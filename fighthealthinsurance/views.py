@@ -47,7 +47,7 @@ from django_encrypted_filefield.crypt import Cryptographer
 from loguru import logger
 from PIL import Image
 
-from fighthealthinsurance import common_view_logic
+from fighthealthinsurance import common_view_logic, intake_resume
 from fighthealthinsurance import forms as core_forms, models
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
@@ -1269,6 +1269,7 @@ class FindNextSteps(View):
                     f"supplied email/semi_sekret; redirecting to scan"
                 )
                 return redirect("scan")
+            intake_resume.note_step(denial_id, "find_next_steps")
             denial_ref_form = core_forms.DenialRefForm(
                 initial={
                     "denial_id": denial_id,
@@ -1857,6 +1858,28 @@ class OCRView(View):
 # genuinely different denial still gets a new row.
 DENIAL_SESSION_REUSE_WINDOW = timedelta(hours=24)
 
+# The intake form's fields in the order scrub.html shows them, each with the
+# id of the control a link to it lands on. A page the server sends back lists
+# every error at the top of the form in this order, each a link to its field.
+INTAKE_FIELD_IDS = {
+    "denial_text": "denial_text",
+    "email": "email",
+    "zip": "store_zip",
+    "pii": "pii",
+    "privacy": "privacy",
+    "tos": "tos",
+    "personalonly": "personalonly",
+    "store_raw_email": "store_raw_email",
+    "use_external_models": "use_external_models",
+    "subscribe": "subscribe",
+}
+# scrub.html also has a message under each of these fields, and the form's
+# words for them say which field they are about, so the list gives them
+# without the field's label.
+INTAKE_FIELDS_WITH_A_MESSAGE = frozenset(
+    ("denial_text", "email", "pii", "privacy", "tos", "personalonly")
+)
+
 
 class InitialProcessView(generic.FormView):
     """
@@ -1908,6 +1931,27 @@ class InitialProcessView(generic.FormView):
                     )
 
         context["ocr_result"] = ocr_result
+
+        form = context.get("form")
+        error_summary: list[dict[str, str]] = []
+        if form is not None and form.is_bound:
+            order = list(INTAKE_FIELD_IDS)
+            for name in sorted(
+                form.errors,
+                key=lambda name: order.index(name) if name in order else len(order),
+            ):
+                field_id = INTAKE_FIELD_IDS.get(name, "")
+                label = ""
+                if name in form.fields and name not in INTAKE_FIELDS_WITH_A_MESSAGE:
+                    label = form[name].label
+                error_summary.extend(
+                    {
+                        "field_id": field_id,
+                        "text": f"{label}: {error}" if label else error,
+                    }
+                    for error in form.errors[name]
+                )
+        context["error_summary"] = error_summary
 
         return context
 
@@ -1984,6 +2028,9 @@ class InitialProcessView(generic.FormView):
         cleaned_data = form.cleaned_data
         if "denial_id" in cleaned_data:
             del cleaned_data["denial_id"]
+        # A gate on the submission, not something the denial keeps: a form
+        # without it ticked never reaches here.
+        cleaned_data.pop("personalonly", None)
 
         # Handle mailing list subscription
         if cleaned_data.get("subscribe"):
@@ -2083,6 +2130,7 @@ class InitialProcessView(generic.FormView):
         remember_denial_ref_email(
             self.request.session, denial_response.denial_id, cleaned_data["email"]
         )
+        intake_resume.note_step(denial_response.denial_id, "hh")
 
         # Store microsite data in session for prefilling later in the flow
         default_procedure = self.request.POST.get(
@@ -2204,18 +2252,6 @@ def session_gate_enforced() -> bool:
     production therefore cannot sit behind this.
     """
     return bool(settings.DEBUG or os.environ.get("TESTING", False))
-
-
-def legacy_denial_ref_query_accepted() -> bool:
-    """Whether a bare (denial_id, email, semi_sekret) query triple still resolves.
-
-    Owner decision, Melanie 2026-09-13: one release, so links already in
-    people's history keep working. While this is True such a link is still a
-    working credential, which is the exposure this scheme exists to end, so
-    set ``LEGACY_DENIAL_REF_QUERY = False`` next release and delete this
-    function and its callers.
-    """
-    return bool(getattr(settings, "LEGACY_DENIAL_REF_QUERY", True))
 
 
 def _denial_ref_fernet(session, create: bool) -> typing.Optional[Fernet]:
@@ -2434,24 +2470,12 @@ def fax_cancel_ref_choices(request, token) -> typing.Dict[str, typing.Any]:
 def denial_ref_from_query(request) -> typing.Dict[str, str]:
     """The case reference a back link carries, as a plain triple.
 
-    Nothing here touches the database; every caller validates the triple the
-    way it already did, and sends {} to ``unresolved_denial_ref_response``.
+    Only ``?ref=`` is read. A query naming ``denial_id``, ``email`` and
+    ``semi_sekret`` directly opens nothing. Nothing here touches the
+    database; every caller validates the triple the way it already did, and
+    sends {} to ``unresolved_denial_ref_response``.
     """
-    token = request.GET.get(DENIAL_REF_QUERY_PARAM)
-    if token:
-        return resolve_denial_ref_token(request, token)
-    if not legacy_denial_ref_query_accepted():
-        return {}
-    denial_id = request.GET.get("denial_id")
-    email = request.GET.get("email")
-    semi_sekret = request.GET.get("semi_sekret")
-    if not denial_id or not email or not semi_sekret:
-        return {}
-    return {
-        "denial_id": str(denial_id),
-        "email": str(email),
-        "semi_sekret": str(semi_sekret),
-    }
+    return resolve_denial_ref_token(request, request.GET.get(DENIAL_REF_QUERY_PARAM))
 
 
 RESUME_HELP_QUERY_PARAM = "resume"
@@ -2465,10 +2489,13 @@ def denial_ref_offered(request) -> bool:
     refusal; reading it as "no link followed" lets it past into the blank form
     this scheme exists to stop serving.
 
-    A bare ``denial_id`` with no email and no secret does not count.
-    ``SessionRequiredMixin`` has always accepted one as a way to seed the
-    session, so counting it would put "your link did not work" in front of
-    people who followed no back link.
+    A query naming ``denial_id``, ``email`` and ``semi_sekret`` together
+    counts too. No page opens a case from those, so that link gets the same
+    explanation as any other that did not open one, rather than a blank step.
+
+    A bare ``denial_id`` with no email and no secret does not count. It
+    opens nothing either, but it was never a back link, so counting it would
+    put "your link did not work" in front of people who followed none.
     """
     if DENIAL_REF_QUERY_PARAM in request.GET:
         return True
@@ -2532,16 +2559,11 @@ class SessionRequiredMixin(View):
             and not request.session.get("denial_id")
         ):
             logger.debug("denial_id not in session, checking POST/GET")
-            # Resolve the reference rather than reading request.GET["denial_id"],
-            # which would reopen the legacy query triple after it is switched off.
+            # Resolve the reference rather than reading request.GET["denial_id"]:
+            # a case id in the query string does not seed the session.
             denial_id = request.POST.get("denial_id") or denial_ref_from_query(
                 request
             ).get("denial_id")
-            if not denial_id and legacy_denial_ref_query_accepted():
-                # A bare denial_id in the query string has always been enough
-                # to seed the session. Nothing builds such a link now, but one
-                # may sit in a history, so it closes with the transition window.
-                denial_id = request.GET.get("denial_id")
             if denial_id:
                 request.session["denial_id"] = denial_id
             else:
@@ -2657,6 +2679,7 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
                 "EntityExtractView: stale denial ref on POST; redirecting to scan"
             )
             return redirect("scan")
+        intake_resume.note_step(denial_response.denial_id, "categorize_review")
 
         email = form.cleaned_data["email"]
 
@@ -2771,6 +2794,7 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
                 "PlanDocumentsView: stale denial ref on POST; redirecting to scan"
             )
             return redirect("scan")
+        intake_resume.note_step(denial_response.denial_id, "dvc")
 
         email = form.cleaned_data["email"]
         new_form = core_forms.PlanDocumentsForm(
@@ -2833,6 +2857,7 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
                 "DenialCollectedView: stale denial ref on POST; redirecting to scan"
             )
             return redirect("scan")
+        intake_resume.note_step(form.cleaned_data["denial_id"], "eev")
 
         new_form = core_forms.EntityExtractForm(
             initial={
@@ -3191,8 +3216,11 @@ def chat_interface_view(request):
 class ChatUserConsentView(FormView):
     """
     View for collecting user consent and information before using the chat interface.
-    This form collects personal information that is stored only in the browser's localStorage
-    for privacy protection (scrubbing personal information from messages).
+    The browser keeps the name, email and address fields in localStorage, and the
+    chat uses them to take those details out of messages before they are sent
+    (user_info_storage.ts). Here the server keeps the email in the session with the
+    consent flag, and puts the name, email, phone and referral answers on the
+    mailing list only when the news box is ticked.
     """
 
     template_name = "chat_consent.html"
@@ -3242,7 +3270,8 @@ class ChatUserConsentView(FormView):
             }
             return render(self.request, "chat_redirect.html", context)
 
-        # No need to save form data to database - it will be saved in browser localStorage via JavaScript
+        # Nothing else from the form is saved here: the browser keeps the
+        # name and address fields itself (user_info_storage.ts).
         return super().form_valid(form)
 
     def get(self, request, *args, **kwargs):

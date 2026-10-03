@@ -9,15 +9,20 @@ Two surfaces are exercised:
 
   * Consumer denial flow (Step 6 / outside_help.html): pre-create a
     denial whose procedure mentions Truvada (a brand we flag as expensive
-    via ``EXPENSIVE_DRUGS_ORDERED``) and hit the ``find_next_steps``
-    URL via GET so the same partial renders alongside the
-    "Additional resources that might help" table.
+    via ``EXPENSIVE_DRUGS_ORDERED``) and open the ``find_next_steps``
+    back link (a reference minted into the browser's session) so the same
+    partial renders alongside the "Additional resources that might help"
+    table.
 """
 
+from importlib import import_module
+
+from django.conf import settings
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from seleniumbase import BaseCase
 
 from fighthealthinsurance.models import Denial
+from tests import back_links
 
 from .fhi_selenium_base import FHISeleniumBase
 
@@ -42,6 +47,27 @@ class SeleniumTestPharmacyCouponSection(FHISeleniumBase, StaticLiveServerTestCas
     def tearDownClass(cls):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
+
+    def back_link_in_this_browser(self, url_name, denial, email):
+        """A back link to ``url_name`` that this browser's session can open.
+
+        A GET reaches a case only through a reference, which resolves only
+        in the session that minted it. So mint one into a fresh session and
+        hand the browser that session's cookie, the way it would hold one
+        after walking the flow.
+        """
+        session = import_module(settings.SESSION_ENGINE).SessionStore()
+        token = back_links.issue_ref(session, denial, email)
+        # A cookie can only be set for the site the browser is on.
+        self.open(self.live_server_url)
+        self.driver.add_cookie(
+            {
+                "name": settings.SESSION_COOKIE_NAME,
+                "value": session.session_key,
+                "path": "/",
+            }
+        )
+        return f"{self.live_server_url}{back_links.ref_url(url_name, token)}"
 
     # ------------------------------------------------------------------
     # Microsite path: GLP-1 / Wegovy
@@ -132,13 +158,7 @@ class SeleniumTestPharmacyCouponSection(FHISeleniumBase, StaticLiveServerTestCas
             your_state="CA",
         )
 
-        url = (
-            f"{self.live_server_url}/find_next_steps"
-            f"?denial_id={denial.denial_id}"
-            f"&email={email}"
-            f"&semi_sekret={denial.semi_sekret}"
-        )
-        self.open(url)
+        self.open(self.back_link_in_this_browser("find_next_steps", denial, email))
         self.wait_for_page_ready()
 
         # Pharmacy section should render in the consumer flow too.

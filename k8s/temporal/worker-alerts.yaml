@@ -31,11 +31,13 @@
 #         curl -s localhost:9464/metrics | grep -E 'temporal_(activity|worker|request)'
 #   - `up{...}` label shape for PodMonitor targets (pod / container labels).
 #   - kube-state-metrics present (kube_deployment_status_replicas_available).
-#   - Server metric names: scrape the temporal-frontend/matching/history
-#     services' /metrics (Helm release "temporal") and confirm the names in
-#     family 3 exist on the deployed server version; adjust before relying on
-#     them. They are shipped here with long `for:` and low severity on
-#     purpose until verified.
+#   - Server series arriving: family 3 reads the Temporal server's own
+#     metrics, scraped by the ServiceMonitors values.yaml turns on
+#     (server.metrics.serviceMonitor). Names and labels are checked against
+#     the server source for the deployed version (see the family 3 header);
+#     what is left to confirm live is that the operator picks those
+#     ServiceMonitors up and that `temporal_namespace` arrives (README
+#     "Server metrics").
 # =============================================================================
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
@@ -177,18 +179,83 @@ spec:
 
     # ------------------------------------------------------------------------
     # Family 3: SERVER-SIDE. Measured by the Temporal server's matching and
-    # history services, so they keep counting with zero workers alive.
-    # ==> VERIFY-LIVE: metric names below follow the Temporal server's
-    #     Prometheus naming (no temporal_ prefix on server series; labels
-    #     namespace / taskqueue / task_type per the server's metric
-    #     definitions) but are NOT confirmed against this cluster's server
-    #     version. Long `for:` and low severity until verified; promote after.
+    # history services, scraped through the ServiceMonitors in values.yaml.
+    # Checked against the source of temporalio/temporal v1.31.2, the server
+    # image chart 1.6.0 ships (common/metrics/metric_defs.go, tags.go,
+    # task_queues.go, service/matching, service/history):
+    #   - Served by the tally Prometheus reporter: counter names carry no
+    #     _total suffix, and timers are histograms in seconds.
+    #   - The Temporal namespace is `temporal_namespace` here: the operator
+    #     renames the server's own `namespace` label to exported_namespace,
+    #     and the ServiceMonitor copies it across (values.yaml).
+    #   - Per task queue: `taskqueue` (the queue's name), `task_type`
+    #     (Workflow / Activity), and on matching series `partition` (the
+    #     partition number, or __sticky__ for a worker's own sticky queue).
+    #   - Matching unloads a task queue nobody has polled or added to for
+    #     5 minutes (matching.maxTaskQueueIdleTime) and sets its backlog
+    #     gauges back to 0. With no worker left and little traffic, a
+    #     backlog is therefore only visible for about 5 minutes after each
+    #     new task, which is why the waiting rule looks back over a window
+    #     with a threshold under 5 minutes.
+    # Warning severity until the live check in the README has been done.
     # ------------------------------------------------------------------------
     - name: fhi-temporal-server-side
       rules:
+        # ---- ZERO WORKERS: a task arrived and nobody had polled for 2m ----
+        # The counter is created by its first count, so a matching pod's
+        # first no-poller task arrives as a new series already at 1, which
+        # increase() reads as no change. The second half catches that: a
+        # series that exists now and did not 15 minutes ago. A series that
+        # comes back after a scrape gap longer than that looks new as well,
+        # so a long gap can fire this once.
+        - alert: FhiTemporalTaskQueueNoPoller
+          expr: >-
+            (
+              sum by (taskqueue, task_type) (
+                increase(no_poller_tasks{temporal_namespace="default", taskqueue=~"fhi-.*"}[15m])
+              ) > 0
+            )
+            or
+            (
+              sum by (taskqueue, task_type) (
+                no_poller_tasks{temporal_namespace="default", taskqueue=~"fhi-.*"}
+                  unless
+                no_poller_tasks{temporal_namespace="default", taskqueue=~"fhi-.*"} offset 15m
+              ) > 0
+            )
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Work added to {{ $labels.taskqueue }} ({{ $labels.task_type }}) with no worker polling"
+            description: >-
+              The matching service counted tasks added to {{ $labels.taskqueue }}
+              while no worker had polled it for 2 minutes. Temporal queues
+              them silently. Counted only on a queue's root partition, and
+              only once that partition has been loaded for 2 minutes, so a
+              very quiet queue can miss it; the waiting rule below covers
+              that case.
+        # ---- ZERO WORKERS, quiet queue: the oldest task has waited >2m ----
+        - alert: FhiTemporalTaskQueueWorkWaiting
+          expr: >-
+            max by (taskqueue, task_type) (
+              max_over_time(approximate_backlog_age_seconds{temporal_namespace="default", taskqueue=~"fhi-.*", partition!="__sticky__"}[15m])
+            ) > 120
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "A task on {{ $labels.taskqueue }} ({{ $labels.task_type }}) waited over 2 minutes"
+            description: >-
+              The oldest task in the {{ $labels.taskqueue }} backlog was
+              {{ $value }}s old. With live workers a task is picked up in
+              seconds, so this means no worker is polling, or every slot is
+              busy. Measured by the matching service, so it fires with every
+              worker gone.
+        # ---- CAN'T KEEP UP: a sustained backlog ----------------------------
         - alert: FhiTemporalTaskQueueBacklog
           expr: >-
-            max by (taskqueue, task_type) (approximate_backlog_count{namespace="default", taskqueue=~"fhi-.*"}) > 25
+            sum by (taskqueue, task_type) (approximate_backlog_count{temporal_namespace="default", taskqueue=~"fhi-.*", partition!="__sticky__"}) > 25
           for: 30m
           labels:
             severity: warning
@@ -196,14 +263,15 @@ spec:
             summary: "Temporal backlog >25 tasks on {{ $labels.taskqueue }} ({{ $labels.task_type }}) for 30m"
             description: >-
               Server-side backlog on {{ $labels.taskqueue }} is {{ $value }}
-              tasks. This is the authoritative "nobody is polling / pollers
-              can't keep up" signal: it is measured by the matching service
-              and survives every worker dying. VERIFY-LIVE: metric name.
+              tasks, summed over the queue's partitions. Pollers are not
+              keeping up. A queue with no poller at all is caught sooner by
+              the two rules above.
+        # ---- SLOW PICKUP, as the history service measures it --------------
         - alert: FhiTemporalServerScheduleToStartSlow
           expr: >-
             histogram_quantile(0.95,
               sum by (le, taskqueue) (
-                rate(task_schedule_to_start_latency_bucket{namespace="default", taskqueue=~"fhi-.*"}[10m])
+                rate(task_schedule_to_start_latency_bucket{temporal_namespace="default", taskqueue=~"fhi-.*"}[10m])
               )
             ) > 60
           for: 30m
@@ -212,21 +280,23 @@ spec:
           annotations:
             summary: "Server-side p95 schedule-to-start >60s on {{ $labels.taskqueue }}"
             description: >-
-              The matching service measured tasks waiting >60s (p95) before a
-              worker picked them up on {{ $labels.taskqueue }}. Unlike the
-              worker-side latency rule, this fires with zero workers. Units:
-              VERIFY-LIVE (server histograms may be milliseconds; adjust the
-              threshold if so).
+              Tasks on {{ $labels.taskqueue }} waited more than 60 seconds
+              (p95) before a worker started them. Recorded by the history
+              service when a worker picks a task up, so it reports slow
+              pickup, and says nothing while no worker is polling at all.
+        # ---- WORKERS DYING MID-ATTEMPT ------------------------------------
         - alert: FhiTemporalActivityTimeouts
           expr: >-
-            sum by (namespace) (increase(activity_timeout{namespace="default"}[30m])) > 3
+            sum by (taskqueue) (increase(activity_task_timeout{temporal_namespace="default", taskqueue=~"fhi-.*"}[30m])) > 3
           for: 0m
           labels:
             severity: warning
           annotations:
-            summary: "Temporal server recorded >3 activity timeouts in 30m"
+            summary: "Temporal server recorded >3 activity attempt timeouts on {{ $labels.taskqueue }} in 30m"
             description: >-
-              Heartbeat / start-to-close / schedule-to-start activity timeouts
-              as counted by the history service -- the server-side face of a
-              worker dying mid-attempt. VERIFY-LIVE: metric name and the
-              timeout_type label on the deployed server version.
+              Heartbeat, start-to-close and schedule-to-start timeouts of
+              individual activity attempts, counted by the history service:
+              the server-side face of a worker dying mid-attempt. The
+              timeout_type label says which. activity_task_timeout counts
+              every attempt; activity_timeout would count only activities
+              whose retries ran out.

@@ -30,7 +30,13 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.generic.base import RedirectView
 
-from fighthealthinsurance import agent_docs, fax_views, staff_views, views
+from fighthealthinsurance import (
+    agent_docs,
+    fax_views,
+    intake_resume_views,
+    staff_views,
+    views,
+)
 from fighthealthinsurance.sitemap import sitemap_view
 
 
@@ -406,6 +412,19 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "pro_version_thankyou",
         csrf_exempt(views.ProVersionThankYouView.as_view()),
         name="pro_version_thankyou",
+    ),
+    # Where the "you left before finishing" email lands. The first takes the
+    # token out of the address bar; the second asks for the email address
+    # the case was started with (intake_resume has the design).
+    path(
+        "continue/<str:token>",
+        intake_resume_views.IntakeResumeLinkView.as_view(),
+        name="intake_resume_link",
+    ),
+    path(
+        "continue",
+        intake_resume_views.IntakeResumeView.as_view(),
+        name="intake_resume",
     ),
     path("share_denial", views.ShareDenialView.as_view(), name="share_denial"),
     path("share_appeal", views.ShareAppealView.as_view(), name="share_appeal"),

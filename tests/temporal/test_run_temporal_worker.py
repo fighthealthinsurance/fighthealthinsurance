@@ -360,10 +360,85 @@ def test_alert_rules_use_the_workers_temporal_namespace_and_cover_worker_loss():
         "absent(up{",
         "kube_deployment_status_replicas_available",
         "approximate_backlog_count",
+        "approximate_backlog_age_seconds",
+        "no_poller_tasks",
         "FhiTemporalFaxWorkerAbsent",
         "FhiTemporalAppealWorkerAbsent",
     ):
         assert needle in rules, f"worker-loss/server-side coverage missing: {needle}"
+
+
+def test_server_side_rules_read_the_temporal_namespace_the_service_monitors_relabel():
+    """The operator gives every scraped series a Kubernetes ``namespace``,
+    so the Temporal server's own ``namespace`` label arrives as
+    ``exported_namespace``. values.yaml turns the server's ServiceMonitors on
+    and copies that label to ``temporal_namespace``; every server-side rule
+    must match on that, with the namespace the workers use, or it can never
+    fire."""
+    import pathlib
+    import re
+
+    import yaml
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    tdir = root / "k8s" / "temporal"
+    worker = (tdir / "worker.yaml").read_text()
+    ns = re.search(r'name: TEMPORAL_NAMESPACE\s*\n\s*value: "([^"]+)"', worker).group(1)
+
+    values = yaml.safe_load((tdir / "values.yaml").read_text())
+    endpoint = values["server"]["config"]["metrics"]["prometheus"]
+    assert endpoint["listenAddress"].endswith(":9090")
+    assert "framework" not in endpoint, "the rules assume the tally reporter"
+    monitor = values["server"]["metrics"]["serviceMonitor"]
+    assert monitor["enabled"] is True
+    assert {
+        "action": "replace",
+        "sourceLabels": ["exported_namespace"],
+        "targetLabel": "temporal_namespace",
+    } in monitor["metricRelabelings"]
+
+    rules = yaml.safe_load((tdir / "worker-alerts.yaml").read_text())
+    (server_side,) = [
+        group
+        for group in rules["spec"]["groups"]
+        if group["name"] == "fhi-temporal-server-side"
+    ]
+    assert server_side["rules"], "no server-side rules"
+    for rule in server_side["rules"]:
+        expr = rule["expr"]
+        assert set(re.findall(r'\btemporal_namespace="([^"]+)"', expr)) == {ns}, (
+            rule["alert"]
+        )
+        assert not re.search(r'(?<![\w])namespace="', expr), (
+            f"{rule['alert']} matches the Kubernetes namespace label"
+        )
+
+
+def test_the_no_poller_rule_also_fires_on_a_counter_whose_first_sample_is_its_first_count():
+    """The server creates ``no_poller_tasks`` with its first count, so a
+    matching pod's first no-poller task arrives as a new series already at
+    1, which increase() reads as no change. The rule also matches a series
+    that exists now and did not at the start of its window."""
+    import pathlib
+    import re
+
+    import yaml
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    rules = yaml.safe_load(
+        (root / "k8s" / "temporal" / "worker-alerts.yaml").read_text()
+    )
+    (rule,) = [
+        rule
+        for group in rules["spec"]["groups"]
+        for rule in group["rules"]
+        if rule.get("alert") == "FhiTemporalTaskQueueNoPoller"
+    ]
+    expr = " ".join(rule["expr"].split())
+    assert re.search(r"increase\(no_poller_tasks\{[^}]*\}\[15m\]\)", expr), expr
+    assert re.search(
+        r"no_poller_tasks\{([^}]*)\} unless no_poller_tasks\{\1\} offset 15m\b", expr
+    ), expr
 
 
 def _draining_worker_cls(shutdown_calls):
