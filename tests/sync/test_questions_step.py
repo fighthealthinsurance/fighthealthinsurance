@@ -52,6 +52,7 @@ from fighthealthinsurance.denial_context import (
 from fighthealthinsurance.form_utils import magic_combined_form
 from fighthealthinsurance.forms import questions as question_forms
 from fighthealthinsurance.models import Denial, DenialTypes
+from tests.back_links import back_link
 
 _QUESTIONS = (
     "fighthealthinsurance.common_view_logic.DenialCreatorHelper."
@@ -173,7 +174,9 @@ class GeneratedQuestionRoundTripTest(QuestionsStepTestBase):
         self.denial.qa_context = json.dumps({_Q1: "answered before pressing back"})
         self.denial.save(update_fields=["qa_context"])
 
-        response = self.client.get(reverse("find_next_steps"), self._ref())
+        response = self.client.get(
+            back_link(self.client, "find_next_steps", self.denial, self.email)
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "answered before pressing back")
@@ -183,7 +186,9 @@ class GeneratedQuestionRoundTripTest(QuestionsStepTestBase):
         self.denial.generated_questions = [[_Q1, ""], [_Q1, ""], [_Q2, ""]]
         self.denial.save(update_fields=["generated_questions"])
 
-        response = self.client.get(reverse("find_next_steps"), self._ref())
+        response = self.client.get(
+            back_link(self.client, "find_next_steps", self.denial, self.email)
+        )
 
         body = response.content.decode()
         self.assertEqual(body.count(_Q1), 1)
@@ -384,7 +389,9 @@ class WithdrawalEdgesTest(QuestionsStepTestBase):
         ]
         self.denial.save(update_fields=["generated_questions"])
 
-        response = self.client.get(reverse("find_next_steps"), self._ref())
+        response = self.client.get(
+            back_link(self.client, "find_next_steps", self.denial, self.email)
+        )
 
         body = response.content.decode()
         self.assertNotIn("<b onmouseover", body)
@@ -582,7 +589,9 @@ class OnlyAQuestionnaireCanWithdrawTest(QuestionsStepTestBase):
         )
 
     def test_the_questionnaire_form_carries_its_mark_and_the_mark_is_not_stored(self):
-        response = self.client.get(reverse("find_next_steps"), self._ref())
+        response = self.client.get(
+            back_link(self.client, "find_next_steps", self.denial, self.email)
+        )
         self.assertIn('name="questionnaire"', response.content.decode())
 
         self._generate_appeal(questionnaire="1")

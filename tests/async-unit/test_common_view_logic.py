@@ -40,6 +40,8 @@ from fighthealthinsurance.models import (
 import pytest
 from django.test import TestCase
 
+from tests.back_links import back_link
+
 
 @contextmanager
 def capture_logs(level="INFO"):
@@ -2853,18 +2855,11 @@ class ConfirmedStateTest(TestCase):
         self.assertEqual(denial.service_zip, self.CA_ZIP[:3])
 
     def test_the_review_page_renders_the_corrected_state(self):
-        from django.urls import reverse
-
         denial = self._submit_upload_page(self.NY_ZIP)
         denial = self._submit_review_page(denial, your_state="CA")
 
         response = self.client.get(
-            reverse("categorize_review"),
-            {
-                "denial_id": denial.denial_id,
-                "email": self.EMAIL,
-                "semi_sekret": denial.semi_sekret,
-            },
+            back_link(self.client, "categorize_review", denial, self.EMAIL)
         )
 
         self.assertEqual(response.status_code, 200)

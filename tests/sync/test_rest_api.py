@@ -40,6 +40,7 @@ from fhi_users.models import (
     PatientDomainRelation,
     ProfessionalDomainRelation,
 )
+from tests.back_links import back_link
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -937,12 +938,7 @@ class GenerateAppealUseExternalContextTest(APITestCase):
             use_external=False,
         )
         response = self.client.get(
-            reverse("generate_appeal"),
-            {
-                "denial_id": str(denial.denial_id),
-                "email": "internal@example.com",
-                "semi_sekret": denial.semi_sekret,
-            },
+            back_link(self.client, "generate_appeal", denial, "internal@example.com")
         )
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.context["use_external"])
@@ -957,12 +953,7 @@ class GenerateAppealUseExternalContextTest(APITestCase):
             use_external=True,
         )
         response = self.client.get(
-            reverse("generate_appeal"),
-            {
-                "denial_id": str(denial.denial_id),
-                "email": "external@example.com",
-                "semi_sekret": denial.semi_sekret,
-            },
+            back_link(self.client, "generate_appeal", denial, "external@example.com")
         )
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context["use_external"])

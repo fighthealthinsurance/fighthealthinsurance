@@ -339,7 +339,7 @@ Cheap-O-Insurance-Corp"""
         """
         Test that the back button link on plan documents page works correctly,
         AND that we can then go forward again without losing form data.
-        This tests the denial_id/email/semi_sekret URL params work correctly.
+        This tests that the back links' references carry the case correctly.
         """
         test_fname = "BackBtnPlanFirst"
         test_lname = "BackBtnPlanLast"
