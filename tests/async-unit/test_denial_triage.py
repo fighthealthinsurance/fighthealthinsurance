@@ -166,15 +166,25 @@ class TestLetterDate:
         assert dt.letter_date(LETTER, TODAY) is None
 
     def test_a_date_labelled_as_something_else_gives_nothing(self):
-        for text in (
+        texts = (
             "Date of service: August 14, 2026\nDear Member,",
             "Service date: August 14, 2026\nDear Member,",
             "Date of service\nAugust 14, 2026\nDear Member,",
             "DOB:\n01/02/1980\nDear Member,",
             "Example Plan\nDates of Service\n\n08/14/2026\n\nDear Member,",
             "Example Plan\nDate of service:\n\n08/14/2026\n\n08/15/2026\n\nDear Member,",
-        ):
-            assert dt.letter_date(text, TODAY) is None, text
+            # A label with its own date heads the lone dates under it too.
+            "Dates of Service: 08/14/2026\n\n08/15/2026\n\nDear Member,",
+            "DOS: 08/14/2026\n\n08/15/2026\n\nDear Member,",
+            "DOB: 01/02/1980\n\n09/02/2026\n\nDear Member,",
+            "Date of Birth: 01/02/1980\n\n09/02/2026\n\nDear Member,",
+            # A note after the date on a "Date:" line says what the date is.
+            "Date: 09/02/2026 (DOB)\nDear Parent,",
+            "Date: 09/02/2026 (date of service)\nDear Member,",
+            "Date: 09/02/2026 (DOS)\nDear Member,",
+            "Date: September 2, 2026 (Date of Birth)\nDear Member,",
+        )
+        assert [text for text in texts if dt.letter_date(text, TODAY) is not None] == []
 
     def test_a_date_with_a_line_right_on_top_of_it_gives_nothing(self):
         for text in (

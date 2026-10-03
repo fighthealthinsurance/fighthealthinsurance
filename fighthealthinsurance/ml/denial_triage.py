@@ -353,6 +353,11 @@ _GREETING = re.compile(
 # flattened: "Date of service:", "Dates of Service" or "Date of birth" over
 # its date.
 _LABEL_LINE = re.compile(r":$|\b(?:dates?|dos|dob|birth)\b", re.IGNORECASE)
+# Words that make a date a date of service or of birth, wherever they sit on
+# its line: "Dates of Service: 08/14/2026", "Date: 01/02/1980 (DOB)".
+_SERVICE_OR_BIRTH = re.compile(
+    r"\b(?:services?|dos|dob|birth(?:date|day)?)\b", re.IGNORECASE
+)
 # A date further back than this is more likely a birth date or an old date of
 # service than the date of a letter someone is appealing now.
 _OLDEST_LETTER = datetime.timedelta(days=3 * 365)
@@ -368,12 +373,15 @@ def letter_date(
     identifier) and keeps one only where the letter marks it as its own:
 
     * after a label such as "Date:", "Letter date:" or "Date of this
-      notice:", with nothing else before it on the line, or on the line under
-      such a label; or
+      notice:", with nothing else before it on the line and nothing after it
+      naming a date of service or birth ("(DOB)"), or on the line under such
+      a label; or
     * alone in its own block above the greeting ("Dear ..."), where a letter
       puts its date: a blank line (or the top of the letter) directly above
       it, and no label for something else ("Date of service:") heading it or
-      the list of dates it sits in.
+      the list of dates it sits in. A line naming a date of service or birth
+      heads the lone dates under it even when it carries a date of its own
+      ("Dates of Service: 08/14/2026").
 
     Anything else is a guess and gives None: no date marked that way, two
     marked dates that differ, or a marked date after ``today`` or more than
@@ -391,11 +399,15 @@ def letter_date(
         line_start = text.rfind("\n", 0, match.start()) + 1
         line_end = text.find("\n", match.end())
         before = text[line_start : match.start()].strip()
+        after = text[match.end() : None if line_end == -1 else line_end].strip()
         if before:
-            if _LETTER_DATE_LABEL.fullmatch(before):
+            # "Date: 09/02/2026 (DOB)" is labelled after the date as well.
+            if _LETTER_DATE_LABEL.fullmatch(before) and not _SERVICE_OR_BIRTH.search(
+                after
+            ):
                 marked.add(resolved)
             continue
-        if text[match.end() : None if line_end == -1 else line_end].strip():
+        if after:
             continue
         lines_above = [line.strip() for line in text[:line_start].split("\n")[:-1]]
         # What heads this date: the nearest line above that is neither blank
@@ -409,8 +421,14 @@ def letter_date(
             ),
             "",
         )
-        # A line carrying its own date is a value, not a label for this one.
-        if _LABEL_LINE.search(heading) and not _ABSOLUTE.search(heading):
+        if _ABSOLUTE.search(heading):
+            # A line carrying its own date is a value, not a label for this
+            # one, unless it names a date of service or birth: then the lone
+            # dates under it continue its list ("Dates of Service: 08/14/2026"
+            # over 08/15/2026).
+            if _SERVICE_OR_BIRTH.search(heading):
+                continue
+        elif _LABEL_LINE.search(heading):
             if _LETTER_DATE_LABEL.fullmatch(heading):
                 marked.add(resolved)
             continue
