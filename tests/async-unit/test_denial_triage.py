@@ -132,6 +132,101 @@ class TestResolveWindow:
         assert dt.resolve_window(None, DENIAL_DATE) is None
 
 
+TODAY = datetime.date(2026, 10, 3)
+HEADED_LETTER = (
+    "Example Health Plan\n"
+    "PO Box 100\n"
+    "Springfield, ST 00000\n"
+    "\n"
+    "September 2, 2026\n"
+    "\n"
+    "Member ID: XYZ123456789\n"
+    "Date of service:\n"
+    "August 14, 2026\n"
+    "\n"
+    "Dear Member,\n"
+    "Your request for an MRI performed on August 14, 2026 was denied. You may "
+    "appeal within 180 days of this notice, or by 03/01/2027.\n"
+)
+
+
+class TestLetterDate:
+    def test_a_date_after_a_letter_date_label_is_the_letters_date(self):
+        for label in ("Date:", "DATE", "Letter date:", "Notice Date:", "Date of this notice:", "Date of the determination:"):
+            text = f"{label} September 2, 2026\nWe denied your request."
+            assert dt.letter_date(text, TODAY) == DENIAL_DATE, label
+
+    def test_a_date_under_a_letter_date_label_is_the_letters_date(self):
+        assert dt.letter_date("Notice date:\n09/02/2026\nWe denied it.", TODAY) == DENIAL_DATE
+
+    def test_a_date_alone_above_the_greeting_is_the_letters_date(self):
+        assert dt.letter_date(HEADED_LETTER, TODAY) == DENIAL_DATE
+
+    def test_a_date_that_only_appears_in_a_sentence_gives_nothing(self):
+        assert dt.letter_date(LETTER, TODAY) is None
+
+    def test_a_date_labelled_as_something_else_gives_nothing(self):
+        texts = (
+            "Date of service: August 14, 2026\nDear Member,",
+            "Service date: August 14, 2026\nDear Member,",
+            "Date of service\nAugust 14, 2026\nDear Member,",
+            "DOB:\n01/02/1980\nDear Member,",
+            "Example Plan\nDates of Service\n\n08/14/2026\n\nDear Member,",
+            "Example Plan\nDate of service:\n\n08/14/2026\n\n08/15/2026\n\nDear Member,",
+            # A label with its own date heads the lone dates under it too.
+            "Dates of Service: 08/14/2026\n\n08/15/2026\n\nDear Member,",
+            "DOS: 08/14/2026\n\n08/15/2026\n\nDear Member,",
+            "DOB: 01/02/1980\n\n09/02/2026\n\nDear Member,",
+            "Date of Birth: 01/02/1980\n\n09/02/2026\n\nDear Member,",
+            # A note after the date on a "Date:" line says what the date is.
+            "Date: 09/02/2026 (DOB)\nDear Parent,",
+            "Date: 09/02/2026 (date of service)\nDear Member,",
+            "Date: 09/02/2026 (DOS)\nDear Member,",
+            "Date: September 2, 2026 (Date of Birth)\nDear Member,",
+        )
+        assert [text for text in texts if dt.letter_date(text, TODAY) is not None] == []
+
+    def test_a_date_with_a_line_right_on_top_of_it_gives_nothing(self):
+        for text in (
+            "Example Plan\nDates of Service\n08/14/2026\nDear Member,",
+            "Example Plan\nDate of service:\n08/14/2026\n08/15/2026\n\nDear Member,",
+            "Example Plan\nService From\n08/14/2026\nDear Member,",
+            "Example Plan\nReceived\n08/14/2026\nDear Member,",
+        ):
+            assert dt.letter_date(text, TODAY) is None, text
+
+    def test_a_date_alone_below_the_greeting_gives_nothing(self):
+        assert dt.letter_date("Dear Member,\nSeptember 2, 2026\nWe denied it.", TODAY) is None
+
+    def test_a_date_alone_with_no_greeting_gives_nothing(self):
+        assert dt.letter_date("Example Health Plan\nSeptember 2, 2026\nWe denied it.", TODAY) is None
+
+    def test_two_marked_dates_that_differ_give_nothing(self):
+        text = "Date: September 2, 2026\n\nSeptember 3, 2026\n\nDear Member,"
+        assert dt.letter_date(text, TODAY) is None
+
+    def test_the_same_date_marked_twice_is_one_date(self):
+        text = "September 2, 2026\nDear Member,\nPage 2\nDate: 09/02/2026"
+        assert dt.letter_date(text, TODAY) == DENIAL_DATE
+
+    def test_a_marked_date_after_today_gives_nothing(self):
+        assert dt.letter_date("Date: October 4, 2026", TODAY) is None
+
+    def test_a_marked_date_more_than_three_years_back_gives_nothing(self):
+        assert dt.letter_date("Date: October 2, 2023", TODAY) is None
+        assert dt.letter_date("Jane Doe\n\n01/02/1980\n\nDear Jane,", TODAY) is None
+
+    def test_a_marked_date_within_three_years_is_kept(self):
+        assert dt.letter_date("Date: October 4, 2023", TODAY) == datetime.date(2023, 10, 4)
+
+    def test_a_two_digit_year_gives_nothing(self):
+        assert dt.letter_date("Date: 09/02/26\nDear Member,", TODAY) is None
+
+    def test_empty_text_gives_nothing(self):
+        assert dt.letter_date(None, TODAY) is None
+        assert dt.letter_date("", TODAY) is None
+
+
 class TestQuestions:
     def test_deadline_question_only_when_there_are_candidates(self):
         assert "deadline" not in dt.build_questions([])
