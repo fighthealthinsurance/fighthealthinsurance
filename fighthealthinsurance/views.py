@@ -2322,10 +2322,11 @@ def issue_denial_ref_token(
 
     Privacy note. The session keeps the email the later pages post, per case
     (``remember_denial_ref_email``), in the session store, which is base64
-    JSON in django_session and is not encrypted, and which nothing in this
-    repo purges. The case's ``semi_sekret`` is not in the session; it
-    travels only inside the encrypted reference. Full statement in
-    ``docs/back-link-references.md``.
+    JSON in django_session and is not encrypted. Once a session expires,
+    SESSION_COOKIE_AGE after its last save, the daily purge in
+    ``EmailPollingActor._clear_expired_sessions`` deletes its row. The case's
+    ``semi_sekret`` is not in the session; it travels only inside the
+    encrypted reference. Full statement in ``docs/back-link-references.md``.
     """
     if denial_id is None or not email or not semi_sekret:
         return None
