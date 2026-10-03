@@ -1062,7 +1062,7 @@ ONE_INITIAL = {
 @needs_node
 def test_two_different_middle_initials_are_two_people(compiled):
     result = run(compiled, find=list(DIFFERENT_INITIALS))
-    for letter, found in zip(DIFFERENT_INITIALS, result["found"]):
+    for letter, found in zip(DIFFERENT_INITIALS, result["found"], strict=True):
         assert found == {}, letter
 
 
@@ -1070,7 +1070,7 @@ def test_two_different_middle_initials_are_two_people(compiled):
 def test_a_block_under_a_spelled_out_middle_name_is_not_the_persons(compiled):
     letters = list(SPELLED_OUT_MIDDLE)
     result = run(compiled, find=letters)
-    for letter, found in zip(letters, result["found"]):
+    for letter, found in zip(letters, result["found"], strict=True):
         assert found == SPELLED_OUT_MIDDLE[letter], letter
 
 
@@ -1078,7 +1078,7 @@ def test_a_block_under_a_spelled_out_middle_name_is_not_the_persons(compiled):
 def test_a_middle_initial_on_one_name_only_still_agrees(compiled):
     letters = list(ONE_INITIAL)
     result = run(compiled, find=letters)
-    for letter, found in zip(letters, result["found"]):
+    for letter, found in zip(letters, result["found"], strict=True):
         assert found == ONE_INITIAL[letter], letter
 
 
@@ -1087,7 +1087,7 @@ def test_the_rule_finds_only_what_the_letter_says_for_sure(compiled):
     letters = list(RULE_CASES)
     result = run(compiled, find=letters)
     assert result["logs"] == []
-    for letter, found in zip(letters, result["found"]):
+    for letter, found in zip(letters, result["found"], strict=True):
         assert found == RULE_CASES[letter], letter
 
 
@@ -1127,7 +1127,7 @@ def test_the_chat_takes_out_what_was_typed_however_the_letter_spaces_it(
         compiled, scrubPersonalInfo=[[message, CHAT_USER] for message in messages]
     )
     assert result["logs"] == []
-    for message, scrubbed in zip(messages, result["scrubbed"]):
+    for message, scrubbed in zip(messages, result["scrubbed"], strict=True):
         assert scrubbed == SCRUBBED[message], message
 
 
