@@ -23,17 +23,21 @@ const PLACEHOLDERS: PatternEntry[] = spec.placeholders;
 export const PRINT_NOTICE_ID = "print-placeholder-notice";
 export const FAX_NOTICE_ID = "fax-placeholder-notice";
 
-// The fax form's answer to "send it as it is", by the name the server reads
-// (FaxForm.send_with_placeholders). "Send anyway" adds it as a hidden field;
-// the page the server sends back when it holds a letter offers it as a tick
-// box, under the letter, with this id.
-export const SEND_ANYWAY_FIELD = "send_with_placeholders";
+// The blanks the person said to fax as they are, by the name the server
+// reads (FaxForm.approved_placeholders): a JSON list, each blank exactly as
+// the letter has it. The server faxes a letter with blanks only when every
+// one is on a list posted under this name. "Send anyway" posts one in a
+// hidden field; the page the server sends back when it holds a letter has a
+// "Send it as it is" tick box under the letter, with this id, whose value is
+// the list that page names.
+export const SEND_ANYWAY_FIELD = "approved_placeholders";
 export const SEND_ANYWAY_INPUT_ID = "fax-send-anyway";
-export const SEND_ANYWAY_BOX_ID = "id_send_with_placeholders";
+export const SEND_ANYWAY_BOX_ID = "id_approved_placeholders";
 
-// The blanks "Send anyway" was pressed for, as the notice listed them. A
-// letter whose blanks are all on this list is faxed as it is; one with a
-// blank that is not on it waits, and the notice lists its blanks again.
+// The blanks "Send anyway" was pressed for, as the letter had them when the
+// notice listed them. A letter whose blanks are all approved, here or by the
+// ticked box, is faxed as it is; one with a blank that is not waits, and the
+// notice lists its blanks again, the new ones first.
 const blanksSentAnyway: string[] = [];
 
 function blankOut(match: string): string {
@@ -78,6 +82,8 @@ interface PlaceholderSpot {
   // Where the blank starts in the letter, and how long it is there.
   at: number;
   length: number;
+  // The blank exactly as the letter has it: what a person says yes to.
+  written: string;
   // What the notice calls it: the blank itself, or its label (a line to
   // write on is listed as ___ however long it is).
   shown: string;
@@ -97,7 +103,12 @@ function findPlaceholderSpots(text: string): PlaceholderSpot[] {
     rest = rest.replace(
       everyMatchOf(entry),
       (match: string, at: number) => {
-        hits.push({ at: at, length: match.length, shown: entry.label || match });
+        hits.push({
+          at: at,
+          length: match.length,
+          written: match,
+          shown: entry.label || match,
+        });
         return blankOut(match);
       },
     );
@@ -106,15 +117,28 @@ function findPlaceholderSpots(text: string): PlaceholderSpot[] {
   return hits;
 }
 
-// Each blank in the letter, once, in the order it first appears.
-export function findUnfilledPlaceholders(text: string): string[] {
+function onceEach(values: string[]): string[] {
   const found: string[] = [];
-  for (const hit of findPlaceholderSpots(text)) {
-    if (found.indexOf(hit.shown) < 0) {
-      found.push(hit.shown);
+  for (const value of values) {
+    if (found.indexOf(value) < 0) {
+      found.push(value);
     }
   }
   return found;
+}
+
+// Each blank in the letter, once, in the order it first appears.
+export function findUnfilledPlaceholders(text: string): string[] {
+  return onceEach(findPlaceholderSpots(text).map((hit) => hit.shown));
+}
+
+// Each blank exactly as the letter has it, once, in the order it first
+// appears: what "Send anyway" says yes to. The same list as
+// findUnfilledPlaceholders, but for a line to write on, which is itself here
+// rather than ___, so a line of another length is another blank. The server
+// makes the same list (find_placeholders_as_written).
+export function findPlaceholdersAsWritten(text: string): string[] {
+  return onceEach(findPlaceholderSpots(text).map((hit) => hit.written));
 }
 
 export interface PlaceholderNotice {
@@ -123,6 +147,12 @@ export interface PlaceholderNotice {
   before: HTMLElement;
   letter: HTMLTextAreaElement | null;
   found: string[];
+  // Blanks from found that are new since the person said to send the letter
+  // as it is. They are listed first, each marked "New".
+  fresh?: string[];
+  // Whether the person has said yes to a blank, as the letter has it. "Show
+  // me in the letter" goes to the first blank they have not.
+  isApproved?: (written: string) => boolean;
   heading: string;
   advice: string;
   // A way past the notice: paper can be filled in by hand, and a fax can go
@@ -150,16 +180,27 @@ function noticeButton(label: string, className: string): HTMLElement {
   return button;
 }
 
-// Put the person's cursor on the first blank, selected, so typing replaces it.
-// The letter is searched again as it is now, so the selection is the blank
-// itself even after edits, and never the same characters inside something
-// the check leaves alone (the XXX of a karyotype like 47,XXX).
-function showFirstPlaceholder(letter: HTMLTextAreaElement | null): void {
+// Put the person's cursor on the first blank they have not said yes to,
+// selected, so typing replaces it; with none, on the first blank. The letter
+// is searched again as it is now, so the selection is the blank itself even
+// after edits, and never the same characters inside something the check
+// leaves alone (the XXX of a karyotype like 47,XXX).
+function showFirstPlaceholder(
+  letter: HTMLTextAreaElement | null,
+  isApproved?: (written: string) => boolean,
+): void {
   if (!letter) {
     return;
   }
   letter.focus();
-  const first = findPlaceholderSpots(letter.value)[0];
+  const spots = findPlaceholderSpots(letter.value);
+  let first = spots[0];
+  for (const spot of spots) {
+    if (!isApproved || !isApproved(spot.written)) {
+      first = spot;
+      break;
+    }
+  }
   if (first) {
     letter.setSelectionRange(first.at, first.at + first.length);
   }
@@ -184,16 +225,31 @@ export function showPlaceholderNotice(notice: PlaceholderNotice): HTMLElement {
   heading.appendChild(strong);
   box.appendChild(heading);
 
+  const fresh = notice.fresh || [];
   const leadIn = document.createElement("p");
-  leadIn.textContent = "These look like spots meant for your own details:";
+  leadIn.textContent =
+    fresh.length > 0
+      ? "These look like spots meant for your own details. The ones marked" +
+        " new weren't there when you said to send it as it is:"
+      : "These look like spots meant for your own details:";
   box.appendChild(leadIn);
 
-  // The blanks are the letter's own text, so they go in as text, never as
-  // markup.
+  // The new blanks first, each marked, then the rest. The blanks are the
+  // letter's own text, so they go in as text, never as markup.
   const list = document.createElement("ul");
-  for (const placeholder of notice.found) {
+  const inOrder = fresh.concat(
+    notice.found.filter((placeholder) => fresh.indexOf(placeholder) < 0),
+  );
+  for (const placeholder of inOrder) {
     const item = document.createElement("li");
-    item.textContent = placeholder;
+    if (fresh.indexOf(placeholder) >= 0) {
+      const mark = document.createElement("strong");
+      mark.textContent = "New:";
+      item.appendChild(mark);
+      item.appendChild(document.createTextNode(" " + placeholder));
+    } else {
+      item.textContent = placeholder;
+    }
     list.appendChild(item);
   }
   box.appendChild(list);
@@ -206,7 +262,8 @@ export function showPlaceholderNotice(notice: PlaceholderNotice): HTMLElement {
   actions.className = "fhi-cluster";
   const showMe = noticeButton("Show me in the letter", "fhi-button fhi-button-secondary");
   const letter = notice.letter;
-  showMe.addEventListener("click", () => showFirstPlaceholder(letter));
+  const isApproved = notice.isApproved;
+  showMe.addEventListener("click", () => showFirstPlaceholder(letter, isApproved));
   actions.appendChild(showMe);
   const anyway = notice.anyway;
   if (anyway) {
@@ -262,18 +319,45 @@ export function printUnlessPlaceholders(
   });
 }
 
-// The hidden field that tells the server to fax the letter as it is: on the
-// form for a submission "Send anyway" started, and off it for every other.
-function markSentAnyway(form: HTMLFormElement, sentAnyway: boolean): void {
+// The blanks the ticked "Send it as it is" box says yes to, from its value;
+// none while it is unticked, or not on the page.
+function blanksTheBoxApproves(): string[] {
+  const box = document.getElementById(SEND_ANYWAY_BOX_ID) as HTMLInputElement | null;
+  if (!box || !box.checked) {
+    return [];
+  }
+  try {
+    const listed: unknown = JSON.parse(box.getAttribute("value") || "");
+    if (Array.isArray(listed)) {
+      return listed.filter((blank): blank is string => typeof blank === "string");
+    }
+  } catch (notAList) {
+    // A box with no list says yes to nothing.
+  }
+  return [];
+}
+
+// Whether the person has said yes to this blank, as the letter has it: with
+// "Send anyway", or with the ticked box.
+function isApprovedBlank(written: string): boolean {
+  return (
+    blanksSentAnyway.indexOf(written) >= 0 || blanksTheBoxApproves().indexOf(written) >= 0
+  );
+}
+
+// The hidden field that tells the server which blanks to fax as they are:
+// on the form, holding them, for a submission that goes with blanks the
+// person said yes to, and off it for every other.
+function markSentAnyway(form: HTMLFormElement, approved: string[]): void {
   removeById(SEND_ANYWAY_INPUT_ID);
-  if (!sentAnyway) {
+  if (approved.length === 0) {
     return;
   }
   const field = document.createElement("input");
   field.id = SEND_ANYWAY_INPUT_ID;
   field.setAttribute("type", "hidden");
   field.setAttribute("name", SEND_ANYWAY_FIELD);
-  field.setAttribute("value", "1");
+  field.setAttribute("value", JSON.stringify(approved));
   form.appendChild(field);
 }
 
@@ -284,30 +368,42 @@ function markSentAnyway(form: HTMLFormElement, sentAnyway: boolean): void {
 // inside the brackets), so the notice offers "Send anyway", which means
 // "send these": the blanks it listed, and no others. It presses the fax
 // button again, and from then on a letter whose blanks were all listed goes
-// without the notice and carries the answer the server reads. A letter
-// edited since, with a blank in it that was not listed, waits, and the
-// notice comes back listing every blank it has.
-// A ticked "Send it as it is" box, on the page the server sends back, is the
-// same answer and lets every submission through while it stays ticked.
+// without the notice, posting them as approved. A letter edited since, with
+// a blank in it that was not listed, waits, and the notice comes back
+// listing every blank it has, the new ones first and marked.
+// A ticked "Send it as it is" box, on the page the server sends back, says
+// yes to the blanks that page listed, and to no others.
 export function faxMustWaitForPlaceholders(
   form: HTMLFormElement,
   button: HTMLElement,
   letter: HTMLTextAreaElement | null,
 ): boolean {
-  const found = findUnfilledPlaceholders(letter ? letter.value : "");
-  const box = document.getElementById(SEND_ANYWAY_BOX_ID) as HTMLInputElement | null;
-  const ticked = box !== null && box.checked;
-  const allSentAnyway = found.every((blank) => blanksSentAnyway.indexOf(blank) >= 0);
-  markSentAnyway(form, found.length > 0 && allSentAnyway && !ticked);
-  if (found.length === 0 || allSentAnyway || ticked) {
+  const spots = findPlaceholderSpots(letter ? letter.value : "");
+  const written = onceEach(spots.map((spot) => spot.written));
+  const waiting = written.filter((blank) => !isApprovedBlank(blank));
+  if (waiting.length === 0) {
+    markSentAnyway(form, written);
     removePlaceholderNotice(FAX_NOTICE_ID);
     return false;
   }
+  markSentAnyway(form, []);
+  // Marked new only when the person has said yes to some of the others:
+  // on a first notice every blank is one they have not seen.
+  const fresh =
+    waiting.length < written.length
+      ? onceEach(
+          spots
+            .filter((spot) => waiting.indexOf(spot.written) >= 0)
+            .map((spot) => spot.shown),
+        )
+      : [];
   showPlaceholderNotice({
     id: FAX_NOTICE_ID,
     before: button,
     letter: letter,
-    found: found,
+    found: onceEach(spots.map((spot) => spot.shown)),
+    fresh: fresh,
+    isApproved: isApprovedBlank,
     heading: "Fill in these blanks before we fax your letter",
     advice:
       "Your insurance company would get them exactly as written." +
@@ -324,7 +420,7 @@ export function faxMustWaitForPlaceholders(
         // The blanks this notice listed, not the letter as it is now: one
         // typed in since the notice showed still waits for a notice of its
         // own.
-        for (const blank of found) {
+        for (const blank of written) {
           if (blanksSentAnyway.indexOf(blank) < 0) {
             blanksSentAnyway.push(blank);
           }

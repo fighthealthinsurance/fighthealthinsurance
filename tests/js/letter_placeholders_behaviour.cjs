@@ -10,7 +10,8 @@
 // script, which wires its Print button at load; the fax scenarios call the
 // check the appeal page's fax form calls, from a submit handler shaped like
 // appeal.ts's. The "find" scenario reads a JSON list of letters on stdin and
-// prints what the browser finds in each.
+// prints what the browser finds in each, as the notice names the blanks and
+// as the letter has them.
 //
 // Writes one JSON object to stdout; everything the page logs is swallowed.
 
@@ -50,6 +51,9 @@ const WITH_A_NEW_BLANK = WITH_BLANKS.replace('{{SCSID}}.', '{{SCSID}}, seen on [
 const WITH_THE_SAME_BLANKS = WITH_BLANKS.replace('{{SCSID}}.', '{{SCSID}}, a member for ten years.');
 const SIGNATURE_LINE = '______________';
 const WITH_A_LINE = 'Dear Example Health,\n\nI am Pat Example.\n\nSigned: ' + SIGNATURE_LINE + '\nPat Example';
+// The same letter with a second, shorter line to write on, under the first.
+const DATE_LINE = '________';
+const WITH_TWO_LINES = WITH_A_LINE.replace('\nPat Example', '\nDated: ' + DATE_LINE + '\nPat Example');
 
 const page = buildPage(MARKUP);
 install(page);
@@ -135,12 +139,17 @@ function report(extra) {
 }
 
 // What the fax form would post besides the letter: each named input, with
-// a tick box only while it is ticked.
+// a tick box only while it is ticked, as the list of values posted under
+// each name. A list of approved blanks is read as the server reads it.
 function posted() {
   const fields = {};
   for (const input of faxForm.querySelectorAll('input')) {
     if (input.getAttribute('type') === 'checkbox' && !input.checked) continue;
-    fields[input.getAttribute('name')] = input.getAttribute('value');
+    const name = input.getAttribute('name');
+    const value = input.getAttribute('value');
+    (fields[name] = fields[name] || []).push(
+      name === 'approved_placeholders' ? JSON.parse(value) : value,
+    );
   }
   return fields;
 }
@@ -173,7 +182,13 @@ const scenarios = {
   find() {
     const {findUnfilledPlaceholders} = require(path.join(SCRIPTS, 'letter_placeholders.js'));
     const letters = JSON.parse(fs.readFileSync(0, 'utf8'));
-    process.stdout.write(JSON.stringify({found: letters.map(findUnfilledPlaceholders)}));
+    const {findPlaceholdersAsWritten} = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    process.stdout.write(
+      JSON.stringify({
+        found: letters.map(findUnfilledPlaceholders),
+        asWritten: letters.map(findPlaceholdersAsWritten),
+      }),
+    );
   },
   'print-complete'() {
     loadReviewPage(COMPLETE);
@@ -302,10 +317,66 @@ const scenarios = {
     pressNoticeButton(lib.FAX_NOTICE_ID, 'Send anyway');
     report({submissions});
   },
+  'fax-send-anyway-then-a-new-blank-show-me'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    faxLetter.value = WITH_BLANKS;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Send anyway');
+    faxLetter.value = WITH_A_NEW_BLANK;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Show me in the letter');
+    report({
+      submissions,
+      newBlankAt: WITH_A_NEW_BLANK.indexOf('[Date of Service]'),
+      faxFocused: page.focused === faxLetter,
+      faxSelection: [faxLetter.selectionStart, faxLetter.selectionEnd],
+    });
+  },
+  'fax-show-me'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    wireFaxForm(lib);
+    faxLetter.value = WITH_BLANKS;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Show me in the letter');
+    report({
+      firstBlankAt: WITH_BLANKS.indexOf('[Your Name]'),
+      faxSelection: [faxLetter.selectionStart, faxLetter.selectionEnd],
+    });
+  },
+  'fax-send-anyway-then-a-new-line'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    faxLetter.value = WITH_A_LINE;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Send anyway');
+    // Back on the page, a second line to write on, of another length.
+    faxLetter.value = WITH_TWO_LINES;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Show me in the letter');
+    report({
+      submissions,
+      // Not indexOf(DATE_LINE): those underscores start inside the longer line.
+      newLineAt: WITH_TWO_LINES.indexOf('Dated: ' + DATE_LINE) + 'Dated: '.length,
+      newLineLength: DATE_LINE.length,
+      faxSelection: [faxLetter.selectionStart, faxLetter.selectionEnd],
+    });
+  },
+  'fax-send-anyway-then-the-same-line'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    faxLetter.value = WITH_A_LINE;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Send anyway');
+    // Back on the page, words added above the line, which is unchanged.
+    faxLetter.value = WITH_A_LINE.replace('I am Pat Example.', 'I am Pat Example, a member.');
+    faxButton.click();
+    report({submissions});
+  },
   'fax-box-ticked'() {
     const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
     const submissions = wireFaxForm(lib);
-    addSendItAsItIsBox(true);
+    addSendItAsItIsBox(true, ['[Your Name]', '{{SCSID}}']);
     faxLetter.value = WITH_BLANKS;
     faxButton.click();
     report({submissions});
@@ -313,20 +384,43 @@ const scenarios = {
   'fax-box-unticked'() {
     const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
     const submissions = wireFaxForm(lib);
-    addSendItAsItIsBox(false);
+    addSendItAsItIsBox(false, ['[Your Name]', '{{SCSID}}']);
     faxLetter.value = WITH_BLANKS;
     faxButton.click();
     report({submissions});
   },
+  'fax-box-ticked-without-a-list'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    addSendItAsItIsBox(true, null);
+    faxLetter.value = WITH_BLANKS;
+    faxButton.click();
+    report({submissions});
+  },
+  'fax-box-ticked-then-a-new-blank'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    addSendItAsItIsBox(true, ['[Your Name]', '{{SCSID}}']);
+    // The page came back naming two blanks; a third is typed in.
+    faxLetter.value = WITH_A_NEW_BLANK;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Show me in the letter');
+    report({
+      submissions,
+      newBlankAt: WITH_A_NEW_BLANK.indexOf('[Date of Service]'),
+      faxSelection: [faxLetter.selectionStart, faxLetter.selectionEnd],
+    });
+  },
 };
 
-// The tick box the server's page puts under the letter.
-function addSendItAsItIsBox(ticked) {
+// The tick box the server's page puts under the letter, its value the list
+// of blanks that page names (null: a box with no list, valued "1").
+function addSendItAsItIsBox(ticked, blanks) {
   const box = doc.createElement('input');
-  box.id = 'id_send_with_placeholders';
+  box.id = 'id_approved_placeholders';
   box.setAttribute('type', 'checkbox');
-  box.setAttribute('name', 'send_with_placeholders');
-  box.setAttribute('value', '1');
+  box.setAttribute('name', 'approved_placeholders');
+  box.setAttribute('value', blanks === null ? '1' : JSON.stringify(blanks));
   box.checked = ticked;
   faxForm.insertBefore(box, faxButton);
 }

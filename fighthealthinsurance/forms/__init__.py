@@ -20,6 +20,7 @@ else:
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.letter_placeholders import (
     describe_placeholders,
+    find_placeholders_as_written,
     find_unfilled_placeholders,
 )
 from fighthealthinsurance.models import (
@@ -352,18 +353,21 @@ class FaxForm(DenialRefForm):
     )
     # Some of what the blank check finds is not a blank: an acronym in
     # brackets like [ERISA], a name typed inside the brackets, a line to sign
-    # on. Ticked, the letter is faxed as it is. The box is on the form only
-    # when the letter posted has blanks in it (see __init__), so it shows
-    # under the letter on the page that names them, and nowhere else. The
-    # appeal page's "Send anyway" posts the same name with a hidden "1".
-    # It never comes back ticked: a page turned back for something else,
-    # like a name of only spaces, names no blanks, and a box ticked there
-    # would send any blank typed in after it, unseen.
-    send_with_placeholders = forms.BooleanField(
+    # on. This box, "Send it as it is", says yes to the blanks the page names,
+    # and to nothing else: its value is that list (JSON, each blank exactly as
+    # the letter has it), so a ticked box posts the list and an unticked one
+    # posts nothing. The appeal page's "Send anyway" posts a list of its own
+    # under the same name, in a hidden field. A letter with blanks is faxed
+    # only when every blank in it is on a posted list.
+    # The box is off the form (see __init__) until clean() holds a letter for
+    # its blanks, so it shows under the letter on the page that names them,
+    # and on no other: a page turned back for something else, like a name of
+    # only spaces, has none. It never comes back ticked.
+    approved_placeholders = forms.BooleanField(
         required=False,
         label="Send it as it is: I've checked these are not blanks",
         label_suffix="",
-        widget=forms.CheckboxInput(attrs={"value": "1"}, check_test=lambda _: False),
+        widget=forms.CheckboxInput(check_test=lambda _: False),
         template_name="partials/check_row_field.html",
     )
     include_provided_health_history = forms.BooleanField(
@@ -378,48 +382,83 @@ class FaxForm(DenialRefForm):
 
     def __init__(self, *args: typing.Any, **kwargs: typing.Any) -> None:
         super().__init__(*args, **kwargs)
-        posted_letter = (
-            self.data.get(self.add_prefix("completed_appeal_text"))
-            if self.is_bound
-            else None
+        self._send_as_it_is_box = self.fields.pop("approved_placeholders")
+
+    def _approved_placeholders(self) -> set[str]:
+        """Every blank on a list posted as approved: by the ticked box, by
+        "Send anyway", or both. Anything that is not a JSON list of strings
+        approves nothing, so a bare "1" or "on" lets no blank through."""
+        name = self.add_prefix("approved_placeholders")
+        getlist = getattr(self.data, "getlist", None)
+        if getlist is not None:
+            posted = getlist(name)
+        else:
+            value = self.data.get(name)
+            posted = value if isinstance(value, list) else [value]
+        approved: set[str] = set()
+        for raw in posted:
+            if not isinstance(raw, str):
+                continue
+            try:
+                values = json.loads(raw)
+            except (ValueError, RecursionError):
+                # Not JSON, or nested past the parser's depth.
+                continue
+            if isinstance(values, list):
+                approved.update(value for value in values if isinstance(value, str))
+        return approved
+
+    def _offer_to_send_as_it_is(self, blanks: list[str]) -> None:
+        """Put the box back on the form, just under the letter, holding
+        exactly ``blanks``."""
+        box = self._send_as_it_is_box
+        box.widget.attrs["value"] = json.dumps(blanks)
+        letter_id = self["completed_appeal_text"].auto_id
+        if letter_id:
+            # The box's label says "these"; a screen reader reads it with
+            # the list of blanks, the letter's error, which has this id.
+            box.widget.attrs["aria-describedby"] = f"{letter_id}_error"
+        fields = list(self.fields.items())
+        names = [name for name, _ in fields]
+        at = (
+            names.index("completed_appeal_text") + 1
+            if "completed_appeal_text" in names
+            else len(fields)
         )
-        if not find_unfilled_placeholders(posted_letter or ""):
-            del self.fields["send_with_placeholders"]
+        fields.insert(at, ("approved_placeholders", box))
+        self.fields = dict(fields)
 
     def clean(self) -> typing.Optional[dict[str, typing.Any]]:
-        """A letter with blanks left in it, like [Your Name], is not faxed
-        unless the person ticks the box to send it as it is.
+        """A letter with blanks left in it, like [Your Name], is faxed only
+        when the person has said yes to every one of them.
 
         The insurance company would get the blanks exactly as written. The
         appeal page's script names them before the form is sent; this holds
-        for a browser that never ran it. The same pattern list drives both.
+        for a browser that never ran it, and for a blank nobody said yes to.
+        The same pattern list drives both.
         """
         cleaned_data = super().clean()
         text = self.cleaned_data.get("completed_appeal_text")
         if not text:
             return cleaned_data
-        found = find_unfilled_placeholders(text)
-        if not found:
+        blanks = find_placeholders_as_written(text)
+        if not blanks:
             return cleaned_data
-        if self.cleaned_data.get("send_with_placeholders"):
-            self.placeholders_sent_as_they_are = len(found)
+        approved = self._approved_placeholders()
+        if all(blank in approved for blank in blanks):
+            self.placeholders_sent_as_they_are = len(blanks)
             return cleaned_data
-        letter_id = self["completed_appeal_text"].auto_id
-        if letter_id and "send_with_placeholders" in self.fields:
-            # The box's label says "these"; a screen reader reads it with
-            # the list of blanks, the letter's error, which has this id.
-            self.fields["send_with_placeholders"].widget.attrs[
-                "aria-describedby"
-            ] = f"{letter_id}_error"
+        self._offer_to_send_as_it_is(blanks)
         self.add_error(
             "completed_appeal_text",
             forms.ValidationError(
                 "Fill in these blanks before we fax your letter: "
-                f"{describe_placeholders(found)}. Your insurance company would "
-                "get them exactly as written. Replace each one with your "
-                "details, or delete it if it doesn't apply, then send the fax "
-                "again. If you've checked and these are not blanks, tick the "
-                "box under your letter to send it as it is.",
+                f"{describe_placeholders(find_unfilled_placeholders(text))}. "
+                "Your insurance company would get them exactly as written. "
+                "Replace each one with your details, or delete it if it "
+                "doesn't apply, then send the fax again. If you've checked "
+                "and these are not blanks, tick the box under your letter to "
+                "send it as it is.",
                 code="unfilled_placeholders",
             ),
         )

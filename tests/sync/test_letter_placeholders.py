@@ -32,6 +32,7 @@ from fighthealthinsurance.forms import FaxForm
 from fighthealthinsurance.letter_placeholders import (
     PATTERNS_FILE,
     describe_placeholders,
+    find_placeholders_as_written,
     find_unfilled_placeholders,
 )
 
@@ -334,6 +335,24 @@ def test_each_blank_is_listed_once_in_the_order_it_first_appears():
     assert find_unfilled_placeholders(text) == ["XXX", "[Your Name]", "{{SCSID}}"]
 
 
+# Two lines to write on, of different lengths, and a third as long as the
+# first.
+LINES = "Dated ________ by [Your Name].\nSigned: ______________\nWitness: ________"
+
+
+def test_lines_to_write_on_are_named_once_as_a_line():
+    assert find_unfilled_placeholders(LINES) == ["___", "[Your Name]"]
+
+
+def test_lines_to_write_on_are_told_apart_by_length_as_they_are_written():
+    """What a person says yes to: a line of another length is another blank."""
+    assert find_placeholders_as_written(LINES) == [
+        "________",
+        "[Your Name]",
+        "______________",
+    ]
+
+
 @pytest.mark.parametrize(
     "entry",
     [SPEC["reference_links"]["definition"], SPEC["reference_links"]["link"]]
@@ -437,9 +456,13 @@ def test_the_browser_finds_exactly_what_the_server_finds(compiled):
         + SPEC["reference_links"]["examples"]
         + [letter for _, letter in APPEAL_TEMPLATES]
         + ["Ref XXX. I am [Your Name], member {{SCSID}}.\nSincerely,\n[Your Name]"]
+        + [LINES]
     )
-    browser = run_scenario(compiled, "find", json.dumps(letters))["found"]
-    assert browser == [find_unfilled_placeholders(text) for text in letters]
+    browser = run_scenario(compiled, "find", json.dumps(letters))
+    assert (browser["found"], browser["asWritten"]) == (
+        [find_unfilled_placeholders(text) for text in letters],
+        [find_placeholders_as_written(text) for text in letters],
+    )
 
 
 @needs_node
@@ -542,11 +565,21 @@ def test_the_fax_waits_and_the_notice_offers_to_send_it_anyway(compiled):
     )
 
 
+def approved(*lists: list[str]) -> dict:
+    """What the fax form posts as approved: each list posted, as the server
+    reads it."""
+    return {"approved_placeholders": [list(blanks) for blanks in lists]}
+
+
+# "Send anyway" means "send these": the blanks its notice listed.
+SENT_ANYWAY = approved(["[Your Name]", "{{SCSID}}"])
+
+
 @needs_node
-def test_send_anyway_sends_the_fax_with_the_answer_the_server_reads(compiled):
+def test_send_anyway_sends_the_fax_with_the_blanks_it_listed(compiled):
     page = run_scenario(compiled, "fax-send-anyway")
     assert (page["submissions"], page["faxNotice"]) == (
-        ["held", {"send_with_placeholders": "1"}],
+        ["held", SENT_ANYWAY],
         None,
     )
 
@@ -555,10 +588,6 @@ def test_send_anyway_sends_the_fax_with_the_answer_the_server_reads(compiled):
 def test_send_anyway_puts_the_focus_on_the_fax_button(compiled):
     page = run_scenario(compiled, "fax-send-anyway")
     assert page["focused"] == "#fax_appeal"
-
-
-# "Send anyway" means "send these": the blanks its notice listed.
-SENT_ANYWAY = {"send_with_placeholders": "1"}
 
 
 @needs_node
@@ -581,8 +610,8 @@ def test_after_send_anyway_an_edit_that_adds_no_blank_is_faxed(compiled):
 
 @needs_node
 def test_after_send_anyway_a_new_blank_brings_the_notice_back(compiled):
-    """The notice lists every blank the letter has, the new one with the
-    ones already sent anyway, so "Send anyway" on it names all that goes."""
+    """The notice lists every blank the letter has, the new one first and
+    marked, so "Send anyway" on it names all that goes."""
     page = run_scenario(compiled, "fax-send-anyway-then-a-new-blank")
     assert (
         page["submissions"],
@@ -591,15 +620,55 @@ def test_after_send_anyway_a_new_blank_brings_the_notice_back(compiled):
     ) == (
         ["held", SENT_ANYWAY, "held"],
         {},
-        ["[Your Name]", "{{SCSID}}", "[Date of Service]"],
+        ["New: [Date of Service]", "[Your Name]", "{{SCSID}}"],
     )
+
+
+@needs_node
+def test_the_notice_that_came_back_says_what_new_means(compiled):
+    notice = run_scenario(compiled, "fax-send-anyway-then-a-new-blank")["faxNotice"]
+    assert (
+        "The ones marked new weren't there when you said to send it as it is"
+        in notice["text"]
+    )
+
+
+@needs_node
+def test_a_first_notice_marks_nothing_new(compiled):
+    notice = run_scenario(compiled, "fax-blanks")["faxNotice"]
+    assert ("New:" in notice["text"], "marked new" in notice["text"]) == (
+        False,
+        False,
+    )
+
+
+@needs_node
+def test_show_me_on_the_notice_that_came_back_selects_the_new_blank(compiled):
+    page = run_scenario(compiled, "fax-send-anyway-then-a-new-blank-show-me")
+    at = page["newBlankAt"]
+    assert (page["faxFocused"], page["faxSelection"]) == (
+        True,
+        [at, at + len("[Date of Service]")],
+    )
+
+
+@needs_node
+def test_show_me_on_a_first_fax_notice_selects_the_first_blank(compiled):
+    page = run_scenario(compiled, "fax-show-me")
+    at = page["firstBlankAt"]
+    assert page["faxSelection"] == [at, at + len("[Your Name]")]
 
 
 @needs_node
 def test_send_anyway_on_the_notice_that_came_back_sends_in_one_press(compiled):
     page = run_scenario(compiled, "fax-send-anyway-then-a-new-blank-sent-anyway")
     assert (page["submissions"], page["faxNotice"]) == (
-        ["held", SENT_ANYWAY, "held", SENT_ANYWAY],
+        [
+            "held",
+            SENT_ANYWAY,
+            "held",
+            approved(["[Your Name]", "{{SCSID}}", "[Date of Service]"]),
+        ],
         None,
     )
 
@@ -609,15 +678,43 @@ def test_send_anyway_covers_only_the_blanks_its_notice_listed(compiled):
     page = run_scenario(compiled, "fax-new-blank-typed-before-send-anyway")
     assert (page["submissions"], page["faxNotice"]["items"]) == (
         ["held", "held"],
-        ["[Your Name]", "{{SCSID}}", "[Date of Service]"],
+        ["New: [Date of Service]", "[Your Name]", "{{SCSID}}"],
     )
 
 
 @needs_node
+def test_after_send_anyway_a_line_of_another_length_brings_the_notice_back(
+    compiled,
+):
+    """Every line is listed as ___, but "Send anyway" says yes to the line
+    the letter had, by its length, so a new, different line is caught, and
+    Show me goes to it."""
+    page = run_scenario(compiled, "fax-send-anyway-then-a-new-line")
+    at = page["newLineAt"]
+    assert (page["submissions"], page["faxNotice"]["items"], page["faxSelection"]) == (
+        ["held", approved(["______________"]), "held"],
+        ["New: ___"],
+        [at, at + page["newLineLength"]],
+    )
+
+
+@needs_node
+def test_after_send_anyway_the_same_line_goes_after_an_edit(compiled):
+    page = run_scenario(compiled, "fax-send-anyway-then-the-same-line")
+    assert page["submissions"] == [
+        "held",
+        approved(["______________"]),
+        approved(["______________"]),
+    ]
+
+
+@needs_node
 def test_a_ticked_send_it_as_it_is_box_lets_the_fax_through(compiled):
+    """The box posts the list it holds, and the page posts the same blanks
+    as the ones it lets go."""
     page = run_scenario(compiled, "fax-box-ticked")
     assert (page["submissions"], page["faxNotice"]) == (
-        [{"send_with_placeholders": "1"}],
+        [approved(["[Your Name]", "{{SCSID}}"], ["[Your Name]", "{{SCSID}}"])],
         None,
     )
 
@@ -631,13 +728,34 @@ def test_an_unticked_send_it_as_it_is_box_still_holds_the_fax(compiled):
     )
 
 
+@needs_node
+def test_a_ticked_box_without_a_list_holds_the_fax(compiled):
+    page = run_scenario(compiled, "fax-box-ticked-without-a-list")
+    assert (page["submissions"], page["faxNotice"]["items"]) == (
+        ["held"],
+        ["[Your Name]", "{{SCSID}}"],
+    )
+
+
+@needs_node
+def test_a_ticked_box_does_not_cover_a_blank_typed_in_after(compiled):
+    page = run_scenario(compiled, "fax-box-ticked-then-a-new-blank")
+    at = page["newBlankAt"]
+    assert (page["submissions"], page["faxNotice"]["items"], page["faxSelection"]) == (
+        ["held"],
+        ["New: [Date of Service]", "[Your Name]", "{{SCSID}}"],
+        [at, at + len("[Date of Service]")],
+    )
+
+
 def test_send_anyway_uses_the_fax_forms_own_name_and_box():
     """The hidden field "Send anyway" adds, and the tick box the page reads,
     are the fax form's: the field the server checks, and the id Django gives
     it on the page that names the blanks."""
     source = (JS / "letter_placeholders.ts").read_text()
     form = FaxForm(data={"completed_appeal_text": "I am [Your Name]."})
-    box = form["send_with_placeholders"]
+    form.is_valid()
+    box = form["approved_placeholders"]
     assert f'SEND_ANYWAY_FIELD = "{box.html_name}";' in source
     assert f'SEND_ANYWAY_BOX_ID = "{box.auto_id}";' in source
 

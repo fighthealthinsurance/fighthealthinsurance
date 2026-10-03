@@ -358,10 +358,11 @@ function setupAppeal() {
         return;
       }
       // Decided inside this one submission, from the letter as it is now: a
-      // letter with no blanks, or only blanks "Send anyway" was pressed for,
-      // goes straight through. "Send anyway" presses the button again from
-      // the notice, outside this event; nothing re-submits the form from
-      // inside it.
+      // letter with no blanks, or only blanks the person said yes to (with
+      // "Send anyway", or the ticked "Send it as it is" box), goes straight
+      // through, posting them as approved. "Send anyway" presses the button
+      // again from the notice, outside this event; nothing re-submits the
+      // form from inside it.
       if (faxMustWaitForPlaceholders(faxForm, faxButton, letter)) {
         e.preventDefault();
       }

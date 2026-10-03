@@ -86,8 +86,19 @@ def _blank_out_reference_links(text: str) -> str:
     return _REFERENCE_LINK.regex.sub(link, rest)
 
 
-def find_unfilled_placeholders(text: str) -> list[str]:
-    """Each blank in ``text``, once, in the order it first appears."""
+@dataclass(frozen=True)
+class _Spot:
+    # Where the blank starts in the letter.
+    at: int
+    # The blank exactly as the letter has it.
+    written: str
+    # What a message calls it: the blank itself, or its label (a line to
+    # write on is ___ however long it is).
+    shown: str
+
+
+def _find_spots(text: str) -> list[_Spot]:
+    """Every blank in ``text``, in the order it appears."""
     rest = _blank_out_reference_links(text or "")
 
     def blank_out(match: re.Match[str]) -> str:
@@ -96,21 +107,46 @@ def find_unfilled_placeholders(text: str) -> list[str]:
     for rule in _IGNORE:
         rest = rule.regex.sub(blank_out, rest)
 
-    hits: list[tuple[int, str]] = []
+    # Each pattern claims what it matches, so a later one never reports
+    # part of a blank an earlier one already found.
+    spots: list[_Spot] = []
     for rule in _PLACEHOLDERS:
 
         def claim(match: re.Match[str], rule: _Rule = rule) -> str:
-            hits.append((match.start(), rule.label or match.group(0)))
+            written = match.group(0)
+            spots.append(_Spot(match.start(), written, rule.label or written))
             return blank_out(match)
 
         rest = rule.regex.sub(claim, rest)
 
-    hits.sort(key=lambda hit: hit[0])
+    spots.sort(key=lambda spot: spot.at)
+    return spots
+
+
+def _once_each(values: list[str]) -> list[str]:
     found: list[str] = []
-    for _, shown in hits:
-        if shown not in found:
-            found.append(shown)
+    for value in values:
+        if value not in found:
+            found.append(value)
     return found
+
+
+def find_unfilled_placeholders(text: str) -> list[str]:
+    """Each blank in ``text``, once, in the order it first appears."""
+    return _once_each([spot.shown for spot in _find_spots(text)])
+
+
+def find_placeholders_as_written(text: str) -> list[str]:
+    """Each blank in ``text`` exactly as the letter has it, once, in the
+    order it first appears.
+
+    This is what a person says yes to when they send a letter with blanks
+    as it is, and what the browser posts for them. It is the same list as
+    ``find_unfilled_placeholders`` except for a line to write on, which is
+    named ``___`` there whatever its length and is the line itself here, so
+    a line of another length is another blank.
+    """
+    return _once_each([spot.written for spot in _find_spots(text)])
 
 
 def describe_placeholders(found: list[str]) -> str:

@@ -178,9 +178,6 @@ class StageFaxView(generic.FormView):
     def form_valid(self, form):
         logger.debug("Valid fax form received")
         form_data = form.cleaned_data
-        # The tick to send a letter with blanks as it is was used by the
-        # form; the appeal is built from the rest, which it takes by name.
-        form_data.pop("send_with_placeholders", None)
         # Get all of the articles the user wants to send
         pubmed_checkboxes = [
             key[len("pubmed_") :]
