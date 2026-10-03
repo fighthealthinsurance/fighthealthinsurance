@@ -1,0 +1,130 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title }}</title>
+  <style>
+    /* Sizes are in rem so none compounds inside another. Colours are the
+       Model Backend Status page's, which the contrast gate already measures. */
+    body { font-family: Arial, sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; background: #f5f5f5; color: #333; }
+    h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+    h2 { color: #333; font-size: 1.15rem; margin: 0 0 8px; }
+    .nav-back { display: inline-block; margin-bottom: 14px; color: #0056b3; text-decoration: none; }
+    .nav-back:hover { text-decoration: underline; }
+    .panel { background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; padding: 14px 18px; margin-bottom: 20px; }
+    .banner { background: #fff3cd; color: #856404; border-radius: 6px; padding: 8px 12px; margin: 0 0 10px; }
+    .saved { background: #d4edda; color: #155724; border-radius: 6px; padding: 8px 12px; margin: 0 0 10px; }
+    .muted { color: #666; }
+    .scroll-x { overflow-x: auto; }
+    table.grid { width: 100%; min-width: 640px; border-collapse: collapse; }
+    table.grid th, table.grid td { padding: 7px 9px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.92rem; vertical-align: top; }
+    table.grid th { background: #f0f4f8; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    fieldset { border: 0; padding: 0; margin: 0 0 10px; }
+    label.choice { display: block; margin: 4px 0; }
+    input[type="text"] { width: 100%; max-width: 520px; padding: 6px 8px; font-size: 0.95rem; }
+    button { margin-top: 10px; padding: 8px 16px; font-size: 0.95rem; cursor: pointer; }
+    blockquote { margin: 6px 0 0; padding: 8px 12px; background: #f0f4f8; border-radius: 6px; }
+    .periods a { margin-right: 12px; color: #0056b3; }
+    .periods strong { margin-right: 12px; }
+  </style>
+</head>
+<body>
+  <a class="nav-back" href="{% url 'staff_dashboard' %}">&larr; Staff dashboard</a>
+  <h1>{{ title }}</h1>
+
+  <div class="panel">
+    <h2>What new letters use</h2>
+    {% if saved %}<p class="saved" role="status">Saved. This server uses it now; the others pick it up within 30 seconds.</p>{% endif %}
+    {% if this_pod_mode != saved_mode %}<p class="banner">This server is still on the earlier setting and will switch within 30 seconds.</p>{% endif %}
+    <form method="post">
+      {% csrf_token %}
+      <fieldset>
+        <legend class="muted">Each new letter draft is written with:</legend>
+        {% for value, label in mode_choices %}
+          <label class="choice"><input type="radio" name="mode" value="{{ value }}"{% if value == saved_mode %} checked{% endif %}> {{ label }}</label>
+        {% endfor %}
+      </fieldset>
+      <label for="note" class="muted">Note (optional)</label><br>
+      <input type="text" id="note" name="note" maxlength="500" placeholder="Why you changed it">
+      <br><button type="submit">Save</button>
+    </form>
+    <p class="muted">Letters already written keep the version they were written with. Templates, synthesized letters and medically-necessary template drafts don't use a letter prompt, so they have no version.</p>
+    <p class="muted">The new prompt (v2) is the original with this added at the end, word for word from the September model evaluation:</p>
+    <blockquote>{{ output_contract }}</blockquote>
+  </div>
+
+  <div class="panel">
+    <h2>How people's choices compare</h2>
+    <p class="periods">
+      {% for value, label in periods %}
+        {% if value == period %}<strong>{{ label }}</strong>{% else %}<a href="?period={{ value }}">{{ label }}</a>{% endif %}
+      {% endfor %}
+    </p>
+    {% if comparison is None %}
+      <p>Half and half hasn't run yet, so there's nothing to compare. Choose it above to start.</p>
+    {% else %}
+      <p class="muted">{{ comparison.picks_considered }} pick{{ comparison.picks_considered|pluralize }} showed at least one versioned draft.{% if comparison.picks_without_report %} {{ comparison.picks_without_report }} pick{{ comparison.picks_without_report|pluralize }} didn't report which drafts were on screen, so {{ comparison.picks_without_report|pluralize:"it isn't,they aren't" }} counted.{% endif %}</p>
+
+      <h2>Pages that showed both versions</h2>
+      <p>This is the fairest comparison: both versions on the same page, for the same case.</p>
+      {% with h=comparison.head_to_head %}
+        <div class="scroll-x">
+          <table class="grid">
+            <thead><tr><th>Picks on those pages</th><th class="num">v1 picked</th><th class="num">v2 picked</th><th class="num">v2 by blind chance</th><th class="num">v2 picked ÷ chance</th><th class="num">Picked something else</th></tr></thead>
+            <tbody><tr><td>{{ h.picks }}</td><td class="num">{{ h.v1_chosen }}</td><td class="num">{{ h.v2_chosen }}</td><td class="num">{{ h.v2_expected_text }}</td><td class="num">{{ h.v2_ratio_text }}</td><td class="num">{{ h.other_chosen }}</td></tr></tbody>
+          </table>
+        </div>
+        {% if h.enough %}
+          <p class="muted">Above 1 means people picked v2 drafts more often than chance; below 1, less often.</p>
+        {% else %}
+          <p class="banner">Not enough picks yet to read: {{ h.versioned_picks }} of the {{ min_mixed_picks }} needed.</p>
+        {% endif %}
+      {% endwith %}
+
+      <h2>By version</h2>
+      <div class="scroll-x">
+        <table class="grid">
+          <thead><tr><th>Version</th><th class="num">Shown</th><th class="num">Picked</th><th class="num">Pick rate</th><th class="num">95% range</th><th class="num">Edited before sending</th></tr></thead>
+          <tbody>
+            {% for row in comparison.by_version %}
+              <tr><td>{{ row.label }}</td><td class="num">{{ row.presented }}</td><td class="num">{{ row.chosen }}</td><td class="num">{{ row.rate_text }}</td><td class="num">{{ row.interval_text }}</td><td class="num">{{ row.edited_text }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">A difference only counts when the ranges don't overlap. Pick rates also depend on where a draft sat on the page.</p>
+
+      <h2>By model and version</h2>
+      <div class="scroll-x">
+        <table class="grid">
+          <thead><tr><th>Model</th><th>Version</th><th class="num">Shown</th><th class="num">Picked</th><th class="num">Pick rate</th><th class="num">95% range</th></tr></thead>
+          <tbody>
+            {% for row in comparison.by_model %}
+              <tr><td>{{ row.label }}</td><td>{{ row.version }}</td><td class="num">{{ row.presented }}</td><td class="num">{{ row.chosen }}</td><td class="num">{{ row.rate_text }}</td><td class="num">{{ row.interval_text }}</td></tr>
+            {% empty %}
+              <tr><td colspan="6" class="muted">No versioned drafts shown yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Changes</h2>
+    <div class="scroll-x">
+      <table class="grid">
+        <thead><tr><th>When</th><th>Who</th><th>Setting</th><th>Note</th></tr></thead>
+        <tbody>
+          {% for row in history %}
+            <tr><td>{{ row.created_at|date:"Y-m-d H:i" }}</td><td>{{ row.changed_by_username|default:"unknown" }}</td><td>{{ row.get_mode_display }}</td><td>{{ row.note }}</td></tr>
+          {% empty %}
+            <tr><td colspan="4" class="muted">Never changed: every letter uses the original prompt.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

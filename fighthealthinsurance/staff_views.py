@@ -4180,3 +4180,109 @@ class TemporalUIProxyView(View):
                 location[len(upstream) :] if location.startswith(upstream) else location
             )
         return response
+
+
+class LetterPromptsView(View):
+    """Which appeal prompt version new letters use, and how they compare.
+
+    Staff choose original (v1), new (v2) or half and half. Each change is a
+    new LetterPromptMode row, so the page also lists who changed it and when.
+    Below that it compares people's letter choices by version (see
+    ml/appeal_prompt_stats.py), over the current half-and-half stretch, the
+    last 30 days or all time. Loading the page never calls a model.
+
+    Each pod reads the setting at most every MODE_CACHE_SECONDS, so a change
+    reaches every letter within that long. Letters already written keep the
+    version they were written with.
+    """
+
+    template_name = "letter_prompts.html"
+    PERIODS = (
+        ("split", "Since half and half began"),
+        ("30", "Last 30 days"),
+        ("all", "All time"),
+    )
+
+    @staticmethod
+    def _split_started(rows: List[Any]) -> Optional[datetime.datetime]:
+        """When the newest unbroken run of half-and-half rows began, or None
+        when the newest row is not half and half. ``rows`` is newest first."""
+        from fighthealthinsurance.ml.appeal_prompt_versions import MODE_SPLIT
+
+        started = None
+        for row in rows:
+            if row.mode != MODE_SPLIT:
+                break
+            started = row.created_at
+        return started
+
+    def get(self, request):
+        from fighthealthinsurance.ml.appeal_prompt_stats import (
+            MIN_MIXED_PICKS,
+            compare_prompt_versions,
+        )
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            MODE_CHOICES,
+            MODE_ORIGINAL,
+            OUTPUT_CONTRACT,
+            current_letter_prompt_mode,
+        )
+        from fighthealthinsurance.models import LetterPromptMode
+
+        history = list(LetterPromptMode.objects.order_by("-created_at", "-id")[:200])
+        newest = history[0] if history else None
+        split_started = self._split_started(history)
+        period = request.GET.get("period") or ("split" if split_started else "30")
+        if period not in {p for p, _label in self.PERIODS}:
+            period = "30"
+        if period == "split":
+            since = split_started
+        elif period == "30":
+            since = timezone.now() - datetime.timedelta(days=30)
+        else:
+            since = None
+        comparison = (
+            compare_prompt_versions(since)
+            if not (period == "split" and since is None)
+            else None
+        )
+        return render(
+            request,
+            self.template_name,
+            {
+                "title": "Appeal prompt versions",
+                "mode_choices": MODE_CHOICES,
+                "saved_mode": newest.mode if newest else MODE_ORIGINAL,
+                "this_pod_mode": current_letter_prompt_mode(),
+                "history": history[:20],
+                "split_started": split_started,
+                "period": period,
+                "periods": self.PERIODS,
+                "comparison": comparison,
+                "min_mixed_picks": MIN_MIXED_PICKS,
+                "output_contract": OUTPUT_CONTRACT,
+                "saved": request.GET.get("saved") == "1",
+            },
+        )
+
+    def post(self, request):
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            MODE_CHOICES,
+            reset_letter_prompt_mode_cache,
+        )
+        from fighthealthinsurance.models import LetterPromptMode
+
+        mode = (request.POST.get("mode") or "").strip()
+        if mode not in {m for m, _label in MODE_CHOICES}:
+            return HttpResponse("Choose original, new or half and half.", status=400)
+        note = (request.POST.get("note") or "").strip()[:500]
+        LetterPromptMode.objects.create(
+            mode=mode,
+            changed_by=request.user if request.user.is_authenticated else None,
+            changed_by_username=getattr(request.user, "username", "") or "",
+            note=note,
+        )
+        # This pod sees the change at once; the others within the cache time.
+        reset_letter_prompt_mode_cache()
+        logger.info(f"Staff {request.user} set the letter prompt mode to {mode}")
+        return redirect(f"{request.path}?saved=1")

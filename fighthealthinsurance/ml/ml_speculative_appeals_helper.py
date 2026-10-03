@@ -423,6 +423,7 @@ class SpeculativeAppealsHelper:
                         speculative=True,
                         context_level=row_context_level,
                         built_for_state=generated_from_context[0],
+                        prompt_version=item.prompt_version,
                     )
                     saved += 1
                     created_pks.append(row.pk)
