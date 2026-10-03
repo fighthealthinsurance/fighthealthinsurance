@@ -3191,8 +3191,11 @@ def chat_interface_view(request):
 class ChatUserConsentView(FormView):
     """
     View for collecting user consent and information before using the chat interface.
-    This form collects personal information that is stored only in the browser's localStorage
-    for privacy protection (scrubbing personal information from messages).
+    The browser keeps the name, email and address fields in localStorage, and the
+    chat uses them to take those details out of messages before they are sent
+    (user_info_storage.ts). Here the server keeps the email in the session with the
+    consent flag, and puts the name, email, phone and referral answers on the
+    mailing list only when the news box is ticked.
     """
 
     template_name = "chat_consent.html"
@@ -3242,7 +3245,8 @@ class ChatUserConsentView(FormView):
             }
             return render(self.request, "chat_redirect.html", context)
 
-        # No need to save form data to database - it will be saved in browser localStorage via JavaScript
+        # Nothing else from the form is saved here: the browser keeps the
+        # name and address fields itself (user_info_storage.ts).
         return super().form_valid(form)
 
     def get(self, request, *args, **kwargs):
