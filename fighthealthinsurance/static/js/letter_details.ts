@@ -19,7 +19,9 @@
 //    MD"). Only a name that splits cleanly counts: a first name, any middle
 //    initials, and a last name ("Example, Jordan A" reads the same way). A
 //    middle name spelled out fills nothing, and so do two different people
-//    anywhere among the salutations and labels.
+//    anywhere among the salutations and labels. Two middle initials that
+//    differ (Jordan A. Example and Jordan B. Example) are two people; a
+//    name with an initial and the same name without one are the same.
 // 2. The name has to be backed up. A salutation alone is not enough: a
 //    greeting this does not know ("Dear Card Holder") reads like a name. A
 //    label in capitals with no comma is not enough either, since it could
@@ -30,7 +32,8 @@
 //    name line, then a street line (a number and street words, or a PO box),
 //    an optional apartment or unit line, then a "City, ST 12345" line, all
 //    single spaced or all double spaced. Never from a block under a heading
-//    for something else ("Services for:", "Provider:"). The street line and
+//    for something else ("Services for:", "Provider:"), and never under a
+//    name line with a different middle initial. The street line and
 //    the five-digit ZIP come from that block and no other. With a unit line
 //    only the ZIP is filled: the street field would drop the unit, so the
 //    finished appeal would lose it and Remove personal details would leave
@@ -38,9 +41,15 @@
 // 4. Only empty fields, and each one once. A name the person typed (or that
 //    came back from storage) that is not the letter's means the letter is
 //    about someone else, so nothing is filled. The street and ZIP go
-//    together the same way. A field this filled is the person's from then
-//    on: if they empty it, a later paste does not fill it again. The email
-//    is never filled.
+//    together the same way. A field this filled, one the person has typed
+//    in or emptied, and one that already held something when the page set
+//    up (restored from this browser, or sent back by the server) are the
+//    person's from then on: empty or not, a later paste does not fill
+//    them. The email is never filled.
+//
+// The fill is a convenience, so it never stops the page: a browser whose
+// storage is full or blocked still gets the field filled and its hint, the
+// value just is not remembered.
 //
 // A name the letter shouts in capitals is put in as Jordan Example; any
 // other casing is kept as the letter has it.
@@ -55,6 +64,8 @@ export interface LetterDetails {
 interface PersonName {
   first: string;
   last: string;
+  // The middle initials, in capitals without dots ("A" for "A."), or "".
+  middle: string;
 }
 
 // Written under each field this fills, and by the About you heading.
@@ -131,6 +142,10 @@ function words(text: string): string[] {
 
 function isInitial(word: string): boolean {
   return INITIAL.test(word);
+}
+
+function initialsOf(tokens: string[]): string {
+  return tokens.map((token) => token.replace(/\./g, "").toUpperCase()).join("");
 }
 
 function isNameWord(word: string): boolean {
@@ -232,23 +247,40 @@ function parseName(raw: string): PersonName | null {
   const last = lastTokens.join(" ");
   const whole = first + " " + last;
   const shouting = whole === whole.toUpperCase();
-  return shouting ? { first: titleCase(first), last: titleCase(last) } : { first, last };
+  const middle = initialsOf(middles);
+  return shouting ? { first: titleCase(first), last: titleCase(last), middle } : { first, last, middle };
 }
 
 function sameWords(a: string, b: string): boolean {
   return a.replace(/\s+/g, " ").trim().toLowerCase() === b.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function samePerson(a: PersonName, b: PersonName): boolean {
-  return sameWords(a.first, b.first) && sameWords(a.last, b.last);
+// Middle initials that are both there and differ are two people; one name
+// with an initial and one without can be the same person.
+function sameMiddle(a: string, b: string): boolean {
+  return a === "" || b === "" || a === b;
 }
 
-// The one person the list names, or null when it names none or two.
+function samePerson(a: PersonName, b: PersonName): boolean {
+  return sameWords(a.first, b.first) && sameWords(a.last, b.last) && sameMiddle(a.middle, b.middle);
+}
+
+// The one person the list names, or null when it names none or two. Every
+// pair has to agree: Jordan Example agrees with Jordan A. Example and with
+// Jordan B. Example, but those two are not one person.
 function onePerson(names: PersonName[]): PersonName | null {
   if (names.length === 0) {
     return null;
   }
-  return names.every((name) => samePerson(name, names[0])) ? names[0] : null;
+  for (let i = 0; i < names.length; i += 1) {
+    for (let j = i + 1; j < names.length; j += 1) {
+      if (!samePerson(names[i], names[j])) {
+        return null;
+      }
+    }
+  }
+  const withInitial = names.filter((name) => name.middle !== "");
+  return withInitial.length > 0 ? withInitial[0] : names[0];
 }
 
 function namesFromSalutations(text: string): PersonName[] {
@@ -338,7 +370,12 @@ function isNameLine(line: string, person: PersonName): boolean {
   if (tokens.length < 1 + lastLength) {
     return false;
   }
-  return sameWords(tokens[0], person.first) && sameWords(tokens.slice(-lastLength).join(" "), person.last);
+  if (!sameWords(tokens[0], person.first) || !sameWords(tokens.slice(-lastLength).join(" "), person.last)) {
+    return false;
+  }
+  // A different middle initial is someone else's block.
+  const between = tokens.slice(1, tokens.length - lastLength);
+  return !between.every(isInitial) || sameMiddle(initialsOf(between), person.middle);
 }
 
 const STREET = new RegExp(
@@ -474,12 +511,17 @@ function hintId(field: HTMLElement): string {
   return field.id + "_from_letter";
 }
 
-function removeHint(field: HTMLElement): void {
+// Takes a field's hint down. False when it had none.
+function removeHint(field: HTMLElement): boolean {
   const hint = document.getElementById(hintId(field));
-  if (hint !== null && hint.parentNode !== null) {
+  if (hint === null) {
+    return false;
+  }
+  if (hint.parentNode !== null) {
     hint.parentNode.removeChild(hint);
   }
   describedBy(field, hintId(field), false);
+  return true;
 }
 
 // The note by the About you heading shows while any field still carries its
@@ -501,12 +543,29 @@ function updateNote(): void {
   }
 }
 
-// Fields whose edits already take their hint down.
-const watchedFields = new Set<string>();
-// Fields the letter has filled since this page opened. The person's from
-// then on: one they empty stays empty when page two of the letter is pasted
-// under page one.
-const filledOnce = new Set<string>();
+// Fields whose input events are followed.
+const followedFields = new Set<string>();
+// Fields this page never fills (rule 4): ones the letter has filled, ones
+// the person has typed in or emptied, and ones that held something when
+// the page set up. One they empty stays empty when page two of the letter
+// is pasted under page one.
+const leaveAlone = new Set<string>();
+
+// Any input event on a field is the person's: the fill sets a value, which
+// fires none. Their edit is also their check, so the hint goes at the
+// first change.
+function follow(field: HTMLInputElement): void {
+  if (followedFields.has(field.id)) {
+    return;
+  }
+  followedFields.add(field.id);
+  field.addEventListener("input", () => {
+    leaveAlone.add(field.id);
+    if (removeHint(field)) {
+      updateNote();
+    }
+  });
+}
 
 function markFromLetter(field: HTMLInputElement): void {
   const id = hintId(field);
@@ -520,14 +579,7 @@ function markFromLetter(field: HTMLInputElement): void {
     }
   }
   describedBy(field, id, true);
-  if (!watchedFields.has(field.id)) {
-    watchedFields.add(field.id);
-    // Their edit is their check: the hint goes at the first change.
-    field.addEventListener("input", () => {
-      removeHint(field);
-      updateNote();
-    });
-  }
+  follow(field);
 }
 
 function fieldValue(id: string): string {
@@ -538,7 +590,8 @@ function fieldValue(id: string): string {
 // Fills each About you field that is still empty from the letter, marks it,
 // and keeps it the way typing would (`remember` is the page's storage
 // helper, which honours "Remember what I typed"). Returns how many it
-// filled.
+// filled. A storage write that fails (full, or blocked) leaves the field
+// filled and marked, and is not thrown on.
 export function fillDetailsFromLetter(text: string, remember: (id: string, value: string) => void): number {
   const found = findDetailsInLetter(text);
   if (found.firstName === undefined || found.lastName === undefined) {
@@ -569,14 +622,19 @@ export function fillDetailsFromLetter(text: string, remember: (id: string, value
       continue;
     }
     const field = document.getElementById(id) as HTMLInputElement | null;
-    if (field === null || field.value !== "" || filledOnce.has(id)) {
+    if (field === null || field.value !== "" || leaveAlone.has(id)) {
       continue;
     }
     field.value = value;
-    remember(id, value);
+    leaveAlone.add(id);
     markFromLetter(field);
-    filledOnce.add(id);
     filled += 1;
+    try {
+      remember(id, value);
+    } catch {
+      // Not remembered, as a typed value would not be either; the field
+      // keeps what was filled and its hint.
+    }
   }
   if (filled > 0) {
     updateNote();
@@ -588,11 +646,21 @@ export function fillDetailsFromLetter(text: string, remember: (id: string, value
 // load when the server put the letter there (its own reading of an upload,
 // a treatment guide's opening line, a page sent back). Not on typing. A
 // file read on this device calls fillDetailsFromLetter itself when the
-// reading is done (scrub.ts).
+// reading is done (scrub.ts). Called once the page has put back what this
+// browser kept, so a field holding something now is the person's.
 export function watchLetterForDetails(
   box: HTMLTextAreaElement,
   remember: (id: string, value: string) => void,
 ): void {
+  for (const [, id] of FIELDS) {
+    const field = document.getElementById(id) as HTMLInputElement | null;
+    if (field !== null) {
+      if (field.value !== "") {
+        leaveAlone.add(id);
+      }
+      follow(field);
+    }
+  }
   box.addEventListener("paste", () => {
     // The pasted text is in the box only once this event is over.
     setTimeout(() => {

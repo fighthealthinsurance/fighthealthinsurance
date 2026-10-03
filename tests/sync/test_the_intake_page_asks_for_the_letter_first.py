@@ -31,6 +31,7 @@ SCRIPTS = (
     "scrub_client_side_form.ts",
     "scrub_scrub.ts",
     "scrub_ocr.ts",
+    "pdf_text.ts",
     "letter_details.ts",
 )
 # Ids those scripts look up that belong to other pages or to markup this page

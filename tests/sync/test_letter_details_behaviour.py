@@ -14,7 +14,9 @@ through tests/js/letter_details_behaviour.cjs, and assert on the fields, the
 hints and the note. The fake page records every console call and every
 network call, so "the module logs nothing and sends nothing" is asserted on
 what ran. (The ZIP field is part of the form, so a filled ZIP is sent with
-it like a typed one: see TheFakePageIsTheIntakePageTest.)
+it like a typed one: see TheFakePageIsTheIntakePageTest.) Some run the whole
+intake script (scrub.ts), which sets the page up as it loads, with pdf.js
+stood in for by text items like the ones it hands over for a text PDF.
 
 Skipped, not silently passed, where node or the front-end toolchain is not
 installed. The checks against the rendered page and scrub.ts need neither.
@@ -42,6 +44,8 @@ from tests.sync.test_entity_fetcher_behaviour import (
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 JS = REPO_ROOT / "fighthealthinsurance" / "static" / "js"
 MODULE = JS / "letter_details.ts"
+# Compiled with it: the PDF text join, and the intake script that uses both.
+ALSO_COMPILED = (JS / "pdf_text.ts", JS / "scrub.ts")
 DRIVER = REPO_ROOT / "tests" / "js" / "letter_details_behaviour.cjs"
 
 HINT = "From your letter. Please check."
@@ -106,7 +110,8 @@ APARTMENT_LETTER = (
 
 @pytest.fixture(scope="module")
 def compiled(tmp_path_factory) -> pathlib.Path:
-    """The real letter_details.ts, compiled the way the bundle is built."""
+    """The real letter_details.ts, compiled the way the bundle is built, with
+    pdf_text.ts and scrub.ts (and what it imports) beside it."""
     out = tmp_path_factory.mktemp("letter-details")
     result = subprocess.run(
         [
@@ -128,6 +133,7 @@ def compiled(tmp_path_factory) -> pathlib.Path:
             "--outDir",
             str(out),
             str(MODULE),
+            *(str(path) for path in ALSO_COMPILED),
         ],
         cwd=str(JS),
         capture_output=True,
@@ -135,11 +141,12 @@ def compiled(tmp_path_factory) -> pathlib.Path:
         timeout=300,
     )
     built = out / "letter_details.js"
-    if not built.exists():
-        pytest.fail(
-            f"tsc did not emit letter_details.js\n"
-            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-        )
+    for name in ("letter_details.js", "pdf_text.js", "scrub.js"):
+        if not (out / name).exists():
+            pytest.fail(
+                f"tsc did not emit {name}\n"
+                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+            )
     assert result.returncode == 0, result.stdout + result.stderr
     return built
 
@@ -395,6 +402,40 @@ def test_filled_fields_are_kept_the_way_typing_keeps_them(compiled):
 
 
 @needs_node
+def test_a_street_the_person_typed_and_then_emptied_stays_empty(compiled):
+    """The letter did not fill it (it was already theirs), so it was not
+    among the fields the letter had filled; emptying it is still their
+    choice, and page two pasted under page one does not undo it."""
+    result = run(
+        compiled,
+        types={"store_street": "123 Sample Street"},
+        letter=TYPICAL_LETTER,
+        arrive="paste",
+        clears=["store_street"],
+        pasteAgain="\nPage 2 of 2\n" + MEMBER + "Your appeal rights are below.\n",
+    )
+    assert result["fields"] == JORDAN
+    assert result["fieldsAtEnd"] == dict(JORDAN, store_street="")
+    assert result["hints"]["store_street"] is None
+    assert "store_street" not in [field for field, _ in result["remembered"]]
+
+
+@needs_node
+def test_a_restored_field_emptied_without_an_input_event_is_not_filled(compiled):
+    """What this browser put back is the person's, even once something other
+    than their typing (a form reset) has emptied it."""
+    result = run(
+        compiled,
+        typed={"store_street": "123 Sample Street"},
+        resets=["store_street"],
+        letter=TYPICAL_LETTER,
+        arrive="paste",
+    )
+    assert result["fields"] == dict(JORDAN, store_street="")
+    assert hinted(result) == {"store_fname", "store_lname", "store_zip"}
+
+
+@needs_node
 @pytest.mark.parametrize("arrive", ["paste", "load", "read", "type"])
 def test_nothing_is_logged_sent_or_navigated(compiled, arrive):
     result = run(compiled, letter=TYPICAL_LETTER, arrive=arrive, edits=FILLABLE)
@@ -402,6 +443,185 @@ def test_nothing_is_logged_sent_or_navigated(compiled, arrive):
     assert result["network"] == []
     assert result["sockets"] == 0
     assert result["leftThePage"] == []
+
+
+# A page with a full or blocked storage, and a fill that fails outright:
+# the rest of the page is wired up either way.
+WIRED = {
+    "upload": 1,
+    "paste": 1,
+    "removePersonalDetails": True,
+    "submitCheck": 1,
+}
+
+
+@needs_node
+def test_a_full_storage_still_fills_and_the_page_is_still_set_up(compiled):
+    """Storage that takes no writes (QuotaExceededError) used to throw out
+    of the fill on load and stop the page's setup before the file button,
+    Remove personal details and the submit check were wired up. The fields
+    are filled and marked; they are just not remembered."""
+    result = run(compiled, page=True, storageFull=True, letter=TYPICAL_LETTER)
+    assert result["setupError"] is None
+    assert result["wired"] == WIRED
+    assert result["fields"] == JORDAN
+    assert hinted(result) == set(FILLABLE)
+    assert result["note"] == {"text": NOTE, "hidden": False}
+    assert result["stored"] == []
+
+
+@needs_node
+def test_the_page_with_working_storage_fills_and_remembers(compiled):
+    """The same page with storage that works, so the test above is about
+    the storage and nothing else."""
+    result = run(compiled, page=True, letter=TYPICAL_LETTER)
+    assert result["setupError"] is None
+    assert result["wired"] == WIRED
+    assert result["fields"] == JORDAN
+    assert set(result["stored"]) == set(FILLABLE)
+
+
+@needs_node
+def test_a_broken_fill_never_stops_the_page(compiled):
+    """Whatever goes wrong in the fill, on load or after a file is read, the
+    page is set up and the read finishes; the console gets the kind of error
+    and nothing from the letter."""
+    result = run(
+        compiled,
+        page=True,
+        fillThrows=True,
+        letter=TYPICAL_LETTER,
+        pdf=[pdf_page(PDF_LETTER)],
+    )
+    assert result["setupError"] is None
+    assert result["unhandled"] == []
+    # Everything but the fill's own paste listener, which is what broke.
+    assert result["wired"] == dict(WIRED, paste=0)
+    assert result["fields"] == EMPTY
+    assert result["box"] == TYPICAL_LETTER + as_read(PDF_LETTER)
+    warning = ["warn", "scrub: About you was not filled from the letter:", "TypeError"]
+    # Once on load, once after the file was read.
+    warned = [entry for entry in result["logs"] if entry[0] == "warn"]
+    assert warned == [warning, warning]
+    assert not any("Jordan" in " ".join(entry) for entry in result["logs"])
+
+
+def text_run(text: str, baseline: float, x: float = 72, height: float = 12):
+    """One of pdf.js's text items, as getTextContent hands it over."""
+    return {
+        "str": text,
+        "dir": "ltr",
+        "width": 6.0 * len(text),
+        "height": height,
+        "transform": [12, 0, 0, 12, x, baseline],
+        "fontName": "g_d0_f1",
+        "hasEOL": False,
+    }
+
+
+def ends_the_line(item: dict) -> dict:
+    return dict(item, hasEOL=True)
+
+
+def pdf_page(letter: str) -> list:
+    """The items pdf.js hands over for a text PDF page carrying this letter.
+    Each line is one run, or two with pdf.js's own " " run between where
+    the line has a wide gap; each baseline is 14 points under the one
+    above; two line ends in three are marked hasEOL (pdf.js does not mark
+    every break, so the rest end where the baseline moves); and the page is
+    wrapped in marked content, which carries no text. A blank line leaves
+    no item, as in a PDF."""
+    items = [{"type": "beginMarkedContent", "id": "mc0"}]
+    lines = [line.strip() for line in letter.split("\n") if line.strip()]
+    for number, line in enumerate(lines):
+        baseline = 720 - 14 * number
+        for column, part in enumerate(re.split(r"\s{2,}", line)):
+            if column:
+                items.append(text_run(" ", baseline, x=72 + 200 * column, height=0))
+            items.append(text_run(part, baseline, x=72 + 200 * column))
+        if number % 3 != 2:
+            items[-1] = ends_the_line(items[-1])
+    items.append({"type": "endMarkedContent"})
+    return items
+
+
+def as_read(letter: str) -> str:
+    """The letter as the box gets it from a text PDF page: a line per line,
+    blank lines gone, a wide gap one space, and the page's closing break."""
+    lines = [line.strip() for line in letter.split("\n") if line.strip()]
+    return "\n".join(re.sub(r"\s{2,}", " ", line) for line in lines) + "\n"
+
+
+# A text PDF of the typical letter, with a second column on one line.
+PDF_LETTER = TYPICAL_LETTER.replace(
+    "Member ID: XYZ000000\n", "Member ID: XYZ000000    Group number: 00000\n"
+)
+
+
+@needs_node
+def test_a_text_pdf_keeps_its_lines_and_fills_about_you(compiled):
+    """Its runs used to be joined with spaces into one line, so the block
+    under the person's name was lost and nothing was filled."""
+    result = run(compiled, page=True, pdf=[pdf_page(PDF_LETTER)])
+    assert result["setupError"] is None
+    assert result["box"] == as_read(PDF_LETTER)
+    assert result["fields"] == JORDAN
+    assert hinted(result) == set(FILLABLE)
+
+
+def turned_run(text: str, x: float, along: float):
+    """A run of text turned a quarter, up the page: its baseline is
+    upright, so its height on the page moves along the line."""
+    return dict(text_run(text, along, x=x), transform=[0, 12, -12, 0, x, along])
+
+
+@needs_node
+def test_pdf_text_items_come_out_a_line_per_line(compiled):
+    page = [
+        {"type": "beginMarkedContentProps", "id": "mc0"},
+        # pdf.js's own space between two runs is one space, not three.
+        text_run("Jordan", 700),
+        text_run(" ", 700, height=0),
+        ends_the_line(text_run("Example", 700)),
+        ends_the_line(text_run("123 Sample Street", 686)),
+        # pdf.js's empty run that marks the same break again: no blank line.
+        ends_the_line(text_run("", 686)),
+        # Two runs on one line with no space run between them.
+        text_run("Springfield, IL", 672),
+        text_run("62701", 672, x=160),
+        # pdf.js's empty run that only ends a line.
+        ends_the_line(text_run("", 672)),
+        # A run that ends in a space, then pdf.js's space: still one, so
+        # the label does not read as a wide gap before the name.
+        text_run("Member name: ", 658),
+        text_run(" ", 658, height=0),
+        text_run(" ", 658, height=0),
+        text_run("Jordan Example", 658, x=160),
+        # Not marked hasEOL above, but on the next baseline down.
+        text_run("Member ID: XYZ000000", 644),
+        # A footnote mark a little above the line stays on it.
+        text_run("1", 648, x=200, height=7),
+        text_run("Dear Jordan Example,", 620),
+        {"type": "endMarkedContent"},
+    ]
+    # Turned text: only hasEOL says where its lines end.
+    turned = [
+        ends_the_line(turned_run("Page 2 of 2", 40, 300)),
+        turned_run("Your appeal", 54, 300),
+        ends_the_line(turned_run("rights", 54, 380)),
+    ]
+    result = run(compiled, pdfText=[page, turned, []])
+    assert result["texts"] == [
+        "Jordan Example\n"
+        "123 Sample Street\n"
+        "Springfield, IL 62701\n"
+        "Member name: Jordan Example\n"
+        "Member ID: XYZ000000 1\n"
+        "Dear Jordan Example,",
+        "Page 2 of 2\nYour appeal rights",
+        "",
+    ]
+    assert result["logs"] == []
 
 
 NAME = {"firstName": "Jordan", "lastName": "Example"}
@@ -508,6 +728,43 @@ RULE_CASES = {
 }
 
 
+# Middle initials: two that differ are two people, so nothing is filled;
+# a name with one and the same name without one are the same person.
+DIFFERENT_INITIALS = (
+    "Dear Jordan A. Example,\nMember name: Jordan B. Example\n",
+    "Member: Example, Jordan A\nPatient: Jordan B Example\n",
+    # Each agrees with the salutation, but not with each other.
+    "Dear Jordan Example,\nMember: Jordan A. Example\nPatient: Jordan B. Example\n",
+    # The block under a different initial is someone else's, so nothing
+    # backs the salutation up.
+    "Dear Jordan A. Example,\nJordan B. Example\n123 Sample Street\n"
+    "Springfield, IL 62701\n",
+)
+ONE_INITIAL = {
+    "Dear Jordan A. Example,\nMember name: Jordan Example\n": NAME,
+    "Dear Jordan Example,\nMember name: Jordan B. Example\n": NAME,
+    "Dear Jordan A. Example,\nJordan A Example\n123 Sample Street\n"
+    "Springfield, IL 62701\n": FULL,
+    "Dear Jordan Example,\nJordan A. Example\n123 Sample Street\n"
+    "Springfield, IL 62701\n": FULL,
+}
+
+
+@needs_node
+def test_two_different_middle_initials_are_two_people(compiled):
+    result = run(compiled, find=list(DIFFERENT_INITIALS))
+    for letter, found in zip(DIFFERENT_INITIALS, result["found"]):
+        assert found == {}, letter
+
+
+@needs_node
+def test_a_middle_initial_on_one_name_only_still_agrees(compiled):
+    letters = list(ONE_INITIAL)
+    result = run(compiled, find=letters)
+    for letter, found in zip(letters, result["found"]):
+        assert found == ONE_INITIAL[letter], letter
+
+
 @needs_node
 def test_the_rule_finds_only_what_the_letter_says_for_sure(compiled):
     letters = list(RULE_CASES)
@@ -538,6 +795,13 @@ def test_the_page_watches_the_box_after_both_restores():
     watch = setup.index("watchLetterForDetails(letterBox, setLocalStorageItemWithTTL);")
     assert setup.index("nodes.forEach(handleStorage);") < watch, setup
     assert setup.index("textareas.forEach") < watch, setup
+    # And before the file button, Remove personal details and the submit
+    # check, which a failed fill must not keep from being wired up.
+    assert re.search(
+        r"try \{\s*watchLetterForDetails\(letterBox, setLocalStorageItemWithTTL\);"
+        r"\s*\} catch",
+        setup,
+    ), setup
 
 
 def test_a_file_read_here_fills_once_its_current_selection_is_done():
@@ -549,7 +813,8 @@ def test_a_file_read_here_fills_once_its_current_selection_is_done():
     superseded = reader.index("if (selection !== latestOcrSelection) {")
     assert superseded < fill, reader
     assert re.search(
-        r"if \(ocrChars > 0\) \{\s*fillDetailsFromLetter\(", reader[superseded:]
+        r"if \(ocrChars > 0\) \{\s*try \{\s*fillDetailsFromLetter\(",
+        reader[superseded:],
     ), reader
 
 
@@ -583,6 +848,19 @@ class TheFakePageIsTheIntakePageTest(TestCase):
             with self.subTest(field=field):
                 group = self.soup.find(id=field).parent
                 self.assertIn("fhi-field-group", group.get("class", []))
+
+    def test_the_controls_the_page_wires_up_are_the_pages(self):
+        """The file button, Remove personal details and the four boxes the
+        submit check reads, by the ids and names the script looks for."""
+        driver = DRIVER.read_text()
+        for control in ("uploader", "scrub-2"):
+            with self.subTest(control=control):
+                self.assertEqual(len(self.soup.find_all(id=control)), 1)
+                self.assertIn(f'id="{control}"', driver)
+        for box in ("pii", "privacy", "tos", "personalonly"):
+            with self.subTest(box=box):
+                self.assertEqual(self.soup.find(id=box).get("name"), box)
+                self.assertIn(f'id="{box}" name="{box}"', driver)
 
     def test_the_name_and_street_stay_in_the_browser(self):
         """No form name, so the form never sends them. The ZIP has one, as it
