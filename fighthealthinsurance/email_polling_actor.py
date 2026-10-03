@@ -47,6 +47,10 @@ class EmailPollingActor:
         self._scheduled_failures = 0
         self._scheduled_skip_until: Optional[datetime.datetime] = None
         self.last_email_clear_check = timezone.now()
+        # None means expired sessions are cleared on the first pass of run(),
+        # then every 24 hours. Each deploy recreates this actor, so each
+        # deploy starts with a purge.
+        self.last_session_clear_check: Optional[datetime.datetime] = None
         self._logger.info("EmailPollingActor senders initialized")
 
     async def health_check(self) -> bool:
@@ -128,8 +132,17 @@ class EmailPollingActor:
                         self._logger.info(f"Sent {thankyou_sent} thank-you emails")
                         await self._jittered_send_delay(thankyou_sent)
 
-                # Check if we should clear expired emails (once per day)
+                # Clear expired sessions on the first pass and once per day
+                # after that. _clear_expired_sessions handles its own errors,
+                # so the email clearing below runs whatever happens here.
                 now = timezone.now()
+                if self.last_session_clear_check is None or (
+                    now - self.last_session_clear_check
+                ) > datetime.timedelta(hours=24):
+                    await self._clear_expired_sessions()
+                    self.last_session_clear_check = now
+
+                # Check if we should clear expired emails (once per day)
                 if (now - self.last_email_clear_check) > datetime.timedelta(hours=24):
                     await self._clear_expired_emails()
                     self.last_email_clear_check = now
@@ -158,6 +171,38 @@ class EmailPollingActor:
         base_delay = 600 * sent_count + 42
         jitter = random.uniform(-60, 60)
         await asyncio.sleep(max(10, base_delay + jitter))
+
+    async def _clear_expired_sessions(self) -> None:
+        """Delete sessions whose expiry date has passed.
+
+        A session expires SESSION_COOKIE_AGE after it was last saved. This
+        runs the configured engine's clear_expired, the same purge as
+        ``manage.py clearsessions``; for the database engine that deletes the
+        expired rows from django_session. Only the count is logged.
+        """
+        try:
+            from importlib import import_module
+
+            from django.conf import settings
+
+            store = import_module(settings.SESSION_ENGINE).SessionStore
+            # The database engines keep sessions in a table, so the rows about
+            # to go can be counted for the log line. Other engines expire
+            # sessions on their own and have nothing to count.
+            expired_count: Optional[int] = None
+            if hasattr(store, "get_model_class"):
+                expired_count = await (
+                    store.get_model_class()
+                    .objects.filter(expire_date__lt=timezone.now())
+                    .acount()
+                )
+            await store.aclear_expired()
+            if expired_count is None:
+                self._logger.info("Cleared expired sessions")
+            else:
+                self._logger.info(f"Cleared {expired_count} expired sessions")
+        except Exception:
+            self._logger.opt(exception=True).error("Error clearing expired sessions")
 
     async def _clear_expired_emails(self) -> None:
         """Clear emails from denials 30 days after follow-up was sent for users who didn't opt in."""

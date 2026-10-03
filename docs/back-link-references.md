@@ -30,8 +30,8 @@ so a person working an appeal across a day always holds links minted within
 the last twelve hours. An old link in a history keeps the window it was minted
 under. It is not a retention period and must not be quoted as one.
 
-What the session holds lives longer than that, and today it lives until
-somebody purges it by hand:
+What the session holds lives longer than that: until two weeks after the
+session was last saved, and then until the next daily purge deletes it.
 
 - A reference is not stored. It is the case id and its permanent
   `semi_sekret`, encrypted with a key derived from the site secret and a
@@ -47,17 +47,23 @@ somebody purges it by hand:
   `Denial.raw_email` is a plaintext `TextField` (`models.py:2387`) holding the
   address for anybody who opted into follow-up contact. So the email in the
   session is the part that is genuinely new: the session holds it for everyone
-  who walks the flow, opt-in or not, and `email_polling_actor`'s sweep that
-  clears `raw_email` after follow-ups are sent does not reach it.
+  who walks the flow, opt-in or not. `email_polling_actor`'s sweep that
+  clears `raw_email` after follow-ups are sent does not reach it; the session
+  purge below does.
 - No `SESSION_ENGINE` is set, on `Prod` or anywhere else, so Django's
   database backend applies (`global_settings.py` default
   `django.contrib.sessions.backends.db`).
 - No `SESSION_COOKIE_AGE` is set, on `Prod` or anywhere else, so Django's two
   week default applies. The row's `expire_date` is stamped from that on each
   save, which means two weeks from the last write, not from the first.
-- The database backend stops honouring an expired row. It does not delete it.
-  Deletion is what `manage.py clearsessions` does, and nothing in this
-  checkout runs it, anywhere git can see.
+- The database backend stops honouring an expired row and leaves it in the
+  table. `EmailPollingActor._clear_expired_sessions` deletes it: it runs the
+  session engine's `clear_expired`, the same purge as
+  `manage.py clearsessions`, on the actor's first pass and every 24 hours
+  after, and logs only how many rows it removed. The actor runs in production
+  whether or not `TEMPORAL_ENABLED` is on (`polling_actor_setup.py`). Each
+  deploy recreates it, so each deploy starts with a purge, and
+  `reconcile_polling_actors` relaunches it if it goes missing.
 
 `RetentionClaimTest` pins those bullets, so the paragraph fails out loud
 rather than rotting. What each assertion actually covers, stated narrowly
@@ -71,28 +77,32 @@ test:
   django-configurations copies Django's global defaults into every
   configuration class body, so a third assertion asks that of the text of
   `settings.py` instead.
-- One assertion exercises the behaviour rather than the setting: it drives a
-  real session through the test client, checks `expire_date` lands two weeks
-  out, ages the row by hand, and shows the session store stops honouring it
-  while the row itself is still in the table.
-- The purge search looks for a `clearsessions` invocation, any use of the
-  `Session` model, and a raw `DELETE FROM django_session`, over every file
-  `git ls-files --cached --others --exclude-standard` reports. Files a purge
-  could be written in are read whole however large; only opaque blobs are
-  capped. It cannot rule out a purge that spells the same thing some third
-  way, or one that lives outside this repo. Tripwire, not proof.
+- Two assertions exercise behaviour rather than settings. One saves a real
+  session, checks `expire_date` lands two weeks out, ages the row by hand,
+  and shows the session store stops honouring it while the row itself is
+  still in the table. The other runs the actor's purge on an aged row and
+  shows the row is gone. When the purge runs, and that a failure in it leaves
+  the expired email clearing alone, is tested with the actor in
+  `tests/async-unit/test_expired_sessions_are_cleared.py`.
+- The purge search looks for a `clearsessions` invocation, a `clear_expired`
+  call, any use of the `Session` model, and a raw `DELETE FROM django_session`,
+  over every file `git ls-files --cached --others --exclude-standard` reports
+  outside `tests/`, and expects exactly one:
+  `fighthealthinsurance/email_polling_actor.py`. Files a purge could be
+  written in are read whole however large; only opaque blobs are capped. It
+  cannot rule out a purge that spells the same thing some third way, or one
+  that lives outside this repo. Tripwire, not proof.
 
-So for somebody who abandons the flow, the plaintext email and the permanent
-case secret sit in `django_session` until something purges them, and today
-nothing in this repo does. The honest sentence is "until the session row is
-purged, and nothing purges it".
+So for somebody who abandons the flow, the plaintext email and the session's
+random secret stay in `django_session` for two weeks after the session was
+last saved, and the next daily purge deletes them. The honest sentence is
+"two weeks after the session was last saved, then deleted within a day", not
+"twelve hours".
 
-That is still a trade worth taking. What this removes is a live credential in
-the address bar, in history and in access logs, reachable by anyone who gets
-the link. What it adds is a row in a database this application already
-controls. But the retention job is the fix, it is infrastructure rather than
-application code, and it has not been written. It belongs on the follow up
-list below, not in a sign off sentence that says "twelve hours".
+That is a trade worth taking. What this removes is a live credential in the
+address bar, in history and in access logs, reachable by anyone who gets the
+link. What it adds is a row in a database this application already controls,
+kept for two weeks after the session was last saved and then deleted.
 
 ## What patients lose, and what they are told
 
@@ -144,18 +154,16 @@ reopen:
   absolute cap measured from the first link was rejected, because it puts a
   cliff in the middle of an active appeal and buys nothing for retention.
 - Old style links are accepted for one more release, so the ones already in
-  people's browser history keep working. That is item 2 below.
+  people's browser history keep working. That is item 1 below.
 
 ## Follow up list
 
-1. A `clearsessions` job, or an equivalent purge. Until it exists the claim
-   above holds and the retention sentence stays as written.
-2. Set `LEGACY_DENIAL_REF_QUERY = False` in the next release. While it is True
+1. Set `LEGACY_DENIAL_REF_QUERY = False` in the next release. While it is True
    an old style link is still a working credential, which is the exposure this
    change exists to end. Links this code builds never contain the triple
    whatever the setting says, so the legacy path cannot be used to lift a
    secret out of a new style link.
-3. `SESSION_COOKIE_HTTPONLY = False` and `SESSION_COOKIE_SAMESITE = "None"`
+2. `SESSION_COOKIE_HTTPONLY = False` and `SESSION_COOKIE_SAMESITE = "None"`
    are set on `Base` and inherited by `Prod` (`settings.py:285-286`). Both
    pre-date this change and neither is touched here, but the reference scheme
    now leans on that cookie, so they are worth a second look.
@@ -193,11 +201,12 @@ this paragraph rests on were false and nothing failed. It now reads the
 configuration classes directly, tests the expiry behaviour rather than only
 the number, and searches every text file git reports. It also asserts that the
 listing reached `.github/workflows/ci.yml`, so a listing that comes back short
-fails instead of passing empty.
+fails instead of missing a purge in a file it never read.
 
-One consequence worth knowing before it surprises somebody: this class fails
-on a change to infrastructure rather than to application code. The day a
-purge job lands, or a cookie age is set, `tests/sync/test_back_url_token.py`
-goes red and the retention paragraph above has to be rewritten in the same
-pull request. That is the intent, not an accident, but it means an infra
-change carries a docs edit with it.
+One consequence worth knowing before it surprises somebody: this class can
+fail on a change to infrastructure rather than to application code. The day a
+second purge lands (a `clearsessions` CronJob, say), the purge moves out of
+`EmailPollingActor`, or a cookie age is set,
+`tests/sync/test_back_url_token.py` goes red and the retention paragraph above
+has to be rewritten in the same pull request. That is the intent, not an
+accident, but it means an infra change carries a docs edit with it.
