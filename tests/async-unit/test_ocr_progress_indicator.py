@@ -207,15 +207,14 @@ def test_progress_box_is_not_styled_as_an_error():
 
 
 def test_progress_box_keeps_the_sibling_live_region_role():
-    """role=alert, like every other message box on this form.
+    """role=alert, like the other reading messages (ocr_partial, ocr_failed).
 
-    A first cut changed it to role=status. Review pointed out that these boxes
-    are toggled by visibility on already-populated markup, which live regions
-    do not reliably treat as a change; alert has the special handling that
-    made the existing boxes announce at all. Fixing that properly (an exposed,
-    empty region whose text is set on show) is a change to the shared pattern
-    and belongs in its own PR; until then this box must not be the one that
-    announces less than its siblings.
+    These boxes are toggled by visibility on markup that is already filled
+    in, which live regions do not reliably treat as a change; alert has the
+    special handling that gets them read out. The messages under each field
+    use the other pattern, an exposed empty region whose text is set on show
+    (partials/field_error.html). Until the reading messages move to it too,
+    this box keeps the role its siblings have.
     """
     html = (TEMPLATES / "scrub.html").read_text()
     tag = re.search(r'<div[^>]*id="ocr_in_progress"[^>]*>', html)

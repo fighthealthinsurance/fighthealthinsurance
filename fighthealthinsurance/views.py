@@ -1858,6 +1858,28 @@ class OCRView(View):
 # genuinely different denial still gets a new row.
 DENIAL_SESSION_REUSE_WINDOW = timedelta(hours=24)
 
+# The intake form's fields in the order scrub.html shows them, each with the
+# id of the control a link to it lands on. A page the server sends back lists
+# every error at the top of the form in this order, each a link to its field.
+INTAKE_FIELD_IDS = {
+    "denial_text": "denial_text",
+    "email": "email",
+    "zip": "store_zip",
+    "pii": "pii",
+    "privacy": "privacy",
+    "tos": "tos",
+    "personalonly": "personalonly",
+    "store_raw_email": "store_raw_email",
+    "use_external_models": "use_external_models",
+    "subscribe": "subscribe",
+}
+# scrub.html also has a message under each of these fields, and the form's
+# words for them say which field they are about, so the list gives them
+# without the field's label.
+INTAKE_FIELDS_WITH_A_MESSAGE = frozenset(
+    ("denial_text", "email", "pii", "privacy", "tos", "personalonly")
+)
+
 
 class InitialProcessView(generic.FormView):
     """
@@ -1909,6 +1931,27 @@ class InitialProcessView(generic.FormView):
                     )
 
         context["ocr_result"] = ocr_result
+
+        form = context.get("form")
+        error_summary: list[dict[str, str]] = []
+        if form is not None and form.is_bound:
+            order = list(INTAKE_FIELD_IDS)
+            for name in sorted(
+                form.errors,
+                key=lambda name: order.index(name) if name in order else len(order),
+            ):
+                field_id = INTAKE_FIELD_IDS.get(name, "")
+                label = ""
+                if name in form.fields and name not in INTAKE_FIELDS_WITH_A_MESSAGE:
+                    label = form[name].label
+                error_summary.extend(
+                    {
+                        "field_id": field_id,
+                        "text": f"{label}: {error}" if label else error,
+                    }
+                    for error in form.errors[name]
+                )
+        context["error_summary"] = error_summary
 
         return context
 
@@ -1985,6 +2028,9 @@ class InitialProcessView(generic.FormView):
         cleaned_data = form.cleaned_data
         if "denial_id" in cleaned_data:
             del cleaned_data["denial_id"]
+        # A gate on the submission, not something the denial keeps: a form
+        # without it ticked never reaches here.
+        cleaned_data.pop("personalonly", None)
 
         # Handle mailing list subscription
         if cleaned_data.get("subscribe"):

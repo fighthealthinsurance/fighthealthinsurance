@@ -1,9 +1,13 @@
 import { getLocalStorageItemWithTTL, setLocalStorageItemWithTTL } from "./shared";
 
-// Add text
+// Add text read from a file to the letter box. Setting the value fires no
+// input event, so the messages the new text answers are taken down here, the
+// way typing takes them down. hideErrorMessages is called rather than an
+// input event fired, which the box's other listeners would count as typing.
 export function addText(text: string): void {
   const input = document.getElementById("denial_text") as HTMLTextAreaElement;
   input.value += text;
+  hideErrorMessages(new Event("input"));
 }
 
 // Error messages
@@ -19,32 +23,158 @@ function showHiddenMessage(name: string): void {
     element.classList.add("visible");
   }
 }
+
+// The intake form's own messages, one under each field it checks
+// (partials/field_error.html). Each is an empty live region until it is
+// shown: showing it puts its words in, which is what a screen reader reads
+// out, and marks the field it is about as invalid and described by it.
+interface FieldCheck {
+  // The id of the message under the field.
+  message: string;
+  // Every field the message is about.
+  fields: HTMLElement[];
+  // The ones that are not filled in yet.
+  missing: HTMLElement[];
+  // Filled in, but not in a shape the server takes (an email address).
+  misshapen?: boolean;
+}
+
+function hasDenialText(form: HTMLFormElement): boolean {
+  return form.denial_text.value.trim().length > 0;
+}
+
+// Every check the form makes before it is sent, in page order, and exactly
+// what the server requires (DenialForm in forms/__init__.py): the letter,
+// the email and the four agreements.
+// Roughly the shape the server's email check takes: something, an @, and a
+// domain with a dot in it. So an address the server refused stays marked
+// until the address itself changes.
+function looksLikeAnEmail(value: string): boolean {
+  return /^[^\s@]+@([^\s@.]+\.)+[^\s@.]+$/.test(value);
+}
+
+function intakeChecks(form: HTMLFormElement): FieldCheck[] {
+  const check = (
+    message: string,
+    fields: HTMLElement[],
+    isMissing: (field: HTMLElement) => boolean,
+  ): FieldCheck => ({ message, fields, missing: fields.filter(isMissing) });
+  const unticked = (field: HTMLElement): boolean => !(field as HTMLInputElement).checked;
+  const email = form.email.value.trim();
+  return [
+    check("need_denial", [form.denial_text], () => !hasDenialText(form)),
+    {
+      ...check("email_error", [form.email], () => !looksLikeAnEmail(email)),
+      misshapen: email !== "" && !looksLikeAnEmail(email),
+    },
+    check("pii_error", [form.pii], unticked),
+    check("agree_chk_error", [form.privacy, form.tos, form.personalonly], unticked),
+  ];
+}
+
+// Adds or takes out one id in a field's aria-describedby, leaving any other.
+function describeBy(field: HTMLElement, id: string, on: boolean): void {
+  const ids = (field.getAttribute("aria-describedby") ?? "")
+    .split(/\s+/)
+    .filter((token) => token !== "" && token !== id);
+  if (on) {
+    ids.push(id);
+  }
+  if (ids.length > 0) {
+    field.setAttribute("aria-describedby", ids.join(" "));
+  } else {
+    field.removeAttribute("aria-describedby");
+  }
+}
+
+// While a message shows, each field it is about that is still missing is
+// invalid and described by it; the rest of its fields are neither.
+function markFields(check: FieldCheck, shown: boolean): void {
+  check.fields.forEach((field) => {
+    const invalid = shown && check.missing.includes(field);
+    if (invalid) {
+      field.setAttribute("aria-invalid", "true");
+    } else {
+      field.removeAttribute("aria-invalid");
+    }
+    describeBy(field, check.message, invalid);
+  });
+}
+
+function isShowing(check: FieldCheck): boolean {
+  const message = document.getElementById(check.message);
+  return message !== null && (message.textContent ?? "") !== "";
+}
+
+function showFieldMessage(check: FieldCheck): void {
+  const message = document.getElementById(check.message);
+  if (message) {
+    const words =
+      (check.misshapen ? message.dataset.invalidMessage : undefined) ??
+      message.dataset.message ??
+      "";
+    // A live region reads out a change, so words already showing are left
+    // as they are rather than read out again.
+    if (message.textContent !== words) {
+      message.textContent = words;
+    }
+  }
+  markFields(check, true);
+}
+
+function clearFieldMessage(check: FieldCheck): void {
+  const message = document.getElementById(check.message);
+  if (message) {
+    message.textContent = "";
+  }
+  markFields(check, false);
+}
+
+// The first of these fields in page order takes focus and is brought into
+// view, so a blocked submit shows the person where to look.
+function focusFirst(fields: HTMLElement[]): void {
+  let first: HTMLElement | null = null;
+  for (const field of fields) {
+    if (
+      first === null ||
+      first.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_PRECEDING
+    ) {
+      first = field;
+    }
+  }
+  if (first === null) {
+    return;
+  }
+  first.focus({ preventScroll: true });
+  first.scrollIntoView({ block: "center" });
+}
+
+// A page the server sent back marks each field it refused (scrub.html sets
+// aria-invalid), and the first of them takes focus as on a blocked submit.
+export function focusFirstRefusedField(form: HTMLFormElement): void {
+  focusFirst(Array.from(form.querySelectorAll<HTMLElement>('[aria-invalid="true"]')));
+}
+
 export function hideErrorMessages(event: Event): void {
   const form = document.getElementById(
     "fuck_health_insurance_form",
-  ) as HTMLFormElement | null; 
+  ) as HTMLFormElement | null;
   if (form == null) {
     return;
   }
-  if (form.privacy.checked && form.personalonly.checked && form.tos.checked) {
-    rehideHiddenMessage("agree_chk_error");
-  }
-  if (form.pii.checked) {
-    rehideHiddenMessage("pii_error");
-  }
-  if (form.email.value.length > 1) {
-    const emailLabel = document.getElementById("email-label");
-    if (emailLabel) {
-      emailLabel.style.color = "";
+  // Typing or ticking only takes messages down, or narrows one to the boxes
+  // still unticked. A new message waits for the next submit.
+  intakeChecks(form).forEach((check) => {
+    if (!isShowing(check)) {
+      return;
     }
-    rehideHiddenMessage("email_error");
-  }
-  if (form.denial_text.value.trim().length > 0) {
-    const denialTextLabel = document.getElementById("denial_text_label");
-    if (denialTextLabel) {
-      denialTextLabel.style.color = "";
+    if (check.missing.length === 0) {
+      clearFieldMessage(check);
+    } else {
+      markFields(check, true);
     }
-    rehideHiddenMessage("need_denial");
+  });
+  if (hasDenialText(form)) {
     // This runs on every keystroke in denial_text. Without clearing here,
     // "we couldn't read your file, so the box below is still empty" stayed on
     // screen while the user typed into that very box -- the gate only
@@ -124,54 +254,19 @@ export function clearOcrFailure(): void {
 export function validateScrubForm(event: Event): void {
   // Listener is bound to the <form>, so currentTarget is always the form
   const form = event.currentTarget as HTMLFormElement;
-  if (
-    !form.privacy.checked ||
-    !form.personalonly.checked ||
-    !form.tos.checked
-  ) {
-    showHiddenMessage("agree_chk_error");
-  } else {
-    rehideHiddenMessage("agree_chk_error");
-  }
-  if (!form.pii.checked) {
-    showHiddenMessage("pii_error");
-  } else {
-    rehideHiddenMessage("pii_error");
-  }
-  if (form.email.value.length < 1) {
-    showHiddenMessage("email_error");
-    const emailLabel = document.getElementById("email-label");
-    if (emailLabel) {
-      emailLabel.style.color = "red";
+  // Each check shows or takes down its own message, and the same checks
+  // decide below whether the form is sent, so a message never shows on a
+  // form that goes anyway.
+  const checks = intakeChecks(form);
+  checks.forEach((check) => {
+    if (check.missing.length > 0) {
+      showFieldMessage(check);
+    } else {
+      clearFieldMessage(check);
     }
-  } else {
-    const emailLabel = document.getElementById("email-label");
-    if (emailLabel) {
-      emailLabel.style.color = "";
-    }
-    rehideHiddenMessage("email_error");
-  }
-  if (form.denial_text.value.trim().length < 1) {
-    showHiddenMessage("need_denial");
-    const denialTextLabel = document.getElementById("denial_text_label");
-    if (denialTextLabel) {
-      denialTextLabel.style.color = "red";
-    }
-  } else {
-    const denialTextLabel = document.getElementById("denial_text_label");
-    if (denialTextLabel) {
-      denialTextLabel.style.color = "";
-    }
-    rehideHiddenMessage("need_denial");
-  }
+  });
 
-  // Every field validated above must also GATE the submit. This condition
-  // used to check only pii/privacy/email, so a form with an empty
-  // denial_text displayed "need_denial" and then submitted regardless --
-  // the server rejected it with "denial_text: This field is required" and
-  // the user saw a contradiction. personalonly and tos were validated and
-  // ungated the same way.
-  const denialTextReady = form.denial_text.value.trim().length > 0;
+  const denialTextReady = hasDenialText(form);
   if (denialTextReady) {
     // However the text arrived -- a later file that read fine, or the user
     // pasting it -- the earlier failure is no longer something to act on.
@@ -188,63 +283,47 @@ export function validateScrubForm(event: Event): void {
     // while the remaining pages were still being read (review).
     rehideHiddenMessage("ocr_in_progress");
   }
-  // Gate on exactly what the SERVER requires: forms/__init__.py marks pii,
-  // tos and privacy required=True, plus email and denial_text. personalonly
-  // is deliberately NOT here -- it is an optional checkbox that the
-  // agree_chk_error branch above happens to mention, and gating on it made
-  // the client stricter than the server, blocking a submission the server
-  // would have accepted (caught by the Selenium suite).
-  if (
-    form.pii.checked &&
-    form.privacy.checked &&
-    form.tos.checked &&
-    form.email.value.length > 0 &&
-    denialTextReady
-  ) {
-    rehideHiddenMessage("agree_chk_error");
-    rehideHiddenMessage("pii_error");
-    rehideHiddenMessage("email_error");
-    rehideHiddenMessage("need_denial");
-    // Only include fname and lname if user has subscribed to mailing list
-    // This ensures we don't send personal names to the server unless the user opts in
-    // Remove any previously added hidden inputs to prevent duplicates
-    const existingFname = form.querySelector('input[type="hidden"][name="fname"]');
-    const existingLname = form.querySelector('input[type="hidden"][name="lname"]');
-    if (existingFname) {
-      existingFname.remove();
-    }
-    if (existingLname) {
-      existingLname.remove();
-    }
-    if (form.subscribe.checked) {
-      // Get the locally stored fname/lname values
-      const fnameInput = document.getElementById(
-        "store_fname",
-      ) as HTMLInputElement | null;
-      const lnameInput = document.getElementById(
-        "store_lname",
-      ) as HTMLInputElement | null;
-      // Add hidden inputs to the form to send fname and lname to the server
-      if (fnameInput && fnameInput.value) {
-        const hiddenFname = document.createElement("input");
-        hiddenFname.type = "hidden";
-        hiddenFname.name = "fname";
-        hiddenFname.value = fnameInput.value;
-        form.appendChild(hiddenFname);
-      }
-      if (lnameInput && lnameInput.value) {
-        const hiddenLname = document.createElement("input");
-        hiddenLname.type = "hidden";
-        hiddenLname.name = "lname";
-        hiddenLname.value = lnameInput.value;
-        form.appendChild(hiddenLname);
-      }
-    }
-    // YOLO
-    return;
-  } else {
-    // Bad news no submit
+  const missing = checks.flatMap((check) => check.missing);
+  if (missing.length > 0) {
+    // Not sent. The first field with a problem takes focus.
     event.preventDefault();
+    focusFirst(missing);
+    return;
+  }
+  // Only include fname and lname if user has subscribed to mailing list
+  // This ensures we don't send personal names to the server unless the user opts in
+  // Remove any previously added hidden inputs to prevent duplicates
+  const existingFname = form.querySelector('input[type="hidden"][name="fname"]');
+  const existingLname = form.querySelector('input[type="hidden"][name="lname"]');
+  if (existingFname) {
+    existingFname.remove();
+  }
+  if (existingLname) {
+    existingLname.remove();
+  }
+  if (form.subscribe.checked) {
+    // Get the locally stored fname/lname values
+    const fnameInput = document.getElementById(
+      "store_fname",
+    ) as HTMLInputElement | null;
+    const lnameInput = document.getElementById(
+      "store_lname",
+    ) as HTMLInputElement | null;
+    // Add hidden inputs to the form to send fname and lname to the server
+    if (fnameInput && fnameInput.value) {
+      const hiddenFname = document.createElement("input");
+      hiddenFname.type = "hidden";
+      hiddenFname.name = "fname";
+      hiddenFname.value = fnameInput.value;
+      form.appendChild(hiddenFname);
+    }
+    if (lnameInput && lnameInput.value) {
+      const hiddenLname = document.createElement("input");
+      hiddenLname.type = "hidden";
+      hiddenLname.name = "lname";
+      hiddenLname.value = lnameInput.value;
+      form.appendChild(hiddenLname);
+    }
   }
 }
 
@@ -276,14 +355,20 @@ function storeInLocalStorage(): void {
   });
 }
 
+// Only an empty field takes what this browser kept. A field the page arrived
+// with something in keeps it: the letter the server read from an upload
+// (/server_side_ocr), the one it sends back with an error, or a microsite's
+// starting line.
 function retrieveFromLocalStorage(): void {
   FORM_FIELD_IDS.forEach((id) => {
     const element = document.getElementById(
       id,
     ) as HTMLInputElement | HTMLTextAreaElement | null;
-    if (element) {
+    if (element && element.value === "") {
       const storedValue = getLocalStorageItemWithTTL(id);
-      element.value = storedValue !== null ? storedValue : "";
+      if (storedValue !== null) {
+        element.value = storedValue;
+      }
     }
   });
 }

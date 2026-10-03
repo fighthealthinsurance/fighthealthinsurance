@@ -57,6 +57,7 @@ class DenialSessionReuseTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
             },
             follow=True,
         )
@@ -183,6 +184,7 @@ class DenialSessionReuseTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
             },
             follow=True,
         )

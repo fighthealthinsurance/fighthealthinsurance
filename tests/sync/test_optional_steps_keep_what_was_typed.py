@@ -111,6 +111,7 @@ class HealthHistoryRendersWhatIsStoredTest(OptionalStepsTestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
             },
             follow=True,
         )
@@ -127,6 +128,7 @@ class HealthHistoryRendersWhatIsStoredTest(OptionalStepsTestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
             },
             follow=True,
         )
