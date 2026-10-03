@@ -202,17 +202,21 @@ def test_sources_imported_from_outside_the_js_directory_are_in_the_checksum():
     """letter_placeholders.ts bundles fighthealthinsurance/letter_placeholders.json,
     which the fax form also reads on the server. A change to that list alone
     rebuilds the bundles, so the browser checks the list the server checks."""
+    src = _build_static_sh()
+    listed = re.search(r"IMPORTED_SOURCES=\(([^)]*)\)", src)
     loop = re.search(
-        r"for\s+IMPORTED_SOURCE\s+in\s+([^;\n]*);\s*do(.*?)\bdone\b",
-        _build_static_sh(),
+        r"for\s+IMPORTED_SOURCE\s+in\s+\"\$\{IMPORTED_SOURCES\[@\]\}\";\s*do(.*?)\bdone\b",
+        src,
         re.S,
     )
-    assert loop is not None, "build_static.sh no longer hashes imported sources"
+    assert (
+        listed is not None and loop is not None
+    ), "build_static.sh no longer hashes imported sources"
     assert re.search(
         r"CURRENT_JS_CHECKSUM=\"\$\{CURRENT_JS_CHECKSUM\}\$\{IMPORTED_SUM\}\"",
-        loop.group(2),
+        loop.group(1),
     ), "the imported sources are hashed but no longer added to the checksum"
-    hashed = set(loop.group(1).split())
+    hashed = set(listed.group(1).split())
     assert _imports_from_outside_the_js_directory() - hashed == set()
 
 

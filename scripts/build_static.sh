@@ -53,7 +53,8 @@ if [ -d "${JS_PATH}" ]; then
   # Sources the scripts import from outside the js directory. The letter
   # placeholder patterns sit in the package so the fax form can read them on
   # the server, and webpack bundles the same file into the page scripts.
-  for IMPORTED_SOURCE in fighthealthinsurance/letter_placeholders.json; do
+  IMPORTED_SOURCES=(fighthealthinsurance/letter_placeholders.json)
+  for IMPORTED_SOURCE in "${IMPORTED_SOURCES[@]}"; do
     if [ -f "${IMPORTED_SOURCE}" ]; then
       IMPORTED_SUM=$(md5sum "${IMPORTED_SOURCE}" 2>/dev/null | cut -d ' ' -f 1)
       CURRENT_JS_CHECKSUM="${CURRENT_JS_CHECKSUM}${IMPORTED_SUM}"
