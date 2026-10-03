@@ -111,12 +111,12 @@ def test_the_guard_does_not_lapse_when_the_letter_is_emptied():
     assert "value.trim() !== \"\"" not in body, "the emptiness escape is back"
 
 
-def test_a_letter_with_blanks_is_held_and_the_next_try_is_checked_afresh():
-    """The check decides inside the one submission: it stops it only while
-    blanks are left, and the page never re-submits the form from inside its
-    own event (requestSubmit() there does nothing). "Send anyway" lets one
-    submission past and no later press: that is behaviour, run in node by
-    tests/sync/test_letter_placeholders.py."""
+def test_a_letter_with_blanks_is_held_and_each_try_is_checked():
+    """The check decides inside each submission: it stops it only while
+    blanks are left that "Send anyway" was not pressed for, and the page never
+    re-submits the form from inside its own event (requestSubmit() there does
+    nothing). Which blanks "Send anyway" lets past, and that a new one is held,
+    is behaviour, run in node by tests/sync/test_letter_placeholders.py."""
     src = _appeal_source()
     assert "skipCheck" not in src, "the skip flag is back; a later click would bypass the check"
     assert "faxForm.requestSubmit(" not in src, "the submit is re-entered from inside its own event again"

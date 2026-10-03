@@ -357,10 +357,11 @@ function setupAppeal() {
         alert("There is no letter to send. Write or rebuild your letter first.");
         return;
       }
-      // Decided inside this one submission: a letter with no blanks goes
-      // straight through, and the next press is checked afresh. "Send
-      // anyway" presses the button again from the notice, outside this
-      // event; nothing re-submits the form from inside it.
+      // Decided inside this one submission, from the letter as it is now: a
+      // letter with no blanks, or only blanks "Send anyway" was pressed for,
+      // goes straight through. "Send anyway" presses the button again from
+      // the notice, outside this event; nothing re-submits the form from
+      // inside it.
       if (faxMustWaitForPlaceholders(faxForm, faxButton, letter)) {
         e.preventDefault();
       }

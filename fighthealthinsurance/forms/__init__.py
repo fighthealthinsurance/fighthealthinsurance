@@ -356,11 +356,14 @@ class FaxForm(DenialRefForm):
     # when the letter posted has blanks in it (see __init__), so it shows
     # under the letter on the page that names them, and nowhere else. The
     # appeal page's "Send anyway" posts the same name with a hidden "1".
+    # It never comes back ticked: a page turned back for something else,
+    # like a name of only spaces, names no blanks, and a box ticked there
+    # would send any blank typed in after it, unseen.
     send_with_placeholders = forms.BooleanField(
         required=False,
         label="Send it as it is: I've checked these are not blanks",
         label_suffix="",
-        widget=forms.CheckboxInput(attrs={"value": "1"}),
+        widget=forms.CheckboxInput(attrs={"value": "1"}, check_test=lambda _: False),
         template_name="partials/check_row_field.html",
     )
     include_provided_health_history = forms.BooleanField(

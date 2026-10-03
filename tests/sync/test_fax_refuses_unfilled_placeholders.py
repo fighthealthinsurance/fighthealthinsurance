@@ -143,6 +143,22 @@ class StageFaxRefusesUnfilledPlaceholdersTest(TestCase):
             description.group(1) if description else "",
         )
 
+    def test_a_page_turned_back_for_something_else_never_comes_back_ticked(self):
+        """Sent anyway, the form is turned back for a name of only spaces,
+        which a browser lets through. That page names no blanks, so its box
+        is not ticked: ticked, it would send a blank typed in after, unseen."""
+        response, _, stage, _ = self.post(
+            WITH_BLANKS, send_with_placeholders="1", name="   "
+        )
+        box = re.search(
+            r'<input[^>]*id="id_send_with_placeholders"[^>]*>',
+            response.content.decode(),
+        )
+        self.assertEqual(
+            (stage.call_count, box is not None and "checked" not in box.group(0)),
+            (0, True),
+        )
+
     def test_the_box_is_labelled_with_what_ticking_it_means(self):
         response, *_ = self.post(WITH_BLANKS)
         self.assertContains(

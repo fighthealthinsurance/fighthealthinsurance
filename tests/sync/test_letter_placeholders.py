@@ -557,17 +557,59 @@ def test_send_anyway_puts_the_focus_on_the_fax_button(compiled):
     assert page["focused"] == "#fax_appeal"
 
 
+# "Send anyway" means "send these": the blanks its notice listed.
+SENT_ANYWAY = {"send_with_placeholders": "1"}
+
+
 @needs_node
-def test_after_send_anyway_the_next_press_is_checked_afresh(compiled):
+def test_after_send_anyway_the_same_letter_goes_again_in_one_press(compiled):
     page = run_scenario(compiled, "fax-send-anyway-then-again")
+    assert (page["submissions"], page["faxNotice"]) == (
+        ["held", SENT_ANYWAY, SENT_ANYWAY],
+        None,
+    )
+
+
+@needs_node
+def test_after_send_anyway_an_edit_that_adds_no_blank_is_faxed(compiled):
+    page = run_scenario(compiled, "fax-send-anyway-then-an-edit")
+    assert (page["submissions"], page["faxNotice"]) == (
+        ["held", SENT_ANYWAY, SENT_ANYWAY],
+        None,
+    )
+
+
+@needs_node
+def test_after_send_anyway_a_new_blank_brings_the_notice_back(compiled):
+    """The notice lists every blank the letter has, the new one with the
+    ones already sent anyway, so "Send anyway" on it names all that goes."""
+    page = run_scenario(compiled, "fax-send-anyway-then-a-new-blank")
     assert (
         page["submissions"],
         page["leftOnTheForm"],
         page["faxNotice"]["items"],
     ) == (
-        ["held", {"send_with_placeholders": "1"}, "held"],
+        ["held", SENT_ANYWAY, "held"],
         {},
-        ["[Your Name]", "{{SCSID}}"],
+        ["[Your Name]", "{{SCSID}}", "[Date of Service]"],
+    )
+
+
+@needs_node
+def test_send_anyway_on_the_notice_that_came_back_sends_in_one_press(compiled):
+    page = run_scenario(compiled, "fax-send-anyway-then-a-new-blank-sent-anyway")
+    assert (page["submissions"], page["faxNotice"]) == (
+        ["held", SENT_ANYWAY, "held", SENT_ANYWAY],
+        None,
+    )
+
+
+@needs_node
+def test_send_anyway_covers_only_the_blanks_its_notice_listed(compiled):
+    page = run_scenario(compiled, "fax-new-blank-typed-before-send-anyway")
+    assert (page["submissions"], page["faxNotice"]["items"]) == (
+        ["held", "held"],
+        ["[Your Name]", "{{SCSID}}", "[Date of Service]"],
     )
 
 

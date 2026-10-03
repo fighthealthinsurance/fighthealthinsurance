@@ -44,6 +44,10 @@ const WITH_MARKUP = 'Dear Example Health, from {{<img src=x onerror=alert(1)>}}.
 // leaves alone.
 const KARYOTYPE_FIRST =
   'Dear Example Health,\n\nI have triple X syndrome (47,XXX).\nMember ID XXX\n\nSincerely,\nPat Example';
+// The same letter after edits: one adds a blank it did not have, the other
+// adds words and no blank.
+const WITH_A_NEW_BLANK = WITH_BLANKS.replace('{{SCSID}}.', '{{SCSID}}, seen on [Date of Service].');
+const WITH_THE_SAME_BLANKS = WITH_BLANKS.replace('{{SCSID}}.', '{{SCSID}}, a member for ten years.');
 const SIGNATURE_LINE = '______________';
 const WITH_A_LINE = 'Dear Example Health,\n\nI am Pat Example.\n\nSigned: ' + SIGNATURE_LINE + '\nPat Example';
 
@@ -254,6 +258,49 @@ const scenarios = {
     // Back on the page (the browser's back button), the letter unchanged.
     faxButton.click();
     report({submissions, leftOnTheForm: posted()});
+  },
+  'fax-send-anyway-then-a-new-blank'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    faxLetter.value = WITH_BLANKS;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Send anyway');
+    // Back on the page, the person types in a blank the notice never listed.
+    faxLetter.value = WITH_A_NEW_BLANK;
+    faxButton.click();
+    report({submissions, leftOnTheForm: posted()});
+  },
+  'fax-send-anyway-then-a-new-blank-sent-anyway'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    faxLetter.value = WITH_BLANKS;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Send anyway');
+    faxLetter.value = WITH_A_NEW_BLANK;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Send anyway');
+    report({submissions});
+  },
+  'fax-send-anyway-then-an-edit'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    faxLetter.value = WITH_BLANKS;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Send anyway');
+    // Back on the page, the person adds words and no blank.
+    faxLetter.value = WITH_THE_SAME_BLANKS;
+    faxButton.click();
+    report({submissions});
+  },
+  'fax-new-blank-typed-before-send-anyway'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    faxLetter.value = WITH_BLANKS;
+    faxButton.click();
+    // With the notice still showing, a blank it does not list is typed in.
+    faxLetter.value = WITH_A_NEW_BLANK;
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Send anyway');
+    report({submissions});
   },
   'fax-box-ticked'() {
     const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));

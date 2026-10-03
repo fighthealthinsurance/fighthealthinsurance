@@ -31,9 +31,10 @@ export const SEND_ANYWAY_FIELD = "send_with_placeholders";
 export const SEND_ANYWAY_INPUT_ID = "fax-send-anyway";
 export const SEND_ANYWAY_BOX_ID = "id_send_with_placeholders";
 
-// True only while "Send anyway" is pressing the fax button, so the one
-// submission that press starts goes without the check, and none after it.
-let sendingAnyway = false;
+// The blanks "Send anyway" was pressed for, as the notice listed them. A
+// letter whose blanks are all on this list is faxed as it is; one with a
+// blank that is not on it waits, and the notice lists its blanks again.
+const blanksSentAnyway: string[] = [];
 
 function blankOut(match: string): string {
   return " ".repeat(match.length);
@@ -280,9 +281,12 @@ function markSentAnyway(form: HTMLFormElement, sentAnyway: boolean): void {
 // above the fax button. The insurance company would get them exactly as
 // written, and the server holds the same letter. Some of what the check
 // finds is not a blank (an acronym in brackets like [ERISA], a name typed
-// inside the brackets), so the notice offers "Send anyway". That presses the
-// fax button again, and the submission it starts goes without the check and
-// carries the answer the server reads. The next press is checked afresh.
+// inside the brackets), so the notice offers "Send anyway", which means
+// "send these": the blanks it listed, and no others. It presses the fax
+// button again, and from then on a letter whose blanks were all listed goes
+// without the notice and carries the answer the server reads. A letter
+// edited since, with a blank in it that was not listed, waits, and the
+// notice comes back listing every blank it has.
 // A ticked "Send it as it is" box, on the page the server sends back, is the
 // same answer and lets every submission through while it stays ticked.
 export function faxMustWaitForPlaceholders(
@@ -293,8 +297,9 @@ export function faxMustWaitForPlaceholders(
   const found = findUnfilledPlaceholders(letter ? letter.value : "");
   const box = document.getElementById(SEND_ANYWAY_BOX_ID) as HTMLInputElement | null;
   const ticked = box !== null && box.checked;
-  markSentAnyway(form, found.length > 0 && sendingAnyway && !ticked);
-  if (found.length === 0 || sendingAnyway || ticked) {
+  const allSentAnyway = found.every((blank) => blanksSentAnyway.indexOf(blank) >= 0);
+  markSentAnyway(form, found.length > 0 && allSentAnyway && !ticked);
+  if (found.length === 0 || allSentAnyway || ticked) {
     removePlaceholderNotice(FAX_NOTICE_ID);
     return false;
   }
@@ -316,16 +321,15 @@ export function faxMustWaitForPlaceholders(
         // nowhere, while the fax is sent or if the browser stops it.
         removePlaceholderNotice(FAX_NOTICE_ID);
         button.focus();
-        // A click on a submit button submits its form before click()
-        // returns, so the flag covers that one submission. It is cleared
-        // even when the browser stops the submission first, for a required
-        // field left empty.
-        sendingAnyway = true;
-        try {
-          button.click();
-        } finally {
-          sendingAnyway = false;
+        // The blanks this notice listed, not the letter as it is now: one
+        // typed in since the notice showed still waits for a notice of its
+        // own.
+        for (const blank of found) {
+          if (blanksSentAnyway.indexOf(blank) < 0) {
+            blanksSentAnyway.push(blank);
+          }
         }
+        button.click();
       },
     },
   });
