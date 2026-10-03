@@ -213,6 +213,7 @@ class StaleSubmitThroughThePagesTest(TestCase):
             "pii": "on",
             "tos": "on",
             "privacy": "on",
+            "personalonly": "on",
         }
         first = self.client.post(reverse("process"), upload, follow=True)
         self.assertEqual(first.status_code, 200)

@@ -51,11 +51,6 @@ Upload your Health Insurance Denial
 	    <p>You started from the <strong>{{ microsite_title }}</strong> page. We'll pre-fill {% if default_procedure %}your procedure as <strong>{{ default_procedure }}</strong>{% endif %}{% if default_procedure and default_condition %} and {% endif %}{% if default_condition %}your condition as <strong>{{ default_condition }}</strong>{% endif %} later in the process. You can still change it if needed.</p>
 	</div>
 	{% endif %}
-	{% if form.errors %}
-	<div class="form-errors">
-	    {{ form.errors }}
-	</div>
-	{% endif %}
 	<div class="main-form">
 	<form class="fhi-stack fhi-stack-loose" method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
 		{% csrf_token %}
@@ -65,6 +60,15 @@ Upload your Health Insurance Denial
 		<input type="hidden" name="microsite_slug" value="{{ microsite_slug }}">
 		<input type="hidden" name="microsite_title" value="{{ microsite_title }}">
 		{% endif %}
+	{% comment %} Each field's error shows under that field. One the page has no
+	   message beside a field for (see INTAKE_FIELDS_WITH_A_MESSAGE in
+	   views.py) is listed here instead. {% endcomment %}
+	{% if other_errors %}
+	<div class="fhi-form-errors" role="alert">
+	    <p>Please check these and send the form again:</p>
+	    <ul>{% for error in other_errors %}<li>{{ error }}</li>{% endfor %}</ul>
+	</div>
+	{% endif %}
 	{% comment %} The letter comes first, the way most sites that take a
 	   document ask for it: it is what the person came here with. One box
 	   takes it either way, pasted in or as a file dropped on it, and the file
@@ -109,10 +113,9 @@ Upload your Health Insurance Denial
 		</div>
 		{% endif %}
 	    {% comment %} Sits between the file button and the letter box, where a
-	       chosen or dropped file is read: on a phone the message boxes at the
-	       bottom of the form are a full screen away, and an indicator nobody
-	       can see is no indicator (review). Same element the submit gate
-	       toggles. {% endcomment %}
+	       chosen or dropped file is read: an indicator a screen away from
+	       the button is one nobody sees (review). Same element the submit
+	       gate toggles. {% endcomment %}
 	    <div class="hidden-error-message hidden-progress-message" id="ocr_in_progress" role="alert" aria-live="polite">
 	      We're reading the file you uploaded. A scanned PDF is processed a page at
 	      a time, so this can take a little while. The text will appear in the
@@ -138,7 +141,8 @@ Upload your Health Insurance Denial
 		<small class="fhi-hint">Take out your name, address and other personal details first, or fill in About you below and press Remove personal details. We keep this text to improve our AI, and people on our team may read it.</small>
 		<textarea name="denial_text" id="denial_text" rows="10" form="fuck_health_insurance_form"
 		    placeholder="Your denial goes here"
-		    class="fhi-field">{{ocr_result}}</textarea>
+		    class="fhi-field"{% if form.denial_text.errors %} aria-invalid="true" aria-describedby="need_denial"{% endif %}>{{ocr_result}}</textarea>
+		{% include "partials/field_error.html" with id="need_denial" message="We need your denial in the box above. If you never got one, say so and describe what was denied (for example: the pharmacy said my PrEP was denied)." errors=form.denial_text.errors %}
 		<small class="fhi-hint">This version, with the personal details we could find removed, is sent to our server.</small>
 	    </div>
 	</section>
@@ -160,7 +164,8 @@ Upload your Health Insurance Denial
 		      <span class="fhi-note">
 		      </span>
 		    </label>
-		    <input type="email" id="email" name="email" class="fhi-field">
+		    <input type="email" id="email" name="email" class="fhi-field"{% if form.email.errors %} aria-invalid="true" aria-describedby="email_error"{% endif %}>
+		    {% include "partials/field_error.html" with id="email_error" message="We need your email to go on. It lets us delete your data later if you ask." errors=form.email.errors filled=form.email.value %}
 		</div>
 		<div class="together-form-group">
 		  <div class="fhi-field-group">
@@ -190,26 +195,38 @@ Upload your Health Insurance Denial
 		<small class="fhi-hint">Takes the name, street and ZIP code above out of your letter, in your browser. Check the letter afterwards for anything it missed.</small>
 	    </div>
 	</section>
-	<section class="fhi-stack">
-	    <h2>Policies</h2>
-	    <div class="fhi-check-row">
-	        <input type="checkbox" id="personalonly" name="personalonly" class="fhi-check">
-	        <label for="personalonly">This is for <b>my own appeal</b>. (Doctors, therapists and offices: see our <a href="{% url 'pro_version' %}">professional version</a>.)</label>
+	{% comment %} The four boxes the form needs ticked, as one group named by its
+	   legend. The legend holds the step's heading, so the group's name and the
+	   page outline are the same words. A box keeps its tick when the server
+	   sends the page back, so only the box it asks about needs one. {% endcomment %}
+	<section>
+	    <fieldset class="fhi-fieldset fhi-stack">
+		<legend><h2>Policies</h2></legend>
+		<div class="fhi-check-row">
+		<input type="checkbox" id="pii" name="pii" class="fhi-check"{% if form.pii.value %} checked{% endif %}{% if form.pii.errors %} aria-invalid="true" aria-describedby="pii_error"{% endif %}>
+		<label for="pii">I've taken my personal details out of the letter above.</label>
+		{% include "partials/field_error.html" with id="pii_error" message="Please tick the box to confirm you've taken your personal details out of the letter." errors=form.pii.errors %}
 		</div>
 		<div class="fhi-check-row">
-		<input type="checkbox" id="privacy" name="privacy" class="fhi-check">
+		<input type="checkbox" id="privacy" name="privacy" class="fhi-check"{% if form.privacy.value %} checked{% endif %}{% if form.privacy.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
 		<label for="privacy">I have read and understand the <a class="link" href="{% url 'privacy_policy' %}">privacy
 		    policy.</a>
 		</label>
 		</div>
 		<div class="fhi-check-row">
-		<input type="checkbox" id="pii" name="pii" class="fhi-check">
-		<label for="pii">I've taken my personal details out of the letter above.</label>
-		</div>
-		<div class="fhi-check-row">
-		<input type="checkbox" id="tos" name="tos" class="fhi-check">
+		<input type="checkbox" id="tos" name="tos" class="fhi-check"{% if form.tos.value %} checked{% endif %}{% if form.tos.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
 		<label for="tos">I agree to the <a href="{% url 'tos' %}">terms of service</a>. I'll use this site only for my own insurance appeals, not to diagnose or treat any condition.</label>
 		</div>
+		<div class="fhi-check-row">
+		<input type="checkbox" id="personalonly" name="personalonly" class="fhi-check"{% if form.personalonly.value %} checked{% endif %}{% if form.personalonly.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
+		<label for="personalonly">This is for <b>my own appeal</b>. (Doctors, therapists and offices: see our <a href="{% url 'pro_version' %}">professional version</a>.)</label>
+		</div>
+		{% comment %} firstof, not a chain of filters: a filter's argument that is
+		   not in the context raises, and /server_side_ocr renders this page
+		   with no form at all. {% endcomment %}
+		{% firstof form.privacy.errors form.tos.errors form.personalonly.errors as agreements_refused %}
+		{% include "partials/field_error.html" with id="agree_chk_error" message="Please tick each box under Policies to go on." errors=agreements_refused %}
+	    </fieldset>
 	</section>
 	<section class="fhi-stack">
 	    <h2>Optional choices</h2>
@@ -261,23 +278,7 @@ Upload your Health Insurance Denial
 				</label>
 			</div>
 	</section>
-	<div class="fhi-stack">
-	    <div class="hidden-error-message" id="email_error" role="alert" aria-live="polite">
-	      We need your email to go on. It lets us delete your data later if you ask.
-	    </div>
-	    <div class="hidden-error-message" id="agree_chk_error" role="alert" aria-live="polite">
-		Please tick each box under Policies to go on.
-	    </div>
-	    <div class="hidden-error-message" id="pii_error" role="alert" aria-live="polite">
-		Please tick the box to confirm you've taken your personal details out of the letter.
-	    </div>
-	    <div class="hidden-error-message" id="need_denial" role="alert" aria-live="polite">
-	      We need your denial in the box at the top of the form. If you never
-	      got one, say so and describe what was denied (for example: the
-	      pharmacy said my PrEP was denied).
-	    </div>
-	    <button type="submit" class="fhi-button fhi-button-primary fhi-button-large" id="submit">Submit</button>
-	</div>
+	<button type="submit" class="fhi-button fhi-button-primary fhi-button-large" id="submit">Submit</button>
 	</form>
 	</div>
 

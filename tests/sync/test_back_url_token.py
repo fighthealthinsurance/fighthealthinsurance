@@ -1349,6 +1349,7 @@ class StartingOverAfterARefusalTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
             },
             follow=True,
         )

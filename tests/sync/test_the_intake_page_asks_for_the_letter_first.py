@@ -12,10 +12,17 @@ and a phone both take it in.
 
 import re
 from pathlib import Path
+from unittest.mock import patch
 
 from bs4 import BeautifulSoup
+from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
+
+from fighthealthinsurance import views
+from fighthealthinsurance.forms import DenialForm
+from fighthealthinsurance.models import Denial
 
 JS = Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "static" / "js"
 # The scripts the page's bundle runs, and what each reads off the page.
@@ -27,7 +34,34 @@ SCRIPTS = ("scrub.ts", "scrub_client_side_form.ts", "scrub_scrub.ts", "scrub_ocr
 NOT_ON_THIS_PAGE = {"email_address", "scrub", "scrubform", "storeButton"}
 
 IDENTITY_FIELDS = ("store_fname", "store_lname", "email", "store_street", "store_zip")
-AGREEMENTS = ("personalonly", "privacy", "pii", "tos")
+# In page order.
+AGREEMENTS = ("pii", "privacy", "tos", "personalonly")
+# Each box's label, word for word.
+AGREEMENT_LABELS = {
+    "pii": "I've taken my personal details out of the letter above.",
+    "privacy": "I have read and understand the privacy policy.",
+    "tos": "I agree to the terms of service. I'll use this site only for my own "
+    "insurance appeals, not to diagnose or treat any condition.",
+    "personalonly": "This is for my own appeal. (Doctors, therapists and offices: "
+    "see our professional version.)",
+}
+# Each message, the field it sits under, and the fields it describes when it
+# shows. The agreements' message sits at the foot of their group, under the
+# last box.
+MESSAGES = {
+    "need_denial": ("denial_text", ("denial_text",)),
+    "email_error": ("email", ("email",)),
+    "pii_error": ("pii", ("pii",)),
+    "agree_chk_error": ("personalonly", ("privacy", "tos", "personalonly")),
+}
+CONTROLS = ("input", "textarea", "select", "button")
+EVERYTHING_BUT_THE_PERSONAL_USE_BOX = {
+    "denial_text": "My MRI was denied as not medically necessary.",
+    "email": "someone@example.com",
+    "pii": "on",
+    "privacy": "on",
+    "tos": "on",
+}
 OPTIONAL = (
     "store_raw_email",
     "use_external_models",
@@ -160,6 +194,7 @@ def _script_hooks() -> "tuple[set[str], set[str]]":
         src = (JS / script).read_text()
         ids |= set(re.findall(r'getElementById\(\s*"([^"]+)"', src))
         ids |= set(re.findall(r'(?:show|rehide)HiddenMessage\("([^"]+)"\)', src))
+        ids |= set(re.findall(r'\bcheck\(\s*"([^"]+)"', src))
         names |= set(re.findall(r"\bform\.([a-z_]+)\.", src))
     return ids - NOT_ON_THIS_PAGE, names
 
@@ -196,3 +231,230 @@ class EveryHookTheScriptsReadIsOnThePageOnceTest(TestCase):
                     if tag.get("id") == name or tag.get("name") == name
                 ]
                 self.assertEqual(len(found), 1, "form.%s" % name)
+
+
+def _scan_page(client, data=None) -> BeautifulSoup:
+    """The intake page as served: on a GET, or sent back after a POST."""
+    response = (
+        client.post(reverse("process"), data)
+        if data is not None
+        else client.get(reverse("scan"))
+    )
+    assert response.status_code == 200, response.status_code
+    return BeautifulSoup(response.content.decode(), "html.parser")
+
+
+def _follows(soup: BeautifulSoup, earlier, later) -> bool:
+    elements = soup.find_all(True)
+    order = {id(element): at for at, element in enumerate(elements)}
+    return order[id(earlier)] < order[id(later)]
+
+
+class TheAgreementsAreOneGroupTest(TestCase):
+    def setUp(self):
+        self.soup = _scan_page(self.client)
+
+    def test_the_four_boxes_are_one_fieldset_named_by_the_steps_heading(self):
+        boxes = [self.soup.find(id=box) for box in AGREEMENTS]
+        groups = {id(box.find_parent("fieldset")) for box in boxes}
+        self.assertEqual(len(groups), 1, "the boxes are not in one fieldset")
+        fieldset = boxes[0].find_parent("fieldset")
+        self.assertIsNotNone(fieldset)
+        legend = fieldset.find("legend", recursive=False)
+        self.assertIsNotNone(legend, "the group has no legend")
+        self.assertEqual(legend.get_text(" ", strip=True), "Policies")
+        # The legend holds the step's heading, so the outline keeps it.
+        self.assertIsNotNone(legend.find("h2", string="Policies"))
+        self.assertEqual(
+            [box["id"] for box in fieldset.find_all("input", type="checkbox")],
+            list(AGREEMENTS),
+        )
+
+    def test_the_boxes_keep_their_names_and_words_in_the_new_order(self):
+        boxes = self.soup.find_all("input", type="checkbox")
+        ids = [box["id"] for box in boxes]
+        self.assertEqual(
+            [ident for ident in ids if ident in AGREEMENTS],
+            list(AGREEMENTS),
+            "the agreements are not in the order pii, privacy, tos, personal use",
+        )
+        for box in AGREEMENTS:
+            with self.subTest(box=box):
+                tag = self.soup.find(id=box)
+                self.assertEqual(tag.get("name"), box)
+                label = self.soup.find("label", attrs={"for": box})
+                self.assertEqual(
+                    re.sub(r"\s+", " ", label.get_text()).strip(),
+                    AGREEMENT_LABELS[box],
+                )
+
+
+class EachMessageSitsUnderItsFieldTest(TestCase):
+    def setUp(self):
+        self.soup = _scan_page(self.client)
+
+    def test_each_message_is_an_empty_live_region_next_to_its_field(self):
+        controls = self.soup.find_all(CONTROLS)
+        for message_id, (field_id, _) in MESSAGES.items():
+            with self.subTest(message=message_id):
+                message = self.soup.find(id=message_id)
+                field = self.soup.find(id=field_id)
+                self.assertEqual(message.get_text(), "", "it is not empty")
+                self.assertEqual(message.get("aria-live"), "polite")
+                self.assertTrue(message.get("data-message"), "it has no words")
+                self.assertTrue(_follows(self.soup, field, message))
+                # No other control between the field and its message.
+                after = [c for c in controls if _follows(self.soup, field, c)]
+                if after:
+                    self.assertTrue(
+                        _follows(self.soup, message, after[0]),
+                        "#%s comes after #%s" % (message_id, after[0].get("id")),
+                    )
+
+    def test_the_agreements_message_is_at_the_foot_of_their_group(self):
+        message = self.soup.find(id="agree_chk_error")
+        fieldset = self.soup.find(id="personalonly").find_parent("fieldset")
+        self.assertIsNotNone(fieldset, "the agreements are not in a fieldset")
+        self.assertIs(fieldset.find_all(True, recursive=False)[-1], message)
+
+    def test_the_page_has_no_raw_error_dump(self):
+        page = _scan_page(self.client, {})
+        self.assertIsNone(page.find(class_="errorlist"), "form.errors is dumped")
+
+    def test_a_fresh_page_marks_no_field_invalid(self):
+        for _, fields in MESSAGES.values():
+            for field_id in fields:
+                with self.subTest(field=field_id):
+                    field = self.soup.find(id=field_id)
+                    self.assertIsNone(field.get("aria-invalid"))
+                    self.assertIsNone(field.get("aria-describedby"))
+
+
+class TheFormHoldsEveryControlTest(TestCase):
+    """The rendered page has the messages, Submit and every control inside
+    the <form> element itself, read the way an HTML parser builds the page,
+    so a close tag out of place in the template shows up here."""
+
+    def _assert_inside(self, soup):
+        form = soup.find("form", id="fuck_health_insurance_form")
+        self.assertIsNotNone(form)
+        main = soup.find("main")
+        held = list(main.find_all(CONTROLS)) + [
+            soup.find(id=message) for message in MESSAGES
+        ]
+        held += main.find_all(class_="fhi-form-errors")
+        self.assertIn(soup.find(id="submit"), held)
+        for tag in held:
+            with self.subTest(tag=tag.get("id") or tag.name):
+                self.assertIn(form, tag.parents, "it is outside the form")
+
+    @override_settings(ADVANCED_OCR_OFFERED=True)
+    def test_on_the_page_as_first_served(self):
+        self._assert_inside(_scan_page(self.client))
+
+    def test_on_the_page_sent_back_with_errors(self):
+        with patch.object(
+            DenialForm, "clean", side_effect=ValidationError("Something else.")
+        ):
+            soup = _scan_page(self.client, {})
+        self.assertIsNotNone(soup.find(class_="fhi-form-errors"))
+        self._assert_inside(soup)
+
+
+class TheServerSendsEachErrorBackByItsFieldTest(TestCase):
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def assert_shows(self, soup, message_id, words=None):
+        message = soup.find(id=message_id)
+        expected = words or message["data-message"]
+        self.assertEqual(message.get_text(), expected)
+        _, fields = MESSAGES[message_id]
+        return message, fields
+
+    def test_a_post_without_the_personal_use_box_is_refused_by_the_box(self):
+        soup = _scan_page(self.client, EVERYTHING_BUT_THE_PERSONAL_USE_BOX)
+        self.assertFalse(
+            Denial.objects.filter(
+                hashed_email=Denial.get_hashed_email("someone@example.com")
+            ).exists()
+        )
+        self.assert_shows(soup, "agree_chk_error")
+        box = soup.find(id="personalonly")
+        self.assertEqual(box.get("aria-invalid"), "true")
+        self.assertEqual(box.get("aria-describedby"), "agree_chk_error")
+        for other in ("pii", "privacy", "tos"):
+            with self.subTest(box=other):
+                tag = soup.find(id=other)
+                self.assertIsNone(tag.get("aria-invalid"))
+                # What the person ticked is still ticked.
+                self.assertIn("checked", tag.attrs)
+        self.assertNotIn("checked", box.attrs)
+        for quiet in ("need_denial", "email_error", "pii_error"):
+            with self.subTest(message=quiet):
+                self.assertEqual(soup.find(id=quiet).get_text(), "")
+        self.assertEqual(
+            soup.find(id="denial_text").get_text(),
+            EVERYTHING_BUT_THE_PERSONAL_USE_BOX["denial_text"],
+        )
+
+    def test_an_empty_post_marks_each_field_with_its_own_message(self):
+        soup = _scan_page(self.client, {})
+        for message_id in MESSAGES:
+            with self.subTest(message=message_id):
+                _, fields = self.assert_shows(soup, message_id)
+                for field_id in fields:
+                    field = soup.find(id=field_id)
+                    self.assertEqual(field.get("aria-invalid"), "true")
+                    self.assertEqual(field.get("aria-describedby"), message_id)
+
+    def test_an_email_the_server_cannot_use_is_explained_in_its_own_words(self):
+        data = dict(EVERYTHING_BUT_THE_PERSONAL_USE_BOX, personalonly="on")
+        data["email"] = "someone@example"
+        soup = _scan_page(self.client, data)
+        self.assert_shows(soup, "email_error", "Enter a valid email address.")
+        self.assertEqual(soup.find(id="email").get("aria-invalid"), "true")
+
+    def test_an_error_with_no_field_message_is_listed_at_the_top_of_the_form(self):
+        with patch.object(
+            DenialForm, "clean", side_effect=ValidationError("Something else.")
+        ):
+            soup = _scan_page(self.client, {})
+        summary = soup.find(class_="fhi-form-errors")
+        self.assertIsNotNone(summary)
+        self.assertEqual(
+            [item.get_text() for item in summary.find_all("li")], ["Something else."]
+        )
+        form = soup.find("form", id="fuck_health_insurance_form")
+        first_step = form.find("section")
+        self.assertTrue(_follows(soup, summary, first_step))
+
+    def test_a_complete_post_goes_on_to_the_next_step(self):
+        data = dict(EVERYTHING_BUT_THE_PERSONAL_USE_BOX, personalonly="on")
+        response = self.client.post(reverse("process"), data, follow=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            Denial.objects.filter(
+                hashed_email=Denial.get_hashed_email("someone@example.com")
+            ).exists()
+        )
+
+
+class TheLetterTheServerReadIsInTheBoxTest(TestCase):
+    """/server_side_ocr sends the same page back with the letter it read in
+    the box. That render has no form in its context, so the page's messages
+    and boxes render from nothing at all there."""
+
+    def test_the_page_after_reading_an_upload_holds_the_letter(self):
+        upload = SimpleUploadedFile(
+            "letter.png", b"not read: _ocr is patched", content_type="image/png"
+        )
+        with patch.object(views.OCRView, "_ocr", return_value="Your MRI was denied."):
+            response = self.client.post(
+                reverse("server_side_ocr"), {"uploader": upload}
+            )
+        self.assertEqual(response.status_code, 200)
+        soup = BeautifulSoup(response.content.decode(), "html.parser")
+        self.assertEqual(soup.find(id="denial_text").get_text(), "Your MRI was denied.")
+        for message in MESSAGES:
+            with self.subTest(message=message):
+                self.assertEqual(soup.find(id=message).get_text(), "")

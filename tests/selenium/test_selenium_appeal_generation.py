@@ -110,6 +110,7 @@ Cheap-O-Insurance-Corp""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.assert_title_eventually("Upload your Health Insurance Denial")
         self.click("button#submit")
         self.assert_title_eventually("Optional: Health History")
@@ -171,6 +172,7 @@ Cheap-O-Insurance-Corp""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
         self.assert_title_eventually("Optional: Health History")
         self.click("button#next")
@@ -203,6 +205,7 @@ Cheap-O-Insurance-Corp""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
         self.assert_title_eventually("Optional: Health History")
         self.click("button#next")
@@ -264,6 +267,7 @@ Cheap-O-Insurance-Corp"""
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         # Move to next page
@@ -320,6 +324,7 @@ Cheap-O-Insurance-Corp"""
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         # Health History page - should have back button to scan
@@ -363,6 +368,7 @@ Cheap-O-Insurance-Corp"""
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         # Health History page
@@ -438,6 +444,7 @@ Sincerely, InsuranceCo""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         self.assert_title_eventually("Optional: Health History")
@@ -461,6 +468,7 @@ Sincerely, OtherInsuranceCo""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         # On health history page for second appeal
@@ -509,6 +517,7 @@ Sincerely, InsuranceCo""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         # On health history page - should have meta tags
@@ -552,6 +561,7 @@ Sincerely, InsuranceCo""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         # On health history page
@@ -612,6 +622,7 @@ Cheap-O-Insurance-Corp"""
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         self.assert_title_eventually("Optional: Health History")
@@ -662,6 +673,7 @@ Cheap-O-Insurance-Corp"""
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         self.assert_title_eventually("Optional: Health History")
@@ -717,6 +729,7 @@ Cheap-O-Insurance-Corp"""
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         self.assert_title_eventually("Optional: Health History")

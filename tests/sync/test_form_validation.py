@@ -260,11 +260,33 @@ class TestDenialForm(TestCase):
                 "pii": True,
                 "tos": True,
                 "privacy": True,
+                "personalonly": True,
                 "denial_text": "My denial text.",
                 "email": "test@example.com",
             }
         )
         self.assertTrue(form.is_valid())
+
+    def test_requires_the_personal_use_box(self):
+        """The intake form is for a person's own appeal; the professional
+        version is a different form."""
+        form = DenialForm(
+            data={
+                "pii": True,
+                "tos": True,
+                "privacy": True,
+                "denial_text": "My denial text.",
+                "email": "test@example.com",
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertEqual(
+            form.errors["personalonly"],
+            ["Please tick the box to confirm this is for your own appeal."],
+        )
+
+    def test_the_professional_form_does_not_ask_for_the_personal_use_box(self):
+        self.assertNotIn("personalonly", ProDenialForm().fields)
 
 
 class TestProDenialForm(TestCase):

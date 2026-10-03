@@ -26,6 +26,7 @@ class ReferralSourceAppealFlowTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
                 "subscribe": "on",
                 "fname": "John",
                 "lname": "Doe",
@@ -64,6 +65,7 @@ class ReferralSourceAppealFlowTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
                 # subscribe not included
                 "referral_source": "Friend or Family",
                 "referral_source_details": "My friend Sarah",
@@ -100,6 +102,7 @@ class ReferralSourceAppealFlowTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
                 "subscribe": "on",
                 "fname": "Jane",
                 "lname": "Doe",

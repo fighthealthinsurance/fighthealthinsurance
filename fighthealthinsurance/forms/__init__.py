@@ -203,7 +203,14 @@ class BaseDenialForm(forms.Form):
 
 
 class DenialForm(BaseDenialForm):
-    pass
+    # The intake page's "this is for my own appeal" box. Only this form has
+    # it: ProDenialForm is the professional version the box points people to.
+    personalonly = forms.BooleanField(
+        required=True,
+        error_messages={
+            "required": "Please tick the box to confirm this is for your own appeal."
+        },
+    )
 
 
 class ProDenialForm(BaseDenialForm):

@@ -1857,6 +1857,13 @@ class OCRView(View):
 # genuinely different denial still gets a new row.
 DENIAL_SESSION_REUSE_WINDOW = timedelta(hours=24)
 
+# scrub.html has a message under each of these fields and shows the field's
+# error there. An error on any other field, or on the form as a whole, is
+# listed at the top of the form instead.
+INTAKE_FIELDS_WITH_A_MESSAGE = frozenset(
+    ("denial_text", "email", "pii", "privacy", "tos", "personalonly")
+)
+
 
 class InitialProcessView(generic.FormView):
     """
@@ -1908,6 +1915,18 @@ class InitialProcessView(generic.FormView):
                     )
 
         context["ocr_result"] = ocr_result
+
+        form = context.get("form")
+        other_errors: list[str] = []
+        if form is not None and form.is_bound:
+            for name, errors in form.errors.items():
+                if name in INTAKE_FIELDS_WITH_A_MESSAGE:
+                    continue
+                label = form[name].label if name in form.fields else None
+                other_errors.extend(
+                    f"{label}: {error}" if label else error for error in errors
+                )
+        context["other_errors"] = other_errors
 
         return context
 
@@ -1984,6 +2003,9 @@ class InitialProcessView(generic.FormView):
         cleaned_data = form.cleaned_data
         if "denial_id" in cleaned_data:
             del cleaned_data["denial_id"]
+        # A gate on the submission, not something the denial keeps: a form
+        # without it ticked never reaches here.
+        cleaned_data.pop("personalonly", None)
 
         # Handle mailing list subscription
         if cleaned_data.get("subscribe"):

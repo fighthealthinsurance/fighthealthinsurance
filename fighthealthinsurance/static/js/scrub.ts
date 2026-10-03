@@ -9,6 +9,7 @@ import {
   beginOcr,
   clearOcrFailure,
   endOcr,
+  focusFirstRefusedField,
   hideErrorMessages,
   notePartialOcrFailure,
   noteOcrFailure,
@@ -854,6 +855,7 @@ function setupScrub(): void {
     form.pii.addEventListener("input", hideErrorMessages);
     form.email.addEventListener("input", hideErrorMessages);
     form.denial_text.addEventListener("input", hideErrorMessages);
+    focusFirstRefusedField(form);
   } else {
     console.log("Missing form?!?");
   }

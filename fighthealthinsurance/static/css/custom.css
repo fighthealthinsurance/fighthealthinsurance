@@ -2117,12 +2117,6 @@ section:not(.slider) .share-subcopy,
     vertical-align: -0.125em;
 }
 
-/* Form validation errors */
-.form-errors {
-    color: #dc3545;
-    margin-bottom: 1rem;
-}
-
 /* ---- The page column --------------------------------------------------
    Every page's content sits in one of two columns. Bootstrap's .container
    is a layout boundary, 1320px at a desktop, and the prose pages ran text
@@ -4034,4 +4028,43 @@ summary.fhi-nav-link::after {
    margins it carries elsewhere, so About you is spaced evenly. */
 .fhi-stack > .together-form-group { row-gap: var(--fhi-space-4); }
 .fhi-stack > .together-form-group > div { margin: 0; }
+/* A group of controls under one name, such as the intake page's four
+   agreements: no box of its own, and its legend, which holds the step's
+   heading, sits over the controls the way a heading does. The legend does
+   not float, so it is the group's name whether or not another stylesheet
+   floats legends. */
+.fhi-fieldset {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+.fhi-fieldset > legend {
+    float: none;
+    width: 100%;
+    margin: 0 0 var(--fhi-space-4);
+    padding: 0;
+}
+.fhi-fieldset > legend > h2 {
+    margin: 0;
+    padding-bottom: 0;
+}
+/* A field's message (partials/field_error.html), under the field it is
+   about, and in the danger colour, 6.91:1 on white. Empty, it stays in the
+   accessibility tree so that filling it is read out, but it takes no part
+   in the layout: a stack or a tick box's row leaves no gap for it. */
+.fhi-field-error,
+.fhi-form-errors {
+    color: var(--fhi-danger);
+    font-weight: 700;
+}
+.fhi-field-error:empty { position: absolute; }
+/* Errors the page has no field message for, listed at the top of the form. */
+.fhi-form-errors {
+    display: grid;
+    gap: var(--fhi-space-2);
+}
+.fhi-form-errors > * { margin-block: 0; }
+/* A field the form cannot take as it is has its edge in the same colour. */
+.fhi-field[aria-invalid="true"] { border-color: var(--fhi-danger); }
 .fhi-text-success { color: var(--fhi-green-ink); }
