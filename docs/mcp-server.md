@@ -4,6 +4,25 @@ The read-only server for AI assistants at `/mcp` is described in the
 docstring of `fighthealthinsurance/mcp_server.py`. This page covers running
 it.
 
+## Which requests /mcp answers
+
+- **Host** must be one of Django's `ALLOWED_HOSTS` (exact names, any port;
+  `.domain` wildcards don't count). Anything else gets 421. This is the
+  check that stops DNS rebinding, so it stays on.
+- **Origin** is ignored. The dispatcher in `mcp_asgi_routes` drops the
+  header before the MCP SDK sees it, so a request that carries one is
+  served like any other. Claude's guide to testing a connector lists a
+  strict Origin check among the causes of failed connections, and we can't
+  confirm whether Claude's or ChatGPT's servers send Origin.
+- That costs nothing: `/mcp` uses no cookies and no sign-in, and a browser
+  can't call it. A page's JSON POST needs a CORS preflight first, and the
+  OPTIONS preflight gets 405 with no CORS headers. A POST a page can send
+  without one (text/plain, or a form) gets 400.
+- Only POST is answered; GET and the rest get 405.
+
+If a connector fails to connect, a 421 in the access log means the host it
+called isn't in `ALLOWED_HOSTS`.
+
 ## Alerts for prepare_appeal
 
 `prepare_appeal` is the one tool that keeps anything: it holds the denial

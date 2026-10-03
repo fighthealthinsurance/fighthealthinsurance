@@ -1512,12 +1512,15 @@ class _StrictFastMCP(FastMCP):
 def transport_security() -> TransportSecuritySettings:
     """Which Host headers /mcp answers, from Django's ALLOWED_HOSTS.
 
-    /mcp never passes through Django, so this is its only host check. Exact
-    hosts are kept (with any port); ".domain" wildcards are skipped. Where
-    ALLOWED_HOSTS is "*" (Dev), only local hosts are allowed rather than
-    turning the check off. No Origin is allowed: Claude and ChatGPT call
-    from their servers and send none, and a browser page has no business
-    here.
+    /mcp never passes through Django, so this is its only host check, and
+    the one that stops DNS rebinding. Exact hosts are kept (with any port);
+    ".domain" wildcards are skipped. Where ALLOWED_HOSTS is "*" (Dev), only
+    local hosts are allowed rather than turning the check off.
+
+    The SDK checks Origin under the same flag, against allowed_origins. That
+    list stays empty, but mcp_asgi_routes takes the Origin header off every
+    /mcp request first, so this check never sees one (its docstring says
+    why). Mounted without that dispatcher, the app refuses any Origin.
     """
     configured = [str(h).lower() for h in settings.ALLOWED_HOSTS]
     hosts = [h for h in configured if h and h != "*" and not h.startswith(".")]
@@ -2428,6 +2431,28 @@ def mcp_asgi_routes(django_http_app: ASGIApp) -> dict[str, ASGIApp]:
     scope type alone, so this entry is all it takes. /mcp never passes
     through Django's middleware, which is why transport_security() checks
     the Host header.
+
+    The Origin header is taken off /mcp requests before the SDK sees them,
+    so a request that carries one is served like any other. Claude's guide
+    to testing a connector lists a strict Origin check among the causes of
+    failed connections, and we can't confirm whether Claude's or ChatGPT's
+    servers send Origin, or with what value. Ignoring it gives nothing away:
+
+    - /mcp uses no cookies and no sign-in, so a browser page that reached it
+      would carry nothing of the person's that a script couldn't send anyway.
+    - A browser can't call it. A cross-site POST of JSON needs a CORS
+      preflight first, and that OPTIONS request gets 405 with no CORS
+      headers, so the POST is never sent. A POST a page can send without a
+      preflight (text/plain, or a form encoding) gets 400 from the SDK's
+      Content-Type check.
+    - The Host check is what stops DNS rebinding, and it stays: a page that
+      points its own name at our address still sends its own name as Host,
+      and gets 421.
+
+    In SDK 1.30 the Host and Origin checks hang off one flag
+    (enable_dns_rebinding_protection), and allowed_origins takes exact
+    values only, so removing the header here is how to drop the one check
+    and keep the other.
     """
     mcp_app = build_mcp_server(django_http_app).streamable_http_app()
 
@@ -2438,7 +2463,16 @@ def mcp_asgi_routes(django_http_app: ASGIApp) -> dict[str, ASGIApp]:
         if scope.get("method") != "POST":
             await _method_not_allowed(send)
             return
-        scope = {**scope, "path": MCP_PATH, "raw_path": MCP_PATH.encode("ascii")}
+        scope = {
+            **scope,
+            "path": MCP_PATH,
+            "raw_path": MCP_PATH.encode("ascii"),
+            "headers": [
+                (name, value)
+                for name, value in scope.get("headers", [])
+                if name.lower() != b"origin"
+            ],
+        }
         await mcp_app(scope, receive, send)
 
     return {"http": http_app, "lifespan": mcp_app}

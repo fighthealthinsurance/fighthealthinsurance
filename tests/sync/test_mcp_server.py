@@ -1106,14 +1106,66 @@ class MountingTest(TestCase):
             )
         self.assertEqual(response.status_code, 421)
 
-    async def test_a_browser_origin_is_refused(self):
+    async def test_a_request_with_an_origin_header_is_served(self):
+        """The dispatcher drops Origin, so a platform that sends one connects.
+        The answer carries no CORS headers, so a page still couldn't read it."""
+        async with running_app() as http:
+            for origin in ("https://claude.ai", "https://chatgpt.com"):
+                with self.subTest(origin=origin):
+                    response = await http.post(
+                        "/mcp",
+                        content=json.dumps(INITIALIZE),
+                        headers={**MCP_HEADERS, "Origin": origin},
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(
+                        response.json()["result"]["serverInfo"]["name"],
+                        "fight-health-insurance",
+                    )
+                    self.assertNotIn("access-control-allow-origin", response.headers)
+
+    async def test_a_browser_preflight_still_gets_405(self):
+        """A page's cross-site JSON POST needs this preflight to pass first."""
+        async with running_app() as http:
+            response = await http.options(
+                "/mcp",
+                headers={
+                    "Origin": "https://evil.example",
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "content-type",
+                },
+            )
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(response.headers["allow"], "POST")
+        self.assertNotIn("access-control-allow-origin", response.headers)
+
+    async def test_a_post_a_page_can_send_without_a_preflight_gets_400(self):
         async with running_app() as http:
             response = await http.post(
                 "/mcp",
                 content=json.dumps(INITIALIZE),
-                headers={**MCP_HEADERS, "Origin": "https://evil.example"},
+                headers={
+                    **MCP_HEADERS,
+                    "Content-Type": "text/plain",
+                    "Origin": "https://evil.example",
+                },
             )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 400)
+
+    async def test_a_bad_host_still_gets_421_with_an_origin(self):
+        """DNS rebinding: a page whose name now points at us sends that name
+        as Host (and as Origin). Dropping Origin leaves the Host check."""
+        async with running_app() as http:
+            response = await http.post(
+                "/mcp",
+                content=json.dumps(INITIALIZE),
+                headers={
+                    **MCP_HEADERS,
+                    "Host": "rebound.example",
+                    "Origin": "http://rebound.example",
+                },
+            )
+        self.assertEqual(response.status_code, 421)
 
     async def test_an_oversized_request_is_refused(self):
         body = json.dumps({**INITIALIZE, "padding": "x" * (70 * 1024)})
