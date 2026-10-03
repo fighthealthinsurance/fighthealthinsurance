@@ -150,6 +150,10 @@
 	</section>
 	<section class="fhi-stack">
 	    <h2>About you</h2>
+	    {% comment %} Says so when the letter filled any field below
+	       (letter_details.ts), each of which then carries its own "please
+	       check" line. Hidden and empty until then. {% endcomment %}
+	    <p class="fhi-note" id="details_from_letter" role="status" aria-live="polite" hidden></p>
 		<div class="together-form-group">
 		  <div class="fhi-field-group">
 		    <label for="store_fname" class="fhi-label">First name <small class="fhi-hint">(we try to keep this in your browser)</small></label>

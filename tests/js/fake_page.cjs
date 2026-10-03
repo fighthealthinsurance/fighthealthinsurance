@@ -74,6 +74,15 @@ class FakeElement {
     return this.querySelectorAll(selector)[0] || null;
   }
 
+  // This element or the nearest one around it that the selector matches.
+  closest(selector) {
+    const match = matcher(selector);
+    for (let node = this; node && node.nodeType === 1; node = node.parentNode) {
+      if (match(node)) return node;
+    }
+    return null;
+  }
+
   querySelectorAll(selector) {
     const match = matcher(selector);
     const hits = [];

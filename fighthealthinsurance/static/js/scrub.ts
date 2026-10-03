@@ -4,6 +4,8 @@ import { type OnDeviceRead, containsNormalised, isAdvancedOCREnabled, recognize 
 
 import { clean } from "./scrub_scrub";
 
+import { fillDetailsFromLetter, watchLetterForDetails } from "./letter_details";
+
 import {
   addText,
   beginOcr,
@@ -190,6 +192,19 @@ const recognizeEvent = async function (evt: Event) {
   if (selection !== latestOcrSelection) {
     untrackChunk(chunk);
     return;
+  }
+
+  // The whole selection is in the box now, so the letter's addressee block
+  // can fill the About you fields still empty, in this browser only
+  // (letter_details.ts). Once, at the end, so every page is read by the
+  // same rule. Never at the cost of what follows: the read's verdict and the
+  // on-device model still run if the fill fails.
+  if (ocrChars > 0) {
+    try {
+      fillDetailsFromLetter(textarea.value, setLocalStorageItemWithTTL);
+    } catch (error) {
+      noteAboutYouNotFilled(error);
+    }
   }
 
   // The on-device model, if the person turned it on, reads after the standard
@@ -778,6 +793,12 @@ function acceptDroppedFiles(
   window.addEventListener("drop", refuseDrop);
 }
 
+// The About you fill is a convenience, so a failure in it is noted and the
+// page carries on. Only the kind of error: the letter is in play there.
+function noteAboutYouNotFilled(error: unknown): void {
+  console.warn("scrub: About you was not filled from the letter:", error instanceof Error ? error.name : typeof error);
+}
+
 function setupScrub(): void {
   // Setup persistence toggle checkbox
   const persistenceCheckbox = document.getElementById("persistence_enabled") as HTMLInputElement;
@@ -785,7 +806,10 @@ function setupScrub(): void {
     persistenceCheckbox.checked = isPersistenceEnabled();
     persistenceCheckbox.addEventListener("change", (event) => {
       const target = event.target as HTMLInputElement;
-      setPersistenceEnabled(target.checked);
+      const remembering = setPersistenceEnabled(target.checked);
+      // Where the browser blocks storage nothing can be kept, so the box
+      // goes back to unticked rather than claim otherwise.
+      target.checked = remembering;
     });
   }
 
@@ -825,6 +849,20 @@ function setupScrub(): void {
       if (textarea.id === "denial_text") followDenialText(textarea);
     }
   });
+
+  // After both restores, so what this browser kept for About you is in its
+  // fields first and is never written over. A pasted letter, or one the
+  // server put in the box, fills only the fields still empty. Whatever goes
+  // wrong in that fill, the upload, Remove personal details and the submit
+  // check below are still wired up.
+  const letterBox = document.getElementById("denial_text") as HTMLTextAreaElement | null;
+  if (letterBox != null) {
+    try {
+      watchLetterForDetails(letterBox, setLocalStorageItemWithTTL);
+    } catch (error) {
+      noteAboutYouNotFilled(error);
+    }
+  }
 
   const elm = document.getElementById("uploader");
   if (elm != null) {
