@@ -9,8 +9,8 @@ is built to be worth as little as possible on its own:
   reached, through the resume pages and nothing else. It is not a back-link
   reference and nothing else accepts it.
 - Only for a case the person started. The link opens the patient form, so
-  a case a professional created or holds gets no reminder and no link, and
-  no link opens one (``started_by_the_person``).
+  a case a professional created, holds or was added to gets no reminder and
+  no link, and no link opens one (``person_started_cases``).
 - It says nothing. The token is 32 random bytes (``secrets.token_urlsafe``).
   The URL holds no email address, hashed email, denial id, uuid or case
   secret, and nothing can be decoded out of it.
@@ -21,7 +21,7 @@ is built to be worth as little as possible on its own:
   email address the case was started with. The denial is keyed by the hash
   of that address, so the check is a hash comparison and costs the person
   one line of typing. A leaked or logged link is useless without it. Five
-  wrong addresses revoke the link.
+  wrong addresses revoke the link, however many tries arrive at once.
 - Expiring. A link works for ``RESUME_LINK_TTL``, 48 hours from minting.
   The nudge goes out 24 hours into the journey and the journey closes at 3
   days, so 48 hours is exactly the time the case can still be resumed from
@@ -53,7 +53,8 @@ import hmac
 import secrets
 import typing
 
-from django.db.models import F
+from django.db import transaction
+from django.db.models import Exists, F, OuterRef
 from django.utils import timezone
 
 from loguru import logger
@@ -100,19 +101,31 @@ def plausible_token(token: typing.Any) -> bool:
     return isinstance(token, str) and 0 < len(token) <= _MAX_TOKEN_LENGTH
 
 
-def started_by_the_person(denial: typing.Any) -> bool:
-    """Whether the case is one a person started on the patient form.
+def person_started_cases() -> typing.Any:
+    """The cases a person started on the patient form, as a queryset.
 
     The resume link opens the patient form, so it is only for those. A case
-    a professional created, holds or keeps in a practice is finished through
-    the professional's own pages: no link is minted for it, and no link
-    opens it.
+    a professional created, holds, keeps in a practice or was added to (each
+    way ``Denial.filter_to_allowed_denials`` gives a professional a case) is
+    finished through the professional's own pages: no link is minted for it,
+    and no link opens it.
     """
-    return (
-        denial.creating_professional_id is None
-        and denial.primary_professional_id is None
-        and denial.domain_id is None
+    from fighthealthinsurance.models import (
+        Denial,
+        SecondaryDenialProfessionalRelation,
     )
+
+    added = SecondaryDenialProfessionalRelation.objects.filter(denial=OuterRef("pk"))
+    return Denial.objects.filter(
+        creating_professional__isnull=True,
+        primary_professional__isnull=True,
+        domain__isnull=True,
+    ).filter(~Exists(added))
+
+
+async def astarted_by_the_person(denial: typing.Any) -> bool:
+    """Whether ``denial`` is one of ``person_started_cases``."""
+    return bool(await person_started_cases().filter(pk=denial.pk).aexists())
 
 
 def note_step(denial_id: typing.Any, step: str) -> None:
@@ -177,30 +190,35 @@ async def amint_link(denial: typing.Any) -> str:
     return token
 
 
-def live_point(digest: typing.Any) -> typing.Optional[typing.Any]:
-    """The resume point a token digest still opens, or None.
+def _live_points(digest: str) -> typing.Any:
+    """The resume points ``digest`` opens at this moment, as a queryset.
 
-    None for a digest nobody holds (never minted, replaced, revoked, or
-    deleted with the case or at the journey's closure), one past its
-    expiry, a case whose form has been completed, and a case a professional
-    created or holds (``started_by_the_person``).
+    One query holds every condition for a link to open its case: the digest
+    is still on the row (not replaced, revoked, or deleted with the case or
+    at the journey's closure), it is not past its expiry, fewer than
+    ``RESUME_LINK_MAX_WRONG_EMAILS`` wrong addresses have been typed against
+    it, the case is one a person started (``person_started_cases``), and its
+    form has not been completed.
     """
     from fighthealthinsurance.models import IntakeJourneyEvent, IntakeResumePoint
 
+    completed = IntakeJourneyEvent.objects.filter(
+        denial_id=OuterRef("denial_id"),
+        event_type=IntakeJourneyEvent.FORM_COMPLETED,
+    )
+    return IntakeResumePoint.objects.filter(
+        token_digest=digest,
+        token_expires_at__gt=timezone.now(),
+        wrong_email_attempts__lt=RESUME_LINK_MAX_WRONG_EMAILS,
+        denial__in=person_started_cases(),
+    ).filter(~Exists(completed))
+
+
+def live_point(digest: typing.Any) -> typing.Optional[typing.Any]:
+    """The resume point a token digest still opens, or None (``_live_points``)."""
     if not isinstance(digest, str) or not digest or not enabled():
         return None
-    point = (
-        IntakeResumePoint.objects.select_related("denial")
-        .filter(token_digest=digest, token_expires_at__gt=timezone.now())
-        .first()
-    )
-    if point is None or not started_by_the_person(point.denial):
-        return None
-    if IntakeJourneyEvent.objects.filter(
-        denial_id=point.denial_id, event_type=IntakeJourneyEvent.FORM_COMPLETED
-    ).exists():
-        return None
-    return point
+    return _live_points(digest).select_related("denial").first()
 
 
 def open_case(
@@ -212,6 +230,15 @@ def open_case(
     when it does not, and ``(DEAD, None)`` when the link opens nothing,
     including the wrong address that used up its last try. Opening does not
     use the link up; see the module docstring for what does.
+
+    Tries against one link can run at the same time, so each is decided
+    against the row as it stands when the try is counted, not as it was
+    first loaded: in one transaction the row is locked and checked again,
+    a right address opens the case only if the link is still live then, and
+    a wrong one is counted by an UPDATE that itself requires the link to be
+    live with tries left. The lock queues tries one behind another where the
+    database has row locks; the conditional UPDATE keeps the count exact
+    where it has none.
     """
     from fighthealthinsurance.models import Denial, IntakeResumePoint
 
@@ -219,16 +246,31 @@ def open_case(
     if point is None:
         return DEAD, None
     typed = Denial.get_hashed_email(email or "")
-    if hmac.compare_digest(typed, point.denial.hashed_email or ""):
-        return OPENED, point
-    IntakeResumePoint.objects.filter(pk=point.pk, token_digest=digest).update(
-        wrong_email_attempts=F("wrong_email_attempts") + 1
-    )
-    revoked = IntakeResumePoint.objects.filter(
-        pk=point.pk,
-        token_digest=digest,
-        wrong_email_attempts__gte=RESUME_LINK_MAX_WRONG_EMAILS,
-    ).update(token_digest=None, token_expires_at=None, updated_at=timezone.now())
+    right = hmac.compare_digest(typed, point.denial.hashed_email or "")
+    with transaction.atomic():
+        still_live = (
+            _live_points(digest)
+            .filter(pk=point.pk)
+            .select_for_update()
+            .values_list("pk", flat=True)
+            .first()
+        )
+        if still_live is None:
+            return DEAD, None
+        if right:
+            return OPENED, point
+        counted = (
+            _live_points(digest)
+            .filter(pk=point.pk)
+            .update(wrong_email_attempts=F("wrong_email_attempts") + 1)
+        )
+        if not counted:
+            return DEAD, None
+        revoked = IntakeResumePoint.objects.filter(
+            pk=point.pk,
+            token_digest=digest,
+            wrong_email_attempts__gte=RESUME_LINK_MAX_WRONG_EMAILS,
+        ).update(token_digest=None, token_expires_at=None, updated_at=timezone.now())
     if revoked:
         logger.info(
             f"intake resume: link for denial {point.denial_id} revoked after "

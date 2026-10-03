@@ -142,8 +142,8 @@ is opened somewhere else, so this link is its own scheme, in
 `fighthealthinsurance/intake_resume.py`:
 
 - It is only for a case the person started on the patient form. A case a
-  professional created or holds gets no reminder and no link, and no link
-  opens one.
+  professional created, holds or was added to gets no reminder and no link,
+  and no link opens one.
 - The link is `/continue/<token>`, where the token is 32 random bytes. It
   holds no email address, hashed email, case id, uuid or case secret, and
   nothing can be decoded from it.
@@ -151,7 +151,7 @@ is opened somewhere else, so this link is its own scheme, in
   `IntakeResumePoint` row. The token itself is only in the email.
 - It opens nothing on its own. The page asks for the email address the case
   was started with and compares its hash with the case's. Five wrong
-  addresses revoke the link.
+  addresses revoke the link, however many tries arrive at once.
 - It works for 48 hours from minting (`RESUME_LINK_TTL`): the nudge goes out
   at 24 hours and the journey closes at 3 days, and closing deletes the link
   too. It also stops working once the case reaches a later step, once the

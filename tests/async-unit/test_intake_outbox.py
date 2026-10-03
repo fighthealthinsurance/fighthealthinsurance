@@ -612,13 +612,15 @@ class TestNudge(TransactionTestCase):
         assert not IntakeResumePoint.objects.filter(denial=denial).exists()
         assert not IntakeJourneyEvent.objects.filter(denial=denial).exists()
 
-    def test_a_case_a_professional_created_gets_no_reminder_and_no_link(self):
+    def test_a_case_a_professional_created_or_was_added_to_gets_no_reminder(self):
         from django.contrib.auth import get_user_model
 
         from fhi_users.models import ProfessionalUser
-        from fighthealthinsurance.models import IntakeResumePoint
+        from fighthealthinsurance.models import (
+            IntakeResumePoint,
+            SecondaryDenialProfessionalRelation,
+        )
 
-        denial = _make_denial(8158)
         professional = ProfessionalUser.objects.create(
             user=get_user_model().objects.create_user(
                 username="nudge-pro", email="nudge-pro@clinic.example"
@@ -626,12 +628,25 @@ class TestNudge(TransactionTestCase):
             active=True,
             npi_number="1234567890",
         )
-        Denial.objects.filter(pk=denial.pk).update(creating_professional=professional)
-        sent, send = self._send(denial)
-        assert sent is False
-        send.assert_not_awaited()
-        assert not IntakeResumePoint.objects.filter(denial=denial).exists()
-        assert not IntakeJourneyEvent.objects.filter(denial=denial).exists()
+        for denial_id, held_by in (
+            (8158, "creating_professional"),
+            (8159, "secondary_professional"),
+        ):
+            with self.subTest(held_by=held_by):
+                denial = _make_denial(denial_id)
+                if held_by == "secondary_professional":
+                    SecondaryDenialProfessionalRelation.objects.create(
+                        denial=denial, professional=professional
+                    )
+                else:
+                    Denial.objects.filter(pk=denial.pk).update(
+                        **{held_by: professional}
+                    )
+                sent, send = self._send(denial)
+                assert sent is False
+                send.assert_not_awaited()
+                assert not IntakeResumePoint.objects.filter(denial=denial).exists()
+                assert not IntakeJourneyEvent.objects.filter(denial=denial).exists()
 
     def test_a_nudge_skipped_for_a_finished_form_mints_no_link(self):
         from fighthealthinsurance.models import IntakeResumePoint
@@ -725,6 +740,33 @@ class TestClosure(TransactionTestCase):
         denial = self._unfinished_case(8157)
         _pending(denial, intake_outbox.FORM_COMPLETED)
         self._close(denial)
+        denial.refresh_from_db()
+        assert denial.health_history == "Diagnosed in 2019; two prior MRIs."
+
+    @override_settings(INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY=True)
+    def test_a_completion_recorded_just_before_the_clear_runs_keeps_the_history(
+        self,
+    ):
+        """The form is completed while the journey is closing: the completion
+        is recorded after everything else the closure did, right before the
+        statement that clears the health history runs."""
+        from django.db import connection
+
+        denial = self._unfinished_case(8160)
+        landed = []
+
+        def completion_lands_first(execute, sql, params, many, context):
+            if (
+                not landed
+                and sql.lstrip().upper().startswith("UPDATE")
+                and "health_history" in sql
+            ):
+                landed.append(_pending(denial, intake_outbox.FORM_COMPLETED))
+            return execute(sql, params, many, context)
+
+        with connection.execute_wrapper(completion_lands_first):
+            self._close(denial)
+        assert landed, "the clearing statement never ran"
         denial.refresh_from_db()
         assert denial.health_history == "Diagnosed in 2019; two prior MRIs."
 

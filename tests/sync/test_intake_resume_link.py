@@ -26,6 +26,7 @@ from fighthealthinsurance.models import (
     Denial,
     IntakeJourneyEvent,
     IntakeResumePoint,
+    SecondaryDenialProfessionalRelation,
 )
 
 EMAIL = "person@example.com"
@@ -196,6 +197,39 @@ class RefusalsTest(IntakeResumeTestBase):
             self.open_case(token, email="someone.else@example.com")
         self.assertLinkIsDead(self.open_case(token))
 
+    def open_while_wrong_tries_land(self, wrong_tries: int):
+        """Open the case with the right address, while ``wrong_tries`` other
+        tries with wrong addresses land after this one has loaded the link
+        and before it compares its address: requests running at once."""
+        digest = intake_resume.token_digest(self.mint())
+        real_hash = Denial.get_hashed_email
+        landed: list = []
+
+        def the_others_land_first(email):
+            if not landed:
+                landed.append("started")
+                for n in range(wrong_tries):
+                    landed.append(
+                        intake_resume.open_case(digest, f"guess{n}@example.com")[0]
+                    )
+            return real_hash(email)
+
+        with patch.object(
+            Denial, "get_hashed_email", side_effect=the_others_land_first
+        ):
+            outcome, _ = intake_resume.open_case(digest, EMAIL)
+        return outcome, landed[1:]
+
+    def test_a_try_running_alongside_five_wrong_ones_cannot_open_the_case(self):
+        outcome, others = self.open_while_wrong_tries_land(5)
+        self.assertEqual(others, [intake_resume.WRONG_EMAIL] * 4 + [intake_resume.DEAD])
+        self.assertEqual(outcome, intake_resume.DEAD)
+
+    def test_a_try_running_alongside_four_wrong_ones_still_opens_the_case(self):
+        outcome, others = self.open_while_wrong_tries_land(4)
+        self.assertEqual(others, [intake_resume.WRONG_EMAIL] * 4)
+        self.assertEqual(outcome, intake_resume.OPENED)
+
     def test_an_expired_link_does_not_open_the_case(self):
         token = self.mint()
         IntakeResumePoint.objects.filter(denial=self.denial).update(
@@ -250,6 +284,7 @@ class RefusalsTest(IntakeResumeTestBase):
             ("creating_professional", professional),
             ("primary_professional", professional),
             ("domain", practice),
+            ("secondary_professional", professional),
         ):
             with self.subTest(field=field):
                 held = {
@@ -257,7 +292,15 @@ class RefusalsTest(IntakeResumeTestBase):
                     "primary_professional": None,
                     "domain": None,
                 }
-                held[field] = holder
+                SecondaryDenialProfessionalRelation.objects.filter(
+                    denial=self.denial
+                ).delete()
+                if field == "secondary_professional":
+                    SecondaryDenialProfessionalRelation.objects.create(
+                        denial=self.denial, professional=holder
+                    )
+                else:
+                    held[field] = holder
                 Denial.objects.filter(pk=self.denial.pk).update(**held)
                 browser = Client()
                 self.assertLinkIsDead(

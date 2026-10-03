@@ -36,8 +36,8 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
     the email carries one resume link, minted only for the claimant, which
     opens nothing without the email address the case was started with
     (intake_resume). While the intake journey is off nothing is claimed,
-    minted or sent, and nothing is sent for a case a professional created
-    or holds.
+    minted or sent, and nothing is sent for a case a professional created,
+    holds or was added to.
     """
     from fighthealthinsurance import intake_outbox
 
@@ -49,8 +49,9 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
         logger.info(f"Intake nudge skipped for denial {denial_uuid}: no retained email")
         return False
     # The email says "you started" and links to the patient form; a case a
-    # professional created or holds is finished through their pages instead.
-    if not intake_resume.started_by_the_person(denial):
+    # professional created, holds or was added to is finished through their
+    # pages instead.
+    if not await intake_resume.astarted_by_the_person(denial):
         logger.info(
             f"Intake nudge skipped for denial {denial_uuid}: a professional's case"
         )
@@ -139,18 +140,15 @@ async def close_incomplete_journey(hashed_email: str, denial_uuid: str) -> bool:
     - Cleared only when INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY is on: the
       health history (the page says it is saved "for this appeal") and the
       caches made from it, never for a case whose form was completed, since
-      a completion can be recorded while its signal is still in flight.
+      a completion can be recorded while its signal is still in flight
+      (``_aclear_health_history``).
     """
-    from fighthealthinsurance import intake_outbox
-
     denial = await aload_denial(hashed_email, denial_uuid)
     if denial is None:
         logger.info(f"Intake journey closed for denial {denial_uuid}: no case left")
         return True
     await intake_resume.aforget(denial)
-    if getattr(
-        settings, "INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY", False
-    ) and not await intake_outbox.ahas_event(denial, intake_outbox.FORM_COMPLETED):
+    if getattr(settings, "INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY", False):
         await _aclear_health_history(denial)
     logger.info(f"Intake journey closed without completion for denial {denial_uuid}")
     return True
@@ -159,13 +157,24 @@ async def close_incomplete_journey(hashed_email: str, denial_uuid: str) -> bool:
 async def _aclear_health_history(denial) -> None:
     """Clear the health history and the caches made from it, in one UPDATE.
 
-    Scoped to those columns, so nothing else on the row is written back.
+    Scoped to those columns, so nothing else on the row is written back. The
+    UPDATE itself requires that no form completion is recorded for the case,
+    so a completion recorded at any point before it runs keeps the history.
     """
+    from django.db.models import Exists, OuterRef
+
     from fighthealthinsurance.denial_history_consent import (
         DERIVED_FROM_HEALTH_HISTORY,
     )
-    from fighthealthinsurance.models import Denial
+    from fighthealthinsurance.models import Denial, IntakeJourneyEvent
 
+    completed = IntakeJourneyEvent.objects.filter(
+        denial_id=OuterRef("pk"), event_type=IntakeJourneyEvent.FORM_COMPLETED
+    )
     cleared = {name: None for name in ("health_history", *DERIVED_FROM_HEALTH_HISTORY)}
-    await Denial.objects.filter(pk=denial.pk).aupdate(**cleared)
-    logger.info(f"Cleared the health history of closed denial {denial.uuid}")
+    if await (
+        Denial.objects.filter(pk=denial.pk)
+        .filter(~Exists(completed))
+        .aupdate(**cleared)
+    ):
+        logger.info(f"Cleared the health history of closed denial {denial.uuid}")
