@@ -33,6 +33,14 @@ class FightHealthInsuranceConfig(AppConfig):
 
         register_letter_quality_collector()
 
+        # Live assistant handoff links (prepare_appeal), same shape: a count
+        # read at scrape time, degrading to a log line before migration.
+        from fighthealthinsurance.assistant_handoff import (
+            register_assistant_handoff_collector,
+        )
+
+        register_assistant_handoff_collector()
+
         # Soft-fail visibility for IP geo lookups (chat state guessing +
         # ASN tracking): warn once, naming FHI_GEOIP_CITY_DB, when they are
         # disabled — otherwise the features silently return nothing.

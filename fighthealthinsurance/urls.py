@@ -32,6 +32,7 @@ from django.views.generic.base import RedirectView
 
 from fighthealthinsurance import (
     agent_docs,
+    assistant_handoff_views,
     fax_views,
     intake_resume_views,
     staff_views,
@@ -266,6 +267,17 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "server_side_ocr",
         sensitive_post_parameters("email")(views.OCRView.as_view()),
         name="server_side_ocr",
+    ),
+    # Where an AI assistant's prepare_appeal link lands (the code rides after
+    # "#", so it never reaches this server in the URL). Always routed so
+    # reverse() works; 404 unless both MCP flags are on, checked per request.
+    # A trailing slash added to the link is served here too: the site's
+    # ordinary 404 page would run the analytics tags with the code still in
+    # the address bar. reverse() gives the form without the slash.
+    re_path(
+        r"^from-your-assistant/?$",
+        assistant_handoff_views.AssistantHandoffView.as_view(),
+        name="assistant_handoff",
     ),
     path(
         "about-us",

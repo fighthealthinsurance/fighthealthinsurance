@@ -1125,7 +1125,12 @@ class RecommendAppeal(View):
 
 
 def review_form(
-    denial, email: str, procedure, *, date_from_letter: bool
+    denial,
+    email: str,
+    procedure,
+    *,
+    date_from_letter: bool,
+    default_condition: str = "",
 ) -> core_forms.PostInferedForm:
     """The review page's form, starting from what the denial row holds.
 
@@ -1137,6 +1142,10 @@ def review_form(
     field filled from the letter says so under it. The way back from the next
     step comes after the person has answered this page, so it shows the row
     as they left it: a date they cleared stays blank.
+
+    ``default_condition`` is the condition a treatment guide or an assistant
+    handoff carried. It fills the diagnosis only when the row has none
+    (form_valid keeps it).
     """
     from_letter = []
     denial_date = denial.denial_date
@@ -1153,7 +1162,7 @@ def review_form(
             "email": email,
             "your_state": denial.your_state,
             "procedure": procedure,
-            "diagnosis": denial.diagnosis,
+            "diagnosis": denial.diagnosis or default_condition,
             "semi_sekret": denial.semi_sekret,
             "insurance_company": denial.insurance_company,
             "plan_id": denial.plan_id,
@@ -1217,7 +1226,13 @@ class CategorizeReview(View):
             procedure = default_procedure
             used_default_procedure = True
 
-        form = review_form(denial, email, procedure, date_from_letter=False)
+        form = review_form(
+            denial,
+            email,
+            procedure,
+            date_from_letter=False,
+            default_condition=request.session.get("default_condition", ""),
+        )
 
         context = {
             "post_infered_form": form,
@@ -2197,6 +2212,18 @@ class InitialProcessView(generic.FormView):
             self.request.session["default_condition"] = default_condition
             self.request.session["microsite_slug"] = microsite_slug
             self.request.session["microsite_title"] = microsite_title
+        elif existing_denial is None:
+            # A new case started without a guide's or an assistant's
+            # treatment must not inherit one from an earlier case in this
+            # session. A resubmission of the same case (the flow's own Back
+            # link to /scan carries no treatment) keeps it.
+            for key in (
+                "default_procedure",
+                "default_condition",
+                "microsite_slug",
+                "microsite_title",
+            ):
+                self.request.session.pop(key, None)
 
         # A resubmission reuses the session's denial, so there can already
         # be history to show.
@@ -2744,7 +2771,13 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
             procedure = default_procedure
             used_default_procedure = True
 
-        new_form = review_form(denial, email, procedure, date_from_letter=True)
+        new_form = review_form(
+            denial,
+            email,
+            procedure,
+            date_from_letter=True,
+            default_condition=self.request.session.get("default_condition", ""),
+        )
 
         context = {
             "post_infered_form": new_form,

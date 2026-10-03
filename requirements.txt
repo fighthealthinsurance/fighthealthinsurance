@@ -54,6 +54,7 @@ git+https://github.com/fighthealthinsurance/django-encrypted-model-fields.git@d9
 git+https://github.com/fighthealthinsurance/llm-result-utils.git@f24e0bf7fa485d682fe3e42df831623c55844462
 icd10-cm
 loguru
+mcp>=1.30,<2  # Read-only MCP server at /mcp (mcp_server.py). 2.x renames FastMCP and needs newer bs4 and seleniumbase first
 metapub==0.5.12
 nest_asyncio
 packaging>=20.0

@@ -1120,8 +1120,9 @@ def test_crd_probes_do_not_read_an_api_error_as_a_missing_operator():
     # A tripwire, not a fact about the number 5: adding a CRD-gated apply
     # should make someone confirm the new one uses crd_present rather than
     # hand-rolling a probe that swallows errors. Bumped when the Ray
-    # actor-reconcile alerts were added.
-    assert build.count("if crd_present ") == 5
+    # actor-reconcile alerts were added, and again for the assistant
+    # handoff alerts.
+    assert build.count("if crd_present ") == 6
     # The real invariant: every CRD-gated apply goes through the helper, so
     # the count above and the number of guarded blocks agree.
     guarded = build.count("no PrometheusRule CRD") + build.count("no PodMonitor CRD")

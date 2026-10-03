@@ -46,11 +46,26 @@
 	    </p>
 	</div>
 	{% endif %}
-	{% if default_procedure or default_condition %}
+	{% if from_assistant %}
+	{% comment %} The assistant handoff (assistant_handoff_views.py): the letter box
+	   below holds what an AI assistant sent, and this is the person's first
+	   sight of it. {% endcomment %}
+	<div class="alert-box alert-box-success" id="from-assistant">
+	    <p><strong>Your assistant filled this in. Check it, remove personal details, and submit when ready.</strong></p>
+	    <p>Before you submit, fill in your name and street address under About you and press Remove personal details, so they come out of the letter. We deleted our copy of what your assistant sent when you opened this page, and nothing is saved as an appeal until you press Submit.</p>
+	    {% comment %} Never the assistant's own words here: they show only in the
+	       letter box and, later, in fields the person can change. {% endcomment %}
+	    {% if default_procedure or default_condition %}
+	    <p>Your assistant also told us {% if default_procedure %}the treatment{% endif %}{% if default_procedure and default_condition %} and {% endif %}{% if default_condition %}the condition{% endif %}. If we can't find {% if default_procedure and default_condition %}them{% else %}it{% endif %} in the letter, we'll fill {% if default_procedure and default_condition %}them{% else %}it{% endif %} in on a later step, where you can check and change {% if default_procedure and default_condition %}them{% else %}it{% endif %}.</p>
+	    {% endif %}
+	    <p>If you didn't ask an AI assistant to do this, close this page.</p>
+	</div>
+	{% endif %}
+	{% if microsite_title %}{% if default_procedure or default_condition %}
 	<div class="alert-box alert-box-success">
 	    <p>You started from the <strong>{{ microsite_title }}</strong> page. We'll pre-fill {% if default_procedure %}your procedure as <strong>{{ default_procedure }}</strong>{% endif %}{% if default_procedure and default_condition %} and {% endif %}{% if default_condition %}your condition as <strong>{{ default_condition }}</strong>{% endif %} later in the process. You can still change it if needed.</p>
 	</div>
-	{% endif %}
+	{% endif %}{% endif %}
 	<div class="main-form">
 	<form class="fhi-stack fhi-stack-loose" method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data" novalidate>
 		{% csrf_token %}
@@ -143,7 +158,7 @@
 		<small class="fhi-hint">Take out your name, address and other personal details first, or fill in About you below and press Remove personal details. We keep this text to improve our AI, and people on our team may read it.</small>
 		<textarea name="denial_text" id="denial_text" rows="10" form="fuck_health_insurance_form"
 		    placeholder="Your denial goes here"
-		    class="fhi-field"{% if form.denial_text.errors %} aria-invalid="true" aria-describedby="need_denial"{% endif %}>{{ocr_result}}</textarea>
+		    class="fhi-field"{% if form.denial_text.errors %} aria-invalid="true" aria-describedby="need_denial"{% endif %}{% if from_assistant %} data-from-assistant="true"{% endif %}>{{ocr_result}}</textarea>
 		{% include "partials/field_error.html" with id="need_denial" message="Paste your denial letter in the box above. No letter? Describe what was denied, for example: the pharmacy denied my PrEP." errors=form.denial_text.errors %}
 		<small class="fhi-hint">This version, with the personal details we could find removed, is sent to our server.</small>
 	    </div>

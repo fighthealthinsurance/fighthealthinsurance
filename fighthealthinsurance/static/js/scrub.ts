@@ -1,4 +1,4 @@
-import { storeLocal, storeTextareaLocal, getLocalStorageItemWithTTL, setLocalStorageItemWithTTL, isPersistenceEnabled, setPersistenceEnabled } from "./shared";
+import { storeLocal, storeTextareaLocal, getLocalStorageItemWithTTL, setLocalStorageItemWithTTL, isPersistenceEnabled, setPersistenceEnabled, keepServerFilledText } from "./shared";
 
 import { type OnDeviceRead, containsNormalised, isAdvancedOCREnabled, recognize } from "./scrub_ocr";
 
@@ -843,6 +843,10 @@ function setupScrub(): void {
       if (textarea.value === "") {
         const storedValue = getLocalStorageItemWithTTL(textarea.id);
         textarea.value = storedValue !== null ? storedValue : "";
+      } else {
+        // Text an assistant's handoff filled in is saved once now, so a
+        // reload or a later /scan doesn't lose it (see shared.ts).
+        keepServerFilledText(textarea);
       }
       // After the restore, so the restored text is the baseline the first
       // keystroke is diffed against.
