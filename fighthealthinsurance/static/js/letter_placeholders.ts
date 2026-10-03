@@ -312,7 +312,10 @@ export function faxMustWaitForPlaceholders(
     anyway: {
       label: "Send anyway",
       choose: () => {
+        // The notice goes, and the focus goes to the fax button rather than
+        // nowhere, while the fax is sent or if the browser stops it.
         removePlaceholderNotice(FAX_NOTICE_ID);
+        button.focus();
         // A click on a submit button submits its form before click()
         // returns, so the flag covers that one submission. It is cleared
         // even when the browser stops the submission first, for a required

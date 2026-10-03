@@ -258,19 +258,31 @@ const scenarios = {
   'fax-box-ticked'() {
     const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
     const submissions = wireFaxForm(lib);
-    // The tick box the server's page puts under the letter, ticked.
-    const box = doc.createElement('input');
-    box.id = 'id_send_with_placeholders';
-    box.setAttribute('type', 'checkbox');
-    box.setAttribute('name', 'send_with_placeholders');
-    box.setAttribute('value', '1');
-    box.checked = true;
-    faxForm.insertBefore(box, faxButton);
+    addSendItAsItIsBox(true);
+    faxLetter.value = WITH_BLANKS;
+    faxButton.click();
+    report({submissions});
+  },
+  'fax-box-unticked'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    addSendItAsItIsBox(false);
     faxLetter.value = WITH_BLANKS;
     faxButton.click();
     report({submissions});
   },
 };
+
+// The tick box the server's page puts under the letter.
+function addSendItAsItIsBox(ticked) {
+  const box = doc.createElement('input');
+  box.id = 'id_send_with_placeholders';
+  box.setAttribute('type', 'checkbox');
+  box.setAttribute('name', 'send_with_placeholders');
+  box.setAttribute('value', '1');
+  box.checked = ticked;
+  faxForm.insertBefore(box, faxButton);
+}
 
 const scenario = scenarios[scenarioName];
 if (!scenario) throw new Error('unknown scenario ' + scenarioName);

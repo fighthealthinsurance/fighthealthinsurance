@@ -11,6 +11,7 @@ blank; the appeal page's "Send anyway" posts the same field. With it, the
 letter is faxed, and the log says how many blanks went, never what they were.
 """
 
+import re
 from unittest.mock import patch
 
 from django.test import Client, TestCase
@@ -42,9 +43,12 @@ class StageFaxRefusesUnfilledPlaceholdersTest(TestCase):
         )
 
     def post(self, letter: str, **extra: str):
+        # autospec, so the builder refuses an argument it doesn't take the
+        # way the real one does.
         with (
             patch(
-                "fighthealthinsurance.common_view_logic.AppealAssemblyHelper.create_or_update_appeal"
+                "fighthealthinsurance.common_view_logic.AppealAssemblyHelper.create_or_update_appeal",
+                autospec=True,
             ) as assemble,
             patch(
                 "fighthealthinsurance.fax_views.SendFaxHelper.stage_appeal_as_fax",
@@ -111,13 +115,32 @@ class StageFaxRefusesUnfilledPlaceholdersTest(TestCase):
             (response.status_code, stage.call_count, send.call_count), (200, 1, 1)
         )
 
+    def test_the_appeal_is_built_without_the_answer_to_send_it_as_it_is(self):
+        _, assemble, *_ = self.post(WITH_BLANKS, send_with_placeholders="1")
+        self.assertNotIn("send_with_placeholders", assemble.call_args.kwargs)
+
     def test_the_page_naming_the_blanks_offers_to_send_it_as_it_is(self):
         response, *_ = self.post(WITH_BLANKS)
         self.assertContains(
             response,
             '<input type="checkbox" name="send_with_placeholders" value="1"'
-            ' class="fhi-check" id="id_send_with_placeholders">',
+            ' class="fhi-check" id="id_send_with_placeholders"'
+            ' aria-describedby="id_completed_appeal_text_error">',
             html=True,
+        )
+
+    def test_the_box_is_described_by_the_list_of_blanks(self):
+        page = self.post(WITH_BLANKS)[0].content.decode()
+        box = re.search(r'<input[^>]*id="id_send_with_placeholders"[^>]*>', page)
+        described_by = re.search(r'aria-describedby="([^"]+)"', box.group(0))
+        description = described_by and re.search(
+            rf'<ul[^>]*id="{re.escape(described_by.group(1))}"[^>]*>(.*?)</ul>',
+            page,
+            re.S,
+        )
+        self.assertIn(
+            "Fill in these blanks before we fax your letter: [Your Name], {{SCSID}}.",
+            description.group(1) if description else "",
         )
 
     def test_the_box_is_labelled_with_what_ticking_it_means(self):

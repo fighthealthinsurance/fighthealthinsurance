@@ -552,6 +552,12 @@ def test_send_anyway_sends_the_fax_with_the_answer_the_server_reads(compiled):
 
 
 @needs_node
+def test_send_anyway_puts_the_focus_on_the_fax_button(compiled):
+    page = run_scenario(compiled, "fax-send-anyway")
+    assert page["focused"] == "#fax_appeal"
+
+
+@needs_node
 def test_after_send_anyway_the_next_press_is_checked_afresh(compiled):
     page = run_scenario(compiled, "fax-send-anyway-then-again")
     assert (
@@ -571,6 +577,15 @@ def test_a_ticked_send_it_as_it_is_box_lets_the_fax_through(compiled):
     assert (page["submissions"], page["faxNotice"]) == (
         [{"send_with_placeholders": "1"}],
         None,
+    )
+
+
+@needs_node
+def test_an_unticked_send_it_as_it_is_box_still_holds_the_fax(compiled):
+    page = run_scenario(compiled, "fax-box-unticked")
+    assert (page["submissions"], page["faxNotice"]["items"]) == (
+        ["held"],
+        ["[Your Name]", "{{SCSID}}"],
     )
 
 

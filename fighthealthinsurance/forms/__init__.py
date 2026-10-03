@@ -401,6 +401,13 @@ class FaxForm(DenialRefForm):
         if self.cleaned_data.get("send_with_placeholders"):
             self.placeholders_sent_as_they_are = len(found)
             return cleaned_data
+        letter_id = self["completed_appeal_text"].auto_id
+        if letter_id and "send_with_placeholders" in self.fields:
+            # The box's label says "these"; a screen reader reads it with
+            # the list of blanks, the letter's error, which has this id.
+            self.fields["send_with_placeholders"].widget.attrs[
+                "aria-describedby"
+            ] = f"{letter_id}_error"
         self.add_error(
             "completed_appeal_text",
             forms.ValidationError(
