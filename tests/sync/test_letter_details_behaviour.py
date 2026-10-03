@@ -550,6 +550,40 @@ def test_the_page_with_working_storage_fills_and_remembers(compiled):
 
 
 @needs_node
+def test_ticking_remember_with_blocked_storage_unticks_and_never_throws(compiled):
+    """Ticking "Remember what I typed" wrote the setting to storage the
+    browser blocks, so the change threw a SecurityError and the box stayed
+    ticked, saying typing was kept when nothing could be. It goes back to
+    unticked."""
+    result = run(compiled, page=True, storageBlocked=True, persistenceClicks=[True])
+    assert result["rememberErrors"] == []
+    assert result["unhandled"] == []
+    assert result["remembering"] is False
+    assert result["stored"] == []
+
+
+@needs_node
+def test_remember_with_full_storage_never_throws(compiled):
+    """A full storage takes no writes, the setting included: unticking and
+    ticking again throw nothing."""
+    result = run(compiled, page=True, storageFull=True, persistenceClicks=[False, True])
+    assert result["rememberErrors"] == []
+    assert result["unhandled"] == []
+
+
+@needs_node
+def test_remember_with_working_storage_unticks_and_ticks_again(compiled):
+    """The same box with storage that works, so the tests above are about
+    the storage: unticked it stays unticked, and ticked again it keeps."""
+    unticked = run(compiled, page=True, persistenceClicks=[False])
+    assert unticked["rememberErrors"] == []
+    assert unticked["remembering"] is False
+    ticked = run(compiled, page=True, persistenceClicks=[False, True])
+    assert ticked["rememberErrors"] == []
+    assert ticked["remembering"] is True
+
+
+@needs_node
 def test_a_broken_fill_never_stops_the_page(compiled):
     """Whatever goes wrong in the fill, on load or after a file is read, the
     page is set up and the read finishes; the console gets the kind of error
@@ -677,6 +711,74 @@ def test_a_member_name_label_with_a_right_column_fills_the_name(compiled):
     result = run(compiled, page=True, pdf=[pdf_page(letter)])
     assert "Member name: Jordan Example\tService Date: 09/01/2026\n" in result["box"]
     assert result["fields"] == JORDAN_NAME_ONLY
+
+
+# Long enough that a page's text layer is read rather than scanned.
+FINDING = "We reviewed your request for an MRI and found it not medically necessary."
+
+
+@needs_node
+def test_a_heading_in_a_right_column_keeps_the_block_under_it_out(compiled):
+    """A text PDF that puts "Services for:" in a right column on the
+    "Member ID:" line, over the facility's block, which starts with the
+    person's name. Only the first column of the line above was checked
+    for a heading, so the facility's street and ZIP were filled in as the
+    person's."""
+    page = [
+        ends_the_line(
+            text_run("Acme Example Health Plan", 740, height=11, width=133.88)
+        ),
+        ends_the_line(text_run("PO Box 0000", 726, height=11, width=65.43)),
+        ends_the_line(text_run("Anytown, NY 00000", 712, height=11, width=97.22)),
+        ends_the_line(text_run("Dear Member,", 680, height=11, width=70.29)),
+        ends_the_line(
+            text_run("Member name: Jordan Example", 660, height=11, width=156.5)
+        ),
+        text_run("Member ID: XYZ000000", 640, height=11, width=118.6),
+        text_run(" ", 640, x=190.6, height=0, width=159.4),
+        ends_the_line(text_run("Services for:", 640, x=350, height=11, width=61.13)),
+        ends_the_line(text_run("Jordan Example", 626, x=350, height=11, width=79.47)),
+        ends_the_line(
+            text_run("789 Hospital Drive", 612, x=350, height=11, width=89.86)
+        ),
+        ends_the_line(
+            text_run("Springfield, IL 62702", 598, x=350, height=11, width=100.89)
+        ),
+        text_run(FINDING, 570, height=11, width=366.2),
+    ]
+    result = run(compiled, page=True, pdf=[page])
+    assert "Member ID: XYZ000000\tServices for:\nJordan Example\n" in result["box"]
+    assert result["fields"] == JORDAN_NAME_ONLY
+
+
+def courier_run(text: str, baseline: float, x: float = 72):
+    """A run of 10 point Courier, as pdf.js hands it over: each character
+    six points (0.6 em) wide."""
+    return dict(
+        text_run(text, baseline, x=x, height=10, width=6.0 * len(text)),
+        transform=[10, 0, 0, 10, x, baseline],
+    )
+
+
+@needs_node
+def test_a_zip_two_monospaced_spaces_past_the_state_is_read(compiled):
+    """A monospaced PDF that places "62701" two spaces (1.2 em) past
+    "Springfield, IL". The gap comes through as a tab, and the city line
+    cut at it had no ZIP, so no address was filled."""
+    page = [
+        ends_the_line(courier_run("Acme Example Health Plan", 740)),
+        ends_the_line(courier_run("Jordan Example", 700)),
+        ends_the_line(courier_run("123 Sample Street", 688)),
+        courier_run("Springfield, IL", 676),
+        text_run(" ", 676, x=162, height=0, width=12),
+        ends_the_line(courier_run("62701", 676, x=174)),
+        ends_the_line(courier_run("Dear Jordan Example,", 640)),
+        ends_the_line(courier_run(FINDING, 620)),
+        courier_run("You can appeal this decision within 180 days.", 608),
+    ]
+    result = run(compiled, page=True, pdf=[page])
+    assert "Springfield, IL\t62701\n" in result["box"]
+    assert result["fields"] == JORDAN
 
 
 @needs_node
@@ -892,6 +994,29 @@ RULE_CASES = {
     # A label's value runs from past the gap after the label to the next one.
     "Dear Member,\nMember name:\tJordan Example\tService Date: 09/01/2026\n": NAME,
     "Dear Member,\nMember name: Jordan Example    Service Date: 09/01/2026\n": NAME,
+    # For a label, two spaces are a gap.
+    "Dear Member,\nMember name: Jordan Example  Service Date: 09/01/2026\n": NAME,
+    # A heading in any column of the line above, from a PDF (a tab) or pasted
+    # (a run of spaces, and the block indented under it).
+    "Dear Member,\nMember name: Jordan Example\nMember ID: XYZ000000\tServices for:\n"
+    "Jordan Example\n789 Hospital Drive\nSpringfield, IL 62702\n": NAME,
+    "Dear Member,\nMember name: Jordan Example\n"
+    "Claim number: 0000000\tRendering provider:\nJordan Example\n"
+    "789 Hospital Drive\nSpringfield, IL 62702\n": NAME,
+    "Dear Member,\nMember name: Jordan Example\n"
+    "Member ID: XYZ000000      Services for:\n"
+    "                              Jordan Example\n"
+    "                              789 Hospital Drive\n"
+    "                              Springfield, IL 62702\n": NAME,
+    # The city line is read whole: any gap between the city, the state and
+    # the ZIP, and the ZIP up to the end or another column.
+    "Dear Jordan Example,\nJordan Example\n123 Sample Street\n"
+    "Springfield, IL\t62701\n": FULL,
+    "Dear Jordan Example,\nJordan Example\n123 Sample Street\n"
+    "Springfield,\tIL\t62701-0000\tGroup number: 00000\n": FULL,
+    # But a column gap does not join two columns into one city.
+    "Dear Jordan Example,\nMember name: Jordan Example\nJordan Example\n"
+    "123 Sample Street\nSpringfield      Anytown, IL 60001\n": NAME,
 }
 
 

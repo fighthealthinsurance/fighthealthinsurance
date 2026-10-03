@@ -198,6 +198,8 @@ function whatAboutYouShows() {
 //   pdf:         [[item, ...], ...] a PDF with a text layer, one list of
 //                pdf.js text items per page, chosen with the file button
 //                once the page is set up
+//   persistenceClicks: [true or false, ...] the person ticks or unticks
+//                "Remember what I typed", in turn, once the page is set up
 //   removePersonalDetails: the person presses Remove personal details last
 // The document finishes loading (DOMContentLoaded) once the script has run.
 // Reports what the page wired up, what About you shows, what the box holds,
@@ -293,6 +295,17 @@ async function runThePage() {
     domReadyError = error.name + ': ' + error.message;
   }
 
+  const persistenceBox = doc.getElementById('persistence_enabled');
+  const rememberErrors = [];
+  for (const checked of spec.persistenceClicks || []) {
+    persistenceBox.checked = checked;
+    try {
+      persistenceBox.dispatch('change', {target: persistenceBox});
+    } catch (error) {
+      rememberErrors.push(error.name + ': ' + error.message);
+    }
+  }
+
   const uploader = doc.getElementById('uploader');
   if (spec.pdf) {
     uploader.files = [{name: 'letter.pdf', type: 'application/pdf'}];
@@ -318,8 +331,9 @@ async function runThePage() {
       setupError,
       domReadyError,
       removeError,
+      rememberErrors,
       unhandled,
-      remembering: doc.getElementById('persistence_enabled').checked === true,
+      remembering: persistenceBox.checked === true,
       wired: {
         upload: listeners(uploader, 'change'),
         paste: listeners(box, 'paste'),

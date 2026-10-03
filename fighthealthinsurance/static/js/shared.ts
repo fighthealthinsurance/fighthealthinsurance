@@ -39,13 +39,30 @@ function isPersistenceEnabled(): boolean {
   }
 }
 
-// Set persistence preference
-function setPersistenceEnabled(enabled: boolean): void {
-  window.localStorage.setItem(PERSISTENCE_ENABLED_KEY, enabled.toString());
-  if (!enabled) {
-    // Clear all form data when disabling persistence
-    clearFormData();
+// Set persistence preference, and say whether this browser now keeps what
+// is typed. Never throws: where the browser blocks storage nothing can be
+// kept, so the answer is false, and a write that fails (full storage) leaves
+// the preference as it was.
+function setPersistenceEnabled(enabled: boolean): boolean {
+  const storage = browserStorage();
+  if (storage === null) {
+    return false;
   }
+  if (!enabled) {
+    // Clear all form data when disabling persistence. First, so a full
+    // storage has room for the preference.
+    try {
+      clearFormData();
+    } catch {
+      // The preference below is still written.
+    }
+  }
+  try {
+    storage.setItem(PERSISTENCE_ENABLED_KEY, enabled.toString());
+  } catch {
+    // Not written; the preference read back below is the one in force.
+  }
+  return isPersistenceEnabled();
 }
 
 // Clear all stored form data (but keep the persistence preference)

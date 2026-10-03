@@ -806,7 +806,10 @@ function setupScrub(): void {
     persistenceCheckbox.checked = isPersistenceEnabled();
     persistenceCheckbox.addEventListener("change", (event) => {
       const target = event.target as HTMLInputElement;
-      setPersistenceEnabled(target.checked);
+      const remembering = setPersistenceEnabled(target.checked);
+      // Where the browser blocks storage nothing can be kept, so the box
+      // goes back to unticked rather than claim otherwise.
+      target.checked = remembering;
     });
   }
 

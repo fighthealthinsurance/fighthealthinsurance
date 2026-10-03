@@ -13,15 +13,17 @@
 //
 // 1. The name. The salutation ("Dear Jordan Example,") and the labels
 //    "Member:", "Member name:", "Patient:", "Patient name:", "Subscriber:"
-//    and "Subscriber name:" name the person. A generic salutation ("Dear
-//    Member", "Dear Sir or Madam", "Dear Provider") names no one, and nor
-//    does one to a doctor ("Dear Dr. Pat Provider", "Dear Casey Doctorson,
-//    MD"). Only a name that splits cleanly counts: a first name, any middle
-//    initials, and a last name ("Example, Jordan A" reads the same way). A
-//    middle name spelled out fills nothing, and so do two different people
-//    anywhere among the salutations and labels. Two middle initials that
-//    differ (Jordan A. Example and Jordan B. Example) are two people; a
-//    name with an initial and the same name without one are the same.
+//    and "Subscriber name:" name the person, up to a tab or two spaces (the
+//    next column) or a word that starts another label. A generic salutation
+//    ("Dear Member", "Dear Sir or Madam", "Dear Provider") names no one, and
+//    nor does one to a doctor ("Dear Dr. Pat Provider", "Dear Casey
+//    Doctorson, MD"). Only a name that splits cleanly counts: a first name,
+//    any middle initials, and a last name ("Example, Jordan A" reads the
+//    same way). A middle name spelled out fills nothing, and so do two
+//    different people anywhere among the salutations and labels. Two middle
+//    initials that differ (Jordan A. Example and Jordan B. Example) are two
+//    people; a name with an initial and the same name without one are the
+//    same.
 // 2. The name has to be backed up. A salutation alone is not enough: a
 //    greeting this does not know ("Dear Card Holder") reads like a name. A
 //    label in capitals with no comma is not enough either, since it could
@@ -32,16 +34,19 @@
 //    name line, then a street line (a number and street words, or a PO box),
 //    an optional apartment or unit line, then a "City, ST 12345" line, all
 //    single spaced or all double spaced. Never from a block under a heading
-//    for something else ("Services for:", "Provider:"), and never under a
-//    name line with a different middle initial or a middle name spelled
-//    out. Each line is read only up to a wide gap (a tab, or three or more
-//    spaces): what is past it is another column, such as "Member ID:" on
-//    the street line's baseline. The street line and the five-digit ZIP
-//    come from that block and no other. With a unit line, or a unit in the
-//    column beside the street, only the ZIP is filled: the street field
-//    would drop the unit, so the finished appeal would lose it and Remove
-//    personal details would leave it in the letter. Two such blocks that
-//    disagree fill no address.
+//    for something else ("Services for:", "Provider:"), in any column of the
+//    line above it, and never under a name line with a different middle
+//    initial or a middle name spelled out. The name, street and unit lines
+//    are read only up to a wide gap (a tab, or three or more spaces): what
+//    is past it is another column, such as "Member ID:" on the street
+//    line's baseline. The city line is read whole, with any gap between the
+//    city, the state and the ZIP (a monospaced PDF can leave the ZIP a tab
+//    away), up to the end of the line or a wide gap past the ZIP. The
+//    street line and the five-digit ZIP come from that block and no other.
+//    With a unit line, or a unit in the column beside the street, only the
+//    ZIP is filled: the street field would drop the unit, so the finished
+//    appeal would lose it and Remove personal details would leave it in the
+//    letter. Two such blocks that disagree fill no address.
 // 4. Only empty fields, and each one once. A name the person typed (or that
 //    came back from storage) that is not the letter's means the letter is
 //    about someone else, so nothing is filled. The street and ZIP go
@@ -149,13 +154,17 @@ function words(text: string): string[] {
 }
 
 // A wide gap on a line: a tab (pdf_text.ts keeps a PDF's wide gaps as one),
-// or three or more spaces in pasted text. Past it is another column.
+// or three or more spaces in pasted text. Past it is another column. Two
+// spaces are not one: OCR leaves them inside a street.
 const COLUMN_GAP = /\t|[ \u00A0]{3,}/;
+// A label's value ends sooner, at a tab or two spaces: in "Member name:
+// Jordan Example  Service Date: 09/01/2026" the name stops at "Example".
+const LABEL_GAP = /\t|\s{2,}/;
 
 // A line's columns, from the left, each with its spaces made single.
-function columnsOf(text: string): string[] {
+function columnsOf(text: string, gap: RegExp = COLUMN_GAP): string[] {
   return text
-    .split(COLUMN_GAP)
+    .split(gap)
     .map((column) => column.replace(/\s+/g, " ").trim())
     .filter((column) => column !== "");
 }
@@ -338,10 +347,10 @@ function namesFromLabels(lines: string[]): LabelledName[] {
       if (/\bdear\s*$/i.test(line.slice(0, match.index + match[1].length))) {
         continue;
       }
-      // The value runs to a wide gap (the next column), then to the first
-      // word that is not part of a name. A gap between the label and its
-      // value is not one: that is the label's own column.
-      const value = columnsOf(line.slice(match.index + match[0].length))[0] ?? "";
+      // The value runs to a gap (a tab or two spaces: the next column), then
+      // to the first word that is not part of a name. A gap between the
+      // label and its value is not one: that is the label's own column.
+      const value = columnsOf(line.slice(match.index + match[0].length), LABEL_GAP)[0] ?? "";
       const taken: string[] = [];
       for (const word of words(value)) {
         const plain = word.replace(/,$/, "");
@@ -406,7 +415,16 @@ const STREET = new RegExp(
 );
 const PO_BOX = /^(?:P\.?\s*O\.?\s*Box|Post\s+Office\s+Box)\s+\d+/i;
 const UNIT = /^(?:apt|apartment|unit|suite|ste|#|bldg|building|floor|fl|room|rm)\b/i;
-const CITY_LINE = /^([A-Za-z][A-Za-z .'\u2019\-]*?)(?:\s*,\s*|\s+)([A-Za-z]{2})\.?\s+(\d{5})(?:-\d{4})?$/;
+// A city line, matched across the whole line: any whitespace, a tab
+// included, can sit between the city, the state and the ZIP, since a
+// monospaced PDF can put "62701" two spaces past "Springfield, IL" and the
+// gap comes through as a tab. The city's own words are a space or two apart
+// (wider is a column gap, and past it is another column), and the ZIP ends
+// the line or comes before a wide gap.
+const CITY_NAME = "[A-Za-z][A-Za-z.'\\u2019\\-]*(?:[ \\u00A0]{1,2}[A-Za-z.'\\u2019\\-]+)*";
+const CITY_LINE = new RegExp(
+  "^(" + CITY_NAME + ")(?:\\s*,\\s*|\\s+)([A-Za-z]{2})\\.?\\s+(\\d{5})(?:-\\d{4})?(?=$|\\t|[ \\u00A0]{3,})",
+);
 
 function isStreetLine(line: string): boolean {
   if (line.length > 60 || CITY_LINE.test(line)) {
@@ -434,45 +452,52 @@ interface Address {
 // that heading's, a claim's services or a provider's, not a mailing block.
 const ANOTHER_PARTYS_HEADING = /(?:\bfor|\bprovider|\bfacility)\s*:$/i;
 
-function underAnotherPartysHeading(lines: string[], at: number): boolean {
+// Whether the nearest line above with anything on it has such a heading in
+// any of its columns: "Member ID: XYZ000000<gap>Services for:" heads the
+// block under it as surely as "Services for:" alone does.
+function underAnotherPartysHeading(columns: string[][], at: number): boolean {
   let above = at - 1;
-  while (above >= 0 && lines[above] === "") {
+  while (above >= 0 && columns[above].length === 0) {
     above -= 1;
   }
-  return above >= 0 && ANOTHER_PARTYS_HEADING.test(lines[above]);
+  return above >= 0 && columns[above].some((column) => ANOTHER_PARTYS_HEADING.test(column));
 }
 
-// `lines` are the letter's lines, each cut at its first wide gap, and
-// `beside` what is in the column right of that gap ("" for none).
-function addressesFor(lines: string[], beside: string[], person: PersonName): Address[] {
+// `lines` are the letter's lines and `columns` each one's columns (see
+// columnsOf). The name, street and unit lines are read up to their first
+// wide gap, and the city line whole (see CITY_LINE).
+function addressesFor(lines: string[], columns: string[][], person: PersonName): Address[] {
   const found: Address[] = [];
+  const firstColumn = (index: number): string => columns[index][0] ?? "";
   for (let at = 0; at < lines.length; at += 1) {
-    if (!isNameLine(lines[at], person) || underAnotherPartysHeading(lines, at)) {
+    if (!isNameLine(firstColumn(at), person) || underAnotherPartysHeading(columns, at)) {
       continue;
     }
     // A reading can double-space a block, so a block is single spaced or
     // double spaced the whole way down. A mix is more likely a name line
     // and someone else's address run together.
     for (const step of [1, 2]) {
-      const blockLine = (n: number): string | null => {
+      // Where the block's nth line under the name is, or null.
+      const blockLine = (n: number): number | null => {
         const index = at + n * step;
-        if (index >= lines.length || lines[index] === "") {
+        if (index >= lines.length || firstColumn(index) === "") {
           return null;
         }
-        return step === 2 && lines[index - 1] !== "" ? null : lines[index];
+        return step === 2 && firstColumn(index - 1) !== "" ? null : index;
       };
-      const street = blockLine(1);
-      if (street === null || !isStreetLine(street)) {
+      const streetAt = blockLine(1);
+      if (streetAt === null || !isStreetLine(firstColumn(streetAt))) {
         continue;
       }
-      let cityLine = blockLine(2);
+      const street = firstColumn(streetAt);
+      let cityAt = blockLine(2);
       // "123 Sample Street<gap>Apt 4B" carries its unit beside it.
-      const unitBeside = UNIT.test(beside[at + step] ?? "");
-      const unit = unitBeside || (cityLine !== null && UNIT.test(cityLine));
+      const unitBeside = UNIT.test(columns[streetAt][1] ?? "");
+      const unit = unitBeside || (cityAt !== null && UNIT.test(firstColumn(cityAt)));
       if (unit && !unitBeside) {
-        cityLine = blockLine(3);
+        cityAt = blockLine(3);
       }
-      const zip = cityLine === null ? null : zipFromCityLine(cityLine);
+      const zip = cityAt === null ? null : zipFromCityLine(lines[cityAt]);
       if (zip !== null) {
         found.push(unit ? { zip } : { street, zip });
       }
@@ -495,14 +520,10 @@ export function findDetailsInLetter(text: string): LetterDetails {
   if (person === null) {
     return {};
   }
-  // Each line up to its first wide gap, with single spaces, for matching
-  // (the label pass above needed the gaps).
-  const columns = lines.map(columnsOf);
-  const addresses = addressesFor(
-    columns.map((line) => line[0] ?? ""),
-    columns.map((line) => line[1] ?? ""),
-    person,
-  );
+  // Each line's columns, with single spaces, for matching (the label pass
+  // above and the city line need the gaps).
+  const columns = lines.map((line) => columnsOf(line));
+  const addresses = addressesFor(lines, columns, person);
   const backedUp =
     addresses.length > 0 ||
     labels.some((label) => label.orderIsClear) ||
