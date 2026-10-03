@@ -4059,12 +4059,37 @@ summary.fhi-nav-link::after {
     font-weight: 700;
 }
 .fhi-field-error:empty { position: absolute; }
-/* Errors the page has no field message for, listed at the top of the form. */
+/* Every error on a page the server sent back, listed at the top of the
+   form in a red-edged box, each a link to its field. The line over the list
+   takes the box's colour and weight rather than a paragraph's grey. */
 .fhi-form-errors {
     display: grid;
     gap: var(--fhi-space-2);
+    padding: var(--fhi-space-4);
+    border: 2px solid var(--fhi-danger);
+    border-radius: var(--fhi-radius);
 }
 .fhi-form-errors > * { margin-block: 0; }
+.fhi-form-errors > p { color: inherit; font-weight: inherit; }
+.fhi-form-errors > ul {
+    display: grid;
+    gap: var(--fhi-space-1);
+    padding-inline-start: var(--fhi-space-5);
+}
+.fhi-form-errors a { color: inherit; }
+/* A link in that list lands its field, and the label over it, clear of the
+   header that stays at the top of the window: the header is up to 143px
+   tall with its menu closed, and the letter box's label and hint take 116px
+   on a phone. */
+.main-form :is(.fhi-field, .fhi-check) {
+    scroll-margin-top: calc(3 * var(--fhi-space-11) + var(--fhi-space-7));
+}
 /* A field the form cannot take as it is has its edge in the same colour. */
 .fhi-field[aria-invalid="true"] { border-color: var(--fhi-danger); }
+/* A tick box has no edge of its own to colour, so one the form still needs
+   gets a red ring instead. Keyboard focus draws its own ring in its place. */
+.fhi-check[aria-invalid="true"]:not(:focus-visible) {
+    outline: 2px solid var(--fhi-danger);
+    outline-offset: 2px;
+}
 .fhi-text-success { color: var(--fhi-green-ink); }

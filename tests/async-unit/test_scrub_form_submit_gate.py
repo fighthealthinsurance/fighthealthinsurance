@@ -117,8 +117,15 @@ def test_every_check_that_shows_a_message_also_stops_the_form():
 
 def test_a_blocked_submit_moves_focus_to_the_first_problem_in_page_order():
     focus = _js_function(_form_source(), "function focusFirst")
-    # The earliest in the document, whatever order the checks list them in.
-    assert "compareDocumentPosition(field) & Node.DOCUMENT_POSITION_PRECEDING" in focus
+    # The earliest in the document, whatever order the checks list them in:
+    # a field takes the place of the one held so far only when it comes
+    # before it.
+    assert re.search(
+        r"if \(\s*first === null \|\|\s*"
+        r"first\.compareDocumentPosition\(field\) & Node\.DOCUMENT_POSITION_PRECEDING"
+        r"\s*\)\s*\{\s*first = field;",
+        focus,
+    ), focus
     assert "first.focus({ preventScroll: true });" in focus, focus
     assert 'first.scrollIntoView({ block: "center" });' in focus, focus
 
@@ -166,7 +173,44 @@ def test_typing_or_ticking_never_raises_a_new_message():
     hide = _js_function(_form_source(), "export function hideErrorMessages")
     assert "showFieldMessage" not in hide, hide
     assert "if (!isShowing(check))" in hide, hide
-    assert "clearFieldMessage(check);" in hide, hide
+    # A message comes down once nothing it is about is missing, and until
+    # then it marks only the boxes still unticked, so a box just ticked is
+    # no longer marked invalid.
+    assert re.search(
+        r"if \(check\.missing\.length === 0\) \{\s*clearFieldMessage\(check\);\s*"
+        r"\} else \{\s*markFields\(check, true\);\s*\}",
+        hide,
+    ), hide
+
+
+def test_every_field_the_checks_name_takes_its_message_down_as_it_is_filled():
+    """Typing or ticking runs hideErrorMessages on each field a check is
+    about, so a field the person has just fixed stops showing its message."""
+    names = set(
+        re.findall(
+            r"form\.(\w+)",
+            " ".join(fields.split("]")[0] for fields in _checks().values()),
+        )
+    )
+    assert names >= {"denial_text", "email", "pii", "privacy", "tos", "personalonly"}
+    setup = _js_function((JS / "scrub.ts").read_text(), "function setupScrub")
+    for name in sorted(names):
+        wired = f'form.{name}.addEventListener("input", hideErrorMessages);'
+        assert wired in setup, f"{name} is not wired:\n{setup}"
+
+
+def test_text_read_from_a_file_takes_down_the_messages_it_answers():
+    """A file read into the letter box after a blocked submit fills the box
+    with no input event, so the letter's message and its invalid mark would
+    stay on a full box. addText takes them down itself, without firing an
+    input event, which the box's other listeners would count as typing."""
+    add = _js_function(_form_source(), "export function addText")
+    assert "input.value += text;" in add, add
+    assert add.index("input.value += text;") < add.index("hideErrorMessages("), add
+    assert "dispatchEvent" not in add, add
+    # The reader appends through addText.
+    reader = _js_function((JS / "scrub.ts").read_text(), "const recognizeEvent")
+    assert "addText(text);" in reader, reader
 
 
 def test_ocr_progress_message_is_cleared_when_the_last_run_finishes():

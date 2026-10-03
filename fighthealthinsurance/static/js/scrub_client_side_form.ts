@@ -1,9 +1,13 @@
 import { getLocalStorageItemWithTTL, setLocalStorageItemWithTTL } from "./shared";
 
-// Add text
+// Add text read from a file to the letter box. Setting the value fires no
+// input event, so the messages the new text answers are taken down here, the
+// way typing takes them down. hideErrorMessages is called rather than an
+// input event fired, which the box's other listeners would count as typing.
 export function addText(text: string): void {
   const input = document.getElementById("denial_text") as HTMLTextAreaElement;
   input.value += text;
+  hideErrorMessages(new Event("input"));
 }
 
 // Error messages

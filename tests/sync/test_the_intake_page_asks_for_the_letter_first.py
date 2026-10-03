@@ -46,12 +46,12 @@ AGREEMENT_LABELS = {
     "see our professional version.)",
 }
 # Each message, the field it sits under, and the fields it describes when it
-# shows. The agreements' message sits at the foot of their group, under the
-# last box.
+# shows. The agreements' two messages sit at the foot of their group, under
+# the last box.
 MESSAGES = {
     "need_denial": ("denial_text", ("denial_text",)),
     "email_error": ("email", ("email",)),
-    "pii_error": ("pii", ("pii",)),
+    "pii_error": ("personalonly", ("pii",)),
     "agree_chk_error": ("personalonly", ("privacy", "tos", "personalonly")),
 }
 CONTROLS = ("input", "textarea", "select", "button")
@@ -311,11 +311,25 @@ class EachMessageSitsUnderItsFieldTest(TestCase):
                         "#%s comes after #%s" % (message_id, after[0].get("id")),
                     )
 
-    def test_the_agreements_message_is_at_the_foot_of_their_group(self):
-        message = self.soup.find(id="agree_chk_error")
+    def test_the_agreements_messages_are_at_the_foot_of_their_group(self):
+        """Under the last box, so taking one down never moves a box the
+        person is about to tick."""
         fieldset = self.soup.find(id="personalonly").find_parent("fieldset")
         self.assertIsNotNone(fieldset, "the agreements are not in a fieldset")
-        self.assertIs(fieldset.find_all(True, recursive=False)[-1], message)
+        self.assertEqual(
+            [tag.get("id") for tag in fieldset.find_all(True, recursive=False)[-2:]],
+            ["pii_error", "agree_chk_error"],
+        )
+
+    def test_the_group_says_all_four_boxes_are_needed(self):
+        fieldset = self.soup.find(id="personalonly").find_parent("fieldset")
+        hint = self.soup.find(id=fieldset.get("aria-describedby"))
+        self.assertIsNotNone(hint, "the group is described by nothing on the page")
+        self.assertEqual(
+            hint.get_text(" ", strip=True), "Tick all four boxes to go on."
+        )
+        self.assertIn(fieldset, hint.parents)
+        self.assertTrue(_follows(self.soup, hint, self.soup.find(id="pii")))
 
     def test_the_page_has_no_raw_error_dump(self):
         page = _scan_page(self.client, {})
@@ -411,22 +425,10 @@ class TheServerSendsEachErrorBackByItsFieldTest(TestCase):
         data = dict(EVERYTHING_BUT_THE_PERSONAL_USE_BOX, personalonly="on")
         data["email"] = "someone@example"
         soup = _scan_page(self.client, data)
-        self.assert_shows(soup, "email_error", "Enter a valid email address.")
-        self.assertEqual(soup.find(id="email").get("aria-invalid"), "true")
-
-    def test_an_error_with_no_field_message_is_listed_at_the_top_of_the_form(self):
-        with patch.object(
-            DenialForm, "clean", side_effect=ValidationError("Something else.")
-        ):
-            soup = _scan_page(self.client, {})
-        summary = soup.find(class_="fhi-form-errors")
-        self.assertIsNotNone(summary)
-        self.assertEqual(
-            [item.get_text() for item in summary.find_all("li")], ["Something else."]
+        self.assert_shows(
+            soup, "email_error", DenialForm.INTAKE_ERROR_MESSAGES["email"]["invalid"]
         )
-        form = soup.find("form", id="fuck_health_insurance_form")
-        first_step = form.find("section")
-        self.assertTrue(_follows(soup, summary, first_step))
+        self.assertEqual(soup.find(id="email").get("aria-invalid"), "true")
 
     def test_a_complete_post_goes_on_to_the_next_step(self):
         data = dict(EVERYTHING_BUT_THE_PERSONAL_USE_BOX, personalonly="on")
@@ -437,6 +439,123 @@ class TheServerSendsEachErrorBackByItsFieldTest(TestCase):
                 hashed_email=Denial.get_hashed_email("someone@example.com")
             ).exists()
         )
+
+
+def _summary(soup) -> "list[tuple[str, str]]":
+    """The list at the top of the form: each item's link target and words."""
+    summary = soup.find(class_="fhi-form-errors")
+    assert summary is not None, "the page sent back lists no errors at the top"
+    items = []
+    for item in summary.find_all("li"):
+        link = item.find("a")
+        items.append((link["href"] if link else "", item.get_text()))
+    return items
+
+
+class TheServerListsEveryErrorAtTheTopTest(TestCase):
+    """With no script to move focus, the top of a page the server sends back
+    is what the person sees first, so it lists every error there, each a
+    link to its field."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def test_an_empty_post_lists_each_field_in_page_order(self):
+        form = DenialForm(data={})
+        form.is_valid()
+        expected = [
+            ("#" + name, form.errors[name][0])
+            for name in (
+                "denial_text",
+                "email",
+                "pii",
+                "privacy",
+                "tos",
+                "personalonly",
+            )
+        ]
+        self.assertEqual(_summary(_scan_page(self.client, {})), expected)
+
+    def test_the_personal_use_box_is_named_in_its_own_words(self):
+        soup = _scan_page(self.client, EVERYTHING_BUT_THE_PERSONAL_USE_BOX)
+        self.assertEqual(
+            _summary(soup),
+            [
+                (
+                    "#personalonly",
+                    "Please tick the box to confirm this is for your own appeal.",
+                )
+            ],
+        )
+
+    def test_the_list_is_the_first_thing_in_the_form(self):
+        soup = _scan_page(self.client, {})
+        summary = soup.find(class_="fhi-form-errors")
+        form = soup.find("form", id="fuck_health_insurance_form")
+        self.assertIn(form, summary.parents)
+        self.assertTrue(_follows(soup, summary, form.find("section")))
+
+    def test_each_link_lands_on_a_field_on_the_page(self):
+        soup = _scan_page(self.client, {"zip": "941\x0003"})
+        for href, _ in _summary(soup):
+            with self.subTest(href=href):
+                self.assertTrue(href.startswith("#"), href)
+                self.assertEqual(len(soup.find_all(id=href[1:])), 1, href)
+
+    def test_a_field_with_no_message_of_its_own_is_named_in_the_list(self):
+        soup = _scan_page(self.client, {"zip": "941\x0003"})
+        self.assertIn(
+            ("#store_zip", "ZIP code: Null characters are not allowed."),
+            _summary(soup),
+        )
+
+    def test_an_error_on_the_whole_form_is_listed_without_a_link(self):
+        data = dict(EVERYTHING_BUT_THE_PERSONAL_USE_BOX, personalonly="on")
+        with patch.object(
+            DenialForm, "clean", side_effect=ValidationError("Something else.")
+        ):
+            soup = _scan_page(self.client, data)
+        self.assertEqual(_summary(soup), [("", "Something else.")])
+
+    def test_the_title_says_there_is_an_error(self):
+        soup = _scan_page(self.client, {})
+        self.assertTrue(
+            soup.title.get_text(strip=True).startswith("Error: "), soup.title
+        )
+
+    def test_a_fresh_page_has_no_list_and_no_error_in_its_title(self):
+        soup = _scan_page(self.client)
+        self.assertIsNone(soup.find(class_="fhi-form-errors"))
+        self.assertFalse(soup.title.get_text(strip=True).startswith("Error"))
+
+
+class APageSentBackKeepsWhatThePersonGaveTest(TestCase):
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def test_the_email_zip_and_choices_come_back(self):
+        """Refused for the one box left unticked, the page comes back with
+        everything else the person gave, so sending it again needs only that
+        box."""
+        data = dict(
+            EVERYTHING_BUT_THE_PERSONAL_USE_BOX,
+            zip="94103",
+            store_raw_email="checked",
+            subscribe="checked",
+        )
+        soup = _scan_page(self.client, data)
+        self.assertEqual(soup.find(id="email").get("value"), data["email"])
+        self.assertEqual(soup.find(id="store_zip").get("value"), "94103")
+        for box in ("store_raw_email", "subscribe"):
+            with self.subTest(box=box):
+                self.assertIn("checked", soup.find(id=box).attrs)
+
+    def test_a_fresh_page_fills_in_nothing(self):
+        soup = _scan_page(self.client)
+        for field in ("email", "store_zip"):
+            with self.subTest(field=field):
+                self.assertEqual(soup.find(id=field).get("value"), "")
+        for box in ("store_raw_email", "subscribe"):
+            with self.subTest(box=box):
+                self.assertNotIn("checked", soup.find(id=box).attrs)
 
 
 class TheLetterTheServerReadIsInTheBoxTest(TestCase):
@@ -458,3 +577,4 @@ class TheLetterTheServerReadIsInTheBoxTest(TestCase):
         for message in MESSAGES:
             with self.subTest(message=message):
                 self.assertEqual(soup.find(id=message).get_text(), "")
+        self.assertIsNone(soup.find(class_="fhi-form-errors"))
