@@ -95,6 +95,36 @@ def test_the_checks_ask_for_exactly_what_the_server_requires():
     assert checked == required, (checked, required)
 
 
+def _email_shape() -> "re.Pattern[str]":
+    fn = _js_function(_form_source(), "function looksLikeAnEmail")
+    match = re.search(r"/(\^.*\$)/\.test", fn)
+    assert match, fn
+    return re.compile(match.group(1))
+
+
+def test_an_address_in_the_wrong_shape_counts_as_missing():
+    # So an address the server refused stays marked when the person edits
+    # some other field, until the address itself changes.
+    shape = _email_shape()
+    for good in ("someone@example.com", "a.b+c@mail.example.org"):
+        assert shape.match(good), good
+    for bad in (
+        "",
+        "someone",
+        "someone@example",
+        "someone@example.",
+        "some one@example.com",
+        "@example.com",
+    ):
+        assert not shape.match(bad), bad
+    assert "looksLikeAnEmail" in _checks()["email_error"]
+
+
+def test_an_address_in_the_wrong_shape_is_told_so_in_its_own_words():
+    show = _js_function(_form_source(), "function showFieldMessage")
+    assert "check.misshapen" in show and "invalidMessage" in show
+
+
 def test_every_check_that_shows_a_message_also_stops_the_form():
     """The checks that show the messages are the ones the gate reads, and a
     form with any field missing is not sent."""

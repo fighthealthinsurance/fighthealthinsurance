@@ -35,6 +35,8 @@ interface FieldCheck {
   fields: HTMLElement[];
   // The ones that are not filled in yet.
   missing: HTMLElement[];
+  // Filled in, but not in a shape the server takes (an email address).
+  misshapen?: boolean;
 }
 
 function hasDenialText(form: HTMLFormElement): boolean {
@@ -44,6 +46,13 @@ function hasDenialText(form: HTMLFormElement): boolean {
 // Every check the form makes before it is sent, in page order, and exactly
 // what the server requires (DenialForm in forms/__init__.py): the letter,
 // the email and the four agreements.
+// Roughly the shape the server's email check takes: something, an @, and a
+// domain with a dot in it. So an address the server refused stays marked
+// until the address itself changes.
+function looksLikeAnEmail(value: string): boolean {
+  return /^[^\s@]+@([^\s@.]+\.)+[^\s@.]+$/.test(value);
+}
+
 function intakeChecks(form: HTMLFormElement): FieldCheck[] {
   const check = (
     message: string,
@@ -51,9 +60,13 @@ function intakeChecks(form: HTMLFormElement): FieldCheck[] {
     isMissing: (field: HTMLElement) => boolean,
   ): FieldCheck => ({ message, fields, missing: fields.filter(isMissing) });
   const unticked = (field: HTMLElement): boolean => !(field as HTMLInputElement).checked;
+  const email = form.email.value.trim();
   return [
     check("need_denial", [form.denial_text], () => !hasDenialText(form)),
-    check("email_error", [form.email], () => form.email.value.length < 1),
+    {
+      ...check("email_error", [form.email], () => !looksLikeAnEmail(email)),
+      misshapen: email !== "" && !looksLikeAnEmail(email),
+    },
     check("pii_error", [form.pii], unticked),
     check("agree_chk_error", [form.privacy, form.tos, form.personalonly], unticked),
   ];
@@ -96,7 +109,10 @@ function isShowing(check: FieldCheck): boolean {
 function showFieldMessage(check: FieldCheck): void {
   const message = document.getElementById(check.message);
   if (message) {
-    const words = message.dataset.message ?? "";
+    const words =
+      (check.misshapen ? message.dataset.invalidMessage : undefined) ??
+      message.dataset.message ??
+      "";
     // A live region reads out a change, so words already showing are left
     // as they are rather than read out again.
     if (message.textContent !== words) {

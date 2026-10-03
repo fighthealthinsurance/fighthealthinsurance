@@ -52,7 +52,7 @@
 	</div>
 	{% endif %}
 	<div class="main-form">
-	<form class="fhi-stack fhi-stack-loose" method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
+	<form class="fhi-stack fhi-stack-loose" method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data" novalidate>
 		{% csrf_token %}
 		{% if default_procedure or default_condition %}
 		<input type="hidden" name="default_procedure" value="{{ default_procedure }}">
@@ -167,7 +167,7 @@
 		      </span>
 		    </label>
 		    <input type="email" id="email" name="email" class="fhi-field" value="{{ form.email.value|default:'' }}"{% if form.email.errors %} aria-invalid="true" aria-describedby="email_error"{% endif %}>
-		    {% include "partials/field_error.html" with id="email_error" message="We need your email to go on. It lets us delete your data later if you ask." errors=form.email.errors filled=form.email.value %}
+		    {% include "partials/field_error.html" with id="email_error" message="We need your email to go on. It lets us delete your data later if you ask." invalid_message="Please check your email address. It should look like name@example.com." errors=form.email.errors filled=form.email.value %}
 		</div>
 		<div class="together-form-group">
 		  <div class="fhi-field-group">

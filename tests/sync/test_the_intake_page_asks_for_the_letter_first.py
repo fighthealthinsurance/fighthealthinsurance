@@ -473,6 +473,21 @@ class TheOutsideAIChoiceComesBackAsItWasLeftTest(TestCase):
         self.assertIn("checked", self.box(_scan_page(self.client, data)).attrs)
 
 
+class ThePageRunsItsOwnChecksTest(TestCase):
+    def test_the_form_asks_the_browser_not_to_check_it_first(self):
+        # The browser's own email check would stop the submit before the
+        # page could mark each field and move focus to the first problem.
+        form = _scan_page(self.client).find(id="fuck_health_insurance_form")
+        self.assertIn("novalidate", form.attrs)
+
+    def test_the_email_message_has_words_for_a_wrong_address(self):
+        message = _scan_page(self.client).find(id="email_error")
+        self.assertEqual(
+            message["data-invalid-message"],
+            DenialForm.INTAKE_ERROR_MESSAGES["email"]["invalid"],
+        )
+
+
 class TheServerListsEveryErrorAtTheTopTest(TestCase):
     """With no script to move focus, the top of a page the server sends back
     is what the person sees first, so it lists every error there, each a
