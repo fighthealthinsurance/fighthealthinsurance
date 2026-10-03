@@ -2377,6 +2377,11 @@ class DenialCreatorHelper:
           speculative ``candidate_generated_questions``), so the questions are
           asked again about the new letter even when the procedure and
           diagnosis they were stamped for are unchanged.
+        * the speculative citations (``candidate_ml_citation_context``). The
+          citation step reuses them whenever the candidate procedure and
+          diagnosis match the live ones, as they do again once the new letter
+          is read, so they are cleared for the same reason as the candidate
+          question set.
 
         With the finished flag and the extracted values gone, the already-done
         gate in ``extract_entity`` lets the new letter be read. A value the
@@ -2390,23 +2395,6 @@ class DenialCreatorHelper:
         deleted, _ = ProposedAppeal.objects.filter(
             for_denial=denial, speculative=True
         ).delete()
-        # Before the mirrors are cleared below, and in the database rather
-        # than on this request's copy, so a value the person typed while this
-        # request ran is compared as it stands. NULL never equals NULL here,
-        # so an empty mirror clears nothing.
-        letter_values_cleared: list[str] = []
-        for column in ("procedure", "diagnosis"):
-            if (
-                Denial.objects.filter(
-                    denial_id=denial.denial_id, **{column: F(f"candidate_{column}")}
-                ).update(**{column: None})
-                > 0
-            ):
-                setattr(denial, column, None)
-                letter_values_cleared.append(column)
-        types_deleted, _ = DenialTypesRelation.objects.filter(
-            denial=denial, src__name="regex"
-        ).delete()
         # The triage was computed from the OLD letter; every column of it goes
         # back to null so nothing downstream can read letter A's deadline
         # against letter B.
@@ -2419,13 +2407,37 @@ class DenialCreatorHelper:
             "generated_questions": None,
             "generated_questions_for": None,
             "candidate_generated_questions": None,
+            "candidate_ml_citation_context": None,
         }
-        Denial.objects.filter(denial_id=denial.denial_id).update(
-            denial_text_summary=None,
-            candidate_denial_text_summary=None,
-            **cleared,
-            **extraction_cleared,
-        )
+        letter_values_cleared: list[str] = []
+        # One transaction: the extracted values, the detected types and the
+        # finished flag go together or not at all, so the extraction gate
+        # never sees the values cleared with the flag still set.
+        with transaction.atomic():
+            # Before the mirrors are cleared below, and in the database rather
+            # than on this request's copy, so a value the person typed while
+            # this request ran is compared as it stands. NULL never equals
+            # NULL here, so an empty mirror clears nothing.
+            for column in ("procedure", "diagnosis"):
+                if (
+                    Denial.objects.filter(
+                        denial_id=denial.denial_id,
+                        **{column: F(f"candidate_{column}")},
+                    ).update(**{column: None})
+                    > 0
+                ):
+                    letter_values_cleared.append(column)
+            types_deleted, _ = DenialTypesRelation.objects.filter(
+                denial=denial, src__name="regex"
+            ).delete()
+            Denial.objects.filter(denial_id=denial.denial_id).update(
+                denial_text_summary=None,
+                candidate_denial_text_summary=None,
+                **cleared,
+                **extraction_cleared,
+            )
+        for column in letter_values_cleared:
+            setattr(denial, column, None)
         denial.denial_text_summary = None
         denial.candidate_denial_text_summary = None
         for column, value in cleared.items():
@@ -2437,7 +2449,8 @@ class DenialCreatorHelper:
             f"{deleted} held-back speculative appeal(s), both cached "
             f"denial-text summaries, the triage columns, the candidate "
             f"procedure/diagnosis mirrors, {types_deleted} detected denial "
-            f"type(s) and the question set; extracted values cleared: "
+            f"type(s), the question set and the speculative citations; "
+            f"extracted values cleared: "
             f"{', '.join(letter_values_cleared) or 'none'}"
         )
 

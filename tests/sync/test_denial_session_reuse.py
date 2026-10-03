@@ -17,6 +17,7 @@ import datetime
 from unittest.mock import AsyncMock, patch
 
 from asgiref.sync import async_to_sync
+from django.db import DatabaseError
 from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -24,6 +25,7 @@ from django.utils import timezone
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.common_view_logic import DenialCreatorHelper
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
+from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
 from fighthealthinsurance.models import (
     Denial,
@@ -236,6 +238,10 @@ class ANewLetterOnTheReusedDenialTest(TestCase):
         LETTER_A: [["Did your doctor try an X-ray before the MRI?", ""]],
         LETTER_B: [["How often are you checking your blood sugar?", ""]],
     }
+    CITATIONS = {
+        LETTER_A: ["about the knee MRI"],
+        LETTER_B: ["about the insulin pump"],
+    }
 
     def setUp(self):
         self.client = Client()
@@ -366,6 +372,22 @@ class ANewLetterOnTheReusedDenialTest(TestCase):
                 denial.denial_id
             )
 
+    def _cite(self, denial, speculative):
+        """The citation step on the row, with the model citing the letter."""
+
+        async def cites(denial, **kwargs):
+            return self.CITATIONS[denial.denial_text]
+
+        denial.refresh_from_db()
+        with patch.object(
+            MLCitationsHelper,
+            "_generate_citations_for_denial",
+            new=AsyncMock(side_effect=cites),
+        ):
+            return async_to_sync(MLCitationsHelper.generate_citations_for_denial)(
+                denial, speculative=speculative
+            )
+
     def _types_on(self, denial):
         return set(denial.denial_type.values_list("name", flat=True))
 
@@ -429,6 +451,24 @@ class ANewLetterOnTheReusedDenialTest(TestCase):
         denial.refresh_from_db()
         self.assertEqual(denial.generated_questions, self.QUESTIONS[self.LETTER_B])
 
+    def test_a_different_letter_is_cited_for_itself(self):
+        denial = self._first_letter_read_and_asked_about()
+        self._cite(denial, speculative=True)
+        denial.refresh_from_db()
+        self.assertEqual(
+            denial.candidate_ml_citation_context, self.CITATIONS[self.LETTER_A]
+        )
+
+        denial = self._submit(self.LETTER_B)
+        self._read(denial)
+        # The speculative pass, then the questions step's citations, which
+        # are the ones the appeal is written with.
+        self._cite(denial, speculative=True)
+        self._cite(denial, speculative=False)
+
+        denial.refresh_from_db()
+        self.assertEqual(denial.ml_citation_context, self.CITATIONS[self.LETTER_B])
+
     def test_a_type_the_person_added_survives_a_different_letter(self):
         denial = self._first_letter_read_and_asked_about()
         added = DenialTypes.objects.create(
@@ -460,3 +500,26 @@ class ANewLetterOnTheReusedDenialTest(TestCase):
         self.assertEqual(self._types_on(denial), {"Imaging (test)"})
         self.assertEqual(denial.generated_questions, first.generated_questions)
         self.assertEqual(denial.generated_questions_for, first.generated_questions_for)
+
+    def test_a_cleanup_that_fails_part_way_leaves_the_row_as_it_was(self):
+        """The extracted values, the detected types and the finished flag
+        are cleared together, so a failure part way never leaves the values
+        gone with the flag still saying the letter was read."""
+        first = self._first_letter_read_and_asked_about()
+
+        with patch.object(
+            DenialTypesRelation.objects,
+            "filter",
+            side_effect=DatabaseError("the database went away"),
+        ):
+            denial = self._submit(self.LETTER_B)
+
+        denial.refresh_from_db()
+        self.assertEqual(denial.denial_text, self.LETTER_B)
+        self.assertEqual(
+            (denial.procedure, denial.diagnosis),
+            (first.procedure, first.diagnosis),
+        )
+        self.assertEqual(denial.candidate_procedure, first.candidate_procedure)
+        self.assertTrue(denial.extract_procedure_diagnosis_finished)
+        self.assertEqual(self._types_on(denial), {"Imaging (test)"})
