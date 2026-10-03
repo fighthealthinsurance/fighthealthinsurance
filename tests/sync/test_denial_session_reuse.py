@@ -12,13 +12,25 @@ only for the same person, only while their journey is unfinished, and only
 inside the recency window. Every other case must still create a new denial.
 """
 
+import contextlib
 import datetime
+from unittest.mock import AsyncMock, patch
 
+from asgiref.sync import async_to_sync
 from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from fighthealthinsurance.models import Denial, IntakeJourneyEvent
+from fighthealthinsurance import common_view_logic
+from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
+from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
+from fighthealthinsurance.models import (
+    Denial,
+    DenialTypes,
+    DenialTypesRelation,
+    IntakeJourneyEvent,
+)
 from fighthealthinsurance.views import DENIAL_SESSION_REUSE_WINDOW
 
 
@@ -174,3 +186,277 @@ class DenialSessionReuseTest(TestCase):
         )
 
         self.assertEqual(Denial.objects.count(), 2)
+
+
+# The extractors other than the procedure/diagnosis reader and the denial-type
+# match. Each one is its own model call; none of them bears on what these
+# tests are about.
+_OTHER_EXTRACTORS = (
+    "extract_set_fax_number",
+    "extract_set_insurance_company",
+    "match_insurance_plan_from_regex",
+    "extract_set_plan_id",
+    "extract_set_claim_id",
+    "extract_set_date_of_service",
+    "extract_set_regulator",
+    "extract_set_triage",
+)
+
+
+async def _swallow(coro, *args, **kwargs):
+    """Stand in for fire_and_forget_in_new_threadpool without leaving coroutines."""
+    close = getattr(coro, "close", None)
+    if close is not None:
+        close()
+    return None
+
+
+class ANewLetterOnTheReusedDenialTest(TestCase):
+    """A different letter on the reused denial is read for itself.
+
+    The reuse above keeps one row per person for a day, so a second, different
+    letter lands on the row the first one filled in. What was read out of the
+    first letter goes, the second is read afresh, and what the person typed
+    stays theirs. The model and the denial-type match are stubbed and keyed on
+    the letter they are handed; everything between the form and the row is
+    the real code.
+    """
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    EMAIL = "new-letter@example.com"
+    LETTER_A = "We denied the knee MRI you asked about for your knee pain."
+    LETTER_B = "We denied the insulin pump you asked about for type 1 diabetes."
+    # What the model reads out of each letter: (procedure, diagnosis).
+    READS = {
+        LETTER_A: ("knee MRI", "knee pain"),
+        LETTER_B: ("insulin pump", "type 1 diabetes"),
+    }
+    QUESTIONS = {
+        LETTER_A: [["Did your doctor try an X-ray before the MRI?", ""]],
+        LETTER_B: [["How often are you checking your blood sugar?", ""]],
+    }
+
+    def setUp(self):
+        self.client = Client()
+        # regex_src caches the DataSource row on the class.
+        DenialCreatorHelper._regex_src = None
+        self.imaging = DenialTypes.objects.create(
+            name="Imaging (test)", regex="MRI", negative_regex=""
+        )
+        self.equipment = DenialTypes.objects.create(
+            name="Equipment (test)", regex="pump", negative_regex=""
+        )
+        self.types_in = {
+            self.LETTER_A: [self.imaging],
+            self.LETTER_B: [self.equipment],
+        }
+
+    def _submit(self, letter) -> Denial:
+        """The scan page, on this browser session."""
+        response = self.client.post(
+            reverse("process"),
+            {
+                "email": self.EMAIL,
+                "denial_text": letter,
+                "pii": "on",
+                "tos": "on",
+                "privacy": "on",
+            },
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        return Denial.objects.get(uuid=self.client.session["denial_uuid"])
+
+    def _read(self, denial) -> AsyncMock:
+        """The extraction page: one run of extract_entity on the row.
+
+        Returns the stubbed reader, so a test can tell whether the
+        already-done gate let the letter be read.
+        """
+
+        async def reads(denial_text):
+            return self.READS[denial_text]
+
+        async def types_in(denial_text, **kwargs):
+            return self.types_in[denial_text]
+
+        reader = AsyncMock(side_effect=reads)
+        with contextlib.ExitStack() as stack:
+            for name in _OTHER_EXTRACTORS:
+                stack.enter_context(
+                    patch.object(
+                        DenialCreatorHelper, name, new=AsyncMock(return_value=None)
+                    )
+                )
+            stack.enter_context(
+                patch(
+                    "fighthealthinsurance.common_view_logic.appealGenerator."
+                    "get_procedure_and_diagnosis",
+                    new=reader,
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    DenialCreatorHelper.regex_denial_processor,
+                    "get_denialtype",
+                    new=AsyncMock(side_effect=types_in),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    MLPlanDocHelper,
+                    "generate_plan_documents_summary",
+                    new=AsyncMock(return_value=None),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    DenialCreatorHelper,
+                    "_maybe_dispatch_ucr",
+                    new=AsyncMock(return_value=None),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    common_view_logic, "fire_and_forget_in_new_threadpool", _swallow
+                )
+            )
+
+            async def run():
+                return [
+                    record
+                    async for record in DenialCreatorHelper.extract_entity(
+                        denial.denial_id
+                    )
+                ]
+
+            async_to_sync(run)()
+        return reader
+
+    def _the_speculative_pass_asks(self, denial):
+        """What build_speculative_context stores for the letter on the row.
+
+        ``_read`` swallows the background work, so the candidate set it
+        would have written is put there directly.
+        """
+        denial.refresh_from_db()
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            candidate_generated_questions=self.QUESTIONS[denial.denial_text]
+        )
+
+    def _ask(self, denial):
+        """The questions step, with the model asking about the letter."""
+
+        async def specific(denial_text, **kwargs):
+            return self.QUESTIONS[denial_text]
+
+        with patch.object(
+            MLAppealQuestionsHelper,
+            "generate_generic_questions",
+            new=AsyncMock(return_value=None),
+        ), patch.object(
+            MLAppealQuestionsHelper,
+            "generate_specific_questions",
+            new=AsyncMock(side_effect=specific),
+        ), patch.object(
+            common_view_logic, "fire_and_forget_in_new_threadpool", _swallow
+        ):
+            return async_to_sync(DenialCreatorHelper.generate_appeal_questions)(
+                denial.denial_id
+            )
+
+    def _types_on(self, denial):
+        return set(denial.denial_type.values_list("name", flat=True))
+
+    def _first_letter_read_and_asked_about(self) -> Denial:
+        """Letter A submitted, read, and its questions generated."""
+        denial = self._submit(self.LETTER_A)
+        self._read(denial)
+        self._the_speculative_pass_asks(denial)
+        self._ask(denial)
+        denial.refresh_from_db()
+        self.assertEqual(denial.procedure, "knee MRI")
+        self.assertEqual(self._types_on(denial), {"Imaging (test)"})
+        self.assertEqual(denial.generated_questions, self.QUESTIONS[self.LETTER_A])
+        return denial
+
+    def test_a_different_letter_is_read_for_its_own_details(self):
+        first = self._first_letter_read_and_asked_about()
+
+        denial = self._submit(self.LETTER_B)
+        self._read(denial)
+        self._ask(denial)
+
+        denial.refresh_from_db()
+        self.assertEqual(denial.denial_id, first.denial_id)
+        self.assertEqual(
+            (denial.procedure, denial.diagnosis), ("insulin pump", "type 1 diabetes")
+        )
+        self.assertEqual(self._types_on(denial), {"Equipment (test)"})
+        self.assertEqual(denial.generated_questions, self.QUESTIONS[self.LETTER_B])
+
+    def test_what_the_person_typed_survives_a_different_letter(self):
+        denial = self._first_letter_read_and_asked_about()
+        # Corrected on the review page.
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            procedure="knee MRI with contrast", diagnosis="torn meniscus"
+        )
+
+        denial = self._submit(self.LETTER_B)
+        self._read(denial)
+
+        denial.refresh_from_db()
+        self.assertEqual(
+            (denial.procedure, denial.diagnosis),
+            ("knee MRI with contrast", "torn meniscus"),
+        )
+
+    def test_a_different_letter_is_asked_about_when_the_typed_details_hold(self):
+        """The question set is stamped for the procedure and diagnosis, and
+        typed ones survive the new letter, so the stamp alone would still
+        call the first letter's questions current."""
+        denial = self._first_letter_read_and_asked_about()
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            procedure="knee MRI with contrast", diagnosis="torn meniscus"
+        )
+        self._ask(denial)
+
+        denial = self._submit(self.LETTER_B)
+        self._read(denial)
+        self._ask(denial)
+
+        denial.refresh_from_db()
+        self.assertEqual(denial.generated_questions, self.QUESTIONS[self.LETTER_B])
+
+    def test_a_type_the_person_added_survives_a_different_letter(self):
+        denial = self._first_letter_read_and_asked_about()
+        added = DenialTypes.objects.create(
+            name="Out of network (test)", regex="never matches", negative_regex=""
+        )
+        # The review page's denial_type.set() writes the row with no source.
+        DenialTypesRelation.objects.create(denial=denial, denial_type=added)
+
+        denial = self._submit(self.LETTER_B)
+        self._read(denial)
+
+        self.assertEqual(
+            self._types_on(denial), {"Out of network (test)", "Equipment (test)"}
+        )
+
+    def test_the_same_letter_again_changes_nothing(self):
+        first = self._first_letter_read_and_asked_about()
+
+        denial = self._submit(self.LETTER_A)
+        reader = self._read(denial)
+
+        denial.refresh_from_db()
+        self.assertEqual(reader.await_count, 0, "the same letter was read twice")
+        self.assertEqual(
+            (denial.procedure, denial.diagnosis),
+            (first.procedure, first.diagnosis),
+        )
+        self.assertEqual(denial.candidate_procedure, first.candidate_procedure)
+        self.assertEqual(self._types_on(denial), {"Imaging (test)"})
+        self.assertEqual(denial.generated_questions, first.generated_questions)
+        self.assertEqual(denial.generated_questions_for, first.generated_questions_for)

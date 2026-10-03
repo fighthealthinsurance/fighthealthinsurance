@@ -2347,9 +2347,8 @@ class DenialCreatorHelper:
     def _invalidate_denial_text_artifacts(denial: Denial) -> None:
         """Drop everything derived from a denial letter that has been replaced.
 
-        Called when an update changes ``denial_text``. Two classes of artifact
-        are purely derived from the letter and become wrong -- not merely stale
-        -- once it changes:
+        Called when an update changes ``denial_text``. These are derived from
+        the letter and become wrong -- not merely stale -- once it changes:
 
         * the HELD-BACK speculative reserve (``speculative=True``), which would
           otherwise be served later as a fallback appeal written about the old
@@ -2364,10 +2363,25 @@ class DenialCreatorHelper:
           plus ``extract_procedure_diagnosis_finished`` (a statement about a
           letter that no longer exists) and ``extract_attempts`` (a per-letter
           failure budget, not a per-case one).
+        * the live ``procedure`` and ``diagnosis``, each only where it still
+          equals its candidate mirror, which is the value the extraction read
+          out of the old letter. A value the person typed differs from the
+          mirror and is kept: a new letter is not a reason to throw their
+          answers away. Compared before the mirrors are cleared.
+        * the denial types ``extract_set_denialtype`` read out of the old
+          letter, which carry the ``regex`` source. A type the person added
+          on the review page carries no source and is kept; one they left
+          ticked keeps the ``regex`` source and is read again from the new
+          letter.
+        * the question set (``generated_questions``, its stamp, and the
+          speculative ``candidate_generated_questions``), so the questions are
+          asked again about the new letter even when the procedure and
+          diagnosis they were stamped for are unchanged.
 
-        The live ``procedure`` and ``diagnosis`` columns are deliberately NOT
-        cleared: those may be what the person typed, and a new letter is not a
-        reason to throw their answers away.
+        With the finished flag and the extracted values gone, the already-done
+        gate in ``extract_entity`` lets the new letter be read. A value the
+        person typed still holds that gate shut, as it does on any row they
+        filled in themselves.
 
         Best-effort: a failure here must not break denial creation/update, so
         the caller wraps this. The in-memory instance is cleared too, since it
@@ -2375,6 +2389,23 @@ class DenialCreatorHelper:
         """
         deleted, _ = ProposedAppeal.objects.filter(
             for_denial=denial, speculative=True
+        ).delete()
+        # Before the mirrors are cleared below, and in the database rather
+        # than on this request's copy, so a value the person typed while this
+        # request ran is compared as it stands. NULL never equals NULL here,
+        # so an empty mirror clears nothing.
+        letter_values_cleared: list[str] = []
+        for column in ("procedure", "diagnosis"):
+            if (
+                Denial.objects.filter(
+                    denial_id=denial.denial_id, **{column: F(f"candidate_{column}")}
+                ).update(**{column: None})
+                > 0
+            ):
+                setattr(denial, column, None)
+                letter_values_cleared.append(column)
+        types_deleted, _ = DenialTypesRelation.objects.filter(
+            denial=denial, src__name="regex"
         ).delete()
         # The triage was computed from the OLD letter; every column of it goes
         # back to null so nothing downstream can read letter A's deadline
@@ -2385,6 +2416,9 @@ class DenialCreatorHelper:
             "candidate_diagnosis": None,
             "extract_procedure_diagnosis_finished": False,
             "extract_attempts": 0,
+            "generated_questions": None,
+            "generated_questions_for": None,
+            "candidate_generated_questions": None,
         }
         Denial.objects.filter(denial_id=denial.denial_id).update(
             denial_text_summary=None,
@@ -2401,8 +2435,10 @@ class DenialCreatorHelper:
         logger.info(
             f"Denial {denial.denial_id} text replaced; invalidated "
             f"{deleted} held-back speculative appeal(s), both cached "
-            f"denial-text summaries, the triage columns and the candidate "
-            f"procedure/diagnosis mirrors"
+            f"denial-text summaries, the triage columns, the candidate "
+            f"procedure/diagnosis mirrors, {types_deleted} detected denial "
+            f"type(s) and the question set; extracted values cleared: "
+            f"{', '.join(letter_values_cleared) or 'none'}"
         )
 
     @classmethod
