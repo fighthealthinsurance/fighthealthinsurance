@@ -1,4 +1,5 @@
 import unittest
+from contextlib import ExitStack
 from unittest.mock import patch, MagicMock
 
 from django.conf import settings
@@ -7,6 +8,7 @@ from django.urls import reverse
 from django.contrib.auth import get_user_model
 
 from fighthealthinsurance.models import (
+    FaxesToSend,
     StripeWebhookEvents,
     LostStripeSession,
     StripeRecoveryInfo,
@@ -354,3 +356,111 @@ class StripeWebhookTests(TestCase):
         StripeWebhookHelper.handle_checkout_session_expired(self.client, mock_session)
 
         mock_send_email.assert_not_called()
+
+
+class FaxPaymentWebhookTests(TestCase):
+    """A fax starts sending when it is staged and paying for it is optional,
+    so a completed fax checkout is only noted. The webhook never sends."""
+
+    # Every way a fax could be sent from here: a Temporal dispatch, the Ray
+    # fax actor (each patched where it is defined, where fax_helpers imported
+    # it, and where the webhook's module would if it ever imported one), and
+    # the success page's own send.
+    SEND_PATHS = {
+        "temporal": "fighthealthinsurance.temporal_client.dispatch_fax_send",
+        "temporal_in_helpers": "fighthealthinsurance.helpers.fax_helpers.dispatch_fax_send",
+        "temporal_in_webhook": "fighthealthinsurance.helpers.stripe_helpers.dispatch_fax_send",
+        "ray": "fighthealthinsurance.fax_actor_ref.fax_actor_ref",
+        "ray_in_helpers": "fighthealthinsurance.helpers.fax_helpers.fax_actor_ref",
+        "ray_in_webhook": "fighthealthinsurance.helpers.stripe_helpers.fax_actor_ref",
+        "success_page": "fighthealthinsurance.helpers.fax_helpers.SendFaxHelper.remote_send_fax",
+    }
+
+    def setUp(self):
+        self.client = MagicMock()
+        self.email = "fax-payer@example.com"
+        self.fax = FaxesToSend.objects.create(
+            hashed_email="fax-payer-hash",
+            email=self.email,
+            paid=True,
+            appeal_text="Test appeal text",
+            destination="4255551234",
+            should_send=False,
+        )
+
+    def _complete_checkout(self, metadata):
+        """Run a completed checkout through the webhook with every send path
+        patched, and return those patches."""
+        # The session carries the email the way Stripe's does, so a log line
+        # that printed the session or its email would show it.
+        session = MagicMock()
+        session.metadata = metadata
+        session.customer_email = self.email
+        session.customer_details = {"email": self.email}
+        session.__str__.return_value = f"Session({metadata}, {self.email})"
+        with ExitStack() as stack:
+            sends = {
+                name: stack.enter_context(patch(target, create=True))
+                for name, target in self.SEND_PATHS.items()
+            }
+            StripeWebhookHelper.handle_checkout_session_completed(self.client, session)
+        return sends
+
+    def assertNothingWasSent(self, sends):
+        sends["temporal"].assert_not_called()
+        sends["temporal_in_helpers"].assert_not_called()
+        sends["temporal_in_webhook"].assert_not_called()
+        sends["ray"].get.do_send_fax.remote.assert_not_called()
+        sends["ray_in_helpers"].get.do_send_fax.remote.assert_not_called()
+        sends["ray_in_webhook"].get.do_send_fax.remote.assert_not_called()
+        sends["success_page"].assert_not_called()
+
+    @patch("fighthealthinsurance.helpers.stripe_helpers.logger")
+    def test_a_paid_fax_is_noted_and_not_sent_again(self, mock_logger):
+        sends = self._complete_checkout(
+            {"payment_type": "fax", "fax_request_uuid": str(self.fax.uuid)}
+        )
+
+        self.assertNothingWasSent(sends)
+        self.fax.refresh_from_db()
+        self.assertFalse(self.fax.should_send)
+        mock_logger.info.assert_called_once_with(
+            f"Payment arrived for fax {self.fax.uuid}"
+        )
+        mock_logger.warning.assert_not_called()
+        # The log names the fax, never the person paying for it.
+        self.assertNotIn(self.email, str(mock_logger.mock_calls))
+
+    @patch("fighthealthinsurance.helpers.stripe_helpers.logger")
+    def test_a_payment_for_an_unknown_fax_is_logged_not_raised(self, mock_logger):
+        sends = self._complete_checkout(
+            {"payment_type": "fax", "fax_request_uuid": "no-such-fax"}
+        )
+
+        self.assertNothingWasSent(sends)
+        mock_logger.warning.assert_called_once_with(
+            "Payment arrived for unknown fax no-such-fax"
+        )
+
+    @patch("fighthealthinsurance.helpers.stripe_helpers.logger")
+    def test_a_fax_payment_with_no_fax_uuid_is_logged_not_raised(self, mock_logger):
+        sends = self._complete_checkout({"payment_type": "fax"})
+
+        self.assertNothingWasSent(sends)
+        mock_logger.warning.assert_called_once_with(
+            "No fax uuid in metadata for fax payment"
+        )
+
+    @patch("fighthealthinsurance.helpers.stripe_helpers.logger")
+    def test_the_older_uuid_key_still_finds_the_fax(self, mock_logger):
+        sends = self._complete_checkout(
+            {"payment_type": "fax", "uuid": str(self.fax.uuid)}
+        )
+
+        self.assertNothingWasSent(sends)
+        self.fax.refresh_from_db()
+        self.assertFalse(self.fax.should_send)
+        mock_logger.info.assert_called_once_with(
+            f"Payment arrived for fax {self.fax.uuid}"
+        )
+        mock_logger.warning.assert_not_called()
