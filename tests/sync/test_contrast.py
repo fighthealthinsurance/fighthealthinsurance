@@ -36,10 +36,8 @@ stylesheet fails, and so does one whose rule starts being measurable or
 starts passing.
 
 What the gate still cannot see: colours a script writes at runtime (the drafts
-page phase labels, named in UNREACHED), and anything Bootstrap contributes,
-which is why the focus ring is checked against Bootstrap's known weight rather
-than against Bootstrap's actual text. The one exception is the few fills
-written down by hand in BOOTSTRAP_GROUNDS.
+page phase labels, named in UNREACHED). Bootstrap's stylesheet, which it
+could not read either, is gone from the site.
 """
 
 from __future__ import annotations
@@ -547,10 +545,6 @@ _STYLE_SOURCE = "data-contrast-source"
 _STYLE_OPEN = re.compile(r"<style\b", re.I)
 _STYLE_FROM = re.compile(r"<style\b[^>]*\b%s=\"([^\"]+)\"" % _STYLE_SOURCE, re.I)
 _LINKED_STYLESHEET = re.compile(r"static\s+['\"]css/([\w.-]+\.css)['\"]")
-# Bootstrap's stylesheet comes from a CDN, not from static/css, so it needs a
-# pattern of its own. A page that links it is reached by BOOTSTRAP_GROUNDS.
-BOOTSTRAP_SOURCE = "bootstrap 5.2.3"
-_LINKED_BOOTSTRAP = re.compile(r"bootstrap@5\.2\.3/dist/css/bootstrap(?:\.min)?\.css")
 
 
 def _class_variants(raw: str) -> tuple[frozenset[str], ...]:
@@ -836,8 +830,7 @@ def selector_states(steps: Sequence[Step]) -> frozenset[str]:
 def page_sources(markup: str) -> frozenset[str]:
     """The CSS one built page carries, named the way Rule.stylesheet names it.
 
-    That is the site stylesheets the page links, Bootstrap when the page
-    links it (the source of the fills in BOOTSTRAP_GROUNDS), and the <style>
+    That is the site stylesheets the page links and the <style>
     block of every template that renders into it: the page itself, what it
     extends, and what it or they include. Nothing else. A browser applies a
     <style> block to the document it sits in and to no other, and a page that
@@ -846,8 +839,6 @@ def page_sources(markup: str) -> frozenset[str]:
     linked = {
         name for name in _LINKED_STYLESHEET.findall(markup) if name in STYLESHEETS
     }
-    if _LINKED_BOOTSTRAP.search(markup):
-        linked.add(BOOTSTRAP_SOURCE)
     blocks = {"templates/" + name for name in _STYLE_FROM.findall(markup)}
     return frozenset(linked | blocks)
 
@@ -1004,19 +995,6 @@ def _layers_from(
     return layers
 
 
-# What Bootstrap paints under words on our pages, for as long as base.html
-# loads it. The gate reads only our own CSS, so these are written down by
-# hand from Bootstrap 5.2.3's stylesheet, which sets .card's background to
-# var(--bs-card-bg), and that to #fff.
-#
-# Until 2026-09-24 a .card's white reached the gate by accident: the two
-# Pro Connector pages each had a ".card { background: white }" of their own,
-# and a template's <style> block is read as if it applied to every page. When
-# those became .proconnector-card, every Bootstrap card lost its white and
-# fell through to whichever <body> fill any template declares, the printable
-# letter's grey included, and three pages failed for words that sit on white.
-# Take an entry out when the component it describes leaves the site.
-BOOTSTRAP_GROUNDS: tuple[Rule, ...] = ()
 
 
 class Painter:
@@ -1055,7 +1033,7 @@ class Painter:
         self.foregrounds: list[
             tuple[str, list[Step], frozenset[str], tuple[int, int, int, int], bool]
         ] = []
-        for rule in tuple(rules) + BOOTSTRAP_GROUNDS:
+        for rule in rules:
             important_colour = [
                 important for prop, _, important in rule.declarations if prop == "color"
             ]
@@ -1851,57 +1829,6 @@ def test_every_colour_rule_the_gate_never_reached_is_named() -> None:
     )
 
 
-def test_every_bootstrap_ground_is_still_under_something() -> None:
-    """A fill written down for a component the site no longer uses.
-
-    It would paint nothing, and it would quietly start painting again if the
-    class came back for some other reason, so it goes when its component
-    goes, and all of them go with Bootstrap. The class has to be on a page
-    that links Bootstrap: a ground paints only where its source reaches.
-    """
-    base = (TEMPLATE_DIR / "base.html").read_text()
-    assert (
-        "bootstrap@5.2.3" in base
-    ), "base.html no longer loads Bootstrap 5.2.3; take BOOTSTRAP_GROUNDS out"
-    dom = template_dom()
-    gone = [
-        selector
-        for rule in BOOTSTRAP_GROUNDS
-        for selector in rule.selectors
-        if not dom.matching(split_selector(selector), rule.stylesheet)
-    ]
-    assert not gone, "no page that links Bootstrap has these any more: %s" % gone
-
-
-def test_a_bootstrap_ground_reaches_the_painter() -> None:
-    """Listing a fill is not the same as painting it. Each rule paints only
-    on the pages that carry its source, and for a while no page recorded
-    Bootstrap as one, so every card's white was skipped and the words in a
-    card were measured on whatever sat under the card. With none of our own
-    CSS in the way, each card on a page that links Bootstrap has to come out
-    as exactly the fill written down for it."""
-    dom = template_dom()
-    painter = Painter([], dom)
-    for rule in BOOTSTRAP_GROUNDS:
-        for selector in rule.selectors:
-            nodes = dom.matching(split_selector(selector), rule.stylesheet)
-            assert nodes, f"no page that links Bootstrap has {selector}"
-            unpainted = sorted(
-                {
-                    node.template
-                    for node in nodes
-                    if [
-                        flatten(stop, BLACK)
-                        for layer in painter._own_layers(node, None, frozenset())
-                        for stop in layer.stops
-                    ]
-                    != [WHITE]
-                }
-            )
-            assert not unpainted, (
-                f"{selector} is not painted white on these pages, although "
-                f"they link Bootstrap: {unpainted}"
-            )
 
 
 def test_every_excuse_names_a_rule_that_still_exists() -> None:
@@ -2335,10 +2262,11 @@ def test_the_controls_that_carry_no_gradient_keep_a_ring() -> None:
         for selector in rule.selectors:
             if ":focus-visible" in selector:
                 rings.add(_normalise(selector))
+    # The site's own input box and tick box; Bootstrap's form classes are
+    # gone from every page.
     for wanted in (
-        ".form-control:focus-visible",
-        ".form-select:focus-visible",
-        ".form-check-input:focus-visible",
+        ".fhi-field:focus-visible",
+        ".fhi-check:focus-visible",
     ):
         assert any(wanted in ring for ring in rings), (
             "%s lost its focus ring; only the gradient buttons trade the ring "
@@ -2491,45 +2419,6 @@ def test_the_site_has_a_focus_ring() -> None:
             assert contrast_ratio(colour[:3], WHITE) >= 3.0, (
                 "the focus ring is %s, which is under 3:1 on white" % value
             )
-
-
-# Bootstrap 5.2's own `.btn:focus-visible {outline: 0}`, and the weight it
-# carries. A bare `:focus-visible` is (0, 1, 0) and loses to it in either load
-# order, which is how a ring can exist in the stylesheet and still never appear
-# on Next, Continue or Confirm Deletion.
-BOOTSTRAP_BUTTON_RESET = (0, 2, 0)
-
-
-def test_the_focus_ring_outranks_bootstraps_button_reset() -> None:
-    rules = load_rules()
-    variables = custom_properties(rules)
-    winners = []
-    for rule in rules:
-        outline = None
-        for prop, value, _ in rule.declarations:
-            if prop == "outline":
-                outline = resolve_vars(value, variables)
-        if outline is None or outline.strip().lower() in ("none", "0"):
-            continue
-        for selector in rule.selectors:
-            steps = split_selector(selector)
-            if "focus-visible" not in selector:
-                continue
-            if not any("btn" in compound.classes for _, compound in steps):
-                continue
-            if specificity(selector) >= BOOTSTRAP_BUTTON_RESET:
-                winners.append((selector, outline))
-    assert winners, (
-        "no :focus-visible rule names .btn at Bootstrap's own weight %r, so "
-        "`.btn:focus-visible {outline: 0}` wins and the ring never reaches a "
-        "button" % (BOOTSTRAP_BUTTON_RESET,)
-    )
-    for selector, outline in winners:
-        colour = next(iter(colours_in(outline)), None)
-        assert colour is not None, selector
-        assert (
-            contrast_ratio(colour[:3], WHITE) >= 3.0
-        ), "%s draws its ring in %s, under 3:1 on white" % (selector, outline)
 
 
 def test_nothing_switches_the_focus_ring_off() -> None:

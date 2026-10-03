@@ -144,6 +144,15 @@ h4 {
 
 h5 {
     font-weight: 500;
+    /* Its size was Bootstrap's 1.25rem, never set here; without it an h5
+       falls to the browser's 13px. */
+    font-size: var(--fhi-text-subsection);
+}
+
+h6 {
+    /* The same: Bootstrap's 1rem. Chat renders a reply's ###### heading
+       as a bare h6, which otherwise falls to about 11px. */
+    font-size: var(--fhi-text-body);
 }
 
 h1 {
