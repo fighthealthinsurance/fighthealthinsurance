@@ -350,7 +350,21 @@ function namesFromLabels(lines: string[]): LabelledName[] {
       // The value runs to a gap (a tab or two spaces: the next column), then
       // to the first word that is not part of a name. A gap between the
       // label and its value is not one: that is the label's own column.
-      const value = columnsOf(line.slice(match.index + match[0].length), LABEL_GAP)[0] ?? "";
+      const rest = line.slice(match.index + match[0].length);
+      const columns = columnsOf(rest, LABEL_GAP);
+      const value = columns[0] ?? "";
+      // Two spaces end the value only when what follows reads as the next
+      // label (it has a colon). Otherwise the name may run on past them, as
+      // in "Jordan Lee  Example", so this label gives no name at all.
+      const gap = rest.replace(/^\s+/, "").match(LABEL_GAP);
+      if (
+        columns.length > 1 &&
+        gap !== null &&
+        !gap[0].includes("\t") &&
+        !columns[1].includes(":")
+      ) {
+        continue;
+      }
       const taken: string[] = [];
       for (const word of words(value)) {
         const plain = word.replace(/,$/, "");

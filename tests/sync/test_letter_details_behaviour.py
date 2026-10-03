@@ -996,6 +996,12 @@ RULE_CASES = {
     "Dear Member,\nMember name: Jordan Example    Service Date: 09/01/2026\n": NAME,
     # For a label, two spaces are a gap.
     "Dear Member,\nMember name: Jordan Example  Service Date: 09/01/2026\n": NAME,
+    # ...but only before another label: a name that runs on past two spaces
+    # gives nothing rather than a wrong last name.
+    "Dear Member,\nMember name: Jordan Lee  Example\n": {},
+    "Dear Member,\nPatient: Jordan  Example\n": {},
+    # A tab is a column whatever follows it.
+    "Dear Member,\nMember name: Jordan Example\tAccount 12345\n": NAME,
     # A heading in any column of the line above, from a PDF (a tab) or pasted
     # (a run of spaces, and the block indented under it).
     "Dear Member,\nMember name: Jordan Example\nMember ID: XYZ000000\tServices for:\n"
