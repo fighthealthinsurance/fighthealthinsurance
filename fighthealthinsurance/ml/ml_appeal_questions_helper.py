@@ -12,7 +12,10 @@ from fighthealthinsurance.denial_history_consent import (
     still_allowed,
 )
 from fighthealthinsurance.ml.ml_router import ml_router
-from fighthealthinsurance.ml.question_parsing import is_junk_question
+from fighthealthinsurance.ml.question_parsing import (
+    clean_suggested_answer,
+    is_junk_question,
+)
 from fighthealthinsurance.models import Denial, GenericQuestionGeneration
 from fighthealthinsurance.utils import best_within_timelimit
 
@@ -186,7 +189,13 @@ class MLAppealQuestionsHelper:
                 logger.debug(
                     f"Found cached generic questions for {procedure}/{diagnosis}"
                 )
-                return cached_questions
+                # Hints get the check a fresh reply's get: a set cached before
+                # it can pair real questions with "[Answer if available]".
+                # Same shape as the stored rows: [question, hint] lists.
+                return cast(
+                    List[Tuple[str, str]],
+                    [[q, clean_suggested_answer(a)] for q, a in cached_questions],
+                )
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error fetching cached generic questions: {e}"
