@@ -1,0 +1,10 @@
+{% comment %}
+A form's tick box as the site lays one out: the box, then its label beside
+it, then any note or error under the label. Set as a field's template_name.
+{% endcomment %}
+<div class="fhi-check-row">
+  {{ field }}
+  {{ field.label_tag }}
+  {% if field.help_text %}<p class="fhi-note"{% if field.auto_id %} id="{{ field.auto_id }}_helptext"{% endif %}>{{ field.help_text|safe }}</p>{% endif %}
+  {{ field.errors }}
+</div>

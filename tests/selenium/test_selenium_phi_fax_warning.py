@@ -1,8 +1,8 @@
-"""Selenium tests for PHI placeholder warning before fax submission.
+"""Selenium tests for the blank-letter check before a fax is sent.
 
-Verifies that when the appeal text still contains unfilled PHI placeholders
-(e.g. {{FIRST_NAME}}, FirstName defaults), the user sees a confirmation
-dialog before the fax form is submitted.
+When the appeal text still contains unfilled placeholders (e.g.
+{{FIRST_NAME}}, FirstName defaults), the page names them in a notice just
+above the fax button, never in a dialog, and the fax form is not submitted.
 """
 
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
@@ -35,6 +35,9 @@ APPEAL_FILLED_IN = (
     "Sincerely,\n"
     "Alice Wonderland"
 )
+
+# letter_placeholders.ts FAX_NOTICE_ID
+FAX_NOTICE_ID = "fax-placeholder-notice"
 
 TEST_EMAIL = "phi_warn_test@example.com"
 TEST_SEMI_SEKRET = "test-sekret-phi"
@@ -138,8 +141,20 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
         """Click the fax button via JS to ensure proper event dispatching."""
         self.execute_script("document.getElementById('fax_appeal').click();")
 
+    def _assert_no_dialog(self):
+        try:
+            alert = self.driver.switch_to.alert
+            raise AssertionError(f"No dialog should appear, but got: {alert.text}")
+        except NoAlertPresentException:
+            pass
+
+    def _wait_for_fax_notice(self):
+        return WebDriverWait(self.driver, 5).until(
+            EC.visibility_of_element_located((By.ID, FAX_NOTICE_ID))
+        )
+
     def test_fax_warns_on_unfilled_placeholders(self):
-        """Clicking fax with {{placeholders}} in text triggers a confirm dialog."""
+        """Clicking fax with {{placeholders}} in the text names them on the page."""
         denial = self._create_denial()
 
         self.open(f"{self.live_server_url}/scan")
@@ -160,22 +175,17 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
         # Click fax button via JS to ensure proper event propagation
         self._click_fax_via_js()
 
-        # Should trigger a confirm() dialog
-        alert = WebDriverWait(self.driver, 5).until(EC.alert_is_present())
-        alert_text = alert.text
-
-        # Verify the alert mentions placeholders
+        # The notice names what is left, inline, and no dialog opens.
+        notice_text = self._wait_for_fax_notice().text
         assert (
-            "placeholder" in alert_text.lower() or "{{" in alert_text
-        ), f"Expected warning about placeholders, got: {alert_text}"
+            "FirstName" in notice_text or "{{" in notice_text
+        ), f"Expected the notice to name the placeholders, got: {notice_text}"
+        self._assert_no_dialog()
 
-        # Dismiss the dialog (cancel) — form should NOT submit
-        alert.dismiss()
-
-        # Verify we're still on the same page (not redirected)
+        # The form did not submit: still on the appeal page.
         assert self.is_element_present(
             "#id_completed_appeal_text"
-        ), "Should still be on appeal page after dismissing warning"
+        ), "Should still be on appeal page while placeholders remain"
 
     def test_fax_no_warning_when_placeholders_filled(self):
         """Clicking fax with all placeholders filled should NOT trigger a warning."""
@@ -216,15 +226,11 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
             EC.element_to_be_clickable((By.ID, "fax_appeal"))
         )
 
-        # Verify no alert is present (validation passed, no warning)
-        try:
-            alert = self.driver.switch_to.alert
-            raise AssertionError(
-                f"No alert should appear when placeholders are filled in, "
-                f"but got: {alert.text}"
-            )
-        except NoAlertPresentException:
-            pass  # Expected — no alert means validation passed
+        # Verify no notice and no dialog (validation passed, no warning)
+        assert not self.is_element_present(
+            f"#{FAX_NOTICE_ID}"
+        ), "No notice should appear when placeholders are filled in"
+        self._assert_no_dialog()
 
         # Verify the form would have submitted (our intercept caught it)
         submitted = self.execute_script("return window.__faxFormSubmitted === true;")
@@ -232,8 +238,8 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
             submitted
         ), "Form should have attempted to submit (no placeholder warning)"
 
-    def test_fax_warning_dismiss_stays_on_page(self):
-        """Dismissing the confirm dialog keeps user on the appeal page."""
+    def test_fax_stays_on_the_page_while_placeholders_remain(self):
+        """The notice holds the fax: the page does not move on."""
         denial = self._create_denial()
 
         self.open(f"{self.live_server_url}/scan")
@@ -245,19 +251,9 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
         # Record the current URL before clicking
         url_before = self.driver.current_url
 
-        # Click fax button — triggers confirm dialog
+        # Click fax button: the notice appears above it
         self._click_fax_via_js()
-
-        alert = WebDriverWait(self.driver, 5).until(EC.alert_is_present())
-        alert_text = alert.text
-
-        # Verify the alert content mentions placeholders
-        assert (
-            "placeholder" in alert_text.lower() or "{{" in alert_text
-        ), f"Expected warning about placeholders, got: {alert_text}"
-
-        # Dismiss (cancel) — should stay on same page
-        alert.dismiss()
+        self._wait_for_fax_notice()
 
         # Wait for the page to remain stable (appeal text still present)
         WebDriverWait(self.driver, 2).until(
@@ -266,7 +262,7 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Verify URL hasn't changed (form was NOT submitted)
         assert self.driver.current_url == url_before, (
-            f"URL should not change after dismissing. Before: {url_before}, "
+            f"URL should not change while placeholders remain. Before: {url_before}, "
             f"After: {self.driver.current_url}"
         )
 

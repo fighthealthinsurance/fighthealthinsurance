@@ -204,6 +204,12 @@ class StageFaxView(generic.FormView):
         staged = SendFaxHelper.stage_appeal_as_fax(
             appeal=appeal, email=form_data["email"], fax_number=form_data["fax_phone"]
         )
+        if form.placeholders_sent_as_they_are:
+            # How many, and nothing else: never the letter or the blanks.
+            logger.info(
+                "Fax staged with placeholders the sender confirmed: "
+                f"{form.placeholders_sent_as_they_are}"
+            )
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
 
         # Get fax amount from form (PWYW) with validation
