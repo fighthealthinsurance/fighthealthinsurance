@@ -284,20 +284,20 @@ def log_logout(request, user) -> Optional[AuditLog]:
 def log_exception_error(
     request,
     error_type: str = "",
-    error_message: str = "",
 ) -> Optional[AuditLog]:
-    """Log an API exception event with request metadata for debugging."""
-    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "") if request else ""
-    extra_data = {
-        "error_type": error_type[:200],
-        "error_message": error_message[:1000],
-        "query_string": (request.META.get("QUERY_STRING", "") if request else "")[
-            :1000
-        ],
-        "remote_addr": (request.META.get("REMOTE_ADDR", "") if request else "")[:100],
-        "x_forwarded_for": str(x_forwarded_for)[:500],
-        "x_real_ip": (request.META.get("HTTP_X_REAL_IP", "") if request else "")[:100],
-    }
+    """Log an API exception event with request metadata for debugging.
+
+    Stores the exception class, never its message or the query string, since
+    either can carry personal details (Sentry records the full exception).
+    The client address headers are kept for professionals only, the same rule
+    log_event follows for ip_address.
+    """
+    extra_data = {"error_type": error_type[:200]}
+    if request is not None and is_professional_user(getattr(request, "user", None)):
+        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
+        extra_data["remote_addr"] = request.META.get("REMOTE_ADDR", "")[:100]
+        extra_data["x_forwarded_for"] = str(x_forwarded_for)[:500]
+        extra_data["x_real_ip"] = request.META.get("HTTP_X_REAL_IP", "")[:100]
 
     return log_event(
         EventType.EXCEPTION_ERROR,

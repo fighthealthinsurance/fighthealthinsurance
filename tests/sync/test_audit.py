@@ -5,8 +5,11 @@ Tests for the simplified audit logging system.
 from typing import Optional
 from unittest.mock import patch
 
+from django.core import serializers
 from django.test import TestCase, RequestFactory, override_settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AnonymousUser
+from django.urls import reverse
 
 from fhi_users.audit import (
     AuditLog,
@@ -16,6 +19,7 @@ from fhi_users.audit import (
     log_login_failure,
     log_logout,
     log_api_access,
+    log_exception_error,
     is_audit_enabled,
     get_client_ip,
     get_user_agent,
@@ -25,6 +29,10 @@ from fhi_users.audit import (
     TrackingInfo,
 )
 from fhi_users.models import ProfessionalUser
+from fighthealthinsurance.middleware.AuditMiddleware import (
+    AUDITED_PATH_PREFIX,
+    AuditMiddleware,
+)
 
 User = get_user_model()
 
@@ -191,6 +199,97 @@ class AuditLoggingEnabledTest(TestCase):
         self.assertEqual(log.user_agent, "TestBrowser/2.0")
         # IP should be stored for professional users
         self.assertEqual(log.ip_address, "5.6.7.8")
+
+
+# Personal details a caller might put in a query string or echo in an error.
+PERSONAL_QUERY = "email=someone%40example.com&denial_id=4242"
+PERSONAL_DETAILS = ("someone@example.com", "someone%40example.com", "4242")
+
+
+def stored_row_text(log: AuditLog) -> str:
+    """Every stored column of an audit row, as one string."""
+    return serializers.serialize("json", [log])
+
+
+class AuditMiddlewareTest(TestCase):
+    """The middleware logs the REST API where it is mounted, by path alone."""
+
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def test_the_audited_prefix_is_where_the_rest_api_is_mounted(self):
+        self.assertTrue(reverse("ping").startswith(AUDITED_PATH_PREFIX))
+
+    @override_settings(ENABLE_AUDIT_LOGGING=True)
+    def test_a_rest_api_request_is_logged_when_audit_logging_is_on(self):
+        self.client.get(reverse("ping"))
+        log = AuditLog.objects.get()
+        self.assertEqual(
+            (log.event_type, log.path, log.method, log.status_code),
+            ("api_access", reverse("ping"), "GET", 204),
+        )
+
+    @override_settings(ENABLE_AUDIT_LOGGING=True)
+    def test_a_page_request_is_not_logged(self):
+        response = self.client.get(reverse("about"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(AuditLog.objects.count(), 0)
+
+    @override_settings(ENABLE_AUDIT_LOGGING=False)
+    def test_nothing_is_logged_when_audit_logging_is_off(self):
+        self.client.get(reverse("ping"))
+        self.client.get(reverse("about"))
+        self.assertEqual(AuditLog.objects.count(), 0)
+
+    @override_settings(ENABLE_AUDIT_LOGGING=True)
+    def test_a_query_string_never_appears_in_the_access_log(self):
+        self.client.get(f"{reverse('ping')}?{PERSONAL_QUERY}")
+        log = AuditLog.objects.get()
+        self.assertEqual(log.path, reverse("ping"))
+        stored = stored_row_text(log)
+        for detail in PERSONAL_DETAILS:
+            self.assertNotIn(detail, stored)
+
+    @override_settings(ENABLE_AUDIT_LOGGING=True)
+    def test_a_query_string_never_appears_in_the_exception_log(self):
+        request = self.factory.get(f"{AUDITED_PATH_PREFIX}denials/?{PERSONAL_QUERY}")
+        request.user = AnonymousUser()
+
+        def fail_with_the_query(request):
+            raise ValueError(f"no denial for {request.META['QUERY_STRING']}")
+
+        with self.assertRaises(ValueError):
+            AuditMiddleware(fail_with_the_query)(request)
+        log = AuditLog.objects.get()
+        self.assertEqual(
+            (log.event_type, log.extra_data["error_type"]),
+            ("exception_error", "ValueError"),
+        )
+        stored = stored_row_text(log)
+        for detail in PERSONAL_DETAILS:
+            self.assertNotIn(detail, stored)
+
+    @override_settings(ENABLE_AUDIT_LOGGING=True)
+    def test_an_exception_log_keeps_no_client_address_for_a_patient(self):
+        request = self.factory.get(
+            f"{AUDITED_PATH_PREFIX}denials/", HTTP_X_FORWARDED_FOR="203.0.113.7"
+        )
+        request.user = AnonymousUser()
+        log = log_exception_error(request, error_type="ValueError")
+        self.assertNotIn("203.0.113.7", stored_row_text(log))
+
+    @override_settings(ENABLE_AUDIT_LOGGING=True)
+    def test_an_exception_log_keeps_the_client_address_for_a_professional(self):
+        pro_user = User.objects.create_user(
+            username="exceptionpro", email="pro2@example.com", password="testpass123"
+        )
+        ProfessionalUser.objects.create(user=pro_user, active=True)
+        request = self.factory.get(
+            f"{AUDITED_PATH_PREFIX}denials/", HTTP_X_FORWARDED_FOR="203.0.113.8"
+        )
+        request.user = pro_user
+        log = log_exception_error(request, error_type="ValueError")
+        self.assertEqual(log.extra_data["x_forwarded_for"], "203.0.113.8")
 
 
 class GetClientIPTest(TestCase):

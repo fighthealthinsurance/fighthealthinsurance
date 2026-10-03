@@ -1,7 +1,7 @@
 """
-Simple audit logging middleware for API requests.
+Simple audit logging middleware for REST API requests.
 
-Logs API access with timing information. Only active when ENABLE_AUDIT_LOGGING is True.
+Logs REST API access with timing information. Only active when ENABLE_AUDIT_LOGGING is True.
 """
 
 import time
@@ -11,12 +11,16 @@ from django.http import HttpRequest, HttpResponse
 
 from loguru import logger
 
+# Where the REST API is mounted (see fighthealthinsurance/urls.py).
+AUDITED_PATH_PREFIX = "/ziggy/rest/"
+
 
 class AuditMiddleware:
     """
-    Middleware to log API requests for audit purposes.
+    Middleware to log REST API requests for audit purposes.
 
-    Only logs requests to API endpoints (/api/).
+    Only logs requests under AUDITED_PATH_PREFIX, by path alone: no query
+    string and no body.
     Logging is synchronous but failures are swallowed to avoid impacting requests.
     """
 
@@ -31,12 +35,12 @@ class AuditMiddleware:
         try:
             response = self.get_response(request)
         except Exception as e:
-            if request.path.startswith("/api/"):
+            if request.path.startswith(AUDITED_PATH_PREFIX):
                 self._log_exception(request, e)
             raise
 
-        # Log API requests only
-        if request.path.startswith("/api/"):
+        # Log REST API requests only
+        if request.path.startswith(AUDITED_PATH_PREFIX):
             self._log_request(request, response, start_time)
 
         return response
@@ -78,7 +82,6 @@ class AuditMiddleware:
             log_exception_error(
                 request=request,
                 error_type=error.__class__.__name__,
-                error_message=str(error),
             )
         except Exception as logging_error:
             logger.warning(
