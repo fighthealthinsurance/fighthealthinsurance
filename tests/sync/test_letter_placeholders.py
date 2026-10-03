@@ -634,6 +634,21 @@ def test_the_notice_that_came_back_says_what_new_means(compiled):
 
 
 @needs_node
+def test_after_send_anyway_an_edit_leaving_only_a_different_blank_marks_it_new(
+    compiled,
+):
+    """None of the blanks said yes to is left, and the one there is new."""
+    page = run_scenario(compiled, "fax-send-anyway-then-only-a-different-blank")
+    notice = page["faxNotice"]
+    assert (
+        page["submissions"],
+        notice["items"],
+        "The ones marked new weren't there when you said to send it as it is"
+        in notice["text"],
+    ) == (["held", SENT_ANYWAY, "held"], ["New: [Date of Service]"], True)
+
+
+@needs_node
 def test_a_first_notice_marks_nothing_new(compiled):
     notice = run_scenario(compiled, "fax-blanks")["faxNotice"]
     assert ("New:" in notice["text"], "marked new" in notice["text"]) == (
@@ -745,6 +760,15 @@ def test_a_ticked_box_does_not_cover_a_blank_typed_in_after(compiled):
         ["held"],
         ["New: [Date of Service]", "[Your Name]", "{{SCSID}}"],
         [at, at + len("[Date of Service]")],
+    )
+
+
+@needs_node
+def test_a_ticked_box_then_only_a_different_blank_marks_it_new(compiled):
+    page = run_scenario(compiled, "fax-box-ticked-then-only-a-different-blank")
+    assert (page["submissions"], page["faxNotice"]["items"]) == (
+        ["held"],
+        ["New: [Date of Service]"],
     )
 
 

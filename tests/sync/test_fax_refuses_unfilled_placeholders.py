@@ -8,8 +8,9 @@ the server (FaxForm, through StageFaxView), so a letter still holding
 named, and nothing is staged, saved or sent. That page has a tick box under
 the letter, "Send it as it is", for what the check finds that is not really a
 blank. Its value is the list of blanks the page names, so ticking it says yes
-to those and no others; the appeal page's "Send anyway" posts a list of its
-own under the same name. A letter is faxed only when every blank in it is on
+to those and no others; a letter with more blanks than a message names is
+named ten at a time, and the box keeps what was said yes to before. The
+appeal page's "Send anyway" posts a list of its own under the same name. A letter is faxed only when every blank in it is on
 a posted list, and the log says how many blanks went, never what they were.
 """
 
@@ -51,6 +52,22 @@ def approved(*blanks: str) -> str:
 
 SENT_ANYWAY = approved("[Your Name]", "{{SCSID}}")
 BOX = re.compile(r'<input[^>]*id="id_approved_placeholders"[^>]*>')
+
+# A letter with thirteen blanks, three more than a message names.
+THIRTEEN = [f"[Blank {letter}]" for letter in "ABCDEFGHIJKLM"]
+WITH_THIRTEEN_BLANKS = (
+    "Dear Example Health,\n\n"
+    + "\n".join(f"Detail: {blank}" for blank in THIRTEEN)
+    + "\n\nSincerely,\nPat Example"
+)
+
+
+def box_value(page) -> list[str] | None:
+    """The list of blanks the page's "Send it as it is" box holds, or None
+    when the page has no box."""
+    box = BOX.search(page.content.decode())
+    value = box and re.search(r'value="([^"]*)"', box.group(0))
+    return json.loads(html.unescape(value.group(1))) if value else None
 
 
 class StageFaxRefusesUnfilledPlaceholdersTest(TestCase):
@@ -224,20 +241,62 @@ class StageFaxRefusesUnfilledPlaceholdersTest(TestCase):
         """Every blank, including the ones already approved, and nothing
         else: ticking it says yes to what the page lists."""
         page = self.post(WITH_A_NEW_BLANK, approved_placeholders=SENT_ANYWAY)[0]
-        box = BOX.search(page.content.decode())
-        value = box and re.search(r'value="([^"]*)"', box.group(0))
         self.assertEqual(
-            json.loads(html.unescape(value.group(1))) if value else None,
-            ["[Your Name]", "{{SCSID}}", "[Date of Service]"],
+            box_value(page), ["[Your Name]", "{{SCSID}}", "[Date of Service]"]
         )
 
     def test_the_box_holds_each_line_as_it_is_written(self):
         page = self.post(WITH_TWO_LINES)[0]
-        box = BOX.search(page.content.decode())
-        value = box and re.search(r'value="([^"]*)"', box.group(0))
+        self.assertEqual(box_value(page), ["________", "______________"])
+
+    def tick_the_box_and_send_again(self, page):
+        """What a browser with no script posts from a page that names
+        blanks, once the person ticks its box."""
+        return self.post(
+            WITH_THIRTEEN_BLANKS, approved_placeholders=json.dumps(box_value(page))
+        )
+
+    def test_a_long_list_is_named_ten_at_a_time(self):
+        response, *_ = self.post(WITH_THIRTEEN_BLANKS)
+        self.assertContains(
+            response,
+            "Fill in these blanks before we fax your letter: "
+            f"{', '.join(THIRTEEN[:10])} and 3 more.",
+        )
+
+    def test_the_box_on_a_long_list_holds_only_the_blanks_the_page_names(self):
+        """The three the page counts but does not name are not said yes to
+        unseen."""
+        page = self.post(WITH_THIRTEEN_BLANKS)[0]
+        self.assertEqual(box_value(page), THIRTEEN[:10])
+
+    def test_ticking_the_box_on_a_long_list_holds_it_for_the_other_three(self):
+        page = self.post(WITH_THIRTEEN_BLANKS)[0]
+        _, _, stage, _ = self.tick_the_box_and_send_again(page)
+        self.assertEqual(stage.call_count, 0)
+
+    def test_the_page_after_ticking_names_the_three_not_yet_named(self):
+        """The ones said yes to fill the room the three leave, in the order
+        the letter has them."""
+        page = self.post(WITH_THIRTEEN_BLANKS)[0]
+        response, *_ = self.tick_the_box_and_send_again(page)
+        self.assertContains(
+            response,
+            "Fill in these blanks before we fax your letter: "
+            f"{', '.join(THIRTEEN[:7] + THIRTEEN[10:])} and 3 more.",
+        )
+
+    def test_the_box_after_ticking_keeps_the_first_ten_said_yes_to(self):
+        page = self.post(WITH_THIRTEEN_BLANKS)[0]
+        again = self.tick_the_box_and_send_again(page)[0]
+        self.assertEqual(box_value(again), THIRTEEN)
+
+    def test_ticking_the_box_again_faxes_the_long_list(self):
+        page = self.post(WITH_THIRTEEN_BLANKS)[0]
+        again = self.tick_the_box_and_send_again(page)[0]
+        response, _, stage, send = self.tick_the_box_and_send_again(again)
         self.assertEqual(
-            json.loads(html.unescape(value.group(1))) if value else None,
-            ["________", "______________"],
+            (response.status_code, stage.call_count, send.call_count), (200, 1, 1)
         )
 
     def test_the_box_is_described_by_the_list_of_blanks(self):

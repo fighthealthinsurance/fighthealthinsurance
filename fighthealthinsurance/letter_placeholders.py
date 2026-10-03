@@ -149,6 +149,47 @@ def find_placeholders_as_written(text: str) -> list[str]:
     return _once_each([spot.written for spot in _find_spots(text)])
 
 
+@dataclass(frozen=True)
+class BlanksToName:
+    # Each blank, once, as a message names it: first the ones it has room
+    # for, in the order the letter has them, then the rest, which
+    # describe_placeholders counts rather than names.
+    shown: list[str]
+    # What "Send it as it is" says yes to, each blank exactly as the letter
+    # has it: the ones the message names, and the ones the person has
+    # already said yes to. Never a blank they have not been shown.
+    send_as_it_is: list[str]
+
+
+def blanks_to_name(text: str, approved: set[str]) -> BlanksToName:
+    """The blanks a message about ``text`` names, and what its box says yes to.
+
+    A message names at most ``LISTED_IN_A_MESSAGE`` and says how many more
+    there are. Blanks the person has not said yes to (not in ``approved``)
+    are named before ones they have, so once they say yes to the first ten,
+    the next message names the rest. A line to write on is named ``___``
+    once, and stands for every line in the letter.
+    """
+    spots = _find_spots(text)
+    shown = _once_each([spot.shown for spot in spots])
+    waiting = {spot.shown for spot in spots if spot.written not in approved}
+    # sorted() keeps the letter's order among the waiting, and among the rest.
+    room = set(
+        sorted(shown, key=lambda label: label not in waiting)[:LISTED_IN_A_MESSAGE]
+    )
+    return BlanksToName(
+        shown=[label for label in shown if label in room]
+        + [label for label in shown if label not in room],
+        send_as_it_is=_once_each(
+            [
+                spot.written
+                for spot in spots
+                if spot.shown in room or spot.written in approved
+            ]
+        ),
+    )
+
+
 def describe_placeholders(found: list[str]) -> str:
     """The blanks as one line for a message: ``[Your Name], {{SCSID}}``."""
     listed = ", ".join(found[:LISTED_IN_A_MESSAGE])

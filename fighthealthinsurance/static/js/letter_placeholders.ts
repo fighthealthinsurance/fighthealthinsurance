@@ -387,16 +387,18 @@ export function faxMustWaitForPlaceholders(
     return false;
   }
   markSentAnyway(form, []);
-  // Marked new only when the person has said yes to some of the others:
-  // on a first notice every blank is one they have not seen.
-  const fresh =
-    waiting.length < written.length
-      ? onceEach(
-          spots
-            .filter((spot) => waiting.indexOf(spot.written) >= 0)
-            .map((spot) => spot.shown),
-        )
-      : [];
+  // Marked new whenever the person has said yes before, with "Send anyway"
+  // or the ticked box, even when an edit since has left none of those
+  // blanks in the letter. On a first notice every blank is one they have
+  // not seen, so none is marked.
+  const saidYesBefore = blanksSentAnyway.length > 0 || blanksTheBoxApproves().length > 0;
+  const fresh = saidYesBefore
+    ? onceEach(
+        spots
+          .filter((spot) => waiting.indexOf(spot.written) >= 0)
+          .map((spot) => spot.shown),
+      )
+    : [];
   showPlaceholderNotice({
     id: FAX_NOTICE_ID,
     before: button,

@@ -49,6 +49,9 @@ const KARYOTYPE_FIRST =
 // adds words and no blank.
 const WITH_A_NEW_BLANK = WITH_BLANKS.replace('{{SCSID}}.', '{{SCSID}}, seen on [Date of Service].');
 const WITH_THE_SAME_BLANKS = WITH_BLANKS.replace('{{SCSID}}.', '{{SCSID}}, a member for ten years.');
+// The same letter after an edit that fills in both blanks and adds another.
+const WITH_ONLY_A_DIFFERENT_BLANK =
+  'Dear Example Health,\n\nI am Pat Example, member 12345, seen on [Date of Service].\n\nSincerely,\nPat Example';
 const SIGNATURE_LINE = '______________';
 const WITH_A_LINE = 'Dear Example Health,\n\nI am Pat Example.\n\nSigned: ' + SIGNATURE_LINE + '\nPat Example';
 // The same letter with a second, shorter line to write on, under the first.
@@ -296,6 +299,17 @@ const scenarios = {
     pressNoticeButton(lib.FAX_NOTICE_ID, 'Send anyway');
     report({submissions});
   },
+  'fax-send-anyway-then-only-a-different-blank'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    faxLetter.value = WITH_BLANKS;
+    faxButton.click();
+    pressNoticeButton(lib.FAX_NOTICE_ID, 'Send anyway');
+    // Back on the page, both blanks filled in and another typed in.
+    faxLetter.value = WITH_ONLY_A_DIFFERENT_BLANK;
+    faxButton.click();
+    report({submissions});
+  },
   'fax-send-anyway-then-an-edit'() {
     const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
     const submissions = wireFaxForm(lib);
@@ -394,6 +408,16 @@ const scenarios = {
     const submissions = wireFaxForm(lib);
     addSendItAsItIsBox(true, null);
     faxLetter.value = WITH_BLANKS;
+    faxButton.click();
+    report({submissions});
+  },
+  'fax-box-ticked-then-only-a-different-blank'() {
+    const lib = require(path.join(SCRIPTS, 'letter_placeholders.js'));
+    const submissions = wireFaxForm(lib);
+    addSendItAsItIsBox(true, ['[Your Name]', '{{SCSID}}']);
+    // The page came back naming two blanks; both are filled in and another
+    // is typed in.
+    faxLetter.value = WITH_ONLY_A_DIFFERENT_BLANK;
     faxButton.click();
     report({submissions});
   },

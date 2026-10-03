@@ -19,9 +19,9 @@ else:
 
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.letter_placeholders import (
+    blanks_to_name,
     describe_placeholders,
     find_placeholders_as_written,
-    find_unfilled_placeholders,
 )
 from fighthealthinsurance.models import (
     DenialTypes,
@@ -354,9 +354,10 @@ class FaxForm(DenialRefForm):
     # Some of what the blank check finds is not a blank: an acronym in
     # brackets like [ERISA], a name typed inside the brackets, a line to sign
     # on. This box, "Send it as it is", says yes to the blanks the page names,
-    # and to nothing else: its value is that list (JSON, each blank exactly as
-    # the letter has it), so a ticked box posts the list and an unticked one
-    # posts nothing. The appeal page's "Send anyway" posts a list of its own
+    # and to the ones the person already said yes to, and to nothing else:
+    # its value is that list (JSON, each blank exactly as the letter has it),
+    # so a ticked box posts the list and an unticked one posts nothing. A
+    # letter with more blanks than a message names is named ten at a time. The appeal page's "Send anyway" posts a list of its own
     # under the same name, in a hidden field. A letter with blanks is faxed
     # only when every blank in it is on a posted list.
     # The box is off the form (see __init__) until clean() holds a letter for
@@ -448,12 +449,16 @@ class FaxForm(DenialRefForm):
         if all(blank in approved for blank in blanks):
             self.placeholders_sent_as_they_are = len(blanks)
             return cleaned_data
-        self._offer_to_send_as_it_is(blanks)
+        # A long list is named ten at a time, and the box says yes only to
+        # what the person has been shown: the blanks named here, and the
+        # ones they said yes to before, which stay said yes to.
+        to_name = blanks_to_name(text, approved)
+        self._offer_to_send_as_it_is(to_name.send_as_it_is)
         self.add_error(
             "completed_appeal_text",
             forms.ValidationError(
                 "Fill in these blanks before we fax your letter: "
-                f"{describe_placeholders(find_unfilled_placeholders(text))}. "
+                f"{describe_placeholders(to_name.shown)}. "
                 "Your insurance company would get them exactly as written. "
                 "Replace each one with your details, or delete it if it "
                 "doesn't apply, then send the fax again. If you've checked "
