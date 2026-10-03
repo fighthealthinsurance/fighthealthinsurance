@@ -183,6 +183,17 @@ class PublicDeleteDataForm(ReCaptchaOptionalMixin, DeleteDataForm):
     captcha = forms.CharField(required=False, widget=forms.HiddenInput())
 
 
+class IntakeResumeForm(StyledWidgetsMixin, forms.Form):
+    """The email address a resume link asks for before it opens a case."""
+
+    email = forms.EmailField(
+        required=True,
+        max_length=300,
+        label="Email address you used",
+        widget=forms.EmailInput(attrs={"autocomplete": "email"}),
+    )
+
+
 class ShareAppealForm(forms.Form):
     denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
     email = forms.CharField(required=True, widget=forms.HiddenInput())
