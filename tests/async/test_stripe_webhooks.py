@@ -363,13 +363,16 @@ class FaxPaymentWebhookTests(TestCase):
     so a completed fax checkout is only noted. The webhook never sends."""
 
     # Every way a fax could be sent from here: a Temporal dispatch, the Ray
-    # fax actor (each patched where it is defined and where fax_helpers
-    # imported it), and the success page's own send.
+    # fax actor (each patched where it is defined, where fax_helpers imported
+    # it, and where the webhook's module would if it ever imported one), and
+    # the success page's own send.
     SEND_PATHS = {
         "temporal": "fighthealthinsurance.temporal_client.dispatch_fax_send",
         "temporal_in_helpers": "fighthealthinsurance.helpers.fax_helpers.dispatch_fax_send",
+        "temporal_in_webhook": "fighthealthinsurance.helpers.stripe_helpers.dispatch_fax_send",
         "ray": "fighthealthinsurance.fax_actor_ref.fax_actor_ref",
         "ray_in_helpers": "fighthealthinsurance.helpers.fax_helpers.fax_actor_ref",
+        "ray_in_webhook": "fighthealthinsurance.helpers.stripe_helpers.fax_actor_ref",
         "success_page": "fighthealthinsurance.helpers.fax_helpers.SendFaxHelper.remote_send_fax",
     }
 
@@ -388,11 +391,16 @@ class FaxPaymentWebhookTests(TestCase):
     def _complete_checkout(self, metadata):
         """Run a completed checkout through the webhook with every send path
         patched, and return those patches."""
+        # The session carries the email the way Stripe's does, so a log line
+        # that printed the session or its email would show it.
         session = MagicMock()
         session.metadata = metadata
+        session.customer_email = self.email
+        session.customer_details = {"email": self.email}
+        session.__str__.return_value = f"Session({metadata}, {self.email})"
         with ExitStack() as stack:
             sends = {
-                name: stack.enter_context(patch(target))
+                name: stack.enter_context(patch(target, create=True))
                 for name, target in self.SEND_PATHS.items()
             }
             StripeWebhookHelper.handle_checkout_session_completed(self.client, session)
@@ -401,8 +409,10 @@ class FaxPaymentWebhookTests(TestCase):
     def assertNothingWasSent(self, sends):
         sends["temporal"].assert_not_called()
         sends["temporal_in_helpers"].assert_not_called()
+        sends["temporal_in_webhook"].assert_not_called()
         sends["ray"].get.do_send_fax.remote.assert_not_called()
         sends["ray_in_helpers"].get.do_send_fax.remote.assert_not_called()
+        sends["ray_in_webhook"].get.do_send_fax.remote.assert_not_called()
         sends["success_page"].assert_not_called()
 
     @patch("fighthealthinsurance.helpers.stripe_helpers.logger")
