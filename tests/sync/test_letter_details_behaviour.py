@@ -16,7 +16,9 @@ network call, so "the module logs nothing and sends nothing" is asserted on
 what ran. (The ZIP field is part of the form, so a filled ZIP is sent with
 it like a typed one: see TheFakePageIsTheIntakePageTest.) Some run the whole
 intake script (scrub.ts), which sets the page up as it loads, with pdf.js
-stood in for by text items like the ones it hands over for a text PDF.
+stood in for by text items like the ones it hands over for a text PDF. A
+few run what takes the person's details back out of a letter: Remove
+personal details on the intake page, and the chat's scrubPersonalInfo.
 
 Skipped, not silently passed, where node or the front-end toolchain is not
 installed. The checks against the rendered page and scrub.ts need neither.
@@ -44,8 +46,9 @@ from tests.sync.test_entity_fetcher_behaviour import (
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 JS = REPO_ROOT / "fighthealthinsurance" / "static" / "js"
 MODULE = JS / "letter_details.ts"
-# Compiled with it: the PDF text join, and the intake script that uses both.
-ALSO_COMPILED = (JS / "pdf_text.ts", JS / "scrub.ts")
+# Compiled with it: the PDF text join, the intake script that uses both, and
+# the chat's scrubber.
+ALSO_COMPILED = (JS / "pdf_text.ts", JS / "scrub.ts", JS / "user_info_storage.ts")
 DRIVER = REPO_ROOT / "tests" / "js" / "letter_details_behaviour.cjs"
 
 HINT = "From your letter. Please check."
@@ -141,7 +144,12 @@ def compiled(tmp_path_factory) -> pathlib.Path:
         timeout=300,
     )
     built = out / "letter_details.js"
-    for name in ("letter_details.js", "pdf_text.js", "scrub.js"):
+    for name in (
+        "letter_details.js",
+        "pdf_text.js",
+        "scrub.js",
+        "user_info_storage.js",
+    ):
         if not (out / name).exists():
             pytest.fail(
                 f"tsc did not emit {name}\n"
@@ -421,6 +429,42 @@ def test_a_street_the_person_typed_and_then_emptied_stays_empty(compiled):
 
 
 @needs_node
+def test_a_street_the_person_typed_and_emptied_keeps_the_zip_out_too(compiled):
+    """Type a street that is not the letter's, paste, empty the street, paste
+    page two: the ZIP goes in only with the letter's street, and the street
+    field is the person's, so it stays empty and so does the ZIP."""
+    result = run(
+        compiled,
+        types={"store_street": "9 Other Lane"},
+        letter=TYPICAL_LETTER,
+        arrive="paste",
+        clears=["store_street"],
+        pasteAgain="\nPage 2 of 2\n" + MEMBER + "Your appeal rights are below.\n",
+    )
+    assert result["fields"] == dict(JORDAN_NAME_ONLY, store_street="9 Other Lane")
+    assert result["fieldsAtEnd"] == JORDAN_NAME_ONLY
+    assert result["hints"]["store_zip"] is None
+    assert [field for field, _ in result["remembered"]] == [
+        "store_fname",
+        "store_lname",
+    ]
+
+
+@needs_node
+def test_the_zip_goes_in_beside_the_letters_street_already_there(compiled):
+    """The other way round: the street the person typed is the letter's, so
+    its ZIP goes in beside it."""
+    result = run(
+        compiled,
+        types={"store_street": "123 Sample Street"},
+        letter=TYPICAL_LETTER,
+        arrive="paste",
+    )
+    assert result["fields"] == JORDAN
+    assert hinted(result) == {"store_fname", "store_lname", "store_zip"}
+
+
+@needs_node
 def test_a_restored_field_emptied_without_an_input_event_is_not_filled(compiled):
     """What this browser put back is the person's, even once something other
     than their typing (a form reset) has emptied it."""
@@ -431,8 +475,10 @@ def test_a_restored_field_emptied_without_an_input_event_is_not_filled(compiled)
         letter=TYPICAL_LETTER,
         arrive="paste",
     )
-    assert result["fields"] == dict(JORDAN, store_street="")
-    assert hinted(result) == {"store_fname", "store_lname", "store_zip"}
+    # The ZIP goes in only beside the letter's street, and the street is
+    # not going in.
+    assert result["fields"] == JORDAN_NAME_ONLY
+    assert hinted(result) == {"store_fname", "store_lname"}
 
 
 @needs_node
@@ -471,12 +517,34 @@ def test_a_full_storage_still_fills_and_the_page_is_still_set_up(compiled):
 
 
 @needs_node
+def test_a_blocked_storage_still_sets_the_page_up_and_fills(compiled):
+    """Where the browser blocks this site's storage, reading localStorage
+    throws. That used to stop the page's setup at the "Remember what I
+    typed" box, before About you, the file button, Remove personal details
+    and the submit check, and to throw again when the document finished
+    loading. Blocked storage now reads as remembering turned off: the box
+    shows unticked, the fields are filled and marked, and nothing is kept."""
+    result = run(compiled, page=True, storageBlocked=True, letter=TYPICAL_LETTER)
+    assert result["setupError"] is None
+    assert result["domReadyError"] is None
+    assert result["unhandled"] == []
+    assert result["wired"] == WIRED
+    assert result["remembering"] is False
+    assert result["fields"] == JORDAN
+    assert hinted(result) == set(FILLABLE)
+    assert result["note"] == {"text": NOTE, "hidden": False}
+    assert result["stored"] == []
+
+
+@needs_node
 def test_the_page_with_working_storage_fills_and_remembers(compiled):
-    """The same page with storage that works, so the test above is about
+    """The same page with storage that works, so the tests above are about
     the storage and nothing else."""
     result = run(compiled, page=True, letter=TYPICAL_LETTER)
     assert result["setupError"] is None
+    assert result["domReadyError"] is None
     assert result["wired"] == WIRED
+    assert result["remembering"] is True
     assert result["fields"] == JORDAN
     assert set(result["stored"]) == set(FILLABLE)
 
@@ -506,12 +574,13 @@ def test_a_broken_fill_never_stops_the_page(compiled):
     assert not any("Jordan" in " ".join(entry) for entry in result["logs"])
 
 
-def text_run(text: str, baseline: float, x: float = 72, height: float = 12):
-    """One of pdf.js's text items, as getTextContent hands it over."""
+def text_run(text: str, baseline: float, x: float = 72, height: float = 12, width=None):
+    """One of pdf.js's text items, as getTextContent hands it over: 12 point
+    text, each character half an em wide unless the width is given."""
     return {
         "str": text,
         "dir": "ltr",
-        "width": 6.0 * len(text),
+        "width": 6.0 * len(text) if width is None else width,
         "height": height,
         "transform": [12, 0, 0, 12, x, baseline],
         "fontName": "g_d0_f1",
@@ -523,22 +592,31 @@ def ends_the_line(item: dict) -> dict:
     return dict(item, hasEOL=True)
 
 
+# The gap pdf.js leaves between two columns, in points: five ems.
+COLUMN_GAP = 60
+
+
 def pdf_page(letter: str) -> list:
     """The items pdf.js hands over for a text PDF page carrying this letter.
-    Each line is one run, or two with pdf.js's own " " run between where
-    the line has a wide gap; each baseline is 14 points under the one
-    above; two line ends in three are marked hasEOL (pdf.js does not mark
-    every break, so the rest end where the baseline moves); and the page is
-    wrapped in marked content, which carries no text. A blank line leaves
-    no item, as in a PDF."""
+    Each line is one run, or a run per column where the line has a wide gap
+    (two spaces or more here), each column COLUMN_GAP points right of where
+    the one before it ends, with pdf.js's own " " run, as wide as the gap,
+    between them; each baseline is 14 points under the one above; two line
+    ends in three are marked hasEOL (pdf.js does not mark every break, so
+    the rest end where the baseline moves); and the page is wrapped in
+    marked content, which carries no text. A blank line leaves no item, as
+    in a PDF."""
     items = [{"type": "beginMarkedContent", "id": "mc0"}]
     lines = [line.strip() for line in letter.split("\n") if line.strip()]
     for number, line in enumerate(lines):
         baseline = 720 - 14 * number
+        x = 72
         for column, part in enumerate(re.split(r"\s{2,}", line)):
             if column:
-                items.append(text_run(" ", baseline, x=72 + 200 * column, height=0))
-            items.append(text_run(part, baseline, x=72 + 200 * column))
+                items.append(text_run(" ", baseline, x=x, height=0, width=COLUMN_GAP))
+                x += COLUMN_GAP
+            items.append(text_run(part, baseline, x=x))
+            x += items[-1]["width"]
         if number % 3 != 2:
             items[-1] = ends_the_line(items[-1])
     items.append({"type": "endMarkedContent"})
@@ -547,9 +625,9 @@ def pdf_page(letter: str) -> list:
 
 def as_read(letter: str) -> str:
     """The letter as the box gets it from a text PDF page: a line per line,
-    blank lines gone, a wide gap one space, and the page's closing break."""
+    blank lines gone, a wide gap a tab, and the page's closing break."""
     lines = [line.strip() for line in letter.split("\n") if line.strip()]
-    return "\n".join(re.sub(r"\s{2,}", " ", line) for line in lines) + "\n"
+    return "\n".join(re.sub(r"\s{2,}", "\t", line) for line in lines) + "\n"
 
 
 # A text PDF of the typical letter, with a second column on one line.
@@ -561,12 +639,67 @@ PDF_LETTER = TYPICAL_LETTER.replace(
 @needs_node
 def test_a_text_pdf_keeps_its_lines_and_fills_about_you(compiled):
     """Its runs used to be joined with spaces into one line, so the block
-    under the person's name was lost and nothing was filled."""
+    under the person's name was lost and nothing was filled. A gap between
+    columns shows in the box as a tab."""
     result = run(compiled, page=True, pdf=[pdf_page(PDF_LETTER)])
     assert result["setupError"] is None
+    assert "Member ID: XYZ000000\tGroup number: 00000\n" in result["box"]
     assert result["box"] == as_read(PDF_LETTER)
     assert result["fields"] == JORDAN
     assert hinted(result) == set(FILLABLE)
+
+
+@needs_node
+def test_a_right_column_on_the_street_line_is_not_part_of_the_street(compiled):
+    """A letter often prints the member ID in a right column on the street
+    line's baseline. Joined with a space it read as "123 Sample Street
+    Member ID: XYZ000000", which was put in the street field."""
+    letter = TYPICAL_LETTER.replace(
+        "123 Sample Street\n", "123 Sample Street        Member ID: XYZ000000\n"
+    )
+    result = run(compiled, page=True, pdf=[pdf_page(letter)])
+    assert "123 Sample Street\tMember ID: XYZ000000\n" in result["box"]
+    assert result["fields"] == JORDAN
+
+
+@needs_node
+def test_a_member_name_label_with_a_right_column_fills_the_name(compiled):
+    """The words "Service Date" do not end a label, so read across the gap
+    the name was "Jordan Example Service" and nothing was filled."""
+    # Long enough that the page's text layer is read rather than scanned.
+    letter = DEAR_MEMBER_LETTER.replace(
+        "Member name: Jordan Example\n",
+        "Member name: Jordan Example        Service Date: 09/01/2026\n",
+    ) + (
+        "We found the MRI your doctor asked for not medically necessary.\n"
+        "You can appeal this decision within 180 days of this letter.\n"
+    )
+    result = run(compiled, page=True, pdf=[pdf_page(letter)])
+    assert "Member name: Jordan Example\tService Date: 09/01/2026\n" in result["box"]
+    assert result["fields"] == JORDAN_NAME_ONLY
+
+
+@needs_node
+def test_remove_personal_details_finds_a_street_the_letter_splits(compiled):
+    """The person typed "123 Sample Street Apt 4B"; the letter puts "Apt
+    4B" on the line under the street. Matched with its literal spaces, the
+    street and the unit were left in the letter."""
+    typed = {
+        "store_fname": "Jordan",
+        "store_lname": "Example",
+        "store_street": "123 Sample Street Apt 4B",
+    }
+    result = run(
+        compiled,
+        page=True,
+        typed=typed,
+        letter=APARTMENT_LETTER,
+        removePersonalDetails=True,
+    )
+    assert result["removeError"] is None
+    assert "{{ADDRESS}}" in result["box"]
+    assert "Sample Street" not in result["box"]
+    assert "Apt 4B" not in result["box"]
 
 
 def turned_run(text: str, x: float, along: float):
@@ -579,11 +712,15 @@ def turned_run(text: str, x: float, along: float):
 def test_pdf_text_items_come_out_a_line_per_line(compiled):
     page = [
         {"type": "beginMarkedContentProps", "id": "mc0"},
-        # pdf.js's own space between two runs is one space, not three.
+        # pdf.js's own space between two runs is one space.
         text_run("Jordan", 700),
         text_run(" ", 700, height=0),
         ends_the_line(text_run("Example", 700)),
-        ends_the_line(text_run("123 Sample Street", 686)),
+        # A right column on the street line's baseline, five ems past where
+        # the street ends (at 174): the gap is a tab, not a space.
+        text_run("123 Sample Street", 686),
+        text_run(" ", 686, x=174, height=0, width=60),
+        ends_the_line(text_run("Member ID: XYZ000000", 686, x=234)),
         # pdf.js's empty run that marks the same break again: no blank line.
         ends_the_line(text_run("", 686)),
         # Two runs on one line with no space run between them.
@@ -591,12 +728,15 @@ def test_pdf_text_items_come_out_a_line_per_line(compiled):
         text_run("62701", 672, x=160),
         # pdf.js's empty run that only ends a line.
         ends_the_line(text_run("", 672)),
-        # A run that ends in a space, then pdf.js's space: still one, so
-        # the label does not read as a wide gap before the name.
+        # A run that ends in a space, then pdf.js's space runs, with less
+        # than an em between the runs (the label ends at 150): still one
+        # space. Then a right column, far past the name: a tab.
         text_run("Member name: ", 658),
         text_run(" ", 658, height=0),
         text_run(" ", 658, height=0),
         text_run("Jordan Example", 658, x=160),
+        text_run(" ", 658, x=244, height=0, width=116),
+        text_run("Service Date: 09/01/2026", 658, x=360),
         # Not marked hasEOL above, but on the next baseline down.
         text_run("Member ID: XYZ000000", 644),
         # A footnote mark a little above the line stays on it.
@@ -604,21 +744,32 @@ def test_pdf_text_items_come_out_a_line_per_line(compiled):
         text_run("Dear Jordan Example,", 620),
         {"type": "endMarkedContent"},
     ]
+    # A monospaced letter: each word placed on its own, with one space (0.6
+    # em) between, which pdf.js may mark with a " " run. A word space, not a
+    # tab.
+    monospaced = [
+        text_run("123", 700, width=21.6),
+        text_run(" ", 700, x=93.6, height=0, width=7.2),
+        text_run("Sample", 700, x=100.8, width=43.2),
+        text_run(" ", 700, x=144, height=0, width=7.2),
+        ends_the_line(text_run("Street", 700, x=151.2, width=43.2)),
+    ]
     # Turned text: only hasEOL says where its lines end.
     turned = [
         ends_the_line(turned_run("Page 2 of 2", 40, 300)),
         turned_run("Your appeal", 54, 300),
         ends_the_line(turned_run("rights", 54, 380)),
     ]
-    result = run(compiled, pdfText=[page, turned, []])
+    result = run(compiled, pdfText=[page, turned, monospaced, []])
     assert result["texts"] == [
         "Jordan Example\n"
-        "123 Sample Street\n"
+        "123 Sample Street\tMember ID: XYZ000000\n"
         "Springfield, IL 62701\n"
-        "Member name: Jordan Example\n"
+        "Member name: Jordan Example\tService Date: 09/01/2026\n"
         "Member ID: XYZ000000 1\n"
         "Dear Jordan Example,",
         "Page 2 of 2\nYour appeal rights",
+        "123 Sample Street",
         "",
     ]
     assert result["logs"] == []
@@ -725,6 +876,22 @@ RULE_CASES = {
     # A block under a heading for something else.
     "Dear Member,\nMember name: Jordan Example\nServices for:\nJordan Example\n"
     "789 Hospital Drive\nSpringfield, IL 62702\n": NAME,
+    # Another column past a wide gap (a tab, or three spaces or more) is not
+    # part of the street, the name line or the city line.
+    "Dear Jordan Example,\nJordan Example\n"
+    "123 Sample Street      Member ID: XYZ000000\nSpringfield, IL 62701\n": FULL,
+    "Dear Jordan Example,\nJordan Example\tOctober 1, 2026\n"
+    "123 Sample Street\tMember ID: XYZ000000\n"
+    "Springfield, IL 62701\tGroup number: 00000\n": FULL,
+    # Two spaces are not a gap: OCR leaves them inside a street.
+    "Dear Jordan Example,\nJordan Example\n123  Sample Street\n"
+    "Springfield, IL 62701\n": dict(FULL, street="123 Sample Street"),
+    # A unit in the column beside the street: the ZIP, not the street.
+    "Dear Jordan Example,\nJordan Example\n123 Sample Street\tApt 4B\n"
+    "Springfield, IL 62701\n": dict(NAME, zip="62701"),
+    # A label's value runs from past the gap after the label to the next one.
+    "Dear Member,\nMember name:\tJordan Example\tService Date: 09/01/2026\n": NAME,
+    "Dear Member,\nMember name: Jordan Example    Service Date: 09/01/2026\n": NAME,
 }
 
 
@@ -739,7 +906,18 @@ DIFFERENT_INITIALS = (
     # backs the salutation up.
     "Dear Jordan A. Example,\nJordan B. Example\n123 Sample Street\n"
     "Springfield, IL 62701\n",
+    # And so is one under a middle name spelled out.
+    "Dear Jordan A. Example,\nJordan Bob Example\n123 Sample Street\n"
+    "Springfield, IL 62701\n",
 )
+# A block whose name line has a middle name spelled out fills no address,
+# whatever else names the person.
+SPELLED_OUT_MIDDLE = {
+    "Dear Jordan A. Example,\nMember name: Jordan A. Example\n"
+    "Jordan Bob Example\n123 Sample Street\nSpringfield, IL 62701\n": NAME,
+    "Dear Jordan Example,\nMember name: Jordan Example\n"
+    "Example, Jordan Bob\n123 Sample Street\nSpringfield, IL 62701\n": NAME,
+}
 ONE_INITIAL = {
     "Dear Jordan A. Example,\nMember name: Jordan Example\n": NAME,
     "Dear Jordan Example,\nMember name: Jordan B. Example\n": NAME,
@@ -758,6 +936,14 @@ def test_two_different_middle_initials_are_two_people(compiled):
 
 
 @needs_node
+def test_a_block_under_a_spelled_out_middle_name_is_not_the_persons(compiled):
+    letters = list(SPELLED_OUT_MIDDLE)
+    result = run(compiled, find=letters)
+    for letter, found in zip(letters, result["found"]):
+        assert found == SPELLED_OUT_MIDDLE[letter], letter
+
+
+@needs_node
 def test_a_middle_initial_on_one_name_only_still_agrees(compiled):
     letters = list(ONE_INITIAL)
     result = run(compiled, find=letters)
@@ -772,6 +958,46 @@ def test_the_rule_finds_only_what_the_letter_says_for_sure(compiled):
     assert result["logs"] == []
     for letter, found in zip(letters, result["found"]):
         assert found == RULE_CASES[letter], letter
+
+
+# The chat's scrubPersonalInfo, with what the person gave the consent form.
+# The state is deliberately left in (see user_info_storage.ts).
+CHAT_USER = {
+    "firstName": "Jordan",
+    "lastName": "Example",
+    "email": "jordan@example.com",
+    "address": "123 Sample Street Apt 4B",
+    "city": "Springfield",
+    "state": "IL",
+    "zipCode": "62701",
+    "acceptedTerms": True,
+}
+SCRUBBED = {
+    # The street and its unit on two lines, as a letter prints them.
+    "Jordan Example\n123 Sample Street\nApt 4B\nSpringfield, IL 62701\n": (
+        "{{PATIENT_NAME}}\n{{ADDRESS}}\n{{CITY}}, IL {{ZIP_CODE}}\n"
+    ),
+    # A tab or a run of spaces between the words.
+    "I live at 123 Sample Street\tApt 4B.": "I live at {{ADDRESS}}.",
+    "I live at 123  Sample   Street Apt 4B.": "I live at {{ADDRESS}}.",
+    # The name across a line break.
+    "Dear Jordan\nExample, write to jordan@example.com": (
+        "Dear {{PATIENT_NAME}}, write to {{Your Email Address}}"
+    ),
+}
+
+
+@needs_node
+def test_the_chat_takes_out_what_was_typed_however_the_letter_spaces_it(
+    compiled,
+):
+    messages = list(SCRUBBED)
+    result = run(
+        compiled, scrubPersonalInfo=[[message, CHAT_USER] for message in messages]
+    )
+    assert result["logs"] == []
+    for message, scrubbed in zip(messages, result["scrubbed"]):
+        assert scrubbed == SCRUBBED[message], message
 
 
 def _js_function(src: str, name: str) -> str:
@@ -850,10 +1076,11 @@ class TheFakePageIsTheIntakePageTest(TestCase):
                 self.assertIn("fhi-field-group", group.get("class", []))
 
     def test_the_controls_the_page_wires_up_are_the_pages(self):
-        """The file button, Remove personal details and the four boxes the
-        submit check reads, by the ids and names the script looks for."""
+        """The file button, Remove personal details, Remember what I typed,
+        and the four boxes the submit check reads, by the ids and names the
+        script looks for."""
         driver = DRIVER.read_text()
-        for control in ("uploader", "scrub-2"):
+        for control in ("uploader", "scrub-2", "persistence_enabled"):
             with self.subTest(control=control):
                 self.assertEqual(len(self.soup.find_all(id=control)), 1)
                 self.assertIn(f'id="{control}"', driver)

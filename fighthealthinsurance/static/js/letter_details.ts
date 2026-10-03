@@ -33,23 +33,31 @@
 //    an optional apartment or unit line, then a "City, ST 12345" line, all
 //    single spaced or all double spaced. Never from a block under a heading
 //    for something else ("Services for:", "Provider:"), and never under a
-//    name line with a different middle initial. The street line and
-//    the five-digit ZIP come from that block and no other. With a unit line
-//    only the ZIP is filled: the street field would drop the unit, so the
-//    finished appeal would lose it and Remove personal details would leave
-//    it in the letter. Two such blocks that disagree fill no address.
+//    name line with a different middle initial or a middle name spelled
+//    out. Each line is read only up to a wide gap (a tab, or three or more
+//    spaces): what is past it is another column, such as "Member ID:" on
+//    the street line's baseline. The street line and the five-digit ZIP
+//    come from that block and no other. With a unit line, or a unit in the
+//    column beside the street, only the ZIP is filled: the street field
+//    would drop the unit, so the finished appeal would lose it and Remove
+//    personal details would leave it in the letter. Two such blocks that
+//    disagree fill no address.
 // 4. Only empty fields, and each one once. A name the person typed (or that
 //    came back from storage) that is not the letter's means the letter is
 //    about someone else, so nothing is filled. The street and ZIP go
-//    together the same way. A field this filled, one the person has typed
-//    in or emptied, and one that already held something when the page set
-//    up (restored from this browser, or sent back by the server) are the
-//    person's from then on: empty or not, a later paste does not fill
-//    them. The email is never filled.
+//    together: the ZIP goes in only with the letter's street, filled from
+//    the same block in the same pass or already in the street field, or,
+//    for a block with a unit line, beside a street field that is still
+//    empty and not the person's. A field this filled, one the person has
+//    typed in or emptied, and one that already held something when the
+//    page set up (restored from this browser, or sent back by the server)
+//    are the person's from then on: empty or not, a later paste does not
+//    fill them. The email is never filled.
 //
 // The fill is a convenience, so it never stops the page: a browser whose
-// storage is full or blocked still gets the field filled and its hint, the
-// value just is not remembered.
+// storage is full still gets the field filled and its hint, the value just
+// is not remembered. (Storage the browser blocks reads as "Remember what I
+// typed" turned off, in shared.ts, so nothing is written there.)
 //
 // A name the letter shouts in capitals is put in as Jordan Example; any
 // other casing is kept as the letter has it.
@@ -138,6 +146,18 @@ function bare(word: string): string {
 
 function words(text: string): string[] {
   return text.split(/\s+/).filter((word) => word !== "");
+}
+
+// A wide gap on a line: a tab (pdf_text.ts keeps a PDF's wide gaps as one),
+// or three or more spaces in pasted text. Past it is another column.
+const COLUMN_GAP = /\t|[ \u00A0]{3,}/;
+
+// A line's columns, from the left, each with its spaces made single.
+function columnsOf(text: string): string[] {
+  return text
+    .split(COLUMN_GAP)
+    .map((column) => column.replace(/\s+/g, " ").trim())
+    .filter((column) => column !== "");
 }
 
 function isInitial(word: string): boolean {
@@ -319,8 +339,9 @@ function namesFromLabels(lines: string[]): LabelledName[] {
         continue;
       }
       // The value runs to a wide gap (the next column), then to the first
-      // word that is not part of a name.
-      const value = line.slice(match.index + match[0].length).split(/\s{2,}|\t/)[0];
+      // word that is not part of a name. A gap between the label and its
+      // value is not one: that is the label's own column.
+      const value = columnsOf(line.slice(match.index + match[0].length))[0] ?? "";
       const taken: string[] = [];
       for (const word of words(value)) {
         const plain = word.replace(/,$/, "");
@@ -373,9 +394,11 @@ function isNameLine(line: string, person: PersonName): boolean {
   if (!sameWords(tokens[0], person.first) || !sameWords(tokens.slice(-lastLength).join(" "), person.last)) {
     return false;
   }
-  // A different middle initial is someone else's block.
+  // Between the first and last names only initials that agree: a
+  // different initial, or a middle name spelled out (Jordan Bob Example for
+  // Jordan A. Example), is someone else's block, or cannot be told from one.
   const between = tokens.slice(1, tokens.length - lastLength);
-  return !between.every(isInitial) || sameMiddle(initialsOf(between), person.middle);
+  return between.every(isInitial) && sameMiddle(initialsOf(between), person.middle);
 }
 
 const STREET = new RegExp(
@@ -419,7 +442,9 @@ function underAnotherPartysHeading(lines: string[], at: number): boolean {
   return above >= 0 && ANOTHER_PARTYS_HEADING.test(lines[above]);
 }
 
-function addressesFor(lines: string[], person: PersonName): Address[] {
+// `lines` are the letter's lines, each cut at its first wide gap, and
+// `beside` what is in the column right of that gap ("" for none).
+function addressesFor(lines: string[], beside: string[], person: PersonName): Address[] {
   const found: Address[] = [];
   for (let at = 0; at < lines.length; at += 1) {
     if (!isNameLine(lines[at], person) || underAnotherPartysHeading(lines, at)) {
@@ -441,8 +466,10 @@ function addressesFor(lines: string[], person: PersonName): Address[] {
         continue;
       }
       let cityLine = blockLine(2);
-      const unit = cityLine !== null && UNIT.test(cityLine);
-      if (unit) {
+      // "123 Sample Street<gap>Apt 4B" carries its unit beside it.
+      const unitBeside = UNIT.test(beside[at + step] ?? "");
+      const unit = unitBeside || (cityLine !== null && UNIT.test(cityLine));
+      if (unit && !unitBeside) {
         cityLine = blockLine(3);
       }
       const zip = cityLine === null ? null : zipFromCityLine(cityLine);
@@ -468,9 +495,14 @@ export function findDetailsInLetter(text: string): LetterDetails {
   if (person === null) {
     return {};
   }
-  // Single spaces for matching (the label pass above needed the wide gaps).
-  const blockLines = lines.map((line) => line.replace(/\s+/g, " "));
-  const addresses = addressesFor(blockLines, person);
+  // Each line up to its first wide gap, with single spaces, for matching
+  // (the label pass above needed the gaps).
+  const columns = lines.map(columnsOf);
+  const addresses = addressesFor(
+    columns.map((line) => line[0] ?? ""),
+    columns.map((line) => line[1] ?? ""),
+    person,
+  );
   const backedUp =
     addresses.length > 0 ||
     labels.some((label) => label.orderIsClear) ||
@@ -590,7 +622,7 @@ function fieldValue(id: string): string {
 // Fills each About you field that is still empty from the letter, marks it,
 // and keeps it the way typing would (`remember` is the page's storage
 // helper, which honours "Remember what I typed"). Returns how many it
-// filled. A storage write that fails (full, or blocked) leaves the field
+// filled. A storage write that fails (full storage) leaves the field
 // filled and marked, and is not thrown on.
 export function fillDetailsFromLetter(text: string, remember: (id: string, value: string) => void): number {
   const found = findDetailsInLetter(text);
@@ -608,17 +640,27 @@ export function fillDetailsFromLetter(text: string, remember: (id: string, value
   }
   const typedStreet = fieldValue("store_street");
   const typedZip = fieldValue("store_zip");
-  // A street already there has to be the letter's for its ZIP to go in
-  // beside it, so one there with a unit line in the letter (no street to
-  // compare) keeps the ZIP out too.
-  const addressAgrees =
-    found.zip !== undefined &&
-    (typedStreet === "" || (found.street !== undefined && sameWords(typedStreet, found.street))) &&
-    (typedZip === "" || typedZip.trim().slice(0, 5) === found.zip);
+  const zipAgrees = found.zip !== undefined && (typedZip === "" || typedZip.trim().slice(0, 5) === found.zip);
+  // Whether the street field is closed to the fill: something is in it, the
+  // person has typed in it or emptied it, or the page has no such field.
+  const streetIsTheirs =
+    typedStreet !== "" || leaveAlone.has("store_street") || document.getElementById("store_street") === null;
+  const fillStreet = found.street !== undefined && zipAgrees && !streetIsTheirs;
+  // The ZIP goes in only beside the letter's street (rule 4): the street
+  // filled from the same block in this pass, the same street already in its
+  // field, or, for a block with a unit line (no street to fill), a street
+  // field still empty and not the person's. A street they emptied, or one
+  // there with a unit line in the letter (no street to compare), keeps it
+  // out.
+  const fillZip =
+    zipAgrees &&
+    (fillStreet ||
+      (found.street !== undefined && typedStreet !== "" && sameWords(typedStreet, found.street)) ||
+      (found.street === undefined && !streetIsTheirs));
   let filled = 0;
   for (const [key, id] of FIELDS) {
     const value = found[key];
-    if (value === undefined || ((key === "street" || key === "zip") && !addressAgrees)) {
+    if (value === undefined || (key === "street" && !fillStreet) || (key === "zip" && !fillZip)) {
       continue;
     }
     const field = document.getElementById(id) as HTMLInputElement | null;

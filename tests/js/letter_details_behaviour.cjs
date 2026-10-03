@@ -6,11 +6,14 @@
 //
 //   node letter_details_behaviour.cjs <compiled letter_details.js> '<spec json>'
 //
-// The other compiled modules (pdf_text.js, scrub.js and what it imports)
-// sit beside it. The spec is one of:
+// The other compiled modules (pdf_text.js, scrub.js and what it imports,
+// user_info_storage.js) sit beside it. The spec is one of:
 //   {"find": [letter, ...]}       what the rule finds in each letter
 //   {"pdfText": [[item, ...], ...]} the text pdf_text makes of each page's
 //                                 pdf.js text items
+//   {"scrubPersonalInfo": [[message, userInfo], ...]}
+//                                 what the chat's scrubPersonalInfo makes of
+//                                 each message
 //   {"page": true, ...}           the whole intake script (scrub.js), which
 //                                 sets the page up as it loads; see runThePage
 // or one run of letter_details on its own:
@@ -94,6 +97,7 @@ const INTAKE_MARKUP = `
     <input type="checkbox" id="privacy" name="privacy" class="fhi-check" />
     <input type="checkbox" id="tos" name="tos" class="fhi-check" />
     <input type="checkbox" id="personalonly" name="personalonly" class="fhi-check" />
+    <input type="checkbox" id="persistence_enabled" class="fhi-check" />
   </section>
 </form>
 `;
@@ -132,6 +136,13 @@ const built = path.dirname(path.resolve(modulePath));
 if (spec.pdfText) {
   const {textFromPDFItems} = require(path.join(built, 'pdf_text.js'));
   process.stdout.write(JSON.stringify({texts: spec.pdfText.map(textFromPDFItems), logs}) + '\n');
+  process.exit(0);
+}
+
+if (spec.scrubPersonalInfo) {
+  const {scrubPersonalInfo} = require(path.join(built, 'user_info_storage.js'));
+  const scrubbed = spec.scrubPersonalInfo.map(([message, userInfo]) => scrubPersonalInfo(message, userInfo));
+  process.stdout.write(JSON.stringify({scrubbed, logs}) + '\n');
   process.exit(0);
 }
 
@@ -178,12 +189,17 @@ function whatAboutYouShows() {
 // The whole intake script, which sets the page up as it loads (setupScrub in
 // scrub.ts), over the same markup. The spec:
 //   letter:      put in the box by the server before the script runs
+//   typed:       (as above) in About you before the script runs
 //   storageFull: this browser's storage takes no writes (QuotaExceededError)
+//   storageBlocked: the browser blocks this site's storage, so reading
+//                window.localStorage throws (SecurityError)
 //   fillThrows:  the About you fill (letter_details) throws whatever it is
 //                asked to do
 //   pdf:         [[item, ...], ...] a PDF with a text layer, one list of
 //                pdf.js text items per page, chosen with the file button
 //                once the page is set up
+//   removePersonalDetails: the person presses Remove personal details last
+// The document finishes loading (DOMContentLoaded) once the script has run.
 // Reports what the page wired up, what About you shows, what the box holds,
 // what was stored, and any promise the page let fail with no one to catch
 // it. pdf.js, tesseract and the on-device model are not loaded; pdf.js is
@@ -203,9 +219,23 @@ async function runThePage() {
       store.set(key, String(value));
     },
     removeItem: (key) => store.delete(key),
+    get length() {
+      return store.size;
+    },
+    key: (index) => Array.from(store.keys())[index] ?? null,
   };
-  global.window.localStorage = localStorage;
-  global.localStorage = localStorage;
+  if (spec.storageBlocked) {
+    const blocked = () => {
+      const error = new Error('The operation is insecure.');
+      error.name = 'SecurityError';
+      throw error;
+    };
+    Object.defineProperty(global.window, 'localStorage', {configurable: true, get: blocked});
+    Object.defineProperty(global, 'localStorage', {configurable: true, get: blocked});
+  } else {
+    global.window.localStorage = localStorage;
+    global.localStorage = localStorage;
+  }
   // A form reaches its controls by name.
   const form = doc.getElementById('fuck_health_insurance_form');
   for (const control of form.querySelectorAll('input').concat(form.querySelectorAll('textarea'))) {
@@ -256,6 +286,12 @@ async function runThePage() {
   } catch (error) {
     setupError = error.name + ': ' + error.message;
   }
+  let domReadyError = null;
+  try {
+    page.fireDomReady();
+  } catch (error) {
+    domReadyError = error.name + ': ' + error.message;
+  }
 
   const uploader = doc.getElementById('uploader');
   if (spec.pdf) {
@@ -267,11 +303,23 @@ async function runThePage() {
     }
   }
 
+  let removeError = null;
+  if (spec.removePersonalDetails) {
+    try {
+      doc.getElementById('scrub-2').onclick();
+    } catch (error) {
+      removeError = error.name + ': ' + error.message;
+    }
+  }
+
   const listeners = (element, name) => (element.listeners[name] || []).length;
   return Object.assign(
     {
       setupError,
+      domReadyError,
+      removeError,
       unhandled,
+      remembering: doc.getElementById('persistence_enabled').checked === true,
       wired: {
         upload: listeners(uploader, 'change'),
         paste: listeners(box, 'paste'),

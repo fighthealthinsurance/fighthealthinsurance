@@ -12,11 +12,31 @@ interface StoredValueWithTTL {
   expiry: number;
 }
 
-// Check if persistence is enabled (default: true)
+// This browser's storage, or null where the browser blocks it. Where a
+// browser blocks this site's storage, reading window.localStorage throws (a
+// SecurityError), and with storage turned off it can be null.
+function browserStorage(): Storage | null {
+  try {
+    return window.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Check if persistence is enabled (default: true). Storage the browser
+// blocks reads as turned off, so the page still sets up: nothing is kept,
+// and nothing is read back.
 function isPersistenceEnabled(): boolean {
-  const stored = window.localStorage.getItem(PERSISTENCE_ENABLED_KEY);
-  // Default to true if not set
-  return stored !== "false";
+  const storage = browserStorage();
+  if (storage === null) {
+    return false;
+  }
+  try {
+    // Default to true if not set
+    return storage.getItem(PERSISTENCE_ENABLED_KEY) !== "false";
+  } catch {
+    return false;
+  }
 }
 
 // Set persistence preference
@@ -57,12 +77,22 @@ function clearFormData(): void {
   keysToRemove.forEach((key) => window.localStorage.removeItem(key));
 }
 
-// Get item with TTL check
+// Get item with TTL check. Null where storage is blocked or a read of it
+// throws: the field is just not put back.
 function getLocalStorageItemWithTTL(key: string): string | null {
-  // If someones disabled persistence remove items if found.
-  const stored = window.localStorage.getItem(key);
-  if (!isPersistenceEnabled()) {
-    window.localStorage.removeItem(key);
+  const storage = browserStorage();
+  if (storage === null) {
+    return null;
+  }
+  let stored: string | null;
+  try {
+    // If someones disabled persistence remove items if found.
+    if (!isPersistenceEnabled()) {
+      storage.removeItem(key);
+      return null;
+    }
+    stored = storage.getItem(key);
+  } catch {
     return null;
   }
   if (!stored) {
@@ -84,7 +114,11 @@ function getLocalStorageItemWithTTL(key: string): string | null {
     ) {
       if (parsed.expiry && Date.now() > parsed.expiry) {
         // Item has expired, remove it
-        window.localStorage.removeItem(key);
+        try {
+          storage.removeItem(key);
+        } catch {
+          // Gone or not, it is not put back.
+        }
         return null;
       }
       return parsed.value;

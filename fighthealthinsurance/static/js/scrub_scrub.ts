@@ -2,6 +2,7 @@ import {
   setLocalStorageItemWithTTL,
   type ScrubberStorageKey,
 } from "./shared";
+import { typedValuePattern } from "./typed_value_pattern";
 
 // The middle column is the storage key, typed so a new rule cannot store
 // under a key that clearFormData does not clear.
@@ -65,13 +66,6 @@ var scrubRegex: ScrubRegex[] = [
   ],
 ];
 
-// Helper function to escape special regex characters in a string
-function escapeRegExp(string: string): string {
-  // Escapes special characters in a string to safely use it inside a RegExp
-  // $& inserts the matched character, and \\ escapes it
-  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 // Mapping from store_* input IDs to {{PLACEHOLDER}} format
 const storeIdToPlaceholder: Record<string, string> = {
   store_fname: "{{FIRST_NAME}}",
@@ -92,20 +86,19 @@ function scrubText(text: string): string {
   var nodes = document.querySelectorAll("input");
   for (let i = 0; i < nodes.length; i++) {
     var node = nodes[i];
-    if (node.id.startsWith("store_") && node.value != "") {
+    // What the person typed is found however the letter spaces it: a typed
+    // "123 Sample Street Apt 4B" matches the street with "Apt 4B" on the
+    // line under it (typed_value_pattern.ts).
+    const pattern = node.id.startsWith("store_") ? typedValuePattern(node.value) : null;
+    if (pattern !== null) {
       const placeholder = storeIdToPlaceholder[node.id] || `{{${node.id}}}`;
-      reservedTokens.push([
-        new RegExp(escapeRegExp(node.value), "gi"),
-        placeholder,
-      ]);
+      reservedTokens.push([new RegExp(pattern, "gi"), placeholder]);
       for (let j = 0; j < nodes.length; j++) {
         var secondNode = nodes[j];
-        if (secondNode.value != "") {
+        const together = secondNode.value != "" ? typedValuePattern(node.value + secondNode.value) : null;
+        if (together !== null) {
           const secondPlaceholder = storeIdToPlaceholder[secondNode.id] || `{{${secondNode.id}}}`;
-          reservedTokens.push([
-            new RegExp(escapeRegExp(node.value + secondNode.value), "gi"),
-            placeholder + " " + secondPlaceholder,
-          ]);
+          reservedTokens.push([new RegExp(together, "gi"), placeholder + " " + secondPlaceholder]);
         }
       }
     }
