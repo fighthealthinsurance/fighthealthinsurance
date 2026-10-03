@@ -920,6 +920,74 @@ class TestCommonViewLogic(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_research_for_a_letter_replaced_while_it_ran_is_not_stored(
+        self, mock_appeal_generator
+    ):
+        """The guidelines and past-review lookups finish after the person
+        submitted a different letter; what they found was about the first
+        one, so the row keeps neither."""
+        email = "test@example.com"
+        denial = Denial.objects.create(
+            semi_sekret="sekret",
+            hashed_email=Denial.get_hashed_email(email),
+            denial_text="We denied the knee MRI you asked about.",
+            procedure="knee MRI",
+            diagnosis="knee pain",
+        )
+        mock_appeal_generator.make_appeals.return_value = iter(
+            self._live_drafts(["A live internal appeal letter about the knee MRI."])
+        )
+
+        def replaced_then(answer):
+            async def lookup(*args, **kwargs):
+                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                    denial_text="We denied the insulin pump you asked about."
+                )
+                return answer
+
+            return lookup
+
+        async def test():
+            try:
+                with patch(
+                    "fighthealthinsurance.common_view_logic.get_rag_context_for_denial",
+                    new=AsyncMock(
+                        side_effect=replaced_then("guidelines for the knee MRI")
+                    ),
+                ), patch.object(
+                    common_view_logic.IMRDecisionRetriever,
+                    "get_context_for_denial",
+                    new=AsyncMock(
+                        side_effect=replaced_then("past reviews of knee MRI denials")
+                    ),
+                ), patch(
+                    "fighthealthinsurance.common_view_logic."
+                    "MLCitationsHelper.generate_citations_for_denial",
+                    new_callable=AsyncMock,
+                    return_value=None,
+                ), patch(
+                    "fighthealthinsurance.common_view_logic.AppealsBackendHelper.pmt"
+                ) as mock_pmt:
+                    mock_pmt.find_context_for_denial = AsyncMock(return_value=None)
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": denial.denial_id,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                fresh = await Denial.objects.aget(denial_id=denial.denial_id)
+                self.assertEqual(
+                    fresh.denial_text, "We denied the insulin pump you asked about."
+                )
+                self.assertEqual((fresh.rag_context, fresh.imr_context), (None, None))
+            finally:
+                await Denial.objects.filter(denial_id=denial.denial_id).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_speculative_not_served_when_live_run_delivers_enough(
         self, mock_appeal_generator
     ):
