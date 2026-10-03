@@ -177,6 +177,7 @@ Cheap-O-Insurance-Corp""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         self.assert_title_eventually("Optional: Health History")

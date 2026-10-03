@@ -935,7 +935,9 @@ def test_replacing_the_letter_clears_the_candidate_mirrors():
     fresh = Denial.objects.get(denial_id=denial.denial_id)
     assert fresh.candidate_procedure is None
     assert fresh.candidate_diagnosis is None
-    assert fresh.extract_procedure_diagnosis_finished is False
+    # None: not read yet, and replacing a letter that was, so the gate reads
+    # it even with the typed procedure below on the row.
+    assert fresh.extract_procedure_diagnosis_finished is None
     assert fresh.extract_attempts == 0
     # The triage column this already cleared is still cleared.
     assert not fresh.appeal_deadline_label

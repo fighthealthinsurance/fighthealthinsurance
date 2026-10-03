@@ -160,6 +160,7 @@ class ConsumerFormSessionKeyLogTest(_SessionKeyLogAssertions, TestCase):
                     "pii": "on",
                     "tos": "on",
                     "privacy": "on",
+                    "personalonly": "on",
                 },
             )
         self.assert_logs_prefix_only(

@@ -36,6 +36,7 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
 
 @activity.defn
 async def close_incomplete_journey(hashed_email: str, denial_uuid: str) -> bool:
+    await _aclose_old_connections()
     try:
         return await intake_journey_core.close_incomplete_journey(
             hashed_email, denial_uuid

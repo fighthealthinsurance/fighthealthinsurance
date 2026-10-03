@@ -372,9 +372,10 @@ def test_the_option_is_offered_only_behind_the_setting():
     gate = html.rfind("{% if advanced_ocr_offered %}", 0, start)
     assert gate != -1, "the advanced OCR section is no longer gated by advanced_ocr_offered"
     # The gate closes after the whole section (label, status line, remove
-    # control) and before the uploader that follows it.
+    # control) and before the reading message that follows it.
     closing = html.index("{% endif %}", start)
-    assert closing < html.index('id="image_select_magic"', start), "the section's {% endif %} is not where the section ends"
+    assert html.index('id="advanced_ocr_remove_model"', start) < closing
+    assert closing < html.index('id="ocr_in_progress"', start), "the section's {% endif %} is not where the section ends"
     settings_src = (REPO / "settings.py").read_text()
     assert re.search(
         r'ADVANCED_OCR_OFFERED\s*=\s*os\.getenv\("ADVANCED_OCR_OFFERED",\s*"false"\)',

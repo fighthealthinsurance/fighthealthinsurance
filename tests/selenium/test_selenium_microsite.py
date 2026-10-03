@@ -55,6 +55,7 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         self.click("input#pii")
         self.click("input#tos")
         self.click("input#privacy")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         # Wait for redirect

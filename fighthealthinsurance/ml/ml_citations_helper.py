@@ -647,9 +647,14 @@ class MLCitationsHelper:
             # it: a refusal landing between a check and an update would be
             # overwritten by the update, and the material chosen out of the
             # history would be back on the row. A run that never had the
-            # history is written unconditionally, so saying no does not cost
-            # a case its cache for good.
-            rows = Denial.objects.filter(denial_id=denial.denial_id)
+            # history is written without that test, so saying no does not
+            # cost a case its cache for good.
+            # The letter goes inside the write for the same reason: these
+            # were chosen for the letter on the copy this run was handed, and
+            # a different letter submitted meanwhile has cleared both sets.
+            rows = Denial.objects.filter(
+                denial_id=denial.denial_id, denial_text=denial.denial_text
+            )
             if used_history:
                 rows = rows.filter(still_allowed())
             field = (
@@ -663,10 +668,18 @@ class MLCitationsHelper:
                 )
             elif used_history:
                 logger.info(
-                    f"Health history consent was withdrawn while citations for "
-                    f"denial {denial.denial_id} were being generated; keeping "
-                    "neither the result nor a copy of it"
+                    f"Health history consent was withdrawn, or the letter "
+                    f"replaced, while citations for denial {denial.denial_id} "
+                    "were being generated; keeping neither the result nor a "
+                    "copy of it"
                 )
                 return []
+            else:
+                # The caller is working on the letter it handed in, so the
+                # result still goes back to it; only the row does without.
+                logger.info(
+                    f"The letter on denial {denial.denial_id} was replaced while "
+                    "its citations were being generated; not storing them"
+                )
 
         return citations

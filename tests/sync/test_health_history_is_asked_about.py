@@ -11,6 +11,7 @@ from django.urls import reverse
 
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.models import Denial
+from tests.back_links import back_link
 
 EMAIL = "consent@example.com"
 SEMI_SEKRET = "sekret"
@@ -48,7 +49,7 @@ class TheHealthHistoryPageAsksTest(TestCase):
         return self.denial.health_history_consent
 
     def test_the_box_is_on_the_page(self):
-        response = self.client.get(reverse("hh"), self._ref())
+        response = self.client.get(back_link(self.client, "hh", self.denial, EMAIL))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "health_history_consent")
@@ -57,14 +58,14 @@ class TheHealthHistoryPageAsksTest(TestCase):
     def test_the_box_starts_ticked_while_nobody_has_answered(self):
         """A row nobody asked carries NULL, and the site uses the history,
         so the box shows what is actually happening."""
-        response = self.client.get(reverse("hh"), self._ref())
+        response = self.client.get(back_link(self.client, "hh", self.denial, EMAIL))
 
         body = response.content.decode()
         box = body[body.index("health_history_consent") :][:400]
         self.assertIn("checked", box)
 
     def test_the_page_says_where_the_words_go(self):
-        response = self.client.get(reverse("hh"), self._ref())
+        response = self.client.get(back_link(self.client, "hh", self.denial, EMAIL))
 
         self.assertContains(response, "given to the AI that writes your letter")
 
@@ -88,7 +89,7 @@ class TheHealthHistoryPageAsksTest(TestCase):
         self._post(health_history_consent="on")
         self.denial.refresh_from_db()
 
-        response = self.client.get(reverse("hh"), self._ref())
+        response = self.client.get(back_link(self.client, "hh", self.denial, EMAIL))
 
         body = response.content.decode()
         box = body[body.index("health_history_consent") :][:400]
@@ -186,14 +187,7 @@ class TheOtherColumnIsLeftAloneTest(TestCase):
         self.assertTrue(self.denial.include_provided_health_history_in_appeal)
 
     def test_the_page_never_names_it(self):
-        response = self.client.get(
-            reverse("hh"),
-            {
-                "denial_id": str(self.denial.denial_id),
-                "email": EMAIL,
-                "semi_sekret": SEMI_SEKRET,
-            },
-        )
+        response = self.client.get(back_link(self.client, "hh", self.denial, EMAIL))
 
         self.assertNotContains(response, "include_provided_health_history_in_appeal")
 

@@ -85,6 +85,7 @@ class MailingListSubscriptionTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
                 "subscribe": "on",
                 "fname": "John",
                 "lname": "Doe",
@@ -119,6 +120,7 @@ class MailingListSubscriptionTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
                 # subscribe not included (unchecked)
                 "fname": "Jane",
                 "lname": "Smith",
@@ -159,6 +161,7 @@ class MailingListSubscriptionTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
                 "subscribe": "on",
                 "fname": "New",
                 "lname": "Name",
