@@ -149,11 +149,6 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="model_usage_dashboard",
     ),
     path(
-        "timbit/help/letter_prompts",
-        staff_member_required(staff_views.LetterPromptsView.as_view()),
-        name="letter_prompts",
-    ),
-    path(
         "timbit/help/model_backends",
         staff_member_required(staff_views.ModelBackendStatusView.as_view()),
         name="model_backend_status",

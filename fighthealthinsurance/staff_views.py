@@ -2345,6 +2345,9 @@ class ModelUsageDashboardView(generic.TemplateView):
                     "label": label,
                     "proposed_appeal": proposed,
                     "context_level": self._context_level_stats(since, shown_on_picks),
+                    "prompt_versions": self._prompt_version_stats(
+                        since, shown_on_picks
+                    ),
                     "chooser_appeal": chooser_appeal,
                     "chooser_chat": chooser_chat,
                     "call_attempts": call_attempts.get(slug),
@@ -2385,7 +2388,74 @@ class ModelUsageDashboardView(generic.TemplateView):
         ctx["chat_shadow"] = self._chat_shadow_state()
         ctx["chat_policy"] = self._chat_policy_panel()
         ctx["reply_check"] = self._reply_check_state()
+        ctx["letter_prompts"] = self._letter_prompts_panel()
+        ctx["letter_prompt_saved"] = self.request.GET.get("prompt_saved") == "1"
         return ctx
+
+    @staticmethod
+    def _split_started(rows: List[Any]) -> Optional[datetime.datetime]:
+        """When the newest unbroken run of half-and-half rows began, or None
+        when the newest row is not half and half. ``rows`` is newest first."""
+        from fighthealthinsurance.ml.appeal_prompt_versions import MODE_SPLIT
+
+        started = None
+        for row in rows:
+            if row.mode != MODE_SPLIT:
+                break
+            started = row.created_at
+        return started
+
+    @classmethod
+    def _letter_prompts_panel(cls) -> Dict[str, Any]:
+        """The appeal prompt switch, its history, and the head-to-head of
+        the current half-and-half run (ml/appeal_prompt_stats.py)."""
+        from fighthealthinsurance.ml.appeal_prompt_stats import (
+            MIN_MIXED_PICKS,
+            head_to_head,
+        )
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            MODE_CHOICES,
+            MODE_ORIGINAL,
+            OUTPUT_CONTRACT,
+            current_letter_prompt_mode,
+        )
+        from fighthealthinsurance.models import LetterPromptMode
+
+        history = list(LetterPromptMode.objects.order_by("-created_at", "-id")[:200])
+        split_started = cls._split_started(history)
+        return {
+            "mode_choices": MODE_CHOICES,
+            "saved_mode": history[0].mode if history else MODE_ORIGINAL,
+            "this_pod_mode": current_letter_prompt_mode(),
+            "history": history[:10],
+            "split_started": split_started,
+            "head_to_head": head_to_head(split_started) if split_started else None,
+            "min_mixed_picks": MIN_MIXED_PICKS,
+            "output_contract": OUTPUT_CONTRACT,
+        }
+
+    def post(self, request, *args, **kwargs):
+        """Change the appeal prompt setting: a new LetterPromptMode row."""
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            MODE_CHOICES,
+            reset_letter_prompt_mode_cache,
+        )
+        from fighthealthinsurance.models import LetterPromptMode
+
+        mode = (request.POST.get("mode") or "").strip()
+        if mode not in {m for m, _label in MODE_CHOICES}:
+            return HttpResponse("Choose original, new or half and half.", status=400)
+        note = (request.POST.get("note") or "").strip()[:500]
+        LetterPromptMode.objects.create(
+            mode=mode,
+            changed_by=request.user if request.user.is_authenticated else None,
+            changed_by_username=getattr(request.user, "username", "") or "",
+            note=note,
+        )
+        # This pod sees the change at once; the others within the cache time.
+        reset_letter_prompt_mode_cache()
+        logger.info(f"Staff {request.user} set the letter prompt mode to {mode}")
+        return redirect(f"{request.path}?prompt_saved=1#letter-prompts")
 
     @staticmethod
     def _reply_check_state() -> Dict[str, Any]:
@@ -2835,6 +2905,74 @@ class ModelUsageDashboardView(generic.TemplateView):
             bucket["scorer"] = latest
             del bucket["sum"]
         return out
+
+    @staticmethod
+    def _prompt_version_stats(
+        since: Optional[datetime.datetime],
+        shown_on_picks: Optional[
+            Tuple[Counter, Dict[int, Tuple[Optional[str], Optional[str]]]]
+        ] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Chosen/presented/win rate by appeal prompt version, overall and per
+        model, counted exactly as the model and context-level tables count
+        (per draft shown at a pick). Drafts without a version (templates,
+        synthesized letters, rows from before versioning) are left out of
+        both sides, and a pick of one is not counted for either version."""
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            PROMPT_VERSION_CHOICES,
+        )
+
+        chosen_qs = ModelUsageDashboardView._chosen_in_window(since)
+        chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
+        presented_qs = ModelUsageDashboardView._presented_before_pick(
+            ProposedAppeal.objects.filter(
+                chosen=False,
+                speculative=False,
+                prompt_version__isnull=False,
+                for_denial_id__in=chosen_denial_ids,
+            ).exclude(prompt_version=""),
+            chosen_qs,
+        )
+        by_version: Counter = Counter()
+        by_model: Counter = Counter()
+        for version, model_name, count in (
+            chosen_qs.filter(prompt_version__isnull=False)
+            .exclude(prompt_version="")
+            .values_list("prompt_version", "model_name")
+            .annotate(c=Count("id"))
+        ):
+            by_version[version] += count
+            by_model[f"{normalize_model_label(model_name)} · {version}"] += count
+        shown_version: Counter = Counter()
+        shown_model: Counter = Counter()
+        shown, _identity = shown_on_picks or ModelUsageDashboardView._shown_on_picks(
+            chosen_qs
+        )
+        ids_shown = sorted(shown)
+        for start in range(0, len(ids_shown), 500):
+            for draft_id, version, model_name in (
+                ProposedAppeal.objects.filter(id__in=ids_shown[start : start + 500])
+                .exclude(prompt_version__isnull=True)
+                .exclude(prompt_version="")
+                .values_list("id", "prompt_version", "model_name")
+            ):
+                times = shown[draft_id]
+                shown_version[version] += times
+                shown_model[f"{normalize_model_label(model_name)} · {version}"] += times
+        for version, model_name, count in presented_qs.values_list(
+            "prompt_version", "model_name"
+        ).annotate(c=Sum("times")):
+            if count:
+                shown_version[version] += count
+                shown_model[f"{normalize_model_label(model_name)} · {version}"] += count
+        readable = dict(PROMPT_VERSION_CHOICES)
+        version_rows = _merge_stats(dict(by_version), dict(shown_version))
+        for row in version_rows:
+            row["label"] = readable.get(row["model_name"], row["model_name"])
+        model_rows = _merge_stats(dict(by_model), dict(shown_model))
+        for row in model_rows:
+            row["label"] = row["model_name"]
+        return {"versions": version_rows, "models": model_rows}
 
     @staticmethod
     def _context_level_stats(
@@ -4180,109 +4318,3 @@ class TemporalUIProxyView(View):
                 location[len(upstream) :] if location.startswith(upstream) else location
             )
         return response
-
-
-class LetterPromptsView(View):
-    """Which appeal prompt version new letters use, and how they compare.
-
-    Staff choose original (v1), new (v2) or half and half. Each change is a
-    new LetterPromptMode row, so the page also lists who changed it and when.
-    Below that it compares people's letter choices by version (see
-    ml/appeal_prompt_stats.py), over the current half-and-half stretch, the
-    last 30 days or all time. Loading the page never calls a model.
-
-    Each pod reads the setting at most every MODE_CACHE_SECONDS, so a change
-    reaches every letter within that long. Letters already written keep the
-    version they were written with.
-    """
-
-    template_name = "letter_prompts.html"
-    PERIODS = (
-        ("split", "Since half and half began"),
-        ("30", "Last 30 days"),
-        ("all", "All time"),
-    )
-
-    @staticmethod
-    def _split_started(rows: List[Any]) -> Optional[datetime.datetime]:
-        """When the newest unbroken run of half-and-half rows began, or None
-        when the newest row is not half and half. ``rows`` is newest first."""
-        from fighthealthinsurance.ml.appeal_prompt_versions import MODE_SPLIT
-
-        started = None
-        for row in rows:
-            if row.mode != MODE_SPLIT:
-                break
-            started = row.created_at
-        return started
-
-    def get(self, request):
-        from fighthealthinsurance.ml.appeal_prompt_stats import (
-            MIN_MIXED_PICKS,
-            compare_prompt_versions,
-        )
-        from fighthealthinsurance.ml.appeal_prompt_versions import (
-            MODE_CHOICES,
-            MODE_ORIGINAL,
-            OUTPUT_CONTRACT,
-            current_letter_prompt_mode,
-        )
-        from fighthealthinsurance.models import LetterPromptMode
-
-        history = list(LetterPromptMode.objects.order_by("-created_at", "-id")[:200])
-        newest = history[0] if history else None
-        split_started = self._split_started(history)
-        period = request.GET.get("period") or ("split" if split_started else "30")
-        if period not in {p for p, _label in self.PERIODS}:
-            period = "30"
-        if period == "split":
-            since = split_started
-        elif period == "30":
-            since = timezone.now() - datetime.timedelta(days=30)
-        else:
-            since = None
-        comparison = (
-            compare_prompt_versions(since)
-            if not (period == "split" and since is None)
-            else None
-        )
-        return render(
-            request,
-            self.template_name,
-            {
-                "title": "Appeal prompt versions",
-                "mode_choices": MODE_CHOICES,
-                "saved_mode": newest.mode if newest else MODE_ORIGINAL,
-                "this_pod_mode": current_letter_prompt_mode(),
-                "history": history[:20],
-                "split_started": split_started,
-                "period": period,
-                "periods": self.PERIODS,
-                "comparison": comparison,
-                "min_mixed_picks": MIN_MIXED_PICKS,
-                "output_contract": OUTPUT_CONTRACT,
-                "saved": request.GET.get("saved") == "1",
-            },
-        )
-
-    def post(self, request):
-        from fighthealthinsurance.ml.appeal_prompt_versions import (
-            MODE_CHOICES,
-            reset_letter_prompt_mode_cache,
-        )
-        from fighthealthinsurance.models import LetterPromptMode
-
-        mode = (request.POST.get("mode") or "").strip()
-        if mode not in {m for m, _label in MODE_CHOICES}:
-            return HttpResponse("Choose original, new or half and half.", status=400)
-        note = (request.POST.get("note") or "").strip()[:500]
-        LetterPromptMode.objects.create(
-            mode=mode,
-            changed_by=request.user if request.user.is_authenticated else None,
-            changed_by_username=getattr(request.user, "username", "") or "",
-            note=note,
-        )
-        # This pod sees the change at once; the others within the cache time.
-        reset_letter_prompt_mode_cache()
-        logger.info(f"Staff {request.user} set the letter prompt mode to {mode}")
-        return redirect(f"{request.path}?saved=1")

@@ -3951,7 +3951,7 @@ class LetterPromptMode(models.Model):
     wins, so the table is also the record of who changed it, when, and
     which periods ran which mode. No rows means original. Read by
     ml/appeal_prompt_versions.current_letter_prompt_mode and changed on the
-    staff page /timbit/help/letter_prompts.
+    Model Usage dashboard (/timbit/help/model_usage).
     """
 
     mode = models.CharField(max_length=16, choices=LETTER_PROMPT_MODE_CHOICES)

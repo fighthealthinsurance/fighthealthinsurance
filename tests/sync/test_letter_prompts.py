@@ -12,10 +12,10 @@ from fighthealthinsurance.common_view_logic import mark_proposal_chosen
 from fighthealthinsurance.ml import appeal_prompt_versions as apv
 from fighthealthinsurance.ml.appeal_prompt_stats import (
     MIN_MIXED_PICKS,
-    compare_prompt_versions,
-    wilson_interval,
+    head_to_head,
 )
 from fighthealthinsurance.models import Denial, LetterPromptMode, ProposedAppeal
+from fighthealthinsurance.staff_views import ModelUsageDashboardView
 
 User = get_user_model()
 
@@ -82,38 +82,26 @@ class PickedLetterVersionTest(TestCase):
         self.assertIsNone(pa.prompt_version)
 
 
-class ComparePromptVersionsTest(TestCase):
-    def _draft(self, denial, version, model="model-x", text=None):
+class HeadToHeadTest(TestCase):
+    def _draft(self, denial, version, model="model-x"):
         return ProposedAppeal.objects.create(
             for_denial=denial,
-            appeal_text=text or f"{model}-{version}-{ProposedAppeal.objects.count()}",
+            appeal_text=f"{model}-{version}-{ProposedAppeal.objects.count()}",
             model_name=model,
             prompt_version=version,
         )
 
-    def _pick(self, denial, draft, shown, editted=False):
+    def _pick(self, denial, draft, shown):
         return ProposedAppeal.objects.create(
             for_denial=denial,
             appeal_text=draft.appeal_text,
             chosen=True,
-            editted=editted,
             model_name=draft.model_name,
             prompt_version=draft.prompt_version,
             presented_ids=[d.id for d in shown],
         )
 
-    def test_counts_shown_and_picked_per_version(self):
-        denial = _denial()
-        a = self._draft(denial, apv.PROMPT_V1)
-        b = self._draft(denial, apv.PROMPT_V2)
-        self._pick(denial, b, [a, b], editted=True)
-        result = compare_prompt_versions()
-        v1, v2 = result.by_version
-        self.assertEqual((v1.presented, v1.chosen), (1, 0))
-        self.assertEqual((v2.presented, v2.chosen, v2.edited), (1, 1, 1))
-        self.assertEqual(result.picks_considered, 1)
-
-    def test_the_head_to_head_uses_only_pages_with_both_versions(self):
+    def test_only_pages_with_both_versions_count(self):
         mixed = _denial("mixed")
         one_version = _denial("single")
         a = self._draft(mixed, apv.PROMPT_V1)
@@ -122,7 +110,7 @@ class ComparePromptVersionsTest(TestCase):
         self._pick(mixed, a, [a, b, c])
         d = self._draft(one_version, apv.PROMPT_V2)
         self._pick(one_version, d, [d])
-        h2h = compare_prompt_versions().head_to_head
+        h2h = head_to_head()
         self.assertEqual(h2h.picks, 1)
         self.assertEqual((h2h.v1_chosen, h2h.v2_chosen), (1, 0))
         # Two of the three drafts on that page were v2.
@@ -137,56 +125,59 @@ class ComparePromptVersionsTest(TestCase):
             for_denial=denial, appeal_text="combined", model_name="synthesized"
         )
         self._pick(denial, synthesized, [a, b, synthesized])
-        h2h = compare_prompt_versions().head_to_head
+        h2h = head_to_head()
         self.assertEqual((h2h.picks, h2h.other_chosen, h2h.v2_expected), (1, 1, 0.0))
-
-    def test_picks_without_an_on_screen_report_are_left_out(self):
-        denial = _denial()
-        a = self._draft(denial, apv.PROMPT_V1)
-        ProposedAppeal.objects.create(
-            for_denial=denial,
-            appeal_text=a.appeal_text,
-            chosen=True,
-            prompt_version=apv.PROMPT_V1,
-        )
-        result = compare_prompt_versions()
-        self.assertEqual(result.picks_without_report, 1)
-        self.assertEqual(result.picks_considered, 0)
 
     def test_a_pick_before_the_window_is_left_out(self):
         denial = _denial()
         a = self._draft(denial, apv.PROMPT_V1)
-        pick = self._pick(denial, a, [a])
+        b = self._draft(denial, apv.PROMPT_V2)
+        pick = self._pick(denial, a, [a, b])
         ProposedAppeal.objects.filter(pk=pick.pk).update(
             created_at=timezone.now() - datetime.timedelta(days=40)
         )
         since = timezone.now() - datetime.timedelta(days=30)
-        self.assertEqual(compare_prompt_versions(since).picks_considered, 0)
+        self.assertEqual(head_to_head(since).picks, 0)
 
-    def test_by_model_rows_split_each_model_by_version(self):
+
+class DashboardPromptVersionTableTest(TestCase):
+    """The per-window tables count like the model table: per draft shown."""
+
+    def test_counts_shown_and_picked_per_version_and_model(self):
         denial = _denial()
-        a = self._draft(denial, apv.PROMPT_V1, model="model-x")
-        b = self._draft(denial, apv.PROMPT_V2, model="model-x")
-        self._pick(denial, b, [a, b])
-        rows = {(r.label, r.version): r for r in compare_prompt_versions().by_model}
-        self.assertEqual(rows[("model-x", apv.PROMPT_V1)].chosen, 0)
-        self.assertEqual(rows[("model-x", apv.PROMPT_V2)].chosen, 1)
+        a = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="a",
+            model_name="model-x",
+            prompt_version=apv.PROMPT_V1,
+        )
+        b = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="b",
+            model_name="model-x",
+            prompt_version=apv.PROMPT_V2,
+        )
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="b",
+            chosen=True,
+            model_name="model-x",
+            prompt_version=apv.PROMPT_V2,
+            presented_ids=[a.id, b.id],
+        )
+        stats = ModelUsageDashboardView._prompt_version_stats(None)
+        versions = {
+            r["model_name"]: (r["chosen"], r["presented"]) for r in stats["versions"]
+        }
+        self.assertEqual(versions, {apv.PROMPT_V1: (0, 1), apv.PROMPT_V2: (1, 1)})
+        models = {r["model_name"]: r["chosen"] for r in stats["models"]}
+        self.assertEqual(models["model-x · v2"], 1)
 
 
-def test_wilson_interval_brackets_the_rate():
-    low, high = wilson_interval(30, 100)
-    assert low < 0.30 < high
-    assert wilson_interval(0, 0) is None
-
-
-def test_the_head_to_head_threshold_is_meaningful():
-    assert MIN_MIXED_PICKS >= 100
-
-
-class LetterPromptsPageTest(TestCase):
+class DashboardPromptSwitchTest(TestCase):
     def setUp(self):
         apv.reset_letter_prompt_mode_cache()
-        self.url = reverse("letter_prompts")
+        self.url = reverse("model_usage_dashboard")
 
     def tearDown(self):
         apv.reset_letter_prompt_mode_cache()
@@ -213,6 +204,7 @@ class LetterPromptsPageTest(TestCase):
         self._staff()
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Appeal prompt versions")
         self.assertContains(response, "Never changed")
         self.assertContains(response, apv.OUTPUT_CONTRACT)
 
@@ -235,18 +227,16 @@ class LetterPromptsPageTest(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(LetterPromptMode.objects.exists())
 
-    def test_the_page_compares_from_when_half_and_half_began(self):
+    def test_the_head_to_head_starts_when_half_and_half_began(self):
         self._staff()
         LetterPromptMode.objects.create(mode=apv.MODE_SPLIT)
         response = self.client.get(self.url)
-        self.assertEqual(response.context["period"], "split")
-        self.assertIsNotNone(response.context["comparison"])
+        self.assertIsNotNone(response.context["letter_prompts"]["head_to_head"])
         self.assertContains(response, "Pages that showed both versions")
 
-    def test_asking_for_the_split_period_before_any_split_shows_nothing_to_compare(
-        self,
-    ):
+    def test_without_half_and_half_there_is_no_head_to_head(self):
         self._staff()
-        response = self.client.get(self.url, {"period": "split"})
-        self.assertIsNone(response.context["comparison"])
-        self.assertContains(response, "Half and half hasn't run yet")
+        LetterPromptMode.objects.create(mode=apv.MODE_NEW)
+        response = self.client.get(self.url)
+        self.assertIsNone(response.context["letter_prompts"]["head_to_head"])
+        self.assertContains(response, "no head-to-head yet")

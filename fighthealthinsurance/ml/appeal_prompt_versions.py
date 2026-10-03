@@ -9,7 +9,7 @@ it on tone and form. The text here is the evaluation's, word for word; change
 it only as a new version, or the comparison stops measuring what was tested.
 
 Which version a letter gets is a staff setting (LetterPromptMode rows,
-changed on /timbit/help/letter_prompts): original (v1 for every letter), new
+changed on the Model Usage dashboard): original (v1 for every letter), new
 (v2 for every letter) or split (each full-letter call draws v1 or v2 at
 random, half and half). Every draft records the version that wrote it, so
 the staff page can compare how often people pick each version's letters.

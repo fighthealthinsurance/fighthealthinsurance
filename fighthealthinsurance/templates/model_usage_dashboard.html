@@ -38,6 +38,13 @@
     .state-fail { background: #f8d7da; color: #721c24; }
     .state-off { background: #e2e3e5; color: #383d41; }
     .state-placeholder { background: #fff; color: #555; border: 1px dashed #888; }
+    .prompt-saved { background: #d4edda; color: #155724; border-radius: 6px; padding: 8px 12px; }
+    .prompt-banner { background: #fff3cd; color: #856404; border-radius: 6px; padding: 8px 12px; }
+    .prompt-fieldset { border: 0; padding: 0; margin: 0 0 10px; }
+    .prompt-choice { display: block; margin: 4px 0; }
+    .prompt-note { width: 100%; max-width: 520px; padding: 6px 8px; font-size: 1rem; }
+    .prompt-save { margin-top: 10px; padding: 8px 16px; font-size: 1rem; cursor: pointer; }
+    .prompt-contract { margin: 6px 0 12px; padding: 8px 12px; background: #f0f4f8; border-radius: 6px; color: #333; }
   </style>
 </head>
 <body>
@@ -47,6 +54,7 @@
   <nav class="jump-links" aria-label="Windows on this page">
     Jump to:
     {% for w in windows %}<a href="#window-{{ w.slug }}">{{ w.label }}</a>{% if not forloop.last %} &middot; {% endif %}{% endfor %}
+    &middot; <a href="#letter-prompts">Appeal prompt versions</a>
   </nav>
   <ul class="intro-list">
     <li><span class="legend-key" style="background:#1f77b4;"></span><strong>ProposedAppeal (denial flow)</strong>: real patients choosing among the drafts written for their own case.</li>
@@ -88,6 +96,8 @@
     <li><span class="state-tag state-off">state unavailable</span> the model settings could not be read; the server log says why.</li>
   </ul>
 
+  {% include "model_usage_prompts_partial.html" with panel=letter_prompts %}
+
   {% for w in windows %}
   <div class="window-section" id="window-{{ w.slug }}">
     <h2>{{ w.label }}</h2>
@@ -105,6 +115,14 @@
 
     <h3>Context / shed level <span class="source-label">(user-chosen, by generation context)</span></h3>
     {% include "model_usage_table_partial.html" with rows=w.context_level label_header="Context level" %}
+
+    <h3>Prompt version <span class="source-label">(user-chosen, by the appeal prompt that wrote the draft)</span></h3>
+    {% if w.prompt_versions.versions %}
+    {% include "model_usage_table_partial.html" with rows=w.prompt_versions.versions label_header="Prompt version" %}
+    {% include "model_usage_table_partial.html" with rows=w.prompt_versions.models label_header="Model · prompt version" %}
+    {% else %}
+    <p class="note">No versioned drafts were picked in this window.</p>
+    {% endif %}
 
     <h3>ChooserVote &mdash; Appeal Letter <span class="source-label">(synthetic chooser)</span></h3>
     {% include "model_usage_table_partial.html" with rows=w.chooser_appeal kind="votes" show_state=True %}
