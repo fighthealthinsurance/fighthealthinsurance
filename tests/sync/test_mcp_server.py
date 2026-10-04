@@ -192,6 +192,15 @@ class ProtocolTest(TestCase):
 
 
 class StartAppealTest(TestCase):
+    async def test_start_appeal_with_the_handoff_off_never_names_prepare_appeal(self):
+        data = (await call("start_appeal", {})).structuredContent
+        self.assertNotIn("prepare_appeal", data["privacy"])
+
+    async def test_start_appeal_says_the_link_opens_the_first_step(self):
+        data = (await call("start_appeal", {})).structuredContent
+        self.assertIn("opens the first step", data["tell_the_person"])
+        self.assertIn("aren't written yet", data["tell_the_person"])
+
     async def test_start_appeal_with_no_topic_links_to_the_intake(self):
         result = await call("start_appeal", {})
         self.assertFalse(result.isError)
@@ -303,6 +312,13 @@ class StartAppealTest(TestCase):
             result = await call("start_appeal", {"topic": "some-medicare-guide"})
         self.assertFalse(result.isError)
         return result.structuredContent
+
+    async def test_start_appeal_for_a_medicare_guide_says_the_link_opens_the_chat(
+        self,
+    ):
+        data = await self.medicare_chat_start()
+        self.assertIn("opens Fight Health Insurance's chat", data["tell_the_person"])
+        self.assertNotIn("first step of the appeal form", data["tell_the_person"])
 
     async def test_start_appeal_for_a_medicare_guide_goes_to_the_chat(self):
         url = (await self.medicare_chat_start())["url"]
@@ -1319,7 +1335,15 @@ class PrepareAppealListingTest(TestCase):
                 "search_site", {"query": "turning 26", "letter": "x"}
             )
         self.assertEqual(init.instructions, mcp_server.INSTRUCTIONS_WITH_PREPARE)
-        self.assertIn("if the person agrees, in prepare_appeal", init.instructions)
+        self.assertIn(
+            "already shared their denial letter in this chat, offer to load it",
+            init.instructions,
+        )
+        self.assertIn("ask before calling it", init.instructions)
+        self.assertIn("opens the first step", init.instructions)
+        self.assertIn(
+            "offer to load it into the form with prepare_appeal", init.instructions
+        )
         self.assertIn("names, member IDs and medical history", init.instructions)
         self.assertTrue(refused.isError)
         self.assertIn(
@@ -1333,7 +1357,7 @@ class PrepareAppealListingTest(TestCase):
             routes = mcp_server.mcp_asgi_routes(django_app())
         async with mcp_session(routes) as session:
             off = {t.name: t for t in (await session.list_tools()).tools}
-        self.assertIn("use prepare_appeal", on["start_appeal"].description)
+        self.assertIn("offer prepare_appeal instead", on["start_appeal"].description)
         self.assertNotIn("prepare_appeal", off["start_appeal"].description)
         # It still takes no letter.
         self.assertEqual(set(on["start_appeal"].inputSchema["properties"]), {"topic"})
@@ -1574,6 +1598,7 @@ class PrepareAppealTest(TestCase):
         self.assertFalse(result.isError, text_of(result))
         data = result.structuredContent
         tell = data["tell_the_person"]
+        self.assertIn("aren't written yet", tell)
         characters = data["received"]["letter_characters"]
         self.assertGreater(characters, 1000)
         self.assertIn(f"(about {characters:,} characters)", tell)
