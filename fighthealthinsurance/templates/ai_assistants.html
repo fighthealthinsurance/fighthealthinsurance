@@ -19,7 +19,7 @@
 
 {% block content %}
 <div class="fhi-page-wide">
-    {% include "partials/page_title.html" with title="Use Fight Health Insurance in Claude or ChatGPT" lede="Your AI assistant can look things up on this site for you: appeal rights and deadlines, who regulates insurance in your state, where your insurer takes appeals, treatment guides and financial help. It is free, and there is no sign-in." %}
+    {% include "partials/page_title.html" with title="Use Fight Health Insurance in Claude or ChatGPT" lede="Claude, ChatGPT or another assistant can look things up on this site for you: appeal rights and deadlines, who regulates insurance in your state, where your insurer takes appeals, treatment guides and financial help. It is free, and there is no sign-in." %}
 
     <nav class="fhi-jump-links" aria-label="On this page">
         <a href="#claude">Claude</a>
@@ -27,6 +27,7 @@
         <a href="#what-it-does">What it can do</a>
         <a href="#keep-out">What to keep out</a>
         <a href="#start-an-appeal">Starting an appeal</a>
+        <a href="#other-assistants">Other assistants</a>
     </nav>
 
     <div class="fhi-stack fhi-stack-loose">
@@ -162,6 +163,16 @@
             {% else %}
             <p>When you are ready to appeal, the assistant gives you a link to start here, where you upload or paste the letter yourself. The assistant never takes the letter.</p>
             {% endif %}
+        </section>
+
+        <section class="fhi-stack" id="other-assistants">
+            <h2>Other assistants and your own models</h2>
+            <p>Anything that speaks MCP works. Wherever your tool asks for a server, it is a remote MCP server over Streamable HTTP at the address above, with no authentication. Two we have tried from the command line:</p>
+            <ul>
+                <li><b>Claude Code:</b> <code>claude mcp add --transport http fight-health-insurance https://www.fighthealthinsurance.com/mcp</code></li>
+                <li><b>Codex CLI:</b> <code>codex mcp add fight-health-insurance --url https://www.fighthealthinsurance.com/mcp</code></li>
+            </ul>
+            <p>Apps that run open-weight models on your own machine, such as LM Studio, Open WebUI, Jan and Ollama, take MCP servers too; each app's own guide shows where to paste the address. Two things to know: the model has to support tool calling, and small local models sometimes skip the tools or misread what they return, so check the links in the answer against this site.</p>
         </section>
     </div>
 </div>

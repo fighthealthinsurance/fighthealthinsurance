@@ -17,7 +17,14 @@ class PageOnTest(TestCase):
         self.assertEqual(self.client.get(PAGE).status_code, 200)
 
     def test_the_address_and_both_clients_are_on_it(self):
-        for text in (ADDRESS, "Set it up in Claude", "Set it up in ChatGPT", INSTALL_LINK):
+        for text in (
+            ADDRESS,
+            "Set it up in Claude",
+            "Set it up in ChatGPT",
+            INSTALL_LINK,
+            "claude mcp add --transport http",
+            "codex mcp add",
+        ):
             self.assertIn(text, self.page)
 
     def test_it_says_what_to_keep_out_in_the_servers_words(self):
