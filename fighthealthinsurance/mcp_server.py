@@ -56,6 +56,7 @@ beautifulsoup4 and seleniumbase pins first.
 import asyncio
 import json
 import logging
+import time
 import os
 import re
 import unicodedata
@@ -80,6 +81,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ContentBlock
 from mcp.types import Tool as MCPTool
 from mcp.types import ToolAnnotations
+from prometheus_client import Counter, Histogram
 from pydantic import Field, ValidationError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -1540,6 +1542,25 @@ UNDECLARED_NOTE_WITH_PREPARE = (
 )
 
 
+# Per tool and outcome, never from arguments. An unknown tool name is counted
+# as "unknown" so a client can't mint label values.
+TOOL_CALLS = Counter(
+    "fhi_mcp_tool_calls_total",
+    "MCP tool calls by tool and outcome",
+    ["tool", "outcome"],
+)
+TOOL_SECONDS = Histogram(
+    "fhi_mcp_tool_call_seconds",
+    "MCP tool call duration by tool",
+    ["tool"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30),
+)
+
+
+class SiteFailure(ToolError):
+    """A ToolError for something that broke on our side, counted as failed."""
+
+
 class _StrictFastMCP(FastMCP):
     """FastMCP that refuses arguments a tool does not declare (the SDK drops
     them silently), says so in each tool's schema, and keeps unexpected
@@ -1571,28 +1592,42 @@ class _StrictFastMCP(FastMCP):
             tool.name: set(tool.inputSchema.get("properties", {}))
             for tool in await super().list_tools()
         }
-        if name in declared:
-            extra = sorted(set(arguments) - declared[name])
-            if extra:
-                raise ToolError(
-                    f"{name} does not take {', '.join(extra)}. It takes only: "
-                    f"{', '.join(sorted(declared[name])) or 'no arguments'}. "
-                    + self.undeclared_note
-                )
+        label = name if name in declared else "unknown"
+        started = time.monotonic()
+        outcome = "failed"
         try:
-            return await super().call_tool(name, arguments)
-        except ToolError as e:
-            cause = e.__cause__
-            if isinstance(cause, ValidationError):
-                raise ToolError(_input_error_message(name, cause)) from None
-            if cause is None or isinstance(cause, ToolError):
-                raise
-            # Never the arguments or the exception's text, which can quote them.
-            logger.error(f"MCP tool {name} failed with {type(cause).__name__}")
-            raise ToolError(
-                f"Error executing tool {name}: something went wrong on our side. "
-                f"Please try again, or send the person to {CANONICAL_ORIGIN}."
-            ) from None
+            if name in declared:
+                extra = sorted(set(arguments) - declared[name])
+                if extra:
+                    outcome = "refused"
+                    raise ToolError(
+                        f"{name} does not take {', '.join(extra)}. It takes only: "
+                        f"{', '.join(sorted(declared[name])) or 'no arguments'}. "
+                        + self.undeclared_note
+                    )
+            try:
+                result = await super().call_tool(name, arguments)
+            except ToolError as e:
+                cause = e.__cause__
+                if isinstance(cause, ValidationError):
+                    outcome = "refused"
+                    raise ToolError(_input_error_message(name, cause)) from None
+                if cause is None or (
+                    isinstance(cause, ToolError) and not isinstance(cause, SiteFailure)
+                ):
+                    outcome = "refused"
+                    raise
+                # Never the arguments or the exception's text, which can quote them.
+                logger.error(f"MCP tool {name} failed with {type(cause).__name__}")
+                raise ToolError(
+                    f"Error executing tool {name}: something went wrong on our side. "
+                    f"Please try again, or send the person to {CANONICAL_ORIGIN}."
+                ) from None
+            outcome = "ok"
+            return result
+        finally:
+            TOOL_CALLS.labels(label, outcome).inc()
+            TOOL_SECONDS.labels(label).observe(time.monotonic() - started)
 
 
 def transport_security() -> TransportSecuritySettings:
@@ -2486,10 +2521,11 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
             django_app.append(ASGIHandler())
         status, markdown = await _get_in_process(django_app[0], twin)
         if status != 200:
-            raise ToolError(
+            message = (
                 f"{path} could not be read right now. Send the person to "
                 f"{_site_url(path)} instead."
             )
+            raise SiteFailure(message) if status >= 500 else ToolError(message)
         markdown = _without_held_back(markdown)
         truncated = len(markdown) > MAX_PAGE_CHARS
         page_url = _site_url(agent_docs.source_path_for(twin))
