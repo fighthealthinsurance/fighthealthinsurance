@@ -2054,7 +2054,7 @@ class ToolCallCountersTest(TestCase):
         before_failed = self._count("get_page", "failed")
         before_refused = self._count("get_page", "refused")
         with mock.patch.object(mcp_server, "_get_in_process", return_value=(500, "")):
-            result = await call("get_page", {"path": "/about-us"})
+            result = await call("get_page", {"url": f"{SITE}/about-us"})
         self.assertTrue(result.isError)
         self.assertIn("something went wrong on our side", text_of(result))
         self.assertEqual(self._count("get_page", "failed"), before_failed + 1)
@@ -2063,7 +2063,7 @@ class ToolCallCountersTest(TestCase):
     async def test_a_page_that_is_not_there_counts_as_refused(self):
         before = self._count("get_page", "refused")
         with mock.patch.object(mcp_server, "_get_in_process", return_value=(404, "")):
-            result = await call("get_page", {"path": "/about-us"})
+            result = await call("get_page", {"url": f"{SITE}/about-us"})
         self.assertTrue(result.isError)
         self.assertEqual(self._count("get_page", "refused"), before + 1)
 
