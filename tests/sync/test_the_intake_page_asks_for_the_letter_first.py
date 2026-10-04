@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bs4 import BeautifulSoup
+from fighthealthinsurance import consent
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
@@ -43,15 +44,8 @@ NOT_ON_THIS_PAGE = {"email_address", "scrub", "scrubform", "storeButton"}
 IDENTITY_FIELDS = ("store_fname", "store_lname", "email", "store_street", "store_zip")
 # In page order.
 AGREEMENTS = ("pii", "privacy", "tos", "personalonly")
-# Each box's label, word for word.
-AGREEMENT_LABELS = {
-    "pii": "I've taken my personal details out of the letter above.",
-    "privacy": "I have read and understand the privacy policy.",
-    "tos": "I agree to the terms of service. I'll use this site only for my own "
-    "insurance appeals, not to diagnose or treat any condition.",
-    "personalonly": "This is for my own appeal. (Doctors, therapists and offices: "
-    "see our professional version.)",
-}
+# Each box's label, word for word, from the module the record is kept from.
+AGREEMENT_LABELS = dict(consent.BOXES)
 # Each message, the field it sits under, and the fields it describes when it
 # shows. The agreements' two messages sit at the foot of their group, under
 # the last box.

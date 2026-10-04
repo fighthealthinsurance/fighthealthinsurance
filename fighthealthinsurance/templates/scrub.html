@@ -1,9 +1,10 @@
 {% extends 'base.html' %}
+{% load consent %}
 {% block title %}
 {% if form.errors %}Error: {% endif %}Upload your Health Insurance Denial
 {% endblock title %}
 
-{% load compress %}
+{% load compress consent %}
 {% load static %}
 
 {% block scriptmagic %}
@@ -228,21 +229,19 @@
 		<p class="fhi-hint" id="agreements_hint">Tick all four boxes to go on.</p>
 		<div class="fhi-check-row">
 		<input type="checkbox" id="pii" name="pii" class="fhi-check"{% if form.pii.value %} checked{% endif %}{% if form.pii.errors %} aria-invalid="true" aria-describedby="pii_error"{% endif %}>
-		<label for="pii">I've taken my personal details out of the letter above.</label>
+		<label for="pii">{% consent_label "pii" %}</label>
 		</div>
 		<div class="fhi-check-row">
 		<input type="checkbox" id="privacy" name="privacy" class="fhi-check"{% if form.privacy.value %} checked{% endif %}{% if form.privacy.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
-		<label for="privacy">I have read and understand the <a class="link" href="{% url 'privacy_policy' %}">privacy
-		    policy.</a>
-		</label>
+		<label for="privacy">{% consent_label "privacy" %}</label>
 		</div>
 		<div class="fhi-check-row">
 		<input type="checkbox" id="tos" name="tos" class="fhi-check"{% if form.tos.value %} checked{% endif %}{% if form.tos.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
-		<label for="tos">I agree to the <a href="{% url 'tos' %}">terms of service</a>. I'll use this site only for my own insurance appeals, not to diagnose or treat any condition.</label>
+		<label for="tos">{% consent_label "tos" %}</label>
 		</div>
 		<div class="fhi-check-row">
 		<input type="checkbox" id="personalonly" name="personalonly" class="fhi-check"{% if form.personalonly.value %} checked{% endif %}{% if form.personalonly.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
-		<label for="personalonly">This is for <b>my own appeal</b>. (Doctors, therapists and offices: see our <a href="{% url 'pro_version' %}">professional version</a>.)</label>
+		<label for="personalonly">{% consent_label "personalonly" %}</label>
 		</div>
 		{% comment %} Both of the group's messages sit at its foot, under the last
 		   box, so taking one down never moves a box. firstof, not a chain of

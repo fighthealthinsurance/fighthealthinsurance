@@ -48,7 +48,7 @@ from django_encrypted_filefield.crypt import Cryptographer
 from loguru import logger
 from PIL import Image
 
-from fighthealthinsurance import common_view_logic, intake_resume
+from fighthealthinsurance import common_view_logic, consent, intake_resume
 from fighthealthinsurance import forms as core_forms, models
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
@@ -2089,8 +2089,9 @@ class InitialProcessView(generic.FormView):
         cleaned_data = form.cleaned_data
         if "denial_id" in cleaned_data:
             del cleaned_data["denial_id"]
-        # A gate on the submission, not something the denial keeps: a form
-        # without it ticked never reaches here.
+        # The boxes are recorded against the denial below; personalonly is a
+        # gate on the submission, not something the denial keeps.
+        agreements = {name: cleaned_data.get(name) for name in consent.BOXES}
         cleaned_data.pop("personalonly", None)
 
         # Handle mailing list subscription
@@ -2168,6 +2169,11 @@ class InitialProcessView(generic.FormView):
             tracking_info=tracking_info,
             denial=existing_denial,
             **cleaned_data,
+        )
+        # After, not around, the helper: its outbox work expects no request
+        # transaction, so the record is best effort and never blocks the appeal.
+        consent.record_consent(
+            denial_response.denial_id, agreements, channel=consent.CHANNEL_SITE
         )
 
         # Store the denial ID in the session to maintain state across the multi-step form process
