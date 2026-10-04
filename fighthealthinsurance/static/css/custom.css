@@ -3917,15 +3917,18 @@ summary.fhi-nav-link::after {
    and the lines stay long enough to read. A short run keeps the same card
    size and leaves the rest of the row empty, so a lone card never stretches
    across the row. */
+/* auto-fit: fewer cards than fit share the row rather than leaving empty tracks. */
 .fhi-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr));
     gap: var(--fhi-space-6);
 }
 .fhi-cards-roomy { --fhi-card-min: 20rem; }
 /* Two columns on the wide page and one on a phone, for a pair of groups
    too long to sit three across, such as the Resources page's. */
 .fhi-cards-wide { --fhi-card-min: 26rem; }
+/* Equal tiles in a lettered index: a letter with one entry keeps a one-tile card. */
+.fhi-cards-tiles { grid-template-columns: repeat(auto-fill, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr)); }
 
 .fhi-card {
     display: flex;

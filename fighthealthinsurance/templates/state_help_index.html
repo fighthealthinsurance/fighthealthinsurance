@@ -66,7 +66,7 @@
             {% for letter_group in letter_groups %}
             <div id="letter-{{ letter_group.grouper }}" class="letter-section">
                 <h3 class="letter-header">{{ letter_group.grouper }}</h3>
-                <div class="fhi-cards">
+                <div class="fhi-cards fhi-cards-tiles">
                     {% for state in letter_group.list %}
                     <a href="{% url 'state_help' state.slug %}" class="state-card">
                         <div class="fhi-card">
