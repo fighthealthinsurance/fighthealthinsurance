@@ -1162,6 +1162,76 @@ def _expedited_note() -> Optional[dict[str, Any]]:
     }
 
 
+# Denial reasons a peer-to-peer review is the usual first move for.
+PEER_TO_PEER_REASONS = frozenset(
+    {
+        "Not medically necessary",
+        "Prior authorization now required",
+        "Experimental or investigational",
+        "Step therapy required",
+    }
+)
+
+
+def _peer_to_peer_note() -> Optional[dict[str, Any]]:
+    """The glossary's peer-to-peer entry, for denials that turn on medical judgment."""
+    term = glossary.get_term("peer-to-peer-review")
+    if term is None:
+        return None
+    return {
+        "what_it_is": term.short,
+        "why": (
+            "The person's doctor asks the plan for it. It is often available "
+            "quickly and can resolve a denial before a formal appeal is filed."
+        ),
+        "url": _page("glossary_term", slug=term.slug),
+    }
+
+
+def _which_plan_note() -> dict[str, Any]:
+    """How a person can tell an insured employer plan from a self-funded one,
+    which decides whose external review they get (regulatory_citations.py,
+    external_review.py)."""
+    erisa = glossary.get_term("erisa")
+    return _compact(
+        {
+            "why_it_matters": (
+                "An employer plan is either insured (an insurance company "
+                "carries the risk) or self-funded (the employer pays the "
+                "claims itself, often with a carrier hired only to administer "
+                "them). A private employer's "
+                "or union's self-funded plan is under ERISA, so state "
+                "insurance rules and some federal payer rules don't reach it, "
+                "and an external review goes through the federal process or "
+                "a reviewer the plan names rather than the state's."
+            ),
+            "how_to_tell": [
+                "The denial letter's appeal-rights section. One that names "
+                "ERISA rights points to a private employer or union plan; "
+                "one that names the state insurance department or a state "
+                "external review usually means an insured plan.",
+                "The plan documents. A private employer's Summary Plan "
+                "Description says how the plan is funded, and where an "
+                "insurer finances or administers it, whether benefits are "
+                "guaranteed by an insurance policy (29 C.F.R. § "
+                "2520.102-3(q)). That rule is ERISA's, so for a government or "
+                "church employer the HR question is the reliable route.",
+                'Ask HR or the benefits office: "Is our plan fully insured '
+                "or self-funded?\" A plan card that names a carrier doesn't "
+                "settle it, because carriers administer self-funded plans too.",
+            ],
+            "erisa": (
+                {
+                    "what_it_is": erisa.short,
+                    "url": _page("glossary_term", slug=erisa.slug),
+                }
+                if erisa
+                else None
+            ),
+        }
+    )
+
+
 def _reason_checklist(phrase: str) -> dict[str, Any]:
     """What to gather for one kind of denial: the library's own "how to
     counter" list on a confident match, candidates on a weak one, never a
@@ -1649,6 +1719,8 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
         tool takes no letter or personal details itself; never ask for a
         letter the person hasn't offered. Fight Health Insurance is free; the
         optional fax service is pay what you want, including $0.
+        find_treatment_guide returns this same link with the treatment
+        filled in, so after that call there is no need for this one.
         """
         guide = None
         if topic:
@@ -1878,6 +1950,9 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
                     :MAX_LIST_ITEMS
                 ],
                 "success_rate": entry.get("success_rate"),
+                "peer_to_peer": (
+                    _peer_to_peer_note() if key in PEER_TO_PEER_REASONS else None
+                ),
                 "url": _page("denial-language-library"),
                 "start_appeal_url": _page("scan"),
                 "other_matches": [k for k in matches if k != key][:3],
@@ -2037,6 +2112,7 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
                     for h in hooks[:MAX_LIST_ITEMS]
                 ],
                 "about_these_laws": laws_note,
+                "how_to_tell_which_kind_of_plan": _which_plan_note(),
                 "deadlines": deadlines,
                 "deadline_sources": deadline_sources,
                 "url": (
@@ -2114,6 +2190,7 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
                 "for_the_form": _form_items(scan_url),
                 "worth_gathering": _worth_gathering(),
                 "expedited_appeal": _expedited_note(),
+                "peer_to_peer": _peer_to_peer_note(),
                 "for_this_denial_reason": (
                     _reason_checklist(denial_reason) if denial_reason else None
                 ),
