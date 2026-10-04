@@ -1951,3 +1951,51 @@ class AppealChecklistTest(TestCase):
             )
         self.assertFalse(result.isError, text_of(result))
         self.assertEqual(writes_in(queries), [])
+
+
+class PlanKindAndPeerToPeerTest(TestCase):
+    """The two things the first live test wanted and couldn't get."""
+
+    async def test_appeal_rights_say_how_to_tell_an_insured_plan_from_a_self_funded_one(
+        self,
+    ):
+        data = (
+            await call(
+                "get_appeal_rights",
+                {"plan_source": "Employer -- Private", "state": "CA"},
+            )
+        ).structuredContent
+        note = data["how_to_tell_which_kind_of_plan"]
+        self.assertIn("self-funded", note["why_it_matters"])
+        self.assertEqual(len(note["how_to_tell"]), 3)
+        self.assertIn(
+            "Is our plan fully insured or self-funded?", note["how_to_tell"][2]
+        )
+        self.assertTrue(note["erisa"]["url"].endswith("/glossary/erisa/"))
+
+    async def test_the_checklist_mentions_peer_to_peer(self):
+        data = (await call("get_appeal_checklist", {})).structuredContent
+        self.assertIn("doctor", data["peer_to_peer"]["what_it_is"])
+        self.assertTrue(
+            data["peer_to_peer"]["url"].endswith("/glossary/peer-to-peer-review/")
+        )
+
+    async def test_medical_necessity_explains_peer_to_peer_and_timely_filing_does_not(
+        self,
+    ):
+        nmn = (
+            await call("explain_denial_reason", {"phrase": "not medically necessary"})
+        ).structuredContent
+        self.assertIn("peer_to_peer", nmn)
+        late = (
+            await call(
+                "explain_denial_reason", {"phrase": "timely filing limit exceeded"}
+            )
+        ).structuredContent
+        self.assertNotIn("peer_to_peer", late)
+
+    async def test_start_appeal_says_the_guide_already_gives_its_link(self):
+        async with mcp_session() as session:
+            tools = {t.name: t for t in (await session.list_tools()).tools}
+        said = " ".join(tools["start_appeal"].description.split())
+        self.assertIn("find_treatment_guide returns this same link", said)
