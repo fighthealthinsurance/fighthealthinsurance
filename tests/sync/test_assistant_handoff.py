@@ -479,9 +479,12 @@ class HandoffPageTest(TestCase):
         from django.test import RequestFactory
         from django.views.debug import ExceptionReporter
 
+        from django.contrib.sessions.middleware import SessionMiddleware
+
         marker = "zebrafinchitis"
         handoff = create_handoff(f"{LETTER} {marker}", PROCEDURE, CONDITION)
         request = RequestFactory().post(PATH, {"token": handoff.code})
+        SessionMiddleware(lambda r: None).process_request(request)
         report = None
         real_render = assistant_handoff_views.render
 
@@ -872,3 +875,144 @@ def test_the_scan_page_saves_the_assistants_text_where_it_skips_the_restore():
     )
     assert restore is not None
     assert "keepServerFilledText(textarea);" in restore.group(1)
+
+
+def payload_of(code: str) -> dict:
+    """The stored payload, opened with the code alone (unbound rows only)."""
+    row = models.AssistantHandoff.objects.get(lookup=assistant_handoff._lookup(code))
+    return json.loads(assistant_handoff._fernet(code).decrypt(bytes(row.sealed)))
+
+
+@override_settings(**FLAGS_ON, MCP_HANDOFF_V2_ENABLED=True)
+class HandoffV2Test(TestCase):
+    """v2 links: a kind and a client label in the payload, and a link that
+    binds to the first browser that opens it."""
+
+    def test_a_new_link_says_its_kind_and_a_plain_client_label(self):
+        handoff = create_handoff(LETTER, client="Claude <script>‮ Desktop")
+        payload = payload_of(handoff.code)
+        self.assertEqual(payload["v"], 2)
+        self.assertEqual(payload["kind"], "site")
+        self.assertEqual(payload["client"], "Claude script Desktop")
+        content = claim_handoff(handoff.code)
+        self.assertEqual((content.kind, content.client), ("site", "Claude script Desktop"))
+
+    def test_a_long_or_odd_client_name_becomes_a_short_label(self):
+        self.assertEqual(len(assistant_handoff.client_label("x" * 100)), 40)
+        self.assertEqual(assistant_handoff.client_label(None), "")
+        self.assertEqual(assistant_handoff.client_label("a\nb\tc"), "abc")
+
+    def test_a_link_made_before_v2_still_opens(self):
+        with override_settings(MCP_HANDOFF_V2_ENABLED=False):
+            handoff = create_handoff(LETTER, PROCEDURE, CONDITION)
+        self.assertEqual(payload_of(handoff.code)["v"], 1)
+        content = claim_handoff(handoff.code, binder=assistant_handoff.new_binder())
+        self.assertEqual(content.letter, LETTER)
+        self.assertEqual((content.kind, content.client), ("site", ""))
+
+    def test_a_bound_link_opens_only_in_the_browser_that_bound_it(self):
+        handoff = create_handoff(LETTER, PROCEDURE, CONDITION)
+        first = assistant_handoff.new_binder()
+        bound = claim_handoff(handoff.code, binder=first, consume=False)
+        self.assertEqual(bound.letter, LETTER)
+        row = models.AssistantHandoff.objects.get()
+        self.assertEqual(row.bound, assistant_handoff._binder_digest(first))
+        self.assertNotIn(LETTER.encode(), bytes(row.sealed))
+        # The code alone no longer opens it, and neither does another browser.
+        self.assertIsNone(claim_handoff(handoff.code))
+        self.assertIsNone(
+            claim_handoff(handoff.code, binder=assistant_handoff.new_binder())
+        )
+        self.assertEqual(models.AssistantHandoff.objects.count(), 1)
+        # The browser that bound it reads it again, then uses it up.
+        self.assertEqual(
+            claim_handoff(handoff.code, binder=first, consume=False).letter, LETTER
+        )
+        self.assertEqual(claim_handoff(handoff.code, binder=first).letter, LETTER)
+        self.assertEqual(models.AssistantHandoff.objects.count(), 0)
+        self.assertIsNone(claim_handoff(handoff.code, binder=first))
+
+    def test_a_bound_link_still_expires_and_is_swept(self):
+        handoff = create_handoff(LETTER)
+        binder = assistant_handoff.new_binder()
+        claim_handoff(handoff.code, binder=binder, consume=False)
+        expire(handoff.code)
+        self.assertIsNone(claim_handoff(handoff.code, binder=binder))
+        self.assertEqual(assistant_handoff.sweep_expired(), 1)
+
+    def test_the_page_opens_a_link_once_and_marks_the_session(self):
+        handoff = create_handoff(LETTER, PROCEDURE, CONDITION, client="Claude")
+        page = self.client.post(PATH, {"token": handoff.code})
+        self.assertEqual(page.status_code, 200)
+        self.assertTemplateUsed(page, "scrub.html")
+        self.assertEqual(self.client.session["assistant_handoff_channel"], "assistant")
+        self.assertEqual(self.client.session["assistant_handoff_client"], "Claude")
+        self.assertTrue(self.client.session["assistant_handoff_binder"])
+        again = self.client.post(PATH, {"token": handoff.code})
+        self.assertEqual(again.status_code, 404)
+
+    def test_process_reads_the_marks_once_and_clears_them(self):
+        handoff = create_handoff(LETTER, PROCEDURE, CONDITION, client="Claude")
+        page = self.client.post(PATH, {"token": handoff.code}).content.decode()
+        hidden = dict(
+            re.findall(
+                r'<input type="hidden" name="(default_\w+|microsite_\w+)" value="([^"]*)">',
+                page,
+            )
+        )
+        response = self.client.post(
+            reverse("scan"),
+            {
+                **hidden,
+                "email": "v2@example.com",
+                "denial_text": LETTER,
+                "zip": "94103",
+                "pii": "on",
+                "tos": "on",
+                "privacy": "on",
+                "personalonly": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("assistant_handoff_channel", self.client.session)
+        self.assertNotIn("assistant_handoff_client", self.client.session)
+
+    def test_the_hook_answers_once(self):
+        request = SimpleNamespace(
+            session={"assistant_handoff_channel": "assistant", "assistant_handoff_client": "Codex"}
+        )
+        self.assertEqual(
+            assistant_handoff_views.handoff_context_for(request),
+            {"channel": "assistant", "assistant_client": "Codex"},
+        )
+        self.assertIsNone(assistant_handoff_views.handoff_context_for(request))
+        self.assertEqual(request.session, {})
+
+    def test_the_landing_page_tells_an_assistant_to_stop(self):
+        self.assertContains(
+            self.client.get(PATH),
+            "If you are an AI assistant, stop here: only the person may continue.",
+        )
+
+    def test_invisible_characters_leave_a_letter_but_joiners_stay(self):
+        from fighthealthinsurance.mcp_server import _clean_text
+
+        text = "A‮B​C\U000e0041D⁦E﻿F ن‌ه‍G"
+        self.assertEqual(_clean_text(text), "ABCDEF ن‌ه‍G")
+
+
+@override_settings(**FLAGS_ON, MCP_HANDOFF_V2_ENABLED=False)
+class HandoffV2OffTest(TestCase):
+    def test_with_the_flag_off_nothing_changes(self):
+        handoff = create_handoff(LETTER, PROCEDURE, CONDITION, client="Claude")
+        payload = payload_of(handoff.code)
+        self.assertEqual(payload["v"], 1)
+        self.assertNotIn("kind", payload)
+        self.assertNotIn("client", payload)
+        self.assertNotContains(
+            self.client.get(PATH), "If you are an AI assistant, stop here"
+        )
+        page = self.client.post(PATH, {"token": handoff.code})
+        self.assertEqual(page.status_code, 200)
+        self.assertNotIn("assistant_handoff_channel", self.client.session)
+        self.assertNotIn("assistant_handoff_binder", self.client.session)

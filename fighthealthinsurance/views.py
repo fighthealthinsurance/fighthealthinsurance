@@ -48,7 +48,12 @@ from django_encrypted_filefield.crypt import Cryptographer
 from loguru import logger
 from PIL import Image
 
-from fighthealthinsurance import common_view_logic, consent, intake_resume
+from fighthealthinsurance import (
+    assistant_handoff_views,
+    common_view_logic,
+    consent,
+    intake_resume,
+)
 from fighthealthinsurance import forms as core_forms, models
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
@@ -2089,6 +2094,9 @@ class InitialProcessView(generic.FormView):
         cleaned_data = form.cleaned_data
         if "denial_id" in cleaned_data:
             del cleaned_data["denial_id"]
+        # Read once and cleared here; the channel it names is applied to the
+        # denial in a later change.
+        self.handoff_context = assistant_handoff_views.handoff_context_for(self.request)
         # The boxes are recorded against the denial below; personalonly is a
         # gate on the submission, not something the denial keeps.
         agreements = {name: cleaned_data.get(name) for name in consent.BOXES}

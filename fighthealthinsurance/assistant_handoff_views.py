@@ -21,7 +21,7 @@ site or is indexed, the landing page loads no third-party script (base.html's
 ``no_third_party_scripts``), and an error here reports no local variables.
 """
 
-from typing import Any
+from typing import Any, Optional
 
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse, HttpResponseBase
@@ -32,9 +32,33 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.debug import SafeExceptionReporterFilter
 
-from fighthealthinsurance.assistant_handoff import claim_handoff
+from fighthealthinsurance.assistant_handoff import claim_handoff, new_binder, v2_enabled
 
 LANDING_TEMPLATE = "assistant_handoff.html"
+# Session keys. The binder is this browser's secret for binding links; the
+# other two say the open form came from an assistant, for /process to read.
+BINDER_KEY = "assistant_handoff_binder"
+CHANNEL_KEY = "assistant_handoff_channel"
+CLIENT_KEY = "assistant_handoff_client"
+
+
+def session_binder(request: HttpRequest) -> str:
+    binder = request.session.get(BINDER_KEY)
+    if not isinstance(binder, str) or not binder:
+        binder = new_binder()
+        request.session[BINDER_KEY] = binder
+    return binder
+
+
+def handoff_context_for(request: HttpRequest) -> Optional[dict[str, str]]:
+    """What the opened form carried from the assistant, read once by
+    /process: the channel and the client label, or None for a plain intake.
+    The keys are cleared so a later case in the session does not inherit them."""
+    channel = request.session.pop(CHANNEL_KEY, None)
+    client = request.session.pop(CLIENT_KEY, "")
+    if channel != "assistant":
+        return None
+    return {"channel": "assistant", "assistant_client": str(client or "")}
 
 
 def handoff_enabled() -> bool:
@@ -87,7 +111,11 @@ class AssistantHandoffView(View):
             render(
                 request,
                 LANDING_TEMPLATE,
-                {"no_third_party_scripts": True, "dead": dead},
+                {
+                    "no_third_party_scripts": True,
+                    "dead": dead,
+                    "assistant_stop_line": v2_enabled(),
+                },
                 status=404 if dead else 200,
             )
         )
@@ -96,9 +124,16 @@ class AssistantHandoffView(View):
         return self._landing(request, dead=False)
 
     def post(self, request: HttpRequest) -> HttpResponse:
-        content = claim_handoff(request.POST.get("token", ""))
+        token = request.POST.get("token", "")
+        if v2_enabled():
+            content = claim_handoff(token, binder=session_binder(request))
+        else:
+            content = claim_handoff(token)
         if content is None:
             return self._landing(request, dead=True)
+        if v2_enabled():
+            request.session[CHANNEL_KEY] = "assistant"
+            request.session[CLIENT_KEY] = content.client
         return _private(
             render(
                 request,

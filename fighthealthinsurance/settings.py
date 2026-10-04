@@ -178,6 +178,10 @@ class Base(Configuration):
     # page reads it on every request, so turning it off stops outstanding
     # links at once.
     MCP_PREPARE_APPEAL_ENABLED = _env_flag("MCP_PREPARE_APPEAL_ENABLED")
+    # Handoff links v2 (assistant_handoff.py): the payload says what kind of
+    # link it is and which client made it, and a link binds to the first
+    # browser that opens it. Links made before the flag still open.
+    MCP_HANDOFF_V2_ENABLED = _env_flag("MCP_HANDOFF_V2_ENABLED")
     # prepare_appeal's caps, counted from the table so they hold across pods
     # (soft at the edge: two pods can pass the check together): links live
     # at once, and links made in the last minute and not yet opened (opening
@@ -960,6 +964,7 @@ class Dev(Base):
     # MCP_SERVER_ENABLED=0 (only uvicorn serves it; runserver never loads
     # asgi.py).
     MCP_SERVER_ENABLED = _env_flag("MCP_SERVER_ENABLED", "1")
+    MCP_HANDOFF_V2_ENABLED = _env_flag("MCP_HANDOFF_V2_ENABLED", "1")
     CSRF_TRUSTED_ORIGINS = [
         "https://fightpaperwork.com",
         "https://localhost:3000",

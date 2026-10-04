@@ -75,7 +75,7 @@ from django.views.generic.base import RedirectView
 from channels.db import database_sync_to_async
 from loguru import logger
 import mcp as mcp_sdk
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ContentBlock
@@ -1441,13 +1441,21 @@ def _tell_the_person(letter_characters: int, treatment: str, diagnosis: str) -> 
 # can't encode: kept, one would break the page that shows the letter. Line
 # endings are made "\n" first, so a carriage return never reaches this.
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\ud800-\udfff]")
+# Invisible characters that can hide or reorder text: bidirectional controls,
+# zero-width spaces and joiners-of-nothing, and Unicode tag characters. The
+# joiners Persian and Indic scripts need (U+200C, U+200D) stay.
+_INVISIBLES = re.compile(
+    "[\u061c\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff"
+    "\U000e0000-\U000e007f]"
+)
 
 
 def _clean_text(text: str) -> str:
     """Consistent line endings, no control characters but newline and tab,
-    no lone surrogates, and no leading or trailing space."""
+    no lone surrogates, no invisible controls, and no leading or trailing
+    space."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    return _CONTROL_CHARS.sub("", text).strip()
+    return _INVISIBLES.sub("", _CONTROL_CHARS.sub("", text)).strip()
 
 
 def _one_line(field: str, value: Optional[str]) -> str:
@@ -1481,9 +1489,20 @@ def _handoff_link(code: str) -> str:
 
 @database_sync_to_async
 def _create_handoff(
-    letter: str, procedure: str, condition: str
+    letter: str, procedure: str, condition: str, client: str = ""
 ) -> assistant_handoff.Handoff:
-    return assistant_handoff.create_handoff(letter, procedure, condition)
+    return assistant_handoff.create_handoff(
+        letter, procedure, condition, kind="site", client=client
+    )
+
+
+def _client_name(ctx: Context) -> str:
+    """The connecting client's self-reported name, when the session has one."""
+    try:
+        params = ctx.session.client_params
+        return params.clientInfo.name if params is not None else ""
+    except Exception:
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -1881,6 +1900,7 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
                     },
                 ),
             ],
+            ctx: Context,
             procedure: Annotated[
                 Optional[str],
                 Field(max_length=SHORT_FIELD_MAX_CHARS, description=PROCEDURE_HELP),
@@ -1898,7 +1918,9 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
             treatment = _one_line("procedure", procedure)
             diagnosis = _one_line("condition", condition)
             try:
-                handoff = await _create_handoff(letter, treatment, diagnosis)
+                handoff = await _create_handoff(
+                    letter, treatment, diagnosis, _client_name(ctx)
+                )
             except assistant_handoff.HandoffCapacityError:
                 raise ToolError(AT_CAPACITY) from None
             expires_at = handoff.expires_at.astimezone(dt_timezone.utc)
