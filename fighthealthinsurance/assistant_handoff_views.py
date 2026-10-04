@@ -24,7 +24,7 @@ site or is indexed, the landing page loads no third-party script (base.html's
 from typing import Any, Optional
 
 from django.conf import settings
-from django.http import HttpRequest, HttpResponse, HttpResponseBase
+from django.http import HttpRequest, HttpResponse, HttpResponseBase, JsonResponse
 from django.shortcuts import render
 from django.utils.decorators import method_decorator
 from django.views import View
@@ -32,22 +32,40 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.debug import SafeExceptionReporterFilter
 
-from fighthealthinsurance.assistant_handoff import claim_handoff, new_binder, v2_enabled
+from fighthealthinsurance.assistant_handoff import (
+    HANDOFF_TTL,
+    claim_handoff,
+    new_binder,
+    v2_enabled,
+)
 
 LANDING_TEMPLATE = "assistant_handoff.html"
-# Session keys. The binder is this browser's secret for binding links; the
-# other two say the open form came from an assistant, for /process to read.
-BINDER_KEY = "assistant_handoff_binder"
+# The binder is this browser's secret for binding links. It lives in its own
+# cookie, never in the session (whose store is a database table in clear);
+# the server keeps only a digest. Scoped to this page's paths and the link's
+# lifetime.
+BINDER_COOKIE = "fhi_handoff_binder"
+BINDER_COOKIE_PATH = "/from-your-assistant"
+# Session keys that say the open form came from an assistant, for /process.
 CHANNEL_KEY = "assistant_handoff_channel"
 CLIENT_KEY = "assistant_handoff_client"
 
 
-def session_binder(request: HttpRequest) -> str:
-    binder = request.session.get(BINDER_KEY)
-    if not isinstance(binder, str) or not binder:
-        binder = new_binder()
-        request.session[BINDER_KEY] = binder
-    return binder
+def request_binder(request: HttpRequest) -> Optional[str]:
+    binder = request.COOKIES.get(BINDER_COOKIE)
+    return binder if isinstance(binder, str) and len(binder) == 43 else None
+
+
+def set_binder_cookie(response: HttpResponse, binder: str) -> None:
+    response.set_cookie(
+        BINDER_COOKIE,
+        binder,
+        max_age=int(HANDOFF_TTL.total_seconds()),
+        path=BINDER_COOKIE_PATH,
+        secure=bool(getattr(settings, "SESSION_COOKIE_SECURE", True)),
+        httponly=True,
+        samesite="Lax",
+    )
 
 
 def handoff_context_for(request: HttpRequest) -> Optional[dict[str, str]]:
@@ -123,10 +141,23 @@ class AssistantHandoffView(View):
     def get(self, request: HttpRequest) -> HttpResponse:
         return self._landing(request, dead=False)
 
+    def _bind(self, request: HttpRequest, token: str) -> HttpResponse:
+        """The page script's first request: bind the link to this browser
+        without using it up. Answers {"bound": true/false}; a false means the
+        page shows its used-link state."""
+        binder = request_binder(request) or new_binder()
+        content = claim_handoff(token, binder=binder, consume=False)
+        response = _private(JsonResponse({"bound": content is not None}))
+        if content is not None:
+            set_binder_cookie(response, binder)
+        return response
+
     def post(self, request: HttpRequest) -> HttpResponse:
         token = request.POST.get("token", "")
         if v2_enabled():
-            content = claim_handoff(token, binder=session_binder(request))
+            if request.POST.get("bind") == "1":
+                return self._bind(request, token)
+            content = claim_handoff(token, binder=request_binder(request))
         else:
             content = claim_handoff(token)
         if content is None:

@@ -1452,10 +1452,18 @@ _INVISIBLES = re.compile(
 
 def _clean_text(text: str) -> str:
     """Consistent line endings, no control characters but newline and tab,
-    no lone surrogates, no invisible controls, and no leading or trailing
-    space."""
+    no lone surrogates, and no leading or trailing space."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    return _INVISIBLES.sub("", _CONTROL_CHARS.sub("", text)).strip()
+    return _CONTROL_CHARS.sub("", text).strip()
+
+
+def _clean_letter(text: str) -> str:
+    """A letter for prepare_appeal: _clean_text, and with handoff v2 on, no
+    invisible controls either (text in a v1 link is kept as it was)."""
+    text = _clean_text(text)
+    if assistant_handoff.v2_enabled():
+        text = _INVISIBLES.sub("", text).strip()
+    return text
 
 
 def _one_line(field: str, value: Optional[str]) -> str:
@@ -1910,7 +1918,7 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
                 Field(max_length=SHORT_FIELD_MAX_CHARS, description=CONDITION_HELP),
             ] = None,
         ) -> dict[str, Any]:
-            letter = _clean_text(letter_text)
+            letter = _clean_letter(letter_text)
             if len(letter) < LETTER_MIN_CHARS:
                 raise ToolError(LETTER_TOO_SHORT)
             if len(letter) > LETTER_MAX_CHARS:

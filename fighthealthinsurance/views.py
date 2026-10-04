@@ -1958,6 +1958,12 @@ class InitialProcessView(generic.FormView):
     template_name = "scrub.html"
     form_class = core_forms.DenialForm
 
+    def post(self, request, *args, **kwargs):
+        # Read once and cleared before validation, so a failed submission
+        # doesn't leave them for a later case; applied in a later change.
+        self.handoff_context = assistant_handoff_views.handoff_context_for(request)
+        return super().post(request, *args, **kwargs)
+
     def get_ocr_result(self) -> typing.Optional[str]:
         if self.request.method == "POST":
             return self.request.POST.get("denial_text", None)
@@ -2094,9 +2100,6 @@ class InitialProcessView(generic.FormView):
         cleaned_data = form.cleaned_data
         if "denial_id" in cleaned_data:
             del cleaned_data["denial_id"]
-        # Read once and cleared here; the channel it names is applied to the
-        # denial in a later change.
-        self.handoff_context = assistant_handoff_views.handoff_context_for(self.request)
         # The boxes are recorded against the denial below; personalonly is a
         # gate on the submission, not something the denial keeps.
         agreements = {name: cleaned_data.get(name) for name in consent.BOXES}

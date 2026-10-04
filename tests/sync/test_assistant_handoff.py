@@ -782,6 +782,27 @@ class LandingScriptBehaviourTest(TestCase):
         result = self.run_scenario("with-code")
         self.assertTrue(result["buttonDisabledAfterSubmit"])
 
+    def test_with_the_v2_flag_the_page_binds_first_and_then_enables_the_button(self):
+        with override_settings(MCP_HANDOFF_V2_ENABLED=True):
+            result = self.run_scenario("with-bind")
+        self.assertEqual(len(result["fetched"]), 1)
+        bind = result["fetched"][0]
+        self.assertEqual(bind["url"], PATH)
+        self.assertEqual(bind["method"], "POST")
+        self.assertEqual(bind["credentials"], "same-origin")
+        self.assertIn("bind=1", bind["body"])
+        self.assertIn("csrfmiddlewaretoken=csrf-token", bind["body"])
+        self.assertEqual(result["hashAfterScript"], "")
+        self.assertFalse(result["buttonDisabled"])
+        self.assertTrue(result["codeMatchesToken"])
+
+    def test_a_refused_bind_shows_the_used_link_state(self):
+        with override_settings(MCP_HANDOFF_V2_ENABLED=True):
+            result = self.run_scenario("bind-refused")
+        self.assertTrue(result["buttonDisabled"])
+        self.assertTrue(result["readyHidden"])
+        self.assertFalse(result["deadHidden"])
+
     def test_without_a_code_the_page_says_the_link_does_not_open_a_form(self):
         for scenario in ("no-code", "bad-code"):
             with self.subTest(scenario=scenario):
@@ -940,16 +961,59 @@ class HandoffV2Test(TestCase):
         self.assertIsNone(claim_handoff(handoff.code, binder=binder))
         self.assertEqual(assistant_handoff.sweep_expired(), 1)
 
-    def test_the_page_opens_a_link_once_and_marks_the_session(self):
+    def bind(self, client, code: str):
+        return client.post(PATH, {"token": code, "bind": "1"})
+
+    def test_the_page_binds_on_load_then_opens_the_link_once(self):
         handoff = create_handoff(LETTER, PROCEDURE, CONDITION, client="Claude")
+        bound = self.bind(self.client, handoff.code)
+        self.assertEqual(bound.status_code, 200)
+        self.assertEqual(bound.json(), {"bound": True})
+        cookie = bound.cookies["fhi_handoff_binder"]
+        self.assertEqual(len(cookie.value), 43)
+        self.assertEqual(cookie["path"], "/from-your-assistant")
+        self.assertEqual(cookie["max-age"], 7200)
+        self.assertTrue(cookie["httponly"])
+        self.assertEqual(cookie["samesite"], "Lax")
+        self.assertNotIn("assistant_handoff_binder", self.client.session)
         page = self.client.post(PATH, {"token": handoff.code})
         self.assertEqual(page.status_code, 200)
         self.assertTemplateUsed(page, "scrub.html")
         self.assertEqual(self.client.session["assistant_handoff_channel"], "assistant")
         self.assertEqual(self.client.session["assistant_handoff_client"], "Claude")
-        self.assertTrue(self.client.session["assistant_handoff_binder"])
         again = self.client.post(PATH, {"token": handoff.code})
         self.assertEqual(again.status_code, 404)
+
+    def test_the_browser_that_opened_the_page_first_is_the_one_that_can_press(self):
+        handoff = create_handoff(LETTER, PROCEDURE, CONDITION)
+        a, b = Client(), Client()
+        self.assertEqual(self.bind(a, handoff.code).json(), {"bound": True})
+        # B presses first, with or without binding, and gets the dead page.
+        self.assertEqual(self.bind(b, handoff.code).json(), {"bound": False})
+        self.assertEqual(b.post(PATH, {"token": handoff.code}).status_code, 404)
+        # A's press still opens the form.
+        page = a.post(PATH, {"token": handoff.code})
+        self.assertEqual(page.status_code, 200)
+        self.assertTemplateUsed(page, "scrub.html")
+
+    def test_the_binder_cookie_is_never_in_the_session_table(self):
+        handoff = create_handoff(LETTER)
+        cookie = self.bind(self.client, handoff.code).cookies["fhi_handoff_binder"].value
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT session_data FROM django_session")
+            rows = [as_text(r[0]) for r in cursor.fetchall()]
+        self.assertFalse(any(cookie in r for r in rows))
+        self.assertEqual(
+            models.AssistantHandoff.objects.get().bound,
+            assistant_handoff._binder_digest(cookie),
+        )
+
+    def test_a_bind_without_a_code_or_an_unknown_code_is_not_bound(self):
+        self.assertEqual(self.bind(self.client, "").json(), {"bound": False})
+        self.assertEqual(
+            self.bind(self.client, secrets.token_urlsafe(32)).json(), {"bound": False}
+        )
+        self.assertNotIn("fhi_handoff_binder", self.client.cookies)
 
     def test_process_reads_the_marks_once_and_clears_them(self):
         handoff = create_handoff(LETTER, PROCEDURE, CONDITION, client="Claude")
@@ -977,6 +1041,16 @@ class HandoffV2Test(TestCase):
         self.assertNotIn("assistant_handoff_channel", self.client.session)
         self.assertNotIn("assistant_handoff_client", self.client.session)
 
+    def test_an_invalid_submission_clears_the_marks_too(self):
+        handoff = create_handoff(LETTER, PROCEDURE, CONDITION, client="Claude")
+        self.bind(self.client, handoff.code)
+        self.client.post(PATH, {"token": handoff.code})
+        self.assertEqual(self.client.session["assistant_handoff_channel"], "assistant")
+        response = self.client.post(reverse("scan"), {"denial_text": LETTER})
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("assistant_handoff_channel", self.client.session)
+        self.assertNotIn("assistant_handoff_client", self.client.session)
+
     def test_the_hook_answers_once(self):
         request = SimpleNamespace(
             session={"assistant_handoff_channel": "assistant", "assistant_handoff_client": "Codex"}
@@ -995,10 +1069,12 @@ class HandoffV2Test(TestCase):
         )
 
     def test_invisible_characters_leave_a_letter_but_joiners_stay(self):
-        from fighthealthinsurance.mcp_server import _clean_text
+        from fighthealthinsurance.mcp_server import _clean_letter
 
-        text = "A‮B​C\U000e0041D⁦E﻿F ن‌ه‍G"
-        self.assertEqual(_clean_text(text), "ABCDEF ن‌ه‍G")
+        text = "A\u202eB\u200bC\U000e0041D\u2066E\ufeffF \u0646\u200c\u0647\u200dG"
+        self.assertEqual(_clean_letter(text), "ABCDEF \u0646\u200c\u0647\u200dG")
+        with override_settings(MCP_HANDOFF_V2_ENABLED=False):
+            self.assertEqual(_clean_letter(text), text)
 
 
 @override_settings(**FLAGS_ON, MCP_HANDOFF_V2_ENABLED=False)
@@ -1012,7 +1088,8 @@ class HandoffV2OffTest(TestCase):
         self.assertNotContains(
             self.client.get(PATH), "If you are an AI assistant, stop here"
         )
+        self.assertNotContains(self.client.get(PATH), 'id="handoff-form" data-bind')
         page = self.client.post(PATH, {"token": handoff.code})
         self.assertEqual(page.status_code, 200)
         self.assertNotIn("assistant_handoff_channel", self.client.session)
-        self.assertNotIn("assistant_handoff_binder", self.client.session)
+        self.assertNotIn("fhi_handoff_binder", self.client.cookies)
