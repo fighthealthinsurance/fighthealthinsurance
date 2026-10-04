@@ -1,5 +1,6 @@
 import asyncio
 import concurrent
+import contextvars
 import hashlib
 import os
 import random
@@ -1295,7 +1296,11 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
             logger.debug(f"fire_and_forget task {task} finished")
 
     # Create and start a thread that will run the task in its own loop
-    thread = threading.Thread(target=run_async_task)
+    # The new thread keeps the caller's context: the ML purpose and the
+    # spend channel.
+    thread = threading.Thread(
+        target=contextvars.copy_context().run, args=(run_async_task,)
+    )
     thread.daemon = True  # Thread will exit when main thread exits
     with _fire_and_forget_threads_lock:
         _fire_and_forget_threads.add(thread)

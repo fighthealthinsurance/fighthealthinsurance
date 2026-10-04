@@ -1,5 +1,6 @@
 """ml/spend.py: appeals that come through an AI assistant spend under their
 own use, with their own budgets, and the channel reaches the model threads.
+Reservations touch the database and are tested in tests/sync.
 """
 
 import datetime
@@ -32,6 +33,8 @@ def _load(**by_day):
 
 
 class _Denial:
+    denial_text = "letter"
+
     def __init__(self, channel):
         self.channel = channel
 
@@ -53,6 +56,12 @@ class TestTheChannel:
         assert spend.channel_of(_Denial("anything")) == spend.CHANNEL_SITE
         assert spend.channel_of(object()) == spend.CHANNEL_SITE
 
+    def test_a_mark_set_inside_a_scope_is_undone_at_its_end(self):
+        with spend.channel_scope():
+            spend.set_channel_of(_Denial("assistant"))
+            assert spend.current_use() == spend.ASSISTANT
+        assert spend.current_use() == spend.OTHER
+
     def test_typesafe_letters_and_triage_become_assistant_for_assistant_work(self):
         assert spend.typesafe_use(spend.LETTERS) == spend.LETTERS
         with spend.for_channel(spend.CHANNEL_ASSISTANT):
@@ -69,11 +78,35 @@ class TestTheChannel:
         with spend.for_channel(spend.CHANNEL_ASSISTANT):
             seen = [pool.submit(spend.current_use).result(timeout=10) for pool in pools]
         assert seen == [spend.ASSISTANT] * len(pools)
-        # And a plain hop afterwards is back to site work.
         assert (
             fhi_exec.executor.submit(spend.current_use).result(timeout=10)
             == spend.OTHER
         )
+
+
+class TestTheDecorator:
+    @pytest.mark.asyncio
+    async def test_a_helper_given_the_denial_spends_for_its_channel(self):
+        seen = []
+
+        @spend.for_denial_channel
+        async def helper(denial, speculative):
+            seen.append(spend.current_use())
+            return "done"
+
+        assert await helper(_Denial("assistant"), True) == "done"
+        assert await helper(denial=_Denial("site"), speculative=False) == "done"
+        assert seen == [spend.ASSISTANT, spend.OTHER]
+        assert spend.current_use() == spend.OTHER
+
+    @pytest.mark.asyncio
+    async def test_a_helper_called_without_the_denial_is_refused(self):
+        @spend.for_denial_channel
+        async def helper(cls, denial):
+            return "never"
+
+        with pytest.raises(TypeError):
+            await helper(object(), None)
 
 
 class TestAssistantBudgets:
@@ -108,47 +141,24 @@ class TestAssistantBudgets:
             assert spend.allows(spend.DEEPINFRA, spend.ASSISTANT)
             _load(**{spend.counter(spend.DEEPINFRA, spend.ASSISTANT): {TODAY: 1 * M}})
             assert not spend.allows(spend.DEEPINFRA, spend.ASSISTANT)
-            # Chat's share is its own.
             assert spend.allows(spend.DEEPINFRA, spend.CHAT)
 
-    def test_an_unread_ledger_refuses_assistant_work_but_not_chat(self):
+    def test_an_unread_ledger_refuses_assistant_work_on_every_provider_but_not_chat(
+        self,
+    ):
         spend._ledger.reset_for_tests()
         with override_settings(FHI_SPEND_BACKGROUND=True):
-            assert not spend.allows(spend.DEEPINFRA, spend.ASSISTANT)
-            assert not spend.allows(spend.TYPESAFE, spend.ASSISTANT)
+            for provider in (spend.DEEPINFRA, spend.TYPESAFE, spend.AZURE):
+                assert not spend.allows(provider, spend.ASSISTANT), provider
             assert spend.allows(spend.DEEPINFRA, spend.CHAT)
-            assert not spend.reserve_generation()
+            assert spend.allows(spend.AZURE, spend.CHAT)
 
     def test_a_failing_check_refuses_assistant_work_and_lets_chat_through(self):
         with patch.object(spend._ledger, "snapshot", side_effect=RuntimeError("boom")):
             assert not spend.allows(spend.DEEPINFRA, spend.ASSISTANT)
+            assert not spend.allows(spend.AZURE, spend.ASSISTANT)
             assert spend.allows(spend.DEEPINFRA, spend.CHAT)
             assert not spend.allows(spend.TYPESAFE, spend.LETTERS)
-
-
-class TestGenerationReservations:
-    def test_reservations_count_and_stop_at_the_daily_cap(self):
-        _load()
-        with override_settings(FHI_SPEND_ASSISTANT_DAILY_APPEALS=2):
-            assert spend.reserve_generation()
-            assert spend.reserve_generation()
-            assert not spend.reserve_generation()
-        view = spend._ledger.snapshot()
-        assert view.day_total(spend.counter(spend.FHI, spend.ASSISTANT), TODAY) == 2
-
-    def test_a_released_reservation_is_given_back(self):
-        _load()
-        with override_settings(FHI_SPEND_ASSISTANT_DAILY_APPEALS=1):
-            assert spend.reserve_generation()
-            assert not spend.reserve_generation()
-            spend.release_generation()
-            assert spend.reserve_generation()
-
-    def test_fifty_a_day_by_default_and_none_means_no_cap(self):
-        _load(**{spend.counter(spend.FHI, spend.ASSISTANT): {TODAY: 50}})
-        assert not spend.reserve_generation()
-        with override_settings(FHI_SPEND_ASSISTANT_DAILY_APPEALS=None):
-            assert spend.reserve_generation()
 
     def test_the_summary_shows_generations_as_counts_and_deepinfra_as_dollars(self):
         _load(

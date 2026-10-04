@@ -4709,6 +4709,16 @@ class SpendCounter(models.Model):
         return f"{self.day} {self.name}: {self.amount}"
 
 
+class SpendReservation(models.Model):
+    """One generation taken from a day's count (ml/spend.py
+    reserve_generation), so it can be given back exactly once."""
+
+    day = models.DateField()
+    name = models.CharField(max_length=80)
+    created_at = models.DateTimeField(auto_now_add=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+
+
 class ExternalServiceHealth(models.Model):
     """Last outcome of calls to one external service, shared across pods.
 

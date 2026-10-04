@@ -23,6 +23,7 @@ from typing import Optional
 from loguru import logger
 
 from fighthealthinsurance.context_utils import estimate_tokens
+from fighthealthinsurance.ml import spend
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import Denial
 
@@ -134,6 +135,7 @@ class MLAppealContextHelper:
             )
 
     @classmethod
+    @spend.for_denial_channel
     async def maybe_summarize_denial_text(cls, denial: Denial) -> Optional[str]:
         """Return a condensed denial_text to substitute into the prompt, or
         ``None`` to use the full text.

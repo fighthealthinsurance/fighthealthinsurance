@@ -88,7 +88,13 @@ class SpeculativeAppealsHelper:
         )
 
     @classmethod
-    async def generate_for_denial(
+    async def generate_for_denial(cls, *args: Any, **kwargs: Any) -> int:
+        """Model spend for the precompute counts for the denial's channel."""
+        with spend.channel_scope():
+            return await cls._generate_for_denial(*args, **kwargs)
+
+    @classmethod
+    async def _generate_for_denial(
         cls,
         denial_id: Any,
         force: bool = False,
@@ -174,6 +180,8 @@ class SpeculativeAppealsHelper:
                 )
                 .afirst()
             )
+            if denial is not None:
+                spend.set_channel_of(denial)
             if denial is None:
                 logger.warning(
                     f"speculative appeals[{trigger}]: denial {denial_id} not "

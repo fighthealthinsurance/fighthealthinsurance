@@ -50,11 +50,22 @@ import calendar
 import contextlib
 import contextvars
 import datetime
+import functools
 import math
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, Mapping, Optional, Tuple
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterator,
+    Mapping,
+    Optional,
+    Tuple,
+    TypeVar,
+)
 
 from django.conf import settings
 from loguru import logger
@@ -70,7 +81,6 @@ TRIAGE = "triage"
 ASSISTANT = "assistant"
 OTHER = "other"
 PAUSED = "paused"
-RELEASED = "assistant_released"
 
 # Denial.channel values.
 CHANNEL_SITE = "site"
@@ -127,6 +137,49 @@ def for_channel(channel: str) -> Iterator[None]:
         yield
     finally:
         _CHANNEL.reset(token)
+
+
+@contextlib.contextmanager
+def channel_scope() -> Iterator[None]:
+    """A block whose set_channel_of() calls are undone at its end."""
+    token = _CHANNEL.set(_CHANNEL.get())
+    try:
+        yield
+    finally:
+        _CHANNEL.reset(token)
+
+
+def set_channel_of(denial: Any) -> None:
+    """Mark the rest of this task's work for the denial's channel. Inside a
+    channel_scope() or for_channel() block, which undoes it."""
+    _CHANNEL.set(channel_of(denial))
+
+
+_F = TypeVar("_F", bound=Callable[..., Awaitable[Any]])
+
+
+def for_denial_channel(fn: _F) -> _F:
+    """Decorate an async helper that takes the Denial it works on, so its
+    model calls spend under that denial's channel."""
+
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        denial = kwargs.get("denial")
+        if denial is None:
+            denial = next(
+                (
+                    a
+                    for a in args
+                    if hasattr(a, "channel") and hasattr(a, "denial_text")
+                ),
+                None,
+            )
+        if denial is None:
+            raise TypeError(f"{fn.__name__} needs the Denial to pick its spend channel")
+        with for_channel(channel_of(denial)):
+            return await fn(*args, **kwargs)
+
+    return wrapper  # type: ignore[return-value]
 
 
 def assistant_work() -> bool:
@@ -456,6 +509,10 @@ def allows(provider: str, use: str) -> bool:
         if paused(provider, use) or paused(provider, "*"):
             return False
         view = _ledger.snapshot()
+        if use == ASSISTANT and not view.loaded:
+            # An assistant appeal can wait; a person in chat cannot (the fail
+            # rule in the module docstring).
+            return False
         if provider == TYPESAFE:
             if not view.loaded:
                 return False
@@ -478,10 +535,6 @@ def allows(provider: str, use: str) -> bool:
                 view, counter(TYPESAFE, CHAT), chat_monthly
             )
         if provider == DEEPINFRA and use == ASSISTANT:
-            # Unread refuses: an assistant appeal can wait, a person in chat
-            # cannot (the fail rule in the module docstring).
-            if not view.loaded:
-                return False
             monthly_usd = _usd_setting("FHI_SPEND_DEEPINFRA_ASSISTANT_MONTHLY_USD", 5.0)
             if monthly_usd <= 0:
                 return True
@@ -548,34 +601,74 @@ def _assistant_daily_cap() -> Optional[int]:
     return cap
 
 
-def reserve_generation() -> bool:
-    """Take one of today's assistant generations, or say there are none
-    left. Counts at once in this process; an unread ledger refuses, since
-    other pods' reservations are unknown. Never raises."""
+@dataclass(frozen=True)
+class Reservation:
+    """One of a UTC day's assistant generations, held until released."""
+
+    id: int
+    day: datetime.date
+
+
+def reserve_generation() -> Optional[Reservation]:
+    """Take one of today's assistant generations against the shared day
+    count, in one conditional update, so two pods cannot both take the last
+    one. None when the cap is reached or the database can't be reached.
+    This process's copy of the ledger learns of it at its next refresh."""
+    from django.db import transaction
+    from django.db.models import F
+
+    from fighthealthinsurance.models import SpendCounter, SpendReservation
+
+    name = counter(FHI, ASSISTANT)
+    cap = _assistant_daily_cap()
+    today = _today()
+
+    def take() -> int:
+        rows = SpendCounter.objects.filter(day=today, name=name)
+        if cap is not None:
+            rows = rows.filter(amount__lt=cap)
+        return rows.update(amount=F("amount") + 1)
+
     try:
-        view = _ledger.snapshot()
-        if not view.loaded:
-            return False
-        cap = _assistant_daily_cap()
-        today = _today()
-        used = view.day_total(counter(FHI, ASSISTANT), today) - view.day_total(
-            counter(FHI, RELEASED), today
-        )
-        if cap is not None and used >= cap:
-            return False
-        _ledger.add(counter(FHI, ASSISTANT), 1)
-        return True
+        with transaction.atomic():
+            # get_or_create settles the race for the day's first row.
+            SpendCounter.objects.get_or_create(
+                day=today, name=name, defaults={"amount": 0}
+            )
+            if not take():
+                return None
+            row = SpendReservation.objects.create(day=today, name=name)
+        return Reservation(id=row.pk, day=today)
     except Exception as e:
         logger.warning(f"Spend reservation failed: {type(e).__name__}")
-        return False
+        return None
 
 
-def release_generation() -> None:
-    """Give back a reservation whose generation never started."""
+def release_generation(reservation: Reservation) -> bool:
+    """Give back a reservation whose generation never started: once, and to
+    the day it was taken from. False when it was already released or is not
+    ours."""
+    from django.db import transaction
+    from django.db.models import F
+    from django.utils import timezone
+
+    from fighthealthinsurance.models import SpendCounter, SpendReservation
+
+    name = counter(FHI, ASSISTANT)
     try:
-        _ledger.add(counter(FHI, RELEASED), 1)
+        with transaction.atomic():
+            freed = SpendReservation.objects.filter(
+                pk=reservation.id, name=name, released_at__isnull=True
+            ).update(released_at=timezone.now())
+            if not freed:
+                return False
+            SpendCounter.objects.filter(
+                day=reservation.day, name=name, amount__gt=0
+            ).update(amount=F("amount") - 1)
+        return True
     except Exception as e:
-        logger.warning(f"Spend release not recorded: {type(e).__name__}")
+        logger.warning(f"Spend release failed: {type(e).__name__}")
+        return False
 
 
 def month_summary() -> Dict[str, float]:

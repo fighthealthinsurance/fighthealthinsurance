@@ -4787,24 +4787,6 @@ class AppealsBackendHelper:
             }
         )
 
-    @staticmethod
-    async def _denial_channel(denial_id: Any) -> str:
-        """Which channel the denial came through, for the spend counters
-        (ml/spend.py). Site when it can't be read: counting is best effort."""
-        try:
-            value = await (
-                Denial.objects.filter(denial_id=denial_id)
-                .values_list("channel", flat=True)
-                .afirst()
-            )
-        except Exception:
-            return spend.CHANNEL_SITE
-        return (
-            spend.CHANNEL_ASSISTANT
-            if value == spend.CHANNEL_ASSISTANT
-            else spend.CHANNEL_SITE
-        )
-
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
         """Public generator: streams ``_generate_appeals_body`` and, for the
@@ -4817,9 +4799,9 @@ class AppealsBackendHelper:
         agen = cast(
             AsyncGenerator[str, None], cls._generate_appeals_body(parameters, lease_ref)
         )
-        channel = await cls._denial_channel(parameters.get("denial_id"))
         try:
-            with spend.for_channel(channel):
+            # The body marks the channel once it has loaded the Denial.
+            with spend.channel_scope():
                 async for chunk in agen:
                     yield chunk
         finally:
@@ -4948,6 +4930,7 @@ class AppealsBackendHelper:
             "creating_professional__user",
         )
         denial = await denial_query.aget()
+        spend.set_channel_of(denial)
         if not background:
             # Form completed: the durable intent is recorded the moment the
             # authenticated lookup succeeds -- before any yield, enrichment,
