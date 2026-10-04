@@ -41,9 +41,18 @@ class GeneratedAppeal:
     # recorded with the same attribution as the mapper's own row.
     infer_type: str = ""
     backend: str = ""
+    # The appeal prompt version that wrote this draft (see
+    # ml/appeal_prompt_versions). None for templated, synthesized and
+    # medically-necessary drafts, which no letter prompt wrote.
+    prompt_version: Optional[str] = None
 
 
 from fighthealthinsurance.denial_history_consent import history_may_be_used_now
+from fighthealthinsurance.ml.appeal_prompt_versions import (
+    apply_prompt_version,
+    choose_prompt_version,
+    current_letter_prompt_mode,
+)
 from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
 from fighthealthinsurance.ml.model_identity import TEMPLATE_MODEL_NAME
 from fighthealthinsurance.context_utils import (
@@ -1200,6 +1209,7 @@ def _generated_to_appeals_text(
     submitted_at: Optional[float] = None,
     submitted_wall: Optional[Any] = None,
     deadline: Optional[float] = None,
+    prompt_version: Optional[str] = None,
 ) -> Iterator[GeneratedAppeal]:
     """Map one model future's (infer_type, text) results to GeneratedAppeals.
 
@@ -1324,6 +1334,7 @@ def _generated_to_appeals_text(
                         context_level=context_level,
                         infer_type=infer_type,
                         backend=backend,
+                        prompt_version=prompt_version,
                     )
                 else:
                     _note_returned(text)
@@ -2617,6 +2628,7 @@ class AppealGenerator(object):
         denial_text_override: Optional[str] = None,
         run_kind: str = "live",
         deadline: Optional[float] = None,
+        prompt_mode: Optional[str] = None,
     ) -> Iterator[GeneratedAppeal]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -2643,6 +2655,10 @@ class AppealGenerator(object):
             deadline: Optional time.monotonic()-based cutoff after which the
                 submitted model calls exit cooperatively (threads cannot be
                 cancelled) instead of continuing work nobody will read.
+            prompt_mode: Which appeal prompt versions the full-letter calls
+                use (ml/appeal_prompt_versions MODE_*). None reads the staff
+                setting. Each full-letter call draws its version once, and
+                every draft it yields records it.
 
         Returns:
             An iterator of ``GeneratedAppeal`` items (each carries the
@@ -2650,6 +2666,8 @@ class AppealGenerator(object):
             template-based / non-AI appeals).
         """
         logger.debug("Starting to make appeals...")
+        if prompt_mode is None:
+            prompt_mode = current_letter_prompt_mode()
         # Background/speculative work uses its own pool so it can't starve
         # interactive generations that a user is actively waiting on.
         submit_pool = background_executor if run_kind == "speculative" else executor
@@ -3040,6 +3058,20 @@ class AppealGenerator(object):
         logger.debug(f"Initial appeal {initial_appeals}")
         # Executor map wants a list for each parameter.
 
+        # Each full-letter call is written with one appeal prompt version: the
+        # staff setting picks original, new, or a random half-and-half draw per
+        # call. The contract goes on last, after any specialized hint block,
+        # and the call keeps its version through context shedding (which
+        # copies the call and keeps what follows the prompt's start). The
+        # medically-necessary calls ask a one-line question whose answer goes
+        # into a template, so no letter prompt is involved and they carry no
+        # version.
+        for _c in itertools.chain(calls, backup_calls):
+            if _c.get("infer_type") == "full" and isinstance(_c.get("prompt"), str):
+                version = choose_prompt_version(prompt_mode)
+                _c["prompt_version"] = version
+                _c["prompt"] = apply_prompt_version(_c["prompt"], version)
+
         # Every model call built above uses full context; stamp the level so
         # each produced appeal records it. The proactive shed variants (added by
         # _add_proactive_shed_variants) and the reactive tier-shed ladder get
@@ -3062,10 +3094,15 @@ class AppealGenerator(object):
             # slow-backend diagnosis needs.
             model_futures: List[Tuple[dict, Future]] = []
             for call in calls:
-                # context_level is provenance metadata, not an inference arg;
-                # strip it before spreading the call into get_model_result.
+                # context_level and prompt_version are provenance metadata, not
+                # inference args; strip them before spreading the call into
+                # get_model_result.
                 context_level = call.get("context_level")
-                call_kwargs = {k: v for k, v in call.items() if k != "context_level"}
+                call_kwargs = {
+                    k: v
+                    for k, v in call.items()
+                    if k not in ("context_level", "prompt_version")
+                }
                 prompt = call.get("prompt")
                 # Everything that doesn't depend on the future is computed once
                 # per call, not once per future: this loop is what gets the
@@ -3083,6 +3120,7 @@ class AppealGenerator(object):
                             {
                                 "model_name": call.get("model_name"),
                                 "context_level": context_level,
+                                "prompt_version": call.get("prompt_version"),
                                 "stage": stage,
                                 "infer_type": call.get("infer_type") or "",
                                 "backend": backend,
@@ -3124,6 +3162,7 @@ class AppealGenerator(object):
                     meta["submitted_at"],
                     meta["submitted_wall"],
                     deadline,
+                    prompt_version=meta["prompt_version"],
                 )
                 if meta["infer_type"] == "full":
                     full_pairs.append((f, mapper))

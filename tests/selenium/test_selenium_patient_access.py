@@ -131,7 +131,7 @@ class SeleniumTestPatientAccessNavigation(FHISeleniumBase, StaticLiveServerTestC
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
-    PROFESSIONAL = 'summary.nav-link:contains("Professional")'
+    PROFESSIONAL = 'summary.fhi-nav-link:contains("Professional")'
     OPEN_MENU = "details.fhi-nav-group[open] .fhi-nav-submenu"
 
     def _open_home(self):

@@ -1,0 +1,55 @@
+{% comment %}
+The appeal prompt switch on the Model Usage dashboard: the setting, its
+history, and the head-to-head of the current half-and-half run. The per-window
+"Prompt version" tables sit in each window below, counted like the model table.
+{% endcomment %}
+<div class="window-section" id="letter-prompts">
+  <h2>Appeal prompt versions</h2>
+  {% if letter_prompt_saved %}<p class="prompt-saved" role="status">Saved. This server uses it now; the others pick it up within 30 seconds.</p>{% endif %}
+  {% if panel.this_pod_mode != panel.saved_mode %}<p class="prompt-banner">This server is still on the earlier setting and will switch within 30 seconds.</p>{% endif %}
+  <form method="post" action="{% url 'model_usage_dashboard' %}">
+    {% csrf_token %}
+    <fieldset class="prompt-fieldset">
+      <legend class="note">Each new letter draft is written with:</legend>
+      {% for value, label in panel.mode_choices %}
+        <label class="prompt-choice"><input type="radio" name="mode" value="{{ value }}"{% if value == panel.saved_mode %} checked{% endif %}> {{ label }}</label>
+      {% endfor %}
+    </fieldset>
+    <label for="prompt-note" class="note">Note (optional)</label><br>
+    <input type="text" id="prompt-note" name="note" maxlength="500" class="prompt-note" placeholder="Why you changed it">
+    <br><button type="submit" class="prompt-save">Save</button>
+  </form>
+  <p class="note">The new prompt (v2) is the original with this added at the end, word for word from the September model evaluation:</p>
+  <blockquote class="prompt-contract">{{ panel.output_contract }}</blockquote>
+  <p class="note">Letters already written keep their version. Templates, synthesized letters and medically-necessary template drafts don't use a letter prompt, so they have no version. Each window below has a <strong>Prompt version</strong> table, counted like the model table.</p>
+
+  <h3>Pages that showed both versions <span class="source-label">(since half and half began)</span></h3>
+  {% if panel.head_to_head is None %}
+    <p class="note">Half and half isn't running, so there's no head-to-head yet.</p>
+  {% else %}
+    {% with h=panel.head_to_head %}
+    <p class="note">The fairest comparison: both versions on the same page, for the same case. Only picks that reported which drafts were on screen count. Since {{ panel.split_started|date:"Y-m-d H:i" }}.</p>
+    <table class="usage">
+      <thead><tr><th>Picks on those pages</th><th class="num">v1 picked</th><th class="num">v2 picked</th><th class="num">v2 by blind chance</th><th class="num">v2 picked ÷ chance</th><th class="num">Picked something else</th></tr></thead>
+      <tbody><tr><td>{{ h.picks }}</td><td class="num">{{ h.v1_chosen }}</td><td class="num">{{ h.v2_chosen }}</td><td class="num">{{ h.v2_expected_text }}</td><td class="num">{{ h.v2_ratio_text }}</td><td class="num">{{ h.other_chosen }}</td></tr></tbody>
+    </table>
+    {% if h.enough %}
+      <p class="note">Above 1 means people picked v2 drafts more often than chance; below 1, less often.</p>
+    {% else %}
+      <p class="prompt-banner">Not enough picks yet to read: {{ h.versioned_picks }} of the {{ panel.min_mixed_picks }} needed.</p>
+    {% endif %}
+    {% endwith %}
+  {% endif %}
+
+  <h3>Changes</h3>
+  <table class="usage">
+    <thead><tr><th>When</th><th>Who</th><th>Setting</th><th>Note</th></tr></thead>
+    <tbody>
+      {% for row in panel.history %}
+        <tr><td>{{ row.created_at|date:"Y-m-d H:i" }}</td><td>{{ row.changed_by_username|default:"unknown" }}</td><td>{{ row.get_mode_display }}</td><td>{{ row.note }}</td></tr>
+      {% empty %}
+        <tr><td colspan="4" class="note">Never changed: every letter uses the original prompt.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

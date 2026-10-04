@@ -213,13 +213,13 @@
       <li>
         <a href="{% url 'model_usage_dashboard' %}">
           <strong>ML Model Usage Dashboard</strong>
-          <div class="link-description">Which ML models users pick and what state each is in now, for the chooser and the denial flow (all time / 1 day / 7 days / 30 days), plus appeal call outcomes (1 day / 7 days / 30 days)</div>
+          <div class="link-description">Which ML models users pick and what state each is in now, for the chooser and the denial flow (all time / 1 day / 7 days / 30 days), plus appeal call outcomes (1 day / 7 days / 30 days), and the appeal prompt switch with its comparison</div>
         </a>
       </li>
       <li>
         <a href="{% url 'model_backend_status' %}">
           <strong>Model Backend Status</strong>
-          <div class="link-description">Every model backend the code knows about: which request paths route to it on this pod, its quality and tier, configuration and registry state, and its latest health check with the deploy it ran under, flagged when older than the current deploy</div>
+          <div class="link-description">Every model backend the code knows about: which request paths route to it on this pod, its quality and tier, configuration and registry state, what weights it reports serving and since when, and its latest health check with the deploy it ran under, flagged when older than the current deploy</div>
         </a>
       </li>
     </ul>

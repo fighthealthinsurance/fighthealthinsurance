@@ -10,8 +10,12 @@
   html { scroll-behavior: smooth; }
   .persona-section { padding: 2.5rem 2rem; border-radius: 8px; margin-bottom: 2rem; }
   .persona-section h2 { margin-bottom: 1.5rem; }
-  .persona-card { padding: 1.5rem; background-color: rgba(255,255,255,0.7); border-radius: 8px; height: 100%; }
+  .persona-card { padding: 1.5rem; background-color: rgba(255,255,255,0.7); border-radius: 8px; }
   .persona-card h3 { margin-bottom: 1rem; }
+  /* The two cards under Help Patients sit in a card grid, which spaces them
+     with its gap. Each used to sit in a column that carried 1.5rem under it,
+     so the grid keeps that much before the Chooser line that follows. */
+  .persona-section > .fhi-cards { margin-bottom: var(--fhi-space-6); }
 </style>
 {% endblock extra_style %}
 
@@ -37,54 +41,50 @@
             Pay what you can. $0 is totally fine.
         </p>
         <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" target="_blank" rel="noopener noreferrer"
-           class="section-btn btn btn-default smoothScroll" style="display: inline-block;">
+           class="fhi-button fhi-button-primary">
             Donate Now
         </a>
     </section>
 
     <section id="help-patients" class="persona-section" style="background-color: #f8f9fa;">
         <h2>Help Patients Fight Denials</h2>
-        <div class="row">
-            <div class="col-md-6" style="margin-bottom: 1.5rem;">
-                <div class="persona-card">
-                    <h3>Share the Tool</h3>
-                    <p>
-                        Know someone dealing with a health insurance denial? Share this free tool and help them fight back.
-                    </p>
-                    {% include 'partials/share_buttons.html' with share_heading_level=4 %}
-                </div>
+        <div class="fhi-cards fhi-cards-roomy">
+            <div class="persona-card">
+                <h3>Share the Tool</h3>
+                <p>
+                    Know someone dealing with a health insurance denial? Share this free tool and help them fight back.
+                </p>
+                {% include 'partials/share_buttons.html' with share_heading_level=4 %}
             </div>
-            <div class="col-md-6" style="margin-bottom: 1.5rem;">
-                <div class="persona-card">
-                    <h3>Spread Awareness</h3>
-                    <p>
-                        Follow us on social media and help raise awareness about the importance of appealing
-                        unfair insurance denials. Every voice makes a difference!
-                    </p>
-                    <p style="margin-top: 1rem;">
-                        <a href="https://x.com/fighthinsurance" target="_blank" rel="noopener noreferrer" aria-label="Follow on X/Twitter" style="margin-right: 0.75rem;">
-                            <img src="{% static 'images/twitterlogo.png' %}" alt="X/Twitter" style="width: 28px; height: 28px;">
-                        </a>
-                        <a href="https://www.instagram.com/fighthealthinsurance/" target="_blank" rel="noopener noreferrer" aria-label="Follow on Instagram" style="margin-right: 0.75rem;">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="35" height="35" viewBox="0 0 24 24" fill="none" stroke="#888888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                <path d="M4 8a4 4 0 0 1 4 -4h8a4 4 0 0 1 4 4v8a4 4 0 0 1 -4 4h-8a4 4 0 0 1 -4 -4z"></path>
-                                <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"></path>
-                                <path d="M16.5 7.5v.01"></path>
-                            </svg>
-                        </a>
-                        <a href="https://www.linkedin.com/company/fight-health-insurance" target="_blank" rel="noopener noreferrer" aria-label="Follow on LinkedIn">
-                            <img src="{% static 'images/linkedinlogo.png' %}" alt="LinkedIn" style="width: 28px; height: 28px;">
-                        </a>
-                        <a href="https://www.tiktok.com/@fighthealthinsurancett" target="_blank" rel="noopener noreferrer" aria-label="Follow on TikTok" style="margin-left: 0.75rem;">
-                            <img src="{% static 'images/TikTok_logo.svg' %}" alt="TikTok" style="width: 28px; height: 28px;">
-                        </a>
-                    </p>
-                </div>
+            <div class="persona-card">
+                <h3>Spread Awareness</h3>
+                <p>
+                    Follow us on social media and help raise awareness about the importance of appealing
+                    unfair insurance denials. Every voice makes a difference!
+                </p>
+                <p style="margin-top: 1rem;">
+                    <a href="https://x.com/fighthinsurance" target="_blank" rel="noopener noreferrer" aria-label="Follow on X/Twitter" style="margin-right: 0.75rem;">
+                        <img src="{% static 'images/twitterlogo.png' %}" alt="X/Twitter" style="width: 28px; height: 28px;">
+                    </a>
+                    <a href="https://www.instagram.com/fighthealthinsurance/" target="_blank" rel="noopener noreferrer" aria-label="Follow on Instagram" style="margin-right: 0.75rem;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="35" height="35" viewBox="0 0 24 24" fill="none" stroke="#888888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M4 8a4 4 0 0 1 4 -4h8a4 4 0 0 1 4 4v8a4 4 0 0 1 -4 4h-8a4 4 0 0 1 -4 -4z"></path>
+                            <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"></path>
+                            <path d="M16.5 7.5v.01"></path>
+                        </svg>
+                    </a>
+                    <a href="https://www.linkedin.com/company/fight-health-insurance" target="_blank" rel="noopener noreferrer" aria-label="Follow on LinkedIn">
+                        <img src="{% static 'images/linkedinlogo.png' %}" alt="LinkedIn" style="width: 28px; height: 28px;">
+                    </a>
+                    <a href="https://www.tiktok.com/@fighthealthinsurancett" target="_blank" rel="noopener noreferrer" aria-label="Follow on TikTok" style="margin-left: 0.75rem;">
+                        <img src="{% static 'images/TikTok_logo.svg' %}" alt="TikTok" style="width: 28px; height: 28px;">
+                    </a>
+                </p>
             </div>
         </div>
         <p style="margin-top: 1rem; text-align: center;">
             You can also help us improve by using our
-            <a href="{% url 'chooser' %}" class="btn btn-outline-green smoothScroll" style="display: inline-block;">
+            <a href="{% url 'chooser' %}" class="fhi-button fhi-button-secondary">
                 Chooser Interface
             </a>
             to contribute anonymized data about insurance denials.
@@ -103,7 +103,7 @@
             helps patients fight unfair denials.
         </p>
         <a href="https://github.com/orgs/fighthealthinsurance/repositories" target="_blank" rel="noopener noreferrer"
-           class="section-btn btn btn-default smoothScroll" style="display: inline-block;">
+           class="fhi-button fhi-button-primary">
             View on GitHub
         </a>
     </section>
@@ -123,7 +123,7 @@
             <li>CDN, storage, or database credits</li>
         </ul>
         <a href="mailto:support42@fighthealthinsurance.com?subject=Cloud%20Resources"
-           class="section-btn btn btn-default smoothScroll" style="display: inline-block;">
+           class="fhi-button fhi-button-primary">
             Get in Touch
         </a>
     </section>
@@ -135,12 +135,14 @@
             into your workflow so your patients can fight denials more effectively. Learn about our
             professional version or explore patient and market access partnerships.
         </p>
-        <a href="{% url 'pro_version' %}" class="section-btn btn btn-default smoothScroll" style="display: inline-block; margin-right: 1rem;">
-            Professional Version
-        </a>
-        <a href="{% url 'patient_access' %}" class="btn btn-outline-green smoothScroll" style="display: inline-block;">
-            Patient &amp; Market Access
-        </a>
+        <div class="fhi-cluster">
+            <a href="{% url 'pro_version' %}" class="fhi-button fhi-button-primary">
+                Professional Version
+            </a>
+            <a href="{% url 'patient_access' %}" class="fhi-button fhi-button-secondary">
+                Patient &amp; Market Access
+            </a>
+        </div>
     </section>
 
     <section id="connectors" class="persona-section" style="background-color: #f3e5f5;">
@@ -158,26 +160,30 @@
             <li>Legal aid and pro bono networks</li>
             <li>Health policy organizations</li>
         </ul>
-        <a href="mailto:support42@fighthealthinsurance.com?subject=Organization%20Introduction"
-           class="section-btn btn btn-default smoothScroll" style="display: inline-block; margin-right: 1rem;">
-            Make an Introduction
-        </a>
-        <a href="mailto:support42@fighthealthinsurance.com" class="btn btn-outline-green smoothScroll" style="display: inline-block;">
-            Share Your Story
-        </a>
+        <div class="fhi-cluster">
+            <a href="mailto:support42@fighthealthinsurance.com?subject=Organization%20Introduction"
+               class="fhi-button fhi-button-primary">
+                Make an Introduction
+            </a>
+            <a href="mailto:support42@fighthealthinsurance.com" class="fhi-button fhi-button-secondary">
+                Share Your Story
+            </a>
+        </div>
     </section>
 
-    <section style="text-align: center; padding: 3rem 0; background-color: #f8f9fa; border-radius: 8px; margin-top: 3rem;">
+    <section style="text-align: center; padding: 3rem 2rem; background-color: #f8f9fa; border-radius: 8px; margin-top: 3rem;">
         <h2 style="margin-bottom: 1rem;">Ready to Get Started?</h2>
         <p style="font-size: 1.1rem; margin-bottom: 2rem;">
             Generate your healthcare claim appeal in minutes with AI.
         </p>
-        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll" style="display: inline-block; margin-right: 1rem;">
-            Generate an Appeal
-        </a>
-        <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll" style="display: inline-block;">
-            AI Chat
-        </a>
+        <div class="fhi-cluster fhi-cluster-center">
+            <a href="{% url 'scan' %}" class="fhi-button fhi-button-primary">
+                Generate an Appeal
+            </a>
+            <a href="{% url 'chat' %}" class="fhi-button fhi-button-secondary">
+                AI Chat
+            </a>
+        </div>
     </section>
 </div>
 {% endblock content %}

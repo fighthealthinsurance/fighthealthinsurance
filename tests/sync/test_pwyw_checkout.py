@@ -1,4 +1,6 @@
 import json
+import pathlib
+
 from django.test import TestCase, Client
 from unittest.mock import patch, MagicMock
 
@@ -22,102 +24,61 @@ class PWYWCheckoutTest(TestCase):
         self.assertTrue(data["success"])
         self.assertEqual(data["message"], "Free usage - no payment needed")
 
-    @patch("stripe.checkout.Session.create")
-    def test_pwyw_checkout_with_amount_no_return_url(self, mock_stripe_create):
-        """Test creating checkout session with amount but no return URL."""
+    def _checkout(self, mock_stripe_create, body):
         mock_session = MagicMock()
         mock_session.url = "https://checkout.stripe.com/test"
         mock_stripe_create.return_value = mock_session
-
         response = self.client.post(
             "/v0/pwyw/checkout",
-            data=json.dumps({"amount": 10}),
+            data=json.dumps(body),
             content_type="application/json",
         )
-
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.content)
         self.assertTrue(data["success"])
         self.assertEqual(data["url"], "https://checkout.stripe.com/test")
-
-        # Verify Stripe session was created with correct parameters
         mock_stripe_create.assert_called_once()
-        call_kwargs = mock_stripe_create.call_args[1]
+        return mock_stripe_create.call_args[1]
+
+    @patch("stripe.checkout.Session.create")
+    def test_a_payment_comes_back_to_the_thank_you_page(self, mock_stripe_create):
+        """Stripe opens in its own tab and comes back to a page that can be
+        loaded with a GET. It used to come back to the page the person
+        left, and the appeal letter page answers only POST, so the tab
+        showed a blank 405 that a reload repeated."""
+        call_kwargs = self._checkout(mock_stripe_create, {"amount": 10})
         self.assertEqual(call_kwargs["mode"], "payment")
-        self.assertTrue(call_kwargs["success_url"].endswith("/?donation=success"))
-        self.assertTrue(call_kwargs["cancel_url"].endswith("/"))
-
-    @patch("stripe.checkout.Session.create")
-    def test_pwyw_checkout_with_return_url(self, mock_stripe_create):
-        """Test creating checkout session with a return URL."""
-        mock_session = MagicMock()
-        mock_session.url = "https://checkout.stripe.com/test"
-        mock_stripe_create.return_value = mock_session
-
-        response = self.client.post(
-            "/v0/pwyw/checkout",
-            data=json.dumps({"amount": 25, "return_url": "/appeal"}),
-            content_type="application/json",
-        )
-
-        self.assertEqual(response.status_code, 200)
-        data = json.loads(response.content)
-        self.assertTrue(data["success"])
-        self.assertEqual(data["url"], "https://checkout.stripe.com/test")
-
-        # Verify Stripe session was created with return URL
-        mock_stripe_create.assert_called_once()
-        call_kwargs = mock_stripe_create.call_args[1]
-        self.assertTrue(call_kwargs["success_url"].endswith("/appeal?donation=success"))
-        self.assertTrue(call_kwargs["cancel_url"].endswith("/appeal"))
-
-    @patch("stripe.checkout.Session.create")
-    def test_pwyw_checkout_with_return_url_with_query_params(self, mock_stripe_create):
-        """Test creating checkout session with a return URL that has query params."""
-        mock_session = MagicMock()
-        mock_session.url = "https://checkout.stripe.com/test"
-        mock_stripe_create.return_value = mock_session
-
-        response = self.client.post(
-            "/v0/pwyw/checkout",
-            data=json.dumps({"amount": 15, "return_url": "/appeal?foo=bar"}),
-            content_type="application/json",
-        )
-
-        self.assertEqual(response.status_code, 200)
-        data = json.loads(response.content)
-        self.assertTrue(data["success"])
-
-        # Verify Stripe session was created with correct URL handling
-        mock_stripe_create.assert_called_once()
-        call_kwargs = mock_stripe_create.call_args[1]
-        # Should append donation=success with & since URL already has params
         self.assertTrue(
-            call_kwargs["success_url"].endswith("/appeal?foo=bar&donation=success")
+            call_kwargs["success_url"].endswith("/pwyw/thanks?donation=success")
         )
-        self.assertTrue(call_kwargs["cancel_url"].endswith("/appeal?foo=bar"))
 
-    def test_pwyw_checkout_rejects_absolute_return_url(self):
-        """Test that absolute URLs in return_url are rejected for security."""
-        # Mock stripe to avoid actual API calls
-        with patch("stripe.checkout.Session.create") as mock_stripe_create:
-            mock_session = MagicMock()
-            mock_session.url = "https://checkout.stripe.com/test"
-            mock_stripe_create.return_value = mock_session
+    @patch("stripe.checkout.Session.create")
+    def test_a_cancelled_payment_comes_back_to_the_thank_you_page(
+        self, mock_stripe_create
+    ):
+        call_kwargs = self._checkout(mock_stripe_create, {"amount": 10})
+        self.assertTrue(
+            call_kwargs["cancel_url"].endswith("/pwyw/thanks?donation=cancelled")
+        )
 
-            response = self.client.post(
-                "/v0/pwyw/checkout",
-                data=json.dumps(
-                    {"amount": 10, "return_url": "https://evil.com/phishing"}
-                ),
-                content_type="application/json",
-            )
+    @patch("stripe.checkout.Session.create")
+    def test_a_return_url_from_an_older_page_is_ignored(self, mock_stripe_create):
+        """A page cached from before this change still sends its own path;
+        the checkout comes back to the thank-you page all the same."""
+        call_kwargs = self._checkout(
+            mock_stripe_create, {"amount": 25, "return_url": "/choose_appeal"}
+        )
+        self.assertNotIn("choose_appeal", call_kwargs["success_url"])
+        self.assertNotIn("choose_appeal", call_kwargs["cancel_url"])
 
-            self.assertEqual(response.status_code, 200)
-            # Should ignore the malicious URL and use default
-            call_kwargs = mock_stripe_create.call_args[1]
-            self.assertTrue(call_kwargs["success_url"].endswith("/?donation=success"))
-            self.assertFalse("evil.com" in call_kwargs["success_url"])
+    @patch("stripe.checkout.Session.create")
+    def test_an_absolute_return_url_never_reaches_stripe(self, mock_stripe_create):
+        call_kwargs = self._checkout(
+            mock_stripe_create,
+            {"amount": 10, "return_url": "https://evil.com/phishing"},
+        )
+        self.assertNotIn("evil.com", call_kwargs["success_url"])
+        self.assertNotIn("evil.com", call_kwargs["cancel_url"])
 
     @patch("stripe.checkout.Session.create")
     def test_pwyw_checkout_persists_recovery_info(self, mock_stripe_create):
@@ -157,3 +118,46 @@ class PWYWCheckoutTest(TestCase):
         data = json.loads(response.content)
         self.assertFalse(data["success"])
         self.assertIn("error", data)
+
+
+class PWYWThanksPageTest(TestCase):
+    def test_the_thank_you_page_loads_with_a_get(self):
+        response = self.client.get("/pwyw/thanks?donation=success")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Thank you")
+        self.assertContains(response, "still open in your other tab")
+
+    def test_the_thank_you_page_carries_no_case_id(self):
+        """A visitor partway through an appeal has its id in the session;
+        base.html would put it in a meta tag on any page that keeps it."""
+        session = self.client.session
+        session["denial_uuid"] = "11111111-2222-3333-4444-555555555555"
+        session.save()
+        response = self.client.get("/pwyw/thanks?donation=success")
+        self.assertNotContains(response, "11111111-2222-3333-4444-555555555555")
+        self.assertNotContains(response, "fhi-session-key")
+
+    def test_the_page_says_nothing_was_charged_after_a_cancel(self):
+        response = self.client.get("/pwyw/thanks?donation=cancelled")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "nothing was charged")
+
+
+APPEAL_TEMPLATE = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "fighthealthinsurance"
+    / "templates"
+    / "appeal.html"
+).read_text()
+
+
+class AppealPageAsksOnceTest(TestCase):
+    """The appeal page asked for a donation four times: two pay-what-you-want
+    panels and two buttons straight to a Stripe Payment Link. It asks once,
+    after the person has sent their appeal."""
+
+    def test_the_appeal_page_has_one_pay_what_you_want_panel(self):
+        self.assertEqual(APPEAL_TEMPLATE.count("partials/pwyw_panel.html"), 1)
+
+    def test_the_appeal_page_links_to_no_payment_page_of_its_own(self):
+        self.assertNotIn("buy.stripe.com", APPEAL_TEMPLATE)

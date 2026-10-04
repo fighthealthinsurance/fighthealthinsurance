@@ -125,7 +125,9 @@ class TestAppealQuestionsGeneration:
         # Everything after the first "?" becomes the answer
         assert len(result) == 1
         assert result[0][0] == "Was the stroke confirmed to occur during birth?"
-        assert result[0][1] == "Yes. Was it localized to the left MCA? Yes, it was."
+        # The rest of the line holds a second question, so it is not shown
+        # as a hint: a hint is an answer, not more questions.
+        assert result[0][1] == ""
 
     @pytest.mark.asyncio
     async def test_get_appeal_questions_no_question_mark(self):
@@ -144,12 +146,10 @@ class TestAppealQuestionsGeneration:
             diagnosis="Test diagnosis",
         )
 
-        # Verify the result has correct question-answer pairs
-        assert len(result) == 2
-        assert result[0][0] == "This treatment is necessary?"
-        assert result[0][1] == ""
-        assert result[1][0] == "Patient history includes condition X?"
-        assert result[1][1] == ""
+        # A line is a question only when the model wrote a question mark.
+        # Adding one to every other line is how a model's refusal ("I cannot
+        # generate specific clinical questions...") was shown as a question.
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_get_appeal_questions_empty_response(self):
@@ -165,8 +165,8 @@ class TestAppealQuestionsGeneration:
             diagnosis="Test diagnosis",
         )
 
-        # Verify the result is an empty list
-        assert result == []
+        # No reply is not "nothing to ask": [] is kept for NO_QUESTIONS.
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_get_appeal_questions_rationale_format(self):
@@ -187,8 +187,8 @@ class TestAppealQuestionsGeneration:
             diagnosis="Test diagnosis",
         )
 
-        # Verify the result is an empty list since we should reject responses with "Rationale for questions"
-        assert result == []
+        # Responses with "Rationale for questions" are rejected: no usable reply.
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_get_appeal_questions_with_answer_prefix(self):
@@ -572,6 +572,31 @@ class TestShedContextPromptRebuild:
             original_open_prompt="ORIGINAL",
         )
         assert new_calls[0]["prompt"] == "SHED" + suffix
+
+    def test_tier1_keeps_the_v2_contract_and_the_calls_prompt_version(self):
+        # A v2 call's prompt ends with the output contract; shedding swaps the
+        # front of the prompt and must keep both the contract and the version
+        # the call drew, or a retried letter would be stored as the wrong one.
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            OUTPUT_CONTRACT,
+            PROMPT_V2,
+            apply_prompt_version,
+        )
+
+        new_calls, _ = _shed_context(
+            [
+                _make_call(
+                    prompt=apply_prompt_version("ORIGINAL", PROMPT_V2),
+                    prompt_version=PROMPT_V2,
+                )
+            ],
+            tier=1,
+            open_prompt_kwargs=_prompt_kwargs(),
+            rebuild_prompt=lambda **_: "SHED",
+            original_open_prompt="ORIGINAL",
+        )
+        assert new_calls[0]["prompt"] == "SHED\n\n" + OUTPUT_CONTRACT
+        assert new_calls[0]["prompt_version"] == PROMPT_V2
 
     def test_tier1_leaves_unrelated_prompts_alone(self):
         # The medically-necessary prompt is a separate string and must not

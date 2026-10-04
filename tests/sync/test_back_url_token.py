@@ -1,18 +1,14 @@
 """Back links carry an opaque reference, not the case's credentials.
 
-``build_back_url`` used to urlencode (denial_id, email, semi_sekret) into the
-query string of every back link from step 3 onward, where the triple lands in
-browser history, in access logs, and in anything the person screenshots. The
-triple is the whole credential on the case: ``sensitive_post_parameters``
-covers POST bodies only, and ``SessionRequiredMixin`` enforces a session only
-under DEBUG or TESTING.
-
-The link now carries one random string, resolved server side against the
-session that issued it. These tests pin that it is worth nothing on its own,
-nothing in another session and nothing once expired, that every consumer
-resolves it (including the ``SessionRequiredMixin`` pages, which the three
-named GET handlers do not cover), and that the transition window for the old
-triple can be closed.
+The (denial_id, email, semi_sekret) triple is the whole credential on a case,
+so ``build_back_url`` never puts it in a query string, where it would land in
+browser history, in access logs, and in anything the person screenshots. A
+back link carries one parameter, ``ref``: the case id and its secret,
+encrypted with a key only the issuing session can derive. These tests pin
+that it is worth nothing on its own, nothing in another session and nothing
+once expired, that every consumer resolves it (including the
+``SessionRequiredMixin`` pages, which the three named GET handlers do not
+cover), and that a query naming the case directly opens nothing.
 
 The scheme costs the patient a back link that works on a second device, so
 ``CrossDeviceResumeTest`` is the acceptance for what they are told instead,
@@ -32,10 +28,11 @@ import subprocess
 import time
 import types
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from urllib.parse import parse_qs, urlparse
 
+from asgiref.sync import async_to_sync
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
 from django.contrib.sessions.models import Session
@@ -44,6 +41,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from fighthealthinsurance import common_view_logic, models, views
+from tests import back_links
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -199,20 +197,10 @@ class BackLinkReferenceTestBase(TestCase):
     def issue_token(self, client=None, denial=None, email=EMAIL) -> str:
         """Mint a reference into a client's session the way the views do."""
         client = client or self.client
-        denial = denial or self.denial
-        session = client.session
-        token = views.issue_denial_ref_token(
-            types.SimpleNamespace(session=session),
-            denial.denial_id,
-            email,
-            denial.semi_sekret,
-        )
-        session.save()
-        assert token is not None
-        return token
+        return back_links.issue_ref(client.session, denial or self.denial, email)
 
     def ref_url(self, url_name: str, token: str) -> str:
-        return f"{reverse(url_name)}?{views.DENIAL_REF_QUERY_PARAM}={token}"
+        return back_links.ref_url(url_name, token)
 
     def stored_expiry(self, token: str, client=None) -> float:
         """When a reference stops resolving, read out of the reference."""
@@ -234,7 +222,8 @@ class BackLinkReferenceTestBase(TestCase):
             denial=denial,
         )
 
-    def legacy_url(self, url_name: str) -> str:
+    def query_naming_the_case(self, url_name: str) -> str:
+        """``url_name`` with the case's triple spelled out in the query."""
         return (
             f"{reverse(url_name)}?denial_id={self.denial.denial_id}"
             f"&email={EMAIL}&semi_sekret={self.denial.semi_sekret}"
@@ -621,67 +610,25 @@ class NothingToLoseInASaveRaceTest(BackLinkReferenceTestBase):
         self.assertIsNotNone(reissued, msg="issuing died on a junk session value")
 
 
-class LegacyQueryTripleTest(BackLinkReferenceTestBase):
-    """The old links keep working for one release, and can then be shut off."""
+class QueryNamingTheCaseTest(BackLinkReferenceTestBase):
+    """A GET opens a case only through a reference, never a query naming it."""
 
-    def test_the_old_triple_still_resolves_during_the_transition(self):
-        response = self.client.get(self.legacy_url("generate_appeal"))
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, "appeals.html")
-
-    def test_the_old_triple_resolves_on_the_session_mixin_pages_too(self):
-        response = self.client.get(self.legacy_url("dvc"))
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, "plan_documents.html")
-        self.assertReferenceFormPopulated(response)
-
-    def test_arriving_on_an_old_link_hands_back_only_opaque_links(self):
-        """The legacy path cannot be used to lift the secret into a new link."""
-        response = self.client.get(self.legacy_url("generate_appeal"))
-        self.assertEqual(response.status_code, 200)
-        links = flow_hrefs(response)
-        self.assertTrue(links, msg="no flow links on the page to check")
-        for href in links:
-            self.assertUrlCarriesNoCredential(href)
-
-    @override_settings(LEGACY_DENIAL_REF_QUERY=False)
-    def test_closing_the_window_refuses_the_old_triple(self):
-        response = self.client.get(self.legacy_url("generate_appeal"))
+    def test_a_query_naming_the_case_lands_on_the_upload_page(self):
+        response = self.client.get(self.query_naming_the_case("generate_appeal"))
         self.assertLandsOnUploadPageWithHelp(response)
 
-    @override_settings(LEGACY_DENIAL_REF_QUERY=False)
-    def test_closing_the_window_refuses_the_old_triple_on_mixin_pages(self):
+    def test_a_query_naming_the_case_is_refused_on_the_mixin_pages_too(self):
         """The mixin's dispatch reads the query string as well as the resolver."""
-        response = self.client.get(self.legacy_url("dvc"))
+        response = self.client.get(self.query_naming_the_case("dvc"))
         self.assertLandsOnUploadPageWithHelp(response)
 
-    def test_a_bare_case_id_in_the_query_still_seeds_the_session(self):
-        """SessionRequiredMixin.dispatch reads the query string on its own.
+    def test_a_bare_case_id_in_the_query_does_not_seed_the_session(self):
+        """The case id is an identifier for a medical case; it opens nothing.
 
-        Nothing in the site builds such a link, but the mixin has always
-        accepted one, so it keeps working for the same window as the rest of
-        the old shape.
-        """
-        response = self.client.get(
-            f"{reverse('dvc')}?denial_id={self.denial.denial_id}"
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, "plan_documents.html")
-        self.assertEqual(
-            str(self.client.session.get("denial_id")),
-            str(self.denial.denial_id),
-            msg="the bare case id did not seed the session",
-        )
-
-    @override_settings(LEGACY_DENIAL_REF_QUERY=False)
-    def test_closing_the_window_refuses_a_bare_case_id_in_the_query(self):
-        """The case id is an identifier for a medical case; it goes too.
-
-        Scope, stated so this is not read as more than it is: the seeding it
-        refuses lives INSIDE ``SessionRequiredMixin``'s session gate, which
-        is off in production. So this pins a session-enforcing configuration
-        (DEBUG on, or TESTING set, which is what tox does) and nothing about
-        the deployed site, where that branch has never run at all.
+        Scope, stated so this is not read as more than it is: the seeding
+        this checks for would live INSIDE ``SessionRequiredMixin``'s session
+        gate, which is off in production. So this pins a session-enforcing
+        configuration (DEBUG on, or TESTING set, which is what tox does).
         ``ProductionShapedRefusalTest`` has the production half.
         """
         self.assertTrue(
@@ -692,17 +639,19 @@ class LegacyQueryTripleTest(BackLinkReferenceTestBase):
             f"{reverse('dvc')}?denial_id={self.denial.denial_id}"
         )
         self.assertEqual(response.status_code, 302)
-        self.assertIn(response.url, (reverse("scan"), reverse("process")))
+        self.assertEqual(response.url, reverse("process"))
+        self.assertIsNone(
+            self.client.session.get("denial_id"),
+            msg="a bare case id in the query seeded the session",
+        )
 
-    @override_settings(LEGACY_DENIAL_REF_QUERY=False)
-    def test_closing_the_window_leaves_the_new_reference_working(self):
+    def test_a_reference_to_the_same_case_opens_it(self):
         response = self.client.get(self.ref_url("generate_appeal", self.issue_token()))
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "appeals.html")
 
-    @override_settings(LEGACY_DENIAL_REF_QUERY=False)
-    def test_closing_the_window_leaves_posted_hidden_fields_working(self):
-        """The gate is about the address bar, not about form bodies."""
+    def test_posted_hidden_fields_still_open_the_case(self):
+        """The refusal is about the address bar, not about form bodies."""
         response = self.client.post(
             reverse("escalation_packet"),
             {
@@ -803,11 +752,10 @@ class ProductionShapedRefusalTest(BackLinkReferenceTestBase):
                 )
                 self.assertLandsOnUploadPageWithHelp(response)
 
-    @override_settings(LEGACY_DENIAL_REF_QUERY=False)
-    def test_a_closed_window_old_link_is_refused_on_every_page(self):
+    def test_a_query_naming_the_case_is_refused_on_every_page(self):
         for url_name in self.ALL_PAGES:
             with self.subTest(page=url_name):
-                response = self.client.get(self.legacy_url(url_name))
+                response = self.client.get(self.query_naming_the_case(url_name))
                 self.assertLandsOnUploadPageWithHelp(response)
 
     def test_the_refused_patient_is_told_what_happened(self):
@@ -852,16 +800,13 @@ class ProductionShapedRefusalTest(BackLinkReferenceTestBase):
                 self.assertEqual(response.status_code, 200)
                 self.assertReferenceFormPopulated(response)
 
-    def test_a_bare_case_id_keeps_the_behaviour_it_has_always_had(self):
-        """Production never honoured a bare case id, and still does not.
+    def test_a_bare_case_id_renders_the_page_without_an_explanation(self):
+        """The page renders, as any visit with no case does, and says nothing.
 
-        ``SessionRequiredMixin.dispatch`` seeds the session from a bare
-        ``denial_id`` only inside the gate, so in production that branch has
-        never run: the page renders with nothing filled in, the same before
-        this branch as after. It carries no email and no secret, so it was
-        never a back link, and it must not be turned into one -- telling
-        somebody their link failed when they followed no link is its own
-        small cruelty.
+        A bare ``denial_id`` carries no email and no secret, so it was never
+        a back link, and it must not be turned into one: telling somebody
+        their link failed when they followed no link is its own small
+        cruelty.
         """
         response = self.client.get(
             f"{reverse('dvc')}?denial_id={self.denial.denial_id}"
@@ -1015,30 +960,33 @@ class CrossDeviceResumeTest(BackLinkReferenceTestBase):
         self.assertNotIn('id="resume-help"', response.content.decode())
 
     def test_a_bare_case_id_is_not_treated_as_a_failed_back_link(self):
-        """The mixin's own session seed keeps the behaviour it has always had.
+        """It goes where any visit with no case goes, without the explanation.
 
-        ``tests/sync/test_insecure_routing.py`` pins that a bare denial_id in
-        the query string seeds the session and renders the page. It carries
-        no email and no secret, so it was never a back link, and turning it
-        into one would put an explanation in front of people who did not
-        follow anything.
+        A bare ``denial_id`` carries no email and no secret, so it was never
+        a back link, and turning it into one would put an explanation in
+        front of people who did not follow anything. With the session gate
+        on, as here, a visit with no case is sent to the start of the flow.
         """
         response = self.client.get(
             f"{reverse('dvc')}?denial_id={self.denial.denial_id}"
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, "plan_documents.html")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url,
+            reverse("process"),
+            msg="a bare case id was treated as a broken back link",
+        )
 
 
 class RetentionClaimTest(TestCase):
     """The retention sentence an owner signs off on, pinned to the repo.
 
-    An earlier draft told the owner the stored copy of the triple lived twelve
-    hours. It does not. ``DENIAL_REF_IDLE_TTL_SECONDS`` decides only whether a
-    reference still resolves; the plaintext email and the permanent
-    ``semi_sekret`` sit in ``django_session``, whose row lifetime comes from
-    ``SESSION_COOKIE_AGE``, whose storage comes from ``SESSION_ENGINE`` and
-    whose deletion comes from a purge nobody has written.
+    ``DENIAL_REF_IDLE_TTL_SECONDS`` decides only whether a reference still
+    resolves. What the session keeps for a reference, the email the later
+    pages post and the random secret the reference is encrypted under, sits in
+    ``django_session``. A row's lifetime comes from ``SESSION_COOKIE_AGE``,
+    its storage from ``SESSION_ENGINE``, and its deletion from the daily purge
+    in ``EmailPollingActor._clear_expired_sessions``.
 
     That sentence is prose, in ``docs/back-link-references.md`` and in
     ``views.issue_denial_ref_token``, and prose rots quietly. So fail here and
@@ -1054,12 +1002,17 @@ class RetentionClaimTest(TestCase):
       django-configurations copies Django's global defaults into every
       configuration class body, so "is it set" cannot be asked of the class;
       it is asked of the settings source instead.
-    - One test drives the store rather than reading a setting, because the
-      bullet about Django not deleting expired rows is a claim about
-      behaviour.
-    - The purge search finds a ``clearsessions`` invocation or a direct delete
-      of ``Session`` rows. It cannot rule out a purge spelled some third way,
-      or one living outside this repo. Tripwire, not proof.
+    - Two tests drive the store rather than reading a setting, because the
+      bullets about Django leaving an expired row in the table and the daily
+      purge deleting it are claims about behaviour. When the purge runs, that
+      a failure in it leaves the rest of the loop alone, and that the email
+      work in the loop does not hold it up, is pinned with the actor in
+      ``tests/async-unit/test_expired_sessions_are_cleared.py``.
+    - The purge search finds every ``clearsessions`` invocation,
+      ``clear_expired`` call and direct delete of ``Session`` rows outside
+      the tests and the docs, and expects exactly one, in the actor. It
+      cannot rule out a purge spelled some third way, or one living outside
+      this repo. Tripwire, not proof.
     """
 
     # Django's own defaults, from django/conf/global_settings.py. Spelled out
@@ -1073,14 +1026,16 @@ class RetentionClaimTest(TestCase):
     SETTINGS_SOURCE = pathlib.Path("fighthealthinsurance/settings.py")
 
     # A purge, in the shapes it would actually be written in. The negative
-    # lookbehind keeps the other models in this repo whose names end in
-    # "Session" out of it.
+    # lookbehinds and the word boundary keep out the other models in this
+    # repo whose names end in "Session", and the clear_expired_emails sweep.
     PURGE_PATTERNS = (
         r"clearsessions",
+        r"(?<!\w)a?clear_expired\b",
         r"(?<![\w.])Session\.objects",
         r"from django\.contrib\.sessions\.models import Session",
         r"""(?i:delete\s+from\s+["'`]?django_session)""",
     )
+    THE_DAILY_PURGE = "fighthealthinsurance/email_polling_actor.py"
 
     @staticmethod
     def prod_configuration():
@@ -1161,11 +1116,11 @@ class RetentionClaimTest(TestCase):
             msg=f"the running configuration's SESSION_ENGINE {stale}",
         )
 
-    def test_an_expired_session_row_stops_resolving_and_stays_in_the_table(self):
-        """The "stops honouring, does not delete" bullet, exercised.
+    def test_an_expired_session_row_stops_resolving_and_waits_for_the_purge(self):
+        """The "stops honouring, leaves the row" bullet, exercised.
 
-        Everything else here reads a setting. This drives the store: a real
-        row, the expiry Django stamps on it, and what survives the clock.
+        This drives the store: a real row, the expiry Django stamps on it, and
+        what survives the clock until the daily purge runs.
         """
         store = SessionStore()
         store[views._DENIAL_REF_EMAILS_SESSION_KEY] = {"1": "someone@example.com"}
@@ -1195,18 +1150,48 @@ class RetentionClaimTest(TestCase):
             Session.objects.filter(session_key=key).exists(),
             msg=(
                 "Django deleted the expired row by itself, so the retention "
-                f"paragraph in {self.DOC} and the privacy note in "
-                "views.issue_denial_ref_token overstate what is retained"
+                f"paragraph in {self.DOC}, which says the daily purge is what "
+                "deletes it, is out of date"
             ),
         )
 
-    def test_nothing_in_the_repo_deletes_expired_session_rows(self):
-        """No ``clearsessions`` and no delete against ``Session``.
+    def test_the_daily_purge_deletes_an_expired_session_row(self):
+        """The "purged daily" bullet, exercised on a real row."""
+        from fighthealthinsurance.email_polling_actor import EmailPollingActor
 
-        Markdown is excluded because saying that nothing runs a purge is
-        exactly what the documentation does, and this file is excluded because
-        the test above deletes nothing but does name the model. Any third file
-        that matches has to be looked at by a person.
+        store = SessionStore()
+        store[views._DENIAL_REF_EMAILS_SESSION_KEY] = {"1": "someone@example.com"}
+        store.save()
+        key = store.session_key
+        Session.objects.filter(session_key=key).update(
+            expire_date=timezone.now() - timedelta(seconds=1)
+        )
+
+        metadata = getattr(EmailPollingActor, "__ray_metadata__", None)
+        actor_class = metadata.modified_class if metadata else EmailPollingActor
+        # __new__ skips the Django boot and the start-up wait in __init__; the
+        # purge needs nothing from the actor but a logger.
+        actor = actor_class.__new__(actor_class)
+        actor._logger = MagicMock()
+        async_to_sync(actor._clear_expired_sessions)()
+
+        self.assertFalse(
+            Session.objects.filter(session_key=key).exists(),
+            msg=(
+                "EmailPollingActor._clear_expired_sessions left an expired "
+                "session row in place, so the retention paragraph in "
+                f"{self.DOC} and the privacy note in "
+                "views.issue_denial_ref_token overstate what is cleared"
+            ),
+        )
+
+    def test_the_daily_purge_is_the_only_purge_in_the_repo(self):
+        """Every ``clearsessions``, ``clear_expired`` and delete of ``Session``.
+
+        Markdown is excluded because the documentation names the purge, and
+        the tests are excluded because they make and delete rows of their own.
+        Any other file that matches is a second purge, or the purge moved, and
+        the retention paragraph has to say so.
         """
         searched = repo_files()
         # A listing that came back short would make the search below pass for
@@ -1222,23 +1207,22 @@ class RetentionClaimTest(TestCase):
                 "fix the listing before believing the result below"
             ),
         )
-        this_file = pathlib.Path(__file__).resolve().relative_to(REPO_ROOT)
         purge = re.compile("|".join(self.PURGE_PATTERNS))
         runs_it = sorted(
             str(path)
             for path in searched
             if path.suffix != ".md"
-            and path != this_file
+            and path.parts[:1] != ("tests",)
             and purge.search(read_repo_text(path))
         )
         self.assertEqual(
             runs_it,
-            [],
+            [self.THE_DAILY_PURGE],
             msg=(
-                "something may purge expired sessions now, so the retention "
-                f"paragraph in {self.DOC} and the privacy note in "
-                "views.issue_denial_ref_token understate what is cleaned up: "
-                + ", ".join(runs_it)
+                f"the retention paragraph in {self.DOC} and the privacy note "
+                "in views.issue_denial_ref_token say expired sessions are "
+                f"deleted by the daily purge in {self.THE_DAILY_PURGE}; the "
+                "files that purge sessions are now: " + (", ".join(runs_it) or "none")
             ),
         )
 
@@ -1349,6 +1333,7 @@ class StartingOverAfterARefusalTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
             },
             follow=True,
         )

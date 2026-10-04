@@ -1,5 +1,6 @@
 """Tests for the speculative internal-only candidate-appeal precompute."""
 
+from types import SimpleNamespace
 import io
 import os
 import threading
@@ -17,7 +18,7 @@ from fighthealthinsurance.ml.ml_speculative_appeals_helper import (
     SpeculativeAppealsHelper,
     dispatch_speculative_appeals,
 )
-from fighthealthinsurance.models import Denial, ProposedAppeal
+from fighthealthinsurance.models import ServingIdentity, Denial, ProposedAppeal
 
 _SUMMARIZE = (
     "fighthealthinsurance.ml.ml_appeal_context_helper."
@@ -88,6 +89,41 @@ class SpeculativeAppealsHelperTest(TestCase):
         # ...but the persisted denial keeps its external opt-in.
         self.denial.refresh_from_db()
         self.assertTrue(self.denial.use_external)
+
+    BACKEND = "AlphaRemoteInternal(fhi-internal @ 10.0.0.5:8000)"
+
+    def test_reserve_drafts_save_the_prompt_version_that_wrote_them(self):
+        from fighthealthinsurance.ml import serving_registry
+
+        serving_registry.reset_serving_registry_cache()
+        serving_registry.record_backends(
+            [
+                SimpleNamespace(
+                    last_model_card={"model_id": "fhi-internal", "weights": "/models/w"},
+                    serving_legs=lambda: [("primary", "http://h/v1", "fhi-internal")],
+                    backend_descriptor=lambda: self.BACKEND,
+                )
+            ]
+        )
+        serving_id = ServingIdentity.objects.get(backend=self.BACKEND).pk
+        with patch(_MAKE_APPEALS) as mock_make, patch(
+            _SUMMARIZE, new_callable=AsyncMock, return_value=None
+        ):
+            mock_make.return_value = iter(
+                [
+                    GeneratedAppeal(
+                        text="A sufficiently long speculative appeal letter here.",
+                        model_name="fhi-internal",
+                        context_level="full",
+                        prompt_version="v2",
+                        backend=self.BACKEND,
+                    ),
+                ]
+            )
+            SpeculativeAppealsHelper.generate_for_denial_sync(self.denial.denial_id)
+        spec = ProposedAppeal.objects.get(for_denial=self.denial, speculative=True)
+        self.assertEqual(spec.prompt_version, "v2")
+        self.assertEqual(spec.serving_id, serving_id)
 
     def test_idempotent_when_speculative_rows_exist(self):
         ProposedAppeal.objects.create(

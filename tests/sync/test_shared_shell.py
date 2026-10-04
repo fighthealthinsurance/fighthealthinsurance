@@ -506,12 +506,11 @@ class ShellTypographyTest(TestCase):
         self.assertEqual(offenders, [], f"inputs smaller than 1rem: {offenders}")
 
 
-# The two rules that make a nav row: the seven top-level items and the two
-# group summaries share one, the five links under Resources and Professional
-# have their own. Both live in custom.css since the header stopped being
-# Bootstrap's navbar.
+# The two rules that make a nav row: the top-level links and the group
+# summaries share .fhi-nav-link, the links inside the groups have their own.
+# Both live in custom.css since the header stopped being Bootstrap's navbar.
 NAV_ROW_RULES = (
-    ".fhi-nav-list > li > .nav-link, .fhi-nav-group > summary.nav-link",
+    ".fhi-nav-link",
     ".fhi-nav-submenu a",
 )
 

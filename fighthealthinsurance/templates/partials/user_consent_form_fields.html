@@ -3,104 +3,109 @@
 {# Requires: form object in context with UserConsentForm fields #}
 
 <!-- User Information Section -->
-<div class="mb-4">
+<div class="fhi-stack">
     <h4>Your Information</h4>
-    <p class="text-muted small">We try to keep this in your browser, and we use it to take your name and details out of your messages before they reach our AI, as best we can.</p>
+    <p class="fhi-note">The details below go to our server when you send this form. Under each one we say what we keep, and where. Our <a href="{% url 'privacy_policy' %}" target="_blank">privacy policy</a> has the rest.</p>
 
-    <div class="row">
-        <div class="col-md-6 mb-3">
-            <label for="store_fname" class="form-label">First name (required)</label>
+    <div class="fhi-cards fhi-cards-roomy">
+        <div class="fhi-field-group">
+            <label for="store_fname" class="fhi-label">First name (required)</label>
             {{ form.first_name }}
         </div>
-        <div class="col-md-6 mb-3">
-            <label for="store_lname" class="form-label">Last name (required)</label>
+        <div class="fhi-field-group">
+            <label for="store_lname" class="fhi-label">Last name (required)</label>
             {{ form.last_name }}
         </div>
     </div>
+    <p class="fhi-note">This browser keeps your name, and the chat tries to take it out of your messages before they're sent. Our server keeps the name you enter here only if you tick the news box below.</p>
 
-    <div class="mb-3">
-        <label for="email" class="form-label">Email (required)</label>
+    <div class="fhi-field-group">
+        <label for="email" class="fhi-label">Email (required)</label>
         {{ form.email }}
+        <small class="fhi-note fhi-hint">Our server keeps your email with the record that you agreed to these terms. With each chat it keeps a scrambled version (a hash), so you can ask us to delete your chats. This browser keeps your email too, and the chat tries to take it out of your messages.</small>
     </div>
 
-    <div class="mb-3">
-        <label for="phone" class="form-label">Phone</label>
+    <div class="fhi-field-group">
+        <label for="phone" class="fhi-label">Phone</label>
         {{ form.phone }}
+        <small class="fhi-note fhi-hint">Our server keeps your phone number only if you tick the news box below. This browser doesn't keep it, so the chat can't take it out of your messages.</small>
     </div>
 
-    <div class="mb-3">
-        <label for="store_street" class="form-label">Street address</label>
+    <div class="fhi-field-group">
+        <label for="store_street" class="fhi-label">Street address</label>
         {{ form.address }}
     </div>
 
-    <div class="row">
-        <div class="col-md-4 mb-3">
-            <label for="store_city" class="form-label">City</label>
+    <div class="fhi-switcher">
+        <div class="fhi-field-group">
+            <label for="store_city" class="fhi-label">City</label>
             {{ form.city }}
         </div>
-        <div class="col-md-4 mb-3">
-            <label for="store_state" class="form-label">State</label>
+        <div class="fhi-field-group">
+            <label for="store_state" class="fhi-label">State</label>
             {{ form.state }}
         </div>
-        <div class="col-md-4 mb-3">
-            <label for="store_zip" class="form-label">ZIP code</label>
+        <div class="fhi-field-group">
+            <label for="store_zip" class="fhi-label">ZIP code</label>
             {{ form.zip_code }}
         </div>
     </div>
+    <p class="fhi-note">This browser keeps your address, and the chat tries to take your street address, city and ZIP code out of your messages before they're sent. It leaves your state in, because the answer can depend on it. Our server doesn't keep what you enter in the address boxes.</p>
 </div>
 
-<hr class="my-4">
+<hr>
 
 <!-- Terms & Agreements Section -->
-<div class="mb-4">
+<div class="fhi-stack">
     <h4>Terms</h4>
 
-    <div class="form-check mb-3">
+    <div class="fhi-check-row">
         {{ form.tos_agreement }}
-        <label for="tos" class="form-check-label">
+        <label for="tos">
             I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a>. I'll use this site only for my own insurance appeals, not to diagnose or treat any condition. (required)
         </label>
     </div>
 
-    <div class="form-check mb-3">
+    <div class="fhi-check-row">
         {{ form.privacy_policy }}
-        <label for="privacy" class="form-check-label">
+        <label for="privacy">
             I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>. (required)
         </label>
     </div>
 
-    <div class="form-check mb-3">
+    <div class="fhi-check-row">
         {{ form.subscribe }}
-        <label for="subscribe" class="form-check-label">
+        <label for="subscribe">
             Send me news from Fight Health Insurance and Fight Paperwork, our version for professionals. Optional, but we appreciate it!
         </label>
+        <small class="fhi-note">If you tick this, our server keeps your name, email, phone number and how you heard about us on our mailing list until you unsubscribe or ask us to delete your data.</small>
     </div>
 
-    <div class="mb-3">
-        <label for="referral_source" class="form-label">How did you hear about us? (Optional)</label>
+    <div class="fhi-field-group">
+        <label for="referral_source" class="fhi-label">How did you hear about us? (Optional)</label>
         {{ form.referral_source }}
     </div>
 
-    <div class="mb-3">
-        <label for="referral_source_details" class="form-label">Details (Optional)</label>
+    <div class="fhi-field-group">
+        <label for="referral_source_details" class="fhi-label">Details (Optional)</label>
         {{ form.referral_source_details }}
-        <small class="form-text text-muted">For example, which search engine or who told you about us.</small>
+        <small class="fhi-note fhi-hint">For example, which search engine or who told you about us. Our server keeps both answers only if you tick the news box above.</small>
     </div>
 </div>
 
-<hr class="my-4">
+<hr>
 
 <!-- AI Model Options Section -->
-<div class="mb-4">
+<div class="fhi-stack">
     <h4>Which AI answers you</h4>
-    <p class="text-muted small">Choose whether outside AI services can help answer.</p>
+    <p class="fhi-note">Choose whether outside AI services can help answer.</p>
 
-    <div class="form-check mb-3">
+    <div class="fhi-check-row">
         {{ form.use_external_models }}
-        <label for="use_external_models" class="form-check-label">
-            Let outside AI services help answer. <b>Optional. Your conversation is shared with those services</b> (for example, Google and Anthropic, among others), under their own terms.
+        <label for="use_external_models">
+            Let outside AI services help answer. <b>Optional. Your conversation is shared with those services</b>, under their own terms.
         </label>
-        <small class="form-text text-muted d-block mt-1">
+        <small class="fhi-note">
             Our own models answer first. With this on, outside services are asked too, so you still get a good answer if ours are slow, down or stuck. We try to remove the name, email, street address, city and ZIP code you entered above in your browser first; please leave out other identifying details, such as your phone number. Turn this off to keep your chat on our own models only.
         </small>
     </div>

@@ -39,7 +39,7 @@ PAGES = {
     "state-help/california/": "state-help-hero",
     "glossary/": "glossary-index-hero",
     "turning-26": "turning26-hero",
-    "preparing-for-2026": "prep2026-hero",
+    "coverage-changes": "prep2027-hero",
     "denial-language/": "denial-library-hero",
     "medicaid-eligibility": "medicaid-eligibility-hero",
 }
@@ -209,7 +209,7 @@ class SeleniumTestExplainHeroes(FHISeleniumBase, StaticLiveServerTestCase):
                 centres = self.execute_script("""
                     const row = document.querySelector('#microsite-hero .hero-cta-group');
                     const guide = document.createElement('a');
-                    guide.href = '#'; guide.className = 'btn btn-outline-primary';
+                    guide.href = '#'; guide.className = 'fhi-button secondary-cta';
                     guide.textContent = 'Read Our Guide';
                     row.prepend(guide);
                     return Array.from(row.querySelectorAll('a'))

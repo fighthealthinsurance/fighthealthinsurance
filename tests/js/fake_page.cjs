@@ -74,6 +74,15 @@ class FakeElement {
     return this.querySelectorAll(selector)[0] || null;
   }
 
+  // This element or the nearest one around it that the selector matches.
+  closest(selector) {
+    const match = matcher(selector);
+    for (let node = this; node && node.nodeType === 1; node = node.parentNode) {
+      if (match(node)) return node;
+    }
+    return null;
+  }
+
   querySelectorAll(selector) {
     const match = matcher(selector);
     const hits = [];
@@ -175,7 +184,14 @@ class FakeElement {
   requestSubmit() {
     this.page.movedThePerson.push(describe(this) + '.requestSubmit()');
   }
-  focus() {}
+  focus() {
+    this.page.focused = this;
+  }
+  // A textarea's selection, held the way the browser holds it.
+  setSelectionRange(start, end) {
+    this.selectionStart = start;
+    this.selectionEnd = end;
+  }
 }
 
 function describe(el) {
@@ -366,7 +382,7 @@ const ESCALATION_MARKUP = `
   <form action="/choose-escalation-letter/" method="post">
     <input type="hidden" name="escalation_uuid" value="" />
     <textarea name="letter_text" class="appeal_text"></textarea>
-    <button type="submit" class="btn btn-green">Save and review this letter</button>
+    <button type="submit" class="fhi-button fhi-button-primary">Save and review this letter</button>
   </form>
 </div>
 `;

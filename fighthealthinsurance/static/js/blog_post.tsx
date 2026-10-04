@@ -32,6 +32,34 @@ marked.setOptions({
   renderer
 });
 
+// A table is as wide as its columns need, whatever the screen. The premium
+// table in the unaffordable-coverage post is six columns of figures, 416px,
+// and on a 390px phone it pushed the whole page sideways. Every table a post
+// renders, from markdown or raw HTML, goes in a .scroll-x box (main.css), so
+// a wide one scrolls inside that box and the page stays the screen's width.
+const wrapTablesToScroll = (html: string): string => {
+  // A template's content is inert: nothing in it loads or runs.
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  template.content.querySelectorAll('table').forEach((table) => {
+    if (table.parentElement?.classList.contains('scroll-x')) return;
+    const box = document.createElement('div');
+    box.className = 'scroll-x';
+    // A box that scrolls has to take focus, or someone on a keyboard tabs
+    // past a table with no links in it and never sees its right-hand side.
+    // As a focusable region it needs a name to be announced by.
+    box.tabIndex = 0;
+    box.setAttribute('role', 'region');
+    box.setAttribute(
+      'aria-label',
+      table.querySelector('caption')?.textContent?.trim() || 'Table'
+    );
+    table.replaceWith(box);
+    box.appendChild(table);
+  });
+  return template.innerHTML;
+};
+
 interface BlogPostProps {
   slug: string;
   type?: 'blog' | 'faq';
@@ -99,6 +127,12 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
         }
         .md-content p {
           margin-bottom: 1rem;
+        }
+        .md-content > :first-child {
+          margin-top: 0;
+        }
+        .md-content > :last-child {
+          margin-bottom: 0;
         }
         .md-content ul, .md-content ol {
           margin-bottom: 1rem;
@@ -205,7 +239,7 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
             const potentialLeadingContent = contentParts[0].trim();
             // A simple check to see if it's likely HTML
             if (potentialLeadingContent.startsWith('<') && potentialLeadingContent.endsWith('>')) {
-                setLeadingContent(DOMPurify.sanitize(potentialLeadingContent));
+                setLeadingContent(wrapTablesToScroll(DOMPurify.sanitize(potentialLeadingContent)));
                 mainContent = contentParts.slice(1).join(separator);
             }
         }
@@ -247,7 +281,7 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
         const rawHtml = await marked.parse(processedContent);
         const safeHtml = DOMPurify.sanitize(rawHtml);
         
-        setContent(safeHtml);
+        setContent(wrapTablesToScroll(safeHtml));
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error';
         setError(`Failed to load content: ${errorMessage}`);
@@ -266,10 +300,10 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
 
   if (loading) {
     return (
-      <div className="container mt-5">
-        <div className="text-center">
-          <div className="spinner-border text-success" role="status">
-            <span className="visually-hidden">Loading...</span>
+      <div className="fhi-section">
+        <div className="fhi-column fhi-column-centred">
+          <div className="fhi-spinner" role="status">
+            <span className="fhi-visually-hidden">Loading...</span>
           </div>
         </div>
       </div>
@@ -282,96 +316,97 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
     const contentType = isFAQ ? 'FAQ content' : 'blog post';
     
     return (
-      <div className="container mt-5">
-        <div className="alert alert-danger">
-          <h4>Content Not Found</h4>
-          <p>The {contentType} you're looking for doesn't exist.</p>
-          <a href={backUrl} className="btn btn-success">{backText}</a>
+      <div className="fhi-section">
+        <div className="fhi-column fhi-stack">
+          <div className="fhi-notice fhi-notice-danger fhi-stack">
+            <h4>Content Not Found</h4>
+            <p>The {contentType} you're looking for doesn't exist.</p>
+          </div>
+          <a href={backUrl} className="fhi-button fhi-button-neutral">{backText}</a>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="container mt-5">
-      <div style={{ marginTop: '10vh', maxWidth: '800px', margin: '10vh auto 0 auto', padding: '0 20px' }}>
-        <nav aria-label="breadcrumb" className="mb-4">
-          <ol className="breadcrumb">
-            <li className="breadcrumb-item">
-              <a href={isFAQ ? '/faq/' : '/blog/'} style={{color: '#a5c422'}}>
+    <div className="fhi-page">
+      {/* The page title block every content page opens with (see
+          templates/partials/page_title.html), with the breadcrumb above the
+          title and the byline under it. */}
+      <header className="fhi-page-title fhi-stack">
+        <nav aria-label="breadcrumb">
+          <ol className="fhi-breadcrumbs">
+            <li>
+              <a href={isFAQ ? '/faq/' : '/blog/'}>
                 {isFAQ ? 'FAQ' : 'Blog'}
               </a>
             </li>
-            <li className="breadcrumb-item active" aria-current="page">
+            <li aria-current="page">
               {metadata.title || slug.replace(/-/g, ' ')}
             </li>
           </ol>
         </nav>
-        
-        <div>
-          <h1 style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '1rem' }}>
-            {metadata.title || slug.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-          </h1>
-          
-          <div style={{ color: '#6c757d', marginBottom: '2rem' }} className="author-line">
-             {authorHtml && <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(`By ${authorHtml}`) }} />}
-            {metadata.date && (
-              <div>
-                {(() => {
-                  // Only format if date matches YYYY-MM-DD
-                  const match = metadata.date.match(/^\d{4}-\d{2}-\d{2}$/);
-                  if (match) {
-                    const [year, month, day] = metadata.date.split('-');
-                    const dateObj = new Date(Number(year), Number(month) - 1, Number(day));
-                    if (!isNaN(dateObj.getTime())) {
-                      return dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-                    }
-                  }
-                  // Fallback: show raw date
-                  return metadata.date;
-                })()}
-              </div>
-            )}
-          </div>
-          
-          {leadingContent && <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(leadingContent) }} />}
 
-          {/*
-            Double-sanitize HTML at render time for defense-in-depth.
-            Even though content is sanitized before setContent, we sanitize again here
-            to protect against any future changes or missed edge cases in the pipeline.
-            This is a best practice for robust XSS protection.
-          */}
-          <div 
-            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content) }} 
-            className="md-content"
-            style={{
-              fontSize: '1rem',
-              lineHeight: '1.6'
-            }}
-          />
-          
-          <hr style={{ margin: '3rem 0' }} />
-          
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem' }}>
-            <div className="card">
-              <div className="card-body">
-                <h5 className="card-title" style={{color: '#a5c422'}}>Need Help?</h5>
-                <p className="card-text">
-                  Get personalized assistance with your health insurance appeal.
-                </p>
-                <a href="/" className="btn" style={{backgroundColor: '#a5c422', color: 'white', border: 'none'}}>Start Appeal Generator</a>
-              </div>
+        <h1>
+          {metadata.title || slug.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+        </h1>
+
+        <div className="author-line fhi-hint">
+          {authorHtml && <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(`By ${authorHtml}`) }} />}
+          {metadata.date && (
+            <div>
+              {(() => {
+                // Only format if date matches YYYY-MM-DD
+                const match = metadata.date.match(/^\d{4}-\d{2}-\d{2}$/);
+                if (match) {
+                  const [year, month, day] = metadata.date.split('-');
+                  const dateObj = new Date(Number(year), Number(month) - 1, Number(day));
+                  if (!isNaN(dateObj.getTime())) {
+                    return dateObj.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+                  }
+                }
+                // Fallback: show raw date
+                return metadata.date;
+              })()}
             </div>
-            <div className="card">
-              <div className="card-body">
-                <h5 className="card-title" style={{color: '#a5c422'}}>More Resources</h5>
-                <p className="card-text">
-                  Explore additional tools and information to fight denials.
-                </p>
-                <a href="/other-resources" className="btn" style={{backgroundColor: 'transparent', color: '#a5c422', border: '1px solid #a5c422'}}>View Resources</a>
-              </div>
-            </div>
+          )}
+        </div>
+      </header>
+
+      <div className="fhi-stack fhi-stack-loose">
+        {leadingContent && <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(leadingContent) }} />}
+
+        {/*
+          Double-sanitize HTML at render time for defense-in-depth.
+          Even though content is sanitized before setContent, we sanitize again here
+          to protect against any future changes or missed edge cases in the pipeline.
+          This is a best practice for robust XSS protection.
+        */}
+        <div
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content) }}
+          className="md-content"
+          style={{
+            fontSize: '1rem',
+            lineHeight: '1.6'
+          }}
+        />
+
+        <hr />
+
+        <div className="fhi-cards fhi-cards-roomy">
+          <div className="fhi-card">
+            <h5 style={{color: 'var(--fhi-green-ink)'}}>Need Help?</h5>
+            <p>
+              Get personalized assistance with your health insurance appeal.
+            </p>
+            <a href="/" className="fhi-button fhi-button-primary">Start Appeal Generator</a>
+          </div>
+          <div className="fhi-card">
+            <h5 style={{color: 'var(--fhi-green-ink)'}}>More Resources</h5>
+            <p>
+              Explore additional tools and information to fight denials.
+            </p>
+            <a href="/other-resources" className="fhi-button fhi-button-secondary">View Resources</a>
           </div>
         </div>
       </div>

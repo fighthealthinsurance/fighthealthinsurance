@@ -9,22 +9,22 @@ Fax ReSend
 {% block scriptmagic %}
 {% endblock scriptmagic %}
 {% block content %}
-<h2>Resend Your Fax</h2>
+<div class="fhi-page">
+{% include "partials/page_title.html" with title="Resend Your Fax" %}
+<div class="fhi-stack">
 <p>Thank you so much for using fight health insurance.
 </p>
-<section class="scan-section mt-2">
-  <div class="container">
-    <form action="{{ request.get_full_path }}" method="post" enctype="multipart/form-data">
-      {% csrf_token %}
-      <div class="scroll-x">
+<section class="scan-section">
+  <form class="fhi-stack" action="{{ request.get_full_path }}" method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <div class="scroll-x">
 	<table class="fhi-form-table">
 	  {{ form.as_table }}
 	</table>
-      </div>
-      <div class="form-group mt-2">
-	<button type="submit" id="submit" class="btn btn-green">Resubmit</button>
-      </div>
-    </form>
-  </div>
+    </div>
+    <button type="submit" id="submit" class="fhi-button fhi-button-primary">Resubmit</button>
+  </form>
 </section>
+</div>
+</div>
 {% endblock content %}

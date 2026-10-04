@@ -12,20 +12,57 @@ interface StoredValueWithTTL {
   expiry: number;
 }
 
-// Check if persistence is enabled (default: true)
-function isPersistenceEnabled(): boolean {
-  const stored = window.localStorage.getItem(PERSISTENCE_ENABLED_KEY);
-  // Default to true if not set
-  return stored !== "false";
+// This browser's storage, or null where the browser blocks it. Where a
+// browser blocks this site's storage, reading window.localStorage throws (a
+// SecurityError), and with storage turned off it can be null.
+function browserStorage(): Storage | null {
+  try {
+    return window.localStorage ?? null;
+  } catch {
+    return null;
+  }
 }
 
-// Set persistence preference
-function setPersistenceEnabled(enabled: boolean): void {
-  window.localStorage.setItem(PERSISTENCE_ENABLED_KEY, enabled.toString());
-  if (!enabled) {
-    // Clear all form data when disabling persistence
-    clearFormData();
+// Check if persistence is enabled (default: true). Storage the browser
+// blocks reads as turned off, so the page still sets up: nothing is kept,
+// and nothing is read back.
+function isPersistenceEnabled(): boolean {
+  const storage = browserStorage();
+  if (storage === null) {
+    return false;
   }
+  try {
+    // Default to true if not set
+    return storage.getItem(PERSISTENCE_ENABLED_KEY) !== "false";
+  } catch {
+    return false;
+  }
+}
+
+// Set persistence preference, and say whether this browser now keeps what
+// is typed. Never throws: where the browser blocks storage nothing can be
+// kept, so the answer is false, and a write that fails (full storage) leaves
+// the preference as it was.
+function setPersistenceEnabled(enabled: boolean): boolean {
+  const storage = browserStorage();
+  if (storage === null) {
+    return false;
+  }
+  if (!enabled) {
+    // Clear all form data when disabling persistence. First, so a full
+    // storage has room for the preference.
+    try {
+      clearFormData();
+    } catch {
+      // The preference below is still written.
+    }
+  }
+  try {
+    storage.setItem(PERSISTENCE_ENABLED_KEY, enabled.toString());
+  } catch {
+    // Not written; the preference read back below is the one in force.
+  }
+  return isPersistenceEnabled();
 }
 
 // Clear all stored form data (but keep the persistence preference)
@@ -57,12 +94,22 @@ function clearFormData(): void {
   keysToRemove.forEach((key) => window.localStorage.removeItem(key));
 }
 
-// Get item with TTL check
+// Get item with TTL check. Null where storage is blocked or a read of it
+// throws: the field is just not put back.
 function getLocalStorageItemWithTTL(key: string): string | null {
-  // If someones disabled persistence remove items if found.
-  const stored = window.localStorage.getItem(key);
-  if (!isPersistenceEnabled()) {
-    window.localStorage.removeItem(key);
+  const storage = browserStorage();
+  if (storage === null) {
+    return null;
+  }
+  let stored: string | null;
+  try {
+    // If someones disabled persistence remove items if found.
+    if (!isPersistenceEnabled()) {
+      storage.removeItem(key);
+      return null;
+    }
+    stored = storage.getItem(key);
+  } catch {
     return null;
   }
   if (!stored) {
@@ -84,7 +131,11 @@ function getLocalStorageItemWithTTL(key: string): string | null {
     ) {
       if (parsed.expiry && Date.now() > parsed.expiry) {
         // Item has expired, remove it
-        window.localStorage.removeItem(key);
+        try {
+          storage.removeItem(key);
+        } catch {
+          // Gone or not, it is not put back.
+        }
         return null;
       }
       return parsed.value;
@@ -108,6 +159,23 @@ function setLocalStorageItemWithTTL(key: string, value: string): void {
     expiry: Date.now() + LOCAL_STORAGE_TTL_MS,
   };
   window.localStorage.setItem(key, JSON.stringify(item));
+}
+
+// The letter box an AI assistant's handoff filled in (/from-your-assistant,
+// marked data-from-assistant on the textarea). The server deleted its copy as
+// the page opened and the page is the answer to a POST, so a reload would
+// lose the text. It is saved once on load the way typing saves it: only
+// while "Remember what I typed" is on, for the same 24 hours, and a later
+// /scan restores it into the empty box. Returns whether it saved.
+function keepServerFilledText(textarea: HTMLTextAreaElement): boolean {
+  if (textarea.getAttribute("data-from-assistant") !== "true") {
+    return false;
+  }
+  if (textarea.value === "" || !isPersistenceEnabled()) {
+    return false;
+  }
+  setLocalStorageItemWithTTL(textarea.id, textarea.value);
+  return true;
 }
 
 // Get item with TTL check and default value
@@ -181,6 +249,7 @@ export {
   getLocalStorageItemOrDefaultEQ,
   getLocalStorageItemWithTTL,
   setLocalStorageItemWithTTL,
+  keepServerFilledText,
   isPersistenceEnabled,
   setPersistenceEnabled,
   clearFormData,

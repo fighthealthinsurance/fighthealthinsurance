@@ -1,8 +1,6 @@
-/* The box model is ours, not the CDN's. Bootstrap's stylesheet carries the
-   same rule, so nothing changes while it loads; without it every element
-   that pairs width:100% with padding (the intake wrapper, .fhi-field) would
-   overflow a phone by its padding, and a 390px page would scroll sideways
-   because a download failed. */
+/* The box model. Without it every element that pairs width:100% with
+   padding (the intake wrapper, .fhi-field) would overflow a phone by its
+   padding, and a 390px page would scroll sideways. */
 *,
 *::before,
 *::after {
@@ -10,14 +8,167 @@
 }
 
 /* The hidden attribute hides, whatever display a rule gives the element.
-   Bootstrap's stylesheet carries the same rule, so nothing changes while it
-   loads; without it, the browser's own [hidden] loses to any rule of ours
-   that sets display, and the element shows. */
+   Without it, the browser's own [hidden] loses to any rule of ours that
+   sets display, and the element shows. */
 [hidden] {
     display: none !important;
 }
 
+/* ---- Where every page starts ---------------------------------------------
+   The browser's own defaults, corrected where this site's pages depend on
+   something else. Each rule below was found by loading the pages with and
+   without Bootstrap's stylesheet and reading what changed (the textarea and
+   code rules by reading the templates of pages behind a login); anything
+   the pages showed no need for is not here. Values that read like a design
+   decision (the 1.5 line height, the #212529 ink) are the ones the site has
+   been drawn with, kept so nothing shifts; changing one is a design call
+   for its own change, not part of this one.
+   ------------------------------------------------------------------------ */
+
+
+html {
+    /* Phone browsers in landscape enlarge text they think is too small.
+       Our sizes are already set for phones. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
+body {
+    /* The browser frames the page in 8px of white; our header, bands and
+       footer run to the window's edge. */
+    margin: 0;
+    line-height: var(--fhi-line-base);
+    color: var(--fhi-ink-base);
+    /* No grey box flashing over a link or button as it is tapped. */
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Headings sit flush under whatever is above them and keep half a line
+   below. The browser's margins are in em, so they differ at every level and
+   grow with the heading (2.33em above an h6). */
+h1, h2, h3, h4, h5, h6 {
+    margin-block: 0 var(--fhi-space-2);
+}
+
+/* A paragraph or list keeps a line of space after it and none before, so the
+   first one in a card or callout starts at the top of its padding. */
+p,
+ul,
+ol {
+    margin-block: 0 var(--fhi-space-4);
+}
+
+/* A list is indented 2rem rather than the browser's 40px. */
+ul,
+ol {
+    padding-inline-start: var(--fhi-space-7);
+}
+
+/* Small print is 87.5% of the text around it; the browser's 'smaller' is
+   about 83%, 13.3px on 16px text. */
+small {
+    font-size: 0.875em;
+}
+
+/* An image or icon in a line of text centres on that text. On the baseline,
+   where the browser puts it, an icon rides above the middle of its label and
+   each image leaves a few pixels of descender space under itself. */
+img,
+svg {
+    vertical-align: middle;
+}
+
+/* A dividing line: one pixel in the text's own colour at a quarter strength,
+   across its column. The browser draws a grey groove with auto side margins,
+   which can leave it short and centred. */
+hr {
+    margin: var(--fhi-space-4) 0;
+    border: 0;
+    border-top: 1px solid;
+    color: inherit;
+    opacity: 0.25;
+}
+
+/* Table cells share their edges instead of each standing 2px apart, and a
+   header cell lines up with its column instead of centring over it. */
+table {
+    border-collapse: collapse;
+}
+th {
+    text-align: inherit;
+}
+
+/* Form controls take the page's typeface, size and line height. Browsers
+   give them a small system face of their own (13.3px Arial in Chrome,
+   monospace in a textarea), so a box would not match the label above it.
+   Not the whole `font`: that would also pass on the weight, and the amount
+   box inside the bold pay-what-you-want label would turn bold. */
+button,
+input,
+select,
+textarea {
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+}
+
+/* The Choose File button inside a file input, which the rule above does not
+   reach: without this the upload box on the first step of the appeal is 4 to
+   6px shorter, its button in 13px Arial. appearance: button because at the
+   default (auto) Chrome pins the button's line height to normal whatever
+   font says. */
+::file-selector-button {
+    font: inherit;
+    appearance: button;
+}
+
+/* A label keeps the margins and the max-width its rules give it, which an
+   inline element ignores. main.css counts on this to stop a long label
+   growing past a phone. */
+label {
+    display: inline-block;
+}
+
+/* A text box grows taller, never wider than the column it fills. */
+textarea {
+    resize: vertical;
+}
+
+/* A button shows the hand, as a link does. Browsers keep the arrow over
+   buttons. */
+button:enabled,
+input:is([type="submit"], [type="button"]):enabled {
+    cursor: pointer;
+}
+
+/* Code and preformatted text in a monospace face that every system has, a
+   step smaller than the text around it. Left alone the browser picks Courier
+   on a Mac and drops it to 13px. */
+code,
+pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.875em;
+}
+pre {
+    margin-block: 0 var(--fhi-space-4);
+    /* A long line scrolls inside the block instead of running out of it:
+       chat renders a reply's fenced text as <pre><code> in a bubble that
+       clips what overflows. */
+    overflow: auto;
+}
+/* Code inside a block keeps the block's size rather than shrinking twice. */
+pre code {
+    font-size: inherit;
+}
+
 :root {
+    /* The line height text gets when nothing sets its own: list items,
+       labels, table cells, and every heading, since main.css tells headings
+       to inherit it. Paragraphs open up to --fhi-line-body. */
+    --fhi-line-base: 1.5;
+    /* The colour of that same text. A shade darker than --fhi-ink (#333);
+       moving to --fhi-ink would be visible on every page. */
+    --fhi-ink-base: #212529;
     /* Palette already in use across this file, named once. */
     --fhi-green: #a5c422;
     --fhi-lime: #ADD100;
@@ -173,6 +324,14 @@
     --fhi-btn-pad-y-lg: 0.85rem;
     --fhi-btn-pad-x-lg: 2.2rem;
     --fhi-btn-height-lg: 56px;
+    /* Part of a button's box in every role, so the padding a button
+       draws is the token's less this. */
+    --fhi-btn-border: 2px;
+    /* A button that takes the reader to another organisation's site, and
+       one that deletes something: 6.67:1 and 6.91:1 on white. */
+    --fhi-outbound: #0b5cad;
+    --fhi-danger: #a33131;
+    --fhi-danger-soft: #fdf1f0;
 }
 
 /* Skip link for keyboard navigation (accessibility) */
@@ -253,6 +412,12 @@ textarea.fhi-field {
     opacity: 0.5;
 }
 
+/* The same fade in the row that replaces .form-check: a box this browser
+   cannot use greys out its label too. */
+.fhi-check-row > .fhi-check:disabled ~ label {
+    opacity: 0.5;
+}
+
 /* A tick box is a box too, just square and sized to the text beside it. */
 .fhi-check {
     width: var(--fhi-space-4);
@@ -264,53 +429,24 @@ textarea.fhi-field {
     border: 1px solid var(--fhi-field-line);
 }
 
-/* Bootstrap clears the outline on its own controls with `.btn:focus-visible
-   {outline: 0}` and `.form-control:focus {outline: 0}`, and those beat a bare
-   `:focus-visible` on specificity whatever order the sheets load in. Its
-   replacement glow resolves through --bs-btn-focus-shadow-rgb, which a plain
-   .btn never defines, so on Next, Continue, Generate My Appeal and Confirm
-   Deletion the reset lands and nothing takes its place. These selectors match
-   Bootstrap's weight so the ring survives on the buttons the eight-step form
-   is actually made of. */
-.btn:focus-visible,
-.btn-check:focus-visible + .btn,
-.form-control:focus-visible,
-.form-select:focus-visible,
-.form-check-input:focus-visible,
+/* The site's own input box and tick box ring the way the rest of the site
+   does, at a weight their own rules cannot quietly undo. */
 .fhi-field:focus-visible,
 .fhi-check:focus-visible {
     outline: 2px solid var(--fhi-green-ink);
     outline-offset: 2px;
 }
 
-/* A button's label keeps its colour while it is being hovered, focused or
-   pressed. main.css recolours every a:hover, a:active and a:focus on the site,
-   and that beats a button's own `.btn-green {color: var(--fhi-btn-ink)}` on
-   specificity, so without this the hero call to action writes dark olive on
-   its own lime fill the moment you tab to it. Every brand button reads the
-   one ink token here too, so the swap stays a single value. */
-.btn-green:hover,
-.btn-green:focus,
-.btn-green:active,
-.section-btn:hover,
-.section-btn:focus,
-.section-btn:active {
-    color: var(--fhi-btn-ink);
-}
-
-/* Same reason, kept apart because neither of these wears the brand lime: the
-   skip link is white on black and the secondary button is white on grey, and
-   both stay white whatever the brand button's ink becomes. */
+/* A link's label keeps its colour while it is being hovered, focused or
+   pressed: main.css recolours every a:hover, a:active and a:focus on the
+   site. The skip link is white on black and stays white. */
 .skip-link:hover,
 .skip-link:focus,
-.skip-link:active,
-.btn-secondary-custom:hover,
-.btn-secondary-custom:focus,
-.btn-secondary-custom:active {
+.skip-link:active {
     color: #fff;
 }
 
-/* Same reason, kept apart because one of the four share buttons wears
+/* Same for the share buttons, kept apart because one of the four wears
    Facebook's blue and is excused in the gate by name. */
 .share-btn:hover,
 .share-btn:focus,
@@ -318,25 +454,41 @@ textarea.fhi-field {
     color: #fff;
 }
 
-/* Bootstrap's reboot writes `.h1,...,.h6 {font-weight:500; line-height:1.2}`,
-   and a class beats main.css's `h1,...,h6 {font-weight:600;
-   line-height:inherit}` on specificity, so a heading given a size class to
-   hold its size loses the site's weight and line height with it. .h5 stays
-   out: main.css sets h5 to 500 too, so 600 here would make `.h5` heavier
-   than a real h5. */
-.h2,
-.h3 {
-    font-weight: 600;
-    line-height: inherit;
+/* The name of a step in the appeal flow: the h1 under the progress bar.
+   It held its size with Bootstrap's .h2 (24px on a phone, 32px on a
+   desktop). This is the section size, 24px to 28.8px, a step under a
+   content page's title because the progress bar above it already says
+   where the person is. */
+.fhi-step-title {
+    font-size: var(--fhi-text-section);
+    line-height: var(--fhi-line-heading);
 }
 
-/* .h5 takes only the line height. main.css gives a real h5 weight 500, which
-   is what Bootstrap's class writes too, so the weight needs no correction and
-   pinning 600 here would make a heading wearing the class heavier than the
-   element it stands in for. Line height is the half that does drift: the
-   element inherits the body's and the class does not. */
-.h5 {
-    line-height: inherit;
+/* The heading inside a callout on a flow page, which held its size with
+   Bootstrap's .h3: a section heading in the reading column, a steady 22px,
+   a step under the step title. Its colour comes from the callout. */
+.fhi-callout-title {
+    font-size: var(--fhi-text-reading-section);
+    line-height: var(--fhi-line-heading);
+}
+
+/* The intake flow's column steps its headings down the way the reading
+   tier does: a step's own title (.fhi-step-title) leads, then sections and
+   every callout's heading share one size, whatever level the page gave
+   them, and a fourth level outside a callout is the lead size. On the
+   send-your-appeal page the callout headings had run larger than the page
+   title and the sections equal to it. :where() keeps the defaults at no
+   weight, so a page's own heading class still wins. */
+.container-narrow :where(h2, h3) {
+    font-size: var(--fhi-text-reading-section);
+    line-height: var(--fhi-line-heading);
+}
+.container-narrow :where(h4) {
+    font-size: var(--fhi-text-lead);
+}
+.container-narrow .alert-box > :is(h2, h3, h4) {
+    font-size: var(--fhi-text-reading-section);
+    line-height: var(--fhi-line-heading);
 }
 
 /* Alert/callout box styles - extracted from inline styles */
@@ -359,43 +511,10 @@ textarea.fhi-field {
     margin: 0;
 }
 
-.alert-success {
-    background: #e8f5e9;
-    border-left-color: #4caf50;
-}
-.alert-success h2,
-.alert-success h3,
-.alert-success h4 {
+/* The regulator letter review's callout, an .alert-box-success with an h3,
+   keeps the green ink it had as alert-success: 4.56:1 on the box's fill. */
+.alert-box-success h3 {
     color: #2e7d32;
-}
-
-.alert-danger {
-    background: #ffebee;
-    border-left-color: #f44336;
-}
-.alert-danger h3,
-.alert-danger p {
-    color: #c62828;
-}
-
-.alert-warning {
-    background: #fff3cd;
-    border-left-color: #ffc107;
-}
-.alert-warning h2,
-.alert-warning h4,
-.alert-warning li {
-    color: #856404;
-}
-
-.alert-info {
-    background: #e3f2fd;
-    border-left-color: #2196f3;
-}
-.alert-info h2,
-.alert-info h3,
-.alert-info h4 {
-    color: #1565c0;
 }
 
 /* Section headers with underline */
@@ -430,6 +549,8 @@ textarea.fhi-field {
     /* An h1 reads --fhi-text-hero for the image hero; a page title is the
        page size, the same size the section h2s used to give these pages. */
     font-size: var(--fhi-text-page);
+    /* Even lines, not one word left alone on the second. */
+    text-wrap: balance;
     line-height: var(--fhi-line-heading);
     color: var(--fhi-ink);
     margin: 0;
@@ -535,12 +656,14 @@ textarea.fhi-field {
     color: #666;
 }
 
-/* Form wrapper backgrounds */
+/* Form wrapper backgrounds. The fax form runs the column's full width: a
+   side margin inside the flow column left the letter box 192px wide on a
+   320px phone. */
 .form-wrapper {
     background: #f9f9f9;
-    padding: 1.5rem;
+    padding: var(--fhi-space-6);
     border-radius: 8px;
-    margin: 1rem 1.5rem;
+    margin: var(--fhi-space-4) 0;
 }
 .donate-wrapper {
     background-color: #f8f9fa;
@@ -575,64 +698,280 @@ a.link:hover::after {
     transform-origin: bottom left;
 }
 
+/* In a list item the link flows with the words around it. As an
+   inline-block it wraps as one box in a narrow column, so the bullet sat
+   beside its last line and the description dropped below it. */
+li > a.link {
+    display: inline;
+}
+
 .font-weight-bold {
     font-weight: bold;
 }
 
-.btn-green, .btn-green:focus {
+/* ---- Buttons
+   One button, named for what it does on the page rather than for its colour.
+   .fhi-button is the box every button shares, and one role class says how
+   loud it is:
+     fhi-button-primary    the page's main action, on the brand lime sweep
+     fhi-button-secondary  another action worth taking: an olive edge
+     fhi-button-neutral    a utility (back, show more, a letter in a bar):
+                           a grey edge
+     fhi-button-quiet      reads as a link and keeps a button's target
+   fhi-button-small and fhi-button-large take the size from the token scale;
+   with neither, a button is medium.
+   The border is part of every button's box, transparent on the primary, so a
+   primary and a secondary side by side are the same height, and the padding
+   gives the border back so the box is the size the tokens say. A transparent
+   border is also what keeps a button's edge in forced-colours mode, which
+   draws it in the system's text colour. */
+.fhi-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--fhi-space-2);
+    box-sizing: border-box;
+    max-width: 100%;
+    min-height: var(--fhi-btn-height-md);
+    margin: 0;
+    padding: calc(var(--fhi-btn-pad-y-md) - var(--fhi-btn-border)) calc(var(--fhi-btn-pad-x-md) - var(--fhi-btn-border));
+    border: var(--fhi-btn-border) solid transparent;
+    border-radius: 4px;
+    background-color: transparent;
+    font-size: var(--fhi-btn-font-md);
+    font-weight: 600;
+    line-height: 1.5;
+    text-align: center;
+    text-decoration: none;
+    white-space: normal;
+    vertical-align: middle;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+/* The fill is twice the button's width, so moving the background is what
+   slides the lime across on hover. */
+.fhi-button-primary {
     background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%);
     background-size: 200% auto;
     color: var(--fhi-btn-ink);
-    transition: all 0.3s;
-    border-radius: 4px;
-    border: none;
-    line-height: 1.5;
-    font-weight: 600;
     box-shadow: 0 3px 12px rgba(165, 196, 34, 0.35);
 }
-/* The default size, on a selector that names no state. Size on a state
-   selector outranks the size classes below on specificity, so a large
-   button would shrink back to medium the moment it took keyboard focus.
-   This rule ties with .fhi-btn-lg and loses to it on source order, which
-   is what lets a button keep its size through every state. */
-.btn-green {
-    padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
-    min-height: var(--fhi-btn-height-md);
-    font-size: var(--fhi-btn-font-md);
-}
-/* The fill slides in from the right on hover. The gradient is twice the width
-   of the button, so moving the background is what draws it across. */
-.btn-green:hover {
+.fhi-button-primary:hover {
     background-position: right center;
-    color: var(--fhi-btn-ink);
     box-shadow: 0 4px 16px rgba(165, 196, 34, 0.5);
 }
-
-.btn-delete, .pro-submit-btn{background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%)}
-.btn-delete, .pro-submit-btn {
-   margin: 10px;
-   padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
-   min-height: var(--fhi-btn-height-md);
-   font-size: var(--fhi-btn-font-md);
-   line-height: 1.5;
-   text-align: center;
-   transition: 0.5s;
-   background-size: 200% auto;
-   color: var(--fhi-btn-ink);
-   box-shadow: 0 0 20px #eee;
-   border-radius: 5px;
-   display: block;
-   border:none;
+/* The label keeps its ink while the button is hovered, focused or pressed:
+   main.css recolours every a:hover, a:active and a:focus, and that outranks
+   a single class. */
+.fhi-button-primary:hover,
+.fhi-button-primary:focus,
+.fhi-button-primary:active {
+    color: var(--fhi-btn-ink);
+}
+/* Focus flips the gradient: the dark stop comes to both ends and the bright
+   one to the middle, the reverse of the resting fill.
+   The flip cannot carry focus on its own. Hover's slide to `right center`
+   already shows dark on the left running to bright on the right, the same
+   colours in the same order the flipped gradient draws at rest, and a focus
+   state that looks like a hover state is not an indicator. So focus also
+   draws a ring, outside the button, in the deep end of the button's own
+   ramp: 6.17:1 against the bright stop, 3.48:1 against the dark one and
+   9.69:1 against a white page. Hover never draws it. On the hero the ring
+   sits on the photograph, where no stylesheet can say what is behind it. */
+.fhi-button-primary:focus-visible {
+    background-image: linear-gradient(to right, var(--fhi-btn-fill-b) 0%, var(--fhi-btn-fill-a) 51%, var(--fhi-btn-fill-b) 100%);
+    background-position: left center;
+    outline: 3px solid var(--fhi-green-deep);
+    outline-offset: 3px;
 }
 
-.btn-delete:hover, .pro-submit-btn:hover{
-   background-position: right center;
-   color: var(--fhi-btn-ink);
-   text-decoration: none;
+/* An edge in the brand lime and a green-ink label, 6.00:1 on white. Hover
+   fills it with the lime (Melanie, 2026-10-02) and turns the label the page's
+   ink, 6.3:1 on the lime; white would be 2:1. The hero's own buttons on the
+   photograph are .secondary-cta, which stay white. */
+.fhi-button-secondary {
+    border-color: var(--fhi-green);
+    color: var(--fhi-green-ink);
+}
+.fhi-button-secondary:focus {
+    color: var(--fhi-green-ink);
+}
+.fhi-button-secondary:hover,
+.fhi-button-secondary:active {
+    background-color: var(--fhi-green);
+    border-color: var(--fhi-green);
+    color: var(--fhi-ink);
 }
 
+/* The same shape in grey: an edge at 3.45:1 on white, a label at 7.46:1,
+   and white on the label's colour when hovered. The focus rule comes first
+   so a hovered button that also has focus still turns white; it is there
+   because main.css turns a focused link green. */
+.fhi-button-neutral {
+    border-color: var(--fhi-field-line);
+    color: var(--fhi-ink-2);
+}
+.fhi-button-neutral:focus {
+    color: var(--fhi-ink-2);
+}
+.fhi-button-neutral:hover,
+.fhi-button-neutral:active {
+    background-color: var(--fhi-ink-2);
+    border-color: var(--fhi-ink-2);
+    color: #fff;
+}
+
+/* A link to another organisation's site (a state's consumer assistance
+   office, healthcare.gov): a blue edge and label, so it reads as a way out
+   rather than a step on ours, and white on blue when hovered, 6.67:1. */
+.fhi-button-outbound {
+    border-color: var(--fhi-outbound);
+    color: var(--fhi-outbound);
+}
+.fhi-button-outbound:focus {
+    color: var(--fhi-outbound);
+}
+.fhi-button-outbound:hover,
+.fhi-button-outbound:active {
+    background-color: var(--fhi-outbound);
+    border-color: var(--fhi-outbound);
+    color: #fff;
+}
+
+/* An action that deletes something: a red edge and label, calm rather than
+   alarming. Hovered it takes a pale red fill and keeps its red label,
+   6.25:1, instead of turning into a solid red block. */
+.fhi-button-danger {
+    border-color: var(--fhi-danger);
+    color: var(--fhi-danger);
+}
+.fhi-button-danger:focus {
+    color: var(--fhi-danger);
+}
+.fhi-button-danger:hover,
+.fhi-button-danger:active {
+    background-color: var(--fhi-danger-soft);
+    border-color: var(--fhi-danger);
+    color: var(--fhi-danger);
+}
+
+/* The sizes. Each comes after the roles, so the size a button is given is
+   the one it keeps in every state. */
+.fhi-button-small {
+    font-size: var(--fhi-btn-font-sm);
+    padding: calc(var(--fhi-btn-pad-y-sm) - var(--fhi-btn-border)) calc(var(--fhi-btn-pad-x-sm) - var(--fhi-btn-border));
+    min-height: var(--fhi-btn-height-sm);
+}
+.fhi-button-large {
+    font-size: var(--fhi-btn-font-lg);
+    padding: calc(var(--fhi-btn-pad-y-lg) - var(--fhi-btn-border)) calc(var(--fhi-btn-pad-x-lg) - var(--fhi-btn-border));
+    min-height: var(--fhi-btn-height-lg);
+}
+
+/* A link with a button's height: underlined, at the weight of running text,
+   and flush with the text beside it. After the sizes, which would otherwise
+   put the side padding back. */
+.fhi-button-quiet {
+    padding-inline: 0;
+    font-family: inherit;
+    font-weight: 400;
+    color: var(--fhi-ink-2);
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+}
+/* Focus first, as with the neutral role, so main.css's green focused link
+   does not win while a hover still turns it green. */
+.fhi-button-quiet:focus {
+    color: var(--fhi-ink-2);
+}
+.fhi-button-quiet:hover,
+.fhi-button-quiet:active {
+    color: var(--fhi-green-ink);
+}
+
+/* A button that cannot be used yet, or a letter with nothing under it. */
+.fhi-button:disabled,
+.fhi-button[aria-disabled="true"] {
+    opacity: 0.55;
+    box-shadow: none;
+    pointer-events: none;
+}
+
+/* A row of small buttons, such as an alphabet to jump through. Each is a
+   touch target high and only as wide as its letter needs, so the whole
+   alphabet fits one row on a desktop and wraps where it does not.
+   On a phone the bar is instead one row that scrolls sideways, each
+   letter a touch target square: wrapped, twenty-six of them filled five
+   rows. The padding keeps a focused letter's ring inside the scroller,
+   which would otherwise clip it, and the negative margin gives that
+   room back so the row lines up with what is around it. */
+.fhi-button-bar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--fhi-space-1);
+}
+.fhi-button-bar > .fhi-button {
+    min-width: var(--fhi-space-7);
+    padding-inline: var(--fhi-space-2);
+}
+@media (max-width: 575.98px) {
+    .fhi-button-bar {
+        align-self: stretch;
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        padding: var(--fhi-space-1);
+        margin: calc(-1 * var(--fhi-space-1));
+    }
+    .fhi-button-bar > .fhi-button {
+        flex: 0 0 auto;
+        min-width: var(--fhi-btn-height-sm);
+    }
+}
+
+/* The control that dismisses a message: a cross drawn in the message's own
+   colour, on a touch target square. */
+.fhi-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    inline-size: var(--fhi-btn-height-sm);
+    block-size: var(--fhi-btn-height-sm);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background-color: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+.fhi-close:hover {
+    background-color: rgba(0, 0, 0, 0.08);
+}
+
+/* Motion only for readers who have not asked for less. main.css gives every
+   link a half-second transition, so a reader who has asked gets none here. */
+@media (prefers-reduced-motion: no-preference) {
+    .fhi-button {
+        transition: background-position 0.3s ease, background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.3s ease;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .fhi-button {
+        transition: none;
+    }
+}
+/* The header's mark, 75px at every width. height: auto keeps it square:
+   the img carries width="150" height="150" so the browser can reserve its
+   box before the file arrives, and without this the 150 would stand. */
 .logo {
     width: 75px;
+    height: auto;
 }
 
 /* Hero improvements */
@@ -649,9 +988,11 @@ a.link:hover::after {
 /* Single column centered layout */
 .hero-inner {text-align:center; display:flex; flex-direction:column; align-items:center;}
 .hero-inner > .hero-cta-group {justify-content:center;}
+/* A badge above a hero's tagline, such as Medicaid's "Experimental". */
+.hero-inner > .hero-badge {margin-bottom: var(--fhi-space-4);}
 .trust-bullets {justify-content:center;}
 .trust-bullets li {text-align:center;}
-.pwyw-pill, .hero-subcopy, .hero-tagline, .hero-headline {margin-left:auto; margin-right:auto;}
+.hero-subcopy, .hero-tagline, .hero-headline {margin-left:auto; margin-right:auto;}
 .hero-subcopy {text-align:center;}
 @media (max-width: 768px){
   .hero-cta-group a {flex:1 1 auto;}
@@ -662,44 +1003,6 @@ a.link:hover::after {
 .hero-tagline {margin-bottom: .25rem; font-weight: 600; color: var(--fhi-green); font-size: 1.15rem; text-shadow: 1px 1px 4px rgba(0,0,0,0.3);}
 .hero-subcopy {font-size: 1.05rem; line-height: 1.5rem; margin: .75rem 0 1.25rem; color: #fff; text-shadow: 1px 1px 4px rgba(0,0,0,0.3);}
 
-/* Hero Primary CTA - Large button above other CTAs */
-.hero-primary-cta {
-    font-size: var(--fhi-btn-font-lg) !important;
-    font-weight: 700 !important;
-    padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg) !important;
-    min-height: var(--fhi-btn-height-lg) !important;
-    margin: 1rem 0 !important;
-    box-shadow: 0 6px 20px rgba(165, 196, 34, 0.4) !important;
-    border: none !important;
-    transform: scale(1);
-    transition: transform 0.2s ease, box-shadow 0.2s ease !important;
-}
-.hero-primary-cta:hover {
-    transform: scale(1.05);
-    box-shadow: 0 8px 28px rgba(165, 196, 34, 0.6) !important;
-}
-
-.pwyw-pill {
-    display: inline-block;
-    background: linear-gradient(90deg, var(--fhi-btn-fill-a), var(--fhi-btn-fill-b));
-    color: var(--fhi-btn-ink);
-    padding:.4rem 1rem;
-    font-size:.95rem;
-    border-radius: 999px;
-    box-shadow:0 4px 12px rgba(0,0,0,.25);
-    margin-bottom:.75rem;
-    letter-spacing:.5px;
-    border: none;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    font-weight: 600;
-}
-.pwyw-pill:hover {
-    transform: translateY(-2px);
-    box-shadow:0 6px 16px rgba(0,0,0,.3);
-    background: linear-gradient(90deg, var(--fhi-btn-fill-b), var(--fhi-btn-fill-a));
-}
-
 .hero-cta-group {display: flex; flex-wrap: wrap; gap: .85rem; margin: .5rem auto 1rem; align-items: center; justify-content: center; width: 100%; box-sizing: border-box;}
 .hero-cta-group.hero-cta-secondary {margin-top: 0.5rem; margin-bottom: 1.5rem; display: flex !important;}
 /* The hero buttons used to be locked to one height, which made the call to
@@ -707,25 +1010,77 @@ a.link:hover::after {
    size: each button brings its own, so the primary reads as the primary. */
 .hero-cta-group a {flex:0 1 auto; text-align:center; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; margin: 0; max-width: 400px;}
 .hero-cta-secondary a {flex:0 1 auto; max-width: 250px;}
-/* A page's primary action, in the hero and in the body of the state pages.
-   Large, and edged in the deep end of its own ramp: it sits on a photograph
-   the stylesheets cannot read, so the fill alone cannot say where the button
-   ends. 6.17:1 against the bright stop of that fill, 3.48:1 against the dark
-   one, over the 3:1 WCAG 1.4.11 asks of a control's boundary. */
-.primary-cta {font-size: var(--fhi-btn-font-lg) !important; font-weight:700 !important; padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg) !important; min-height: var(--fhi-btn-height-lg) !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
-.primary-cta:hover {transform: scale(1.03); box-shadow: 0 6px 24px rgba(165, 196, 34, 0.6) !important;}
-.secondary-cta, .tertiary-cta {background:rgba(255,255,255,0.15) !important; backdrop-filter: blur(5px); border:2px solid rgba(255,255,255,0.6) !important; color:#fff !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; font-weight: 500 !important; transition: all 0.2s ease !important; font-size: var(--fhi-btn-font-md) !important; padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md) !important; min-height: var(--fhi-btn-height-md) !important; line-height: 1.5 !important;}
-.secondary-cta:hover, .tertiary-cta:hover {background:var(--fhi-green-ink) !important; color:#fff !important; border-color: var(--fhi-green-ink) !important;}
+/* A page's primary action in the hero: bold, and lifted off the photograph
+   by a lime glow. On a picture no stylesheet can read, the fill alone
+   cannot say where the button ends; the glow does, without the line a
+   border would draw (the product owner's call of 2026-09-13). */
+.primary-cta {
+    font-weight: 700;
+    box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4);
+}
+.primary-cta:hover {
+    box-shadow: 0 6px 24px rgba(165, 196, 34, 0.6);
+}
+@media (prefers-reduced-motion: no-preference) {
+    .primary-cta {
+        transition: background-position 0.3s ease, box-shadow 0.3s ease, transform 0.2s ease;
+    }
+    .primary-cta:hover {
+        transform: scale(1.03);
+    }
+}
+/* The hero's other actions, frosted glass over the photograph: a white
+   label and edge on a light veil, filling with green ink on hover. */
+.secondary-cta,
+.secondary-cta:focus {
+    background-color: rgba(255, 255, 255, 0.15);
+    -webkit-backdrop-filter: blur(5px);
+    backdrop-filter: blur(5px);
+    border-color: rgba(255, 255, 255, 0.6);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.secondary-cta:hover,
+.secondary-cta:active {
+    background-color: var(--fhi-green-ink);
+    border-color: var(--fhi-green-ink);
+    color: #fff;
+}
+/* The home hero's content keeps the side room Bootstrap's .row used to give
+   it (a 12px gutter on each side of its column), so the Why and Pay what
+   you want boxes sit where they did. */
+#home .item {
+    padding-inline: var(--fhi-space-3);
+}
+/* The home hero's four outlined links keep the corners and keyboard ring
+   the earlier home page gave them (Melanie, 2026-10-02): a little rounder
+   than .fhi-button's 4px. */
+#home .hero-cta-secondary > a {
+    vertical-align: middle;
+    border-radius: 6px;
+}
+#home .hero-cta-secondary > a:focus-visible {
+    outline-style: solid;
+    outline-width: 2px;
+    outline-offset: 2px;
+}
+/* On the photograph's darker colours the site's deep-green focus ring
+   nearly disappears, so a focused control in the home copy rings in white
+   instead. Only the colour changes, so width and offset stay each
+   control's own. */
+#home .hero-inner :focus-visible {
+    outline-color: #fff;
+}
 
 /* Value Proposition Two-Column Layout */
-#why-fhi .home-why-inner .value-prop-container {
+#home .hero-inner .value-prop-container {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.8rem;
     margin-top: 1.2rem;
     align-items: stretch;
 }/* Benefits Card (Left) */
-#why-fhi .home-why-inner .value-prop-container .benefits-card {
+#home .hero-inner .value-prop-container .benefits-card {
     background: rgba(30, 20, 60, 0.85) !important;
     backdrop-filter: blur(8px) !important;
     -webkit-backdrop-filter: blur(8px) !important;
@@ -735,14 +1090,14 @@ a.link:hover::after {
     border: 1px solid rgba(165, 196, 34, 0.3) !important;
     height: 100%;
 }
-#why-fhi .home-why-inner .value-prop-container .benefits-card .benefits-title {
+#home .hero-inner .value-prop-container .benefits-card .benefits-title {
     font-size: 1.1rem;
     font-weight: 700;
     margin-bottom: 0.5rem;
     color: #a5c422;
     text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
 }
-#why-fhi .home-why-inner .value-prop-container .benefits-card .benefits-list {
+#home .hero-inner .value-prop-container .benefits-card .benefits-list {
     list-style: none;
     padding: 0;
     margin: 0;
@@ -750,21 +1105,21 @@ a.link:hover::after {
     flex-direction: column;
     gap: 0.3rem;
 }
-#why-fhi .home-why-inner .benefits-list li {
+#home .hero-inner .benefits-list li {
     display: flex !important; 
     align-items: flex-start !important; 
     gap: .5rem !important;
 }
-#why-fhi .home-why-inner .value-prop-container .benefits-card .benefit-icon {
+#home .hero-inner .value-prop-container .benefits-card .benefit-icon {
     font-size: 1.1rem;
     margin-right: 0.4rem;
     flex-shrink: 0;
 }
-#why-fhi .home-why-inner .benefit-content {
+#home .hero-inner .benefit-content {
     flex: 1 !important;
     text-align: left !important;
 }
-#why-fhi .home-why-inner .benefit-content strong {
+#home .hero-inner .benefit-content strong {
     display: block !important; 
     font-size: 0.95rem !important; 
     font-weight: 600 !important; 
@@ -772,7 +1127,7 @@ a.link:hover::after {
     margin-bottom: .2rem !important; 
     text-shadow: 1px 1px 3px rgba(0,0,0,0.25) !important;
 }
-#why-fhi .home-why-inner .benefit-content p {
+#home .hero-inner .benefit-content p {
     margin: 0 !important; 
     font-size: 0.9rem !important; 
     line-height: 1.4 !important; 
@@ -781,12 +1136,12 @@ a.link:hover::after {
 }
 
 /* Payment Card Wrapper (Right) */
-#why-fhi .home-why-inner .payment-card-wrapper {
+#home .hero-inner .payment-card-wrapper {
     display: flex !important; 
     align-items: stretch !important;
     width: 100% !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel {
+#home .hero-inner .payment-card-wrapper .pwyw-panel {
     margin: 0 !important;
     width: 100% !important;
     height: 100% !important;
@@ -800,7 +1155,7 @@ a.link:hover::after {
     border: 1px solid rgba(165, 196, 34, 0.3) !important;
     text-align: left !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-title {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-title {
     margin: 0 0 0.5rem !important;
     font-size: 1.1rem !important;
     font-weight: 700 !important;
@@ -808,7 +1163,7 @@ a.link:hover::after {
     text-align: center !important;
     text-shadow: 1px 1px 3px rgba(0,0,0,0.3) !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-subcopy {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-subcopy {
     color: #fff !important;
     opacity: 1 !important;
     text-align: left !important;
@@ -816,14 +1171,14 @@ a.link:hover::after {
     line-height: 1.4 !important;
     margin-bottom: 0.5rem !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-options {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-options {
     display: flex !important;
     flex-wrap: wrap !important;
     gap: 0.3rem !important;
     align-items: flex-start !important;
     justify-content: space-between !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
     background: rgba(255, 255, 255, 0.2) !important;
     border: 1px solid rgba(255, 255, 255, 0.3) !important;
     border-radius: 4px !important;
@@ -846,7 +1201,7 @@ a.link:hover::after {
     width: calc(50% - 0.15rem) !important;
 }
 @media (max-width: 1200px) {
-    #why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
+    #home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
         flex: 0 0 100% !important;
         max-width: 100% !important;
         width: 100% !important;
@@ -855,16 +1210,16 @@ a.link:hover::after {
 }
 
 @media (min-width: 1201px) {
-    #why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
+    #home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
         min-height: 32px !important;
     }
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option:hover {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option:hover {
     background: rgba(165, 196, 34, 0.25) !important;
     border-color: rgba(165, 196, 34, 0.6) !important;
     transform: translateX(3px) !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option input[type=radio] {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option input[type=radio] {
     margin: 0 !important;
     accent-color: #a5c422 !important;
     width: 12px !important;
@@ -872,7 +1227,7 @@ a.link:hover::after {
     cursor: pointer !important;
     flex-shrink: 0 !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option small {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option small {
     display: inline !important;
     font-size: 0.75rem !important;
     color: rgba(255, 255, 255, 0.85) !important;
@@ -880,14 +1235,14 @@ a.link:hover::after {
     margin-left: 0.2rem !important;
     white-space: nowrap !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option .custom-wrapper {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option .custom-wrapper {
     display: flex !important;
     align-items: center !important;
     gap: 0.3rem !important;
     width: 100% !important;
     flex-wrap: nowrap !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-option .pwyw-custom-input {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option .pwyw-custom-input {
     width: 80px !important;
     flex: 0 0 80px !important;
     padding: 0.2rem 0.3rem !important;
@@ -897,14 +1252,14 @@ a.link:hover::after {
     margin: 0 !important;
     height: auto !important;
 }
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-actions {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-actions {
     text-align: left !important;
     margin-top: 0.5rem !important;
 }
 
 /* Mobile responsiveness */
 @media (max-width: 768px) {
-  #why-fhi .home-why-inner .value-prop-container {
+  #home .hero-inner .value-prop-container {
       grid-template-columns: 1fr !important; 
       gap: 1.3rem !important;
   }
@@ -920,7 +1275,7 @@ a.link:hover::after {
     top: 50%;
     transform: translateY(-50%);
     font-size: 2rem;
-    /* Solid lime: 5.87:1 on the step's tint over the plum ground. */
+    /* Solid lime, with the shadow below to lift it off the photograph. */
     color: #b8dd00;
     text-shadow: 1px 1px 3px rgba(0,0,0,0.3);
     z-index: 1;
@@ -932,15 +1287,15 @@ a.link:hover::after {
 
 /* PWYW Panel */
 .pwyw-panel {background: rgba(255, 255, 255, 0.25); backdrop-filter: blur(8px); padding:1.3rem 1.5rem 1.5rem; border-radius:12px; color:#fff; margin:0 0 1.3rem; box-shadow:0 4px 14px rgba(0,0,0,.25); max-width:680px; border: 1px solid rgba(255, 255, 255, 0.3); border-top: 4px solid rgba(255, 255, 255, 0.9);}
-.pwyw-title {margin:0 0 .5rem; font-size:1.15rem; font-weight:700; color:#fff; text-shadow: 1px 1px 3px rgba(0,0,0,0.3);}
+.pwyw-title {margin:0 0 .5rem; font-size:var(--fhi-text-lead); font-weight:700; color:#fff; text-shadow: 1px 1px 3px rgba(0,0,0,0.3);}
 .pwyw-subcopy {font-size:0.95rem; line-height:1.5rem; margin:0 0 1rem; color:#fff; text-shadow: 1px 1px 2px rgba(0,0,0,0.2);}
 .pwyw-options {display:flex; flex-wrap:wrap; gap:.8rem;}
 .pwyw-option {background: rgba(255, 255, 255, 0.3); backdrop-filter: blur(5px); padding:.7rem .85rem; border-radius:10px; display:flex; align-items:center; gap:.55rem; cursor:pointer; font-size:0.95rem; flex:1 1 150px; min-width:150px; border:1px solid rgba(255, 255, 255, 0.4); position:relative; color: #fff; font-weight: 500;}
 .pwyw-option input[type=radio] {margin:0; accent-color:#a5c422;}
 .pwyw-option small {display:block; font-size:var(--fhi-text-micro); opacity:.9; color: #fff;}
-.pwyw-option.custom {flex:1 1 165px;}
+.pwyw-option.custom {flex:1 1 165px; min-width:0;}
 .custom-wrapper {display:flex; align-items:center; gap:.45rem; width:100%;}
-.pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:1rem;}
+.pwyw-custom-input {flex:1; min-width:0; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:1rem;}
 .pwyw-actions {display:flex; align-items:center; gap:1rem; margin-top:.85rem;}
 /* The hero panel is dark and the photograph behind it is anything, so the
    fill alone does not tell the reader where the button ends. The glow does:
@@ -948,19 +1303,25 @@ a.link:hover::after {
    the picture turns out to be, without drawing a line around it. A border
    was tried here and read as a box on the page. */
 .pwyw-submit {min-width:180px;}
-#why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel .pwyw-submit {
+#home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-submit {
     box-shadow: 0 4px 16px rgba(165, 196, 34, 0.45) !important;
 }
 /* The hero's panel is a dark purple veil over the photograph (see
-   #why-fhi .home-why-inner .payment-card-wrapper .pwyw-panel above), so this
+   #home .hero-inner .payment-card-wrapper .pwyw-panel above), so this
    confirmation keeps the brand green rather than the ink: green-ink reads at
    1.8:1 to 3.0:1 there. The white panel on the appeal pages overrides it with
    the ink further down. */
 .pwyw-thanks {font-size:var(--fhi-text-micro); color:var(--fhi-green);}
-
-/* Outline variant for chat/pro buttons */
-.btn-outline-green {background:transparent; border:2px solid var(--fhi-green); color:var(--fhi-green-ink); transition:.3s;}
-.btn-outline-green:hover {background:#000; color:#fff;}
+/* The link offered when the browser blocks the payment tab reads in the
+   message's own colour, underlined, so it stands out on the dark home
+   panel as well as on white instead of taking the site's dark link ink. */
+.pwyw-thanks a,
+.pwyw-thanks a:hover,
+.pwyw-thanks a:focus {
+    color: inherit;
+    font-weight: 700;
+    text-decoration: underline;
+}
 
 /* Drafts page phase list. These four states used to be colour literals the
    appeal fetcher wrote into a style attribute at runtime, where no
@@ -1003,8 +1364,7 @@ a.link:hover::after {
   .hero-cta-group {flex-direction:column;}
   .trust-bullets {flex-direction:column;}
   .how-it-works {flex-direction:column;}
-  /* Stacked steps have nothing beside them to point at, and the arrow would
-     hang past the edge of a phone now that no hero clips it. */
+  /* Stacked steps have nothing beside them to point at. */
   .how-step:not(:last-child)::after {display:none;}
   .pwyw-options {flex-direction:column;}
   .pwyw-option {flex:1 1 auto;}
@@ -1015,87 +1375,11 @@ a.link:hover::after {
     .how-step {flex:0 0 250px;}
     .hero-inner {max-width: 1200px; width:92%;}
 }
-/* Force full-width hero background while allowing inner content to widen */
-.slider .row {
-    width: 100% !important;
-    max-width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
 @media (min-width:1200px){
     .hero-inner {max-width:none; width:100%; padding:2rem 4vw 2.75rem;}
     .hero-grid {max-width:1600px; margin:0 auto;}
 }
 
-
-.section-btn, .section-btn.btn.btn-default.smoothScroll{background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%)}
-.section-btn, .section-btn.btn.btn-default.smoothScroll {
-   margin: 10px;
-   padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
-   min-height: var(--fhi-btn-height-md);
-   font-size: var(--fhi-btn-font-md);
-   line-height: 1.5;
-   text-align: center;
-   transition: 0.5s;
-   background-size: 200% auto;
-   color: var(--fhi-btn-ink);
-   box-shadow: 0 0 20px #eee;
-   border-radius: 4px;
-   border:none;
-}
-
-.section-btn:hover, .section-btn.btn.btn-default.smoothScroll:hover {
-   background-position: right center;
-   color: var(--fhi-btn-ink);
-   text-decoration: none;
-}
-
-/* Focus on a button that carries the sweep flips the gradient: the dark stop
-   comes to both ends and the bright one to the middle, the reverse of the
-   resting fill.
-   The flip cannot carry focus on its own. The fill is twice the button's
-   width, so hover's slide to `right center` already shows dark on the left
-   running to bright on the right, and that is the same sequence of colours
-   the flipped gradient draws at rest. A reader cannot tell the two apart by
-   the fill, and a focus state that looks like a hover state is not an
-   indicator. So focus also draws a ring, outside the button, in the deep end
-   of the button's own ramp: 6.17:1 against the bright stop, 3.48:1 against
-   the dark one and 9.69:1 against a white page. Hover never draws it, which
-   is the difference the reader can see. On the hero the ring sits on the
-   photograph, where no stylesheet can say what is behind it, the same limit
-   the gate names for everything else in that band. */
-.btn-green:focus-visible,
-.btn-delete:focus-visible,
-.pro-submit-btn:focus-visible,
-.section-btn:focus-visible,
-.section-btn.btn.btn-default.smoothScroll:focus-visible {
-    background-image: linear-gradient(to right, var(--fhi-btn-fill-b) 0%, var(--fhi-btn-fill-a) 51%, var(--fhi-btn-fill-b) 100%);
-    background-position: left center;
-    outline: 3px solid var(--fhi-green-deep);
-    outline-offset: 3px;
-}
-
-/* The three sizes, as classes that read the size tokens. A button's size is
-   its role: large on a page's primary action, small in the nav, and nothing
-   at all on the rest, which leaves them medium. */
-.fhi-btn-sm {
-    font-size: var(--fhi-btn-font-sm);
-    padding: var(--fhi-btn-pad-y-sm) var(--fhi-btn-pad-x-sm);
-    min-height: var(--fhi-btn-height-sm);
-    line-height: 1.5;
-}
-.fhi-btn-md {
-    font-size: var(--fhi-btn-font-md);
-    padding: var(--fhi-btn-pad-y-md) var(--fhi-btn-pad-x-md);
-    min-height: var(--fhi-btn-height-md);
-    line-height: 1.5;
-}
-.fhi-btn-lg {
-    font-size: var(--fhi-btn-font-lg);
-    padding: var(--fhi-btn-pad-y-lg) var(--fhi-btn-pad-x-lg);
-    min-height: var(--fhi-btn-height-lg);
-    line-height: 1.5;
-}
 
 .custom-angle-up {
   display: inline-block;
@@ -1135,23 +1419,6 @@ a.link:hover::after {
     width: 100%;
 }
 
-.generic-main-content {
-    width: 80%;
-    max-width: 1200px;
-    margin-left: auto;
-    margin-right: auto;
-    margin-top: 2rem;
-    padding: 0 15px;
-}
-
-/* Mobile: use more of the screen width */
-@media (max-width: 768px) {
-    .generic-main-content {
-        width: 95%;
-        padding: 0 10px;
-    }
-}
-
 .post-infered-table {
     width: 100%;
     margin: 0 auto;
@@ -1176,6 +1443,11 @@ a.link:hover::after {
     padding: 0; /* Resets padding */
 }
 
+/* In a stack, a hidden message would still take a slot and double the gap
+   around it, so until it is shown it takes no part in the layout. */
+.fhi-stack > .hidden-error-message:not(.visible) {
+    display: none;
+}
 .hidden-error-message.visible {
   visibility: visible; /* Makes the element visible */
   height: auto; /* Allows the content to occupy its natural height */
@@ -1209,51 +1481,13 @@ a.link:hover::after {
     height: 5px;
 }
 
-.img-fluid.img-thumbnail {
-    max-width: 200px;
-    margin: auto;
-    border: none;
-    height: auto;
-    padding: 5px;
-}
-
-.img-fluid.img-logo {
+/* The social icons under a photo on About Us. */
+.img-logo {
     max-width: 25px;
     margin: auto;
     border: none;
     height: auto;
     padding: 5px;
-}
-
-.row.align-items-center {
-    box-shadow: rgba(0, 0, 0, 0.1) 0px 10px 50px;
-}
-
-.row {
-    display: flex;
-    flex-wrap: wrap;
-}
-
-.row.no-gutters {
-    margin: 0;
-    justify-content: center;
-}
-
-.row.no-gutters .col-md-2 {
-    padding: 0;
-    flex: 0 0 auto;
-    width: auto;
-}
-
-.row.no-gutters .col-md-2 img{
-    width: 100%;
-    height: auto;
-    margin: 5px;
-}
-
-.row .col-md-2 {
-    margin: 10px;
-    flex-basis: 20%;
 }
 
 #id_name, #id_job_title_or_provider_type, #id_email, #id_phone_number, #id_business_name, #id_address, #id_most_common_denial, #id_comments{
@@ -1291,6 +1525,15 @@ a.link:hover::after {
         flex-wrap: nowrap;
     }
 }
+/* The logos share their strip equally and each sits in the middle of its
+   share. Every logo, in either strip, is capped at the same 140px
+   (.featured-logo) so the two strips read as one set. */
+.featured-row > a,
+.featured-row-highlight > a {
+    flex: 1 1 0;
+    padding: var(--fhi-space-2);
+    text-align: center;
+}
 .featured-row a {
     display: block;
     transition: transform 0.3s ease, opacity 0.3s ease;
@@ -1300,7 +1543,7 @@ a.link:hover::after {
     transform: scale(1.05);
     opacity: 1;
 }
-.featured-row .img-fluid.img-thumbnail {
+.featured-logo {
     max-width: 140px;
     height: auto;
     margin: 0 auto;
@@ -1311,7 +1554,8 @@ a.link:hover::after {
     box-shadow: none;
     transition: all 0.3s ease;
 }
-.featured-row a:hover .img-fluid.img-thumbnail {
+.featured-row a:hover .featured-logo,
+.featured-row-highlight a:hover .featured-logo {
     box-shadow: none;
 }
 .featured-row-highlight {
@@ -1343,9 +1587,13 @@ a.link:hover::after {
     margin-bottom: 2.5rem;
     color: #333;
 }
+/* 16rem rather than 280px: the band sits on the wide column now, a little
+   narrower than Bootstrap's container was, and at 280px the three cards
+   split two and one on a 1024px screen. At 16rem they share a row from
+   about 980px wide, where they did before. */
 .testimonials-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
     gap: 1.5rem;
     max-width: 1200px;
     margin: 0 auto;
@@ -1526,22 +1774,25 @@ a.link:hover::after {
     color: #fff;
 }
 
-/* Share panel on non-hero pages (with colored backgrounds) */
-.container .share-panel,
-section:not(.slider) .share-panel {
+/* Share panel on non-hero pages (with colored backgrounds). A page on the
+   reading column (.fhi-page) has no section around the panel, so the
+   column is named too; without it the thank-you pages drew the hero's
+   white words on the white page. */
+section:not(.slider) .share-panel,
+.fhi-page .share-panel {
     background: #fff;
     color: #333;
     border: 1px solid var(--fhi-line);
     border-top: 4px solid var(--fhi-green);
     box-shadow: var(--fhi-shadow);
 }
-.container .share-title,
-section:not(.slider) .share-title {
+section:not(.slider) .share-title,
+.fhi-page .share-title {
     color: #333;
     text-shadow: none;
 }
-.container .share-subcopy,
-section:not(.slider) .share-subcopy {
+section:not(.slider) .share-subcopy,
+.fhi-page .share-subcopy {
     color: #555;
     text-shadow: none;
 }
@@ -1637,9 +1888,20 @@ section:not(.slider) .share-subcopy {
     background: #e8f5e9;
     border-left-color: #a5c422;
 }
+/* A callout's heading takes its box's ink, as the Bootstrap-named boxes'
+   did: green on green 4.56:1, amber 4.96:1, blue 5.03:1, red 4.92:1. */
+.alert-box-success h2,
+.alert-box-success h4 {
+    color: #2e7d32;
+}
 .alert-box-warning {
     background: #fff3cd;
     border-left-color: #ffc107;
+}
+.alert-box-warning h2,
+.alert-box-warning h4,
+.alert-box-warning li {
+    color: #856404;
 }
 .alert-box-warning-light {
     background: #fff8e1;
@@ -1649,8 +1911,18 @@ section:not(.slider) .share-subcopy {
     background: #e3f2fd;
     border-left-color: #2196f3;
 }
-.alert-box-info h2 {
+.alert-box-info h2,
+.alert-box-info h3,
+.alert-box-info h4 {
     color: #1565c0;
+}
+.alert-box-danger {
+    background: #ffebee;
+    border-left-color: #f44336;
+}
+.alert-box-danger h3,
+.alert-box-danger p {
+    color: #c62828;
 }
 
 /* Navigation/Form actions row */
@@ -1668,7 +1940,17 @@ section:not(.slider) .share-subcopy {
     align-items: center;
 }
 
-/* Footer social icons */
+/* Footer social icons: one centred row that wraps. Six 48px icons with
+   32px between them need 448px, so on a phone narrower than that the row
+   wraps instead of pushing the page sideways. */
+.footer-social {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: var(--fhi-space-4) var(--fhi-space-7);
+    margin-top: var(--fhi-space-7);
+}
 .footer-social-link {
     display: flex;
     align-items: center;
@@ -1739,7 +2021,9 @@ section:not(.slider) .share-subcopy {
 /* Insurance Bullshit Bingo Styles */
 .bingo-section {
     background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-    padding: 4rem 0;
+    /* The band's own side padding keeps the gradient showing beside the
+       board, as Bootstrap's .container inside it used to. */
+    padding: var(--fhi-space-10) var(--fhi-space-3);
     margin: 2rem 0;
 }
 
@@ -1885,6 +2169,13 @@ section:not(.slider) .share-subcopy {
     transform: translate(-50%, -50%);
 }
 
+/* The waiting page's three questions ("Why does this take time?") are
+   subsections of its h3, so they sit a step under it. main.css draws an h4
+   as large as that h3; Bootstrap's .h5 class used to make the difference. */
+#loading-more h4 {
+    font-size: var(--fhi-text-subsection);
+}
+
 /* Words for screen readers only: in the page and read aloud, drawn nowhere.
    Ours rather than Bootstrap's .visually-hidden, so it holds when Bootstrap
    is gone. Bootstrap 5 dropped the older .sr-only, and a page still using
@@ -1914,6 +2205,17 @@ section:not(.slider) .share-subcopy {
     border-radius: 50%;
 }
 
+/* The spinner beside a heading's words: a line high, with a thinner ring.
+   flex: none because a heading that wraps on a phone squeezes every item
+   in its row, and an empty box gives way first, which can press the ring
+   into an oval. */
+.fhi-spinner-inline {
+    flex: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-width: 2px;
+}
+
 @media (prefers-reduced-motion: no-preference) {
     .fhi-spinner {
         animation: fhi-spin 0.8s linear infinite;
@@ -1932,12 +2234,6 @@ section:not(.slider) .share-subcopy {
     width: 1em;
     height: 1em;
     vertical-align: -0.125em;
-}
-
-/* Form validation errors */
-.form-errors {
-    color: #dc3545;
-    margin-bottom: 1rem;
 }
 
 /* ---- The page column --------------------------------------------------
@@ -1983,9 +2279,10 @@ section:not(.slider) .share-subcopy {
 }
 
 /* Running prose in the reading column is a step larger. Text that states
-   its own size (.lead, .small), sits in a card, or is a breadcrumb keeps
-   the size it was given. */
-.fhi-page :where(p, li):not(.lead, .small, .breadcrumb-item, [class*="card"] *) {
+   its own size (.lead, .small, .fhi-lead, .fhi-note), sits in a card, or
+   is a breadcrumb keeps the size it was given. Each name in the list is
+   one class, so the rule stays at two classes of specificity. */
+.fhi-page :where(p, li):not(.lead, .small, .fhi-lead, .fhi-note, .fhi-breadcrumbs *, [class*="card"] *) {
     font-size: var(--fhi-text-reading);
 }
 
@@ -1995,7 +2292,7 @@ section:not(.slider) .share-subcopy {
    table cell or checkbox label (the consent links) inside the page content, but not one styled as a button, a
    card or navigation. :where() keeps it at zero-class specificity, so any
    component rule that sets its own decoration still wins. */
-main :where(p, li, dd, td, .form-check-label) a:where(:not([class*="btn"], [class*="card"], [class*="nav"], [role="button"])) {
+main :where(p, li, dd, td, .form-check-label, .fhi-check-row label) a:where(:not([class*="btn"], [class*="card"], [class*="nav"], [role="button"])) {
     text-decoration: underline;
     text-underline-offset: 0.15em;
     text-decoration-thickness: from-font;
@@ -2030,7 +2327,8 @@ main :where(table) {
    22px, a subsection 18px and a fourth level the body size. The wide
    column holds cards and grids, where the larger section sits right. */
 .fhi-page :where(h2),
-.fhi-page-wide :where(h2) {
+.fhi-page-wide :where(h2),
+.fhi-column :where(h2) {
     line-height: var(--fhi-line-heading);
 }
 
@@ -2038,12 +2336,14 @@ main :where(table) {
     font-size: var(--fhi-text-reading-section);
 }
 
-.fhi-page-wide :where(h2) {
+.fhi-page-wide :where(h2),
+.fhi-column :where(h2) {
     font-size: var(--fhi-text-section);
 }
 
 .fhi-page :where(h3),
-.fhi-page-wide :where(h3) {
+.fhi-page-wide :where(h3),
+.fhi-column :where(h3) {
     line-height: var(--fhi-line-heading);
     margin-bottom: var(--fhi-space-2);
 }
@@ -2052,7 +2352,8 @@ main :where(table) {
     font-size: var(--fhi-text-lead);
 }
 
-.fhi-page-wide :where(h3) {
+.fhi-page-wide :where(h3),
+.fhi-column :where(h3) {
     font-size: var(--fhi-text-subsection);
 }
 
@@ -2060,7 +2361,8 @@ main :where(table) {
     font-size: var(--fhi-text-body);
 }
 
-.fhi-page-wide :where(h4) {
+.fhi-page-wide :where(h4),
+.fhi-column :where(h4) {
     font-size: var(--fhi-text-lead);
 }
 
@@ -2090,17 +2392,34 @@ main :where(table) {
 /* The delete flow's notes ("Don't see the email?") read best at 640px,
    which used to be an inline style on the alert. An inline style beats
    the cap above, so on a phone the note ran 373px in a 350px column.
-   Here the two limits are one rule, and the smaller wins. */
-.fhi-page-centred > .alert {
+   Here the two limits are one rule, and the smaller wins. A notice reads
+   from its left edge even in a centred column: its bullet list, centred
+   line by line, was hard to follow, which is what Bootstrap's text-start
+   on each alert used to fix. */
+.fhi-page-centred > .fhi-notice {
     max-width: min(640px, 100%);
+    text-align: start;
 }
 
 /* The support address is one word. In bold Poppins it is 320px, and a
    list item inside the phone note has 284px, so the page scrolled 5px
-   sideways. A word that cannot fit breaks; nothing else changes. */
-.fhi-page .alert,
-.fhi-page a[href^="mailto:"] {
+   sideways. A word that cannot fit breaks; nothing else changes. About
+   Us sets its addresses in cards on the wide column, as little as 240px
+   on a 320px phone, and its a.link is an inline-block, which keeps a word
+   whole unless it may break anywhere. */
+.fhi-page .fhi-notice,
+.fhi-page a[href^="mailto:"],
+.fhi-page-wide a[href^="mailto:"] {
     overflow-wrap: anywhere;
+}
+
+/* A blog or FAQ post's text (blog_post.tsx renders it into .md-content).
+   A word with no space in it, such as a long code name or a path, breaks
+   rather than running past a phone's edge. break-word, not anywhere: a
+   post's tables sit in a .scroll-x box, and anywhere would let a table
+   squeeze to the phone by splitting every figure mid-number instead. */
+.md-content {
+    overflow-wrap: break-word;
 }
 
 .fhi-page-centred {
@@ -2110,14 +2429,21 @@ main :where(table) {
     text-align: center;
 }
 
+/* The centred column spaces what it holds: each piece sits a paragraph's
+   distance above the next, as Bootstrap's paragraph and alert margins
+   did, so a notice or a form no longer touches the line under it. The
+   title block keeps its own spacing. */
+.fhi-page-centred > :not(.fhi-page-title) {
+    margin-block: 0 var(--fhi-space-4);
+}
+
 /* The press logos on About Us: a row that wraps and centres, each
    wordmark near the size the home page's featured row gives its logos
    (five to a line in the reading column, the same five centred in the
    wide one). On Bootstrap's col-md-2 they were a sixth of the
    row, which in a 760px column is a 99px wordmark nobody can read. The
-   image is capped at its link, since .img-fluid.img-thumbnail otherwise
-   lets it ask for 200px and a flex item will not shrink below its
-   content. */
+   image is capped at its link: a wordmark asks for its own width, 411px
+   to 884px here, and a flex item will not shrink below its content. */
 .fhi-logo-row {
     display: flex;
     flex-wrap: wrap;
@@ -2129,8 +2455,20 @@ main :where(table) {
     flex: 0 1 136px;
 }
 
-.fhi-logo-row .img-fluid.img-thumbnail {
+.fhi-logo-row img {
     max-width: 100%;
+    /* The small inset Bootstrap's thumbnail gave each logo, which keeps the
+       second row clear of the pink shadow under it. */
+    padding: var(--fhi-space-1);
+}
+/* A photo at the head of a card, as on About Us: centred, and no wider
+   than 200px or the card. It centres with align-self rather than auto
+   margins, which in a card stretched to its row's height would push the
+   photo down into the spare space. */
+.fhi-portrait {
+    align-self: center;
+    max-width: min(200px, 100%);
+    height: auto;
 }
 
 /* Container utilities */
@@ -2146,30 +2484,6 @@ main :where(table) {
     margin-left: auto;
     margin-right: auto;
     margin-top: 2.5rem !important;
-}
-
-/* Muted link style */
-.btn-link-muted {
-    color: #6c757d;
-    text-decoration: underline;
-    font-size: 0.9rem;
-}
-.btn-link-muted:hover {
-    color: #495057;
-}
-
-/* Secondary button style */
-.btn-secondary-custom {
-    background: #6c757d;
-    color: white;
-    padding: 10px 20px;
-    border-radius: 3px;
-    text-decoration: none;
-}
-.btn-secondary-custom:hover {
-    background: #5a6268;
-    color: white;
-    text-decoration: none;
 }
 
 /* External link icon (small) - extracted from microsite.html */
@@ -2192,13 +2506,8 @@ main :where(table) {
     width: 60px;
 }
 
-/* Appeals page layout - centered content with margins */
-#output-container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 20px;
-}
-
+/* Appeals page layout: the back and start-over links sit in from the edge.
+   The drafts above them take the flow column's width, gutter included. */
 .form-nav-centered {
     padding: 0 20px;
 }
@@ -2464,16 +2773,22 @@ main :where(table) {
     .about-steps {
         max-width: 100%;
     }
+    /* The strip scrolls sideways on a phone, so it starts at its left edge:
+       centred, the logos that overflowed to the left could never be
+       scrolled back to (Fast Company, CBS and NewsNation were unreachable). */
     .featured-row,
     .featured-row-highlight {
+        justify-content: flex-start;
         flex-wrap: nowrap;
         overflow-x: auto;
+        /* A logo snapped to the strip's edge keeps room for its focus ring. */
+        scroll-padding-inline: var(--fhi-space-2);
         -webkit-overflow-scrolling: touch;
         scroll-snap-type: x mandatory;
         padding: 1rem 0.5rem;
     }
-    .featured-row .col-md-2,
-    .featured-row-highlight .col-md-2 {
+    .featured-row > a,
+    .featured-row-highlight > a {
         flex: 0 0 auto;
         scroll-snap-align: start;
         min-width: 120px;
@@ -2555,7 +2870,7 @@ main :where(table) {
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.pro-interest-form input:focus,
+.pro-interest-form input:not([type="submit"]):focus,
 .pro-interest-form textarea:focus {
     border-color: var(--fhi-green-ink);
     box-shadow: 0 0 0 3px rgba(165, 196, 34, 0.18);
@@ -2588,16 +2903,25 @@ main :where(table) {
     font-size: 1.3rem;
 }
 
+/* The form's own errors, not one field's, sit in a red notice above the
+   fields, a field's gap clear of the first row. Its list takes the
+   notice's ink: the field errors' red is 4.1:1 on the notice's pale red,
+   the notice's ink 7.1:1. */
+.pro-interest-form > .fhi-notice {
+    margin-bottom: var(--fhi-space-5);
+}
+
+.pro-interest-form > .fhi-notice .errorlist {
+    margin: 0;
+    color: inherit;
+}
+
 .pro-interest-actions {
     margin-top: 1.75rem;
 }
 
-.pro-interest-form .pro-submit-btn {
+.pro-interest-actions > .fhi-button {
     width: 100%;
-    margin: 0;
-    padding: 0.8rem 1.5rem;
-    font-size: 1.6rem;
-    font-weight: 600;
 }
 
 @media (max-width: 768px) {
@@ -2879,20 +3203,9 @@ textarea,
     z-index: 5;
 }
 
-.letter-btn {
-    margin: var(--fhi-space-1);
-    min-width: var(--fhi-space-7);
-}
-
-.letter-btn.disabled {
-    opacity: 0.4;
-    pointer-events: none;
-}
-
 .letter-header {
     border-bottom: 2px solid var(--fhi-green-ink);
     padding-bottom: var(--fhi-space-2);
-    margin-bottom: var(--fhi-space-4);
     color: var(--fhi-green-ink);
 }
 
@@ -2902,17 +3215,18 @@ textarea,
     color: inherit;
 }
 
-.term-card .card {
+.term-card .fhi-card {
+    height: 100%;
     border-left: 3px solid transparent;
 }
 
 @media (prefers-reduced-motion: no-preference) {
-    .term-card .card {
+    .term-card .fhi-card {
         transition: all 0.2s ease;
     }
 }
 
-.term-card:hover .card {
+.term-card:hover .fhi-card {
     box-shadow: var(--fhi-shadow);
     border-left-color: var(--fhi-green-ink);
 }
@@ -2925,23 +3239,8 @@ textarea,
     border-left: 4px solid var(--fhi-green-ink);
 }
 
-.term-definition .lead {
+.term-definition .fhi-lead {
     line-height: var(--fhi-line-body);
-}
-
-.breadcrumb-item a {
-    color: var(--fhi-green-ink);
-    text-decoration: none;
-}
-
-.breadcrumb-item a:hover {
-    text-decoration: underline;
-}
-
-/* Scoped to the glossary: the same class is on three other pages that never
-   asked for this border, and !important would have taken theirs too. */
-.glossary-disclaimer.disclaimer-box {
-    border-color: var(--fhi-line) !important;
 }
 
 #final-cta {
@@ -2970,6 +3269,36 @@ textarea,
    Desktop opens the menu with CSS and hides the toggle; the phone keeps the
    real disclosure behaviour.
    -------------------------------------------------------------------------- */
+
+/* The header's row and the footer's. On a big screen it is the wide
+   column's width, so the logo and the footer sit over the page's own edges
+   rather than out past them. Narrower, it is its parent less 12px a side;
+   the header and footer keep 12px from the window themselves, so on a
+   tablet the row starts 24px in and the logo 36px in, where they were. It
+   follows the window; Bootstrap's container, which this replaces, jumped
+   between five fixed widths. */
+.fhi-shell {
+    width: 100%;
+    max-width: min(var(--fhi-page-wide), 100% - 2 * var(--fhi-space-3));
+    margin-inline: auto;
+    padding-inline: var(--fhi-space-3);
+}
+
+@media (max-width: 575px) {
+    /* A phone has no width to spare: the row is the screen. */
+    .fhi-shell {
+        max-width: none;
+    }
+}
+
+/* The logo, then the menu. On a phone the menu is the whole width, so it
+   wraps under the logo; a desktop puts the two side by side (below). */
+.fhi-nav-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
 .fhi-nav {
     width: 100%;
 }
@@ -2989,6 +3318,14 @@ textarea,
     display: none;
 }
 
+/* The three bars beside "Menu", an inline SVG drawn in the toggle's own
+   colour. In em, so it grows with the word when someone sets a larger
+   text size. */
+.fhi-nav-toggle-icon {
+    width: 1.5em;
+    height: 1.5em;
+}
+
 .fhi-nav-list {
     display: flex;
     flex-direction: column;
@@ -2998,8 +3335,7 @@ textarea,
     list-style: none;
 }
 
-.fhi-nav-list > li > .nav-link,
-.fhi-nav-group > summary.nav-link {
+.fhi-nav-link {
     display: block;
     padding: var(--fhi-space-2) var(--fhi-space-3);
     /* 44px minimum row, the same rule the rest of the nav follows. */
@@ -3010,12 +3346,22 @@ textarea,
     list-style: none;
 }
 
-.fhi-nav-group > summary.nav-link::-webkit-details-marker {
+summary.fhi-nav-link::-webkit-details-marker {
     display: none;
 }
 
-.fhi-nav-group > summary.nav-link::after {
+summary.fhi-nav-link::after {
     content: " \25BE";
+}
+
+/* Every item in the row answers the pointer the way the links in its
+   dropdowns do. The links get this from main.css's a:hover; a summary is
+   not a link, so it is said here for both. Only where there is a pointer:
+   on a phone a tapped summary would otherwise stay green after it opens. */
+@media (hover: hover) {
+    .fhi-nav-link:hover {
+        color: var(--fhi-green-ink);
+    }
 }
 
 .fhi-nav-submenu {
@@ -3081,6 +3427,12 @@ textarea,
         display: none;
     }
 
+    /* The logo and the menu share one line. The menu gives way and wraps
+       its own items; the logo keeps its 75px. */
+    .fhi-nav-bar {
+        flex-wrap: nowrap;
+    }
+
     .fhi-nav-list {
         flex-direction: row;
         /* Seven items and the button do not fit beside the logo on a small
@@ -3092,8 +3444,7 @@ textarea,
         gap: var(--fhi-space-2);
     }
 
-    .fhi-nav-list > li > .nav-link,
-    .fhi-nav-group > summary.nav-link,
+    .fhi-nav-link,
     .fhi-nav-cta a {
         white-space: nowrap;
     }
@@ -3117,7 +3468,7 @@ textarea,
 
 /* ---- Questions that open in place ----------------------------------------
    The FAQ on every microsite and on the Denial Language Library, and the
-   lists on Preparing for 2026 and Turning 26. They were Bootstrap
+   lists on Preparing for 2027 and Turning 26. They were Bootstrap
    accordions, which opened only once bootstrap.bundle.min.js had arrived
    from a CDN, so a blocked or slow script left every answer shut. Each item
    is a <details> now: the browser opens it with no script, and keyboards
@@ -3269,9 +3620,12 @@ textarea,
    own, and more than the 3px the copy box used to blur behind itself,
    which made the photo sharp everywhere but under the box. One blur, so
    the box's goes. */
+/* #home is a flex row (main.css), so its one band has to ask for the whole
+   width; Bootstrap's row used to force it there. */
 #home .item {
     position: relative;
     overflow: hidden;
+    width: 100%;
 }
 
 #home .item::before {
@@ -3289,36 +3643,6 @@ textarea,
 #home .hero-inner {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
-    /* A flat plum panel under the home copy, so the words sit on one colour
-       rather than on whichever part of the photograph lands behind them. */
-    background: #2b0f3d;
-}
-
-/* On that panel the site's deep-green focus ring nearly disappears, so a
-   focused control in the home copy rings in white instead: 16.96:1 on
-   the plum. The id outranks each button's own ring rule; only the colour
-   changes, so width and offset stay theirs. */
-#home .hero-inner :focus-visible {
-    outline-color: #fff;
-}
-
-/* The block under the home hero: why the site exists, paying what you can,
-   and how it works. It used to sit on the photograph inside the hero; on
-   the hero's own plum it keeps the white and lime it was drawn in, and the
-   first screen is left to the headline and the three ways in. */
-.home-why {
-    background: #2b0f3d;
-    color: #fff;
-    padding: var(--fhi-space-9) var(--fhi-space-4);
-}
-
-.home-why-inner {
-    max-width: 1100px;
-    margin: 0 auto;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
 }
 
 /* The copy's last piece brings its own bottom margin: 20px under a
@@ -3430,16 +3754,40 @@ textarea,
     .fhi-form-table td {
         padding: 0 0 var(--fhi-space-4);
     }
+}
 
-    /* A field sized in columns rather than by a class, like the follow-up
-       form's cols="80" textareas, is wider than a phone. Stacked, the cell
-       is the whole row, so capping the field at its cell keeps its right
-       edge on screen instead of scrolling the form box sideways. */
-    .fhi-form-table input,
-    .fhi-form-table select,
-    .fhi-form-table textarea {
-        max-width: 100%;
-    }
+/* In the reading column a form table always puts each label above its
+   field, as it does on a phone. The column is never wide enough for a field
+   sized in columns beside its label: follow-up's two cols="80" boxes ran
+   about 100px past it at a desktop. */
+.fhi-page .fhi-form-table,
+.fhi-page .fhi-form-table tbody,
+.fhi-page .fhi-form-table tr,
+.fhi-page .fhi-form-table th,
+.fhi-page .fhi-form-table td {
+    display: block;
+    width: 100%;
+}
+
+.fhi-page .fhi-form-table th {
+    padding: var(--fhi-space-3) 0 var(--fhi-space-1);
+    background: transparent;
+    border-bottom: 0;
+}
+
+.fhi-page .fhi-form-table td {
+    padding: 0 0 var(--fhi-space-4);
+}
+
+/* A field sized in columns rather than by a class, like the follow-up
+   form's cols="80" textareas, is wider than a phone, and beside its label
+   it is wider than the reading column too. Capping the field at its cell
+   keeps its right edge on screen instead of scrolling the form box
+   sideways, stacked on a phone or side by side above one. */
+.fhi-form-table input,
+.fhi-form-table select,
+.fhi-form-table textarea {
+    max-width: 100%;
 }
 
 /* The two notes under the appeal form (what stays in your browser, how we
@@ -3455,3 +3803,415 @@ textarea,
 .fhi-hint {
     color: var(--fhi-muted);
 }
+
+/* An aside inside a bold label, such as "(we try to keep this in your
+   browser)", stays at the running weight, so the label's own words are
+   what stand out. */
+.fhi-label .fhi-hint { font-weight: 400; }
+
+/* ---- Content pages: sections, the column, stacks and cards ----------------
+   The few pieces a content page is built from, in place of Bootstrap's grid
+   and utilities. They lean on the browser rather than on breakpoints: the
+   column is one width token, a card grid fits as many cards as the room
+   allows, and a parent spaces its children with gap, so there are no
+   margin classes to keep in step.
+   -------------------------------------------------------------------------- */
+
+/* A full-width band of the page. */
+.fhi-section { padding-block: var(--fhi-space-9); }
+.fhi-section-tight { padding-block: var(--fhi-space-6); }
+.fhi-section-alt { background-color: #f8f9fa; }
+
+/* The column a section's content sits in, sized the way the page tiers
+   are: the reading width, or the wide one for a band of cards, giving way
+   to the window with the page gutter beside it, and the whole screen less
+   the 16px edge padding on a phone. Its headings follow the wide tier's
+   scale (above), since a band holds cards and grids rather than prose. */
+.fhi-column {
+    width: 100%;
+    max-width: min(var(--fhi-page-reading), 100% - 2 * var(--fhi-page-gutter));
+    margin-inline: auto;
+    padding-inline: var(--fhi-space-4);
+    container-type: inline-size;
+}
+.fhi-column-wide { max-width: min(var(--fhi-page-wide), 100% - 2 * var(--fhi-page-gutter)); }
+@media (max-width: 575px) {
+    .fhi-column { max-width: none; }
+}
+
+/* Children one under another, spaced by the parent. */
+.fhi-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fhi-space-4);
+}
+.fhi-stack > * { margin-block: 0; }
+/* A button in a stack or card keeps its own width rather than stretching
+   across the column; in a centred stack it sits in the middle. */
+.fhi-stack > .fhi-button,
+.fhi-card > .fhi-button { align-self: flex-start; }
+/* The same in a tick box's row, where a grid cell would otherwise stretch
+   the button across the label's column. */
+.fhi-check-row > .fhi-button { justify-self: start; }
+/* A quiet button in the row, such as Remove the downloaded model or the
+   Undo after a status line, sits in the line of text beside it rather
+   than in a button's box. */
+.fhi-check-row .fhi-button-quiet { padding: 0; min-height: 0; }
+
+/* A stack whose contents sit in the middle: a call to action and its note. */
+.fhi-stack-centred { align-items: center; text-align: center; }
+.fhi-stack-centred > .fhi-button { align-self: center; }
+
+/* A section's heading, and the line under it, sit in the middle of the
+   column; the cards and lists after them keep their left edge. A band
+   that is only a call to action centres everything. */
+.fhi-column > h2,
+.fhi-column > h2 + p { text-align: center; }
+.fhi-column-centred { text-align: center; }
+.fhi-column-centred > .fhi-button { align-self: center; }
+.fhi-stack-loose { gap: var(--fhi-space-6); }
+
+/* A marker, badge or abbreviation beside its text, centred on one line. */
+.fhi-media {
+    display: flex;
+    align-items: center;
+    gap: var(--fhi-space-4);
+}
+.fhi-media > *,
+.fhi-media > * > * { margin-block: 0; }
+
+/* A wrapping row, for buttons and links side by side. */
+.fhi-cluster {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--fhi-space-4);
+}
+.fhi-cluster-center { justify-content: center; }
+/* A long unbroken name, such as a drug's chemical names joined by
+   slashes, breaks rather than pushing the page wider than a phone. A
+   button already wraps inside its own width. */
+.fhi-column { overflow-wrap: anywhere; }
+
+/* Two to four cards that belong together, laid out by the width of the
+   column they sit in rather than the screen: one under another in a narrow
+   column, then side by side. Three go three across; four go two by two
+   until there is room for all four, so no group splits two and one and no
+   card gets too narrow to read. */
+.fhi-switcher {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--fhi-space-6);
+}
+@container (min-width: 36rem) {
+    .fhi-switcher { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .fhi-switcher:has(> :nth-child(3):last-child) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container (min-width: 56rem) {
+    .fhi-switcher:has(> :nth-child(4):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* Cards: as many to a row as fit at about 14rem each, so three short cards
+   share the reading column on a desktop and one takes a phone's width.
+   Cards that hold paragraphs are roomy: 20rem each, so two to a row there
+   and the lines stay long enough to read. A short run keeps the same card
+   size and leaves the rest of the row empty, so a lone card never stretches
+   across the row. */
+/* auto-fit: fewer cards than fit share the row rather than leaving empty tracks. */
+.fhi-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr));
+    gap: var(--fhi-space-6);
+}
+.fhi-cards-roomy { --fhi-card-min: 20rem; }
+/* Two columns on the wide page and one on a phone, for a pair of groups
+   too long to sit three across, such as the Resources page's. */
+.fhi-cards-wide { --fhi-card-min: 26rem; }
+/* Equal tiles in a lettered index: a letter with one entry keeps a one-tile card. */
+.fhi-cards-tiles { grid-template-columns: repeat(auto-fill, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr)); }
+
+.fhi-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fhi-space-2);
+    min-width: 0;
+    padding: var(--fhi-space-6);
+    overflow-wrap: break-word;
+    background-color: #fff;
+    border: 1px solid #d0d0d0;
+    border-radius: var(--fhi-radius);
+}
+.fhi-card > * { margin-block: 0; }
+.fhi-card-warning { border-color: #ffc107; }
+.fhi-card-info { border-color: #087990; }
+.fhi-card-subtitle { color: var(--fhi-muted); font-size: var(--fhi-text-small); }
+/* A card's own title, a step below the section's subheadings (the
+   column's h3 is --fhi-text-subsection). */
+.fhi-card-title { font-size: var(--fhi-text-lead); }
+/* A card's closing link or button sits at the foot, so a row of cards
+   lines theirs up. */
+.fhi-card-action { margin-top: auto; align-self: flex-start; }
+/* A card whose title link covers the whole card, so the card is the target. */
+.fhi-card:has(.fhi-card-link) { position: relative; }
+.fhi-card-link::after { content: ""; position: absolute; inset: 0; }
+/* A coloured title bar across the top of a card. #087990 carries white
+   at 5.06:1. */
+.fhi-card-banner {
+    margin: calc(-1 * var(--fhi-space-6)) calc(-1 * var(--fhi-space-6)) var(--fhi-space-2);
+    padding: var(--fhi-space-2) var(--fhi-space-6);
+    color: #fff;
+    background-color: #087990;
+    border-radius: var(--fhi-radius) var(--fhi-radius) 0 0;
+}
+
+/* Items that read as one block, divided by rules. */
+.fhi-list {
+    padding: 0;
+    list-style: none;
+    background-color: #fff;
+    border: 1px solid #d0d0d0;
+    border-radius: var(--fhi-radius);
+}
+.fhi-list > * {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fhi-space-1);
+    padding: var(--fhi-space-4);
+}
+.fhi-list > * + * { border-top: 1px solid #d0d0d0; }
+.fhi-list > * > * { margin-block: 0; }
+/* A list item can itself be a media row: a badge beside its text. */
+.fhi-list > .fhi-media { flex-direction: row; }
+
+/* A list without bullets or indent. */
+.fhi-bare-list { padding-left: 0; list-style: none; }
+
+/* A boxed notice. Amber with dark ink, 7.21:1. */
+.fhi-notice {
+    padding: var(--fhi-space-4);
+    border: 1px solid transparent;
+    border-radius: var(--fhi-radius);
+}
+.fhi-notice-warning { color: #664d03; background-color: #fff3cd; border-color: #ffecb5; }
+.fhi-notice-info { color: #333; background-color: #e7f0ff; border-color: #cfe2ff; }
+/* Something went wrong with what the reader sent: dark red on pale red, 7.1:1. */
+.fhi-notice-danger { color: #842029; background-color: #f8d7da; border-color: #f5c2c7; }
+/* A link in a notice is the notice's ink, bold and underlined, so it
+   stands out from the text around it by more than colour. */
+.fhi-notice a { color: inherit; font-weight: 700; text-decoration: underline; }
+/* A list in a notice sits a step under the line that leads into it, and
+   the notice's own padding, not the list's margin, closes the box. */
+.fhi-notice > ul { margin-block: var(--fhi-space-2) 0; }
+/* A paragraph in a notice is the notice's ink too, not main.css's grey,
+   which falls under 4.5:1 on the notice fills. */
+.fhi-notice p { color: inherit; }
+
+/* The small print at the foot of a page: a bordered light box. */
+.fhi-disclaimer {
+    padding: var(--fhi-space-4);
+    font-size: var(--fhi-text-small);
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: var(--fhi-radius);
+}
+
+/* Where a page sits in the site: its parents as links, each after a
+   slash, then the page itself. A plain ordered list, so a screen reader
+   counts the steps, in place of Bootstrap's .breadcrumb. The grey is
+   --fhi-muted, 5.74:1 on white; the links are the green ink. */
+.fhi-breadcrumbs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--fhi-space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--fhi-muted);
+}
+.fhi-breadcrumbs > li + li::before {
+    content: "/";
+    margin-right: var(--fhi-space-2);
+}
+.fhi-breadcrumbs a { color: var(--fhi-green-ink); text-decoration: none; }
+.fhi-breadcrumbs a:hover { text-decoration: underline; }
+
+/* A light panel. */
+.fhi-panel {
+    padding: var(--fhi-space-4);
+    background-color: #f8f9fa;
+    border-radius: var(--fhi-radius);
+}
+
+/* A photograph in the column: the size its file gives it, never wider
+   than the column, at its own proportions. The fax thank-you photo is
+   1088px wide and scrolled the page sideways on a phone. */
+.fhi-photo {
+    max-width: 100%;
+    height: auto;
+}
+
+/* A video embed that keeps its 16:9 shape at any width: the box takes its
+   height from its width and the frame fills it. Bootstrap's .ratio did the
+   same with a padding trick. */
+.fhi-video { aspect-ratio: 16 / 9; }
+.fhi-video > iframe { display: block; width: 100%; height: 100%; }
+
+/* A small label. The fills clear 4.5:1 under their ink. */
+.fhi-badge {
+    display: inline-block;
+    padding: var(--fhi-space-1) var(--fhi-space-2);
+    font-size: var(--fhi-text-small);
+    font-weight: 700;
+    line-height: 1.25;
+    color: #fff;
+    border-radius: var(--fhi-space-2);
+}
+.fhi-badge.fhi-badge-success { background-color: #157347; }
+.fhi-badge.fhi-badge-primary { background-color: #0b5ed7; }
+.fhi-badge.fhi-badge-danger { background-color: #bb2d3b; }
+.fhi-badge.fhi-badge-warning { background-color: #ffc107; color: #212529; }
+.fhi-badge.fhi-badge-info { background-color: #0dcaf0; color: #212529; }
+/* Long condition names wrap inside the card rather than running past it. */
+.fhi-badge { max-width: 100%; }
+
+/* Text roles: the line that introduces a section, a small aside, and the
+   colour of a warning or information icon. */
+.fhi-lead { font-size: var(--fhi-text-subsection); }
+.fhi-note { color: var(--fhi-muted); font-size: var(--fhi-text-small); }
+.fhi-text-warning { color: #8a5a00; }
+.fhi-text-info { color: #087990; }
+
+/* ---- Forms: a field's group, its label, a tick box's row, the buttons ------
+   The field and tick box themselves are .fhi-field and .fhi-check, near the
+   top of this file. These arrange them. */
+.fhi-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--fhi-space-1);
+}
+.fhi-field-group > * { margin-block: 0; }
+.fhi-label { font-weight: 700; }
+/* A tick box, its label beside it, and any note under the label in the
+   same column as the label's text. */
+.fhi-check-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--fhi-space-2);
+    row-gap: var(--fhi-space-1);
+    align-items: baseline;
+}
+.fhi-check-row > :nth-child(n + 3) { grid-column: 2; }
+.fhi-check-row > * { margin: 0; }
+/* A form's buttons, each the full width of the form. */
+.fhi-actions {
+    display: grid;
+    gap: var(--fhi-space-2);
+}
+/* The intake page's letter box takes the letter typed, pasted or as a file
+   dropped on it or anywhere in its step, which scrub.ts hands to the file
+   input so it is read on the device the way a chosen file is. A phone or a
+   keyboard cannot drag, so the file input is drawn as its label: a button
+   that says what it does, beside the hint. */
+.fhi-file-pick {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--fhi-space-2) var(--fhi-space-3);
+}
+/* The input is hidden from sight, not from the keyboard, so the button
+   people see carries the ring while the input has focus. */
+.fhi-file-pick > input[type="file"]:focus-visible + .fhi-button {
+    outline: 2px solid var(--fhi-green-ink);
+    outline-offset: 2px;
+}
+/* "Or drop the file on this box" only where there is a mouse to drag with;
+   on a phone it would ask for something the phone cannot do. "Or take a
+   photo" the other way round: a desktop's file picker has no camera. It
+   sits inside the button's one span, so it stays in the line of text rather
+   than becoming a flex item of its own. */
+.fhi-drop-hint { display: none; }
+@media (hover: hover) and (pointer: fine) {
+    .fhi-drop-hint { display: inline; }
+    .fhi-photo-hint { display: none; }
+}
+/* While a file is dragged over the letter's step: a dashed green edge and a
+   pale ground, so the box reads as the place it goes. */
+.fhi-field.fhi-drop-active {
+    border-style: dashed;
+    border-color: var(--fhi-green-ink);
+    background-color: var(--fhi-surface);
+}
+/* The intake form's steps: each heading sits with the fields under it, and
+   the steps sit further apart than the fields in them. */
+.main-form > form > section > h2 { padding-bottom: 0; }
+.main-form > form > section + section { margin-top: var(--fhi-space-2); }
+/* A pair of fields in a stack takes the stack's spacing, not the 10px
+   margins it carries elsewhere, so About you is spaced evenly. */
+.fhi-stack > .together-form-group { row-gap: var(--fhi-space-4); }
+.fhi-stack > .together-form-group > div { margin: 0; }
+/* A group of controls under one name, such as the intake page's four
+   agreements: no box of its own, and its legend, which holds the step's
+   heading, sits over the controls the way a heading does. The legend does
+   not float, so it is the group's name whether or not another stylesheet
+   floats legends. */
+.fhi-fieldset {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+.fhi-fieldset > legend {
+    float: none;
+    width: 100%;
+    margin: 0 0 var(--fhi-space-4);
+    padding: 0;
+}
+.fhi-fieldset > legend > h2 {
+    margin: 0;
+    padding-bottom: 0;
+}
+/* A field's message (partials/field_error.html), under the field it is
+   about, and in the danger colour, 6.91:1 on white. Empty, it stays in the
+   accessibility tree so that filling it is read out, but it takes no part
+   in the layout: a stack or a tick box's row leaves no gap for it. */
+.fhi-field-error,
+.fhi-form-errors {
+    color: var(--fhi-danger);
+    font-weight: 700;
+}
+.fhi-field-error:empty { position: absolute; }
+/* Every error on a page the server sent back, listed at the top of the
+   form in a red-edged box, each a link to its field. The line over the list
+   takes the box's colour and weight rather than a paragraph's grey. */
+.fhi-form-errors {
+    display: grid;
+    gap: var(--fhi-space-2);
+    padding: var(--fhi-space-4);
+    border: 2px solid var(--fhi-danger);
+    border-radius: var(--fhi-radius);
+}
+.fhi-form-errors > * { margin-block: 0; }
+.fhi-form-errors > p { color: inherit; font-weight: inherit; }
+.fhi-form-errors > ul {
+    display: grid;
+    gap: var(--fhi-space-1);
+    padding-inline-start: var(--fhi-space-5);
+}
+.fhi-form-errors a { color: inherit; }
+/* A link in that list lands its field, and the label over it, clear of the
+   header that stays at the top of the window: the header is up to 143px
+   tall with its menu closed, and the letter box's label and hint take 116px
+   on a phone. */
+.main-form :is(.fhi-field, .fhi-check) {
+    scroll-margin-top: calc(3 * var(--fhi-space-11) + var(--fhi-space-7));
+}
+/* A field the form cannot take as it is has its edge in the same colour. */
+.fhi-field[aria-invalid="true"] { border-color: var(--fhi-danger); }
+/* A tick box has no edge of its own to colour, so one the form still needs
+   gets a red ring instead. Keyboard focus draws its own ring in its place. */
+.fhi-check[aria-invalid="true"]:not(:focus-visible) {
+    outline: 2px solid var(--fhi-danger);
+    outline-offset: 2px;
+}
+.fhi-text-success { color: var(--fhi-green-ink); }

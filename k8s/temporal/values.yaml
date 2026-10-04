@@ -52,6 +52,41 @@ server:
             maxIdleConns: 2
             maxConnLifetime: "25m"
             manageSchema: true
+    # The server's own Prometheus endpoint, on :9090 in every server pod.
+    # These are the chart's defaults, written out so the endpoint the alert
+    # rules depend on cannot change under a chart bump. No `framework` key:
+    # the server then uses its tally reporter, which keeps counter names as
+    # defined (no _total suffix) and reports timer histograms in SECONDS.
+    # Verified against temporalio/temporal v1.31.2 (the image chart 1.6.0
+    # ships), common/metrics/config.go.
+    metrics:
+      prometheus:
+        timerType: histogram
+        listenAddress: "0.0.0.0:9090"
+  # Scraping it: one ServiceMonitor per server service (frontend, history,
+  # matching, worker), pointed at the headless Services' `metrics` port.
+  # Nothing scraped the endpoint before; the worker alerts' server-side group
+  # reads these series.
+  metrics:
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      # Same selector caveat as the PodMonitors (k8s/fhi-web-podmonitor.yaml):
+      # the operator picks a ServiceMonitor up only if its
+      # serviceMonitorSelector matches. Mirror any label it requires here.
+      additionalLabels:
+        app: fight-health-insurance
+      # The operator gives every scraped series a `namespace` label (the
+      # Kubernetes namespace), so the server's own `namespace` label, the
+      # Temporal namespace, arrives renamed to `exported_namespace`. Copy it
+      # to `temporal_namespace`, the label the alert rules match on. Series
+      # scraped any other way never carry it, so the rules cannot count a
+      # second copy of the same series.
+      metricRelabelings:
+        - action: replace
+          sourceLabels:
+            - exported_namespace
+          targetLabel: temporal_namespace
 
 # We bring our own Postgres. Chart >= 1.0 no longer bundles Cassandra/ES/
 # MySQL/PostgreSQL subcharts, so there is nothing to disable -- external
@@ -72,5 +107,6 @@ web:
     - name: TEMPORAL_DISABLE_WRITE_ACTIONS
       value: "true"
 
-# Monitoring: chart >= 1.0 no longer bundles Prometheus/Grafana; wire
-# Temporal's metrics into the existing Prometheus later if wanted.
+# Monitoring: chart >= 1.0 no longer bundles Prometheus/Grafana. The server's
+# metrics reach the cluster's existing Prometheus through the ServiceMonitors
+# above (server.metrics.serviceMonitor); see README "Server metrics".

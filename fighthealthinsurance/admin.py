@@ -864,10 +864,17 @@ class ProposedAppealAdmin(admin.ModelAdmin):
         "chosen",
         "editted",
         "context_level",
+        "prompt_version",
         "speculative",
     )
     search_fields = ("appeal_text",)
-    list_filter = ("chosen", "editted", "context_level", "speculative")
+    list_filter = (
+        "chosen",
+        "editted",
+        "context_level",
+        "prompt_version",
+        "speculative",
+    )
     ordering = ("id",)
     # Use raw_id_fields to avoid loading all Denials in FK dropdown
     raw_id_fields = ("for_denial",)

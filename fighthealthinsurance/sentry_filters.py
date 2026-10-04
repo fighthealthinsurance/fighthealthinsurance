@@ -88,6 +88,20 @@ UNROUTED_WEBSOCKET_MARKER = "No route found for path"
 UNROUTED_TRANSACTION_SOURCE = "url"
 
 
+# Code whose local variables can hold a denial letter an AI assistant sent:
+# the MCP SDK (the request body), the MCP server (tool arguments) and the
+# assistant handoff (the letter, before it is sealed and after it is opened).
+# An error event whose stack passes through one of these keeps its stack
+# trace but loses the variables of every frame (see
+# strip_local_variables_near_assistant_text).
+ASSISTANT_TEXT_MODULES = (
+    "mcp",
+    "fighthealthinsurance.mcp_server",
+    "fighthealthinsurance.assistant_handoff",
+    "fighthealthinsurance.assistant_handoff_views",
+)
+
+
 # sentry's logentry/Message interface renders text into "formatted" and keeps
 # the pre-substitution template in "message". Everything else it carries --
 # "params" above all -- is metadata, not message text.
@@ -165,6 +179,55 @@ def is_sigterm_teardown(exc: dict) -> bool:
     if exc_type == "RuntimeError":
         return any(marker in exc_value for marker in SHUTDOWN_RUNTIME_ERROR_MARKERS)
     return False
+
+
+def _frames(event: dict) -> List[Dict[str, Any]]:
+    """Every stack frame in an event: each exception's and each thread's,
+    defensively, the way exception_values reads the entries."""
+    frames: List[Dict[str, Any]] = []
+    holders: List[Any] = list(raw_exception_entries(event))
+    threads = event.get("threads")
+    if isinstance(threads, dict) and isinstance(threads.get("values"), (list, tuple)):
+        holders += list(threads["values"])
+    for holder in holders:
+        if not isinstance(holder, dict):
+            continue
+        stacktrace = holder.get("stacktrace")
+        if not isinstance(stacktrace, dict):
+            continue
+        found = stacktrace.get("frames")
+        if isinstance(found, (list, tuple)):
+            frames += [frame for frame in found if isinstance(frame, dict)]
+    return frames
+
+
+def _holds_assistant_text(frame: Dict[str, Any]) -> bool:
+    module = frame.get("module")
+    if not isinstance(module, str):
+        return False
+    return any(
+        module == name or module.startswith(name + ".")
+        for name in ASSISTANT_TEXT_MODULES
+    )
+
+
+def strip_local_variables_near_assistant_text(event: Any) -> Any:
+    """Drop the local variables of every frame when any frame is in code
+    that can hold an assistant's letter (ASSISTANT_TEXT_MODULES).
+
+    Every frame, not only the matching ones: the letter is passed down the
+    stack, into the database driver, the template engine or json, whose
+    frames are named after their own modules. The frames themselves (file,
+    function, line) stay, so the event is still worth reading. Never raises,
+    like the rest of this module.
+    """
+    if not isinstance(event, dict):
+        return event
+    frames = _frames(event)
+    if any(_holds_assistant_text(frame) for frame in frames):
+        for frame in frames:
+            frame.pop("vars", None)
+    return event
 
 
 def before_send_filter(event: Any, hint: Any) -> Any:
@@ -250,7 +313,7 @@ def before_send_filter(event: Any, hint: Any) -> Any:
         logger.debug("Unrouted websocket path (filtered from Sentry)")
         return None
 
-    return event
+    return strip_local_variables_near_assistant_text(event)
 
 
 def before_send_transaction_filter(event: Any, hint: Any) -> Any:

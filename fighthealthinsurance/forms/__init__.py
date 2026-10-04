@@ -18,6 +18,11 @@ else:
     _ReCaptchaMixinBase = object
 
 from fighthealthinsurance.form_utils import *
+from fighthealthinsurance.letter_placeholders import (
+    blanks_to_name,
+    describe_placeholders,
+    find_placeholders_as_written,
+)
 from fighthealthinsurance.models import (
     DenialTypes,
     InsuranceCompany,
@@ -183,6 +188,17 @@ class PublicDeleteDataForm(ReCaptchaOptionalMixin, DeleteDataForm):
     captcha = forms.CharField(required=False, widget=forms.HiddenInput())
 
 
+class IntakeResumeForm(StyledWidgetsMixin, forms.Form):
+    """The email address a resume link asks for before it opens a case."""
+
+    email = forms.EmailField(
+        required=True,
+        max_length=300,
+        label="Email address you used",
+        widget=forms.EmailInput(attrs={"autocomplete": "email"}),
+    )
+
+
 class ShareAppealForm(forms.Form):
     denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
     email = forms.CharField(required=True, widget=forms.HiddenInput())
@@ -203,7 +219,43 @@ class BaseDenialForm(forms.Form):
 
 
 class DenialForm(BaseDenialForm):
-    pass
+    # The intake page's "this is for my own appeal" box. Only this form has
+    # it: ProDenialForm is the professional version the box points people to.
+    personalonly = forms.BooleanField(
+        required=True,
+        error_messages={
+            "required": "Please tick the box to confirm this is for your own appeal."
+        },
+    )
+
+    # What the intake page says about a field it cannot take, in the list at
+    # the top of a page the server sends back, and under the email field when
+    # the address typed is not one it can use. ProDenialForm keeps Django's
+    # words: each form gets its own copy of every field, so these stay here.
+    INTAKE_ERROR_MESSAGES = {
+        "denial_text": {
+            "required": "Please paste your denial letter, or describe what was denied."
+        },
+        "email": {
+            "required": "We need your email to go on.",
+            "invalid": "Please check your email address. It should look like name@example.com.",
+        },
+        "pii": {
+            "required": "Please tick the box to confirm you've taken your personal details out of the letter."
+        },
+        "privacy": {
+            "required": "Please tick the box to confirm you've read the privacy policy."
+        },
+        "tos": {"required": "Please tick the box to agree to the terms of service."},
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, messages in self.INTAKE_ERROR_MESSAGES.items():
+            self.fields[name].error_messages.update(messages)
+        # The page's own label for it, so an error on it names the field the
+        # way the page does.
+        self.fields["zip"].label = "ZIP code"
 
 
 class ProDenialForm(BaseDenialForm):
@@ -346,12 +398,123 @@ class FaxForm(DenialRefForm):
         required=True,
         label="Your appeal letter",
     )
+    # Some of what the blank check finds is not a blank: an acronym in
+    # brackets like [ERISA], a name typed inside the brackets, a line to sign
+    # on. This box, "Send it as it is", says yes to the blanks the page names,
+    # and to the ones the person already said yes to, and to nothing else:
+    # its value is that list (JSON, each blank exactly as the letter has it),
+    # so a ticked box posts the list and an unticked one posts nothing. A
+    # letter with more blanks than a message names is named ten at a time. The appeal page's "Send anyway" posts a list of its own
+    # under the same name, in a hidden field. A letter with blanks is faxed
+    # only when every blank in it is on a posted list.
+    # The box is off the form (see __init__) until clean() holds a letter for
+    # its blanks, so it shows under the letter on the page that names them,
+    # and on no other: a page turned back for something else, like a name of
+    # only spaces, has none. It never comes back ticked.
+    approved_placeholders = forms.BooleanField(
+        required=False,
+        label="Send it as it is: I've checked these are not blanks",
+        label_suffix="",
+        widget=forms.CheckboxInput(check_test=lambda _: False),
+        template_name="partials/check_row_field.html",
+    )
     include_provided_health_history = forms.BooleanField(
         required=False,
         label="Include my health history in the fax",
         help_text="If you provided health history earlier, include it with your appeal.",
     )
     # Note: we don't have fax_pwyw etc. so we don't overload.
+
+    # How many blanks the person said to fax as they are; 0 when none.
+    placeholders_sent_as_they_are: int = 0
+
+    def __init__(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._send_as_it_is_box = self.fields.pop("approved_placeholders")
+
+    def _approved_placeholders(self) -> set[str]:
+        """Every blank on a list posted as approved: by the ticked box, by
+        "Send anyway", or both. Anything that is not a JSON list of strings
+        approves nothing, so a bare "1" or "on" lets no blank through."""
+        name = self.add_prefix("approved_placeholders")
+        getlist = getattr(self.data, "getlist", None)
+        if getlist is not None:
+            posted = getlist(name)
+        else:
+            value = self.data.get(name)
+            posted = value if isinstance(value, list) else [value]
+        approved: set[str] = set()
+        for raw in posted:
+            if not isinstance(raw, str):
+                continue
+            try:
+                values = json.loads(raw)
+            except (ValueError, RecursionError):
+                # Not JSON, or nested past the parser's depth.
+                continue
+            if isinstance(values, list):
+                approved.update(value for value in values if isinstance(value, str))
+        return approved
+
+    def _offer_to_send_as_it_is(self, blanks: list[str]) -> None:
+        """Put the box back on the form, just under the letter, holding
+        exactly ``blanks``."""
+        box = self._send_as_it_is_box
+        box.widget.attrs["value"] = json.dumps(blanks)
+        letter_id = self["completed_appeal_text"].auto_id
+        if letter_id:
+            # The box's label says "these"; a screen reader reads it with
+            # the list of blanks, the letter's error, which has this id.
+            box.widget.attrs["aria-describedby"] = f"{letter_id}_error"
+        fields = list(self.fields.items())
+        names = [name for name, _ in fields]
+        at = (
+            names.index("completed_appeal_text") + 1
+            if "completed_appeal_text" in names
+            else len(fields)
+        )
+        fields.insert(at, ("approved_placeholders", box))
+        self.fields = dict(fields)
+
+    def clean(self) -> typing.Optional[dict[str, typing.Any]]:
+        """A letter with blanks left in it, like [Your Name], is faxed only
+        when the person has said yes to every one of them.
+
+        The insurance company would get the blanks exactly as written. The
+        appeal page's script names them before the form is sent; this holds
+        for a browser that never ran it, and for a blank nobody said yes to.
+        The same pattern list drives both.
+        """
+        cleaned_data = super().clean()
+        text = self.cleaned_data.get("completed_appeal_text")
+        if not text:
+            return cleaned_data
+        blanks = find_placeholders_as_written(text)
+        if not blanks:
+            return cleaned_data
+        approved = self._approved_placeholders()
+        if all(blank in approved for blank in blanks):
+            self.placeholders_sent_as_they_are = len(blanks)
+            return cleaned_data
+        # A long list is named ten at a time, and the box says yes only to
+        # what the person has been shown: the blanks named here, and the
+        # ones they said yes to before, which stay said yes to.
+        to_name = blanks_to_name(text, approved)
+        self._offer_to_send_as_it_is(to_name.send_as_it_is)
+        self.add_error(
+            "completed_appeal_text",
+            forms.ValidationError(
+                "Fill in these blanks before we fax your letter: "
+                f"{describe_placeholders(to_name.shown)}. "
+                "Your insurance company would get them exactly as written. "
+                "Replace each one with your details, or delete it if it "
+                "doesn't apply, then send the fax again. If you've checked "
+                "and these are not blanks, tick the box under your letter to "
+                "send it as it is.",
+                code="unfilled_placeholders",
+            ),
+        )
+        return cleaned_data
 
 
 class EntityExtractForm(DenialRefForm):

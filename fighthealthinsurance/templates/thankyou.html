@@ -4,13 +4,15 @@ Thank you!
 {% endblock title %}
 
 {% block content %}
-<div class="container mt-5">
-    <h2>Thank you!</h2>
+<div class="fhi-page">
+{% include "partials/page_title.html" with title="Thank you!" %}
+<div class="fhi-stack">
 
-    <p>
-      Thank you for using Fight Health Insurance :)
-    </p>
+<p>
+  Thank you for using Fight Health Insurance :)
+</p>
 
-    {% include 'partials/share_buttons.html' %}
+{% include 'partials/share_buttons.html' %}
+</div>
 </div>
 {% endblock content %}

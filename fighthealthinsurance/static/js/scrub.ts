@@ -1,14 +1,17 @@
-import { storeLocal, storeTextareaLocal, getLocalStorageItemWithTTL, setLocalStorageItemWithTTL, isPersistenceEnabled, setPersistenceEnabled } from "./shared";
+import { storeLocal, storeTextareaLocal, getLocalStorageItemWithTTL, setLocalStorageItemWithTTL, isPersistenceEnabled, setPersistenceEnabled, keepServerFilledText } from "./shared";
 
 import { type OnDeviceRead, containsNormalised, isAdvancedOCREnabled, recognize } from "./scrub_ocr";
 
 import { clean } from "./scrub_scrub";
+
+import { fillDetailsFromLetter, watchLetterForDetails } from "./letter_details";
 
 import {
   addText,
   beginOcr,
   clearOcrFailure,
   endOcr,
+  focusFirstRefusedField,
   hideErrorMessages,
   notePartialOcrFailure,
   noteOcrFailure,
@@ -189,6 +192,19 @@ const recognizeEvent = async function (evt: Event) {
   if (selection !== latestOcrSelection) {
     untrackChunk(chunk);
     return;
+  }
+
+  // The whole selection is in the box now, so the letter's addressee block
+  // can fill the About you fields still empty, in this browser only
+  // (letter_details.ts). Once, at the end, so every page is read by the
+  // same rule. Never at the cost of what follows: the read's verdict and the
+  // on-device model still run if the fill fails.
+  if (ocrChars > 0) {
+    try {
+      fillDetailsFromLetter(textarea.value, setLocalStorageItemWithTTL);
+    } catch (error) {
+      noteAboutYouNotFilled(error);
+    }
   }
 
   // The on-device model, if the person turned it on, reads after the standard
@@ -455,7 +471,7 @@ function onDeviceStatus(message: string, action?: { label: string; run: () => vo
   if (action) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "btn btn-link btn-sm p-0 ms-1";
+    button.className = "fhi-button fhi-button-quiet fhi-button-small";
     button.textContent = action.label;
     button.addEventListener("click", () => {
       action.run();
@@ -705,6 +721,84 @@ async function improveWithOnDeviceModel(
   }
 }
 
+// A drag that carries files, as opposed to text being dragged into or within
+// the box, which is left to the browser as it always was.
+function carriesFiles(event: DragEvent): boolean {
+  return event.dataTransfer !== null && Array.from(event.dataTransfer.types).includes("Files");
+}
+
+// The letter's whole step takes a dropped file, and the box lights up to show
+// where it goes. A dropped file is handed to the uploader and read by the
+// uploader's own change listener, so it takes exactly the path a chosen file
+// takes: read on this device by recognizeEvent, and never posted, because the
+// uploader has no name. A file nothing can read fails there the way a chosen
+// one does.
+//
+// The step, not only the box: the file button is where most people drop a
+// file, and the input behind it is hidden, so it takes no drop of its own.
+// Anywhere else on the page a dropped file is refused rather than opened.
+function acceptDroppedFiles(
+  zone: HTMLElement,
+  box: HTMLTextAreaElement,
+  uploader: HTMLInputElement,
+): void {
+  const DROP_ACTIVE = "fhi-drop-active";
+  const offerDrop = (event: DragEvent): void => {
+    if (!carriesFiles(event)) {
+      return;
+    }
+    // Without this the browser refuses the drop, or opens the file in place
+    // of the page and takes everything typed so far with it.
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+    box.classList.add(DROP_ACTIVE);
+  };
+  zone.addEventListener("dragenter", offerDrop);
+  zone.addEventListener("dragover", offerDrop);
+  zone.addEventListener("dragleave", (event) => {
+    // Moving from one part of the step to another is not leaving it. A
+    // browser that does not say where the drag went gets the highlight back
+    // from the next dragover.
+    if (!zone.contains(event.relatedTarget as Node | null)) {
+      box.classList.remove(DROP_ACTIVE);
+    }
+  });
+  zone.addEventListener("drop", (event) => {
+    box.classList.remove(DROP_ACTIVE);
+    if (!carriesFiles(event) || event.dataTransfer === null) {
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer.files.length === 0) {
+      return;
+    }
+    uploader.files = event.dataTransfer.files;
+    // Setting files fires nothing on its own.
+    uploader.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  // Outside the step the browser's own handling would open the file in place
+  // of the page, so there the drop is refused instead.
+  const refuseDrop = (event: DragEvent): void => {
+    if (!carriesFiles(event) || zone.contains(event.target as Node | null)) {
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "none";
+    }
+  };
+  window.addEventListener("dragover", refuseDrop);
+  window.addEventListener("drop", refuseDrop);
+}
+
+// The About you fill is a convenience, so a failure in it is noted and the
+// page carries on. Only the kind of error: the letter is in play there.
+function noteAboutYouNotFilled(error: unknown): void {
+  console.warn("scrub: About you was not filled from the letter:", error instanceof Error ? error.name : typeof error);
+}
+
 function setupScrub(): void {
   // Setup persistence toggle checkbox
   const persistenceCheckbox = document.getElementById("persistence_enabled") as HTMLInputElement;
@@ -712,7 +806,10 @@ function setupScrub(): void {
     persistenceCheckbox.checked = isPersistenceEnabled();
     persistenceCheckbox.addEventListener("change", (event) => {
       const target = event.target as HTMLInputElement;
-      setPersistenceEnabled(target.checked);
+      const remembering = setPersistenceEnabled(target.checked);
+      // Where the browser blocks storage nothing can be kept, so the box
+      // goes back to unticked rather than claim otherwise.
+      target.checked = remembering;
     });
   }
 
@@ -746,6 +843,10 @@ function setupScrub(): void {
       if (textarea.value === "") {
         const storedValue = getLocalStorageItemWithTTL(textarea.id);
         textarea.value = storedValue !== null ? storedValue : "";
+      } else {
+        // Text an assistant's handoff filled in is saved once now, so a
+        // reload or a later /scan doesn't lose it (see shared.ts).
+        keepServerFilledText(textarea);
       }
       // After the restore, so the restored text is the baseline the first
       // keystroke is diffed against.
@@ -753,9 +854,29 @@ function setupScrub(): void {
     }
   });
 
+  // After both restores, so what this browser kept for About you is in its
+  // fields first and is never written over. A pasted letter, or one the
+  // server put in the box, fills only the fields still empty. Whatever goes
+  // wrong in that fill, the upload, Remove personal details and the submit
+  // check below are still wired up.
+  const letterBox = document.getElementById("denial_text") as HTMLTextAreaElement | null;
+  if (letterBox != null) {
+    try {
+      watchLetterForDetails(letterBox, setLocalStorageItemWithTTL);
+    } catch (error) {
+      noteAboutYouNotFilled(error);
+    }
+  }
+
   const elm = document.getElementById("uploader");
   if (elm != null) {
     elm.addEventListener("change", recognizeEvent);
+    const box = document.getElementById("denial_text") as HTMLTextAreaElement | null;
+    if (box != null) {
+      // The letter's step, so a file dropped on the button above the box is
+      // read too.
+      acceptDroppedFiles(box.closest("section") ?? box, box, elm as HTMLInputElement);
+    }
   }
   const scrub = document.getElementById("scrub");
   if (scrub != null) {
@@ -776,6 +897,7 @@ function setupScrub(): void {
     form.pii.addEventListener("input", hideErrorMessages);
     form.email.addEventListener("input", hideErrorMessages);
     form.denial_text.addEventListener("input", hideErrorMessages);
+    focusFirstRefusedField(form);
   } else {
     console.log("Missing form?!?");
   }

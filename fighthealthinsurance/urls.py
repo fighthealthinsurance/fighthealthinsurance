@@ -30,7 +30,14 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.generic.base import RedirectView
 
-from fighthealthinsurance import agent_docs, fax_views, staff_views, views
+from fighthealthinsurance import (
+    agent_docs,
+    assistant_handoff_views,
+    fax_views,
+    intake_resume_views,
+    staff_views,
+    views,
+)
 from fighthealthinsurance.sitemap import sitemap_view
 
 
@@ -62,6 +69,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "v0/pwyw/checkout",
         views.create_pwyw_checkout,
         name="pwyw_checkout",
+    ),
+    path(
+        "pwyw/thanks",
+        views.PwywThanksView.as_view(),
+        name="pwyw_thanks",
     ),
     re_path("timbit/sentry-debug/(?P<path>.+)", trigger_error, name="fake_fetch_url"),
     path("timbit/charts/", include(("charts.urls", "charts"), namespace="charts")),
@@ -222,6 +234,12 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         fax_views.StageFaxView.as_view(),
         name="stagefaxview",
     ),
+    # Stripe's cancel_url for a fax payment: back to the letter.
+    path(
+        "v0/stagefax/cancelled",
+        fax_views.FaxPaymentCancelledView.as_view(),
+        name="fax_payment_cancelled",
+    ),
     # View an appeal
     path(
         "v0/appeal/<uuid:appeal_uuid>/appeal.pdf",
@@ -250,6 +268,17 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         sensitive_post_parameters("email")(views.OCRView.as_view()),
         name="server_side_ocr",
     ),
+    # Where an AI assistant's prepare_appeal link lands (the code rides after
+    # "#", so it never reaches this server in the URL). Always routed so
+    # reverse() works; 404 unless both MCP flags are on, checked per request.
+    # A trailing slash added to the link is served here too: the site's
+    # ordinary 404 page would run the analytics tags with the code still in
+    # the address bar. reverse() gives the form without the slash.
+    re_path(
+        r"^from-your-assistant/?$",
+        assistant_handoff_views.AssistantHandoffView.as_view(),
+        name="assistant_handoff",
+    ),
     path(
         "about-us",
         views.AboutView.as_view(),
@@ -266,8 +295,16 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="how-to-help",
     ),
     path(
+        "coverage-changes",
+        views.CoverageChangesView.as_view(),
+        name="coverage-changes",
+    ),
+    # The yearly guide keeps one address with no year in it, so links and
+    # search ranking carry over from year to year; the page says which year
+    # it covers. The old yearly address lands on it.
+    path(
         "preparing-for-2026",
-        views.Preparing2026View.as_view(),
+        RedirectView.as_view(pattern_name="coverage-changes", permanent=True),
         name="preparing-2026",
     ),
     path(
@@ -387,6 +424,19 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "pro_version_thankyou",
         csrf_exempt(views.ProVersionThankYouView.as_view()),
         name="pro_version_thankyou",
+    ),
+    # Where the "you left before finishing" email lands. The first takes the
+    # token out of the address bar; the second asks for the email address
+    # the case was started with (intake_resume has the design).
+    path(
+        "continue/<str:token>",
+        intake_resume_views.IntakeResumeLinkView.as_view(),
+        name="intake_resume_link",
+    ),
+    path(
+        "continue",
+        intake_resume_views.IntakeResumeView.as_view(),
+        name="intake_resume",
     ),
     path("share_denial", views.ShareDenialView.as_view(), name="share_denial"),
     path("share_appeal", views.ShareAppealView.as_view(), name="share_appeal"),

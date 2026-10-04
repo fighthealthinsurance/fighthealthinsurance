@@ -33,6 +33,9 @@ Data protection: the denial text only, never the form fields, and only when
 the user allowed external models (``denial.use_external``). Inert until both
 ``TYPESAFE_API_KEY`` and ``TYPESAFE_DENIAL_TRIAGE_ENABLED`` are set; fails
 closed; never logs the text.
+
+``letter_date`` is separate from the triage: it reads the date the letter is
+dated, for the review page, on this server, and asks no model.
 """
 
 import asyncio
@@ -332,6 +335,114 @@ def date_candidates(
         found = (appeal_first + rest)[:limit]
         found.sort(key=lambda c: c.position)
     return found
+
+
+# A label naming the date after it as the letter's own: "Date:", "Letter
+# date:", "Date of this notice:". Nothing but the label may stand before it.
+_LETTER_DATE_LABEL = re.compile(
+    r"(?:(?:letter|notice|notification|decision|determination|denial)\s+date"
+    r"|date(?:\s+of\s+(?:this\s+|the\s+)?"
+    r"(?:letter|notice|notification|decision|determination|denial))?)\s*:?",
+    re.IGNORECASE,
+)
+# Where the letter turns to its reader. A letter's date sits above this.
+_GREETING = re.compile(
+    r"^[ \t]*(?:dear|to whom it may concern)\b", re.IGNORECASE | re.MULTILINE
+)
+# A line that labels the value under it, as a table reads once it is
+# flattened: "Date of service:", "Dates of Service" or "Date of birth" over
+# its date.
+_LABEL_LINE = re.compile(r":$|\b(?:dates?|dos|dob|birth)\b", re.IGNORECASE)
+# Words that make a date a date of service or of birth, wherever they sit on
+# its line: "Dates of Service: 08/14/2026", "Date: 01/02/1980 (DOB)".
+_SERVICE_OR_BIRTH = re.compile(
+    r"\b(?:services?|dos|dob|birth(?:date|day)?)\b", re.IGNORECASE
+)
+# A date further back than this is more likely a birth date or an old date of
+# service than the date of a letter someone is appealing now.
+_OLDEST_LETTER = datetime.timedelta(days=3 * 365)
+
+
+def letter_date(
+    text: typing.Optional[str], today: datetime.date
+) -> typing.Optional[datetime.date]:
+    """The date the letter is dated, when the letter says so plainly.
+
+    Runs here on the text alone and sends it nowhere. It reads the dates
+    date_candidates reads (four-digit years, month first, never part of an
+    identifier) and keeps one only where the letter marks it as its own:
+
+    * after a label such as "Date:", "Letter date:" or "Date of this
+      notice:", with nothing else before it on the line and nothing after it
+      naming a date of service or birth ("(DOB)"), or on the line under such
+      a label; or
+    * alone in its own block above the greeting ("Dear ..."), where a letter
+      puts its date: a blank line (or the top of the letter) directly above
+      it, and no label for something else ("Date of service:") heading it or
+      the list of dates it sits in. A line naming a date of service or birth
+      heads the lone dates under it even when it carries a date of its own
+      ("Dates of Service: 08/14/2026").
+
+    Anything else is a guess and gives None: no date marked that way, two
+    marked dates that differ, or a marked date after ``today`` or more than
+    about three years before it. The review page asks the person to check
+    the value, and the appeal deadline is counted from it once they submit.
+    """
+    text = text or ""
+    greeting = _GREETING.search(text)
+    greeting_at = greeting.start() if greeting else -1
+    marked: set[datetime.date] = set()
+    for match in _ABSOLUTE.finditer(text):
+        resolved = _parse_absolute(match.group(0))
+        if resolved is None:
+            continue
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        line_end = text.find("\n", match.end())
+        before = text[line_start : match.start()].strip()
+        after = text[match.end() : None if line_end == -1 else line_end].strip()
+        if before:
+            # "Date: 09/02/2026 (DOB)" is labelled after the date as well.
+            if _LETTER_DATE_LABEL.fullmatch(before) and not _SERVICE_OR_BIRTH.search(
+                after
+            ):
+                marked.add(resolved)
+            continue
+        if after:
+            continue
+        lines_above = [line.strip() for line in text[:line_start].split("\n")[:-1]]
+        # What heads this date: the nearest line above that is neither blank
+        # nor another lone date, so every date in a list under "Date of
+        # service:" is read as a date of service.
+        heading = next(
+            (
+                line
+                for line in reversed(lines_above)
+                if line and not _ABSOLUTE.fullmatch(line)
+            ),
+            "",
+        )
+        if _ABSOLUTE.search(heading):
+            # A line carrying its own date is a value, not a label for this
+            # one, unless it names a date of service or birth: then the lone
+            # dates under it continue its list ("Dates of Service: 08/14/2026"
+            # over 08/15/2026).
+            if _SERVICE_OR_BIRTH.search(heading):
+                continue
+        elif _LABEL_LINE.search(heading):
+            if _LETTER_DATE_LABEL.fullmatch(heading):
+                marked.add(resolved)
+            continue
+        if lines_above and lines_above[-1]:
+            # Something sits right on top of it (a heading such as "Service
+            # From", another date, an address): part of a table or a block,
+            # not a date standing on its own.
+            continue
+        if match.start() < greeting_at:
+            marked.add(resolved)
+    if len(marked) != 1:
+        return None
+    (only,) = marked
+    return only if today - _OLDEST_LETTER <= only <= today else None
 
 
 def build_questions(

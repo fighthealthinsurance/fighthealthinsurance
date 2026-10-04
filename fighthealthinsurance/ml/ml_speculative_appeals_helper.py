@@ -34,6 +34,7 @@ from loguru import logger
 
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.exec import bridge_executor
+from fighthealthinsurance.ml.serving_registry import aserving_id_for
 from fighthealthinsurance.context_utils import (
     CONTEXT_LEVEL_SPECULATIVE,
     CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
@@ -423,6 +424,8 @@ class SpeculativeAppealsHelper:
                         speculative=True,
                         context_level=row_context_level,
                         built_for_state=generated_from_context[0],
+                        prompt_version=item.prompt_version,
+                        serving_id=await aserving_id_for(item.backend),
                     )
                     saved += 1
                     created_pks.append(row.pk)

@@ -41,7 +41,7 @@ from django.core.validators import validate_email
 from django.db import IntegrityError, close_old_connections, transaction
 
 
-from django.db.models import F, Q, QuerySet
+from django.db.models import Case, F, Q, QuerySet, Value, When
 from django.db.models.functions import Length
 from django.forms import Form
 from django.template.loader import render_to_string
@@ -98,6 +98,7 @@ from fighthealthinsurance.medical_code_extractor import (
 )
 from fighthealthinsurance.ml import denial_triage, letter_quality
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
+from fighthealthinsurance.ml.serving_registry import aserving_id_for
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
@@ -884,6 +885,11 @@ def mark_proposal_chosen(
     model_name: Optional[str] = None
     synthesized = False
     context_level: Optional[str] = None
+    # Only a matched draft says which prompt version wrote the letter: an
+    # inferred pick never guesses one, since a guess on a page that showed
+    # both versions would corrupt the prompt comparison.
+    prompt_version: Optional[str] = None
+    serving_id: Optional[int] = None
     if original is not None:
         model_name = original.model_name
         synthesized = original.synthesized
@@ -891,6 +897,8 @@ def mark_proposal_chosen(
         # dashboard/RL export (which read only chosen rows) would be blind to
         # which context level users actually pick.
         context_level = original.context_level
+        prompt_version = original.prompt_version
+        serving_id = original.serving_id
     elif not arbitrary_text and not draft_unsaved:
         inferred = ProposedAppeal.sole_draft_attribution(denial.denial_id)
         if inferred is not None:
@@ -950,6 +958,8 @@ def mark_proposal_chosen(
         context_level=context_level,
         presented_ids=shown,
         professional_pick=professional_pick,
+        prompt_version=prompt_version,
+        serving_id=serving_id,
     )
     pa.save()
     return pa
@@ -1059,6 +1069,18 @@ class ChooseAppealHelper:
             draft_unsaved=draft_unsaved,
             presented_ids=presented_ids,
         )
+        articles = cls.candidate_articles(denial_id, denial)
+        return (denial.appeal_fax_number, denial.insurance_company, articles)
+
+    @classmethod
+    def candidate_articles(
+        cls, denial_id, denial: Denial
+    ) -> Optional[QuerySet[PubMedArticleSummarized]]:
+        """The PubMed articles the send page offers to include with a fax.
+
+        Its own step so the page a cancelled fax payment returns to can offer
+        the same articles as the page the person left.
+        """
         articles = None
         article_ids = None
 
@@ -1091,7 +1113,7 @@ class ChooseAppealHelper:
                 logger.debug(f"Error finding articles {article_ids}: {e}")
 
         logger.debug(f"Loaded articles {articles}...")
-        return (denial.appeal_fax_number, denial.insurance_company, articles)
+        return articles
 
 
 @dataclass
@@ -2262,6 +2284,8 @@ class DenialCreatorHelper:
                 # a no here means nothing new is written; a set already
                 # standing is still handed back.
                 used_history=bool(denial.health_history),
+                # The letter they were asked about, as read when this began.
+                for_letter=denial.denial_text,
             )
             if questions is None:
                 return await cls._questions_already_on_the_row(denial_id)
@@ -2315,6 +2339,9 @@ class DenialCreatorHelper:
                 # read the history, and this instance can be holding a copy
                 # a refusal has since cleared from the row.
                 used_history=bool(denial.health_history),
+                # The candidate set stands only on a row that still holds
+                # the letter it was asked about, so that is the letter here.
+                for_letter=denial.denial_text,
             )
             if questions is None:
                 return None
@@ -2329,9 +2356,8 @@ class DenialCreatorHelper:
     def _invalidate_denial_text_artifacts(denial: Denial) -> None:
         """Drop everything derived from a denial letter that has been replaced.
 
-        Called when an update changes ``denial_text``. Two classes of artifact
-        are purely derived from the letter and become wrong -- not merely stale
-        -- once it changes:
+        Called when an update changes ``denial_text``. These are derived from
+        the letter and become wrong -- not merely stale -- once it changes:
 
         * the HELD-BACK speculative reserve (``speculative=True``), which would
           otherwise be served later as a fallback appeal written about the old
@@ -2345,11 +2371,46 @@ class DenialCreatorHelper:
         * the two candidate mirrors of the extracted procedure and diagnosis,
           plus ``extract_procedure_diagnosis_finished`` (a statement about a
           letter that no longer exists) and ``extract_attempts`` (a per-letter
-          failure budget, not a per-case one).
+          failure budget, not a per-case one). The flag goes to None rather
+          than False: None says the letter on the row replaced one and has
+          not been read itself, and the gate in ``extract_entity`` reads such
+          a letter even where the person typed a value.
+        * the live ``procedure`` and ``diagnosis``, each only where it still
+          equals its candidate mirror, which is the value the extraction read
+          out of the old letter. A value the person typed differs from the
+          mirror and is kept: a new letter is not a reason to throw their
+          answers away. Compared before the mirrors are cleared.
+        * the denial types ``extract_set_denialtype`` read out of the old
+          letter, which carry the ``regex`` source. A type the person added
+          on the review page carries no source and is kept; one they left
+          ticked keeps the ``regex`` source and is read again from the new
+          letter.
+        * the question set (``generated_questions``, its stamp, and the
+          speculative ``candidate_generated_questions``), so the questions are
+          asked again about the new letter even when the procedure and
+          diagnosis they were stamped for are unchanged.
+        * the speculative citations (``candidate_ml_citation_context``). The
+          citation step reuses them whenever the candidate procedure and
+          diagnosis match the live ones, as they do again once the new letter
+          is read, so they are cleared for the same reason as the candidate
+          question set.
+        * the citations the questions step kept (``ml_citation_context``).
+          Both citation paths hand back that set whenever there is one.
+        * the research the appeal step stores and reuses as it stands on a
+          retry: the PubMed context and the article ids it is built from,
+          and the NICE, guideline (RAG) and past-review (IMR) context. Each
+          is built from the procedure and diagnosis read out of the letter,
+          or from the codes in its text.
 
-        The live ``procedure`` and ``diagnosis`` columns are deliberately NOT
-        cleared: those may be what the person typed, and a new letter is not a
-        reason to throw their answers away.
+        With the flag at None and the extracted values gone, the new letter
+        is read on the next visit to the extraction page, which fills only
+        what is empty, so a value the person typed stays theirs.
+
+        Work for the old letter that is still running when this sweep runs
+        stores its result only while the row still holds the letter it
+        started from: a filter on ``denial_text`` in the write, or for the
+        reserve and the detected types a check after the insert. So nothing
+        cleared here comes back after it.
 
         Best-effort: a failure here must not break denial creation/update, so
         the caller wraps this. The in-memory instance is cleared too, since it
@@ -2365,15 +2426,61 @@ class DenialCreatorHelper:
         extraction_cleared: dict[str, Any] = {
             "candidate_procedure": None,
             "candidate_diagnosis": None,
-            "extract_procedure_diagnosis_finished": False,
+            # Not read yet, and replacing a letter that was (see the gate in
+            # extract_entity).
+            "extract_procedure_diagnosis_finished": None,
             "extract_attempts": 0,
+            "generated_questions": None,
+            "generated_questions_for": None,
+            "candidate_generated_questions": None,
+            "candidate_ml_citation_context": None,
+            # Handed back by both citation paths whenever it is set.
+            "ml_citation_context": None,
+            # Searched for with the procedure and diagnosis, and reused
+            # whenever it is set.
+            "pubmed_context": None,
+            # The articles that search picked, which the PubMed context above
+            # is rebuilt from.
+            "pubmed_ids_json": None,
+            # Looked up by the procedure and diagnosis; read as it stands
+            # when no key is set, on a retry and on the fallback path.
+            "nice_context": None,
+            # Matched on the codes in the letter's text; read as it stands on
+            # a retry and on the fallback path.
+            "rag_context": None,
+            # Matched on the procedure and diagnosis; read as it stands on a
+            # retry and on the fallback path.
+            "imr_context": None,
         }
-        Denial.objects.filter(denial_id=denial.denial_id).update(
-            denial_text_summary=None,
-            candidate_denial_text_summary=None,
-            **cleared,
-            **extraction_cleared,
-        )
+        letter_values_cleared: list[str] = []
+        # One transaction: the extracted values, the detected types and the
+        # finished flag go together or not at all, so the extraction gate
+        # never sees the values cleared with the flag still set.
+        with transaction.atomic():
+            # Before the mirrors are cleared below, and in the database rather
+            # than on this request's copy, so a value the person typed while
+            # this request ran is compared as it stands. NULL never equals
+            # NULL here, so an empty mirror clears nothing.
+            for column in ("procedure", "diagnosis"):
+                if (
+                    Denial.objects.filter(
+                        denial_id=denial.denial_id,
+                        **{column: F(f"candidate_{column}")},
+                    ).update(**{column: None})
+                    > 0
+                ):
+                    letter_values_cleared.append(column)
+            types_deleted, _ = DenialTypesRelation.objects.filter(
+                denial=denial, src__name="regex"
+            ).delete()
+            Denial.objects.filter(denial_id=denial.denial_id).update(
+                denial_text_summary=None,
+                candidate_denial_text_summary=None,
+                **cleared,
+                **extraction_cleared,
+            )
+        for column in letter_values_cleared:
+            setattr(denial, column, None)
         denial.denial_text_summary = None
         denial.candidate_denial_text_summary = None
         for column, value in cleared.items():
@@ -2383,8 +2490,11 @@ class DenialCreatorHelper:
         logger.info(
             f"Denial {denial.denial_id} text replaced; invalidated "
             f"{deleted} held-back speculative appeal(s), both cached "
-            f"denial-text summaries, the triage columns and the candidate "
-            f"procedure/diagnosis mirrors"
+            f"denial-text summaries, the triage columns, the candidate "
+            f"procedure/diagnosis mirrors, {types_deleted} detected denial "
+            f"type(s), the question set, both citation sets and the stored "
+            f"research; extracted values cleared: "
+            f"{', '.join(letter_values_cleared) or 'none'}"
         )
 
     @classmethod
@@ -3010,9 +3120,16 @@ class DenialCreatorHelper:
         button would be an unbounded invitation to re-run eleven steps and the
         PubMed/ClinicalTrials/speculative-context fan-out behind them. The
         caller checks the cap BEFORE calling this.
+
+        A finished flag of None (a new letter not read yet) stays None, so a
+        retry that fails still leaves the new letter to be read on the next
+        visit.
         """
         await Denial.objects.filter(denial_id=denial_id).aupdate(
-            extract_procedure_diagnosis_finished=False,
+            extract_procedure_diagnosis_finished=Case(
+                When(extract_procedure_diagnosis_finished=True, then=Value(False)),
+                default=F("extract_procedure_diagnosis_finished"),
+            ),
             candidate_procedure=None,
             candidate_diagnosis=None,
             extract_attempts=F("extract_attempts") + 1,
@@ -3046,10 +3163,19 @@ class DenialCreatorHelper:
         if retry and not out_of_attempts:
             await cls.clear_extraction_for_retry(denial_id)
 
-        if not retry and (
-            denial.diagnosis
-            or denial.extract_procedure_diagnosis_finished
-            or denial.procedure
+        # None on the finished flag: this letter replaced one on the row and
+        # has not been read (_invalidate_denial_text_artifacts). It is read
+        # even where the person typed a value, filling only what is empty, so
+        # the candidate copies and the detected types are this letter's.
+        new_letter_unread = denial.extract_procedure_diagnosis_finished is None
+        if (
+            not retry
+            and not new_letter_unread
+            and (
+                denial.diagnosis
+                or denial.extract_procedure_diagnosis_finished
+                or denial.procedure
+            )
         ):
             logger.debug(f"extract_entity({denial_id}): skipping, already done")
             # Regulator matching is cheap (a handful of regexes), idempotent,
@@ -3275,10 +3401,15 @@ class DenialCreatorHelper:
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         procedure = None
         diagnosis = None
+        # The letter this run reads. Every write below is filtered on it, so a
+        # run still going when the person submits a different letter writes
+        # nothing about the one they replaced.
+        letter = denial.denial_text
+        this_letter = Denial.objects.filter(denial_id=denial_id, denial_text=letter)
 
         try:
             procedure, diagnosis = await appealGenerator.get_procedure_and_diagnosis(
-                denial_text=denial.denial_text
+                denial_text=letter
             )
 
             # Prepare update fields
@@ -3310,15 +3441,14 @@ class DenialCreatorHelper:
             for field in ("procedure", "diagnosis"):
                 if field in update_fields:
                     user_facing[field] = update_fields.pop(field)
-            await Denial.objects.filter(denial_id=denial_id).aupdate(**update_fields)
+            if not await this_letter.aupdate(**update_fields):
+                return cls._read_a_replaced_letter(denial_id)
             filled_in = False
             kept_existing = False
             for field, value in user_facing.items():
-                updated = await (
-                    Denial.objects.filter(denial_id=denial_id)
-                    .filter(Q(**{f"{field}__isnull": True}) | Q(**{field: ""}))
-                    .aupdate(**{field: value})
-                )
+                updated = await this_letter.filter(
+                    Q(**{f"{field}__isnull": True}) | Q(**{field: ""})
+                ).aupdate(**{field: value})
                 if updated:
                     filled_in = True
                 else:
@@ -3330,6 +3460,10 @@ class DenialCreatorHelper:
 
             # Refresh in-memory denial so enrichment sees updated values.
             await denial.arefresh_from_db()
+            if denial.denial_text != letter:
+                # Replaced between the writes above; the sweep that comes with
+                # the new letter clears what they wrote.
+                return cls._read_a_replaced_letter(denial_id)
 
             # Use fire_and_forget_in_new_threadpool for background PubMed article search
             # now that we have diagnosis and procedure information.
@@ -3438,10 +3572,11 @@ class DenialCreatorHelper:
             # extract_entity's gate stops retrying after 3 failures. An
             # authorized retry spent its attempt up front, in
             # clear_extraction_for_retry; a failed retry is one attempt,
-            # not two.
+            # not two. The budget is the letter's, so a failure reading a
+            # letter since replaced spends none of the new one's.
             if not attempt_spent:
                 try:
-                    await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    await this_letter.aupdate(
                         extract_attempts=F("extract_attempts") + 1
                     )
                 except Exception as inner:
@@ -3450,6 +3585,20 @@ class DenialCreatorHelper:
                         f"{inner}"
                     )
             return EXTRACTION_OUTCOME_FAILED
+
+    @staticmethod
+    def _read_a_replaced_letter(denial_id: int) -> str:
+        """The outcome of a read whose letter was replaced while it ran.
+
+        Nothing it found is written, and nothing is started from it. Failed,
+        because the letter now on the row has not been read, and it spends
+        none of that letter's attempts.
+        """
+        logger.info(
+            f"extract_set_denial_and_diagnosis({denial_id}): the letter was "
+            "replaced while it was being read; keeping nothing from it"
+        )
+        return EXTRACTION_OUTCOME_FAILED
 
     @classmethod
     async def _match_insurance_company(
@@ -4143,10 +4292,17 @@ class DenialCreatorHelper:
 
         ``get_or_create``, not ``create``: DenialTypesRelation carries no
         unique constraint, so a second read adds a second copy of every type.
+
+        The types are matched in the letter on the row when this starts. If a
+        different letter has replaced it by the time they are stored, the
+        rows this run added are removed again: checked after the inserts, as
+        the speculative reserve does, because the sweep that comes with the
+        new letter only removes rows that are already there.
         """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        letter = denial.denial_text
         denial_types = await cls.regex_denial_processor.get_denialtype(
-            denial_text=denial.denial_text,
+            denial_text=letter,
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
         )
@@ -4154,21 +4310,36 @@ class DenialCreatorHelper:
             f"extract_set_denialtype({denial_id}): processing {len(denial_types)} types"
         )
         src = await cls.regex_src()
-        created = 0
+        created_pks: list[int] = []
         already_stored = 0
         failed = 0
         for dt in denial_types:
             try:
-                _, was_created = await DenialTypesRelation.objects.aget_or_create(
-                    denial=denial, denial_type=dt, src=src
+                relation, was_created = (
+                    await DenialTypesRelation.objects.aget_or_create(
+                        denial=denial, denial_type=dt, src=src
+                    )
                 )
                 if was_created:
-                    created += 1
+                    created_pks.append(relation.pk)
                 else:
                     already_stored += 1
             except Exception as e:
                 failed += 1
                 logger.opt(exception=True).debug(f"Failed setting denial type: {e}")
+        if (
+            created_pks
+            and not await Denial.objects.filter(
+                denial_id=denial_id, denial_text=letter
+            ).aexists()
+        ):
+            await DenialTypesRelation.objects.filter(pk__in=created_pks).adelete()
+            logger.info(
+                f"extract_set_denialtype({denial_id}): the letter was replaced "
+                f"while its types were matched; removed {len(created_pks)}"
+            )
+            return EXTRACTION_OUTCOME_FAILED
+        created = len(created_pks)
         if created:
             return EXTRACTION_OUTCOME_FOUND
         if failed:
@@ -5743,9 +5914,13 @@ class AppealsBackendHelper:
                     persist_updates["imr_context"] = imr_context
                 if persist_updates:
                     try:
-                        await Denial.objects.filter(denial_id=denial_id).aupdate(
-                            **persist_updates
-                        )
+                        # Only while the row still holds the letter they were
+                        # built for: submitting a different letter clears this
+                        # pair, and a lookup finishing after that leaves it
+                        # cleared.
+                        await Denial.objects.filter(
+                            denial_id=denial_id, denial_text=denial.denial_text
+                        ).aupdate(**persist_updates)
                     except Exception as e:
                         logger.opt(exception=True).debug(
                             f"Failed to persist RAG/IMR context for "
@@ -5985,6 +6160,8 @@ class AppealsBackendHelper:
                     synthesized=item.synthesized,
                     context_level=item.context_level,
                     text_fingerprint=fingerprint,
+                    prompt_version=item.prompt_version,
+                    serving_id=await aserving_id_for(item.backend),
                 )
 
                 def _insert_fenced() -> None:
@@ -6613,15 +6790,22 @@ class AppealsBackendHelper:
                                 "Synthesis returned a verbatim copy of an input draft; skipping yield"
                             )
                         else:
+                            winner = synthesis_provenance.get("model")
                             saved = await save_appeal(
                                 GeneratedAppeal(
                                     text=synthesized,
                                     model_name="synthesized",
                                     synthesized=True,
                                     context_level=CONTEXT_LEVEL_SYNTHESIZED,
+                                    # So the row points at what the winner
+                                    # was serving, like any other draft.
+                                    backend=(
+                                        backend_label(winner)
+                                        if winner is not None
+                                        else ""
+                                    ),
                                 )
                             )
-                            winner = synthesis_provenance.get("model")
                             if winner is not None:
                                 # The call still succeeded when its text landed
                                 # on a stored draft, but what was served is that

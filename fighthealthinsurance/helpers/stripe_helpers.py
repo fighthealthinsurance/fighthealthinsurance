@@ -87,59 +87,25 @@ class StripeWebhookHelper:
                     )
 
             elif payment_type == "fax":
-                # metadata is already extracted above to handle both object and dict
-                fax_uuid = metadata.get("uuid") if metadata else None
-                if fax_uuid:
-                    FaxesToSend.objects.filter(uuid=fax_uuid).update(
-                        paid=True, should_send=True
-                    )
-                    StripeWebhookHelper._handle_fax_payment(fax_uuid)
+                # The fax started sending when it was staged, before checkout
+                # opened, and paying for it is optional. Stripe's success page
+                # (SendFaxView) re-dispatches, which is a no-op once the fax
+                # has gone out. So a payment is only noted here: sending again
+                # from this webhook would start a second, delayed send.
+                # StageFaxView sends fax_request_uuid; "uuid" is read too in
+                # case an older checkout carries it.
+                fax_uuid = metadata.get("fax_request_uuid") or metadata.get("uuid")
+                if not fax_uuid:
+                    logger.warning("No fax uuid in metadata for fax payment")
+                elif FaxesToSend.objects.filter(uuid=fax_uuid).exists():
+                    logger.info(f"Payment arrived for fax {fax_uuid}")
                 else:
-                    logger.warning("No uuid in metadata for fax payment")
+                    logger.warning(f"Payment arrived for unknown fax {fax_uuid}")
             else:
                 logger.warning(f"Unknown payment type: {payment_type}")
         except Exception as e:
             logger.opt(exception=True).error("Error processing checkout session")
             raise e
-
-    @staticmethod
-    def _handle_fax_payment(fax_uuid: str) -> None:
-        """Kick off sending for a just-paid fax.
-
-        When Temporal is enabled the delayed send runs as a durable
-        SendFaxWorkflow timer (replacing the FaxPollingActor ~1h sweep); if that
-        dispatch fails, fall back to an immediate Ray send -- the polling sweep
-        is gated off under Temporal, so a paid fax would otherwise sit unsent
-        forever. When Temporal is disabled the dispatch is a no-op and the Ray
-        polling actor picks the fax up via should_send, preserving the ~1h
-        delay as before.
-        """
-        from fighthealthinsurance.temporal_client import dispatch_fax_send
-
-        fax = FaxesToSend.objects.filter(uuid=fax_uuid).first()
-        if fax is None:
-            logger.warning(f"Paid fax {fax_uuid} not found; cannot dispatch send")
-            return
-        dispatched = dispatch_fax_send(fax.hashed_email, str(fax.uuid), delay_send=True)
-        if not dispatched and getattr(settings, "TEMPORAL_ENABLED", False):
-            logger.warning(
-                f"Temporal dispatch failed for paid fax {fax.uuid}; "
-                "falling back to immediate Ray send"
-            )
-            # Intentionally NOT gated on ray_cluster_available(): this branch is
-            # only reachable under TEMPORAL_ENABLED, which is precisely the
-            # configuration where the delayed-fax sweep does not run, so skipping
-            # would strand a fax the user paid for. See the note in fax_helpers.
-            from fighthealthinsurance.fax_actor_ref import fax_actor_ref
-
-            try:
-                fax_actor_ref.get.do_send_fax.remote(fax.hashed_email, str(fax.uuid))
-            except Exception:
-                # First use of the handle; see BaseActorRef.invalidate. This
-                # one is a fax somebody paid for, so a handle that stays dead
-                # strands it.
-                fax_actor_ref.invalidate()
-                raise
 
     @staticmethod
     def _build_recovery_link(

@@ -20,6 +20,7 @@ from fighthealthinsurance.sentry_filters import (
     before_send_filter,
     before_send_transaction_filter,
     exception_values,
+    strip_local_variables_near_assistant_text,
 )
 
 
@@ -489,3 +490,83 @@ class TestTransactionFilter:
     def test_unrouted_source_constant_matches_sentry(self):
         """sentry-sdk labels the raw-path fallback TransactionSource.URL."""
         assert UNROUTED_TRANSACTION_SOURCE == "url"
+
+
+def _framed_event(*modules: str, threads: bool = False) -> dict:
+    """An error event whose stack passes through these modules, each frame
+    holding a letter in its local variables."""
+    frames = [
+        {"module": module, "function": "f", "lineno": 1, "vars": {"letter": "MARKER"}}
+        for module in modules
+    ]
+    holder = {"stacktrace": {"frames": frames}}
+    if threads:
+        return {"threads": {"values": [holder]}}
+    return {
+        "exception": {"values": [{"type": "DatabaseError", "value": "x", **holder}]}
+    }
+
+
+def _vars_left(event: dict) -> list:
+    entries = (event.get("exception") or event.get("threads"))["values"]
+    return [
+        frame.get("vars")
+        for entry in entries
+        for frame in entry["stacktrace"]["frames"]
+        if "vars" in frame
+    ]
+
+
+class TestLocalVariablesNearAnAssistantsLetter:
+    """An error raised anywhere in a stack that passes through code holding
+    an assistant's letter reaches Sentry without any frame's variables."""
+
+    @pytest.mark.parametrize(
+        "module",
+        [
+            "fighthealthinsurance.mcp_server",
+            "fighthealthinsurance.assistant_handoff",
+            "fighthealthinsurance.assistant_handoff_views",
+            "mcp",
+            "mcp.server.streamable_http",
+        ],
+    )
+    def test_every_frame_loses_its_variables(self, module):
+        event = _framed_event("django.db.backends.utils", module, "json.encoder")
+        kept = before_send_filter(event, {})
+        assert kept is event, "the event itself is kept"
+        assert _vars_left(kept) == []
+        frames = kept["exception"]["values"][0]["stacktrace"]["frames"]
+        assert [f["function"] for f in frames] == ["f", "f", "f"]
+
+    def test_a_thread_stack_loses_them_too(self):
+        event = _framed_event("fighthealthinsurance.mcp_server", threads=True)
+        assert _vars_left(before_send_filter(event, {})) == []
+
+    @pytest.mark.parametrize(
+        "module",
+        [
+            "fighthealthinsurance.views",
+            "mcpx.client",
+            "fighthealthinsurance.mcp_server_notes",
+            "fighthealthinsurance.assistant_handoffs",
+        ],
+    )
+    def test_other_stacks_keep_their_variables(self, module):
+        event = _framed_event("django.core.handlers.base", module)
+        assert len(_vars_left(before_send_filter(event, {}))) == 2
+
+    @pytest.mark.parametrize(
+        "event",
+        [
+            None,
+            "scrubbed",
+            {"exception": {"values": [{"stacktrace": None}]}},
+            {"exception": {"values": [{"stacktrace": {"frames": "x"}}]}},
+            {"exception": {"values": [{"stacktrace": {"frames": [None, 3]}}]}},
+            {"threads": {"values": None}},
+            {"exception": {"values": [{"stacktrace": {"frames": [{"module": 5}]}}]}},
+        ],
+    )
+    def test_a_malformed_event_never_raises(self, event):
+        assert strip_local_variables_near_assistant_text(event) is event

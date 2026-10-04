@@ -10,7 +10,7 @@ Additional Resources & Questions
   <!-- Progress indicator -->
   {% include 'partials/flow_progress.html' with current_step=current_step|default:6 %}
 
-  <h1 class="h2">Questions</h1>
+  <h1 class="fhi-step-title">Questions</h1>
 
 {# Branch on the view's outcome, never on `combined`: a Django Form with #}
 {# no fields in it is still truthy. An absent or unrecognised outcome     #}
@@ -35,7 +35,7 @@ Additional Resources & Questions
   <p><strong>A few more questions</strong> to help us create a better appeal for your situation:</p>
 </div>
 {% endif %}
-<form action="{% url 'generate_appeal' %}" method="post">
+<form class="fhi-stack fhi-stack-loose" action="{% url 'generate_appeal' %}" method="post">
   {# The mark of a questionnaire submission: only this form can withdraw an answer. #}
   <input type="hidden" name="questionnaire" value="1">
   {% csrf_token %}
@@ -49,20 +49,20 @@ Additional Resources & Questions
   {% endif %}
   <div class="form-nav-row">
     {% if back_url %}
-    <a href="{{ back_url }}" class="btn btn-secondary-custom">
+    <a href="{{ back_url }}" rel="prev" class="fhi-button fhi-button-neutral">
       ← {{ back_label|default:"Back" }}
     </a>
     {% else %}
-    <a href="{% url 'scan' %}" class="btn-link-muted">
+    <a href="{% url 'scan' %}" class="fhi-button fhi-button-quiet fhi-button-small">
       Start over with a new denial
     </a>
     {% endif %}
-    <input type="submit" value="Generate My Appeal &rarr;" id="submit" class="btn-green">
+    <input type="submit" value="Generate My Appeal &rarr;" id="submit" class="fhi-button fhi-button-primary">
   </div>
   </form>
 
   <div class="alert-box alert-box-info" style="margin-top:1.5rem;">
-    <h2 class="h3">Additional resources that might help</h2>
+    <h2 class="fhi-callout-title">Additional resources that might help</h2>
     <p>Here are some other options you may want to consider for your specific situation:</p>
   </div>
 

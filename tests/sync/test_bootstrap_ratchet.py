@@ -49,7 +49,7 @@ CLASS_LIST_SOURCE = (
 )
 CLASS_LIST_HEADER = (
     "# Every class name Bootstrap 5.2.3 styles, one per line, sorted: the class\n"
-    "# selectors of its stylesheet, the version base.html loads. Read by\n"
+    "# selectors of its stylesheet, the version base.html loaded. Read by\n"
     "# test_bootstrap_ratchet.py.\n"
     "# Our own classes that only look like Bootstrap's, such as btn-default and\n"
     "# no-gutters in custom.css, are not in it, because 5.2.3 does not have them.\n"
@@ -177,36 +177,41 @@ DATA_BS = "data-bs attributes"
 # 2026-09-25: the rest of the content pages moved onto the page column, which
 # took 29 containers, 9 rows, 9 columns and 2 d-flex with them, and the jump
 # links on how_to_help left Bootstrap's nav pills for tiles of our own.
+# 2026-10-02: the header and footer left Bootstrap's navbar, container, row
+# and columns for .fhi-shell and the header's own classes, the home page's
+# lower bands moved onto the wide column, and the microsite photo lost
+# img-fluid, rounded and shadow. That took the grid, the navbar, images and
+# borders to zero.
 BASELINE: "dict[str, int]" = {
-    "form-control": 6,
-    "form-check-input": 5,
-    "card": 105,
-    "btn": 134,
-    "row": 132,
-    "col-": 191,
-    "container": 91,
-    "alert": 20,
-    "d-flex": 51,
+    "form-control": 0,
+    "form-check-input": 0,
+    "card": 0,
+    "btn": 0,
+    "row": 0,
+    "col-": 0,
+    "container": 0,
+    "alert": 0,
+    "d-flex": 0,
     # The families.
-    "alerts": 60,
-    "badges": 18,
-    "borders and shadows": 41,
-    "breadcrumbs": 7,
-    "buttons": 187,
-    "cards": 411,
-    "colours and backgrounds": 64,
-    "display and flex": 168,
-    "forms": 107,
-    "grid": 436,
-    "images and figures": 49,
-    "list groups": 23,
-    "navs and the navbar": 9,
-    "shared state": 3,
-    "sizing": 83,
-    "spacing": 695,
-    "spinners": 3,
-    "text": 366,
-    "visibility and interaction": 8,
+    "alerts": 0,
+    "badges": 0,
+    "borders and shadows": 0,
+    "breadcrumbs": 0,
+    "buttons": 0,
+    "cards": 0,
+    "colours and backgrounds": 0,
+    "display and flex": 0,
+    "forms": 0,
+    "grid": 0,
+    "images and figures": 0,
+    "list groups": 0,
+    "navs and the navbar": 0,
+    "shared state": 0,
+    "sizing": 0,
+    "spacing": 0,
+    "spinners": 0,
+    "text": 0,
+    "visibility and interaction": 0,
 }
 
 # Where each one should end up instead, for whoever reads a failure.

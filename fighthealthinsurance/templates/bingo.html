@@ -32,6 +32,13 @@
     margin-bottom: 1rem;
 }
 
+/* The hint under the intro keeps the site's muted grey. .bingo-intro p
+   above names a class and an element, so it outranks .fhi-hint on its
+   own; Bootstrap's .text-muted won only by being !important. */
+.bingo-intro .fhi-hint {
+    color: var(--fhi-muted);
+}
+
 .bingo-back-link {
     margin-top: 2rem;
     text-align: center;
@@ -56,7 +63,7 @@
             Sometimes you need to vent about the frustrating reality of insurance denials. 
             Here's a bit of humor to help you cope with the all-too-familiar phrases we hear far too often.
         </p>
-        <p class="text-muted">
+        <p class="fhi-hint">
             <em>Refresh the page for a new board!</em>
         </p>
     </div>

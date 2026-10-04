@@ -33,6 +33,7 @@ class MicrositeSlugStorageTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
                 "microsite_slug": "mri-denial",
                 "default_procedure": "MRI Scan",
                 "microsite_title": "Appealing MRI Denials",
@@ -61,6 +62,7 @@ class MicrositeSlugStorageTest(TestCase):
                 "pii": "on",
                 "tos": "on",
                 "privacy": "on",
+                "personalonly": "on",
             },
         )
 
@@ -190,7 +192,7 @@ class MicrositeGuideLinkTest(TestCase):
 
     def test_the_closing_guide_link_matches_its_green_neighbours(self):
         _hero, closing = self._guide_link_classes()
-        self.assertIn("btn-outline-green", closing)
-        self.assertIn("fhi-btn-lg", closing)
+        self.assertIn("fhi-button-secondary", closing)
+        self.assertIn("fhi-button-large", closing)
         self.assertNotIn("btn-outline-primary", closing)
         self.assertNotIn("btn-lg", closing)

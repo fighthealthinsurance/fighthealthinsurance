@@ -362,6 +362,63 @@ class AppealReplayCapTest(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_genuine_synthesis_points_at_what_its_writer_served(
+        self, mock_appeal_generator
+    ):
+        """The synthesized row carries the serving row of the backend that
+        wrote it, like any other draft."""
+        from fighthealthinsurance.ml import serving_registry
+
+        backend = "AlphaRemoteInternal(fhi-internal @ 10.0.0.5:8000)"
+        serving_registry.reset_serving_registry_cache()
+        self.addCleanup(serving_registry.reset_serving_registry_cache)
+        serving_registry.record_backends(
+            [
+                SimpleNamespace(
+                    last_model_card={"model_id": "fhi-internal", "weights": "/w"},
+                    serving_legs=lambda: [("primary", "http://h/v1", "fhi-internal")],
+                    backend_descriptor=lambda: backend,
+                )
+            ]
+        )
+        serving_id = async_to_sync(serving_registry.aserving_id_for)(backend)
+        self.assertIsNotNone(serving_id)
+        email, denial, _texts = self._eighteen_stored_drafts()
+        mock_appeal_generator.make_appeals.return_value = iter([])
+        fresh = (
+            "A brand new synthesized letter combining the drafts, long enough "
+            "to be a deliverable appeal rather than a runt row."
+        )
+
+        async def synthesize(*, provenance=None, **_kwargs):
+            if provenance is not None:
+                provenance["model"] = SimpleNamespace(
+                    name="synth-model", backend_descriptor=lambda: backend
+                )
+            return fresh
+
+        mock_appeal_generator.synthesize_appeals = AsyncMock(side_effect=synthesize)
+
+        async def test():
+            try:
+                await self._collect_frames(
+                    {
+                        "denial_id": self.DENIAL_ID,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                    }
+                )
+                row = await ProposedAppeal.objects.aget(
+                    for_denial=denial, synthesized=True
+                )
+                self.assertEqual(row.serving_id, serving_id)
+            finally:
+                await Denial.objects.filter(denial_id=self.DENIAL_ID).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_a_synthesis_result_matching_a_held_back_draft_is_still_delivered(
         self, mock_appeal_generator
     ):

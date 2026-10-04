@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
+from django.conf import settings
 from django.contrib.staticfiles import finders
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.http import Http404, HttpRequest, HttpResponse
@@ -73,7 +74,11 @@ PAGE_NOTES: dict[str, tuple[str, str]] = {
         "Denial language library",
         "common phrases insurers use in denials and what they mean",
     ),
-    "preparing-2026": ("Preparing for 2026", "insurance changes to plan for"),
+    "coverage-changes": (
+        "Coverage changes for 2027",
+        "what changes for Marketplace, Medicaid, Medicare and employer plans, "
+        "the dates that matter this fall, and appeal deadlines",
+    ),
     "turning-26": ("Turning 26", "coverage options when you age off a parent's plan"),
     "medicaid-eligibility": ("Medicaid eligibility", ""),
     "other-resources": ("Other resources", "organizations and tools beyond this site"),
@@ -513,6 +518,14 @@ def build_llms_txt() -> str:
         "## Optional",
         "",
         f"- [Sitemap]({CANONICAL_ORIGIN}{reverse('django.contrib.sitemaps.views.sitemap')})",
+    ]
+    if settings.MCP_SERVER_ENABLED:  # mcp_server.py, served from asgi.py
+        lines.append(
+            f"- [MCP server]({CANONICAL_ORIGIN}/mcp): read-only tools for AI "
+            "assistants over streamable HTTP, no sign-in, the same public "
+            "information as these pages"
+        )
+    lines += [
         "- [Source code](https://github.com/orgs/fighthealthinsurance/repositories): "
         "the tool is open source",
         "- [Substack](https://fighthealthinsurance.substack.com/): newsletter",

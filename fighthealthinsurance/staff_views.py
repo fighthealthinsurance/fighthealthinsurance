@@ -2345,6 +2345,9 @@ class ModelUsageDashboardView(generic.TemplateView):
                     "label": label,
                     "proposed_appeal": proposed,
                     "context_level": self._context_level_stats(since, shown_on_picks),
+                    "prompt_versions": self._prompt_version_stats(
+                        since, shown_on_picks
+                    ),
                     "chooser_appeal": chooser_appeal,
                     "chooser_chat": chooser_chat,
                     "call_attempts": call_attempts.get(slug),
@@ -2385,7 +2388,74 @@ class ModelUsageDashboardView(generic.TemplateView):
         ctx["chat_shadow"] = self._chat_shadow_state()
         ctx["chat_policy"] = self._chat_policy_panel()
         ctx["reply_check"] = self._reply_check_state()
+        ctx["letter_prompts"] = self._letter_prompts_panel()
+        ctx["letter_prompt_saved"] = self.request.GET.get("prompt_saved") == "1"
         return ctx
+
+    @staticmethod
+    def _split_started(rows: List[Any]) -> Optional[datetime.datetime]:
+        """When the newest unbroken run of half-and-half rows began, or None
+        when the newest row is not half and half. ``rows`` is newest first."""
+        from fighthealthinsurance.ml.appeal_prompt_versions import MODE_SPLIT
+
+        started = None
+        for row in rows:
+            if row.mode != MODE_SPLIT:
+                break
+            started = row.created_at
+        return started
+
+    @classmethod
+    def _letter_prompts_panel(cls) -> Dict[str, Any]:
+        """The appeal prompt switch, its history, and the head-to-head of
+        the current half-and-half run (ml/appeal_prompt_stats.py)."""
+        from fighthealthinsurance.ml.appeal_prompt_stats import (
+            MIN_MIXED_PICKS,
+            head_to_head,
+        )
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            MODE_CHOICES,
+            MODE_ORIGINAL,
+            OUTPUT_CONTRACT,
+            current_letter_prompt_mode,
+        )
+        from fighthealthinsurance.models import LetterPromptMode
+
+        history = list(LetterPromptMode.objects.order_by("-created_at", "-id")[:200])
+        split_started = cls._split_started(history)
+        return {
+            "mode_choices": MODE_CHOICES,
+            "saved_mode": history[0].mode if history else MODE_ORIGINAL,
+            "this_pod_mode": current_letter_prompt_mode(),
+            "history": history[:10],
+            "split_started": split_started,
+            "head_to_head": head_to_head(split_started) if split_started else None,
+            "min_mixed_picks": MIN_MIXED_PICKS,
+            "output_contract": OUTPUT_CONTRACT,
+        }
+
+    def post(self, request, *args, **kwargs):
+        """Change the appeal prompt setting: a new LetterPromptMode row."""
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            MODE_CHOICES,
+            reset_letter_prompt_mode_cache,
+        )
+        from fighthealthinsurance.models import LetterPromptMode
+
+        mode = (request.POST.get("mode") or "").strip()
+        if mode not in {m for m, _label in MODE_CHOICES}:
+            return HttpResponse("Choose original, new or half and half.", status=400)
+        note = (request.POST.get("note") or "").strip()[:500]
+        LetterPromptMode.objects.create(
+            mode=mode,
+            changed_by=request.user if request.user.is_authenticated else None,
+            changed_by_username=getattr(request.user, "username", "") or "",
+            note=note,
+        )
+        # This pod sees the change at once; the others within the cache time.
+        reset_letter_prompt_mode_cache()
+        logger.info(f"Staff {request.user} set the letter prompt mode to {mode}")
+        return redirect(f"{request.path}?prompt_saved=1#letter-prompts")
 
     @staticmethod
     def _reply_check_state() -> Dict[str, Any]:
@@ -2837,6 +2907,74 @@ class ModelUsageDashboardView(generic.TemplateView):
         return out
 
     @staticmethod
+    def _prompt_version_stats(
+        since: Optional[datetime.datetime],
+        shown_on_picks: Optional[
+            Tuple[Counter, Dict[int, Tuple[Optional[str], Optional[str]]]]
+        ] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Chosen/presented/win rate by appeal prompt version, overall and per
+        model, counted exactly as the model and context-level tables count
+        (per draft shown at a pick). Drafts without a version (templates,
+        synthesized letters, rows from before versioning) are left out of
+        both sides, and a pick of one is not counted for either version."""
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            PROMPT_VERSION_CHOICES,
+        )
+
+        chosen_qs = ModelUsageDashboardView._chosen_in_window(since)
+        chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
+        presented_qs = ModelUsageDashboardView._presented_before_pick(
+            ProposedAppeal.objects.filter(
+                chosen=False,
+                speculative=False,
+                prompt_version__isnull=False,
+                for_denial_id__in=chosen_denial_ids,
+            ).exclude(prompt_version=""),
+            chosen_qs,
+        )
+        by_version: Counter = Counter()
+        by_model: Counter = Counter()
+        for version, model_name, count in (
+            chosen_qs.filter(prompt_version__isnull=False)
+            .exclude(prompt_version="")
+            .values_list("prompt_version", "model_name")
+            .annotate(c=Count("id"))
+        ):
+            by_version[version] += count
+            by_model[f"{normalize_model_label(model_name)} · {version}"] += count
+        shown_version: Counter = Counter()
+        shown_model: Counter = Counter()
+        shown, _identity = shown_on_picks or ModelUsageDashboardView._shown_on_picks(
+            chosen_qs
+        )
+        ids_shown = sorted(shown)
+        for start in range(0, len(ids_shown), 500):
+            for draft_id, version, model_name in (
+                ProposedAppeal.objects.filter(id__in=ids_shown[start : start + 500])
+                .exclude(prompt_version__isnull=True)
+                .exclude(prompt_version="")
+                .values_list("id", "prompt_version", "model_name")
+            ):
+                times = shown[draft_id]
+                shown_version[version] += times
+                shown_model[f"{normalize_model_label(model_name)} · {version}"] += times
+        for version, model_name, count in presented_qs.values_list(
+            "prompt_version", "model_name"
+        ).annotate(c=Sum("times")):
+            if count:
+                shown_version[version] += count
+                shown_model[f"{normalize_model_label(model_name)} · {version}"] += count
+        readable = dict(PROMPT_VERSION_CHOICES)
+        version_rows = _merge_stats(dict(by_version), dict(shown_version))
+        for row in version_rows:
+            row["label"] = readable.get(row["model_name"], row["model_name"])
+        model_rows = _merge_stats(dict(by_model), dict(shown_model))
+        for row in model_rows:
+            row["label"] = row["model_name"]
+        return {"versions": version_rows, "models": model_rows}
+
+    @staticmethod
     def _context_level_stats(
         since: Optional[datetime.datetime],
         shown_on_picks: Optional[
@@ -3216,6 +3354,14 @@ class ModelBackendStatusView(generic.TemplateView):
         names = [r.model_name for r in entries]
         latest_checks = self._latest_check_by_model(names)
         last_generation = self._last_generation_by_model(names)
+        labels = {
+            id(r): self._backend_label(r.router_instance)
+            for r in entries
+            if r.router_instance is not None
+        }
+        newest_per_leg, rows_by_id, serving_history = self._serving_rows(
+            list(labels.values())
+        )
 
         current_deployment = mhc.deployment_id()
         current_environment = mhc.environment_name()
@@ -3278,12 +3424,14 @@ class ModelBackendStatusView(generic.TemplateView):
                     "config_changed": check is not None and check.enabled != r.enabled,
                     "last_generation": last_generation.get(r.model_name),
                     "has_traits": t is not None,
+                    **self._serving_cell(labels.get(id(r)), newest_per_leg, rows_by_id),
                 }
             )
         rows.sort(key=self._row_order)
 
         ctx["title"] = "Model Backend Status"
         ctx["rows"] = rows
+        ctx["serving_history"] = serving_history
         ctx["routing"] = routing
         ctx["current_deployment_id"] = current_deployment
         ctx["current_environment"] = current_environment
@@ -3292,6 +3440,79 @@ class ModelBackendStatusView(generic.TemplateView):
             1 for row in rows if row["last_check"] is not None and row["last_check"].ok
         )
         return ctx
+
+    @staticmethod
+    def _backend_label(instance: Any) -> str:
+        from fighthealthinsurance.generate_appeal import backend_label
+
+        return backend_label(instance)
+
+    @staticmethod
+    def _serving_rows(
+        labels: List[str],
+    ) -> Tuple[Dict[str, List[Any]], Dict[int, Any], List[Any]]:
+        """From the serving registry's table (ml/serving_registry.py): for
+        each backend descriptor in ``labels``, the newest row per leg; those
+        backends' rows by id; and the newest rows of any backend, for the
+        history panel. Database reads only, like the rest of this page."""
+        from fighthealthinsurance.models import ServingIdentity
+
+        # The registry stores the descriptor cut to the column's length.
+        stored = {label[:300]: label for label in labels}
+        newest_per_leg: Dict[str, List[Any]] = {}
+        rows_by_id: Dict[int, Any] = {}
+        seen_legs: set = set()
+        for row in ServingIdentity.objects.filter(backend__in=stored).order_by(
+            "-last_seen", "-id"
+        ):
+            rows_by_id[row.pk] = row
+            leg = (row.backend, row.endpoint, row.model_id)
+            if leg in seen_legs:
+                continue
+            seen_legs.add(leg)
+            newest_per_leg.setdefault(stored[row.backend], []).append(row)
+        history = list(ServingIdentity.objects.order_by("-last_seen", "-id")[:100])
+        return newest_per_leg, rows_by_id, history
+
+    @staticmethod
+    def _serving_cell(
+        label: Optional[str],
+        newest_per_leg: Dict[str, List[Any]],
+        rows_by_id: Dict[int, Any],
+    ) -> Dict[str, Any]:
+        """The Serving column for one backend: what its legs reported in the
+        latest health round this pod recorded. A leg that did not report
+        then (its check failed, or this pod has recorded no round for it)
+        shows its last recorded answer as history, never as current."""
+        from fighthealthinsurance.ml import serving_registry
+
+        current: List[Any] = []
+        reported_at: Optional[datetime.datetime] = None
+        unreported = True
+        if label is not None:
+            latest = serving_registry.this_round(label)
+            if latest is not None:
+                legs, at = latest
+                if legs is not None:
+                    reported_at = at
+                    current = [
+                        rows_by_id[i] for i in legs if i is not None and i in rows_by_id
+                    ]
+                    unreported = len(current) < len(legs)
+        last_recorded: List[Any] = []
+        if label is not None and unreported:
+            reported = {(row.endpoint, row.model_id) for row in current}
+            last_recorded = [
+                row
+                for row in newest_per_leg.get(label, [])
+                if (row.endpoint, row.model_id) not in reported
+            ]
+        return {
+            "serving": current,
+            "serving_reported_at": reported_at,
+            "serving_unreported": unreported,
+            "serving_last_recorded": last_recorded,
+        }
 
     @classmethod
     def _row_group(cls, row: Dict[str, Any]) -> int:

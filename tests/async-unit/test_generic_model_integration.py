@@ -32,7 +32,11 @@ async def test_end_to_end_generic_cache_workflow():
     )
 
     # Mock the question generation and citation generation to verify calls
-    mock_questions = [("What is the medical necessity?", "Answer about necessity")]
+    # Two: a single question is not shared through the generic cache.
+    mock_questions = [
+        ("What is the medical necessity?", "Answer about necessity"),
+        ("How long has the patient had back pain?", ""),
+    ]
     mock_citations = ["Study shows efficacy of physical therapy for lower back pain"]
 
     # Set up mocks
