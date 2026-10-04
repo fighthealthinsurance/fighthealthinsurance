@@ -172,8 +172,9 @@
             <ul>
                 <li><b>Claude Code:</b> <code>claude mcp add --transport http fight-health-insurance https://www.fighthealthinsurance.com/mcp</code></li>
                 <li><b>Codex CLI:</b> <code>codex mcp add fight-health-insurance --url https://www.fighthealthinsurance.com/mcp</code></li>
+                <li><b>VS Code</b> (1.100 or later, with Copilot; from its docs): <code>code --add-mcp "{\"name\":\"fight-health-insurance\",\"type\":\"http\",\"url\":\"https://www.fighthealthinsurance.com/mcp\"}"</code></li>
             </ul>
-            <p>Apps that run open-weight models on your own machine, such as LM Studio, Open WebUI, Jan and Ollama, take MCP servers too; each app's own guide shows where to paste the address. Two things to know: the model has to support tool calling, and small local models sometimes skip the tools or misread what they return, so check the links in the answer against this site.</p>
+            <p>Apps that run open-weight models on your own machine take MCP servers too. Each app's guide shows where to paste the address: <a class="link" href="https://lmstudio.ai/docs/app/mcp">LM Studio</a>, <a class="link" href="https://docs.openwebui.com/features/extensibility/mcp">Open WebUI</a>, <a class="link" href="https://jan.ai/docs/desktop/mcp">Jan</a> and <a class="link" href="https://www.librechat.ai/docs/features/mcp">LibreChat</a>. Ollama on its own has no MCP support; Ollama users can connect through a front end such as Open WebUI. Two things to know: the model has to support tool calling, and small local models sometimes skip the tools or misread what they return, so check the links in the answer against this site.</p>
             <p>Something look different? <a class="link" href="{% url 'contact' %}">Let us know</a> and we'll update this page.</p>
         </section>
     </div>
