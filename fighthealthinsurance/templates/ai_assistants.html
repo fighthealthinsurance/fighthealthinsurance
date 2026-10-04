@@ -44,11 +44,11 @@
             <p>That link opens Claude with the form already filled in. To do it by hand:</p>
             <ol class="ai-steps">
                 <li>
-                    Open <b>Settings</b>, then <b>Connectors</b>, and choose <b>Add custom connector</b>.
+                    Open <b>Customize</b>, then <b>Connectors</b>, press <b>+ Add</b> and choose <b>Add custom connector</b>.
                     {% comment %}figure slot: claude-1-connectors{% endcomment %}
                 </li>
                 <li>
-                    Name it <b>Fight Health Insurance</b> and paste the address above. Leave the sign-in fields under Advanced settings empty, then press <b>Add</b>.
+                    Name it <b>Fight Health Insurance</b>, paste the address above as the MCP server URL and press <b>Continue</b>. There is nothing to sign in to.
                     {% comment %}figure slot: claude-2-add-dialog{% endcomment %}
                 </li>
                 <li>
@@ -56,7 +56,8 @@
                     {% comment %}figure slot: claude-3-tool-permissions{% endcomment %}
                 </li>
                 <li>
-                    In a chat, open the <b>+</b> menu, choose <b>Connectors</b> and turn Fight Health Insurance on. Then ask your question. Claude asks you before it uses a tool the first time.
+                    In a chat, open the <b>+</b> menu, choose <b>Connectors</b> and turn Fight Health Insurance on. Then ask your question. Claude asks before each tool it uses; <b>Always allow</b> stops the asking for that tool.
+                    {% comment %}figure slot: claude-tool-approval{% endcomment %}
                     {% comment %}figure slot: claude-4-answer{% endcomment %}
                 </li>
             </ol>
