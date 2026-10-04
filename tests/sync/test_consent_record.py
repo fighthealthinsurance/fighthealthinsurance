@@ -1,6 +1,8 @@
 """The agreements a person ticks are recorded, in the words they saw."""
 
 from bs4 import BeautifulSoup
+from unittest.mock import patch
+
 from django.test import TestCase
 from django.urls import reverse
 
@@ -77,3 +79,24 @@ class TheIntakeRecordsTheBoxesTest(TestCase):
         flat = str(record.boxes) + record.channel + record.assistant_client
         self.assertNotIn("consent-test@example.com", flat)
         self.assertNotIn("zebraflute", flat)
+
+    def test_a_broken_record_never_blocks_the_intake(self):
+        with patch(
+            "fighthealthinsurance.models.ConsentRecord.objects.create",
+            side_effect=RuntimeError("no table today"),
+        ):
+            response = self.client.post(
+                reverse("process"),
+                {
+                    "email": "consent-test@example.com",
+                    "denial_text": "Your claim has been denied.",
+                    "pii": "on",
+                    "tos": "on",
+                    "privacy": "on",
+                    "personalonly": "on",
+                },
+                follow=True,
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Denial.objects.count(), 1)
+        self.assertEqual(ConsentRecord.objects.count(), 0)

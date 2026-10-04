@@ -2173,9 +2173,7 @@ class InitialProcessView(generic.FormView):
         # After, not around, the helper: its outbox work expects no request
         # transaction, so the record is best effort and never blocks the appeal.
         consent.record_consent(
-            models.Denial.objects.get(denial_id=denial_response.denial_id),
-            agreements,
-            channel=consent.CHANNEL_SITE,
+            denial_response.denial_id, agreements, channel=consent.CHANNEL_SITE
         )
 
         # Store the denial ID in the session to maintain state across the multi-step form process

@@ -42,7 +42,7 @@ def boxes_as_shown(ticked: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def record_consent(
-    denial: Any,
+    denial_id: Any,
     ticked: Mapping[str, Any],
     *,
     channel: str = CHANNEL_SITE,
@@ -52,11 +52,11 @@ def record_consent(
 ) -> Optional[Any]:
     """Keep what was ticked for this denial. Best effort: the appeal goes on
     if the record can't be written, and the failure is logged."""
-    from fighthealthinsurance.models import ConsentRecord
+    from fighthealthinsurance.models import ConsentRecord, Denial
 
     try:
         return ConsentRecord.objects.create(
-            denial=denial,
+            denial=Denial.objects.get(denial_id=denial_id),
             terms_version=TERMS_VERSION,
             privacy_version=PRIVACY_VERSION,
             boxes=boxes_as_shown(ticked),
