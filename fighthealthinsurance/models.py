@@ -5200,3 +5200,26 @@ class AssistantHandoff(models.Model):
 
     def __str__(self) -> str:
         return f"AssistantHandoff({self.pk}, expires {self.expires_at:%Y-%m-%d %H:%M})"
+
+
+class ConsentRecord(models.Model):
+    """What a person ticked before an appeal, and against which policy
+    versions (consent.py). Wording and ticks only; it goes with its denial."""
+
+    CHANNELS = (("site", "site"), ("assistant", "assistant"))
+    FINISH = (("site", "site"), ("chat", "chat"))
+
+    denial = models.ForeignKey(
+        Denial, on_delete=models.CASCADE, related_name="consent_records"
+    )
+    terms_version = models.DateField()
+    privacy_version = models.DateField()
+    boxes = models.JSONField()
+    accepted_at = models.DateTimeField(auto_now_add=True)
+    channel = models.CharField(max_length=16, choices=CHANNELS, default="site")
+    on_behalf = models.BooleanField(default=False)
+    finish_in = models.CharField(max_length=8, choices=FINISH, default="site")
+    assistant_client = models.CharField(max_length=80, blank=True, default="")
+
+    def __str__(self) -> str:
+        return f"ConsentRecord({self.pk}, denial {self.denial_id}, {self.channel})"
