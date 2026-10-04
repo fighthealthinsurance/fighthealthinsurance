@@ -142,6 +142,14 @@ MAX_PAGE_CHARS = 40_000
 MAX_LIST_ITEMS = 10
 MAX_SEARCH_RESULTS = 10
 
+# Passed on with both appeal links, so an assistant doesn't call the form
+# "already set up" or promise a draft that hasn't been written.
+LINK_OPENS_FIRST_STEP = (
+    "The link opens the first step of the appeal form; the appeal letters "
+    "aren't written yet. The site drafts them after the person finishes its "
+    "steps, and nothing goes to the insurer until the person sends it."
+)
+
 INSTRUCTIONS = (
     "Welcome! Fight Health Insurance is a free tool that helps people appeal "
     "health insurance denials. On the site, a person takes a picture of their "
@@ -174,11 +182,13 @@ INSTRUCTIONS_WITH_PREPARE = (
     "these tools to find a guide or financial help. Please keep everything "
     "else personal out of them: names, member IDs and medical history belong "
     "on the site itself, where the person can remove personal details before "
-    "anything is sent. The denial letter belongs on the site too, or, if the "
-    "person agrees, in prepare_appeal, which fills in the form for them to "
-    "check and submit there. When someone is ready to appeal, use "
-    "start_appeal, or prepare_appeal if they want the form filled in for "
-    "them. This is general information, not legal or medical advice."
+    "anything is sent. If the person has already shared their denial letter "
+    "in this chat, offer to load it into the form with prepare_appeal, and "
+    "ask before calling it: the letter then arrives in the form for them to "
+    "check, take personal details out of, and submit. If they haven't shared "
+    "the letter, or would rather do it themselves, use start_appeal. "
+    + LINK_OPENS_FIRST_STEP
+    + " This is general information, not legal or medical advice."
 )
 
 READ_ONLY = ToolAnnotations(
@@ -1343,8 +1353,8 @@ def _tell_the_person(letter_characters: int, treatment: str, diagnosis: str) -> 
         "deleted soon after. Database backups made before it's deleted keep a "
         "locked copy, which can't be opened without the link, until the "
         "backups expire. Nothing becomes part of an appeal unless you submit "
-        "the form yourself. Fight Health Insurance's privacy policy: "
-        f"{_page('privacy_policy')}"
+        "the form yourself. " + LINK_OPENS_FIRST_STEP + " Fight Health "
+        f"Insurance's privacy policy: {_page('privacy_policy')}"
     )
 
 
@@ -1628,11 +1638,11 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
         """Get the link to start a free appeal on Fight Health Insurance, and the steps the person will follow there.
 
         Use this when someone has a denial and wants to appeal, or asks how to
-        start. Send the person to the link: they upload or paste their own
-        denial letter on the site, which removes personal details before
-        anything is sent. This tool never takes the letter or any personal
-        details. Fight Health Insurance is free; the optional fax service is
-        pay what you want, including $0.
+        start. At the link they upload or paste their denial letter on the
+        site, which removes personal details before anything is sent. This
+        tool takes no letter or personal details itself; never ask for a
+        letter the person hasn't offered. Fight Health Insurance is free; the
+        optional fax service is pay what you want, including $0.
         """
         guide = None
         if topic:
@@ -1642,7 +1652,10 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
                     f"Unknown topic {topic!r}. Use a slug from "
                     "find_treatment_guide, or leave topic out."
                 )
-        result: dict[str, Any] = {"url": _intake_link(guide)}
+        result: dict[str, Any] = {
+            "url": _intake_link(guide),
+            "tell_the_person": LINK_OPENS_FIRST_STEP,
+        }
         if guide is not None:
             result["topic"] = _guide_summary(guide)
         if guide is not None and guide.medicare:
@@ -1682,8 +1695,10 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
             # and common_view_logic.py (create_or_update_denial, which looks
             # up the state from the whole ZIP code and stores zip[:3]).
             result["privacy"] = (
-                "Send the person to the link rather than asking for their "
-                "letter here. On the site, 'Remove personal details' takes out "
+                "Don't ask for the letter here; if the person has already "
+                "shared it in the chat, prepare_appeal can load it into the "
+                "form, otherwise they upload or paste it at the link. On the "
+                "site, 'Remove personal details' takes out "
                 "the personal details it can find before the letter is sent, "
                 "and the person checks for the rest. The site keeps the denial "
                 "text it receives to improve its AI, and people on its team "
@@ -1719,8 +1734,9 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
         annotations=READ_ONLY,
         description=(
             (start_appeal.__doc__ or "").rstrip()
-            + " If the person wants you to fill in the form for them, use "
-            "prepare_appeal."
+            + " If the person has already shared their denial letter in this "
+            "chat, offer prepare_appeal instead, which loads it into the "
+            "form; ask first."
             if prepare_on
             else None
         ),
