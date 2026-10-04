@@ -3926,6 +3926,14 @@ summary.fhi-nav-link::after {
 /* Two columns on the wide page and one on a phone, for a pair of groups
    too long to sit three across, such as the Resources page's. */
 .fhi-cards-wide { --fhi-card-min: 26rem; }
+/* A set that fills the row however few cards it holds. auto-fill keeps
+   empty tracks, so two founder cards on the wide About Us page sat in the
+   left two-fifths; auto-fit collapses the empty tracks and the cards share
+   the width. For a row that may hold one card alone, which would then
+   stretch the full width. */
+.fhi-cards-fit {
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr));
+}
 
 .fhi-card {
     display: flex;
