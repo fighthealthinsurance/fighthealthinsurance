@@ -97,6 +97,7 @@ from fighthealthinsurance.medical_code_extractor import (
     extract_procedure_codes,
 )
 from fighthealthinsurance.ml import denial_triage, letter_quality
+from fighthealthinsurance.ml import spend
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.ml.serving_registry import aserving_id_for
 from fighthealthinsurance.reliability_events import capture_reliability_event
@@ -4224,7 +4225,8 @@ class DenialCreatorHelper:
         if denial_triage.is_current(denial):
             return EXTRACTION_OUTCOME_CACHED
         text = denial.denial_text
-        result = await denial_triage.triage(text, denial.denial_date)
+        with spend.for_channel(spend.channel_of(denial)):
+            result = await denial_triage.triage(text, denial.denial_date)
         if result is None:
             return EXTRACTION_OUTCOME_NOTHING_FOUND
         values = denial_triage.row_values(result, timezone.now(), text)
@@ -4785,6 +4787,24 @@ class AppealsBackendHelper:
             }
         )
 
+    @staticmethod
+    async def _denial_channel(denial_id: Any) -> str:
+        """Which channel the denial came through, for the spend counters
+        (ml/spend.py). Site when it can't be read: counting is best effort."""
+        try:
+            value = await (
+                Denial.objects.filter(denial_id=denial_id)
+                .values_list("channel", flat=True)
+                .afirst()
+            )
+        except Exception:
+            return spend.CHANNEL_SITE
+        return (
+            spend.CHANNEL_ASSISTANT
+            if value == spend.CHANNEL_ASSISTANT
+            else spend.CHANNEL_SITE
+        )
+
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
         """Public generator: streams ``_generate_appeals_body`` and, for the
@@ -4797,9 +4817,11 @@ class AppealsBackendHelper:
         agen = cast(
             AsyncGenerator[str, None], cls._generate_appeals_body(parameters, lease_ref)
         )
+        channel = await cls._denial_channel(parameters.get("denial_id"))
         try:
-            async for chunk in agen:
-                yield chunk
+            with spend.for_channel(channel):
+                async for chunk in agen:
+                    yield chunk
         finally:
             await agen.aclose()
             extender = lease_ref.get("extender")
@@ -5116,12 +5138,13 @@ class AppealsBackendHelper:
             await ExternalServiceHealth.anote_failure(letter_quality.SERVICE, summary)
 
         async def _score_draft(proposed_id: str, draft_text: str) -> Optional[str]:
-            score = await letter_quality.score_letter(
-                denial.denial_text,
-                draft_text,
-                identifiers=scoring_identifiers,
-                on_failure=_note_scoring_failure,
-            )
+            with spend.for_channel(spend.channel_of(denial)):
+                score = await letter_quality.score_letter(
+                    denial.denial_text,
+                    draft_text,
+                    identifiers=scoring_identifiers,
+                    on_failure=_note_scoring_failure,
+                )
             if score is None:
                 return None
             # Same record, the other way: TypeSafe answered. Best effort.

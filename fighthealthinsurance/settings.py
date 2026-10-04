@@ -264,6 +264,16 @@ class Base(Configuration):
         _env_int("FHI_SPEND_AZURE_CHAT_DAILY_CALLS", 0, minimum=0, maximum=10_000_000)
         or None
     )
+    # Appeals that come through an AI assistant (Denial.channel "assistant"):
+    # DeepInfra dollars a month, spread by day, and generations a day.
+    # Setting either to 0 removes that cap.
+    FHI_SPEND_DEEPINFRA_ASSISTANT_MONTHLY_USD = _env_float(
+        "FHI_SPEND_DEEPINFRA_ASSISTANT_MONTHLY_USD", 5.0, minimum=0.0, maximum=10000.0
+    )
+    FHI_SPEND_ASSISTANT_DAILY_APPEALS = (
+        _env_int("FHI_SPEND_ASSISTANT_DAILY_APPEALS", 50, minimum=0, maximum=10_000_000)
+        or None
+    )
     # Chat's outside models, in order (MLRouter.chat_outside_models): at most
     # three are asked, skipping any that is down or whose budget is spent.
     # Empty means the best externals, as before. Kimi-K3 is kept out: it is

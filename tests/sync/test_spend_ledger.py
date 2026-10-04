@@ -69,3 +69,25 @@ class SpendLedgerTest(TestCase):
             spend._ledger.flush_sync_for_tests()
         self.assertEqual(SpendCounter.objects.get(name="deepinfra:chat").amount, 150)
         self.assertEqual(spend._ledger._pending, {})
+
+
+class AssistantChannelTest(TestCase):
+    def test_a_denial_comes_from_the_site_unless_told_otherwise(self):
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(hashed_email="h", denial_text="letter")
+        self.assertEqual(denial.channel, "site")
+        self.assertEqual(spend.channel_of(denial), spend.CHANNEL_SITE)
+        denial.channel = "assistant"
+        denial.save(update_fields=["channel"])
+        denial.refresh_from_db()
+        self.assertEqual(spend.channel_of(denial), spend.CHANNEL_ASSISTANT)
+
+    def test_a_reservation_reaches_the_shared_ledger(self):
+        spend._ledger.reset_for_tests()
+        self.assertTrue(spend.reserve_generation())
+        spend._ledger.flush_sync_for_tests()
+        from fighthealthinsurance.models import SpendCounter
+
+        row = SpendCounter.objects.get(name="fhi:assistant")
+        self.assertEqual(row.amount, 1)

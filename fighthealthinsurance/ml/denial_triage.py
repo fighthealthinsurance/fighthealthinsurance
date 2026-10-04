@@ -576,7 +576,10 @@ async def _post(
     # The letter goes out as the request's state; the model comes from
     # TYPESAFE_MODEL (typesafe.model_name).
     return await typesafe.ask(
-        document, questions, timeout_seconds=timeout_seconds, use=spend.TRIAGE
+        document,
+        questions,
+        timeout_seconds=timeout_seconds,
+        use=spend.typesafe_use(spend.TRIAGE),
     )
 
 

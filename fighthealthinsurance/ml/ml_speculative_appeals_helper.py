@@ -34,6 +34,7 @@ from loguru import logger
 
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.exec import bridge_executor
+from fighthealthinsurance.ml import spend
 from fighthealthinsurance.ml.serving_registry import aserving_id_for
 from fighthealthinsurance.context_utils import (
     CONTEXT_LEVEL_SPECULATIVE,
@@ -377,11 +378,12 @@ class SpeculativeAppealsHelper:
             # either way, so per-call connection isolation is unchanged.
             # executor=bridge_executor keeps this minutes-long drain off the
             # loop's small shared default executor (see exec.py).
-            drafts = await database_sync_to_async(
-                _generate_drafts,
-                thread_sensitive=False,
-                executor=bridge_executor,
-            )()
+            with spend.for_channel(spend.channel_of(denial)):
+                drafts = await database_sync_to_async(
+                    _generate_drafts,
+                    thread_sensitive=False,
+                    executor=bridge_executor,
+                )()
 
             # Generation is done; make sure it is still about the CURRENT letter
             # before persisting anything (see generated_from_text above). Read
