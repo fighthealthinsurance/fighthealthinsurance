@@ -192,6 +192,10 @@ class ProtocolTest(TestCase):
 
 
 class StartAppealTest(TestCase):
+    async def test_start_appeal_with_the_handoff_off_never_names_prepare_appeal(self):
+        data = (await call("start_appeal", {})).structuredContent
+        self.assertNotIn("prepare_appeal", data["privacy"])
+
     async def test_start_appeal_says_the_link_opens_the_first_step(self):
         data = (await call("start_appeal", {})).structuredContent
         self.assertIn("opens the first step", data["tell_the_person"])
@@ -308,6 +312,13 @@ class StartAppealTest(TestCase):
             result = await call("start_appeal", {"topic": "some-medicare-guide"})
         self.assertFalse(result.isError)
         return result.structuredContent
+
+    async def test_start_appeal_for_a_medicare_guide_says_the_link_opens_the_chat(
+        self,
+    ):
+        data = await self.medicare_chat_start()
+        self.assertIn("opens Fight Health Insurance's chat", data["tell_the_person"])
+        self.assertNotIn("first step of the appeal form", data["tell_the_person"])
 
     async def test_start_appeal_for_a_medicare_guide_goes_to_the_chat(self):
         url = (await self.medicare_chat_start())["url"]

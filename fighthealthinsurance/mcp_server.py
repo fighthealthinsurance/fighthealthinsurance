@@ -149,6 +149,12 @@ LINK_OPENS_FIRST_STEP = (
     "aren't written yet. The site drafts them after the person finishes its "
     "steps, and nothing goes to the insurer until the person sends it."
 )
+# The Medicare guides' link opens the site's chat instead (see _intake_link).
+LINK_OPENS_THE_CHAT = (
+    "The link opens Fight Health Insurance's chat, set up for Medicare; the "
+    "appeal letter isn't written yet. The chat helps draft it, and nothing "
+    "goes to the insurer until the person sends it."
+)
 
 INSTRUCTIONS = (
     "Welcome! Fight Health Insurance is a free tool that helps people appeal "
@@ -1659,6 +1665,7 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
         if guide is not None:
             result["topic"] = _guide_summary(guide)
         if guide is not None and guide.medicare:
+            result["tell_the_person"] = LINK_OPENS_THE_CHAT
             result["steps"] = [
                 "Open the link. It opens Fight Health Insurance's chat, set up "
                 "for Medicare, and it's free.",
@@ -1695,10 +1702,15 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
             # and common_view_logic.py (create_or_update_denial, which looks
             # up the state from the whole ZIP code and stores zip[:3]).
             result["privacy"] = (
-                "Don't ask for the letter here; if the person has already "
-                "shared it in the chat, prepare_appeal can load it into the "
-                "form, otherwise they upload or paste it at the link. On the "
-                "site, 'Remove personal details' takes out "
+                (
+                    "Don't ask for the letter here; if the person has already "
+                    "shared it in the chat, prepare_appeal can load it into the "
+                    "form, otherwise they upload or paste it at the link. "
+                    if prepare_on
+                    else "Don't ask for the letter here; the person uploads or "
+                    "pastes it at the link. "
+                )
+                + "On the site, 'Remove personal details' takes out "
                 "the personal details it can find before the letter is sent, "
                 "and the person checks for the rest. The site keeps the denial "
                 "text it receives to improve its AI, and people on its team "
