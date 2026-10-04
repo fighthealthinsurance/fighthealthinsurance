@@ -1193,8 +1193,11 @@ def _which_plan_note() -> dict[str, Any]:
                 "ERISA rights points to a private employer or union plan; "
                 "one that names the state insurance department or a state "
                 "external review usually means an insured plan.",
-                "The plan documents. An employer plan's Summary Plan "
-                "Description says how the plan is funded.",
+                "The plan documents. A private employer's Summary Plan "
+                "Description has to say whether benefits are guaranteed by an "
+                "insurance policy (29 C.F.R. § 2520.102-3(q)); that rule is "
+                "ERISA's, so for a government or church employer the HR "
+                "question is the reliable route.",
                 'Ask HR or the benefits office: "Is our plan fully insured '
                 "or self-funded?\" A plan card that names a carrier doesn't "
                 "settle it, because carriers administer self-funded plans too.",
