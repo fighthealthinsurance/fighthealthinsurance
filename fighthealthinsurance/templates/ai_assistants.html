@@ -167,12 +167,14 @@
 
         <section class="fhi-stack" id="other-assistants">
             <h2>Other assistants and your own models</h2>
-            <p>Anything that speaks MCP works. Wherever your tool asks for a server, it is a remote MCP server over Streamable HTTP at the address above, with no authentication. Two we have tried from the command line:</p>
+            <p>Apps rename and move their menus often. Everything here was last checked in October 2026.</p>
+            <p>Anything that speaks MCP works. Look for a setting called Connectors, Integrations, Tools, Plugins, Extensions or MCP servers, with an option to add a custom or remote server; if you can't find it, search your app's help pages for "MCP". Wherever it asks for a server, it is a remote MCP server over Streamable HTTP at the address above, with no authentication. Two we have tried from the command line:</p>
             <ul>
                 <li><b>Claude Code:</b> <code>claude mcp add --transport http fight-health-insurance https://www.fighthealthinsurance.com/mcp</code></li>
                 <li><b>Codex CLI:</b> <code>codex mcp add fight-health-insurance --url https://www.fighthealthinsurance.com/mcp</code></li>
             </ul>
             <p>Apps that run open-weight models on your own machine, such as LM Studio, Open WebUI, Jan and Ollama, take MCP servers too; each app's own guide shows where to paste the address. Two things to know: the model has to support tool calling, and small local models sometimes skip the tools or misread what they return, so check the links in the answer against this site.</p>
+            <p>Something look different? <a class="link" href="{% url 'contact' %}">Let us know</a> and we'll update this page.</p>
         </section>
     </div>
 </div>
