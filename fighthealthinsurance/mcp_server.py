@@ -1181,8 +1181,9 @@ def _which_plan_note() -> dict[str, Any]:
         {
             "why_it_matters": (
                 "An employer plan is either insured (an insurance company "
-                "carries the risk) or self-funded (the employer pays claims "
-                "and a carrier only administers them). A private employer's "
+                "carries the risk) or self-funded (the employer pays the "
+                "claims itself, often with a carrier hired only to administer "
+                "them). A private employer's "
                 "or union's self-funded plan is under ERISA, so state "
                 "insurance rules and some federal payer rules don't reach it, "
                 "and an external review goes through the federal process or "
@@ -1194,10 +1195,11 @@ def _which_plan_note() -> dict[str, Any]:
                 "one that names the state insurance department or a state "
                 "external review usually means an insured plan.",
                 "The plan documents. A private employer's Summary Plan "
-                "Description has to say whether benefits are guaranteed by an "
-                "insurance policy (29 C.F.R. § 2520.102-3(q)); that rule is "
-                "ERISA's, so for a government or church employer the HR "
-                "question is the reliable route.",
+                "Description says how the plan is funded, and where an "
+                "insurer finances or administers it, whether benefits are "
+                "guaranteed by an insurance policy (29 C.F.R. § "
+                "2520.102-3(q)). That rule is ERISA's, so for a government or "
+                "church employer the HR question is the reliable route.",
                 'Ask HR or the benefits office: "Is our plan fully insured '
                 "or self-funded?\" A plan card that names a carrier doesn't "
                 "settle it, because carriers administer self-funded plans too.",
