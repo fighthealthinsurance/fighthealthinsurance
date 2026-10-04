@@ -44,7 +44,7 @@
                     {% for letter, terms in letter_groups %}
                     <div id="letter-{{ letter }}" class="letter-section fhi-stack">
                         <h2 class="letter-header">{{ letter }}</h2>
-                        <div class="fhi-cards fhi-cards-roomy">
+                        <div class="fhi-cards fhi-cards-roomy fhi-cards-tiles">
                             {% for term in terms %}
                             <a href="{% url 'glossary_term' term.slug %}" class="term-card">
                                 <div class="fhi-card">
