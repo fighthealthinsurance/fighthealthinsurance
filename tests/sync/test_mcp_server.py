@@ -2111,10 +2111,11 @@ class CaregiverWordingTest(TestCase):
     def test_the_agreement_step_and_the_box_share_the_helping_phrase(self):
         from fighthealthinsurance import consent
 
-        phrase = "helping who asked"
-        self.assertIn(phrase, consent.BOXES["personalonly"])
-        self.assertIn(phrase, consent.BOXES["tos"])
+        first_person = "for someone I'm helping who asked me to"
+        third_person = "for someone they're helping who asked them to"
+        self.assertIn(first_person, consent.BOXES["personalonly"])
+        self.assertIn(first_person, consent.BOXES["tos"])
         agreement_steps = [s for s in mcp_server.SCAN_STEPS if "Tick the boxes" in s]
         self.assertEqual(len(agreement_steps), 1)
-        self.assertIn(phrase, agreement_steps[0])
-        self.assertIn(phrase, mcp_server.PREPARE_APPEAL_DESCRIPTION)
+        self.assertIn(third_person, agreement_steps[0])
+        self.assertIn(third_person, mcp_server.PREPARE_APPEAL_DESCRIPTION)
