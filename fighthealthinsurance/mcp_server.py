@@ -56,6 +56,7 @@ beautifulsoup4 and seleniumbase pins first.
 import asyncio
 import json
 import logging
+import time
 import os
 import re
 import unicodedata
@@ -80,6 +81,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ContentBlock
 from mcp.types import Tool as MCPTool
 from mcp.types import ToolAnnotations
+from prometheus_client import Counter, Histogram
 from pydantic import Field, ValidationError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -1524,6 +1526,21 @@ UNDECLARED_NOTE_WITH_PREPARE = (
 )
 
 
+# Per tool and outcome, never from arguments. An unknown tool name is counted
+# as "unknown" so a client can't mint label values.
+TOOL_CALLS = Counter(
+    "fhi_mcp_tool_calls_total",
+    "MCP tool calls by tool and outcome",
+    ["tool", "outcome"],
+)
+TOOL_SECONDS = Histogram(
+    "fhi_mcp_tool_call_seconds",
+    "MCP tool call duration by tool",
+    ["tool"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30),
+)
+
+
 class _StrictFastMCP(FastMCP):
     """FastMCP that refuses arguments a tool does not declare (the SDK drops
     them silently), says so in each tool's schema, and keeps unexpected
@@ -1555,28 +1572,38 @@ class _StrictFastMCP(FastMCP):
             tool.name: set(tool.inputSchema.get("properties", {}))
             for tool in await super().list_tools()
         }
+        label = name if name in declared else "unknown"
         if name in declared:
             extra = sorted(set(arguments) - declared[name])
             if extra:
+                TOOL_CALLS.labels(label, "refused").inc()
                 raise ToolError(
                     f"{name} does not take {', '.join(extra)}. It takes only: "
                     f"{', '.join(sorted(declared[name])) or 'no arguments'}. "
                     + self.undeclared_note
                 )
+        started = time.monotonic()
         try:
-            return await super().call_tool(name, arguments)
+            result = await super().call_tool(name, arguments)
         except ToolError as e:
             cause = e.__cause__
             if isinstance(cause, ValidationError):
+                TOOL_CALLS.labels(label, "refused").inc()
                 raise ToolError(_input_error_message(name, cause)) from None
             if cause is None or isinstance(cause, ToolError):
+                TOOL_CALLS.labels(label, "refused").inc()
                 raise
+            TOOL_CALLS.labels(label, "failed").inc()
             # Never the arguments or the exception's text, which can quote them.
             logger.error(f"MCP tool {name} failed with {type(cause).__name__}")
             raise ToolError(
                 f"Error executing tool {name}: something went wrong on our side. "
                 f"Please try again, or send the person to {CANONICAL_ORIGIN}."
             ) from None
+        finally:
+            TOOL_SECONDS.labels(label).observe(time.monotonic() - started)
+        TOOL_CALLS.labels(label, "ok").inc()
+        return result
 
 
 def transport_security() -> TransportSecuritySettings:
