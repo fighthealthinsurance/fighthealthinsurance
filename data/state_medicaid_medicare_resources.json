@@ -1,0 +1,736 @@
+[
+    {
+        "state_name": "Alabama",
+        "state_abbr": "AL",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/alabama/",
+        "senior_medicare_patrol": "https://alabamaageline.gov/smp/",
+        "protection_and_advocacy": "https://sites.ua.edu/adap/",
+        "fair_hearing_request": "https://admincode.legislature.state.al.us/api/rule/560-X-3-.03",
+        "managed_care_and_independent_review_orgs": "https://www.alabamapublichealth.gov/mcc/",
+        "ndc_cdl_drugs": "https://medicaid.alabama.gov/content/4.0_Programs/4.3_Pharmacy-DME/4.3.7_Preferred_Drug_List.aspx",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-services-alabama-program-profile"
+        ]
+    },
+    {
+        "state_name": "Alaska",
+        "state_abbr": "AK",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/alaska/",
+        "senior_medicare_patrol": "https://health.alaska.gov/en/senior-and-disabilities-services/senior-medicare-patrol/",
+        "protection_and_advocacy": "https://www.olmsteadrights.org/self-helptools/advocacy-resources/item.6438-Alaska_Disability_Resources_and_Advocacy_Organizations",
+        "fair_hearing_request": "https://alaskalawhelp.org/resource/fair-hearings",
+        "managed_care_and_independent_review_orgs": "https://www.commerce.alaska.gov/web/ins/Consumers/Health/ExternalHealthcareReview.aspx",
+        "ndc_cdl_drugs": "https://health.alaska.gov/en/education/pdl-preferred-drug-list/",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/alaska-legal-services-corporation-program-profile"
+        ]
+    },
+    {
+        "state_name": "Arizona",
+        "state_abbr": "AZ",
+        "state_health_ins_assist_programs": "https://azship.org/",
+        "senior_medicare_patrol": "https://azsmp.org/",
+        "protection_and_advocacy": "https://disabilityrightsaz.org/about/about-us/",
+        "fair_hearing_request": "https://www.azahcccs.gov/Members/GetCovered/RightsAndResponsibilities/grievanceandappeals.html",
+        "managed_care_and_independent_review_orgs": "https://difi.az.gov/insurers",
+        "ndc_cdl_drugs": "https://www.uhcprovider.com/content/dam/provider/docs/public/commplan/az/pharmacy/AZ-Preferred-Drug-List-Medicaid.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/community-legal-services-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/dna-peoples-legal-services-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/southern-arizona-legal-aid-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Arkansas",
+        "state_abbr": "AR",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/arkansas/",
+        "senior_medicare_patrol": "https://insurance.arkansas.gov/consumer-assistance/senior-medicare-patrol-smp/",
+        "protection_and_advocacy": "https://portal.arkansas.gov/helpful-link/disability-rights-arkansas-dra/",
+        "fair_hearing_request": "https://humanservices.arkansas.gov/contact-us/file-an-appeal/",
+        "managed_care_and_independent_review_orgs": "https://healthy.arkansas.gov/programs-services/licensing-military-member-licensure-permits-plan-reviews/health-facility-services/utilization-review-construction-plan-review-program/",
+        "ndc_cdl_drugs": "https://ar.primetherapeutics.com/documents/268611/269354/Preferred+Drug+List.pdf/533764a9-1715-6daf-8eb5-bbe71e53ca1d",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-arkansas-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "California",
+        "state_abbr": "CA",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/california/",
+        "senior_medicare_patrol": "https://www.aging.ca.gov/Providers_and_Partners/Health_Insurance_Counseling_and_Advocacy_Program/Senior_Medicare_Patrol/",
+        "protection_and_advocacy": "https://www.disabilityrightsca.org/",
+        "fair_hearing_request": "https://www.cdss.ca.gov/hearing-requests",
+        "managed_care_and_independent_review_orgs": "https://www.dmhc.ca.gov/FileaComplaint/IndependentMedicalReviewandComplaintReports.aspx",
+        "ndc_cdl_drugs": "https://medi-calrx.dhcs.ca.gov/home/cdl/",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/bay-area-legal-aid-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/california-indian-legal-services-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/california-rural-legal-assistance-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/central-california-legal-services-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/greater-bakersfield-legal-assistance-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/inland-counties-legal-services-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-foundation-los-angeles-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/community-legal-aid-socal-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-society-san-diego-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-services-northern-california-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/neighborhood-legal-services-los-angeles-county-program-profile"
+        ]
+    },
+    {
+        "state_name": "Colorado",
+        "state_abbr": "CO",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/colorado/",
+        "senior_medicare_patrol": "https://doi.colorado.gov/insurance-products/health-insurance/senior-health-care/medicare-assistance/senior-medicare-patrol",
+        "protection_and_advocacy": "https://disabilityjustice.co/",
+        "fair_hearing_request": "https://www.healthfirstcolorado.gov/benefits-services/appeals/",
+        "managed_care_and_independent_review_orgs": "https://www.dmhc.ca.gov/",
+        "ndc_cdl_drugs": "https://hcpf.colorado.gov/sites/hcpf/files/07-01-26_PDL_V1.1.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/colorado-legal-services-program-profile"
+        ]
+    },
+    {
+        "state_name": "Connecticut",
+        "state_abbr": "CT",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/connecticut/",
+        "senior_medicare_patrol": "https://smpresource.org/",
+        "protection_and_advocacy": "https://www.disrightsct.org/",
+        "fair_hearing_request": "https://connect.ct.gov/access/jsp/MyAccount_webHelp_EN/Hearing_Request.htm",
+        "managed_care_and_independent_review_orgs": "https://portal.ct.gov/cid/consumer-information-center/consumer-resource-library/external-review?language=en_US",
+        "ndc_cdl_drugs": "https://www.ctdssmap.com/CTPortal/Portals/0/StaticContent/Publications/CT_PDL_alpha.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/statewide-legal-services-connecticut-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Delaware",
+        "state_abbr": "DE",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/delaware/",
+        "senior_medicare_patrol": "https://dhss.delaware.gov/dss/division-of-social-services/senior-medicare-patrol/",
+        "protection_and_advocacy": "https://www.declasi.org/drd/",
+        "fair_hearing_request": "https://dhss.delaware.gov/dss/division-of-social-services/fair-hearing-decisions/",
+        "managed_care_and_independent_review_orgs": "https://archive.regulations.delaware.gov/AdminCode/title18/1300/1301.shtml",
+        "ndc_cdl_drugs": "https://www.highmark.com/health-options-de/medicaid/benefits-programs/benefits-pharmacy",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-services-corporation-delaware-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "District of Columbia",
+        "state_abbr": "DC",
+        "state_health_ins_assist_programs": "https://dacl.dc.gov/service/health-insurance-counseling",
+        "senior_medicare_patrol": "https://smpresource.org/locator/district-of-columbia/",
+        "protection_and_advocacy": "https://www.uls-dc.org/programs/disability-rights-dc",
+        "fair_hearing_request": "https://dhcf.dc.gov/page/fair-hearing",
+        "managed_care_and_independent_review_orgs": "https://www.dmhc.ca.gov/FileaComplaint/IndependentMedicalReviewandComplaintReports.aspx",
+        "ndc_cdl_drugs": "https://dc.fhsc.com/providers/PDL.asp",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/neighborhood-legal-services-program-district-columbia-program-profile"
+        ]
+    },
+    {
+        "state_name": "Florida",
+        "state_abbr": "FL",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/florida/",
+        "senior_medicare_patrol": "https://smpresource.org/",
+        "protection_and_advocacy": "https://disabilityrightsflorida.org/",
+        "fair_hearing_request": "https://ahca.myflorida.com/medicaid/florida-medicaid-complaints/medicaid-fair-hearings.html",
+        "managed_care_and_independent_review_orgs": "https://emcexam.com/",
+        "ndc_cdl_drugs": "https://ahca.myflorida.com/medicaid/prescribed-drugs/medicaid-pharmaceutical-therapeutics-committee/florida-medicaid-preferred-drug-list-pdl.html",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/bay-area-legal-services-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/coast-coast-legal-aid-south-florida-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/community-legal-services-mid-florida-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/florida-rural-legal-services-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-services-greater-miami-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-services-north-florida-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/three-rivers-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Georgia",
+        "state_abbr": "GA",
+        "state_health_ins_assist_programs": "https://aging.georgia.gov/georgia-ship",
+        "senior_medicare_patrol": "https://smpresource.org/locator/georgia/",
+        "protection_and_advocacy": "https://thegao.org/",
+        "fair_hearing_request": "https://pathways.georgia.gov/eligibility/appeal-eligibility-decision",
+        "managed_care_and_independent_review_orgs": "https://rules.sos.ga.gov/gac/120-2-111",
+        "ndc_cdl_drugs": "https://dch.georgia.gov/providers/provider-types/pharmacy/preferred-drug-lists/2026-preferred-drug-list",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/atlanta-legal-aid-society-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/georgia-legal-services-program-program-profile"
+        ]
+    },
+    {
+        "state_name": "Hawaii",
+        "state_abbr": "HI",
+        "state_health_ins_assist_programs": "https://www.hawaiiship.org/",
+        "senior_medicare_patrol": "https://health.hawaii.gov/eoa/home/senior-medicare-patrol-smp-hawaii/",
+        "protection_and_advocacy": "https://hawaiidisabilityrights.org/",
+        "fair_hearing_request": "https://medical.mybenefits.hawaii.gov/content/medical-assistance-application-portal/us/en/appeals.html",
+        "managed_care_and_independent_review_orgs": "https://medquest.hawaii.gov/content/medquest/en/plans-providers/managed-care-providers.html",
+        "ndc_cdl_drugs": "https://medquest.hawaii.gov/content/medquest/en/plans-providers/pharmacy/drug-coverage/formulary-drug-search.html",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-society-hawaii-program-profile"
+        ]
+    },
+    {
+        "state_name": "Idaho",
+        "state_abbr": "ID",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/idaho/",
+        "senior_medicare_patrol": "https://smpresource.org/locator/idaho/",
+        "protection_and_advocacy": "https://www.disabilityrightsidaho.org/",
+        "fair_hearing_request": "https://healthandwelfare.idaho.gov/appeals-and-fair-hearings",
+        "managed_care_and_independent_review_orgs": "https://healthandwelfare.idaho.gov/managedcare",
+        "ndc_cdl_drugs": "https://www.uhcprovider.com/content/dam/provider/docs/public/commplan/ID/pharmacy/ID-UHCCP-PDL.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/idaho-legal-aid-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Illinois",
+        "state_abbr": "IL",
+        "state_health_ins_assist_programs": "https://ilaging.illinois.gov/ship.html",
+        "senior_medicare_patrol": "https://ilaging.illinois.gov/ship/senior-medicare-patrol.html",
+        "protection_and_advocacy": "https://www.olmsteadrights.org/self-helptools/advocacy-resources/item.6563-Illinois_Disability_Resources_and_Advocacy_Organizations",
+        "fair_hearing_request": "https://www.dhs.state.il.us/page.aspx?item=32119",
+        "managed_care_and_independent_review_orgs": "https://illinoisattorneygeneral.gov/Page-Attachments/appealsreviews.pdf",
+        "ndc_cdl_drugs": "https://hfs.illinois.gov/medicalproviders/pharmacy/medicaid-preferred-drug-list.html",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/land-lincoln-legal-aid-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-chicago-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/prairie-state-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Indiana",
+        "state_abbr": "IN",
+        "state_health_ins_assist_programs": "https://www.in.gov/ship/",
+        "senior_medicare_patrol": "https://smpresource.org/locator/indiana/",
+        "protection_and_advocacy": "https://www.in.gov/idr/",
+        "fair_hearing_request": "https://www.in.gov/oalp/resources-for-fssa-appeals/",
+        "managed_care_and_independent_review_orgs": "https://www.in.gov/idoi/medical-malpractice/filing-a-medical-malpractice-complaint/medical-review-panel/",
+        "ndc_cdl_drugs": "https://www.mhsindiana.com/content/dam/centene/mhsindiana/policies/pharmacy-policies/20230601_INM_PDL+(1).pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/indiana-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Iowa",
+        "state_abbr": "IA",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/iowa/",
+        "senior_medicare_patrol": "https://shiip.iowa.gov/about-smp",
+        "protection_and_advocacy": "https://disabilityrightsiowa.org/",
+        "fair_hearing_request": "https://hhs.iowa.gov/appeals/how-appeal",
+        "managed_care_and_independent_review_orgs": "https://iid.iowa.gov/consumers/insurance/health-insurance/external-review",
+        "ndc_cdl_drugs": "https://www.iowamedicaidpdl.com/pa-pdl/preferred-drug-lists.html",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/iowa-legal-aid-program-profile"
+        ]
+    },
+    {
+        "state_name": "Kansas",
+        "state_abbr": "KS",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/kansas/",
+        "senior_medicare_patrol": "https://www.kdads.ks.gov/services-programs/aging/medicare-programs/kansas-senior-medicare-patrol-smp",
+        "protection_and_advocacy": "https://www.drckansas.org/",
+        "fair_hearing_request": "https://www.kancare.ks.gov/members/help-resources/appeals-fair-hearings/",
+        "managed_care_and_independent_review_orgs": "https://insurance.ks.gov/documents/department/publications/independent-medical-review.pdf",
+        "ndc_cdl_drugs": "https://www.kdhe.ks.gov/212/Preferred-Drug-List-Program",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/kansas-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Kentucky",
+        "state_abbr": "KY",
+        "state_health_ins_assist_programs": "https://www.chfs.ky.gov/agencies/dail/Pages/ship.aspx",
+        "senior_medicare_patrol": "https://smpresource.org/locator/kentucky/",
+        "protection_and_advocacy": "https://kypa.net/",
+        "fair_hearing_request": "https://www.chfs.ky.gov/agencies/dms/dhpo/Pages/appeals.aspx",
+        "managed_care_and_independent_review_orgs": "https://apps.legislature.ky.gov/law/statutes/statute.aspx?id=56581",
+        "ndc_cdl_drugs": "https://kyportal.medimpact.com/sites/default/files/2026-07/kentucky-medicaid-pdl_03292024.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/appalachian-research-and-defense-fund-kentucky-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/kentucky-legal-aid-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-bluegrass-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-society-program-profile"
+        ]
+    },
+    {
+        "state_name": "Louisiana",
+        "state_abbr": "LA",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/louisiana/",
+        "senior_medicare_patrol": "https://smpresource.org/locator/louisiana/",
+        "protection_and_advocacy": "https://disabilityrightsla.org/",
+        "fair_hearing_request": "https://ldh.la.gov/medicaid/how-to-appeal-medicaid",
+        "managed_care_and_independent_review_orgs": "https://ldh.la.gov/assets/docs/BayouHealth/Independent_Review_Panel/IR_PROCESS_LDH_02.1.18.pdf",
+        "ndc_cdl_drugs": "https://ldh.la.gov/assets/HealthyLa/Pharmacy/PDL.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/acadiana-legal-service-corporation-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/southeast-louisiana-legal-services-corporation-program-profile"
+        ]
+    },
+    {
+        "state_name": "Maine",
+        "state_abbr": "ME",
+        "state_health_ins_assist_programs": "https://www.maine.gov/dhhs/oads/get-support/older-adults-disabilities/older-adult-services/ship-medicare-assistance",
+        "senior_medicare_patrol": "https://smpresource.org/locator/maine/",
+        "protection_and_advocacy": "https://drme.org/",
+        "fair_hearing_request": "https://www.maine.gov/dhhs/about-us/administrative-hearings",
+        "managed_care_and_independent_review_orgs": "https://www.maine.gov/pfr/insurance/consumers/health-insurance-for-individuals-and-families/complaints-appeals-external-reviews",
+        "ndc_cdl_drugs": "https://www.mainecarepdl.org/preferred-drug-lists.html",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/pine-tree-legal-assistance-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Maryland",
+        "state_abbr": "MD",
+        "state_health_ins_assist_programs": "https://aging.maryland.gov/programs-and-services/medicare-support/state-health-insurance-assistance-program",
+        "senior_medicare_patrol": "https://aging.maryland.gov/programs-and-services/medicare-support/senior-medicare-patrol",
+        "protection_and_advocacy": "https://disabilityrightsmd.org/about/",
+        "fair_hearing_request": "https://health.maryland.gov/mmcp/Pages/medicaid-appeal.aspx",
+        "managed_care_and_independent_review_orgs": "https://health.maryland.gov/mmcp/healthchoice/Pages/independent-review.aspx",
+        "ndc_cdl_drugs": "https://health.maryland.gov/mmcp/pap/pages/Preferred-Drug-List.aspx",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/maryland-legal-aid-program-profile"
+        ]
+    },
+    {
+        "state_name": "Massachusetts",
+        "state_abbr": "MA",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/SHIPs/massachusetts/",
+        "senior_medicare_patrol": "https://smpresource.org/locator/massachusetts/",
+        "protection_and_advocacy": "https://www.dlc-ma.org/",
+        "fair_hearing_request": "https://www.mass.gov/how-to/how-to-appeal-a-masshealth-decision",
+        "managed_care_and_independent_review_orgs": "https://www.mass.gov/info-details/health-care-access-bureau-hcab",
+        "ndc_cdl_drugs": "https://mhdl.pharmacy.services.conduent.com/MHDL/welcome.do",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/community-legal-aid-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/northeast-legal-aid-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/south-coastal-counties-legal-services-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/volunteer-lawyers-project-boston-bar-association-program-profile"
+        ]
+    },
+    {
+        "state_name": "Michigan",
+        "state_abbr": "MI",
+        "state_health_ins_assist_programs": "https://www.michigan.gov/mdhhs/adult-child-serv/adults-and-seniors/acls/state-health-insurance-assistance-program",
+        "senior_medicare_patrol": "https://www.michigan.gov/mdhhs/adult-child-serv/adults-and-seniors/acls/senior-medicare-patrol-program",
+        "protection_and_advocacy": "https://www.drmich.org/",
+        "fair_hearing_request": "https://www.michigan.gov/mdhhs/assistance-programs/medicaid/hearings",
+        "managed_care_and_independent_review_orgs": "https://www.michigan.gov/mdhhs/doing-business/providers/providers/managedcare",
+        "ndc_cdl_drugs": "https://mi.primetherapeutics.com/provider/external/medicaid/mi/doc/en-us/MIRx_PDL.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/lakeshore-legal-aid-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-western-michigan-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-services-eastern-michigan-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-services-northern-michigan-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/michigan-advocacy-program-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/michigan-indian-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Minnesota",
+        "state_abbr": "MN",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/minnesota/",
+        "senior_medicare_patrol": "https://smpresource.org/",
+        "protection_and_advocacy": "https://www.olmsteadrights.org/self-helptools/advocacy-resources/item.6981-Minnesota_Disability_Resources_and_Advocacy_Organizations",
+        "fair_hearing_request": "https://mn.gov/dhs/about-us/about-human-services/appeals/",
+        "managed_care_and_independent_review_orgs": "https://mn.gov/commerce/insurance/health/consumer-protections/external-review.jsp",
+        "ndc_cdl_drugs": "https://mn.gov/dhs/partners-and-providers/news-initiatives-reports-workgroups/minnesota-health-care-programs/drug-formulary-committee/uniform-preferred-drug-list/index.jsp",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/anishinabe-legal-services-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/central-minnesota-legal-services-inc-program-profile",
+            "https://www.lsc.gov/about-lsc/our-grantees/justice-north-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/southern-minnesota-regional-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Mississippi",
+        "state_abbr": "MS",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/mississippi/",
+        "senior_medicare_patrol": "https://smpresource.org/locator/mississippi/",
+        "protection_and_advocacy": "https://askjan.org/organizations/Mississippi-Protection-and-Advocacy.cfm",
+        "fair_hearing_request": "https://medicaid.ms.gov/medicaid-coverage/after-you-apply/eligibility-hearings/",
+        "managed_care_and_independent_review_orgs": "https://medicaid.ms.gov/wp-content/uploads/2026/01/2026-MS-Managed-Care-Quality-Strategy.pdf",
+        "ndc_cdl_drugs": "https://medicaid.ms.gov/preferred-drug-list/",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/mississippi-center-legal-services-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/north-mississippi-rural-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Missouri",
+        "state_abbr": "MO",
+        "state_health_ins_assist_programs": "https://www.missouriship.org/",
+        "senior_medicare_patrol": "https://missourismp.org/",
+        "protection_and_advocacy": "https://www.moadvocacy.org/",
+        "fair_hearing_request": "https://mymohealthportal.com/appeals-and-grievances/",
+        "managed_care_and_independent_review_orgs": "https://insurance.mo.gov/health-insurance/external-review-process",
+        "ndc_cdl_drugs": "https://dss.mo.gov/media/file/preferred-and-non-preferred-drug-list",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-western-missouri-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-services-eastern-missouri-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-services-southern-missouri-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/mid-missouri-legal-services-corporation-program-profile"
+        ]
+    },
+    {
+        "state_name": "Montana",
+        "state_abbr": "MT",
+        "state_health_ins_assist_programs": "https://dphhs.mt.gov/sltc/aging/ship",
+        "senior_medicare_patrol": "https://dphhs.mt.gov/SLTC/aging/MontanaSMP",
+        "protection_and_advocacy": "https://disabilityrightsmt.org/",
+        "fair_hearing_request": "https://www.montanalawhelp.org/issues/healthcare/medicaid",
+        "managed_care_and_independent_review_orgs": "https://erd.dli.mt.gov/work-comp-claims/medical-regulations/utilization-and-treatment-guidelines/independent-medical-review-process",
+        "ndc_cdl_drugs": "https://medicaidprovider.mt.gov/docs/pharmacy/2024pharm/PreferredDrugListFebruary2025.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/montana-legal-services-association-program-profile"
+        ]
+    },
+    {
+        "state_name": "Nebraska",
+        "state_abbr": "NE",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/nebraska/",
+        "senior_medicare_patrol": "https://doi.nebraska.gov/consumer/senior-health",
+        "protection_and_advocacy": "https://www.disabilityrightsnebraska.org/",
+        "fair_hearing_request": "https://public-dhhs.ne.gov/Forms/DisplayPDF.aspx?item=232",
+        "managed_care_and_independent_review_orgs": "https://doi.nebraska.gov/sites/default/files/doc/Chapter87ExternalReviewForms_0.pdf",
+        "ndc_cdl_drugs": "https://nebraska.fhsc.com/PDL/PDLlistings.asp",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-nebraska-program-profile"
+        ]
+    },
+    {
+        "state_name": "Nevada",
+        "state_abbr": "NV",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/nevada/",
+        "senior_medicare_patrol": "https://smpresource.org/locator/nevada/",
+        "protection_and_advocacy": "https://ndalc.org/",
+        "fair_hearing_request": "https://mss.anthem.com/nevada-medicaid/nv_caid_statefairhearing_eng.pdf",
+        "managed_care_and_independent_review_orgs": "https://www.leg.state.nv.us/NRS/NRS-695G.html",
+        "ndc_cdl_drugs": "https://fm.formularynavigator.com/FBO/4/Nevada_PDL_English.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/nevada-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "New Hampshire",
+        "state_abbr": "NH",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/new-hampshire/",
+        "senior_medicare_patrol": "https://smpresource.org/locator/new-hampshire/",
+        "protection_and_advocacy": "https://drcnh.org/about-us/",
+        "fair_hearing_request": "https://www.amerihealthcaritasnh.com/member/rights/fair-hearings",
+        "managed_care_and_independent_review_orgs": "https://www.insurance.nh.gov/consumers/health-insurance/independent-external-review",
+        "ndc_cdl_drugs": "https://www.dhhs.nh.gov/programs-services/medicaid/medicaid-pharmacy-benefit-management",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/603-legal-aid-program-profile"
+        ]
+    },
+    {
+        "state_name": "New Jersey",
+        "state_abbr": "NJ",
+        "state_health_ins_assist_programs": "https://nj.gov/humanservices/doas/services/q-z/ship/",
+        "senior_medicare_patrol": "https://seniormedicarepatrolnj.org/",
+        "protection_and_advocacy": "https://disabilityrightsnj.org/",
+        "fair_hearing_request": "https://www.fideliscarenj.com/members/medicaid/nj-familycare/member-rights-policies/appeals-and-grievances.html",
+        "managed_care_and_independent_review_orgs": "https://www.nj.gov/dobi/division_insurance/managedcare/ihcap.htm",
+        "ndc_cdl_drugs": "https://fm.formularynavigator.com/FBO/4/New_Jersey_PDL_English.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/central-jersey-legal-services-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/essex-newark-legal-services-project-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-services-northwest-jersey-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/northeast-new-jersey-legal-services-corporation-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/south-jersey-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "New Mexico",
+        "state_abbr": "NM",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/new-mexico/",
+        "senior_medicare_patrol": "https://www.aging.nm.gov/consumer-and-elder-rights/medicare/senior-medicare-patrol/",
+        "protection_and_advocacy": "https://drnm.org/",
+        "fair_hearing_request": "https://www.hca.nm.gov/office-of-fair-hearings-faqs/",
+        "managed_care_and_independent_review_orgs": "https://www.osi.state.nm.us/en/consumer-assistance/insurance-types/managed-health-care-review/iro/",
+        "ndc_cdl_drugs": "https://www.hca.nm.gov/wp-content/uploads/New-Mexico-Medicaid-PDL-7.1.26-Final.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/new-mexico-legal-aid-program-profile"
+        ]
+    },
+    {
+        "state_name": "New York",
+        "state_abbr": "NY",
+        "state_health_ins_assist_programs": "https://nyship.ny.gov/",
+        "senior_medicare_patrol": "https://www.nysenior.org/senior-medicare-patrol/",
+        "protection_and_advocacy": "https://www.drny.org/",
+        "fair_hearing_request": "https://otda.ny.gov/hearings/request/",
+        "managed_care_and_independent_review_orgs": "https://health.ny.gov/health_care/managed_care/plans/docs/mmc_nyia_guidance.pdf",
+        "ndc_cdl_drugs": "https://newyork.fhsc.com/downloads/providers/NYRx_PDP_PDL_20240228.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-society-mid-new-york-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-society-northeastern-new-york-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-assistance-western-new-york-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-services-nyc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-services-hudson-valley-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-services-long-island-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/neighborhood-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "North Carolina",
+        "state_abbr": "NC",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/north-carolina/",
+        "senior_medicare_patrol": "https://www.ncdoi.gov/consumers/senior-medicare-patrol-program-ncsmp",
+        "protection_and_advocacy": "https://disabilityrightsnc.org/",
+        "fair_hearing_request": "https://medicaid.ncdhhs.gov/resources/appeals",
+        "managed_care_and_independent_review_orgs": "https://www.ncdoi.gov/insurance-industry/form-and-rate-filings/life-and-health/checklists-managed-care-operations-networks-and-provider-agreements",
+        "ndc_cdl_drugs": "https://www.carolinacompletehealth.com/members/medicaid/benefits-services/pharmacy.html",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-north-carolina-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "North Dakota",
+        "state_abbr": "ND",
+        "state_health_ins_assist_programs": "https://www.insurance.nd.gov/consumers/medicare",
+        "senior_medicare_patrol": "https://ndcpd.org/smp/",
+        "protection_and_advocacy": "https://www.ndpanda.org/",
+        "fair_hearing_request": "https://www.hhs.nd.gov/healthcare-coverage/medicaid/file-appeal",
+        "managed_care_and_independent_review_orgs": "https://www.law.cornell.edu/regulations/north-dakota/N-D-A-C-92-01-02-41",
+        "ndc_cdl_drugs": "https://ndmedicaid.acentra.com/preferred-drug-list-pdl/",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-services-north-dakota-program-profile"
+        ]
+    },
+    {
+        "state_name": "Ohio",
+        "state_abbr": "OH",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/ohio/",
+        "senior_medicare_patrol": "https://smpresource.org/locator/ohio/",
+        "protection_and_advocacy": "https://www.disabilityrightsohio.org/",
+        "fair_hearing_request": "https://hearings.jfs.ohio.gov/apps/SHARE/",
+        "managed_care_and_independent_review_orgs": "https://insurance.ohio.gov/companies/product-regulation-and-actuarial-services/resources/iro-list",
+        "ndc_cdl_drugs": "https://medicaid.ohio.gov/stakeholders-and-partners/phm/unified-pdl",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/community-legal-aid-services-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-western-ohio-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-society-cleveland-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-society-greater-cincinnati-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-southeast-and-central-ohio-program-profile"
+        ]
+    },
+    {
+        "state_name": "Oklahoma",
+        "state_abbr": "OK",
+        "state_health_ins_assist_programs": "https://www.oid.ok.gov/consumers/information-for-seniors/senior-health-insurance-counseling-program-ship/",
+        "senior_medicare_patrol": "https://www.oid.ok.gov/consumers/information-for-seniors/senior-medicare-patrol-smp/",
+        "protection_and_advocacy": "https://drok.org/",
+        "fair_hearing_request": "https://www.oklahomacompletehealth.com/members/medicaid/resources/complaints-appeals.html",
+        "managed_care_and_independent_review_orgs": "https://www.oid.ok.gov/consumers/external-review-process/",
+        "ndc_cdl_drugs": "https://www.oklahomacompletehealth.com/content/dam/centene/oklahoma-complete-health/pdfs/pdl/2025.11+OK_CNCOK001_NOV25_FinalPDOC.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-services-oklahoma-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/oklahoma-indian-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Oregon",
+        "state_abbr": "OR",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/oregon/",
+        "senior_medicare_patrol": "https://www.oregon.gov/odhs/providers-partners/community-services-supports/Pages/senior-medicare-patrol.aspx",
+        "protection_and_advocacy": "https://www.droregon.org/",
+        "fair_hearing_request": "https://www.oregon.gov/oha/HSD/OHP/Pages/Appeals-Hearings.aspx",
+        "managed_care_and_independent_review_orgs": "https://dfr.oregon.gov/business/reg/health/Pages/external-review.aspx",
+        "ndc_cdl_drugs": "https://www.oregon.gov/oha/OHP/Providers/Pages/PDL.aspx",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-services-oregon-program-profile"
+        ]
+    },
+    {
+        "state_name": "Pennsylvania",
+        "state_abbr": "PA",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/pennsylvania/",
+        "senior_medicare_patrol": "https://smpresource.org/locator/pennsylvania/",
+        "protection_and_advocacy": "https://www.disabilityrightspa.org/",
+        "fair_hearing_request": "https://www.pa.gov/services/dhs/hearings-and-appeals-dhs",
+        "managed_care_and_independent_review_orgs": "https://www.pa.gov/services/insurance/request-a-review-if-your-health-insurance-denied-a-treatment-medication-or-service",
+        "ndc_cdl_drugs": "https://www.pa.gov/agencies/dhs/resources/pharmacy-services/preferred-drug-list",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-southeastern-pennsylvania-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/midpenn-legal-services-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/neighborhood-legal-services-association-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/north-penn-legal-services-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/northwestern-legal-services-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/philadelphia-legal-assistance-center-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/summit-legal-aid-program-profile"
+        ]
+    },
+    {
+        "state_name": "Rhode Island",
+        "state_abbr": "RI",
+        "state_health_ins_assist_programs": "https://oha.ri.gov/media/1631/download?language=en",
+        "senior_medicare_patrol": "https://oha.ri.gov/SMP",
+        "protection_and_advocacy": "https://drri.org/",
+        "fair_hearing_request": "https://staycovered.ri.gov/renew-your-medicaid/file-appeal",
+        "managed_care_and_independent_review_orgs": "https://eohhs.ri.gov/sites/g/files/xkgbur226/files/2025-04/RI+2023+EQR+ATR+UHCCP_F1_4.30.25.pdf",
+        "ndc_cdl_drugs": "https://eohhs.ri.gov/sites/g/files/xkgbur226/files/2025-07/PDL+07.10.2025.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/rhode-island-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "South Carolina",
+        "state_abbr": "SC",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/south-carolina/",
+        "senior_medicare_patrol": "https://smpresource.org/",
+        "protection_and_advocacy": "https://www.disabilityrightssc.org/",
+        "fair_hearing_request": "https://www.scdhhs.gov/appeals/file-appeal",
+        "managed_care_and_independent_review_orgs": "https://www.scdhhs.gov/providers/managed-care/managed-care",
+        "ndc_cdl_drugs": "https://southcarolina.fhsc.com/providers/pdl.asp",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/south-carolina-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "South Dakota",
+        "state_abbr": "SD",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/south-dakota/",
+        "senior_medicare_patrol": "https://smpresource.org/locator/south-dakota/",
+        "protection_and_advocacy": "https://drsdlaw.org/",
+        "fair_hearing_request": "https://dss.sd.gov/docs/medicaid/providers/billingmanuals/Provider_Basics/Reconsideration_Reviews.pdf",
+        "managed_care_and_independent_review_orgs": "https://dlr.sd.gov/insurance/long_term_care/independent_review.aspx",
+        "ndc_cdl_drugs": "https://sdm.pharmacy.optum.com/pdl",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/dakota-plains-legal-services-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/east-river-legal-services-program-profile"
+        ]
+    },
+    {
+        "state_name": "Tennessee",
+        "state_abbr": "TN",
+        "state_health_ins_assist_programs": "https://www.tn.gov/disability-and-aging/disability-aging-programs/tn-ship.html",
+        "senior_medicare_patrol": "https://smpresource.org/location/tennessee/",
+        "protection_and_advocacy": "https://www.disabilityrightstn.org/",
+        "fair_hearing_request": "https://www.tn.gov/humanservices/division-ofappeals-and-hearings/dhs-appeals-faq.html",
+        "managed_care_and_independent_review_orgs": "https://www.tn.gov/commerce/tenncare-oversight/mco-dispute-resolution/independent-review-process.html",
+        "ndc_cdl_drugs": "https://contenthub-aem.optumrx.com/content/dam/contenthub/onboarding/assets/Tenncare/Tenncare-PDL.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-east-tennessee-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-society-middle-tennessee-and-cumberlands-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/west-tennessee-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Texas",
+        "state_abbr": "TX",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/texas/",
+        "senior_medicare_patrol": "https://texassmp.org/",
+        "protection_and_advocacy": "https://disabilityrightstx.org/en/home/",
+        "fair_hearing_request": "https://fhb.hhs.texas.gov/handbooks/community-care-services-eligibility-handbook/2900-appeals-fair-hearings",
+        "managed_care_and_independent_review_orgs": "https://www.tdi.texas.gov/hmo/mcqa/indexiro.html",
+        "ndc_cdl_drugs": "https://www.txvendordrug.com/sites/default/files/docs/2024-0125-preferred-drug-list.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-northwest-texas-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/lone-star-legal-aid-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/texas-riogrande-legal-aid-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Utah",
+        "state_abbr": "UT",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/utah/",
+        "senior_medicare_patrol": "https://smpresource.org/locator/utah/",
+        "protection_and_advocacy": "https://disabilitylawcenter.org/",
+        "fair_hearing_request": "https://dhhs.utah.gov/oah/medicaid-fair-hearings/",
+        "managed_care_and_independent_review_orgs": "https://insurance.utah.gov/consumers/health-insurance/independent-review/",
+        "ndc_cdl_drugs": "https://medicaid.utah.gov/pharmacy-program/preferred-drug-list/",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/utah-legal-services-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Vermont",
+        "state_abbr": "VT",
+        "state_health_ins_assist_programs": "https://asd.vermont.gov/services/ship",
+        "senior_medicare_patrol": "https://smpresource.org/locator/vermont/",
+        "protection_and_advocacy": "https://disabilityrightsvt.org/",
+        "fair_hearing_request": "https://dvha.vermont.gov/members/appeals-and-fair-hearings",
+        "managed_care_and_independent_review_orgs": "https://dfr.vermont.gov/reg-bul-ord/consumer-protection-and-quality-requirements-managed-care-organizations",
+        "ndc_cdl_drugs": "https://dvha.vermont.gov/providers/pharmacy/preferred-drug-list-pdl-clinical-criteria",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-services-vermont-program-profile"
+        ]
+    },
+    {
+        "state_name": "Virginia",
+        "state_abbr": "VA",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/virginia/",
+        "senior_medicare_patrol": "https://virginiasmp.com/",
+        "protection_and_advocacy": "https://www.dlcv.org/",
+        "fair_hearing_request": "https://www.dmas.virginia.gov/appeals/",
+        "managed_care_and_independent_review_orgs": "https://www.scc.virginia.gov/media/sccvirginiagov-home/regulated-industries/insurance/insurance-companies/life-health-companies/naic-product-checklists/sampleeobnotice.pdf",
+        "ndc_cdl_drugs": "https://vamedicaid.dmas.virginia.gov/bulletin/virginia-medicaid-preferred-drug-list-common-core-formulary-and-new-drug-utilization-1",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/blue-ridge-legal-services-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/central-virginia-legal-aid-society-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-society-eastern-virginia-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/legal-services-northern-virginia-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/southwest-virginia-legal-aid-society-inc-program-profile",
+            "https://www.lsc.gov/grants/our-grantees/virginia-legal-aid-society-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Washington",
+        "state_abbr": "WA",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/washington/",
+        "senior_medicare_patrol": "https://smpresource.org/",
+        "protection_and_advocacy": "https://disabilityrightswa.org/",
+        "fair_hearing_request": "https://oah.wa.gov/",
+        "managed_care_and_independent_review_orgs": "https://app.leg.wa.gov/rcw/default.aspx?cite=48.43.535",
+        "ndc_cdl_drugs": "https://www.hca.wa.gov/billers-providers-partners/program-information-providers/apple-health-preferred-drug-list-pdl",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/northwest-justice-project-program-profile"
+        ]
+    },
+    {
+        "state_name": "West Virginia",
+        "state_abbr": "WV",
+        "state_health_ins_assist_programs": "http://www.wvship.org/",
+        "senior_medicare_patrol": "https://smpresource.org/locator/west-virginia/",
+        "protection_and_advocacy": "https://www.drofwv.org/",
+        "fair_hearing_request": "https://specialedstartguide.com/blog/west-virginia-fair-hearing-dohs-medicaid",
+        "managed_care_and_independent_review_orgs": "https://bms.wv.gov/managed-care-reports",
+        "ndc_cdl_drugs": "https://bms.wv.gov/preferred-drug-list-and-coverage-details",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-west-virginia-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Wisconsin",
+        "state_abbr": "WI",
+        "state_health_ins_assist_programs": "https://www.dhs.wisconsin.gov/benefit-specialists/medicare-counseling.htm",
+        "senior_medicare_patrol": "https://www.smpwi.org/",
+        "protection_and_advocacy": "https://disabilityrightswi.org/program/protection-and-advocacy/",
+        "fair_hearing_request": "https://www.emhandbooks.wisconsin.gov/meh-ebd/policy_files/23/23.2.htm",
+        "managed_care_and_independent_review_orgs": "https://oci.wi.gov/Pages/Consumers/PI-203.aspx",
+        "ndc_cdl_drugs": "https://www.forwardhealth.wi.gov/WIPortal/Subsystem/SW/content/provider/medicaid/pharmacy/pdl/pdfs/pdl_list.pdf.spage",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-action-wisconsin-inc-program-profile"
+        ]
+    },
+    {
+        "state_name": "Wyoming",
+        "state_abbr": "WY",
+        "state_health_ins_assist_programs": "https://www.shiphelp.org/ships/wyoming/",
+        "senior_medicare_patrol": "https://wysmp.org/",
+        "protection_and_advocacy": "https://www.wypanda.com/",
+        "fair_hearing_request": "https://www.wesystem.wyo.gov/",
+        "managed_care_and_independent_review_orgs": "https://doi.wyo.gov/consumers/iro",
+        "ndc_cdl_drugs": "https://www.wymedicaid.org/content/dam/ffs-medicaid/wy/pdl-2026-041526.pdf",
+        "lsc_grantee_profiles": [
+            "https://www.lsc.gov/grants/our-grantees/legal-aid-wyoming-inc-program-profile"
+        ]
+    }
+]
