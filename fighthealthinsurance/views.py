@@ -79,6 +79,7 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import (
     is_valid_denial_id,
+    ai_assistants_page_enabled,
     medicaid_eligibility_page_enabled,
     notify_interested_professional,
     send_fallback_email,
@@ -611,6 +612,38 @@ class MedicaidEligibilityView(StaticIshView):
         # functools.wraps keeps view_class / view_initkwargs / __name__ that
         # Django attaches to the as_view callable and that middleware and
         # URL introspection read.
+        return view
+
+
+class AiAssistantsView(StaticIshView):
+    """How to connect Claude or ChatGPT to the MCP server. 404 while the
+    server is off, checked outside the page cache like MedicaidEligibilityView."""
+
+    template_name = "ai_assistants.html"
+
+    def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
+        from fighthealthinsurance.mcp_server import prepare_appeal_enabled
+
+        context = super().get_context_data(**kwargs)
+        context["prepare_appeal_on"] = prepare_appeal_enabled()
+        return context
+
+    @classonlymethod
+    def as_view(  # type: ignore[override]
+        cls, **initkwargs: typing.Any
+    ) -> typing.Callable[..., HttpResponseBase]:
+        cached_view = super().as_view(**initkwargs)
+
+        @functools.wraps(cached_view)
+        def view(
+            request: HttpRequest, *args: typing.Any, **kwargs: typing.Any
+        ) -> HttpResponseBase:
+            if not ai_assistants_page_enabled():
+                from django.http import Http404
+
+                raise Http404("This page is not available yet.")
+            return cached_view(request, *args, **kwargs)
+
         return view
 
 

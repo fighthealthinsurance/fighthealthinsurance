@@ -2329,6 +2329,11 @@ def extract_file_text(path: str) -> str:
             return ""
 
 
+def ai_assistants_page_enabled() -> bool:
+    """The Claude/ChatGPT setup page serves only while the MCP server it describes is on."""
+    return bool(getattr(settings, "MCP_SERVER_ENABLED", False))
+
+
 def medicaid_eligibility_page_enabled() -> bool:
     """Whether the experimental Medicaid eligibility landing page is staged on.
 
