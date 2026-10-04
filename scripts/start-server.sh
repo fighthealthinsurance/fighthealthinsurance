@@ -112,7 +112,8 @@ _drain() {
 }
 trap _drain TERM INT
 
-sudo -E -u www-data uvicorn fighthealthinsurance.asgi:application --host 0.0.0.0 --port 8010 --workers "${UVICORN_WORKERS:-2}" --proxy-headers --access-log --use-colors --log-config conf/uvlog_config.yaml 2>&1 | grep -v kube-probe  | grep -v kube-proxy &
+# grep block-buffers into a pipe; without --line-buffered, log lines arrive late in 4 KB batches or not at all.
+sudo -E -u www-data uvicorn fighthealthinsurance.asgi:application --host 0.0.0.0 --port 8010 --workers "${UVICORN_WORKERS:-2}" --proxy-headers --access-log --use-colors --log-config conf/uvlog_config.yaml 2>&1 | grep --line-buffered -v kube-probe | grep --line-buffered -v kube-proxy &
 sleep 2
-nginx -g "daemon off;" 2>&1 |grep -v kube-proxy |grep -v kube-probe &
+nginx -g "daemon off;" 2>&1 | grep --line-buffered -v kube-proxy | grep --line-buffered -v kube-probe &
 wait
