@@ -1541,6 +1541,10 @@ TOOL_SECONDS = Histogram(
 )
 
 
+class SiteFailure(ToolError):
+    """A ToolError for something that broke on our side, counted as failed."""
+
+
 class _StrictFastMCP(FastMCP):
     """FastMCP that refuses arguments a tool does not declare (the SDK drops
     them silently), says so in each tool's schema, and keeps unexpected
@@ -1573,37 +1577,41 @@ class _StrictFastMCP(FastMCP):
             for tool in await super().list_tools()
         }
         label = name if name in declared else "unknown"
-        if name in declared:
-            extra = sorted(set(arguments) - declared[name])
-            if extra:
-                TOOL_CALLS.labels(label, "refused").inc()
-                raise ToolError(
-                    f"{name} does not take {', '.join(extra)}. It takes only: "
-                    f"{', '.join(sorted(declared[name])) or 'no arguments'}. "
-                    + self.undeclared_note
-                )
         started = time.monotonic()
+        outcome = "failed"
         try:
-            result = await super().call_tool(name, arguments)
-        except ToolError as e:
-            cause = e.__cause__
-            if isinstance(cause, ValidationError):
-                TOOL_CALLS.labels(label, "refused").inc()
-                raise ToolError(_input_error_message(name, cause)) from None
-            if cause is None or isinstance(cause, ToolError):
-                TOOL_CALLS.labels(label, "refused").inc()
-                raise
-            TOOL_CALLS.labels(label, "failed").inc()
-            # Never the arguments or the exception's text, which can quote them.
-            logger.error(f"MCP tool {name} failed with {type(cause).__name__}")
-            raise ToolError(
-                f"Error executing tool {name}: something went wrong on our side. "
-                f"Please try again, or send the person to {CANONICAL_ORIGIN}."
-            ) from None
+            if name in declared:
+                extra = sorted(set(arguments) - declared[name])
+                if extra:
+                    outcome = "refused"
+                    raise ToolError(
+                        f"{name} does not take {', '.join(extra)}. It takes only: "
+                        f"{', '.join(sorted(declared[name])) or 'no arguments'}. "
+                        + self.undeclared_note
+                    )
+            try:
+                result = await super().call_tool(name, arguments)
+            except ToolError as e:
+                cause = e.__cause__
+                if isinstance(cause, ValidationError):
+                    outcome = "refused"
+                    raise ToolError(_input_error_message(name, cause)) from None
+                if cause is None or (
+                    isinstance(cause, ToolError) and not isinstance(cause, SiteFailure)
+                ):
+                    outcome = "refused"
+                    raise
+                # Never the arguments or the exception's text, which can quote them.
+                logger.error(f"MCP tool {name} failed with {type(cause).__name__}")
+                raise ToolError(
+                    f"Error executing tool {name}: something went wrong on our side. "
+                    f"Please try again, or send the person to {CANONICAL_ORIGIN}."
+                ) from None
+            outcome = "ok"
+            return result
         finally:
+            TOOL_CALLS.labels(label, outcome).inc()
             TOOL_SECONDS.labels(label).observe(time.monotonic() - started)
-        TOOL_CALLS.labels(label, "ok").inc()
-        return result
 
 
 def transport_security() -> TransportSecuritySettings:
@@ -2485,10 +2493,11 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
             django_app.append(ASGIHandler())
         status, markdown = await _get_in_process(django_app[0], twin)
         if status != 200:
-            raise ToolError(
+            message = (
                 f"{path} could not be read right now. Send the person to "
                 f"{_site_url(path)} instead."
             )
+            raise SiteFailure(message) if status >= 500 else ToolError(message)
         markdown = _without_held_back(markdown)
         truncated = len(markdown) > MAX_PAGE_CHARS
         page_url = _site_url(agent_docs.source_path_for(twin))

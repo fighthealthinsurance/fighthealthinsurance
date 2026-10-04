@@ -2032,11 +2032,40 @@ class ToolCallCountersTest(TestCase):
             timed + 1,
         )
 
-    async def test_an_undeclared_argument_counts_as_refused(self):
+    async def test_an_undeclared_argument_counts_as_refused_and_is_timed(self):
         before = self._count("get_state_help", "refused")
+        timed = (
+            REGISTRY.get_sample_value(
+                "fhi_mcp_tool_call_seconds_count", {"tool": "get_state_help"}
+            )
+            or 0
+        )
         result = await call("get_state_help", {"state": "CA", "letter": "x"})
         self.assertTrue(result.isError)
         self.assertEqual(self._count("get_state_help", "refused"), before + 1)
+        self.assertEqual(
+            REGISTRY.get_sample_value(
+                "fhi_mcp_tool_call_seconds_count", {"tool": "get_state_help"}
+            ),
+            timed + 1,
+        )
+
+    async def test_a_page_the_site_cannot_serve_counts_as_failed_not_refused(self):
+        before_failed = self._count("get_page", "failed")
+        before_refused = self._count("get_page", "refused")
+        with mock.patch.object(mcp_server, "_get_in_process", return_value=(500, "")):
+            result = await call("get_page", {"path": "/about-us"})
+        self.assertTrue(result.isError)
+        self.assertIn("something went wrong on our side", text_of(result))
+        self.assertEqual(self._count("get_page", "failed"), before_failed + 1)
+        self.assertEqual(self._count("get_page", "refused"), before_refused)
+
+    async def test_a_page_that_is_not_there_counts_as_refused(self):
+        before = self._count("get_page", "refused")
+        with mock.patch.object(mcp_server, "_get_in_process", return_value=(404, "")):
+            result = await call("get_page", {"path": "/about-us"})
+        self.assertTrue(result.isError)
+        self.assertEqual(self._count("get_page", "refused"), before + 1)
 
     async def test_an_unknown_tool_is_counted_under_unknown_not_its_name(self):
         before = self._count("unknown", "refused")
