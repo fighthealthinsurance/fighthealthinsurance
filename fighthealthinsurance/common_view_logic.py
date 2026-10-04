@@ -97,6 +97,7 @@ from fighthealthinsurance.medical_code_extractor import (
     extract_procedure_codes,
 )
 from fighthealthinsurance.ml import denial_triage, letter_quality
+from fighthealthinsurance.ml import spend
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.ml.serving_registry import aserving_id_for
 from fighthealthinsurance.reliability_events import capture_reliability_event
@@ -4224,7 +4225,8 @@ class DenialCreatorHelper:
         if denial_triage.is_current(denial):
             return EXTRACTION_OUTCOME_CACHED
         text = denial.denial_text
-        result = await denial_triage.triage(text, denial.denial_date)
+        with spend.for_channel(spend.channel_of(denial)):
+            result = await denial_triage.triage(text, denial.denial_date)
         if result is None:
             return EXTRACTION_OUTCOME_NOTHING_FOUND
         values = denial_triage.row_values(result, timezone.now(), text)
@@ -4798,8 +4800,10 @@ class AppealsBackendHelper:
             AsyncGenerator[str, None], cls._generate_appeals_body(parameters, lease_ref)
         )
         try:
-            async for chunk in agen:
-                yield chunk
+            # The body marks the channel once it has loaded the Denial.
+            with spend.channel_scope():
+                async for chunk in agen:
+                    yield chunk
         finally:
             await agen.aclose()
             extender = lease_ref.get("extender")
@@ -4926,6 +4930,7 @@ class AppealsBackendHelper:
             "creating_professional__user",
         )
         denial = await denial_query.aget()
+        spend.set_channel_of(denial)
         if not background:
             # Form completed: the durable intent is recorded the moment the
             # authenticated lookup succeeds -- before any yield, enrichment,
@@ -5116,12 +5121,13 @@ class AppealsBackendHelper:
             await ExternalServiceHealth.anote_failure(letter_quality.SERVICE, summary)
 
         async def _score_draft(proposed_id: str, draft_text: str) -> Optional[str]:
-            score = await letter_quality.score_letter(
-                denial.denial_text,
-                draft_text,
-                identifiers=scoring_identifiers,
-                on_failure=_note_scoring_failure,
-            )
+            with spend.for_channel(spend.channel_of(denial)):
+                score = await letter_quality.score_letter(
+                    denial.denial_text,
+                    draft_text,
+                    identifiers=scoring_identifiers,
+                    on_failure=_note_scoring_failure,
+                )
             if score is None:
                 return None
             # Same record, the other way: TypeSafe answered. Best effort.

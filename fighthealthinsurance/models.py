@@ -2393,6 +2393,14 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     raw_email = models.TextField(max_length=300, null=True, blank=True)
     created = models.DateTimeField(db_default=Now(), null=True)
     use_external = models.BooleanField(default=True)
+    # Where the denial came from: the site, or an AI assistant through the
+    # MCP server. Model spend for it is counted per channel (ml/spend.py).
+    channel = models.CharField(
+        max_length=16,
+        choices=[("site", "Site"), ("assistant", "AI assistant")],
+        default="site",
+        db_default="site",
+    )
     # Triage from ml/denial_triage.py (TypeSafe System One): the stated denial
     # reason, the kind of plan, pre-service and urgency probabilities, and the
     # appeal deadline the letter names. Every value carries the model's
@@ -4699,6 +4707,16 @@ class SpendCounter(models.Model):
 
     def __str__(self) -> str:
         return f"{self.day} {self.name}: {self.amount}"
+
+
+class SpendReservation(models.Model):
+    """One generation taken from a day's count (ml/spend.py
+    reserve_generation), so it can be given back exactly once."""
+
+    day = models.DateField()
+    name = models.CharField(max_length=80)
+    created_at = models.DateTimeField(auto_now_add=True)
+    released_at = models.DateTimeField(null=True, blank=True)
 
 
 class ExternalServiceHealth(models.Model):
