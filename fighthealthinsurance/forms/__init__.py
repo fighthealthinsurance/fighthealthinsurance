@@ -224,7 +224,7 @@ class DenialForm(BaseDenialForm):
     personalonly = forms.BooleanField(
         required=True,
         error_messages={
-            "required": "Please tick the box to confirm this is for your own appeal."
+            "required": "Please tick the box to confirm this appeal is yours, or for someone you're helping who asked you to."
         },
     )
 

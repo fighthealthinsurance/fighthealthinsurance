@@ -519,7 +519,7 @@ class TheServerListsEveryErrorAtTheTopTest(TestCase):
             [
                 (
                     "#personalonly",
-                    "Please tick the box to confirm this is for your own appeal.",
+                    "Please tick the box to confirm this appeal is yours, or for someone you're helping who asked you to.",
                 )
             ],
         )

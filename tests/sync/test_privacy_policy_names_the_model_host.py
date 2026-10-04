@@ -35,7 +35,7 @@ class PrivacyPolicyNamesTheModelHostTest(TestCase):
         self.assertIn("better text recognition for photos and scans on the scan page", self.text)
 
     def test_the_date_moved_with_the_change(self):
-        self.assertIn("Last updated: September 12, 2026", self.text)
+        self.assertIn("Last updated: October 5, 2026", self.text)
         self.assertNotIn("September 7, 2026", self.text)
 
     def test_the_deletion_right_says_anonymous_totals_survive(self):
