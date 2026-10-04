@@ -12,7 +12,7 @@
   .ai-steps { padding-left: 1.5rem; }
   .ai-steps > li + li { margin-top: var(--fhi-space-4); }
   .ai-steps figure { margin: var(--fhi-space-3) 0 0; }
-  .ai-steps img { border: 1px solid #d0d0d0; border-radius: var(--fhi-radius); }
+  .ai-steps img { max-width: min(100%, 40rem); height: auto; border: 1px solid #d0d0d0; border-radius: var(--fhi-radius); }
   .ai-steps figcaption { font-size: var(--fhi-text-small); color: var(--fhi-muted); }
 </style>
 {% endblock extra_style %}
@@ -45,20 +45,35 @@
             <ol class="ai-steps">
                 <li>
                     Open <b>Customize</b>, then <b>Connectors</b>, press <b>+ Add</b> and choose <b>Add custom connector</b>.
-                    {% comment %}figure slot: claude-1-connectors{% endcomment %}
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/claude-1-connectors.webp' %}" alt="The Connectors page in Claude's Customize settings, with the Add menu open and Add custom connector showing." width="1200" height="148" loading="lazy">
+                        <figcaption>Customize, Connectors, then + Add.</figcaption>
+                    </figure>
                 </li>
                 <li>
                     Name it <b>Fight Health Insurance</b>, paste the address above as the MCP server URL and press <b>Continue</b>. There is nothing to sign in to.
-                    {% comment %}figure slot: claude-2-add-dialog{% endcomment %}
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/claude-2-add-dialog.webp' %}" alt="The Add custom connector dialog with the name Fight Health Insurance and the MCP server URL filled in." width="1200" height="1005" loading="lazy">
+                        <figcaption>The name and the address, nothing else.</figcaption>
+                    </figure>
                 </li>
                 <li>
                     Open the connector's page and check <b>Tool permissions</b>. It should list the tools described below.
-                    {% comment %}figure slot: claude-3-tool-permissions{% endcomment %}
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/claude-3-tool-permissions.webp' %}" alt="The connector's page in Claude listing ten read-only tools under Tool permissions." width="1200" height="1212" loading="lazy">
+                        <figcaption>Tool permissions lists the ten tools.</figcaption>
+                    </figure>
                 </li>
                 <li>
                     In a chat, open the <b>+</b> menu, choose <b>Connectors</b> and turn Fight Health Insurance on. Then ask your question. Claude asks before each tool it uses; <b>Always allow</b> stops the asking for that tool.
-                    {% comment %}figure slot: claude-tool-approval{% endcomment %}
-                    {% comment %}figure slot: claude-4-answer{% endcomment %}
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/claude-tool-approval.webp' %}" alt="Claude asking to use Find a treatment guide from Fight Health Insurance, with Allow once and Always allow buttons." width="1200" height="197" loading="lazy">
+                        <figcaption>Claude asks before it uses a tool.</figcaption>
+                    </figure>
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/claude-4-answer.webp' %}" alt="Claude's answer to an MRI denial question, marked Used Fight Health Insurance, with a link to start an MRI appeal and sources from the site." width="1200" height="918" loading="lazy">
+                        <figcaption>An answer that used the tools, with links back to this site.</figcaption>
+                    </figure>
                 </li>
             </ol>
         </section>
