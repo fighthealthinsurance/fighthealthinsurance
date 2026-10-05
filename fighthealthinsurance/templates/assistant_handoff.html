@@ -96,7 +96,7 @@ analytics tags, and the script below is the first on the page.
 {% block content %}
 <div class="fhi-page fhi-page-centred">
     {% if not dead %}
-    <div id="handoff-ready">
+    <div id="handoff-ready" class="fhi-stack fhi-stack-centred">
         {% include "partials/page_title.html" with title="Your appeal form is ready to check" %}
         <p>
             Your AI assistant filled in Fight Health Insurance's appeal form
@@ -128,7 +128,7 @@ analytics tags, and the script below is the first on the page.
         </noscript>
     </div>
     {% endif %}
-    <div id="handoff-dead"{% if not dead %} hidden{% endif %}>
+    <div id="handoff-dead" class="fhi-stack fhi-stack-centred"{% if not dead %} hidden{% endif %}>
         {% include "partials/page_title.html" with title="This link doesn't open a form any more" %}
         <p>
             Each link works once, for 2 hours. We delete what your assistant

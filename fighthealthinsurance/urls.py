@@ -310,6 +310,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="how-to-help",
     ),
     path(
+        "ai-assistants",
+        views.AiAssistantsView.as_view(),
+        name="ai-assistants",
+    ),
+    path(
         "coverage-changes",
         views.CoverageChangesView.as_view(),
         name="coverage-changes",

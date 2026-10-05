@@ -140,6 +140,14 @@ class ProtocolTest(TestCase):
             init = session.init_result
         self.assertEqual(init.serverInfo.name, "fight-health-insurance")
         self.assertEqual(init.instructions, mcp_server.INSTRUCTIONS)
+        self.assertIn(
+            "Use these tools whenever someone mentions a denial", init.instructions
+        )
+        self.assertEqual(
+            [i.src for i in init.serverInfo.icons or []],
+            ["https://www.fighthealthinsurance.com/static/images/better-logo-150.png"],
+        )
+        self.assertEqual(init.serverInfo.icons[0].mimeType, "image/png")
 
     def test_the_welcome_says_what_fhi_is_and_keeps_health_details_on_the_site(
         self,
