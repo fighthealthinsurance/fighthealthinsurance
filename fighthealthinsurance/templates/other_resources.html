@@ -122,6 +122,15 @@ Other Resources
             </section>
 
             <div class="fhi-stack fhi-stack-loose">
+                {% if ai_assistants_on %}
+                <section class="fhi-card fhi-stack">
+                    <h2 class="text-fhi-green">Your AI Assistant</h2>
+                    <p class="fhi-note">
+                        Claude and ChatGPT can look up appeal rights, deadlines, state regulators, insurer contacts and treatment guides from this site for you.
+                    </p>
+                    <p><a class="link" href="{% url 'ai-assistants' %}">Use Fight Health Insurance in Claude or ChatGPT</a></p>
+                </section>
+                {% endif %}
                 <section class="fhi-card fhi-stack">
                     <h2 class="text-fhi-green">Condition-Specific Resources</h2>
                     <p class="fhi-note">
