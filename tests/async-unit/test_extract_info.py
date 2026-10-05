@@ -541,6 +541,17 @@ async def test_run_extraction_pipeline_positive_path(
     mock_process_single_url: AsyncMock,
     mock_file_open: MagicMock,
 ) -> None:
+    # Track separate file handles for each open() invocation
+    created_handles: list[MagicMock] = []
+
+    def make_fresh_handle(*args: Any, **kwargs: Any) -> MagicMock:
+        handle = MagicMock()
+        handle.__enter__.return_value = handle
+        created_handles.append(handle)
+        return handle
+
+    mock_file_open.side_effect = make_fresh_handle
+
     mock_items_dict = [item.model_dump() for item in MOCK_EXTRACTED_ITEMS]
 
     expected_output = [
@@ -559,17 +570,13 @@ async def test_run_extraction_pipeline_positive_path(
     ]
 
     await run_extraction_pipeline()
-    
-    handle = mock_file_open.return_value.__enter__.return_value if hasattr(mock_file_open.return_value, '__enter__') else mock_file_open()
-    
-    # Reconstruct all written content
-    written_content = "".join(call.args[0] for call in handle.write.call_args_list)
 
-    # Since the test runner/retries can cause multiple pipeline runs resulting in concatenated 
-    # JSON arrays like `[...][...]`, split with `][` and take the final complete JSON array.
-    if "][" in written_content:
-        # Get the last JSON block and restore the leading bracket
-        written_content = "[" + written_content.rsplit("][", 1)[-1]
+    # Get the file handle from the final open() call
+    assert created_handles, "mock_file_open was never called"
+    final_handle = created_handles[-1]
+
+    # Reconstruct content written strictly during the final pipeline output write
+    written_content = "".join(call.args[0] for call in final_handle.write.call_args_list)
 
     assert json.loads(written_content) == expected_output
 
