@@ -134,6 +134,7 @@ def render_terms(
                 "form": form,
                 "on_behalf_choices": core_forms.AssistantTermsForm.ON_BEHALF_CHOICES,
                 "error_summary": _error_summary(form),
+                "captcha_enabled": form._is_recaptcha_enabled(),
             },
         )
     )
