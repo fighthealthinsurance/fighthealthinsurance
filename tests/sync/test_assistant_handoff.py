@@ -1093,3 +1093,17 @@ class HandoffV2OffTest(TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertNotIn("assistant_handoff_channel", self.client.session)
         self.assertNotIn("fhi_handoff_binder", self.client.cookies)
+
+    def test_a_page_from_before_a_flag_flip_still_binds_and_opens(self):
+        handoff = create_handoff(LETTER)
+        bound = self.client.post(PATH, {"token": handoff.code, "bind": "1"})
+        self.assertEqual(bound.json(), {"bound": True})
+        page = self.client.post(PATH, {"token": handoff.code})
+        self.assertContains(page, "lower back was denied")
+
+    def test_a_link_bound_with_the_flag_on_still_opens_after_it_is_off(self):
+        handoff = create_handoff(LETTER)
+        with override_settings(MCP_HANDOFF_V2_ENABLED=True):
+            self.client.post(PATH, {"token": handoff.code, "bind": "1"})
+        page = self.client.post(PATH, {"token": handoff.code})
+        self.assertContains(page, "lower back was denied")
