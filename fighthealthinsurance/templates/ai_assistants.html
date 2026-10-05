@@ -1,0 +1,191 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Use Fight Health Insurance in Claude or ChatGPT - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Use Fight Health Insurance in Claude or ChatGPT{% endblock metatitle %}
+{% block metadescription %}Connect Claude or ChatGPT to Fight Health Insurance's free appeal information: appeal rights and deadlines, state regulators, where insurers take appeals, treatment guides and financial help. No sign-in.{% endblock metadescription %}
+
+{% block extra_style %}
+<style>
+  html { scroll-behavior: smooth; }
+  .ai-address { font-size: var(--fhi-text-lead); word-break: break-all; }
+  .ai-steps { padding-left: 1.5rem; }
+  .ai-steps > li + li { margin-top: var(--fhi-space-4); }
+  .ai-steps figure { margin: var(--fhi-space-3) 0 0; }
+  .ai-steps img { max-width: min(100%, 40rem); height: auto; border: 1px solid #d0d0d0; border-radius: var(--fhi-radius); }
+  .ai-steps figcaption { font-size: var(--fhi-text-small); color: var(--fhi-muted); }
+</style>
+{% endblock extra_style %}
+
+{% block content %}
+<div class="fhi-page-wide">
+    {% include "partials/page_title.html" with title="Use Fight Health Insurance in Claude or ChatGPT" lede="Claude, ChatGPT or another assistant can look things up on this site for you: appeal rights and deadlines, who regulates insurance in your state, where your insurer takes appeals, treatment guides and financial help. It is free, and there is no sign-in." %}
+
+    <nav class="fhi-jump-links" aria-label="On this page">
+        <a href="#claude">Claude</a>
+        <a href="#chatgpt">ChatGPT</a>
+        <a href="#what-it-does">What it can do</a>
+        <a href="#keep-out">What to keep out</a>
+        <a href="#start-an-appeal">Starting an appeal</a>
+        <a href="#other-assistants">Other assistants</a>
+    </nav>
+
+    <div class="fhi-stack fhi-stack-loose">
+        <section class="fhi-stack" id="address">
+            <h2>The address</h2>
+            <p>Both assistants connect to the same address. Copy it as it is, with no sign-in or password:</p>
+            <p class="ai-address"><code>https://www.fighthealthinsurance.com/mcp</code></p>
+            <p>The connection uses MCP, the open standard assistants use to talk to tools, so other assistants and coding tools that speak it work the same way.</p>
+        </section>
+
+        <section class="fhi-stack" id="claude">
+            <h2>Set it up in Claude</h2>
+            <p>Works on every Claude plan, including the free one, on the web, the desktop app and the phone apps.</p>
+            <p><a class="fhi-button fhi-button-primary" href="https://claude.ai/customize/connectors?modal=add-custom-connector&amp;connectorName=Fight%20Health%20Insurance&amp;connectorUrl=https%3A%2F%2Fwww.fighthealthinsurance.com%2Fmcp">Add to Claude</a></p>
+            <p>That link opens Claude with the form already filled in. To do it by hand:</p>
+            <ol class="ai-steps">
+                <li>
+                    Open <b>Customize</b>, then <b>Connectors</b>, press <b>+ Add</b> and choose <b>Add custom connector</b>.
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/claude-1-connectors.webp' %}" alt="The Connectors page in Claude's Customize settings, with the Add menu open and Add custom connector showing." width="1200" height="148" loading="lazy">
+                        <figcaption>Customize, Connectors, then + Add.</figcaption>
+                    </figure>
+                </li>
+                <li>
+                    Name it <b>Fight Health Insurance</b>, paste the address above as the MCP server URL and press <b>Continue</b>. There is nothing to sign in to.
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/claude-2-add-dialog.webp' %}" alt="The Add custom connector dialog with the name Fight Health Insurance and the MCP server URL filled in." width="1200" height="1005" loading="lazy">
+                        <figcaption>The name and the address, nothing else.</figcaption>
+                    </figure>
+                </li>
+                <li>
+                    Open the connector's page and check <b>Tool permissions</b>. It should list the tools described below.
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/claude-3-tool-permissions.webp' %}" alt="The connector's page in Claude listing ten read-only tools under Tool permissions." width="1200" height="1212" loading="lazy">
+                        <figcaption>Tool permissions lists the ten tools.</figcaption>
+                    </figure>
+                </li>
+                <li>
+                    In a chat, open the <b>+</b> menu, choose <b>Connectors</b> and turn Fight Health Insurance on. Then ask your question. Claude asks before each tool it uses; <b>Always allow</b> stops the asking for that tool.
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/claude-tool-approval.webp' %}" alt="Claude asking to use Find a treatment guide from Fight Health Insurance, with Allow once and Always allow buttons." width="1200" height="197" loading="lazy">
+                        <figcaption>Claude asks before it uses a tool.</figcaption>
+                    </figure>
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/claude-4-answer.webp' %}" alt="Claude's answer to an MRI denial question, marked Used Fight Health Insurance, with a link to start an MRI appeal and sources from the site." width="1200" height="918" loading="lazy">
+                        <figcaption>An answer that used the tools, with links back to this site.</figcaption>
+                    </figure>
+                </li>
+            </ol>
+        </section>
+
+        <section class="fhi-stack" id="chatgpt">
+            <h2>Set it up in ChatGPT</h2>
+            <p>ChatGPT needs a paid plan (Plus, Pro, Business, Enterprise or Education) and its developer mode, which is a switch in settings.</p>
+            <ol class="ai-steps">
+                <li>
+                    Open <b>Settings</b>, then <b>Security and login</b>, and turn on <b>Developer mode</b>.
+                </li>
+                <li>
+                    Open <b>Customize</b>, then <b>Plugins</b>, press <b>Add</b> and choose <b>Create custom MCP server</b>.
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/chatgpt-1-plugins-add.webp' %}" alt="ChatGPT's Plugins page with the Add menu open, showing Create custom MCP server." width="1200" height="339" loading="lazy">
+                        <figcaption>Customize, Plugins, Add, then Create custom MCP server.</figcaption>
+                    </figure>
+                </li>
+                <li>
+                    Name it <b>Fight Health Insurance</b> and paste the address above as the server URL. Authentication starts on OAuth: switch it to <b>No authentication</b>. Tick the "I understand" box and press <b>Create as a plugin</b>. The icon and description are optional.
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/chatgpt-2-create-app.webp' %}" alt="The Create custom MCP server dialog with the name Fight Health Insurance, the server URL and Authentication set to No authentication." width="1200" height="1328" loading="lazy">
+                        <figcaption>Name, server URL and No authentication; then tick the box and create it.</figcaption>
+                    </figure>
+                </li>
+                <li>
+                    In a chat, open the <b>+</b> menu and choose <b>Fight Health Insurance</b>; a small Fight Health Insurance tag appears on your message. Then ask your question. ChatGPT asks before it uses a tool that changes anything; the look-up tools run on their own.
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/chatgpt-3-answer.webp' %}" alt="ChatGPT's answer to an MRI denial question, pointing to fighthealthinsurance.com and asking for only the denial reason, not a name or member ID." width="1200" height="1455" loading="lazy">
+                        <figcaption>An answer that used the tools, with the link to start here.</figcaption>
+                    </figure>
+                </li>
+            </ol>
+        </section>
+
+        <section class="fhi-stack" id="what-it-does">
+            <h2>What it can do</h2>
+            <p>Try: <i>"I got a denial for an MRI, where do I start?"</i> The assistant looks up what to gather for an appeal, the guide for MRI denials and the link to start one here, and answers with those links. Everything it can look up is public information from this site:</p>
+            <div class="fhi-cards fhi-cards-roomy">
+                <div class="fhi-card">
+                    <h3 class="fhi-card-title">Your rights and deadlines</h3>
+                    <p>Which appeal law covers your kind of plan, the usual deadlines, and what to have ready before you start.</p>
+                </div>
+                <div class="fhi-card">
+                    <h3 class="fhi-card-title">Your state</h3>
+                    <p>Who regulates health insurance where you live and who gives free help there.</p>
+                </div>
+                <div class="fhi-card">
+                    <h3 class="fhi-card-title">Your insurer</h3>
+                    <p>Where a health insurer takes appeals: portal, fax, mailing address, email and phone, with the insurer's own page as the source.</p>
+                </div>
+                <div class="fhi-card">
+                    <h3 class="fhi-card-title">The denial's wording</h3>
+                    <p>What a reason like "not medically necessary" means, why insurers use it and how people answer it.</p>
+                </div>
+                <div class="fhi-card">
+                    <h3 class="fhi-card-title">Treatment guides and money</h3>
+                    <p>Our guide to appealing a denial of a specific treatment, drug or test, and copay foundations, drug-maker programs and safety-net programs that can help pay.</p>
+                </div>
+                <div class="fhi-card">
+                    <h3 class="fhi-card-title">This site's pages</h3>
+                    <p>A search of the guides, FAQs, state pages, blog posts and glossary, and any page read as plain text. Every answer links back here.</p>
+                </div>
+            </div>
+            <p>It is general information, not legal or medical advice.</p>
+        </section>
+
+        <section class="fhi-stack" id="keep-out">
+            <h2>What to keep out of the chat</h2>
+            <div class="fhi-notice fhi-notice-info">
+                <p>A short treatment or condition word, such as "MRI" or "migraine", is all the assistant needs to find a guide or financial help. Keep everything else personal out of these tools: your denial letter, your name, member ID and medical history belong on this site, where you can remove personal details before anything is sent anywhere. The assistant is told the same thing when it connects.</p>
+            </div>
+            <p>What your assistant itself keeps from a chat is up to its maker; see <a class="link" href="https://www.anthropic.com/privacy">Anthropic's privacy policy</a> or <a class="link" href="https://openai.com/policies/privacy-policy/">OpenAI's</a>. What we keep is in our <a class="link" href="{% url 'privacy_policy' %}">privacy policy</a>.</p>
+        </section>
+
+        <section class="fhi-stack" id="start-an-appeal">
+            <h2>Starting an appeal from your assistant</h2>
+            {% if prepare_appeal_on %}
+            <p>When you are ready to appeal, the assistant gives you a link to start here, where you upload or paste the letter yourself.</p>
+            <p>You can also ask it to fill the form in for you. Then it sends us the denial text you shared in the chat, and your plan type and state if you gave them, and gets back a link for you. The assistant tells you what it is sending before it does. Here is how that link works:</p>
+            <ul>
+                <li>It opens once. Pressing the button on it fills in the appeal form, and the link is finished.</li>
+                <li>It lasts two hours. After that, or once it has been used, what was sent is deleted.</li>
+                <li>Nothing is stored as an appeal until you check the form, remove personal details and submit it yourself.</li>
+            </ul>
+            {% if chat_path_on %}
+            <p>Or it can have appeal letters drafted and bring them back to the chat. It sends us the letter the same way and gives you a link. On our page you remove personal details, say who the appeal is for (you, or someone you're helping who asked you to) and agree to our terms. Then:</p>
+            <ul>
+                <li>We read the letter and may have a few questions. The assistant asks you and sends only what you answer; you can skip any.</li>
+                <li>We write up to three letters and the assistant shows them to you. They have spaces for your details, which it fills in from the chat, not from us.</li>
+                <li>Nothing is sent to your insurer. You pick a letter, edit it and send it yourself.</li>
+                <li>Once you agree, the letter is kept as an appeal, like one made on this site. We email you a link to finish here instead, and the assistant can collect the letters for a day.</li>
+            </ul>
+            {% endif %}
+            {% else %}
+            <p>When you are ready to appeal, the assistant gives you a link to start here, where you upload or paste the letter yourself. The assistant never takes the letter.</p>
+            {% endif %}
+        </section>
+
+        <section class="fhi-stack" id="other-assistants">
+            <h2>Other assistants and your own models</h2>
+            <p>Apps rename and move their menus often. Everything here was last checked in October 2026.</p>
+            <p>Anything that speaks MCP works. Look for a setting called Connectors, Integrations, Tools, Plugins, Extensions or MCP servers, with an option to add a custom or remote server; if you can't find it, search your app's help pages for "MCP". Wherever it asks for a server, it is a remote MCP server over Streamable HTTP at the address above, with no authentication. Two we have tried from the command line:</p>
+            <ul>
+                <li><b>Claude Code:</b> <code>claude mcp add --transport http fight-health-insurance https://www.fighthealthinsurance.com/mcp</code></li>
+                <li><b>Codex CLI:</b> <code>codex mcp add fight-health-insurance --url https://www.fighthealthinsurance.com/mcp</code></li>
+                <li><b>VS Code</b> (1.100 or later, with Copilot; from its docs): <code>code --add-mcp "{\"name\":\"fight-health-insurance\",\"type\":\"http\",\"url\":\"https://www.fighthealthinsurance.com/mcp\"}"</code></li>
+            </ul>
+            <p>Apps that run open-weight models on your own machine take MCP servers too. Each app's guide shows where to paste the address: <a class="link" href="https://lmstudio.ai/docs/app/mcp">LM Studio</a>, <a class="link" href="https://docs.openwebui.com/features/extensibility/mcp">Open WebUI</a>, <a class="link" href="https://jan.ai/docs/desktop/mcp">Jan</a> and <a class="link" href="https://www.librechat.ai/docs/features/mcp">LibreChat</a>. Ollama on its own has no MCP support; Ollama users can connect through a front end such as Open WebUI. Two things to know: the model has to support tool calling, and small local models sometimes skip the tools or misread what they return, so check the links in the answer against this site.</p>
+            <p>Something look different? <a class="link" href="{% url 'contact' %}">Let us know</a> and we'll update this page.</p>
+        </section>
+    </div>
+</div>
+{% endblock content %}

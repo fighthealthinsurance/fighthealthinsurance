@@ -694,6 +694,7 @@ class Base(Configuration):
                     "fighthealthinsurance.context_processors.canonical_url_context",
                     "fighthealthinsurance.context_processors.site_banner_context",
                     "fighthealthinsurance.context_processors.advanced_ocr_context",
+                    "fighthealthinsurance.context_processors.feature_pages_context",
                 ],
             },
         },
