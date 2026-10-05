@@ -120,7 +120,7 @@ class AppealsResource(BaseModel):
         """Strip conversational LLM artifacts like '(Link not provided)'."""
         if not v:
             return None
-        v = v.strip()
+        v = sanitize_url(v)
         if not (v.startswith("http://") or v.startswith("https://")):
             return None
         return v

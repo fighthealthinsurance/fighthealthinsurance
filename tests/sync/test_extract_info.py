@@ -1,7 +1,7 @@
 import pytest
 import json
 from unittest.mock import MagicMock, mock_open, patch
-from typing import Any, List, Dict, Tuple, cast
+from typing import Any, List, Dict, Tuple, cast, Generator
 import requests
 
 from scripts.state_data.extract_info import (
@@ -13,11 +13,12 @@ from scripts.state_data.extract_info import (
 )
 
 @pytest.fixture
-def mock_ddgs(mocker: Any):
+def mock_ddgs() -> Generator[MagicMock, None, None]:
     """Fixture to handle repetitive DDGS mocking and patching."""
     mock_ddgs_instance = MagicMock()
-    mocker.patch("scripts.state_data.extract_info.DDGS", return_value=mock_ddgs_instance)
-    return mock_ddgs_instance
+    mock_ddgs_instance.__enter__.return_value = mock_ddgs_instance
+    with patch("scripts.state_data.extract_info.DDGS", return_value=mock_ddgs_instance):
+        yield mock_ddgs_instance
 
 class TestSearchDuckDuckGo:
     """Tests for the search_duckduckgo function using Given-When-Then pattern."""
@@ -47,7 +48,8 @@ class TestSearchDuckDuckGo:
 
         assert result is None
 
-    def test_search_rate_limit_retry(self, mocker: Any, mock_ddgs: MagicMock):
+    @patch("time.sleep")
+    def test_search_rate_limit_retry(self, mock_sleep: MagicMock, mock_ddgs: MagicMock):
         """
         Given a rate limit error (429) on the first attempt,
         When search_duckduckgo is called,
@@ -57,7 +59,6 @@ class TestSearchDuckDuckGo:
             Exception("Rate limit exceeded (429)"),
             [{"href": "https://retry.com"}]
         ]
-        mock_sleep = mocker.patch("time.sleep")
 
         result = search_duckduckgo("retry query")
 
@@ -78,14 +79,14 @@ class TestSearchDuckDuckGo:
         assert result is None
         assert mock_ddgs.text.call_count == 1
 
-    def test_search_max_retries_exceeded(self, mocker: Any, mock_ddgs: MagicMock):
+    @patch("time.sleep")
+    def test_search_max_retries_exceeded(self, mock_sleep: MagicMock, mock_ddgs: MagicMock):
         """
         Given a persistent rate limit error exceeding max_retries,
         When search_duckduckgo is called,
         Then it should return None after all attempts are exhausted.
         """
         mock_ddgs.text.side_effect = Exception("Rate limit exceeded (429)")
-        mock_sleep = mocker.patch("time.sleep")
 
         result = search_duckduckgo("persistent error", max_retries=2)
 
@@ -95,7 +96,7 @@ class TestSearchDuckDuckGo:
 
 
 @pytest.fixture
-def mock_constants(mocker: Any) -> Tuple[List[Dict[str, str]], Dict[str, str], str]:
+def mock_constants() -> Generator[Tuple[List[Dict[str, str]], Dict[str, str], str], None, None]:
     """
     Mock the constants used in extract_info.py to ensure a controlled 
     and fast testing environment.
@@ -110,29 +111,27 @@ def mock_constants(mocker: Any) -> Tuple[List[Dict[str, str]], Dict[str, str], s
     }
     mock_index_file = "mock_index.json"
 
-    mocker.patch("scripts.state_data.extract_info.STATES", mock_states)
-    mocker.patch("scripts.state_data.extract_info.SEARCH_CATEGORIES", mock_categories)
-    mocker.patch("scripts.state_data.extract_info.INDEX_FILE", mock_index_file)
-    
-    mocker.patch("scripts.state_data.extract_info.search_duckduckgo", return_value="http://mock-url.com")
-    mocker.patch("scripts.state_data.extract_info.extract_lsc_grantee_urls", return_value={
-        "TestState": [{"profile_url": "http://test1.com"}],
-        "AnotherState": [{"profile_url": "http://test2.com"}]
-    })
-    mocker.patch("time.sleep") 
-    
-    return mock_states, mock_categories, mock_index_file
+    with patch("scripts.state_data.extract_info.STATES", mock_states), \
+         patch("scripts.state_data.extract_info.SEARCH_CATEGORIES", mock_categories), \
+         patch("scripts.state_data.extract_info.INDEX_FILE", mock_index_file), \
+         patch("scripts.state_data.extract_info.search_duckduckgo", return_value="http://mock-url.com"), \
+         patch("scripts.state_data.extract_info.extract_lsc_grantee_urls", return_value={
+             "TestState": [{"profile_url": "http://test1.com"}],
+             "AnotherState": [{"profile_url": "http://test2.com"}]
+         }), \
+         patch("time.sleep"):
+        yield mock_states, mock_categories, mock_index_file
 
-def test_generate_index_fresh_build(mocker: Any, mock_constants: list[MagicMock]):
+
+@patch("os.path.exists", return_value=False)
+@patch("builtins.open", new_callable=mock_open)
+def test_generate_index_fresh_build(m_open: MagicMock, mock_exists: MagicMock, mock_constants: Tuple[List[Dict[str, str]], Dict[str, str], str]):
     """
     Given: The index file does not exist.
     When: generate_state_resource_index is called with force_rebuild=False.
     Then: It should perform full searches, scrape LSC profiles, and save the file.
     """
     mock_index_file = mock_constants[2]
-    
-    mocker.patch("os.path.exists", return_value=False)
-    m_open = mocker.patch("builtins.open", mock_open())
     
     result = generate_state_resource_index(force_rebuild=False)
 
@@ -144,7 +143,12 @@ def test_generate_index_fresh_build(mocker: Any, mock_constants: list[MagicMock]
     m_open.assert_called_with(mock_index_file, "w", encoding="utf-8")
     assert m_open().write.called
 
-def test_generate_index_partial_update(mocker: Any):
+
+@patch("os.path.exists", return_value=True)
+@patch("scripts.state_data.extract_info.search_duckduckgo", return_value="http://new_found.com")
+@patch("scripts.state_data.extract_info.extract_lsc_grantee_urls", return_value=["http://mocked.com"])
+@patch("time.sleep")
+def test_generate_index_partial_update(mock_sleep: MagicMock, mock_extract: MagicMock, mock_search: MagicMock, mock_exists: MagicMock, mock_constants: Any):
     """
     Given: The index file exists but 'TestState' is missing 'category_1'.
     When: generate_state_resource_index is called with force_rebuild=False.
@@ -167,17 +171,21 @@ def test_generate_index_partial_update(mocker: Any):
         }
     ]
     
-    mocker.patch("os.path.exists", return_value=True)
-    mocker.patch("builtins.open", mock_open(read_data=json.dumps(existing_data)))
-    
-    mock_search = mocker.patch("scripts.state_data.extract_info.search_duckduckgo", return_value="http://new_found.com")
-
-    generate_state_resource_index(force_rebuild=False)
+    with patch("builtins.open", mock_open(read_data=json.dumps(existing_data))):
+        generate_state_resource_index(force_rebuild=False)
 
     assert mock_search.call_count == 1
     mock_search.assert_called_with("Search for TestState TS category 1")
 
-def test_generate_index_force_rebuild(mocker: Any):
+
+@patch("os.path.exists", return_value=True)
+@patch("scripts.state_data.extract_info.search_duckduckgo", return_value="http://rebuilt.com")
+@patch("scripts.state_data.extract_info.extract_lsc_grantee_urls", return_value={
+    "TestState": [{"profile_url": "http://mocked.com"}],
+    "AnotherState": [{"profile_url": "http://mocked.com"}]
+})
+@patch("time.sleep")
+def test_generate_index_force_rebuild(mock_sleep: MagicMock, mock_extract: MagicMock, mock_search: MagicMock, mock_exists: MagicMock, mock_constants: Any):
     """
     Given: The index file exists and is complete.
     When: generate_state_resource_index is called with force_rebuild=True.
@@ -193,47 +201,45 @@ def test_generate_index_force_rebuild(mocker: Any):
         }
     ]
     
-    mocker.patch("os.path.exists", return_value=True)
-    mocker.patch("builtins.open", mock_open(read_data=json.dumps(existing_data)))
-    
-    mock_search = mocker.patch("scripts.state_data.extract_info.search_duckduckgo", return_value="http://rebuilt.com")
-
-    generate_state_resource_index(force_rebuild=True)
+    with patch("builtins.open", mock_open(read_data=json.dumps(existing_data))):
+        generate_state_resource_index(force_rebuild=True)
 
     assert mock_search.call_count == 4
 
-def test_generate_index_corrupt_json(mocker: Any):
+
+@patch("os.path.exists", return_value=True)
+@patch("scripts.state_data.extract_info.search_duckduckgo", return_value="http://recovery.com")
+@patch("scripts.state_data.extract_info.extract_lsc_grantee_urls", return_value={
+    "TestState": [{"profile_url": "http://mocked.com"}],
+    "AnotherState": [{"profile_url": "http://mocked.com"}]
+})
+@patch("time.sleep")
+def test_generate_index_corrupt_json(mock_sleep: MagicMock, mock_extract: MagicMock, mock_search: MagicMock, mock_exists: MagicMock, mock_constants: Any):
     """
     Given: The index file exists but contains invalid JSON.
     When: generate_state_resource_index is called.
     Then: It should catch the exception, print a message, and perform a fresh build.
     """
-    mocker.patch("os.path.exists", return_value=True)
-    mocker.patch("builtins.open", mock_open(read_data="NOT_JSON_DATA"))
-    
-    mock_search = mocker.patch("scripts.state_data.extract_info.search_duckduckgo", return_value="http://recovery.com")
-
-    result = generate_state_resource_index(force_rebuild=False)
+    with patch("builtins.open", mock_open(read_data="NOT_JSON_DATA")):
+        result = generate_state_resource_index(force_rebuild=False)
 
     assert len(result) == 2
     assert mock_search.call_count == 4
 
 
 @pytest.fixture
-def mock_instructor_deps(mocker: Any):
+def mock_instructor_deps() -> Generator[Dict[str, MagicMock], None, None]:
     """
     Mocks the OpenAI client and the Instructor factory to prevent 
     actual network initialization.
     """
-    mock_openai_class = mocker.patch("scripts.state_data.extract_info.AsyncOpenAI")
-    mock_from_openai = mocker.patch("scripts.state_data.extract_info.instructor.from_openai")
-    
-    mocker.patch("scripts.state_data.extract_info.LOCAL_SERVER_URL", "http://localhost:8000")
-    
-    return {
-        "openai_class": mock_openai_class,
-        "from_openai": mock_from_openai
-    }
+    with patch("scripts.state_data.extract_info.AsyncOpenAI") as mock_openai_class, \
+         patch("scripts.state_data.extract_info.instructor.from_openai") as mock_from_openai, \
+         patch("scripts.state_data.extract_info.LOCAL_SERVER_URL", "http://localhost:8000"):
+        yield {
+            "openai_class": mock_openai_class,
+            "from_openai": mock_from_openai
+        }
 
 def test_get_local_instructor_client_success(mock_instructor_deps: dict[str, MagicMock]):
     """
@@ -271,11 +277,12 @@ def test_get_local_instructor_client_exception(mock_instructor_deps: dict[str, M
     with pytest.raises(ValueError, match="Invalid Configuration"):
         get_local_instructor_client()
 
+
 @pytest.mark.parametrize("input_url, expected", [
 # Positive cases
 ("https://example.com", "https://example.com"),
 ("  https://example.com  ", "https://example.com"),
-("https:\\example.com", "https://example.com"),
+("https:\\\\example.com", "https://example.com"),
 ("https\u2044example.com", "https/example.com"),
 ("https\u2215example.com", "https/example.com"),
 ("https⁄example.com", "https/example.com"),
@@ -300,7 +307,7 @@ def test_sanitize_url_scenarios(input_url: str, expected: str):
     assert result == expected
 
 @pytest.fixture
-def mock_session() -> Any:
+def mock_session() -> Generator[requests.Session, None, None]:
     """Fixture to mock the requests.Session object."""
     with patch("requests.Session") as mock_session_class:
         mock_instance = cast(requests.Session, mock_session_class.return_value)
@@ -433,4 +440,3 @@ def test_extract_lsc_grantee_urls_initial_request_failure(mock_session: MagicMoc
 
     with pytest.raises(requests.exceptions.HTTPError):
         extract_lsc_grantee_urls("https://www.lsc.gov/invalid-page")
-

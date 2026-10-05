@@ -23,5 +23,5 @@ setuptools<80
 pydantic
 openai
 instructor
-duckduckgo_search
+ddgs
 python-dotenv
