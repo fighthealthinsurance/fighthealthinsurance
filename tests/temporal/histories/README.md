@@ -36,17 +36,24 @@ kubectl -n totallylegitco exec deploy/temporal-admintools -- \
     --workflow-id <workflow-id> --output json \
   > /tmp/history-raw.json
 
-# 2. Read it. TEMPORAL_PAYLOAD_KEY is unset in production, so payloads are
-#    PLAINTEXT. The journey's inputs are ids-only by design (hashed_email,
-#    denial_uuid, contact_opt_in) -- confirm nothing else rode along.
-python3 -m json.tool /tmp/history-raw.json | less
+# 2. Decode it, if encrypted. With TEMPORAL_PAYLOAD_KEY configured, payloads
+#    are Fernet-encrypted (binary/encrypted-fernet, see
+#    fighthealthinsurance/temporal_codec.py); histories written without a key
+#    are plaintext and pass through unchanged. The script reads the key from
+#    the environment and never prints it.
+python scripts/decode_temporal_history.py \
+  < /tmp/history-raw.json > /tmp/history-plain.json
 
-# 3. Replace production identifiers with safe values: the denial uuid, the
+# 3. Read it. The journey's inputs are ids-only by design (hashed_email,
+#    denial_uuid, contact_opt_in) -- confirm nothing else rode along.
+python3 -m json.tool /tmp/history-plain.json | less
+
+# 4. Replace production identifiers with safe values: the denial uuid, the
 #    hashed email, the workflow id, and the worker/client `identity` fields
 #    (which carry a pod name).
 
-# 4. Only now copy it in.
-cp /tmp/history-raw.json tests/temporal/histories/<name>.json
+# 5. Only now copy it in.
+cp /tmp/history-plain.json tests/temporal/histories/<name>.json
 ```
 
 Prefer histories that exercised different paths. One of each shape beats ten

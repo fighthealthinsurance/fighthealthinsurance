@@ -17,7 +17,8 @@ Decoding passes unencrypted payloads through untouched, so histories
 written before the key was configured keep replaying during rollout.
 """
 
-from typing import Iterable, List
+import base64
+from typing import Any, Iterable, List
 
 from cryptography.fernet import Fernet, MultiFernet
 
@@ -63,3 +64,27 @@ class EncryptionCodec(PayloadCodec):
                 # pass through so old workflows keep replaying.
                 out.append(p)
         return out
+
+
+def decode_history_json(history: Any, key: str) -> Any:
+    """A ``temporal workflow show --output json`` history with every
+    encrypted payload replaced by its plaintext, for redacting a capture."""
+    fernet = EncryptionCodec(key)._fernet
+    marker = base64.b64encode(ENCODING).decode()
+
+    def walk(node: Any) -> Any:
+        if isinstance(node, list):
+            return [walk(v) for v in node]
+        if not isinstance(node, dict):
+            return node
+        if (node.get("metadata") or {}).get("encoding") == marker and "data" in node:
+            plain = Payload.FromString(fernet.decrypt(base64.b64decode(node["data"])))
+            return {
+                "metadata": {
+                    k: base64.b64encode(v).decode() for k, v in plain.metadata.items()
+                },
+                "data": base64.b64encode(plain.data).decode(),
+            }
+        return {k: walk(v) for k, v in node.items()}
+
+    return walk(history)
