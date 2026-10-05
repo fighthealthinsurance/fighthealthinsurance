@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% comment %}
+After the person agrees on the assistant terms page (assistant_terms_views.py).
+{% endcomment %}
+{% block title %}
+{% if started %}Go back to your chat{% else %}We couldn't start your letters{% endif %}
+{% endblock title %}
+
+{% block extra_style %}
+<meta name="robots" content="noindex, nofollow">
+{% endblock extra_style %}
+
+{% block content %}
+<div class="fhi-page fhi-page-centred" id="assistant-agreed">
+    {% if started %}
+    {% include "partials/page_title.html" with title="Go back to your chat" %}
+    <p>
+        Thank you. We're reading your letter now. Tell your assistant you're
+        done, and it will bring the appeal letters back to your chat when
+        they're ready, usually in a few minutes.
+    </p>
+    {% else %}
+    {% include "partials/page_title.html" with title="We couldn't start your letters" %}
+    <p>
+        Something went wrong on our side, so your assistant won't get letters
+        this time.{% if emailed %} Your appeal is saved: you can finish it on
+        our site with the link we emailed you.{% else %} You can start again on
+        our <a href="{% url 'scan' %}">appeal page</a>.{% endif %}
+    </p>
+    {% endif %}
+    {% if started and emailed %}
+    <p>
+        We emailed you a link to finish on our site instead, if you'd rather.
+        It asks for your email address and works for {{ link_days }} days.
+    </p>
+    {% endif %}
+    <p>Nothing has been sent to your insurer. You can close this page.</p>
+</div>
+{% endblock content %}

@@ -5301,6 +5301,33 @@ class AppealsBackendHelper:
                 f"{len(held_back_keys)}"
             )
 
+        if (
+            not background
+            and old >= cls.ENOUGH_APPEALS
+            and spend.channel_of(denial) == spend.CHANNEL_ASSISTANT
+        ):
+            # Letters drafted for an assistant, reopened from the emailed
+            # link: showing them needs no model call.
+            for score_json in await _drain_score_frames(letter_quality.DRAIN_SECONDS):
+                yield score_json
+            yield json.dumps(
+                {
+                    "type": "status",
+                    "phase": "done",
+                    "message": f"Complete: 0 new and {old} existing appeals generated",
+                    "new_appeals": 0,
+                    "existing_appeals": old,
+                    "total_appeals": old,
+                    "generation_id": generation_id,
+                    "make_appeals_seconds": -1.0,
+                    "first_model": "none",
+                    "shed_tier": None,
+                    "models_tried": "none",
+                    "speculative_appeals": 0,
+                }
+            ) + "\n"
+            return
+
         # --- Early speculative fallback ---
         # What the precompute had ready before this run started. Logged here so
         # a trace shows, from the first frames, whether there was ever a safety

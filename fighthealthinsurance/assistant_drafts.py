@@ -119,8 +119,11 @@ def _digest(draft_id: str) -> str:
     return hashlib.sha256(_DIGEST_LABEL + draft_id.encode("ascii")).hexdigest()
 
 
-def create_draft(denial: Denial, procedure: str = "", condition: str = "") -> NewDraft:
-    """A new draft for this denial. The id is returned once and never stored."""
+def create_draft(
+    denial: Optional[Denial], procedure: str = "", condition: str = ""
+) -> NewDraft:
+    """A new draft, for this denial or, before the person agrees, for none.
+    The id is returned once and never stored."""
     draft_id = new_draft_id()
     draft = AssistantDraft.objects.create(
         denial=denial,
@@ -157,6 +160,40 @@ def set_status(draft: AssistantDraft, status: str) -> None:
     draft.status_at = timezone.now()
     draft.save(update_fields=["status", "status_at"])
     DRAFTS.labels(status).inc()
+
+
+def waiting_draft(pk: object) -> Optional[AssistantDraft]:
+    """The live draft a chat link names, while it still waits for agreement."""
+    if not isinstance(pk, int) or isinstance(pk, bool):
+        return None
+    return AssistantDraft.objects.filter(
+        pk=pk,
+        denial__isnull=True,
+        status=WAITING,
+        expires_at__gt=timezone.now(),
+    ).first()
+
+
+def agree(draft: AssistantDraft, denial: Denial) -> bool:
+    """Tie a waiting draft to the denial the person just agreed for, once.
+    False when another request got there first or it moved on."""
+    linked = AssistantDraft.objects.filter(
+        pk=draft.pk,
+        denial__isnull=True,
+        status=WAITING,
+        expires_at__gt=timezone.now(),
+    ).update(denial=denial)
+    if linked != 1:
+        return False
+    draft.denial = denial
+    mark_agreed(draft)
+    return True
+
+
+def finish_on_site(draft: Optional[AssistantDraft]) -> None:
+    """The person chose the site's own form: the assistant sees on_site."""
+    if draft is not None:
+        set_status(draft, ON_SITE)
 
 
 def mark_agreed(draft: AssistantDraft) -> None:
@@ -254,7 +291,7 @@ def file_answers(draft: AssistantDraft, answers: Any) -> int:
             .filter(pk=draft.pk, expires_at__gt=timezone.now())
             .first()
         )
-        if current is None or current.status != QUESTIONS:
+        if current is None or current.status != QUESTIONS or current.denial_id is None:
             raise ValueError("this draft is not waiting for answers")
         denial = Denial.objects.select_for_update().get(pk=current.denial_id)
         return _file_answers(current, denial, answers)

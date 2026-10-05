@@ -1947,6 +1947,35 @@ INTAKE_FIELDS_WITH_A_MESSAGE = frozenset(
 )
 
 
+def subscribe_from_appeal_flow(request, email) -> None:
+    """Add the person to the mailing list from an intake form that ticked it."""
+    # Get name from the POST data (it's not stored in cleaned_data for privacy)
+    fname = request.POST.get("fname", "")
+    lname = request.POST.get("lname", "")
+    name = f"{fname} {lname}".strip()
+    referral_source = request.POST.get("referral_source", "")
+    referral_source_details = request.POST.get("referral_source_details", "")
+    defaults = {
+        "comments": "From appeal flow",
+        "referral_source": referral_source,
+        "referral_source_details": referral_source_details,
+    }
+    if len(name) > 2:
+        defaults["name"] = name
+    # Use get_or_create to avoid duplicate subscriptions
+    try:
+        models.MailingListSubscriber.objects.get_or_create(
+            email=email,
+            defaults=defaults,
+        )
+    except Exception as e:
+        logger.debug(f"Error subscribing {email} to mailing list: {e}")
+        try:
+            models.MailingListSubscriber.objects.filter(email=email).update(**defaults)
+        except Exception as e2:
+            logger.warning(f"Error updating subscriber? {email}!?!")
+
+
 class InitialProcessView(generic.FormView):
     """
     Initial denial processing view that creates a denial record and begins the appeal flow.
@@ -2107,36 +2136,7 @@ class InitialProcessView(generic.FormView):
 
         # Handle mailing list subscription
         if cleaned_data.get("subscribe"):
-            email = cleaned_data.get("email")
-            # Get name from the POST data (it's not stored in cleaned_data for privacy)
-            fname = self.request.POST.get("fname", "")
-            lname = self.request.POST.get("lname", "")
-            name = f"{fname} {lname}".strip()
-            referral_source = self.request.POST.get("referral_source", "")
-            referral_source_details = self.request.POST.get(
-                "referral_source_details", ""
-            )
-            defaults = {
-                "comments": "From appeal flow",
-                "referral_source": referral_source,
-                "referral_source_details": referral_source_details,
-            }
-            if len(name) > 2:
-                defaults["name"] = name
-            # Use get_or_create to avoid duplicate subscriptions
-            try:
-                models.MailingListSubscriber.objects.get_or_create(
-                    email=email,
-                    defaults=defaults,
-                )
-            except Exception as e:
-                logger.debug(f"Error subscribing {email} to mailing list: {e}")
-                try:
-                    models.MailingListSubscriber.objects.filter(email=email).update(
-                        **defaults
-                    )
-                except Exception as e2:
-                    logger.warning(f"Error updating subscriber? {email}!?!")
+            subscribe_from_appeal_flow(self.request, cleaned_data.get("email"))
 
         # Get microsite slug from request if available and validate it
         microsite_slug = self.request.POST.get(

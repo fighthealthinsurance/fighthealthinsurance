@@ -33,6 +33,7 @@ from django.views.generic.base import RedirectView
 from fighthealthinsurance import (
     agent_docs,
     assistant_handoff_views,
+    assistant_terms_views,
     fax_views,
     intake_resume_views,
     staff_views,
@@ -278,6 +279,20 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         r"^from-your-assistant/?$",
         assistant_handoff_views.AssistantHandoffView.as_view(),
         name="assistant_handoff",
+    ),
+    # The terms page's buttons, under the handoff page's path so the
+    # browser's binder cookie comes with them (assistant_terms_views.py).
+    path(
+        "from-your-assistant/agree",
+        assistant_terms_views.AssistantAgreeView.as_view(),
+        name="assistant_agree",
+    ),
+    # The emailed link back to an assistant's letters; its token rides
+    # after "#" (assistant_continue.py).
+    path(
+        "your-appeal-letters",
+        assistant_terms_views.AssistantContinueView.as_view(),
+        name="assistant_continue",
     ),
     path(
         "about-us",

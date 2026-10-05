@@ -258,6 +258,28 @@ class DenialForm(BaseDenialForm):
         self.fields["zip"].label = "ZIP code"
 
 
+class AssistantTermsForm(ReCaptchaOptionalMixin, DenialForm):
+    """The terms page an assistant's chat link opens (assistant_terms_views.py):
+    the intake form's fields and boxes, who the appeal is for, and a bot check."""
+
+    ON_BEHALF_CHOICES = [
+        ("me", "Me"),
+        (
+            "helping",
+            "Someone I'm helping who asked me to and is fine with this site "
+            "keeping it as the privacy policy says",
+        ),
+    ]
+
+    on_behalf = forms.ChoiceField(
+        choices=ON_BEHALF_CHOICES,
+        required=True,
+        widget=forms.RadioSelect,
+        error_messages={"required": "Please say who this appeal is for."},
+    )
+    captcha = forms.CharField(required=False, widget=forms.HiddenInput())
+
+
 class ProDenialForm(BaseDenialForm):
     # In pro we can fetch email from the patient object
     primary_professional = forms.CharField(required=False)
