@@ -241,6 +241,7 @@ class Command(BaseCommand):
 
         from fighthealthinsurance.activities import (
             appeal_journey as journey_activities,
+            assistant_appeal as draft_activities,
             chat_routing_policy as policy_activities,
             fax as fax_activities,
             intake_journey as intake_activities,
@@ -383,15 +384,27 @@ class Command(BaseCommand):
                 # thread executor and its concurrency is bounded separately
                 # (low and explicit: current letter volume is small, and a
                 # small bound is most of the blast-radius story).
+                from fighthealthinsurance.assistant_drafts import draft_in_chat_enabled
+
+                drafts_enabled = draft_in_chat_enabled()
                 appeal_workflows: List[type] = workflow_registry.appeal_workflows(
                     intake_enabled=getattr(
                         settings, "TEMPORAL_INTAKE_JOURNEY_ENABLED", False
-                    )
+                    ),
+                    drafts_enabled=drafts_enabled,
                 )
-                appeal_activity_fns = [
+                appeal_activity_fns: List[Callable[..., _Any]] = [
                     journey_activities.precheck_appeal_journey,
                     journey_activities.generate_and_store_appeals,
                 ]
+                if drafts_enabled:
+                    appeal_activity_fns += [
+                        draft_activities.read_letter,
+                        draft_activities.ask_questions,
+                        draft_activities.start_drafting,
+                        draft_activities.finish_drafts,
+                        draft_activities.mark_draft_status,
+                    ]
                 if getattr(settings, "TEMPORAL_INTAKE_JOURNEY_ENABLED", False):
                     appeal_activity_fns += [
                         intake_activities.send_abandonment_nudge,

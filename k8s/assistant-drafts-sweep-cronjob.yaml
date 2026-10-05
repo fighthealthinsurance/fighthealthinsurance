@@ -1,0 +1,62 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  # Assistant drafts sweep: hourly, delete AssistantDraft rows past their
+  # expiry (assistant_drafts.py: 2 hours unagreed, a day once agreed). Runs
+  # whatever the MCP flags say. Applied by scripts/build.sh.
+  name: fhi-assistant-drafts-sweep
+  namespace: totallylegitco
+spec:
+  schedule: "17 * * * *"
+  # Never overlap two sweeps; a missed run is simply skipped.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # One DELETE; a run that takes minutes is stuck, not busy.
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata:
+          labels:
+            group: fight-health-insurance-prod-webbackend-batch
+        spec:
+          containers:
+            - image: ${FHI_BASE}:${FHI_VERSION}
+              name: totallylegitco
+              # start-server.sh runs the sweep command when this is set.
+              env:
+                - name: SWEEP_ASSISTANT_DRAFTS
+                  value: "1"
+                - name: PDBHOST
+                  valueFrom:
+                    configMapKeyRef:
+                      name: fhi-db-config
+                      key: PDBHOST
+              envFrom:
+                - secretRef:
+                    name: fight-health-insurance-secret
+                - secretRef:
+                    name: fight-health-insurance-primary-secret
+              imagePullPolicy: Always
+              # Same partial hardening as the intake outbox relay.
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                seccompProfile:
+                  type: RuntimeDefault
+              # The same image and the same Django import floor as the intake
+              # outbox relay (about 1 GiB measured there before it does any
+              # work), so the same sizing.
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: 1536Mi
+                limits:
+                  cpu: "500m"
+                  memory: 3Gi
+          restartPolicy: Never

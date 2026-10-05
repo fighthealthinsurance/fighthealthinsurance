@@ -178,6 +178,12 @@ class Base(Configuration):
     # page reads it on every request, so turning it off stops outstanding
     # links at once.
     MCP_PREPARE_APPEAL_ENABLED = _env_flag("MCP_PREPARE_APPEAL_ENABLED")
+    # The chat path: letters drafted in the background for an assistant to
+    # bring back (assistant_drafts.py, workflows/assistant_appeal.py). Off
+    # everywhere; it counts as on only with MCP_SERVER_ENABLED,
+    # MCP_PREPARE_APPEAL_ENABLED, TEMPORAL_ENABLED and
+    # TEMPORAL_APPEAL_JOURNEY_ENABLED as well (assistant_drafts.draft_in_chat_enabled).
+    MCP_DRAFT_IN_CHAT_ENABLED = _env_flag("MCP_DRAFT_IN_CHAT_ENABLED")
     # prepare_appeal's caps, counted from the table so they hold across pods
     # (soft at the edge: two pods can pass the check together): links live
     # at once, and links made in the last minute and not yet opened (opening
