@@ -18,7 +18,6 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from django.conf import settings
-from django.db.models import F
 from django.utils import timezone
 from loguru import logger
 from prometheus_client import Counter
@@ -26,11 +25,13 @@ from prometheus_client import Counter
 from fighthealthinsurance.denial_context import (
     RESERVED_QA_KEYS,
     _question_text,
+    load_qa,
     merge_qa,
     qa_key_for_question,
     question_field_name,
+    question_text_for_field,
 )
-from fighthealthinsurance.models import AssistantDraft, Denial, ProposedAppeal
+from fighthealthinsurance.models import AssistantDraft, Denial
 from fighthealthinsurance.utils import is_real_appeal
 
 WAITING = "waiting_for_agreement"
@@ -42,6 +43,9 @@ ON_SITE = "on_site"
 STOPPED = "stopped"
 EXPIRED = "expired"
 SITE_ONLY = "site_only"
+STATUSES = frozenset(
+    (WAITING, READING, QUESTIONS, DRAFTING, READY, ON_SITE, STOPPED, EXPIRED, SITE_ONLY)
+)
 
 # A draft nobody agrees to goes with its handoff link; an agreed one lives a day.
 UNAGREED_TTL = timedelta(hours=2)
@@ -52,11 +56,15 @@ LETTER_MAX_CHARS = 6_000
 QUESTION_MAX_CHARS = 300
 ANSWER_MAX_CHARS = 1_000
 MAX_ANSWERS = 60
+MAX_CHOICES = 6
+CHOICE_MAX_CHARS = 60
 FIELD_MAX_CHARS = 80
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _URL = re.compile(r"https?://|www\.", re.IGNORECASE)
 _PLACEHOLDER = re.compile(r"\{\{?[A-Za-z_][A-Za-z0-9_ ]*\}\}?|\[[A-Z][^\]\n]{2,40}\]")
+# A question that ends with its options in brackets: "(inpatient/outpatient)".
+_CHOICES = re.compile(r"\(([^()]+)\)\s*\?\s*$")
 _YES_NO_STARTS = frozenset(
     "is are was were do does did has have had can could will would should".split()
 )
@@ -138,6 +146,8 @@ def draft_for_denial(denial: Denial) -> Optional[AssistantDraft]:
 
 
 def set_status(draft: AssistantDraft, status: str) -> None:
+    if status not in STATUSES:
+        raise ValueError(f"unknown draft status {status!r}")
     draft.status = status
     draft.status_at = timezone.now()
     draft.save(update_fields=["status", "status_at"])
@@ -153,12 +163,36 @@ def mark_agreed(draft: AssistantDraft) -> None:
     DRAFTS.labels("agreed").inc()
 
 
+def _choices(question: str) -> list[str]:
+    match = _CHOICES.search(question)
+    if match is None:
+        return []
+    options = [o.strip() for o in re.split(r"/|,|\bor\b", match.group(1))]
+    options = [o for o in options if o]
+    if not 2 <= len(options) <= MAX_CHOICES:
+        return []
+    if any(len(o) > CHOICE_MAX_CHARS for o in options):
+        return []
+    return options
+
+
+def _kind(question: str, choices: list[str]) -> str:
+    if choices:
+        return "choice"
+    first = question.split(" ", 1)[0].lower().strip("?:,.")
+    # "Was it inpatient or outpatient?" is not answered with yes or no.
+    if first in _YES_NO_STARTS and " or " not in question.lower():
+        return "yes_no"
+    return "text"
+
+
 def clean_questions(rows: Any) -> list[dict[str, Any]]:
     """The questions the assistant may ask, from generated_questions rows.
 
-    Short, URL-free, never a key the review step owns, each once. The
-    suggested answer stays out: it reads as a hint and assistants answer
-    with it.
+    Each is {name, kind, label, choices}: the name is the one the site's
+    form uses, the label is cut at QUESTION_MAX_CHARS, and a question with
+    a URL or a key the review step owns is left out. The suggested answer
+    stays out too: assistants answer with whatever hint they are given.
     """
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -170,44 +204,72 @@ def clean_questions(rows: Any) -> list[dict[str, Any]]:
         if name in seen:
             continue
         seen.add(name)
-        first = question.split(" ", 1)[0].lower().strip("?:,.")
+        choices = _choices(question)
         out.append(
             {
                 "name": name,
-                "kind": "yes_no" if first in _YES_NO_STARTS else "text",
+                "kind": _kind(question, choices),
                 "label": question[:QUESTION_MAX_CHARS],
-                "question": question,
+                "choices": choices,
             }
         )
     return out
 
 
-def file_answers(draft: AssistantDraft, answers: Any) -> int:
-    """File the person's answers under the questions this draft asked.
+def _checked_value(question: dict[str, Any], value: str) -> Optional[str]:
+    """The answer to file, None for a skip, ValueError when it does not fit."""
+    if not value or value.lower() == "skip":
+        return None
+    name = question["name"]
+    if question["kind"] == "yes_no":
+        if value.lower() not in ("yes", "no"):
+            raise ValueError(f"{name}: answer yes, no or skip")
+        return value.capitalize()
+    if question["kind"] == "choice":
+        by_lower = {c.lower(): c for c in question.get("choices") or []}
+        if value.lower() not in by_lower:
+            raise ValueError(f"{name}: answer one of the choices, or skip")
+        return str(by_lower[value.lower()])
+    return value
 
-    Only names the draft issued; anything else is refused by name before
-    anything is written. "skip" files nothing. Returns how many were filed.
+
+def file_answers(draft: AssistantDraft, answers: Any) -> int:
+    """File the person's answers the way the site's questions page does.
+
+    Only while the draft is waiting for answers, and only under names this
+    draft issued; anything else is refused by name before anything is
+    written. "skip" files nothing. Returns how many were filed.
     """
+    if draft.status != QUESTIONS:
+        raise ValueError("this draft is not waiting for answers")
     if not isinstance(answers, list) or len(answers) > MAX_ANSWERS:
         raise ValueError(f"answers must be a list of at most {MAX_ANSWERS}")
+    denial = draft.denial
     issued = {q["name"]: q for q in draft.questions or []}
+    texts: dict[str, Optional[str]] = {
+        name: question_text_for_field(name, denial.generated_questions)
+        for name in issued
+    }
+    askable = {
+        name
+        for name, text in texts.items()
+        if text is not None and text not in RESERVED_QA_KEYS
+    }
     names = [a.get("name") if isinstance(a, dict) else None for a in answers]
-    unknown = sorted({str(n) for n in names if n not in issued})
+    unknown = sorted({str(n) for n in names if n not in askable})
     if unknown:
         raise UnknownQuestion(f"not asked: {', '.join(unknown)}")
     updates: dict[str, str] = {}
     for answer in answers:
-        question = issued[answer["name"]]
+        name = answer["name"]
         value = answer.get("value")
         if not isinstance(value, str):
-            raise ValueError(f"{answer['name']}: the answer must be text")
-        value = " ".join(value.split())[:ANSWER_MAX_CHARS]
-        if not value or value.lower() == "skip":
-            continue
-        if question["kind"] == "yes_no" and value.lower() not in ("yes", "no"):
-            raise ValueError(f"{answer['name']}: answer yes, no or skip")
-        updates[qa_key_for_question(question["question"])] = value
-    denial = draft.denial
+            raise ValueError(f"{name}: the answer must be text")
+        checked = _checked_value(
+            issued[name], " ".join(value.split())[:ANSWER_MAX_CHARS]
+        )
+        if checked is not None:
+            updates[qa_key_for_question(str(texts[name]))] = checked
     merge_qa(denial, updates, source="assistant_answers")
     denial.save(update_fields=["qa_context"])
     draft.answers_at = timezone.now()
@@ -219,31 +281,25 @@ def file_answers(draft: AssistantDraft, answers: Any) -> int:
 def collect_letters(denial: Denial) -> list[dict[str, Any]]:
     """The letters the site would show, as the assistant gets them.
 
-    The same rows the appeal page replays: not speculative, not chosen, not
-    a reserve built for another state, real text, each distinct text once,
-    with the denial's own values substituted, newest first, at most three,
-    each cut at LETTER_MAX_CHARS with its placeholders listed.
+    The rows the appeal page replays, less the chosen copies: real text,
+    each distinct text once, with the denial's own values substituted,
+    newest first, at most three, each cut at LETTER_MAX_CHARS with the
+    placeholders still in it listed.
     """
     from fighthealthinsurance.appeal_fingerprints import fingerprint_text
     from fighthealthinsurance.common_view_logic import (
+        appeal_replay_queryset,
         deliverable_candidates,
-        served_reserve_for_another_state,
         substitute_appeal_fields,
     )
 
-    rows = deliverable_candidates(
-        ProposedAppeal.objects.filter(
-            for_denial=denial, speculative=False, chosen=False
-        )
-        .exclude(served_reserve_for_another_state())
-        .order_by(F("created_at").desc(nulls_last=True), "-id")
-    )
+    rows = deliverable_candidates(appeal_replay_queryset(denial).filter(chosen=False))
     letters: list[dict[str, Any]] = []
     seen: set[str] = set()
     for text in rows.values_list("appeal_text", flat=True):
         if not is_real_appeal(text):
             continue
-        fingerprint = fingerprint_text(text)
+        fingerprint = fingerprint_text(text) or text.strip()
         if fingerprint in seen:
             continue
         seen.add(fingerprint)
@@ -269,6 +325,29 @@ def letters_status(denial: Denial, finished: bool) -> str:
     if count >= MAX_LETTERS or (finished and count):
         return READY
     return STOPPED if finished else DRAFTING
+
+
+def site_took_generation(denial: Denial) -> bool:
+    """Whether the last generation lease on this denial went to the site's
+    own page rather than to a background run."""
+    from fighthealthinsurance.models import AppealGenerationLease
+
+    holder = (
+        AppealGenerationLease.objects.filter(for_denial=denial)
+        .values_list("holder", flat=True)
+        .first()
+    )
+    return bool(holder and holder.startswith("interactive:"))
+
+
+def answers_for_generation(denial: Denial) -> Optional[dict[str, str]]:
+    """What a background generation sends as the questionnaire: the
+    denial's stored answers, once the assistant has filed some."""
+    if not AssistantDraft.objects.filter(
+        denial=denial, answers_at__isnull=False
+    ).exists():
+        return None
+    return load_qa(denial)
 
 
 def sweep_expired(now: Optional[datetime] = None) -> int:

@@ -18,6 +18,7 @@ from typing import (
     Iterable,
     Iterator,
     List,
+    Mapping,
     Optional,
     Tuple,
     AsyncGenerator,
@@ -2188,6 +2189,32 @@ def served_reserve_for_another_state() -> Q:
     return Q(context_level__in=SPECULATIVE_CONTEXT_LEVELS, chosen=False) & (
         ~Q(built_for_state=state_on_the_row_now()) | Q(built_for_state__isnull=True)
     )
+
+
+def appeal_replay_queryset(denial) -> QuerySet:
+    """The stored drafts the appeal page replays for a denial, newest first."""
+    return (
+        ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
+        .exclude(served_reserve_for_another_state())
+        .order_by(F("created_at").desc(nulls_last=True), "-id")
+        .all()
+    )
+
+
+# Keys of a generation's parameters that a stored answer never supplies.
+_NOT_ANSWERS = frozenset(
+    {
+        "csrfmiddlewaretoken",
+        "denial_id",
+        "email",
+        "semi_sekret",
+        "questionnaire",
+        "professional_to_finish",
+        "reconnect",
+        "medical_context",
+        "misc",
+    }
+)
 
 
 class DenialCreatorHelper:
@@ -4766,16 +4793,31 @@ class AppealsBackendHelper:
 
     @classmethod
     def generate_appeals_for_denial(
-        cls, denial, background: bool = True, lease_epoch: Optional[int] = None
+        cls,
+        denial,
+        background: bool = True,
+        lease_epoch: Optional[int] = None,
+        answers: Optional[Mapping[str, str]] = None,
     ):
         """Internal entry point: the caller already holds a loaded, authorized
         ``Denial``. Builds the parameters itself (including the private
         identity key), so internal dispatchers never construct the public
         parameter dict by hand -- and the public path never learns to accept
         a caller-supplied hash. ``background=True`` also keeps these runs
-        from consuming the user's interactive ``gen_attempts`` budget."""
+        from consuming the user's interactive ``gen_attempts`` budget.
+        ``answers`` are sent as the questions page sends its post (a
+        questionnaire submission), with no control key among them."""
+        parameters: dict[str, Any] = {}
+        if answers:
+            parameters.update(
+                (k, v)
+                for k, v in answers.items()
+                if k not in _NOT_ANSWERS and not k.startswith("_")
+            )
+            parameters["questionnaire"] = True
         return cls.generate_appeals(
             {
+                **parameters,
                 "denial_id": denial.denial_id,
                 "email": None,
                 "semi_sekret": denial.semi_sekret,
@@ -5065,12 +5107,7 @@ class AppealsBackendHelper:
         # whatever the database happened to return. created_at is null on legacy
         # rows, and Postgres sorts NULLs first on DESC, which would have handed
         # those rows the whole budget; nulls_last puts them where they belong.
-        existing_appeals = (
-            ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
-            .exclude(served_reserve_for_another_state())
-            .order_by(F("created_at").desc(nulls_last=True), "-id")
-            .all()
-        )
+        existing_appeals = appeal_replay_queryset(denial)
         # Everything already delivered to this client, by normalized raw text.
         # Grown by every path that ships an appeal (existing rows, streamed
         # drafts, the early reserve flush, synthesis, the end-of-flow

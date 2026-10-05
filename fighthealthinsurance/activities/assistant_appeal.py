@@ -16,14 +16,15 @@ from temporalio.exceptions import ApplicationError
 
 from fighthealthinsurance import assistant_drafts
 from fighthealthinsurance.appeal_journey_core import aload_denial
+from fighthealthinsurance.ml import spend
 
 _aclose_old_connections = database_sync_to_async(close_old_connections)
 _NON_RETRYABLE_ERRORS = (ValidationError, FieldError, ProgrammingError, DataError)
 
-# Above each step's own ceiling (extract_entity 90 s, questions 130 s), so
-# the step's budget ends it, not this.
-READ_TIMEOUT_S = 120
-QUESTIONS_TIMEOUT_S = 160
+# Each under its activity's start_to_close, so the step ends on its own
+# budget with what it has.
+READ_TIMEOUT_S = 90
+QUESTIONS_TIMEOUT_S = 150
 
 
 def _non_retryable(e: Exception, denial_uuid: str) -> ApplicationError:
@@ -60,9 +61,10 @@ async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
         from fighthealthinsurance.common_view_logic import DenialCreatorHelper
 
         try:
-            async with asyncio.timeout(READ_TIMEOUT_S):
-                async for _ in DenialCreatorHelper.extract_entity(denial.denial_id):
-                    pass
+            with spend.for_channel(spend.channel_of(denial)):
+                async with asyncio.timeout(READ_TIMEOUT_S):
+                    async for _ in DenialCreatorHelper.extract_entity(denial.denial_id):
+                        pass
         except TimeoutError:
             logger.warning(f"assistant draft: reading timed out for {denial_uuid}")
         await denial.arefresh_from_db(fields=["procedure", "diagnosis"])
@@ -93,10 +95,11 @@ async def ask_questions(hashed_email: str, denial_uuid: str) -> int:
 
         rows = None
         try:
-            async with asyncio.timeout(QUESTIONS_TIMEOUT_S):
-                rows = await DenialCreatorHelper.generate_appeal_questions(
-                    denial.denial_id
-                )
+            with spend.for_channel(spend.channel_of(denial)):
+                async with asyncio.timeout(QUESTIONS_TIMEOUT_S):
+                    rows = await DenialCreatorHelper.generate_appeal_questions(
+                        denial.denial_id
+                    )
         except TimeoutError:
             logger.warning(f"assistant draft: questions timed out for {denial_uuid}")
         questions = assistant_drafts.clean_questions(rows or [])
@@ -135,15 +138,20 @@ async def start_drafting(hashed_email: str, denial_uuid: str) -> bool:
 
 @activity.defn
 async def finish_drafts(hashed_email: str, denial_uuid: str) -> str:
-    """ready or stopped, from what the generation actually stored."""
+    """on_site when the site's own page took the generation, else ready or
+    stopped from what the generation actually stored."""
     await _aclose_old_connections()
     try:
         denial, draft = await _draft_for(hashed_email, denial_uuid)
         if denial is None or draft is None:
             return assistant_drafts.STOPPED
-        status = str(
-            await database_sync_to_async(assistant_drafts.letters_status)(denial, True)
-        )
+
+        def outcome() -> str:
+            if assistant_drafts.site_took_generation(denial):
+                return assistant_drafts.ON_SITE
+            return assistant_drafts.letters_status(denial, True)
+
+        status = str(await database_sync_to_async(outcome)())
         await _set_status(draft, status)
         return status
     except _NON_RETRYABLE_ERRORS as e:
@@ -153,6 +161,8 @@ async def finish_drafts(hashed_email: str, denial_uuid: str) -> str:
 @activity.defn
 async def mark_draft_status(hashed_email: str, denial_uuid: str, status: str) -> bool:
     await _aclose_old_connections()
+    if status not in assistant_drafts.STATUSES:
+        raise ApplicationError("unknown draft status", non_retryable=True)
     try:
         denial, draft = await _draft_for(hashed_email, denial_uuid)
         if denial is None or draft is None:

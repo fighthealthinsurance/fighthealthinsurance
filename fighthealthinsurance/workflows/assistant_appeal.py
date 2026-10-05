@@ -20,9 +20,14 @@ from fighthealthinsurance.workflows.types import (
 )
 
 with workflow.unsafe.imports_passed_through():
+    from fighthealthinsurance.activities import appeal_journey as appeal_activities
     from fighthealthinsurance.activities import assistant_appeal as draft_activities
 
 ANSWER_WAIT = timedelta(hours=24)
+# Inside the draft's own day: past this the letters could not be collected.
+RECONCILE_FOR = timedelta(hours=6)
+RECONCILE_INITIAL_DELAY = timedelta(seconds=30)
+RECONCILE_MAX_DELAY = timedelta(minutes=10)
 
 BOOKKEEPING_RETRY = RetryPolicy(
     maximum_attempts=5, maximum_interval=timedelta(minutes=5)
@@ -77,6 +82,20 @@ class AssistantAppealWorkflow:
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=BOOKKEEPING_RETRY,
         )
+        if not await self._start_generation(draft):
+            await self._reconcile(draft, args)
+        return str(
+            await workflow.execute_activity(
+                draft_activities.finish_drafts,
+                args=args,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=BOOKKEEPING_RETRY,
+            )
+        )
+
+    async def _start_generation(self, draft: AssistantAppealInput) -> bool:
+        """Run generation as our child; False when a standalone run holds
+        the id (WorkflowAlreadyStartedError), which the caller reconciles."""
         try:
             await workflow.execute_child_workflow(
                 "GenerateAppealWorkflow",
@@ -86,19 +105,41 @@ class AssistantAppealWorkflow:
                 id=f"generate-appeal-{draft.denial_uuid}",
             )
         except WorkflowAlreadyStartedError:
-            # The site is already drafting this case; its page shows them.
-            await self._mark(args, "on_site")
-            return "on_site"
+            workflow.logger.info(
+                "generation already running for this denial; reconciling"
+            )
+            return False
         except ChildWorkflowError:
             # Out of attempts; finish_drafts says whether anything landed.
             workflow.logger.warning("generation child failed; collecting what exists")
-        return str(
-            await workflow.execute_activity(
-                draft_activities.finish_drafts,
+        return True
+
+    async def _reconcile(self, draft: AssistantAppealInput, args: list) -> None:
+        """The intake journey's rule: another run is not drafts. Check the
+        durable outcome on a backoff and take generation over if that run
+        closes short of it."""
+        delay = RECONCILE_INITIAL_DELAY
+        until = workflow.now() + RECONCILE_FOR
+        while True:
+            remaining = until - workflow.now()
+            if remaining <= timedelta(0):
+                break
+            await asyncio.sleep(min(delay, remaining).total_seconds())
+            delay = min(delay * 2, RECONCILE_MAX_DELAY)
+            if workflow.now() >= until:
+                break
+            satisfied = await workflow.execute_activity(
+                appeal_activities.check_generation_postcondition,
                 args=args,
-                start_to_close_timeout=timedelta(minutes=2),
+                start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=BOOKKEEPING_RETRY,
             )
+            if satisfied or workflow.now() >= until:
+                return
+            if await self._start_generation(draft):
+                return
+        workflow.logger.warning(
+            "generation postcondition unmet after the reconciliation window"
         )
 
     async def _mark(self, args: list, status: str) -> None:

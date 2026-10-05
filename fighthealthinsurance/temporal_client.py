@@ -242,6 +242,39 @@ async def start_generate_appeal_workflow(hashed_email: str, denial_uuid: str) ->
     return str(handle.id)
 
 
+def assistant_appeal_workflow_id(denial_uuid: str) -> str:
+    return f"assistant-appeal-{denial_uuid}"
+
+
+async def start_assistant_appeal_workflow(
+    hashed_email: str, denial_uuid: str, client: Any = None
+) -> str:
+    """Start ``AssistantAppealWorkflow`` once the person has agreed. Raises
+    WorkflowAlreadyStartedError when one is already open for the denial."""
+    from fighthealthinsurance.workflows.types import AssistantAppealInput
+
+    if client is None:
+        client = await get_temporal_client()
+    handle = await client.start_workflow(
+        "AssistantAppealWorkflow",
+        AssistantAppealInput(hashed_email=hashed_email, denial_uuid=str(denial_uuid)),
+        id=assistant_appeal_workflow_id(str(denial_uuid)),
+        task_queue=settings.TEMPORAL_APPEAL_TASK_QUEUE,
+        rpc_timeout=timedelta(seconds=INTAKE_RPC_TIMEOUT_SECONDS),
+    )
+    return str(handle.id)
+
+
+async def signal_assistant_answers_filed(denial_uuid: str, client: Any = None) -> None:
+    """Tell a waiting AssistantAppealWorkflow its answers are on the denial.
+    The signal carries nothing: the answers stay in Django."""
+    if client is None:
+        client = await get_temporal_client()
+    await client.get_workflow_handle(
+        assistant_appeal_workflow_id(str(denial_uuid))
+    ).signal("answers_filed", rpc_timeout=timedelta(seconds=INTAKE_RPC_TIMEOUT_SECONDS))
+
+
 def dispatch_appeal_generation(hashed_email: str, denial_uuid: str) -> bool:
     """Dispatch a durable appeal-generation journey when enabled.
 

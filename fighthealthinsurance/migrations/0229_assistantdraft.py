@@ -4,10 +4,8 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
 
-    # Both 0227s are leaves on main; depending on both joins them.
     dependencies = [
-        ("fighthealthinsurance", "0227_consentrecord"),
-        ("fighthealthinsurance", "0227_denial_channel_and_spend_reservation"),
+        ("fighthealthinsurance", "0228_assistanthandoff_bound"),
     ]
 
     operations = [

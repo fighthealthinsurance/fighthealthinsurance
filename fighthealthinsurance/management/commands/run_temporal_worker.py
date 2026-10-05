@@ -397,6 +397,9 @@ class Command(BaseCommand):
                     journey_activities.precheck_appeal_journey,
                     journey_activities.generate_and_store_appeals,
                 ]
+                intake_enabled = getattr(
+                    settings, "TEMPORAL_INTAKE_JOURNEY_ENABLED", False
+                )
                 if drafts_enabled:
                     appeal_activity_fns += [
                         draft_activities.read_letter,
@@ -405,12 +408,16 @@ class Command(BaseCommand):
                         draft_activities.finish_drafts,
                         draft_activities.mark_draft_status,
                     ]
-                if getattr(settings, "TEMPORAL_INTAKE_JOURNEY_ENABLED", False):
+                if intake_enabled:
                     appeal_activity_fns += [
                         intake_activities.send_abandonment_nudge,
                         intake_activities.close_incomplete_journey,
-                        intake_activities.check_generation_postcondition,
                     ]
+                if intake_enabled or drafts_enabled:
+                    # Both journeys reconcile with it; registered once.
+                    appeal_activity_fns.append(
+                        journey_activities.check_generation_postcondition
+                    )
                 appeal_worker = Worker(
                     client,
                     task_queue=appeal_queue,

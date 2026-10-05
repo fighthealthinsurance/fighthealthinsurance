@@ -5,6 +5,7 @@ import uuid
 
 import pytest
 from temporalio import activity, workflow
+from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
@@ -20,10 +21,11 @@ class _StubGenerateAppeal:
 
 
 class _Recorder:
-    def __init__(self, *, found=True, questions=0, finish="ready"):
+    def __init__(self, *, found=True, questions=0, finish="ready", satisfied=True):
         self.found = found
         self.questions = questions
         self.finish = finish
+        self.satisfied = satisfied
         self.calls: list = []
 
     def activities(self):
@@ -54,7 +56,19 @@ class _Recorder:
             rec.calls.append(f"mark:{status}")
             return True
 
-        return [read_letter, ask_questions, start_drafting, finish_drafts, mark_draft_status]
+        @activity.defn(name="check_generation_postcondition")
+        async def check_generation_postcondition(hashed_email: str, denial_uuid: str) -> bool:
+            rec.calls.append("check")
+            return rec.satisfied
+
+        return [
+            read_letter,
+            ask_questions,
+            start_drafting,
+            finish_drafts,
+            mark_draft_status,
+            check_generation_postcondition,
+        ]
 
 
 async def _start(env, rec, *, denial_uuid="u"):
@@ -120,24 +134,39 @@ async def test_a_case_that_is_gone_ends_at_once():
     assert rec.calls == ["read"]
 
 
-@pytest.mark.asyncio
-async def test_a_generation_the_site_already_owns_means_on_site():
-    rec = _Recorder()
+@workflow.defn(name="GenerateAppealWorkflow")
+class _BlockingGenerateAppeal:
+    """A standalone generation that holds generate-appeal-{uuid} open."""
+
+    @workflow.run
+    async def run(self, journey: GenerateAppealInput) -> int:
+        await workflow.wait_condition(lambda: False)
+        return 0
+
+
+@workflow.defn(name="GenerateAppealWorkflow")
+class _Failing:
+    @workflow.run
+    async def run(self, journey: GenerateAppealInput) -> int:
+        raise ApplicationError("out of attempts", non_retryable=True)
+
+
+async def _with_generation_taken(rec):
+    """Run the workflow while a standalone generation holds the child id."""
     async with await WorkflowEnvironment.start_time_skipping() as env:
         task_queue = str(uuid.uuid4())
         worker = Worker(
             env.client,
             task_queue=task_queue,
-            workflows=[AssistantAppealWorkflow, _StubGenerateAppeal],
+            workflows=[AssistantAppealWorkflow, _BlockingGenerateAppeal],
             activities=rec.activities(),
         )
         async with worker:
-            # A standalone generation holding the deterministic child id.
             await env.client.start_workflow(
-                _StubGenerateAppeal.run,
+                _BlockingGenerateAppeal.run,
                 GenerateAppealInput(hashed_email="h", denial_uuid="taken"),
                 id="generate-appeal-taken",
-                task_queue=str(uuid.uuid4()),
+                task_queue=task_queue,
             )
             handle = await env.client.start_workflow(
                 AssistantAppealWorkflow.run,
@@ -145,5 +174,67 @@ async def test_a_generation_the_site_already_owns_means_on_site():
                 id=str(uuid.uuid4()),
                 task_queue=task_queue,
             )
-            assert await handle.result() == "on_site"
-    assert rec.calls == ["read", "ask", "start", "mark:on_site"]
+            return await asyncio.wait_for(handle.result(), timeout=120)
+
+
+@pytest.mark.asyncio
+async def test_a_generation_already_running_is_checked_not_assumed():
+    rec = _Recorder(finish="on_site")
+    assert await _with_generation_taken(rec) == "on_site"
+    assert rec.calls == ["read", "ask", "start", "check", "finish"]
+
+
+@pytest.mark.asyncio
+async def test_a_generation_that_never_delivers_is_given_up_inside_the_window():
+    rec = _Recorder(satisfied=False, finish="stopped")
+    assert await _with_generation_taken(rec) == "stopped"
+    assert rec.calls[:4] == ["read", "ask", "start", "check"]
+    assert rec.calls[-1] == "finish"
+    assert set(rec.calls[3:-1]) == {"check"}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_generation_still_reports_what_landed():
+    rec = _Recorder(finish="stopped")
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        task_queue = str(uuid.uuid4())
+        async with Worker(
+            env.client,
+            task_queue=task_queue,
+            workflows=[AssistantAppealWorkflow, _Failing],
+            activities=rec.activities(),
+        ):
+            handle = await env.client.start_workflow(
+                AssistantAppealWorkflow.run,
+                AssistantAppealInput(hashed_email="h", denial_uuid="u"),
+                id=str(uuid.uuid4()),
+                task_queue=task_queue,
+            )
+            assert await handle.result() == "stopped"
+    assert rec.calls == ["read", "ask", "start", "finish"]
+
+
+@pytest.mark.asyncio
+async def test_the_client_starts_and_signals_the_workflow_by_its_id():
+    from django.conf import settings
+
+    from fighthealthinsurance.temporal_client import (
+        assistant_appeal_workflow_id,
+        signal_assistant_answers_filed,
+        start_assistant_appeal_workflow,
+    )
+
+    rec = _Recorder(questions=1)
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=settings.TEMPORAL_APPEAL_TASK_QUEUE,
+            workflows=[AssistantAppealWorkflow, _StubGenerateAppeal],
+            activities=rec.activities(),
+        ):
+            started = await start_assistant_appeal_workflow("h", "u1", client=env.client)
+            assert started == assistant_appeal_workflow_id("u1")
+            await signal_assistant_answers_filed("u1", client=env.client)
+            handle = env.client.get_workflow_handle(started)
+            assert await handle.result() == "ready"
+    assert rec.calls == ["read", "ask", "start", "finish"]
