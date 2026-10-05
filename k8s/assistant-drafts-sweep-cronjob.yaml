@@ -2,11 +2,13 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   # Assistant drafts sweep: hourly, delete AssistantDraft rows past their
-  # expiry (assistant_drafts.py: 2 hours unagreed, a day once agreed). Runs
-  # whatever the MCP flags say. Applied by scripts/build.sh.
+  # expiry (assistant_drafts.py: 2 hours unagreed, a day once agreed).
+  # Applied by scripts/build.sh. Suspended until MCP_DRAFT_IN_CHAT_ENABLED
+  # turns on; set suspend: false in the same change.
   name: fhi-assistant-drafts-sweep
   namespace: totallylegitco
 spec:
+  suspend: true
   schedule: "17 * * * *"
   # Never overlap two sweeps; a missed run is simply skipped.
   concurrencyPolicy: Forbid

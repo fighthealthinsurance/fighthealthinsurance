@@ -12,7 +12,11 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ChildWorkflowError, WorkflowAlreadyStartedError
+from temporalio.exceptions import (
+    ActivityError,
+    ChildWorkflowError,
+    WorkflowAlreadyStartedError,
+)
 
 from fighthealthinsurance.workflows.types import (
     AssistantAppealInput,
@@ -54,19 +58,24 @@ class AssistantAppealWorkflow:
     @workflow.run
     async def run(self, draft: AssistantAppealInput) -> str:
         args = [draft.hashed_email, draft.denial_uuid]
-        found = await workflow.execute_activity(
-            draft_activities.read_letter,
-            args=args,
-            start_to_close_timeout=timedelta(minutes=3),
-            retry_policy=MODEL_STEP_RETRY,
+        try:
+            return await self._run(draft, args)
+        except ActivityError:
+            # A bookkeeping step ran out of attempts: say so on the draft.
+            try:
+                await self._mark(args, "stopped")
+            except ActivityError:
+                workflow.logger.warning("could not mark the draft stopped")
+            raise
+
+    async def _run(self, draft: AssistantAppealInput, args: list) -> str:
+        found = await self._model_step(
+            draft_activities.read_letter, args, timedelta(minutes=3), True
         )
         if not found:
             return "not_found"
-        asked = await workflow.execute_activity(
-            draft_activities.ask_questions,
-            args=args,
-            start_to_close_timeout=timedelta(minutes=4),
-            retry_policy=MODEL_STEP_RETRY,
+        asked = await self._model_step(
+            draft_activities.ask_questions, args, timedelta(minutes=4), 0
         )
         if asked:
             try:
@@ -76,12 +85,14 @@ class AssistantAppealWorkflow:
             except asyncio.TimeoutError:
                 await self._mark(args, "expired")
                 return "expired"
-        await workflow.execute_activity(
+        started = await workflow.execute_activity(
             draft_activities.start_drafting,
             args=args,
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=BOOKKEEPING_RETRY,
         )
+        if not started:
+            return "not_found"
         if not await self._start_generation(draft):
             await self._reconcile(draft, args)
         return str(
@@ -92,6 +103,19 @@ class AssistantAppealWorkflow:
                 retry_policy=BOOKKEEPING_RETRY,
             )
         )
+
+    async def _model_step(self, step, args: list, timeout: timedelta, failed):
+        """A model step out of attempts goes on without its result."""
+        try:
+            return await workflow.execute_activity(
+                step,
+                args=args,
+                start_to_close_timeout=timeout,
+                retry_policy=MODEL_STEP_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("model step out of attempts; going on without it")
+            return failed
 
     async def _start_generation(self, draft: AssistantAppealInput) -> bool:
         """Run generation as our child; False when a standalone run holds

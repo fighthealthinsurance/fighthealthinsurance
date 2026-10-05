@@ -6,6 +6,7 @@ import uuid
 import pytest
 from temporalio import activity, workflow
 from temporalio.exceptions import ApplicationError
+from temporalio.client import WorkflowFailureError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
@@ -21,7 +22,11 @@ class _StubGenerateAppeal:
 
 
 class _Recorder:
-    def __init__(self, *, found=True, questions=0, finish="ready", satisfied=True):
+    def __init__(
+        self, *, found=True, questions=0, finish="ready", satisfied=True, started=True, fail=()
+    ):
+        self.started = started
+        self.fail = set(fail)
         self.found = found
         self.questions = questions
         self.finish = finish
@@ -34,17 +39,23 @@ class _Recorder:
         @activity.defn(name="read_letter")
         async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
             rec.calls.append("read")
+            if "read" in rec.fail:
+                raise ApplicationError("out of attempts", non_retryable=True)
             return rec.found
 
         @activity.defn(name="ask_questions")
         async def ask_questions(hashed_email: str, denial_uuid: str) -> int:
             rec.calls.append("ask")
+            if "ask" in rec.fail:
+                raise ApplicationError("out of attempts", non_retryable=True)
             return rec.questions
 
         @activity.defn(name="start_drafting")
         async def start_drafting(hashed_email: str, denial_uuid: str) -> bool:
             rec.calls.append("start")
-            return True
+            if "start" in rec.fail:
+                raise ApplicationError("out of attempts", non_retryable=True)
+            return rec.started
 
         @activity.defn(name="finish_drafts")
         async def finish_drafts(hashed_email: str, denial_uuid: str) -> str:
@@ -132,6 +143,37 @@ async def test_a_case_that_is_gone_ends_at_once():
         async with worker:
             assert await handle.result() == "not_found"
     assert rec.calls == ["read"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_model_step_goes_on_without_it():
+    rec = _Recorder(fail={"read", "ask"})
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        worker, handle = await _start(env, rec)
+        async with worker:
+            assert await handle.result() == "ready"
+    assert rec.calls == ["read", "ask", "start", "finish"]
+
+
+@pytest.mark.asyncio
+async def test_a_draft_gone_before_drafting_starts_no_generation():
+    rec = _Recorder(started=False)
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        worker, handle = await _start(env, rec)
+        async with worker:
+            assert await handle.result() == "not_found"
+    assert rec.calls == ["read", "ask", "start"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_bookkeeping_step_marks_the_draft_stopped():
+    rec = _Recorder(fail={"start"})
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        worker, handle = await _start(env, rec)
+        async with worker:
+            with pytest.raises(WorkflowFailureError):
+                await handle.result()
+    assert rec.calls == ["read", "ask", "start", "mark:stopped"]
 
 
 @workflow.defn(name="GenerateAppealWorkflow")

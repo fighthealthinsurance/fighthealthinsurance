@@ -32,6 +32,7 @@ ALL_ON = dict(
     MCP_PREPARE_APPEAL_ENABLED=True,
     TEMPORAL_ENABLED=True,
     TEMPORAL_APPEAL_JOURNEY_ENABLED=True,
+    TEMPORAL_PAYLOAD_KEY="test-key",
 )
 
 LETTER = (
@@ -243,6 +244,28 @@ class QuestionsTest(TestCase):
         with self.assertRaises(ValueError):
             drafts.file_answers(draft, [{"name": draft.questions[0]["name"], "value": "x"}])
 
+    def test_a_stale_copy_cannot_file_after_drafting_starts(self):
+        draft = asking(a_denial(), [("What happened?", "")])
+        AssistantDraft.objects.filter(pk=draft.pk).update(status=drafts.DRAFTING)
+        with self.assertRaises(ValueError):
+            drafts.file_answers(draft, [{"name": draft.questions[0]["name"], "value": "x"}])
+
+    def test_an_expired_draft_takes_no_answers(self):
+        draft = asking(a_denial(), [("What happened?", "")])
+        AssistantDraft.objects.filter(pk=draft.pk).update(expires_at=timezone.now())
+        with self.assertRaises(ValueError):
+            drafts.file_answers(draft, [{"name": draft.questions[0]["name"], "value": "x"}])
+
+    def test_answers_merge_with_answers_filed_since_the_copy_was_loaded(self):
+        denial = a_denial()
+        draft = asking(denial, [("What happened?", ""), ("When?", "")])
+        fresh = Denial.objects.get(pk=denial.pk)
+        merge_qa(fresh, {"When?": "May"}, source="test")
+        fresh.save(update_fields=["qa_context"])
+        drafts.file_answers(draft, [{"name": draft.questions[0]["name"], "value": "x"}])
+        qa = load_qa(Denial.objects.get(pk=denial.pk))
+        self.assertEqual((qa["What happened?"], qa["When?"]), ("x", "May"))
+
     def test_a_long_answer_is_cut(self):
         denial = a_denial()
         draft = asking(denial, [("What happened?", "")])
@@ -280,6 +303,13 @@ class LettersTest(TestCase):
         )
         self.assertEqual(len(drafts.collect_letters(denial)), 1)
 
+    def test_dollar_placeholders_are_listed(self):
+        denial = a_denial()
+        self._row(denial, LETTER + " Signed, $your_name_here. It cost $500.")
+        [letter] = drafts.collect_letters(denial)
+        self.assertIn("$your_name_here", letter["placeholders"])
+        self.assertNotIn("$500", letter["placeholders"])
+
     def test_a_long_letter_is_cut_and_says_so(self):
         denial = a_denial()
         self._row(denial, LETTER + " more. " * 2000)
@@ -311,6 +341,18 @@ class LettersTest(TestCase):
 
 
 class GenerationAnswersTest(TestCase):
+    def setUp(self):
+        # After the conftest fixture that turns Temporal off.
+        self.enterContext(override_settings(**ALL_ON))
+
+    def test_no_answers_with_the_chat_path_off(self):
+        denial = a_denial()
+        draft = drafts.create_draft(denial).draft
+        draft.answers_at = timezone.now()
+        draft.save()
+        with override_settings(MCP_DRAFT_IN_CHAT_ENABLED=False):
+            self.assertIsNone(drafts.answers_for_generation(denial))
+
     def test_no_answers_until_the_assistant_files_some(self):
         denial = a_denial()
         merge_qa(denial, {"medical_reason": "pain"}, source="test")
@@ -403,6 +445,7 @@ class WorkerGenerationTest(TransactionTestCase):
 
     def setUp(self):
         super().setUp()
+        self.enterContext(override_settings(**ALL_ON))
         for target in (
             "fighthealthinsurance.common_view_logic.get_rag_context_for_denial",
             "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
@@ -485,3 +528,16 @@ class WorkerGenerationTest(TransactionTestCase):
             except appeal_journey_core.JourneyIncomplete:
                 pass
         self.assertEqual(seen, [{"What happened?": "a fall"}])
+
+
+class ActivityErrorsTest(TestCase):
+    def test_an_unexpected_error_reaches_history_without_its_text(self):
+        from temporalio.exceptions import ApplicationError
+
+        from fighthealthinsurance.activities.assistant_appeal import _sanitized
+
+        with self.assertRaises(ApplicationError) as caught:
+            with _sanitized("reading", "u"):
+                raise RuntimeError("Dear Example Health, my MRI")
+        self.assertNotIn("MRI", str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)

@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 from loguru import logger
 from prometheus_client import Counter
@@ -62,7 +63,9 @@ FIELD_MAX_CHARS = 80
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _URL = re.compile(r"https?://|www\.", re.IGNORECASE)
-_PLACEHOLDER = re.compile(r"\{\{?[A-Za-z_][A-Za-z0-9_ ]*\}\}?|\[[A-Z][^\]\n]{2,40}\]")
+_PLACEHOLDER = re.compile(
+    r"\{\{?[A-Za-z_][A-Za-z0-9_ ]*\}\}?|\[[A-Z][^\]\n]{2,40}\]|\$[a-z][a-z_]{2,}\b"
+)
 # A question that ends with its options in brackets: "(inpatient/outpatient)".
 _CHOICES = re.compile(r"\(([^()]+)\)\s*\?\s*$")
 _YES_NO_STARTS = frozenset(
@@ -89,7 +92,7 @@ class NewDraft:
 
 def draft_in_chat_enabled() -> bool:
     """On only with every flag the chat path needs: the server, the handoff,
-    and the Temporal appeal worker that does the drafting."""
+    the Temporal appeal worker that does the drafting, and the payload key."""
     return all(
         bool(getattr(settings, name, False))
         for name in (
@@ -98,6 +101,8 @@ def draft_in_chat_enabled() -> bool:
             "MCP_PREPARE_APPEAL_ENABLED",
             "TEMPORAL_ENABLED",
             "TEMPORAL_APPEAL_JOURNEY_ENABLED",
+            # Encrypts what the chat path puts in Temporal history.
+            "TEMPORAL_PAYLOAD_KEY",
         )
     )
 
@@ -240,11 +245,22 @@ def file_answers(draft: AssistantDraft, answers: Any) -> int:
     draft issued; anything else is refused by name before anything is
     written. "skip" files nothing. Returns how many were filed.
     """
-    if draft.status != QUESTIONS:
-        raise ValueError("this draft is not waiting for answers")
     if not isinstance(answers, list) or len(answers) > MAX_ANSWERS:
         raise ValueError(f"answers must be a list of at most {MAX_ANSWERS}")
-    denial = draft.denial
+    with transaction.atomic():
+        # Locked and reloaded: a stale copy must not file late or overwrite.
+        current = (
+            AssistantDraft.objects.select_for_update()
+            .filter(pk=draft.pk, expires_at__gt=timezone.now())
+            .first()
+        )
+        if current is None or current.status != QUESTIONS:
+            raise ValueError("this draft is not waiting for answers")
+        denial = Denial.objects.select_for_update().get(pk=current.denial_id)
+        return _file_answers(current, denial, answers)
+
+
+def _file_answers(draft: AssistantDraft, denial: Denial, answers: list) -> int:
     issued = {q["name"]: q for q in draft.questions or []}
     texts: dict[str, Optional[str]] = {
         name: question_text_for_field(name, denial.generated_questions)
@@ -343,6 +359,8 @@ def site_took_generation(denial: Denial) -> bool:
 def answers_for_generation(denial: Denial) -> Optional[dict[str, str]]:
     """What a background generation sends as the questionnaire: the
     denial's stored answers, once the assistant has filed some."""
+    if not draft_in_chat_enabled():
+        return None
     if not AssistantDraft.objects.filter(
         denial=denial, answers_at__isnull=False
     ).exists():

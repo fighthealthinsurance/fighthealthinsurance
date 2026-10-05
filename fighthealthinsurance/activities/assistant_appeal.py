@@ -5,11 +5,14 @@ identifiers in, sanitized errors out, nothing from the case in history.
 """
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from channels.db import database_sync_to_async
 from django.core.exceptions import FieldError, ValidationError
 from django.db import close_old_connections
 from django.db.utils import DataError, ProgrammingError
+from django.utils import timezone
 from loguru import logger
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
@@ -36,6 +39,22 @@ def _non_retryable(e: Exception, denial_uuid: str) -> ApplicationError:
     )
 
 
+@contextmanager
+def _sanitized(step: str, denial_uuid: str) -> Iterator[None]:
+    """Only the step name and uuid reach history; detail stays in worker logs."""
+    try:
+        yield
+    except _NON_RETRYABLE_ERRORS as e:
+        raise _non_retryable(e, denial_uuid) from None
+    except ApplicationError:
+        raise
+    except Exception:
+        logger.opt(exception=True).error(
+            f"assistant draft: {step} failed for denial {denial_uuid}"
+        )
+        raise ApplicationError(f"{step} failed for denial {denial_uuid}") from None
+
+
 async def _draft_for(hashed_email: str, denial_uuid: str):
     denial = await aload_denial(hashed_email, denial_uuid)
     if denial is None:
@@ -53,7 +72,7 @@ async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
     """Read the letter (extract_entity), then fill what it left empty from
     what the assistant sent. False when there is no such case."""
     await _aclose_old_connections()
-    try:
+    with _sanitized("reading", denial_uuid):
         denial, draft = await _draft_for(hashed_email, denial_uuid)
         if denial is None or draft is None:
             return False
@@ -78,8 +97,6 @@ async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
         if fields:
             await denial.asave(update_fields=fields)
         return True
-    except _NON_RETRYABLE_ERRORS as e:
-        raise _non_retryable(e, denial_uuid) from None
 
 
 @activity.defn
@@ -87,7 +104,7 @@ async def ask_questions(hashed_email: str, denial_uuid: str) -> int:
     """Generate our questions for this case and keep the askable ones on
     the draft. Returns how many there are; zero means drafting starts."""
     await _aclose_old_connections()
-    try:
+    with _sanitized("questions", denial_uuid):
         denial, draft = await _draft_for(hashed_email, denial_uuid)
         if denial is None or draft is None:
             return 0
@@ -114,8 +131,6 @@ async def ask_questions(hashed_email: str, denial_uuid: str) -> int:
 
         await database_sync_to_async(store)()
         return len(questions)
-    except _NON_RETRYABLE_ERRORS as e:
-        raise _non_retryable(e, denial_uuid) from None
 
 
 @activity.defn
@@ -123,17 +138,15 @@ async def start_drafting(hashed_email: str, denial_uuid: str) -> bool:
     """Record the form as completed, so the intake journey sends no nudge,
     and say drafting has begun."""
     await _aclose_old_connections()
-    try:
+    with _sanitized("start drafting", denial_uuid):
         denial, draft = await _draft_for(hashed_email, denial_uuid)
-        if denial is None or draft is None:
+        if denial is None or draft is None or draft.expires_at <= timezone.now():
             return False
         from fighthealthinsurance import intake_outbox
 
         await intake_outbox.arecord_intent(denial, intake_outbox.FORM_COMPLETED)
         await _set_status(draft, assistant_drafts.DRAFTING)
         return True
-    except _NON_RETRYABLE_ERRORS as e:
-        raise _non_retryable(e, denial_uuid) from None
 
 
 @activity.defn
@@ -141,7 +154,7 @@ async def finish_drafts(hashed_email: str, denial_uuid: str) -> str:
     """on_site when the site's own page took the generation, else ready or
     stopped from what the generation actually stored."""
     await _aclose_old_connections()
-    try:
+    with _sanitized("finish", denial_uuid):
         denial, draft = await _draft_for(hashed_email, denial_uuid)
         if denial is None or draft is None:
             return assistant_drafts.STOPPED
@@ -154,8 +167,6 @@ async def finish_drafts(hashed_email: str, denial_uuid: str) -> str:
         status = str(await database_sync_to_async(outcome)())
         await _set_status(draft, status)
         return status
-    except _NON_RETRYABLE_ERRORS as e:
-        raise _non_retryable(e, denial_uuid) from None
 
 
 @activity.defn
@@ -163,11 +174,9 @@ async def mark_draft_status(hashed_email: str, denial_uuid: str, status: str) ->
     await _aclose_old_connections()
     if status not in assistant_drafts.STATUSES:
         raise ApplicationError("unknown draft status", non_retryable=True)
-    try:
+    with _sanitized("mark status", denial_uuid):
         denial, draft = await _draft_for(hashed_email, denial_uuid)
         if denial is None or draft is None:
             return False
         await _set_status(draft, status)
         return True
-    except _NON_RETRYABLE_ERRORS as e:
-        raise _non_retryable(e, denial_uuid) from None
