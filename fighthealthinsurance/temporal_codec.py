@@ -69,7 +69,7 @@ class EncryptionCodec(PayloadCodec):
 def decode_history_json(history: Any, key: str) -> Any:
     """A ``temporal workflow show --output json`` history with every
     encrypted payload replaced by its plaintext, for redacting a capture."""
-    fernet = EncryptionCodec(key)._fernet
+    fernet = EncryptionCodec(key)._fernet if key.strip() else None
     marker = base64.b64encode(ENCODING).decode()
 
     def walk(node: Any) -> Any:
@@ -78,6 +78,8 @@ def decode_history_json(history: Any, key: str) -> Any:
         if not isinstance(node, dict):
             return node
         if (node.get("metadata") or {}).get("encoding") == marker and "data" in node:
+            if fernet is None:
+                raise ValueError("an encrypted payload needs TEMPORAL_PAYLOAD_KEY")
             plain = Payload.FromString(fernet.decrypt(base64.b64decode(node["data"])))
             return {
                 "metadata": {

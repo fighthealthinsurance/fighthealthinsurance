@@ -7,6 +7,7 @@ payload is Fernet-encrypted client-side so Temporal's database and UI hold
 ciphertext until namespace retention (720h) expires it.
 """
 
+import base64
 import dataclasses
 
 import pytest
@@ -187,3 +188,13 @@ async def test_an_encrypted_history_export_decodes_to_plaintext():
     assert value not in json.dumps(raw) and marker in json.dumps(raw)
     plain = json.dumps(decode_history_json(raw, key))
     assert value in plain and marker not in plain
+
+
+def test_a_plaintext_history_needs_no_key_and_an_encrypted_one_does():
+    from fighthealthinsurance.temporal_codec import decode_history_json
+
+    plain = {"events": [{"payloads": [{"metadata": {"encoding": "anNvbi9wbGFpbg=="}, "data": "IngiIg=="}]}]}
+    assert decode_history_json(plain, "") == plain
+    encrypted = {"payloads": [{"metadata": {"encoding": base64.b64encode(ENCODING).decode()}, "data": "eA=="}]}
+    with pytest.raises(ValueError, match="TEMPORAL_PAYLOAD_KEY"):
+        decode_history_json(encrypted, "")
