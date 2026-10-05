@@ -126,3 +126,16 @@ What it does and doesn't do:
 
 Keeping one caller from filling the caps for everyone needs a per-caller
 quota in the app, which is still to decide.
+
+## Link versions
+
+A prepare_appeal link's stored payload has a version. v1 holds the letter,
+treatment and condition. v2 (`MCP_HANDOFF_V2_ENABLED`) adds `kind` ("site";
+"chat" is reserved for the in-chat flow) and `client`, a short label from the
+client's own name. Both versions open while any v1 link is live. With v2 on,
+the landing page binds the link to the first browser that loads it: its script
+sends a bind request before the button is enabled, the row is resealed under
+the code and a random secret that browser gets as its own cookie (HttpOnly, 2
+hours, this path only), and only a digest of the secret is stored, so the same
+link in another browser gets the used-link page. The one-use rule (the button
+uses the link up) and the 2-hour expiry are unchanged.
