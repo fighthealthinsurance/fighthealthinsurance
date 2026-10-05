@@ -126,3 +126,10 @@ def advanced_ocr_context(request):
     return {
         "advanced_ocr_offered": bool(getattr(settings, "ADVANCED_OCR_OFFERED", False))
     }
+
+
+def feature_pages_context(request):
+    """Which staged pages the footer may link to."""
+    from fighthealthinsurance.utils import ai_assistants_page_enabled
+
+    return {"ai_assistants_on": ai_assistants_page_enabled()}
