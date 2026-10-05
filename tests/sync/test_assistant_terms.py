@@ -262,8 +262,22 @@ class AgreeTest(TermsTestBase):
         self.assertTemplateUsed(response, "assistant_agreed.html")
         self.assertFalse(response.context["started"])
         self.assertEqual(SpendCounter.objects.get(name="fhi:assistant").amount, 0)
+        self.assertEqual(AssistantAgreementCount.objects.get().count, 0)
         draft.refresh_from_db()
         self.assertEqual(draft.status, assistant_drafts.STOPPED)
+
+    def test_a_continue_link_that_fails_gives_everything_back(self):
+        code, draft, _ = self.open_terms()
+        with patch.object(
+            assistant_continue, "mint", side_effect=RuntimeError("no link")
+        ):
+            with self.assertRaises(RuntimeError):
+                self.client.post(AGREE, terms_form(code))
+        self.assertEqual(SpendCounter.objects.get(name="fhi:assistant").amount, 0)
+        self.assertEqual(AssistantAgreementCount.objects.get().count, 0)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, assistant_drafts.STOPPED)
+        self.start.assert_not_called()
 
     def test_finish_on_this_site_opens_the_site_form_with_the_letter_as_edited(self):
         code, draft, _ = self.open_terms()
@@ -556,3 +570,25 @@ class SavedDraftsNeedNoModelTest(TestCase):
         self.assertEqual(sum(1 for f in frames if "content" in f), 3)
         done = frames[-1]
         self.assertEqual((done["phase"], done["existing_appeals"]), ("done", 3))
+
+
+class SubscribeFallbackTest(TestCase):
+    def test_a_failed_subscribe_keeps_the_existing_referral(self):
+        from django.test import RequestFactory
+
+        from fighthealthinsurance.models import MailingListSubscriber
+        from fighthealthinsurance.views import subscribe_from_appeal_flow
+
+        MailingListSubscriber.objects.create(
+            email=EMAIL, referral_source="friend", referral_source_details="Sam"
+        )
+        request = RequestFactory().post("/", {})
+        with patch.object(
+            MailingListSubscriber.objects, "get_or_create", side_effect=RuntimeError
+        ):
+            subscribe_from_appeal_flow(request, EMAIL)
+        subscriber = MailingListSubscriber.objects.get(email=EMAIL)
+        self.assertEqual(
+            (subscriber.referral_source, subscriber.referral_source_details),
+            ("friend", "Sam"),
+        )
