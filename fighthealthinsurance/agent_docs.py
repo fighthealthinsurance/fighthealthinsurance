@@ -520,11 +520,7 @@ def build_llms_txt() -> str:
         f"- [Sitemap]({CANONICAL_ORIGIN}{reverse('django.contrib.sitemaps.views.sitemap')})",
     ]
     if settings.MCP_SERVER_ENABLED:  # mcp_server.py, served from asgi.py
-        lines.append(
-            f"- [MCP server]({CANONICAL_ORIGIN}/mcp): read-only tools for AI "
-            "assistants over streamable HTTP, no sign-in, the same public "
-            "information as these pages"
-        )
+        lines.append(f"- [MCP server]({CANONICAL_ORIGIN}/mcp): " + _mcp_summary())
     lines += [
         "- [Source code](https://github.com/orgs/fighthealthinsurance/repositories): "
         "the tool is open source",
@@ -534,6 +530,28 @@ def build_llms_txt() -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def _mcp_summary() -> str:
+    """The llms.txt line for /mcp, naming only the tools that are listed."""
+    from fighthealthinsurance import mcp_server
+
+    reads = (
+        "tools for AI assistants over streamable HTTP, no sign-in, that "
+        "answer from the same public information as these pages"
+    )
+    if mcp_server.chat_path_enabled():
+        return (
+            reads + ". With the person's agreement, they can also load a "
+            "denial letter into the site's appeal form, or have appeal "
+            "letters drafted and brought back to the chat"
+        )
+    if mcp_server.prepare_appeal_enabled():
+        return (
+            reads + ". With the person's agreement, they can also load a "
+            "denial letter into the site's appeal form"
+        )
+    return "read-only " + reads
 
 
 @cache_control(public=True)

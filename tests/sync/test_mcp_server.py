@@ -2468,3 +2468,42 @@ class ChatPathToolsTest(TestCase):
         self.assertTrue(result.isError)
         self.assertIn("q_made_up", text_of(result))
         signal.assert_not_awaited()
+
+
+def mcp_line(body: str) -> str:
+    return next(line for line in body.splitlines() if "[MCP server]" in line)
+
+
+class LlmsTxtAppealPathsTest(TestCase):
+    """llms.txt names only the appeal tools that are listed."""
+
+    ON_SITE = "load a denial letter into the site's appeal form"
+    IN_CHAT = "brought back to the chat"
+
+    def setUp(self):
+        # After the conftest fixture that turns Temporal off.
+        self.enterContext(override_settings(**CHAT_ON))
+
+    def test_both_paths_with_the_chat_path_on(self):
+        line = mcp_line(agent_docs.build_llms_txt())
+        self.assertNotIn("read-only", line)
+        self.assertIn(self.ON_SITE, line)
+        self.assertIn(self.IN_CHAT, line)
+
+    def test_no_chat_path_when_any_of_its_flags_is_off(self):
+        for flag in CHAT_ON:
+            if flag in PREPARE_ON:
+                continue
+            with self.subTest(flag=flag):
+                with override_settings(**{flag: False}):
+                    line = mcp_line(agent_docs.build_llms_txt())
+                self.assertNotIn(self.IN_CHAT, line)
+                self.assertIn(self.ON_SITE, line)
+                self.assertNotIn("read-only", line)
+
+    def test_read_only_with_prepare_appeal_off(self):
+        with override_settings(MCP_PREPARE_APPEAL_ENABLED=False):
+            line = mcp_line(agent_docs.build_llms_txt())
+        self.assertIn("read-only tools", line)
+        self.assertNotIn(self.ON_SITE, line)
+        self.assertNotIn(self.IN_CHAT, line)

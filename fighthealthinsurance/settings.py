@@ -165,10 +165,11 @@ class Base(Configuration):
     # so the URL is invisible in production. Dev/Test enable it so the page
     # and its tests stay exercised.
     MEDICAID_ELIGIBILITY_PAGE_ENABLED = _env_flag("MEDICAID_ELIGIBILITY_PAGE_ENABLED")
-    # Read-only MCP server for AI assistants at /mcp (mcp_server.py, wired in
-    # asgi.py). Off by default: /mcp is then an ordinary 404 from Django and
-    # the MCP server is never mounted. Read once, when asgi.py builds the app,
-    # so changing it needs a restart. Dev turns it on.
+    # MCP server for AI assistants at /mcp (mcp_server.py, wired in asgi.py):
+    # read-only tools, plus the appeal tools behind the flags below. Off by
+    # default: /mcp is then an ordinary 404 from Django and the MCP server is
+    # never mounted. Read once, when asgi.py builds the app, so changing it
+    # needs a restart. Dev turns it on.
     MCP_SERVER_ENABLED = _env_flag("MCP_SERVER_ENABLED")
     # The one MCP tool that stores anything, prepare_appeal, and the page its
     # links open, /from-your-assistant (assistant_handoff.py). Off in every
@@ -976,7 +977,7 @@ class Dev(Base):
     # Keep the (production-hidden) experimental Medicaid eligibility landing
     # page routable locally and in the Test* configurations.
     MEDICAID_ELIGIBILITY_PAGE_ENABLED = True
-    # The read-only MCP server at /mcp, on locally unless
+    # The MCP server at /mcp, on locally unless
     # MCP_SERVER_ENABLED=0 (only uvicorn serves it; runserver never loads
     # asgi.py).
     MCP_SERVER_ENABLED = _env_flag("MCP_SERVER_ENABLED", "1")
