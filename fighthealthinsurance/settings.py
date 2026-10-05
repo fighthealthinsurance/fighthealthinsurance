@@ -171,8 +171,9 @@ class Base(Configuration):
     # never mounted. Read once, when asgi.py builds the app, so changing it
     # needs a restart. Dev turns it on.
     MCP_SERVER_ENABLED = _env_flag("MCP_SERVER_ENABLED")
-    # The one MCP tool that stores anything, prepare_appeal, and the page its
-    # links open, /from-your-assistant (assistant_handoff.py). Off in every
+    # prepare_appeal, the MCP tool that takes a denial letter for the site's
+    # form, and the page its links open, /from-your-assistant
+    # (assistant_handoff.py). The chat path needs it too. Off in every
     # configuration, Dev included: a local server shouldn't take letters
     # unless asked. It needs MCP_SERVER_ENABLED as well. asgi.py reads it when
     # it builds the MCP server (so the tool needs a restart to change); the
@@ -199,12 +200,12 @@ class Base(Configuration):
     MCP_ASSISTANT_PER_IP_DAILY = _env_int(
         "MCP_ASSISTANT_PER_IP_DAILY", 5, minimum=1, maximum=10_000
     )
-    # prepare_appeal's caps, counted from the table so they hold across pods
-    # (soft at the edge: two pods can pass the check together): links live
-    # at once, and links made in the last minute and not yet opened (opening
-    # one deletes its row). Both are guesses; look again after a week of
-    # counts. Both are global and /mcp is anonymous, so one caller can fill
-    # them and turn prepare_appeal away for everyone until links expire;
+    # The appeal link caps, shared by prepare_appeal and draft_appeal_in_chat,
+    # counted from the table so they hold across pods (soft at the edge: two
+    # pods can pass the check together): links live at once, and links made
+    # in the last minute and not yet opened (opening one deletes its row).
+    # Both are guesses; look again after a week of counts. Both are global
+    # and /mcp is anonymous, so one caller can fill them until links expire;
     # alert on fhi_assistant_handoff_refused_at_cap_total.
     MCP_PREPARE_APPEAL_MAX_LIVE = _env_int(
         "MCP_PREPARE_APPEAL_MAX_LIVE", 300, minimum=1, maximum=100_000

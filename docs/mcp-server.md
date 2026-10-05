@@ -11,7 +11,8 @@ tool is read-only and answers from the site's public information.
   site's appeal form with the letter filled in, for the person to check and
   submit.
 - **In the chat** (`MCP_DRAFT_IN_CHAT_ENABLED` and `MCP_HANDOFF_V2_ENABLED`,
-  with Temporal on): `draft_appeal_in_chat` returns a link to a terms page.
+  on top of `MCP_PREPARE_APPEAL_ENABLED`, `TEMPORAL_ENABLED`,
+  `TEMPORAL_APPEAL_JOURNEY_ENABLED` and `TEMPORAL_PAYLOAD_KEY`): `draft_appeal_in_chat` returns a link to a terms page.
   Once the person agrees there, letters are drafted in the background, and
   `get_appeal_drafts` and `answer_appeal_questions` bring the questions and
   letters back to the chat. `MCP_DRAFT_IN_CHAT_PAUSED` keeps the tools listed

@@ -17,8 +17,8 @@ details from and submit themselves (assistant_handoff.py and
 assistant_handoff_views.py). It submits nothing and creates no appeal.
 
 Three more exist only while the chat path is on as well
-(``chat_path_enabled``: MCP_DRAFT_IN_CHAT_ENABLED and MCP_HANDOFF_V2_ENABLED,
-with Temporal on): ``draft_appeal_in_chat`` makes the same kind of link,
+(``chat_path_enabled``: MCP_DRAFT_IN_CHAT_ENABLED, MCP_HANDOFF_V2_ENABLED and
+the Temporal flags in assistant_drafts.draft_in_chat_enabled): ``draft_appeal_in_chat`` makes the same kind of link,
 which opens a terms page where the person agrees before letters are drafted
 in the background; ``get_appeal_drafts`` and ``answer_appeal_questions`` then
 bring our questions and the letters back to the chat
