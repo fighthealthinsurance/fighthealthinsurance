@@ -1971,7 +1971,9 @@ def subscribe_from_appeal_flow(request, email) -> None:
     except Exception as e:
         logger.debug(f"Error subscribing to mailing list: {type(e).__name__}")
         try:
-            models.MailingListSubscriber.objects.filter(email=email).update(**defaults)
+            # Blank values would wipe what an existing subscriber already has.
+            updates = {key: value for key, value in defaults.items() if value}
+            models.MailingListSubscriber.objects.filter(email=email).update(**updates)
         except Exception as e2:
             logger.warning(f"Error updating subscriber: {type(e2).__name__}")
 

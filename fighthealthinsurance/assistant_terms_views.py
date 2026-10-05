@@ -195,7 +195,7 @@ class AssistantAgreeView(View):
             assistant_ip_limit.give_back(taken)
             spend.release_generation(reservation)
             raise
-        return self._agreed(request, form, content, draft, denial, reservation)
+        return self._agreed(request, form, content, draft, denial, reservation, taken)
 
     def _to_site(
         self,
@@ -248,6 +248,7 @@ class AssistantAgreeView(View):
         draft: Any,
         denial: Any,
         reservation: spend.Reservation,
+        taken: assistant_ip_limit.Taken,
     ) -> HttpResponse:
         data = form.cleaned_data
         consent.record_consent(
@@ -259,13 +260,22 @@ class AssistantAgreeView(View):
             assistant_client=content.client,
         )
         linked = assistant_drafts.agree(draft, denial)
-        token = assistant_continue.mint(denial)
-        emailed = assistant_continue.send(data["email"], token)
-        started = linked and self._start(denial)
-        if not started:
+
+        def give_back() -> None:
             spend.release_generation(reservation)
+            assistant_ip_limit.give_back(taken)
             if linked:
                 assistant_drafts.set_status(draft, assistant_drafts.STOPPED)
+
+        try:
+            token = assistant_continue.mint(denial)
+            emailed = assistant_continue.send(data["email"], token)
+        except Exception:
+            give_back()
+            raise
+        started = linked and self._start(denial)
+        if not started:
+            give_back()
         return _private(
             render(
                 request,
