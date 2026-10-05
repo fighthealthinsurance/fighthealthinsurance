@@ -34,6 +34,7 @@ class PageOnTest(TestCase):
     def test_the_handoff_section_waits_for_its_flag(self):
         self.assertIn("The assistant never takes the letter.", self.page)
         self.assertNotIn("It opens once.", self.page)
+        self.assertNotIn("bring them back to the chat", self.page)
 
     def test_the_footer_and_resources_link_to_it(self):
         self.assertIn(reverse("ai-assistants"), self.client.get("/").content.decode())
@@ -52,6 +53,33 @@ class HandoffOnTest(TestCase):
         page = self.client.get(PAGE).content.decode()
         self.assertIn("It opens once.", page)
         self.assertIn("It lasts two hours.", page)
+
+
+CHAT_ON = dict(
+    MCP_SERVER_ENABLED=True,
+    MCP_PREPARE_APPEAL_ENABLED=True,
+    MCP_DRAFT_IN_CHAT_ENABLED=True,
+    MCP_HANDOFF_V2_ENABLED=True,
+    TEMPORAL_ENABLED=True,
+    TEMPORAL_APPEAL_JOURNEY_ENABLED=True,
+    TEMPORAL_PAYLOAD_KEY="test-key",
+)
+
+
+class ChatPathTest(TestCase):
+    def setUp(self):
+        # After the conftest fixture that turns Temporal off.
+        self.enterContext(override_settings(**CHAT_ON))
+
+    def test_the_chat_path_is_explained_when_it_is_on(self):
+        page = self.client.get(PAGE).content.decode()
+        self.assertIn("bring them back to the chat", page)
+        self.assertIn("It opens once.", page)
+
+    def test_it_waits_for_the_newer_links(self):
+        with override_settings(MCP_HANDOFF_V2_ENABLED=False):
+            page = self.client.get(PAGE).content.decode()
+        self.assertNotIn("bring them back to the chat", page)
 
 
 @override_settings(MCP_SERVER_ENABLED=False)

@@ -160,6 +160,15 @@
                 <li>It lasts two hours. After that, or once it has been used, what was sent is deleted.</li>
                 <li>Nothing is stored as an appeal until you check the form, remove personal details and submit it yourself.</li>
             </ul>
+            {% if chat_path_on %}
+            <p>Or it can have appeal letters drafted and bring them back to the chat. It sends us the letter the same way and gives you a link. On our page you remove personal details, say who the appeal is for (you, or someone you're helping who asked you to) and agree to our terms. Then:</p>
+            <ul>
+                <li>We read the letter and may have a few questions. The assistant asks you and sends only what you answer; you can skip any.</li>
+                <li>We write up to three letters and the assistant shows them to you. They have spaces for your details, which it fills in from the chat, not from us.</li>
+                <li>Nothing is sent to your insurer. You pick a letter, edit it and send it yourself.</li>
+                <li>Once you agree, the letter is kept as an appeal, like one made on this site. We email you a link to finish here instead, and the assistant can collect the letters for a day.</li>
+            </ul>
+            {% endif %}
             {% else %}
             <p>When you are ready to appeal, the assistant gives you a link to start here, where you upload or paste the letter yourself. The assistant never takes the letter.</p>
             {% endif %}

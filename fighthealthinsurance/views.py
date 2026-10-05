@@ -627,10 +627,14 @@ class AiAssistantsView(StaticIshView):
     template_name = "ai_assistants.html"
 
     def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
+        from fighthealthinsurance.assistant_drafts import draft_in_chat_enabled
         from fighthealthinsurance.mcp_server import prepare_appeal_enabled
 
         context = super().get_context_data(**kwargs)
         context["prepare_appeal_on"] = prepare_appeal_enabled()
+        context["chat_path_on"] = draft_in_chat_enabled() and bool(
+            getattr(settings, "MCP_HANDOFF_V2_ENABLED", False)
+        )
         return context
 
     @classonlymethod
