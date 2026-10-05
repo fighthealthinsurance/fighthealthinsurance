@@ -154,12 +154,11 @@ class AssistantHandoffView(View):
 
     def post(self, request: HttpRequest) -> HttpResponse:
         token = request.POST.get("token", "")
-        if v2_enabled():
-            if request.POST.get("bind") == "1":
-                return self._bind(request, token)
-            content = claim_handoff(token, binder=request_binder(request))
-        else:
-            content = claim_handoff(token)
+        # Not gated on the flag: a page served before a flag flip or by
+        # another pod mid-rollout must still bind, and a bound link still open.
+        if request.POST.get("bind") == "1":
+            return self._bind(request, token)
+        content = claim_handoff(token, binder=request_binder(request))
         if content is None:
             return self._landing(request, dead=True)
         if v2_enabled():
