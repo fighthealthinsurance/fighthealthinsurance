@@ -5215,6 +5215,8 @@ class AssistantHandoff(models.Model):
     sealed = models.BinaryField()
     expires_at = models.DateTimeField(db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # Digest of the browser's binder once a link is bound; empty until then.
+    bound = models.CharField(max_length=64, blank=True, default="")
 
     def __str__(self) -> str:
         return f"AssistantHandoff({self.pk}, expires {self.expires_at:%Y-%m-%d %H:%M})"

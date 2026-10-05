@@ -27,9 +27,10 @@ if (!mode || !file || !scenario) {
 
 // The ids the landing script uses; the Python test checks them against the
 // rendered page, so a rename cannot leave this fixture testing nothing.
-const LANDING_MARKUP = `
+const landingMarkup = (bind) => `
 <div id="handoff-ready">
-  <form id="handoff-form">
+  <form id="handoff-form" action="/from-your-assistant"${bind ? ' data-bind="1"' : ''}>
+    <input name="csrfmiddlewaretoken" value="csrf-token" />
     <input id="handoff-token" name="token" value="" />
     <button id="handoff-open" type="submit">Open my appeal form</button>
   </form>
@@ -37,23 +38,29 @@ const LANDING_MARKUP = `
 <div id="handoff-dead"></div>
 `;
 
-function landing() {
+async function landing() {
   const script = fs.readFileSync(file, 'utf8');
   const code = crypto.randomBytes(32).toString('base64url');
   const hash = {
     'with-code': '#' + code,
     'no-code': '',
     'bad-code': '#not-a-code',
+    'with-bind': '#' + code,
+    'bind-refused': '#' + code,
   }[scenario];
   if (hash === undefined) throw new Error('unknown scenario ' + scenario);
+  const binds = scenario === 'with-bind' || scenario === 'bind-refused';
 
-  const page = buildPage(LANDING_MARKUP);
+  const page = buildPage(landingMarkup(binds));
   const $ = (id) => page.document.getElementById(id);
   // As the server renders them: the dead block hidden, the button off.
   $('handoff-dead').hidden = true;
   $('handoff-ready').hidden = false;
   $('handoff-open').disabled = true;
   $('handoff-token').value = '';
+  // Inputs built from markup carry value= only as an attribute.
+  const csrf = page.document.querySelector('input[name="csrfmiddlewaretoken"]');
+  if (csrf) csrf.value = csrf.getAttribute('value');
 
   const replaced = [];
   const location = {pathname: '/from-your-assistant', search: '', hash};
@@ -65,12 +72,21 @@ function landing() {
     },
   };
   const window = {location, history};
-  const sandbox = {window, document: page.document, console};
+  // A fake fetch that records the bind request and answers as the server would.
+  const fetched = [];
+  const fetch = (url, init) => {
+    fetched.push({url, method: init.method, body: init.body, credentials: init.credentials});
+    const bound = scenario === 'with-bind';
+    return Promise.resolve({json: () => Promise.resolve({bound})});
+  };
+  const sandbox = {window, document: page.document, console, fetch, encodeURIComponent};
   vm.runInNewContext(script, sandbox);
   // Straight after the script, before the page has even finished parsing.
   const hashAfterScript = location.hash;
 
   page.fireDomReady();
+  // Let the bind request's promise settle, as a browser would before any click.
+  await new Promise((resolve) => setImmediate(resolve));
   const afterReady = {
     token: $('handoff-token').value,
     buttonDisabled: $('handoff-open').disabled,
@@ -86,8 +102,11 @@ function landing() {
     replaced,
     ...afterReady,
     buttonDisabledAfterSubmit: $('handoff-open').disabled,
+    fetched,
     // Nothing the script keeps leaks onto the page's globals.
-    globalsAdded: Object.keys(sandbox).filter((k) => !['window', 'document', 'console'].includes(k)),
+    globalsAdded: Object.keys(sandbox).filter(
+      (k) => !['window', 'document', 'console', 'fetch', 'encodeURIComponent'].includes(k)
+    ),
   };
 }
 
@@ -151,6 +170,6 @@ function keep() {
   };
 }
 
-const result = mode === 'landing' ? landing() : mode === 'keep' ? keep() : null;
+const result = mode === 'landing' ? landing() : mode === 'keep' ? Promise.resolve(keep()) : null;
 if (result === null) throw new Error('unknown mode ' + mode);
-process.stdout.write(JSON.stringify(result) + '\n');
+result.then((value) => process.stdout.write(JSON.stringify(value) + '\n'));

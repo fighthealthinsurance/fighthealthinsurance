@@ -178,6 +178,10 @@ class Base(Configuration):
     # page reads it on every request, so turning it off stops outstanding
     # links at once.
     MCP_PREPARE_APPEAL_ENABLED = _env_flag("MCP_PREPARE_APPEAL_ENABLED")
+    # Handoff links v2 (assistant_handoff.py): the payload says what kind of
+    # link it is and which client made it, and a link binds to the first
+    # browser that opens it. Links made before the flag still open.
+    MCP_HANDOFF_V2_ENABLED = _env_flag("MCP_HANDOFF_V2_ENABLED")
     # The chat path: letters drafted in the background for an assistant to
     # bring back (assistant_drafts.py, workflows/assistant_appeal.py). Off
     # everywhere; it counts as on only with MCP_SERVER_ENABLED,
@@ -966,6 +970,7 @@ class Dev(Base):
     # MCP_SERVER_ENABLED=0 (only uvicorn serves it; runserver never loads
     # asgi.py).
     MCP_SERVER_ENABLED = _env_flag("MCP_SERVER_ENABLED", "1")
+    MCP_HANDOFF_V2_ENABLED = _env_flag("MCP_HANDOFF_V2_ENABLED", "1")
     CSRF_TRUSTED_ORIGINS = [
         "https://fightpaperwork.com",
         "https://localhost:3000",

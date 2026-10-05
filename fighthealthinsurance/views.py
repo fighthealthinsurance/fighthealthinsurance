@@ -48,7 +48,12 @@ from django_encrypted_filefield.crypt import Cryptographer
 from loguru import logger
 from PIL import Image
 
-from fighthealthinsurance import common_view_logic, consent, intake_resume
+from fighthealthinsurance import (
+    assistant_handoff_views,
+    common_view_logic,
+    consent,
+    intake_resume,
+)
 from fighthealthinsurance import forms as core_forms, models
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
@@ -1952,6 +1957,12 @@ class InitialProcessView(generic.FormView):
 
     template_name = "scrub.html"
     form_class = core_forms.DenialForm
+
+    def post(self, request, *args, **kwargs):
+        # Read once and cleared before validation, so a failed submission
+        # doesn't leave them for a later case; applied in a later change.
+        self.handoff_context = assistant_handoff_views.handoff_context_for(request)
+        return super().post(request, *args, **kwargs)
 
     def get_ocr_result(self) -> typing.Optional[str]:
         if self.request.method == "POST":
