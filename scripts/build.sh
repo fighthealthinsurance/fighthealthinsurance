@@ -382,6 +382,8 @@ envsubst < k8s/temporal/intake-outbox-cronjob.yaml | kubectl apply -f -
 # deletes prepare_appeal links past their 2 hours. Applied whatever the MCP
 # flags say, so turning the feature off still empties the table.
 envsubst < k8s/assistant-handoff-sweep-cronjob.yaml | kubectl apply -f -
+# ...and the drafts the chat path keeps for a day, swept hourly.
+envsubst < k8s/assistant-drafts-sweep-cronjob.yaml | kubectl apply -f -
 # ...and its alerts: prepare_appeal refusing at a cap, or live links near the
 # cap (docs/mcp-server.md). Applied whatever the flags say; with the tool off
 # the counts stay at zero and nothing fires.

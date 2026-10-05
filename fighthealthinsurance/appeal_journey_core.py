@@ -233,6 +233,11 @@ async def agenerate_and_store_appeals(denial) -> int:
             denial, lease.epoch, lease_clock, on_lost=_lost
         )
 
+    from channels.db import database_sync_to_async
+
+    from fighthealthinsurance.assistant_drafts import answers_for_generation
+
+    answers = await database_sync_to_async(answers_for_generation)(denial)
     extender = asyncio.create_task(_keep_lease())
     frames = 0
     stolen = False
@@ -244,7 +249,7 @@ async def agenerate_and_store_appeals(denial) -> int:
         # draft insert on it: the per-frame check below is the early stop,
         # the write boundary is the guarantee (review).
         AppealsBackendHelper.generate_appeals_for_denial(
-            denial, lease_epoch=lease.epoch
+            denial, lease_epoch=lease.epoch, answers=answers
         ),
     )
     try:

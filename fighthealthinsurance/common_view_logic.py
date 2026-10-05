@@ -18,6 +18,7 @@ from typing import (
     Iterable,
     Iterator,
     List,
+    Mapping,
     Optional,
     Tuple,
     AsyncGenerator,
@@ -97,6 +98,7 @@ from fighthealthinsurance.medical_code_extractor import (
     extract_procedure_codes,
 )
 from fighthealthinsurance.ml import denial_triage, letter_quality
+from fighthealthinsurance.ml import spend
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.ml.serving_registry import aserving_id_for
 from fighthealthinsurance.reliability_events import capture_reliability_event
@@ -2189,6 +2191,32 @@ def served_reserve_for_another_state() -> Q:
     )
 
 
+def appeal_replay_queryset(denial) -> QuerySet:
+    """The stored drafts the appeal page replays for a denial, newest first."""
+    return (
+        ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
+        .exclude(served_reserve_for_another_state())
+        .order_by(F("created_at").desc(nulls_last=True), "-id")
+        .all()
+    )
+
+
+# Keys of a generation's parameters that a stored answer never supplies.
+_NOT_ANSWERS = frozenset(
+    {
+        "csrfmiddlewaretoken",
+        "denial_id",
+        "email",
+        "semi_sekret",
+        "questionnaire",
+        "professional_to_finish",
+        "reconnect",
+        "medical_context",
+        "misc",
+    }
+)
+
+
 class DenialCreatorHelper:
     regex_denial_processor = ProcessDenialRegex()
     zip_engine = uszipcode.search.SearchEngine()
@@ -4224,7 +4252,8 @@ class DenialCreatorHelper:
         if denial_triage.is_current(denial):
             return EXTRACTION_OUTCOME_CACHED
         text = denial.denial_text
-        result = await denial_triage.triage(text, denial.denial_date)
+        with spend.for_channel(spend.channel_of(denial)):
+            result = await denial_triage.triage(text, denial.denial_date)
         if result is None:
             return EXTRACTION_OUTCOME_NOTHING_FOUND
         values = denial_triage.row_values(result, timezone.now(), text)
@@ -4764,16 +4793,31 @@ class AppealsBackendHelper:
 
     @classmethod
     def generate_appeals_for_denial(
-        cls, denial, background: bool = True, lease_epoch: Optional[int] = None
+        cls,
+        denial,
+        background: bool = True,
+        lease_epoch: Optional[int] = None,
+        answers: Optional[Mapping[str, str]] = None,
     ):
         """Internal entry point: the caller already holds a loaded, authorized
         ``Denial``. Builds the parameters itself (including the private
         identity key), so internal dispatchers never construct the public
         parameter dict by hand -- and the public path never learns to accept
         a caller-supplied hash. ``background=True`` also keeps these runs
-        from consuming the user's interactive ``gen_attempts`` budget."""
+        from consuming the user's interactive ``gen_attempts`` budget.
+        ``answers`` are sent as the questions page sends its post (a
+        questionnaire submission), with no control key among them."""
+        parameters: dict[str, Any] = {}
+        if answers:
+            parameters.update(
+                (k, v)
+                for k, v in answers.items()
+                if k not in _NOT_ANSWERS and not k.startswith("_")
+            )
+            parameters["questionnaire"] = True
         return cls.generate_appeals(
             {
+                **parameters,
                 "denial_id": denial.denial_id,
                 "email": None,
                 "semi_sekret": denial.semi_sekret,
@@ -4798,8 +4842,10 @@ class AppealsBackendHelper:
             AsyncGenerator[str, None], cls._generate_appeals_body(parameters, lease_ref)
         )
         try:
-            async for chunk in agen:
-                yield chunk
+            # The body marks the channel once it has loaded the Denial.
+            with spend.channel_scope():
+                async for chunk in agen:
+                    yield chunk
         finally:
             await agen.aclose()
             extender = lease_ref.get("extender")
@@ -4926,6 +4972,7 @@ class AppealsBackendHelper:
             "creating_professional__user",
         )
         denial = await denial_query.aget()
+        spend.set_channel_of(denial)
         if not background:
             # Form completed: the durable intent is recorded the moment the
             # authenticated lookup succeeds -- before any yield, enrichment,
@@ -5060,12 +5107,7 @@ class AppealsBackendHelper:
         # whatever the database happened to return. created_at is null on legacy
         # rows, and Postgres sorts NULLs first on DESC, which would have handed
         # those rows the whole budget; nulls_last puts them where they belong.
-        existing_appeals = (
-            ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
-            .exclude(served_reserve_for_another_state())
-            .order_by(F("created_at").desc(nulls_last=True), "-id")
-            .all()
-        )
+        existing_appeals = appeal_replay_queryset(denial)
         # Everything already delivered to this client, by normalized raw text.
         # Grown by every path that ships an appeal (existing rows, streamed
         # drafts, the early reserve flush, synthesis, the end-of-flow
@@ -5116,12 +5158,13 @@ class AppealsBackendHelper:
             await ExternalServiceHealth.anote_failure(letter_quality.SERVICE, summary)
 
         async def _score_draft(proposed_id: str, draft_text: str) -> Optional[str]:
-            score = await letter_quality.score_letter(
-                denial.denial_text,
-                draft_text,
-                identifiers=scoring_identifiers,
-                on_failure=_note_scoring_failure,
-            )
+            with spend.for_channel(spend.channel_of(denial)):
+                score = await letter_quality.score_letter(
+                    denial.denial_text,
+                    draft_text,
+                    identifiers=scoring_identifiers,
+                    on_failure=_note_scoring_failure,
+                )
             if score is None:
                 return None
             # Same record, the other way: TypeSafe answered. Best effort.

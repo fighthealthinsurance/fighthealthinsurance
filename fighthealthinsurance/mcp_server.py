@@ -56,6 +56,7 @@ beautifulsoup4 and seleniumbase pins first.
 import asyncio
 import json
 import logging
+import time
 import os
 import re
 import unicodedata
@@ -74,13 +75,14 @@ from django.views.generic.base import RedirectView
 from channels.db import database_sync_to_async
 from loguru import logger
 import mcp as mcp_sdk
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ContentBlock
 from mcp.types import Icon
 from mcp.types import Tool as MCPTool
 from mcp.types import ToolAnnotations
+from prometheus_client import Counter, Histogram
 from pydantic import Field, ValidationError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -149,6 +151,20 @@ MAX_PAGE_CHARS = 40_000
 MAX_LIST_ITEMS = 10
 MAX_SEARCH_RESULTS = 10
 
+# Passed on with both appeal links, so an assistant doesn't call the form
+# "already set up" or promise a draft that hasn't been written.
+LINK_OPENS_FIRST_STEP = (
+    "The link opens the first step of the appeal form; the appeal letters "
+    "aren't written yet. The site drafts them after the person finishes its "
+    "steps, and nothing goes to the insurer until the person sends it."
+)
+# The Medicare guides' link opens the site's chat instead (see _intake_link).
+LINK_OPENS_THE_CHAT = (
+    "The link opens Fight Health Insurance's chat, set up for Medicare; the "
+    "appeal letter isn't written yet. The chat helps draft it, and nothing "
+    "goes to the insurer until the person sends it."
+)
+
 INSTRUCTIONS = (
     "Welcome! Fight Health Insurance is a free tool that helps people appeal "
     "health insurance denials. On the site, a person takes a picture of their "
@@ -185,11 +201,13 @@ INSTRUCTIONS_WITH_PREPARE = (
     "these tools to find a guide or financial help. Please keep everything "
     "else personal out of them: names, member IDs and medical history belong "
     "on the site itself, where the person can remove personal details before "
-    "anything is sent. The denial letter belongs on the site too, or, if the "
-    "person agrees, in prepare_appeal, which fills in the form for them to "
-    "check and submit there. When someone is ready to appeal, use "
-    "start_appeal, or prepare_appeal if they want the form filled in for "
-    "them. This is general information, not legal or medical advice."
+    "anything is sent. If the person has already shared their denial letter "
+    "in this chat, offer to load it into the form with prepare_appeal, and "
+    "ask before calling it: the letter then arrives in the form for them to "
+    "check, take personal details out of, and submit. If they haven't shared "
+    "the letter, or would rather do it themselves, use start_appeal. "
+    + LINK_OPENS_FIRST_STEP
+    + " This is general information, not legal or medical advice."
 )
 
 READ_ONLY = ToolAnnotations(
@@ -1157,6 +1175,76 @@ def _expedited_note() -> Optional[dict[str, Any]]:
     }
 
 
+# Denial reasons a peer-to-peer review is the usual first move for.
+PEER_TO_PEER_REASONS = frozenset(
+    {
+        "Not medically necessary",
+        "Prior authorization now required",
+        "Experimental or investigational",
+        "Step therapy required",
+    }
+)
+
+
+def _peer_to_peer_note() -> Optional[dict[str, Any]]:
+    """The glossary's peer-to-peer entry, for denials that turn on medical judgment."""
+    term = glossary.get_term("peer-to-peer-review")
+    if term is None:
+        return None
+    return {
+        "what_it_is": term.short,
+        "why": (
+            "The person's doctor asks the plan for it. It is often available "
+            "quickly and can resolve a denial before a formal appeal is filed."
+        ),
+        "url": _page("glossary_term", slug=term.slug),
+    }
+
+
+def _which_plan_note() -> dict[str, Any]:
+    """How a person can tell an insured employer plan from a self-funded one,
+    which decides whose external review they get (regulatory_citations.py,
+    external_review.py)."""
+    erisa = glossary.get_term("erisa")
+    return _compact(
+        {
+            "why_it_matters": (
+                "An employer plan is either insured (an insurance company "
+                "carries the risk) or self-funded (the employer pays the "
+                "claims itself, often with a carrier hired only to administer "
+                "them). A private employer's "
+                "or union's self-funded plan is under ERISA, so state "
+                "insurance rules and some federal payer rules don't reach it, "
+                "and an external review goes through the federal process or "
+                "a reviewer the plan names rather than the state's."
+            ),
+            "how_to_tell": [
+                "The denial letter's appeal-rights section. One that names "
+                "ERISA rights points to a private employer or union plan; "
+                "one that names the state insurance department or a state "
+                "external review usually means an insured plan.",
+                "The plan documents. A private employer's Summary Plan "
+                "Description says how the plan is funded, and where an "
+                "insurer finances or administers it, whether benefits are "
+                "guaranteed by an insurance policy (29 C.F.R. § "
+                "2520.102-3(q)). That rule is ERISA's, so for a government or "
+                "church employer the HR question is the reliable route.",
+                'Ask HR or the benefits office: "Is our plan fully insured '
+                "or self-funded?\" A plan card that names a carrier doesn't "
+                "settle it, because carriers administer self-funded plans too.",
+            ],
+            "erisa": (
+                {
+                    "what_it_is": erisa.short,
+                    "url": _page("glossary_term", slug=erisa.slug),
+                }
+                if erisa
+                else None
+            ),
+        }
+    )
+
+
 def _reason_checklist(phrase: str) -> dict[str, Any]:
     """What to gather for one kind of denial: the library's own "how to
     counter" list on a confident match, candidates on a weak one, never a
@@ -1354,8 +1442,8 @@ def _tell_the_person(letter_characters: int, treatment: str, diagnosis: str) -> 
         "deleted soon after. Database backups made before it's deleted keep a "
         "locked copy, which can't be opened without the link, until the "
         "backups expire. Nothing becomes part of an appeal unless you submit "
-        "the form yourself. Fight Health Insurance's privacy policy: "
-        f"{_page('privacy_policy')}"
+        "the form yourself. " + LINK_OPENS_FIRST_STEP + " Fight Health "
+        f"Insurance's privacy policy: {_page('privacy_policy')}"
     )
 
 
@@ -1364,6 +1452,13 @@ def _tell_the_person(letter_characters: int, treatment: str, diagnosis: str) -> 
 # can't encode: kept, one would break the page that shows the letter. Line
 # endings are made "\n" first, so a carriage return never reaches this.
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\ud800-\udfff]")
+# Invisible characters that can hide or reorder text: bidirectional controls,
+# zero-width spaces and joiners-of-nothing, and Unicode tag characters. The
+# joiners Persian and Indic scripts need (U+200C, U+200D) stay.
+_INVISIBLES = re.compile(
+    "[\u061c\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff"
+    "\U000e0000-\U000e007f]"
+)
 
 
 def _clean_text(text: str) -> str:
@@ -1371,6 +1466,15 @@ def _clean_text(text: str) -> str:
     no lone surrogates, and no leading or trailing space."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     return _CONTROL_CHARS.sub("", text).strip()
+
+
+def _clean_letter(text: str) -> str:
+    """A letter for prepare_appeal: _clean_text, and with handoff v2 on, no
+    invisible controls either (text in a v1 link is kept as it was)."""
+    text = _clean_text(text)
+    if assistant_handoff.v2_enabled():
+        text = _INVISIBLES.sub("", text).strip()
+    return text
 
 
 def _one_line(field: str, value: Optional[str]) -> str:
@@ -1404,9 +1508,20 @@ def _handoff_link(code: str) -> str:
 
 @database_sync_to_async
 def _create_handoff(
-    letter: str, procedure: str, condition: str
+    letter: str, procedure: str, condition: str, client: str = ""
 ) -> assistant_handoff.Handoff:
-    return assistant_handoff.create_handoff(letter, procedure, condition)
+    return assistant_handoff.create_handoff(
+        letter, procedure, condition, kind="site", client=client
+    )
+
+
+def _client_name(ctx: Context) -> str:
+    """The connecting client's self-reported name, when the session has one."""
+    try:
+        params = ctx.session.client_params
+        return params.clientInfo.name if params is not None else ""
+    except Exception:
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -1465,6 +1580,25 @@ UNDECLARED_NOTE_WITH_PREPARE = (
 )
 
 
+# Per tool and outcome, never from arguments. An unknown tool name is counted
+# as "unknown" so a client can't mint label values.
+TOOL_CALLS = Counter(
+    "fhi_mcp_tool_calls_total",
+    "MCP tool calls by tool and outcome",
+    ["tool", "outcome"],
+)
+TOOL_SECONDS = Histogram(
+    "fhi_mcp_tool_call_seconds",
+    "MCP tool call duration by tool",
+    ["tool"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30),
+)
+
+
+class SiteFailure(ToolError):
+    """A ToolError for something that broke on our side, counted as failed."""
+
+
 class _StrictFastMCP(FastMCP):
     """FastMCP that refuses arguments a tool does not declare (the SDK drops
     them silently), says so in each tool's schema, and keeps unexpected
@@ -1496,28 +1630,42 @@ class _StrictFastMCP(FastMCP):
             tool.name: set(tool.inputSchema.get("properties", {}))
             for tool in await super().list_tools()
         }
-        if name in declared:
-            extra = sorted(set(arguments) - declared[name])
-            if extra:
-                raise ToolError(
-                    f"{name} does not take {', '.join(extra)}. It takes only: "
-                    f"{', '.join(sorted(declared[name])) or 'no arguments'}. "
-                    + self.undeclared_note
-                )
+        label = name if name in declared else "unknown"
+        started = time.monotonic()
+        outcome = "failed"
         try:
-            return await super().call_tool(name, arguments)
-        except ToolError as e:
-            cause = e.__cause__
-            if isinstance(cause, ValidationError):
-                raise ToolError(_input_error_message(name, cause)) from None
-            if cause is None or isinstance(cause, ToolError):
-                raise
-            # Never the arguments or the exception's text, which can quote them.
-            logger.error(f"MCP tool {name} failed with {type(cause).__name__}")
-            raise ToolError(
-                f"Error executing tool {name}: something went wrong on our side. "
-                f"Please try again, or send the person to {CANONICAL_ORIGIN}."
-            ) from None
+            if name in declared:
+                extra = sorted(set(arguments) - declared[name])
+                if extra:
+                    outcome = "refused"
+                    raise ToolError(
+                        f"{name} does not take {', '.join(extra)}. It takes only: "
+                        f"{', '.join(sorted(declared[name])) or 'no arguments'}. "
+                        + self.undeclared_note
+                    )
+            try:
+                result = await super().call_tool(name, arguments)
+            except ToolError as e:
+                cause = e.__cause__
+                if isinstance(cause, ValidationError):
+                    outcome = "refused"
+                    raise ToolError(_input_error_message(name, cause)) from None
+                if cause is None or (
+                    isinstance(cause, ToolError) and not isinstance(cause, SiteFailure)
+                ):
+                    outcome = "refused"
+                    raise
+                # Never the arguments or the exception's text, which can quote them.
+                logger.error(f"MCP tool {name} failed with {type(cause).__name__}")
+                raise ToolError(
+                    f"Error executing tool {name}: something went wrong on our side. "
+                    f"Please try again, or send the person to {CANONICAL_ORIGIN}."
+                ) from None
+            outcome = "ok"
+            return result
+        finally:
+            TOOL_CALLS.labels(label, outcome).inc()
+            TOOL_SECONDS.labels(label).observe(time.monotonic() - started)
 
 
 def transport_security() -> TransportSecuritySettings:
@@ -1640,11 +1788,13 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
         """Get the link to start a free appeal on Fight Health Insurance, and the steps the person will follow there.
 
         Use this when someone has a denial and wants to appeal, or asks how to
-        start. Send the person to the link: they upload or paste their own
-        denial letter on the site, which removes personal details before
-        anything is sent. This tool never takes the letter or any personal
-        details. Fight Health Insurance is free; the optional fax service is
-        pay what you want, including $0.
+        start. At the link they upload or paste their denial letter on the
+        site, which removes personal details before anything is sent. This
+        tool takes no letter or personal details itself; never ask for a
+        letter the person hasn't offered. Fight Health Insurance is free; the
+        optional fax service is pay what you want, including $0.
+        find_treatment_guide returns this same link with the treatment
+        filled in, so after that call there is no need for this one.
         """
         guide = None
         if topic:
@@ -1654,10 +1804,14 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
                     f"Unknown topic {topic!r}. Use a slug from "
                     "find_treatment_guide, or leave topic out."
                 )
-        result: dict[str, Any] = {"url": _intake_link(guide)}
+        result: dict[str, Any] = {
+            "url": _intake_link(guide),
+            "tell_the_person": LINK_OPENS_FIRST_STEP,
+        }
         if guide is not None:
             result["topic"] = _guide_summary(guide)
         if guide is not None and guide.medicare:
+            result["tell_the_person"] = LINK_OPENS_THE_CHAT
             result["steps"] = [
                 "Open the link. It opens Fight Health Insurance's chat, set up "
                 "for Medicare, and it's free.",
@@ -1694,8 +1848,15 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
             # and common_view_logic.py (create_or_update_denial, which looks
             # up the state from the whole ZIP code and stores zip[:3]).
             result["privacy"] = (
-                "Send the person to the link rather than asking for their "
-                "letter here. On the site, 'Remove personal details' takes out "
+                (
+                    "Don't ask for the letter here; if the person has already "
+                    "shared it in the chat, prepare_appeal can load it into the "
+                    "form, otherwise they upload or paste it at the link. "
+                    if prepare_on
+                    else "Don't ask for the letter here; the person uploads or "
+                    "pastes it at the link. "
+                )
+                + "On the site, 'Remove personal details' takes out "
                 "the personal details it can find before the letter is sent, "
                 "and the person checks for the rest. The site keeps the denial "
                 "text it receives to improve its AI, and people on its team "
@@ -1731,8 +1892,9 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
         annotations=READ_ONLY,
         description=(
             (start_appeal.__doc__ or "").rstrip()
-            + " If the person wants you to fill in the form for them, use "
-            "prepare_appeal."
+            + " If the person has already shared their denial letter in this "
+            "chat, offer prepare_appeal instead, which loads it into the "
+            "form; ask first."
             if prepare_on
             else None
         ),
@@ -1758,6 +1920,7 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
                     },
                 ),
             ],
+            ctx: Context,
             procedure: Annotated[
                 Optional[str],
                 Field(max_length=SHORT_FIELD_MAX_CHARS, description=PROCEDURE_HELP),
@@ -1767,7 +1930,7 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
                 Field(max_length=SHORT_FIELD_MAX_CHARS, description=CONDITION_HELP),
             ] = None,
         ) -> dict[str, Any]:
-            letter = _clean_text(letter_text)
+            letter = _clean_letter(letter_text)
             if len(letter) < LETTER_MIN_CHARS:
                 raise ToolError(LETTER_TOO_SHORT)
             if len(letter) > LETTER_MAX_CHARS:
@@ -1775,7 +1938,9 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
             treatment = _one_line("procedure", procedure)
             diagnosis = _one_line("condition", condition)
             try:
-                handoff = await _create_handoff(letter, treatment, diagnosis)
+                handoff = await _create_handoff(
+                    letter, treatment, diagnosis, _client_name(ctx)
+                )
             except assistant_handoff.HandoffCapacityError:
                 raise ToolError(AT_CAPACITY) from None
             expires_at = handoff.expires_at.astimezone(dt_timezone.utc)
@@ -1862,6 +2027,9 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
                     :MAX_LIST_ITEMS
                 ],
                 "success_rate": entry.get("success_rate"),
+                "peer_to_peer": (
+                    _peer_to_peer_note() if key in PEER_TO_PEER_REASONS else None
+                ),
                 "url": _page("denial-language-library"),
                 "start_appeal_url": _page("scan"),
                 "other_matches": [k for k in matches if k != key][:3],
@@ -2021,6 +2189,7 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
                     for h in hooks[:MAX_LIST_ITEMS]
                 ],
                 "about_these_laws": laws_note,
+                "how_to_tell_which_kind_of_plan": _which_plan_note(),
                 "deadlines": deadlines,
                 "deadline_sources": deadline_sources,
                 "url": (
@@ -2098,6 +2267,7 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
                 "for_the_form": _form_items(scan_url),
                 "worth_gathering": _worth_gathering(),
                 "expedited_appeal": _expedited_note(),
+                "peer_to_peer": _peer_to_peer_note(),
                 "for_this_denial_reason": (
                     _reason_checklist(denial_reason) if denial_reason else None
                 ),
@@ -2393,10 +2563,11 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
             django_app.append(ASGIHandler())
         status, markdown = await _get_in_process(django_app[0], twin)
         if status != 200:
-            raise ToolError(
+            message = (
                 f"{path} could not be read right now. Send the person to "
                 f"{_site_url(path)} instead."
             )
+            raise SiteFailure(message) if status >= 500 else ToolError(message)
         markdown = _without_held_back(markdown)
         truncated = len(markdown) > MAX_PAGE_CHARS
         page_url = _site_url(agent_docs.source_path_for(twin))

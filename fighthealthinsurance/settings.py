@@ -178,6 +178,16 @@ class Base(Configuration):
     # page reads it on every request, so turning it off stops outstanding
     # links at once.
     MCP_PREPARE_APPEAL_ENABLED = _env_flag("MCP_PREPARE_APPEAL_ENABLED")
+    # Handoff links v2 (assistant_handoff.py): the payload says what kind of
+    # link it is and which client made it, and a link binds to the first
+    # browser that opens it. Links made before the flag still open.
+    MCP_HANDOFF_V2_ENABLED = _env_flag("MCP_HANDOFF_V2_ENABLED")
+    # The chat path: letters drafted in the background for an assistant to
+    # bring back (assistant_drafts.py, workflows/assistant_appeal.py). Off by
+    # default, on in Dev; it counts as on only with MCP_SERVER_ENABLED,
+    # MCP_PREPARE_APPEAL_ENABLED, TEMPORAL_ENABLED and
+    # TEMPORAL_APPEAL_JOURNEY_ENABLED as well (assistant_drafts.draft_in_chat_enabled).
+    MCP_DRAFT_IN_CHAT_ENABLED = _env_flag("MCP_DRAFT_IN_CHAT_ENABLED")
     # prepare_appeal's caps, counted from the table so they hold across pods
     # (soft at the edge: two pods can pass the check together): links live
     # at once, and links made in the last minute and not yet opened (opening
@@ -262,6 +272,16 @@ class Base(Configuration):
     # Sponsored Azure GPT-5.5 calls per UTC day for chat; unset means no cap.
     FHI_SPEND_AZURE_CHAT_DAILY_CALLS = (
         _env_int("FHI_SPEND_AZURE_CHAT_DAILY_CALLS", 0, minimum=0, maximum=10_000_000)
+        or None
+    )
+    # Appeals that come through an AI assistant (Denial.channel "assistant"):
+    # DeepInfra dollars a month, spread by day, and generations a day.
+    # Setting either to 0 removes that cap.
+    FHI_SPEND_DEEPINFRA_ASSISTANT_MONTHLY_USD = _env_float(
+        "FHI_SPEND_DEEPINFRA_ASSISTANT_MONTHLY_USD", 5.0, minimum=0.0, maximum=10000.0
+    )
+    FHI_SPEND_ASSISTANT_DAILY_APPEALS = (
+        _env_int("FHI_SPEND_ASSISTANT_DAILY_APPEALS", 50, minimum=0, maximum=10_000_000)
         or None
     )
     # Chat's outside models, in order (MLRouter.chat_outside_models): at most
@@ -951,6 +971,8 @@ class Dev(Base):
     # MCP_SERVER_ENABLED=0 (only uvicorn serves it; runserver never loads
     # asgi.py).
     MCP_SERVER_ENABLED = _env_flag("MCP_SERVER_ENABLED", "1")
+    MCP_HANDOFF_V2_ENABLED = _env_flag("MCP_HANDOFF_V2_ENABLED", "1")
+    MCP_DRAFT_IN_CHAT_ENABLED = _env_flag("MCP_DRAFT_IN_CHAT_ENABLED", "1")
     CSRF_TRUSTED_ORIGINS = [
         "https://fightpaperwork.com",
         "https://localhost:3000",

@@ -2131,7 +2131,7 @@ class RemoteModel(RemoteModelLike):
             return spend.allows(provider, spend.current_use())
         except Exception as e:
             logger.debug(f"Spend check failed: {type(e).__name__}")
-            return True
+            return not spend.assistant_work()
 
     def _note_spend_refusal(self, status: int, body: str) -> None:
         """Pause this provider for the day when it refuses for credit or

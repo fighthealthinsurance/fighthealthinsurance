@@ -67,7 +67,25 @@ def test_all_enabled_is_the_maximal_set_the_replay_gate_must_cover():
         "GenerateAppealWorkflow",
         "IntakeJourneyWorkflow",
         "ChatRoutingPolicyWorkflow",
+        "AssistantAppealWorkflow",
     }
+
+
+def test_the_assistant_workflow_appears_only_with_its_own_flag():
+    for role in ("appeal", "all"):
+        assert "AssistantAppealWorkflow" not in _names(
+            registry.workflows_for_role(role, journey_enabled=True, intake_enabled=True)
+        )
+    assert "AssistantAppealWorkflow" in _names(
+        registry.workflows_for_role(
+            "appeal", journey_enabled=True, intake_enabled=False, drafts_enabled=True
+        )
+    )
+    assert "AssistantAppealWorkflow" not in _names(
+        registry.workflows_for_role(
+            "appeal", journey_enabled=False, intake_enabled=False, drafts_enabled=True
+        )
+    )
 
 
 def test_the_policy_workflow_appears_only_with_its_own_flag():

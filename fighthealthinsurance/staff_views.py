@@ -2618,7 +2618,7 @@ class ModelUsageDashboardView(generic.TemplateView):
             {
                 "counter": name,
                 "amount": amount,
-                "calls": name.startswith(spend.AZURE + ":"),
+                "calls": spend.is_count(name),
             }
             for name, amount in summary.items()
         ]

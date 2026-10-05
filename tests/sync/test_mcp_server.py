@@ -27,6 +27,7 @@ from channels.routing import ProtocolTypeRouter
 from datetime import datetime, timedelta
 from django.core.handlers.asgi import ASGIHandler
 from django.db import DatabaseError, connection
+from prometheus_client import REGISTRY
 from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import NoReverseMatch, reverse
@@ -200,6 +201,15 @@ class ProtocolTest(TestCase):
 
 
 class StartAppealTest(TestCase):
+    async def test_start_appeal_with_the_handoff_off_never_names_prepare_appeal(self):
+        data = (await call("start_appeal", {})).structuredContent
+        self.assertNotIn("prepare_appeal", data["privacy"])
+
+    async def test_start_appeal_says_the_link_opens_the_first_step(self):
+        data = (await call("start_appeal", {})).structuredContent
+        self.assertIn("opens the first step", data["tell_the_person"])
+        self.assertIn("aren't written yet", data["tell_the_person"])
+
     async def test_start_appeal_with_no_topic_links_to_the_intake(self):
         result = await call("start_appeal", {})
         self.assertFalse(result.isError)
@@ -311,6 +321,13 @@ class StartAppealTest(TestCase):
             result = await call("start_appeal", {"topic": "some-medicare-guide"})
         self.assertFalse(result.isError)
         return result.structuredContent
+
+    async def test_start_appeal_for_a_medicare_guide_says_the_link_opens_the_chat(
+        self,
+    ):
+        data = await self.medicare_chat_start()
+        self.assertIn("opens Fight Health Insurance's chat", data["tell_the_person"])
+        self.assertNotIn("first step of the appeal form", data["tell_the_person"])
 
     async def test_start_appeal_for_a_medicare_guide_goes_to_the_chat(self):
         url = (await self.medicare_chat_start())["url"]
@@ -1327,7 +1344,15 @@ class PrepareAppealListingTest(TestCase):
                 "search_site", {"query": "turning 26", "letter": "x"}
             )
         self.assertEqual(init.instructions, mcp_server.INSTRUCTIONS_WITH_PREPARE)
-        self.assertIn("if the person agrees, in prepare_appeal", init.instructions)
+        self.assertIn(
+            "already shared their denial letter in this chat, offer to load it",
+            init.instructions,
+        )
+        self.assertIn("ask before calling it", init.instructions)
+        self.assertIn("opens the first step", init.instructions)
+        self.assertIn(
+            "offer to load it into the form with prepare_appeal", init.instructions
+        )
         self.assertIn("names, member IDs and medical history", init.instructions)
         self.assertTrue(refused.isError)
         self.assertIn(
@@ -1341,7 +1366,7 @@ class PrepareAppealListingTest(TestCase):
             routes = mcp_server.mcp_asgi_routes(django_app())
         async with mcp_session(routes) as session:
             off = {t.name: t for t in (await session.list_tools()).tools}
-        self.assertIn("use prepare_appeal", on["start_appeal"].description)
+        self.assertIn("offer prepare_appeal instead", on["start_appeal"].description)
         self.assertNotIn("prepare_appeal", off["start_appeal"].description)
         # It still takes no letter.
         self.assertEqual(set(on["start_appeal"].inputSchema["properties"]), {"topic"})
@@ -1582,6 +1607,7 @@ class PrepareAppealTest(TestCase):
         self.assertFalse(result.isError, text_of(result))
         data = result.structuredContent
         tell = data["tell_the_person"]
+        self.assertIn("aren't written yet", tell)
         characters = data["received"]["letter_characters"]
         self.assertGreater(characters, 1000)
         self.assertIn(f"(about {characters:,} characters)", tell)
@@ -1959,3 +1985,129 @@ class AppealChecklistTest(TestCase):
             )
         self.assertFalse(result.isError, text_of(result))
         self.assertEqual(writes_in(queries), [])
+
+
+class PlanKindAndPeerToPeerTest(TestCase):
+    """The two things the first live test wanted and couldn't get."""
+
+    async def test_appeal_rights_say_how_to_tell_an_insured_plan_from_a_self_funded_one(
+        self,
+    ):
+        data = (
+            await call(
+                "get_appeal_rights",
+                {"plan_source": "Employer -- Private", "state": "CA"},
+            )
+        ).structuredContent
+        note = data["how_to_tell_which_kind_of_plan"]
+        self.assertIn("self-funded", note["why_it_matters"])
+        self.assertEqual(len(note["how_to_tell"]), 3)
+        self.assertIn(
+            "Is our plan fully insured or self-funded?", note["how_to_tell"][2]
+        )
+        self.assertTrue(note["erisa"]["url"].endswith("/glossary/erisa/"))
+
+    async def test_the_checklist_mentions_peer_to_peer(self):
+        data = (await call("get_appeal_checklist", {})).structuredContent
+        self.assertIn("doctor", data["peer_to_peer"]["what_it_is"])
+        self.assertTrue(
+            data["peer_to_peer"]["url"].endswith("/glossary/peer-to-peer-review/")
+        )
+
+    async def test_medical_necessity_explains_peer_to_peer_and_timely_filing_does_not(
+        self,
+    ):
+        nmn = (
+            await call("explain_denial_reason", {"phrase": "not medically necessary"})
+        ).structuredContent
+        self.assertIn("peer_to_peer", nmn)
+        late = (
+            await call(
+                "explain_denial_reason", {"phrase": "timely filing limit exceeded"}
+            )
+        ).structuredContent
+        self.assertNotIn("peer_to_peer", late)
+
+    async def test_start_appeal_says_the_guide_already_gives_its_link(self):
+        async with mcp_session() as session:
+            tools = {t.name: t for t in (await session.list_tools()).tools}
+        said = " ".join(tools["start_appeal"].description.split())
+        self.assertIn("find_treatment_guide returns this same link", said)
+
+
+class ToolCallCountersTest(TestCase):
+    """Every call is counted by tool and outcome, never by what was sent."""
+
+    @staticmethod
+    def _count(tool, outcome):
+        return (
+            REGISTRY.get_sample_value(
+                "fhi_mcp_tool_calls_total", {"tool": tool, "outcome": outcome}
+            )
+            or 0
+        )
+
+    async def test_a_good_call_counts_as_ok_and_is_timed(self):
+        before = self._count("get_state_help", "ok")
+        timed = (
+            REGISTRY.get_sample_value(
+                "fhi_mcp_tool_call_seconds_count", {"tool": "get_state_help"}
+            )
+            or 0
+        )
+        result = await call("get_state_help", {"state": "CA"})
+        self.assertFalse(result.isError)
+        self.assertEqual(self._count("get_state_help", "ok"), before + 1)
+        self.assertEqual(
+            REGISTRY.get_sample_value(
+                "fhi_mcp_tool_call_seconds_count", {"tool": "get_state_help"}
+            ),
+            timed + 1,
+        )
+
+    async def test_an_undeclared_argument_counts_as_refused_and_is_timed(self):
+        before = self._count("get_state_help", "refused")
+        timed = (
+            REGISTRY.get_sample_value(
+                "fhi_mcp_tool_call_seconds_count", {"tool": "get_state_help"}
+            )
+            or 0
+        )
+        result = await call("get_state_help", {"state": "CA", "letter": "x"})
+        self.assertTrue(result.isError)
+        self.assertEqual(self._count("get_state_help", "refused"), before + 1)
+        self.assertEqual(
+            REGISTRY.get_sample_value(
+                "fhi_mcp_tool_call_seconds_count", {"tool": "get_state_help"}
+            ),
+            timed + 1,
+        )
+
+    async def test_a_page_the_site_cannot_serve_counts_as_failed_not_refused(self):
+        before_failed = self._count("get_page", "failed")
+        before_refused = self._count("get_page", "refused")
+        with mock.patch.object(mcp_server, "_get_in_process", return_value=(500, "")):
+            result = await call("get_page", {"url": f"{SITE}/about-us"})
+        self.assertTrue(result.isError)
+        self.assertIn("something went wrong on our side", text_of(result))
+        self.assertEqual(self._count("get_page", "failed"), before_failed + 1)
+        self.assertEqual(self._count("get_page", "refused"), before_refused)
+
+    async def test_a_page_that_is_not_there_counts_as_refused(self):
+        before = self._count("get_page", "refused")
+        with mock.patch.object(mcp_server, "_get_in_process", return_value=(404, "")):
+            result = await call("get_page", {"url": f"{SITE}/about-us"})
+        self.assertTrue(result.isError)
+        self.assertEqual(self._count("get_page", "refused"), before + 1)
+
+    async def test_an_unknown_tool_is_counted_under_unknown_not_its_name(self):
+        before = self._count("unknown", "refused")
+        result = await call("no_such_tool", {})
+        self.assertTrue(result.isError)
+        self.assertEqual(self._count("unknown", "refused"), before + 1)
+        self.assertIsNone(
+            REGISTRY.get_sample_value(
+                "fhi_mcp_tool_calls_total",
+                {"tool": "no_such_tool", "outcome": "refused"},
+            )
+        )

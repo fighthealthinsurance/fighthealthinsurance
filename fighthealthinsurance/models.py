@@ -2393,6 +2393,14 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     raw_email = models.TextField(max_length=300, null=True, blank=True)
     created = models.DateTimeField(db_default=Now(), null=True)
     use_external = models.BooleanField(default=True)
+    # Where the denial came from: the site, or an AI assistant through the
+    # MCP server. Model spend for it is counted per channel (ml/spend.py).
+    channel = models.CharField(
+        max_length=16,
+        choices=[("site", "Site"), ("assistant", "AI assistant")],
+        default="site",
+        db_default="site",
+    )
     # Triage from ml/denial_triage.py (TypeSafe System One): the stated denial
     # reason, the kind of plan, pre-service and urgency probabilities, and the
     # appeal deadline the letter names. Every value carries the model's
@@ -4701,6 +4709,16 @@ class SpendCounter(models.Model):
         return f"{self.day} {self.name}: {self.amount}"
 
 
+class SpendReservation(models.Model):
+    """One generation taken from a day's count (ml/spend.py
+    reserve_generation), so it can be given back exactly once."""
+
+    day = models.DateField()
+    name = models.CharField(max_length=80)
+    created_at = models.DateTimeField(auto_now_add=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+
+
 class ExternalServiceHealth(models.Model):
     """Last outcome of calls to one external service, shared across pods.
 
@@ -5197,6 +5215,68 @@ class AssistantHandoff(models.Model):
     sealed = models.BinaryField()
     expires_at = models.DateTimeField(db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # Digest of the browser's binder once a link is bound; empty until then.
+    bound = models.CharField(max_length=64, blank=True, default="")
 
     def __str__(self) -> str:
         return f"AssistantHandoff({self.pk}, expires {self.expires_at:%Y-%m-%d %H:%M})"
+
+
+class ConsentRecord(models.Model):
+    """What a person ticked before an appeal, and against which policy
+    versions (consent.py). Wording and ticks only; it goes with its denial."""
+
+    CHANNELS = (("site", "site"), ("assistant", "assistant"))
+    FINISH = (("site", "site"), ("chat", "chat"))
+
+    denial = models.ForeignKey(
+        Denial, on_delete=models.CASCADE, related_name="consent_records"
+    )
+    terms_version = models.DateField()
+    privacy_version = models.DateField()
+    boxes = models.JSONField()
+    accepted_at = models.DateTimeField(auto_now_add=True)
+    channel = models.CharField(max_length=16, choices=CHANNELS, default="site")
+    on_behalf = models.BooleanField(default=False)
+    finish_in = models.CharField(max_length=8, choices=FINISH, default="site")
+    assistant_client = models.CharField(max_length=80, blank=True, default="")
+
+    def __str__(self) -> str:
+        return f"ConsentRecord({self.pk}, denial {self.denial_id}, {self.channel})"
+
+
+class AssistantDraft(models.Model):
+    """Letters being drafted in the background for an AI assistant
+    (assistant_drafts.py). The assistant holds a random id; only its digest
+    is here. Status and the questions asked, no answers and no letter text;
+    it goes with its denial and is swept once it expires."""
+
+    STATUSES = (
+        ("waiting_for_agreement", "waiting_for_agreement"),
+        ("reading", "reading"),
+        ("questions", "questions"),
+        ("drafting", "drafting"),
+        ("ready", "ready"),
+        ("on_site", "on_site"),
+        ("stopped", "stopped"),
+        ("expired", "expired"),
+        ("site_only", "site_only"),
+    )
+
+    denial = models.ForeignKey(
+        Denial, on_delete=models.CASCADE, related_name="assistant_drafts"
+    )
+    draft_id_digest = models.CharField(max_length=64, unique=True)
+    status = models.CharField(
+        max_length=24, choices=STATUSES, default="waiting_for_agreement"
+    )
+    status_at = models.DateTimeField(auto_now_add=True)
+    questions = models.JSONField(default=list, blank=True)
+    answers_at = models.DateTimeField(null=True, blank=True)
+    procedure = models.CharField(max_length=80, blank=True, default="")
+    condition = models.CharField(max_length=80, blank=True, default="")
+    expires_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    def __str__(self) -> str:
+        return f"AssistantDraft({self.pk}, denial {self.denial_id}, {self.status})"

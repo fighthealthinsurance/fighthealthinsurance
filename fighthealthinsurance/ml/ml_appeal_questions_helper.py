@@ -11,6 +11,7 @@ from fighthealthinsurance.denial_history_consent import (
     ahistory_may_be_used,
     still_allowed,
 )
+from fighthealthinsurance.ml import spend
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.ml.question_parsing import (
     clean_suggested_answer,
@@ -365,6 +366,7 @@ class MLAppealQuestionsHelper:
         return questions
 
     @staticmethod
+    @spend.for_denial_channel
     async def generate_questions_for_denial(
         denial: Denial, speculative: bool
     ) -> Optional[List[Tuple[str, str]]]:

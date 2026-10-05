@@ -37,6 +37,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
 
 from fighthealthinsurance.workflows import registry as workflow_registry
+from fighthealthinsurance.workflows.assistant_appeal import AssistantAppealWorkflow
 from fighthealthinsurance.workflows.chat_routing_policy import (
     ChatRoutingPolicyWorkflow,
 )
@@ -44,6 +45,7 @@ from fighthealthinsurance.workflows.generate_appeal import GenerateAppealWorkflo
 from fighthealthinsurance.workflows.intake_journey import IntakeJourneyWorkflow
 from fighthealthinsurance.workflows.send_fax import SendFaxWorkflow
 from fighthealthinsurance.workflows.types import (
+    AssistantAppealInput,
     ChatRoutingPolicyInput,
     GenerateAppealInput,
     IntakeJourneyInput,
@@ -216,6 +218,32 @@ def _chat_policy_activities():
     return [compute_and_store_chat_policy]
 
 
+def _assistant_activities():
+    @activity.defn(name="read_letter")
+    async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
+        return True
+
+    @activity.defn(name="ask_questions")
+    async def ask_questions(hashed_email: str, denial_uuid: str) -> int:
+        return 2
+
+    @activity.defn(name="start_drafting")
+    async def start_drafting(hashed_email: str, denial_uuid: str) -> bool:
+        return True
+
+    @activity.defn(name="finish_drafts")
+    async def finish_drafts(hashed_email: str, denial_uuid: str) -> str:
+        return "ready"
+
+    @activity.defn(name="mark_draft_status")
+    async def mark_draft_status(
+        hashed_email: str, denial_uuid: str, status: str
+    ) -> bool:
+        return True
+
+    return [read_letter, ask_questions, start_drafting, finish_drafts, mark_draft_status]
+
+
 async def _capture(
     env, task_queue, workflows, activities, entry, arg, signal_completion=True
 ):
@@ -235,6 +263,8 @@ async def _capture(
         )
         if entry is IntakeJourneyWorkflow.run and signal_completion:
             await handle.signal(IntakeJourneyWorkflow.form_completed)
+        if entry is AssistantAppealWorkflow.run:
+            await handle.signal(AssistantAppealWorkflow.answers_filed)
         # These workflows use an unbounded durable retry policy, so a stub
         # whose signature does not match the real activity retries forever
         # rather than failing. Bound it: a mis-shaped stub should surface as a
@@ -302,6 +332,13 @@ async def test_capture_baseline_histories():
                 IntakeJourneyInput(
                     hashed_email="h", denial_uuid="u", contact_opt_in=True
                 ),
+            ),
+            (
+                "assistant_appeal_completed",
+                [AssistantAppealWorkflow, _StubGenerateAppeal],
+                _assistant_activities(),
+                AssistantAppealWorkflow.run,
+                AssistantAppealInput(hashed_email="h", denial_uuid="u"),
             ),
             (
                 "chat_routing_policy_completed",

@@ -66,6 +66,7 @@ _CHECKED_INPUTS = (
     "SendFaxInput",
     "GenerateAppealInput",
     "IntakeJourneyInput",
+    "AssistantAppealInput",
     "ChatRoutingPolicyInput",
 )
 

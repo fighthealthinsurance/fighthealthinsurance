@@ -1,5 +1,6 @@
 import asyncio
 import concurrent
+import contextvars
 import hashlib
 import os
 import random
@@ -1295,7 +1296,11 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
             logger.debug(f"fire_and_forget task {task} finished")
 
     # Create and start a thread that will run the task in its own loop
-    thread = threading.Thread(target=run_async_task)
+    # The new thread keeps the caller's context: the ML purpose and the
+    # spend channel.
+    thread = threading.Thread(
+        target=contextvars.copy_context().run, args=(run_async_task,)
+    )
     thread.daemon = True  # Thread will exit when main thread exits
     with _fire_and_forget_threads_lock:
         _fire_and_forget_threads.add(thread)
@@ -2242,6 +2247,11 @@ async def execute_critical_optional_fireandforget(
         logger.opt(exception=True).error(f"Timed out waiting for required tasks?")
     except Exception as e:
         logger.opt(exception=True).error(f"Error executing required tasks {e}")
+    except BaseException:
+        # The consumer stopped (cancelled or closed): stop what we started.
+        for owned in (*all_tasks, *required_tasks, *optional_tasks):
+            owned.cancel()
+        raise
 
     if timeout is None:
         logger.debug("No timeout set, so all tasks should be done")
