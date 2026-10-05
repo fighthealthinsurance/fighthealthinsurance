@@ -99,6 +99,8 @@ ASSISTANT_TEXT_MODULES = (
     "fighthealthinsurance.mcp_server",
     "fighthealthinsurance.assistant_handoff",
     "fighthealthinsurance.assistant_handoff_views",
+    "fighthealthinsurance.assistant_terms_views",
+    "fighthealthinsurance.assistant_continue",
 )
 
 

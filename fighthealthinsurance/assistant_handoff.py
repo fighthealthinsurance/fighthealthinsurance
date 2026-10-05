@@ -127,6 +127,8 @@ class HandoffContent:
     condition: str
     kind: str = "site"
     client: str = ""
+    # The AssistantDraft a chat link was made for (its primary key), or None.
+    draft: Optional[int] = None
 
 
 def is_code(value: object) -> bool:
@@ -194,12 +196,14 @@ def create_handoff(
     condition: str = "",
     kind: str = "site",
     client: str = "",
+    draft: Optional[int] = None,
 ) -> Handoff:
     """Seal what the assistant sent and return the new link's code.
 
     Raises HandoffCapacityError at either cap. The arguments are already
     cleaned and capped by the caller (mcp_server.prepare_appeal). ``kind``
-    and ``client`` are kept only in a v2 payload (MCP_HANDOFF_V2_ENABLED).
+    and ``client`` are kept only in a v2 payload (MCP_HANDOFF_V2_ENABLED),
+    as is ``draft``, the AssistantDraft a chat link belongs to.
     """
     if kind not in KINDS:
         raise ValueError(f"unknown handoff kind {kind!r}")
@@ -226,6 +230,8 @@ def create_handoff(
     }
     if v2_enabled():
         fields.update(v=PAYLOAD_VERSION_V2, kind=kind, client=client_label(client))
+        if draft is not None:
+            fields["draft"] = int(draft)
     payload = json.dumps(fields, ensure_ascii=False).encode("utf-8")
     expires_at = now + HANDOFF_TTL
     AssistantHandoff.objects.create(
@@ -271,12 +277,14 @@ def _content(plain: bytes) -> Optional[HandoffContent]:
     procedure = payload.get("procedure")
     condition = payload.get("condition")
     kind = payload.get("kind")
+    draft = payload.get("draft")
     return HandoffContent(
         letter=letter,
         procedure=procedure if isinstance(procedure, str) else "",
         condition=condition if isinstance(condition, str) else "",
         kind=kind if kind in KINDS else "site",
         client=client_label(payload.get("client")),
+        draft=draft if isinstance(draft, int) and not isinstance(draft, bool) else None,
     )
 
 

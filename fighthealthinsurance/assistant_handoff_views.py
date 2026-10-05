@@ -34,6 +34,7 @@ from django.views.debug import SafeExceptionReporterFilter
 
 from fighthealthinsurance.assistant_handoff import (
     HANDOFF_TTL,
+    HandoffContent,
     claim_handoff,
     new_binder,
     v2_enabled,
@@ -109,6 +110,45 @@ class _NoLocalVariables(SafeExceptionReporterFilter):
         return []
 
 
+def render_landing(request: HttpRequest, dead: bool) -> HttpResponse:
+    return _private(
+        render(
+            request,
+            LANDING_TEMPLATE,
+            {
+                "no_third_party_scripts": True,
+                "dead": dead,
+                "assistant_stop_line": v2_enabled(),
+            },
+            status=404 if dead else 200,
+        )
+    )
+
+
+def render_site_form(
+    request: HttpRequest,
+    content: HandoffContent,
+    letter: Optional[str] = None,
+    form: Any = None,
+) -> HttpResponse:
+    """The usual appeal form, filled in from an opened link."""
+    if v2_enabled():
+        request.session[CHANNEL_KEY] = "assistant"
+        request.session[CLIENT_KEY] = content.client
+    context: dict[str, Any] = {
+        "ocr_result": letter if letter else content.letter,
+        "upload_more": True,
+        "from_assistant": True,
+        # Carried in the form's hidden fields to /process, which keeps them
+        # in the session for the review step, the way a treatment guide's are.
+        "default_procedure": content.procedure,
+        "default_condition": content.condition,
+    }
+    if form is not None:
+        context["form"] = form
+    return _private(render(request, "scrub.html", context))
+
+
 @method_decorator(never_cache, name="dispatch")
 @method_decorator(sensitive_post_parameters("token"), name="dispatch")
 class AssistantHandoffView(View):
@@ -125,18 +165,7 @@ class AssistantHandoffView(View):
         return super().dispatch(request, *args, **kwargs)
 
     def _landing(self, request: HttpRequest, dead: bool) -> HttpResponse:
-        return _private(
-            render(
-                request,
-                LANDING_TEMPLATE,
-                {
-                    "no_third_party_scripts": True,
-                    "dead": dead,
-                    "assistant_stop_line": v2_enabled(),
-                },
-                status=404 if dead else 200,
-            )
-        )
+        return render_landing(request, dead)
 
     def get(self, request: HttpRequest) -> HttpResponse:
         return self._landing(request, dead=False)
@@ -158,25 +187,17 @@ class AssistantHandoffView(View):
         # another pod mid-rollout must still bind, and a bound link still open.
         if request.POST.get("bind") == "1":
             return self._bind(request, token)
-        content = claim_handoff(token, binder=request_binder(request))
+        binder = request_binder(request)
+        from fighthealthinsurance import assistant_terms_views
+
+        if binder is not None and assistant_terms_views.chat_path_on():
+            # A chat link is read, not used up, until the person agrees.
+            peek = claim_handoff(token, binder=binder, consume=False)
+            if peek is None:
+                return self._landing(request, dead=True)
+            if assistant_terms_views.opens_terms_page(peek):
+                return assistant_terms_views.render_terms(request, token, peek.letter)
+        content = claim_handoff(token, binder=binder)
         if content is None:
             return self._landing(request, dead=True)
-        if v2_enabled():
-            request.session[CHANNEL_KEY] = "assistant"
-            request.session[CLIENT_KEY] = content.client
-        return _private(
-            render(
-                request,
-                "scrub.html",
-                {
-                    "ocr_result": content.letter,
-                    "upload_more": True,
-                    "from_assistant": True,
-                    # Carried in the form's hidden fields to /process, which
-                    # keeps them in the session for the review step, the way
-                    # a treatment guide's are.
-                    "default_procedure": content.procedure,
-                    "default_condition": content.condition,
-                },
-            )
-        )
+        return render_site_form(request, content)

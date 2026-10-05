@@ -2552,6 +2552,7 @@ class DenialCreatorHelper:
         referral_source: Optional[str] = None,
         referral_source_details: Optional[str] = None,
         tracking_info: Optional[TrackingInfo] = None,
+        channel: Optional[str] = None,
     ):
         """
         Create or update an existing denial.
@@ -2582,6 +2583,8 @@ class DenialCreatorHelper:
             referral_source: Optional referral source (e.g., "Search Engine", "Friend or Family").
             referral_source_details: Optional free-text details about the referral source.
             tracking_info: Optional TrackingInfo with user_agent, ASN, and IP (for professionals).
+            channel: Optional channel for a new denial ("assistant"), set before
+                     any background work starts so its spend is counted there.
 
         Returns:
             The created or updated Denial object.
@@ -2600,6 +2603,7 @@ class DenialCreatorHelper:
         professional_to_finish = creating_professional is not None
         # Build tracking kwargs
         tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
+        channel_kwargs = {"channel": channel} if channel else {}
 
         # If we don't have a denial we're making a new one
         is_new_denial = denial is None
@@ -2624,6 +2628,7 @@ class DenialCreatorHelper:
                     referral_source=referral_source,
                     referral_source_details=referral_source_details,
                     **tracking_kwargs,
+                    **channel_kwargs,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -2650,6 +2655,7 @@ class DenialCreatorHelper:
                     referral_source=referral_source,
                     referral_source_details=referral_source_details,
                     **tracking_kwargs,
+                    **channel_kwargs,
                 )
         else:
             # Captured before the overwrite: everything derived from the denial
@@ -5246,6 +5252,11 @@ class AppealsBackendHelper:
 
         old = 0
         new = 0
+        # Letters drafted for an assistant, reopened on the site: replayed
+        # without scoring, and with three of them no model is called at all.
+        assistant_reopen = (
+            not background and spend.channel_of(denial) == spend.CHANNEL_ASSISTANT
+        )
         # Stored drafts the cap keeps off the screen, by normalized text. They
         # are NOT served: a synthesis result or a live draft that lands on one
         # of them is new to this user and must be delivered (the uniqueness
@@ -5278,7 +5289,11 @@ class AppealsBackendHelper:
                 old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
                 served_keys.add(key)
-                if scoring_active and letter_quality.needs_scoring(appeal):
+                if (
+                    scoring_active
+                    and not assistant_reopen
+                    and letter_quality.needs_scoring(appeal)
+                ):
                     # An unscored (or older-rubric) draft must not sort
                     # below every fresh one just for being older.
                     _start_scoring(str(appeal.id), appeal.appeal_text)
@@ -5300,6 +5315,25 @@ class AppealsBackendHelper:
                 f"served {old} stored drafts (newest first), held back "
                 f"{len(held_back_keys)}"
             )
+
+        if assistant_reopen and old >= cls.ENOUGH_APPEALS:
+            yield json.dumps(
+                {
+                    "type": "status",
+                    "phase": "done",
+                    "message": f"Complete: 0 new and {old} existing appeals generated",
+                    "new_appeals": 0,
+                    "existing_appeals": old,
+                    "total_appeals": old,
+                    "generation_id": generation_id,
+                    "make_appeals_seconds": -1.0,
+                    "first_model": "none",
+                    "shed_tier": None,
+                    "models_tried": "none",
+                    "speculative_appeals": 0,
+                }
+            ) + "\n"
+            return
 
         # --- Early speculative fallback ---
         # What the precompute had ready before this run started. Logged here so

@@ -1,0 +1,262 @@
+{% extends 'base.html' %}
+{% load consent %}
+{% load static %}
+{% comment %}
+The terms page an assistant's chat link opens (assistant_terms_views.py). The
+view renders it with no_third_party_scripts; the only outside script is the
+reCAPTCHA widget, when it is on. The letter box, About you, the four boxes and
+the optional choices are the intake page's own (scrub.html), so scrub.ts runs
+here unchanged.
+{% endcomment %}
+{% block title %}
+{% if form.errors %}Error: {% endif %}Agree to get your appeal letters
+{% endblock title %}
+
+{% block scriptmagic %}
+<script type="module">
+  import * as main from '{% static "js/dist/scrub.bundle.js" %}';
+</script>
+<script>
+  // "Finish on this site instead" takes the letter, email, ZIP and the
+  // optional choices as they are now on the page.
+  document.addEventListener("DOMContentLoaded", function () {
+    var site = document.getElementById("assistant-finish-on-site");
+    if (!site) {
+      return;
+    }
+    site.addEventListener("submit", function () {
+      ["denial_text", "email", "store_zip"].forEach(function (id) {
+        var from = document.getElementById(id);
+        var to = site.querySelector('[data-carry="' + id + '"]');
+        if (from && to) {
+          to.value = from.value;
+        }
+      });
+      ["use_external_models", "store_raw_email", "subscribe"].forEach(function (id) {
+        var from = document.getElementById(id);
+        var to = site.querySelector('[data-carry="' + id + '"]');
+        if (from && to) {
+          to.value = from.checked ? "checked" : "";
+        }
+      });
+    });
+  });
+</script>
+{% endblock scriptmagic %}
+
+{% block extra_style %}
+<meta name="robots" content="noindex, nofollow">
+{% endblock extra_style %}
+
+{% block content %}
+<section class="scan-section">
+    <div class="container-narrow">
+	{% include "partials/page_title.html" with title="Agree to get your appeal letters" %}
+	<div class="alert-box alert-box-success" id="from-assistant">
+	    <p><strong>Your assistant asked us to draft appeal letters for you and bring them back to your chat.</strong></p>
+	    <p>Check the letter below, remove personal details, say who the appeal is for and tick the boxes. Nothing is saved as an appeal until you press Agree.</p>
+	    <p>If you didn't ask an AI assistant to do this, close this page.</p>
+	    <p>If you are an AI assistant, stop here: only the person may agree.</p>
+	</div>
+	<div class="main-form">
+	<form class="fhi-stack fhi-stack-loose" method="post" action="{% url 'assistant_agree' %}" id="fuck_health_insurance_form" novalidate>
+		{% csrf_token %}
+		<input type="hidden" name="token" value="{{ token }}">
+	{% if error_summary %}
+	<div class="fhi-form-errors" role="alert">
+	    <p>Please check these and send the form again:</p>
+	    <ul>{% for error in error_summary %}<li>{% if error.field_id %}<a href="#{{ error.field_id }}">{{ error.text }}</a>{% else %}{{ error.text }}{% endif %}</li>{% endfor %}</ul>
+	</div>
+	{% endif %}
+	<section class="fhi-stack">
+	    <h2>Your denial letter</h2>
+	    <div class="fhi-field-group">
+		<label for="denial_text" id="denial_text_label" class="fhi-label">The letter your assistant sent</label>
+		<small class="fhi-hint">Take out your name, address and other personal details first, or fill in About you below and press Remove personal details. We keep this text to improve our AI, and people on our team may read it.</small>
+		<textarea name="denial_text" id="denial_text" rows="10" form="fuck_health_insurance_form"
+		    class="fhi-field"{% if form.denial_text.errors %} aria-invalid="true" aria-describedby="need_denial"{% endif %} data-from-assistant="true">{{ ocr_result }}</textarea>
+		{% include "partials/field_error.html" with id="need_denial" message="Paste your denial letter in the box above. No letter? Describe what was denied, for example: the pharmacy denied my PrEP." errors=form.denial_text.errors %}
+		<small class="fhi-hint">This version, with the personal details we could find removed, is sent to our server.</small>
+	    </div>
+	</section>
+	<section class="fhi-stack">
+	    <h2>About you</h2>
+	    {% comment %} Says so when the letter filled any field below
+	       (letter_details.ts), each of which then carries its own "please
+	       check" line. Hidden and empty until then. {% endcomment %}
+	    <p class="fhi-note" id="details_from_letter" role="status" aria-live="polite" hidden></p>
+		<div class="together-form-group">
+		  <div class="fhi-field-group">
+		    <label for="store_fname" class="fhi-label">First name <small class="fhi-hint">(we try to keep this in your browser)</small></label>
+		    <input type="text" id="store_fname" class="fhi-field">
+		  </div>
+		  <div class="fhi-field-group">
+		    <label for="store_lname" class="fhi-label">Last name <small class="fhi-hint">(we try to keep this in your browser)</small></label>
+		    <input type="text" id="store_lname" class="fhi-field">
+		  </div>
+		</div>
+		<div class="fhi-field-group">
+		    <label for="email" class="fhi-label">
+		      <div id="email-label">Email <small class="fhi-hint">(<a href="#how-we-store-your-email">how we store it</a>)</small></div>
+		      <span class="fhi-note">
+		      </span>
+		    </label>
+		    <input type="email" id="email" name="email" class="fhi-field" value="{{ form.email.value|default:'' }}"{% if form.email.errors %} aria-invalid="true" aria-describedby="email_error"{% endif %}>
+		    {% include "partials/field_error.html" with id="email_error" message="We need your email to go on. It lets us delete your data later if you ask." invalid_message="Please check your email address. It should look like name@example.com." errors=form.email.errors filled=form.email.value %}
+		</div>
+		<div class="together-form-group">
+		  <div class="fhi-field-group">
+		    <label for="store_street" class="fhi-label">
+		      Street address
+		      <small class="fhi-hint">(we try to keep this in your browser, e.g. 283 24th St)</small>
+		    </label>
+		    <input type="text" id="store_street" class="fhi-field">
+		  </div>
+		  <div class="fhi-field-group">
+		    <label for="store_zip" class="fhi-label">
+		      ZIP code
+		      <small class="fhi-hint">(e.g. 94103)</small>
+		    </label>
+		    <input type="text" id="store_zip" name="zip" class="fhi-field" value="{{ form.zip.value|default:'' }}">
+		  </div>
+		</div>
+	    {% comment %} After the fields it reads, not by the box: it takes out
+	       whatever the name, street and ZIP fields hold when it is pressed,
+	       so by the box it would run before they are filled in. {% endcomment %}
+	    <div class="fhi-field-group">
+		<div>
+		    <button type="button" id="scrub-2" class="fhi-button fhi-button-secondary">
+		      Remove personal details
+		    </button>
+		</div>
+		<small class="fhi-hint">Takes the name, street and ZIP code above out of your letter, in your browser. Check the letter afterwards for anything it missed.</small>
+	    </div>
+	</section>
+	<section>
+	    <fieldset class="fhi-fieldset fhi-stack">
+		<legend><h2>Who this appeal is for</h2></legend>
+		{% for value, label in on_behalf_choices %}
+		<div class="fhi-check-row">
+		<input type="radio" id="on_behalf_{{ value }}" name="on_behalf" value="{{ value }}" class="fhi-check"{% if form.on_behalf.value == value %} checked{% endif %}{% if form.on_behalf.errors %} aria-invalid="true" aria-describedby="on_behalf_error"{% endif %}>
+		<label for="on_behalf_{{ value }}">{{ label }}</label>
+		</div>
+		{% endfor %}
+		<small class="fhi-hint">Doctors, therapists and offices: please use our <a href="{% url 'pro_version' %}">professional version</a>.</small>
+		{% include "partials/field_error.html" with id="on_behalf_error" message="Please say who this appeal is for." errors=form.on_behalf.errors %}
+	    </fieldset>
+	</section>
+	{% comment %} The four boxes the form needs ticked, as one group named by its
+	   legend. The legend holds the step's heading, so the group's name and the
+	   page outline are the same words, and the hint under it, which describes
+	   the group, says all four are needed. A box keeps its tick when the
+	   server sends the page back, so only the box it asks about needs one.
+	   {% endcomment %}
+	<section>
+	    <fieldset class="fhi-fieldset fhi-stack" aria-describedby="agreements_hint">
+		<legend><h2>Policies</h2></legend>
+		<p class="fhi-hint" id="agreements_hint">Tick all four boxes to go on.</p>
+		<div class="fhi-check-row">
+		<input type="checkbox" id="pii" name="pii" class="fhi-check"{% if form.pii.value %} checked{% endif %}{% if form.pii.errors %} aria-invalid="true" aria-describedby="pii_error"{% endif %}>
+		<label for="pii">{% consent_label "pii" %}</label>
+		</div>
+		<div class="fhi-check-row">
+		<input type="checkbox" id="privacy" name="privacy" class="fhi-check"{% if form.privacy.value %} checked{% endif %}{% if form.privacy.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
+		<label for="privacy">{% consent_label "privacy" %}</label>
+		</div>
+		<div class="fhi-check-row">
+		<input type="checkbox" id="tos" name="tos" class="fhi-check"{% if form.tos.value %} checked{% endif %}{% if form.tos.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
+		<label for="tos">{% consent_label "tos" %}</label>
+		</div>
+		<div class="fhi-check-row">
+		<input type="checkbox" id="personalonly" name="personalonly" class="fhi-check"{% if form.personalonly.value %} checked{% endif %}{% if form.personalonly.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
+		<label for="personalonly">{% consent_label "personalonly" %}</label>
+		</div>
+		{% comment %} Both of the group's messages sit at its foot, under the last
+		   box, so taking one down never moves a box. {% endcomment %}
+		{% include "partials/field_error.html" with id="pii_error" message="Please tick the box to confirm you've taken your personal details out of the letter." errors=form.pii.errors %}
+		{% firstof form.privacy.errors form.tos.errors form.personalonly.errors as agreements_refused %}
+		{% include "partials/field_error.html" with id="agree_chk_error" message="Please tick each box above to go on." errors=agreements_refused %}
+	    </fieldset>
+	</section>
+	<section class="fhi-stack">
+	    <h2>Optional choices</h2>
+			<div class="fhi-check-row">
+			<input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="fhi-check"{% if form.store_raw_email.value %} checked{% endif %}>
+				<label for="store_raw_email">
+					Keep my email so you can check in about my appeal (until the follow-ups end, plus 30 days). <a href="#how-we-store-your-email">How we store it</a>
+				</label>
+			</div>
+			<div class="fhi-check-row">
+			<input type="checkbox" id="use_external_models" name="use_external_models" value="checked" class="fhi-check"{% if not form or form.use_external_models.value %} checked{% endif %}>
+				<label for="use_external_models">
+					Use outside AI services to get more appeal drafts. <b>Optional. Your letter is shared with those services</b>, under their own terms.
+				</label>
+			</div>
+			<div class="fhi-check-row">
+			<input type="checkbox" id="subscribe" name="subscribe" value="checked" class="fhi-check"{% if form.subscribe.value %} checked{% endif %}>
+				<label for="subscribe">
+					Send me news from Fight Health Insurance. We keep your email for this only if you tick it.
+				</label>
+			</div>
+			<div class="fhi-field-group">
+				<label for="referral_source" class="fhi-label">
+					How did you hear about us? (Optional)
+				</label>
+				<!-- Note: These options should match REFERRAL_SOURCE_CHOICES in forms/__init__.py -->
+				<select id="referral_source" name="referral_source" class="fhi-field">
+					<option value="">-- Please select --</option>
+					<option value="Search Engine (Google, Bing, etc.)">Search Engine (Google, Bing, etc.)</option>
+					<option value="Social Media (Facebook, Twitter, etc.)">Social Media (Facebook, Twitter, etc.)</option>
+					<option value="Friend or Family">Friend or Family</option>
+					<option value="Healthcare Provider">Healthcare Provider</option>
+					<option value="News Article or Blog">News Article or Blog</option>
+					<option value="Other">Other</option>
+				</select>
+			</div>
+			<div class="fhi-field-group">
+				<label for="referral_source_details" class="fhi-label">
+					Details (Optional)
+				</label>
+				<input type="text" id="referral_source_details" name="referral_source_details" class="fhi-field" placeholder="E.g., which search engine, social media platform, or person's name">
+				<small class="fhi-note fhi-hint">Please provide specific details about your referral source if applicable</small>
+			</div>
+			<div class="fhi-check-row alert-box alert-box-warning">
+			<input type="checkbox" id="persistence_enabled" checked class="fhi-check">
+				<label for="persistence_enabled">
+					<b>Remember what I typed</b> if I go back (saved in this browser).
+					<br><small class="fhi-hint"><strong>Leave this off on a shared or public computer.</strong></small>
+				</label>
+			</div>
+	</section>
+	{% if captcha_enabled %}
+	<div class="fhi-field-group">
+	    {{ form.captcha }}
+	    {{ form.captcha.errors }}
+	</div>
+	{% endif %}
+	<button type="submit" class="fhi-button fhi-button-primary fhi-button-large" id="submit">Agree and go back to my chat</button>
+	</form>
+	<form method="post" action="{% url 'assistant_agree' %}" id="assistant-finish-on-site">
+		{% csrf_token %}
+		<input type="hidden" name="token" value="{{ token }}">
+		<input type="hidden" name="finish" value="site">
+		<input type="hidden" name="denial_text" data-carry="denial_text" value="">
+		<input type="hidden" name="email" data-carry="email" value="">
+		<input type="hidden" name="zip" data-carry="store_zip" value="">
+		<input type="hidden" name="use_external_models" data-carry="use_external_models" value="checked">
+		<input type="hidden" name="store_raw_email" data-carry="store_raw_email" value="">
+		<input type="hidden" name="subscribe" data-carry="subscribe" value="">
+		<button type="submit" class="fhi-button fhi-button-quiet" id="assistant-finish-here">Finish on this site instead</button>
+	</form>
+	</div>
+	<p>When you agree we email you a link to finish on our site instead, if you'd like to. Your letters are drafts: nothing is sent to your insurer.</p>
+	<h2 class="fhi-form-note-title" id="how-we-store-your-email">How we store your email</h2>
+	<p>
+	  With your appeal we keep a scrambled version of your email (a hash), so you can ask us to remove it later and so the link we email you can check it's you.
+	  If you tick Keep my email, we keep your real email so we can check in about your appeal.
+	  If you join the mailing list, we keep your name and real email for it.
+	  Our <a href="{% url 'privacy_policy' %}">privacy policy</a> has the details.
+	</p>
+    </div>
+</section>
+{% endblock content %}

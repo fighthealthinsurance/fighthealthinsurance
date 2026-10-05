@@ -188,6 +188,13 @@ class Base(Configuration):
     # MCP_PREPARE_APPEAL_ENABLED, TEMPORAL_ENABLED and
     # TEMPORAL_APPEAL_JOURNEY_ENABLED as well (assistant_drafts.draft_in_chat_enabled).
     MCP_DRAFT_IN_CHAT_ENABLED = _env_flag("MCP_DRAFT_IN_CHAT_ENABLED")
+    # Agreements on the chat path's terms page per address per UTC day
+    # (assistant_ip_limit.py); IPv6 counts by /64. Past it the person gets
+    # the site's form instead. FHI_SPEND_ASSISTANT_DAILY_APPEALS stays the
+    # global limit.
+    MCP_ASSISTANT_PER_IP_DAILY = _env_int(
+        "MCP_ASSISTANT_PER_IP_DAILY", 5, minimum=1, maximum=10_000
+    )
     # prepare_appeal's caps, counted from the table so they hold across pods
     # (soft at the edge: two pods can pass the check together): links live
     # at once, and links made in the last minute and not yet opened (opening
