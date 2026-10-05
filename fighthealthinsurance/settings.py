@@ -188,6 +188,9 @@ class Base(Configuration):
     # MCP_PREPARE_APPEAL_ENABLED, TEMPORAL_ENABLED and
     # TEMPORAL_APPEAL_JOURNEY_ENABLED as well (assistant_drafts.draft_in_chat_enabled).
     MCP_DRAFT_IN_CHAT_ENABLED = _env_flag("MCP_DRAFT_IN_CHAT_ENABLED")
+    # Pauses the chat path without taking its tools away (clients cache tool
+    # lists): draft_appeal_in_chat then answers site_only with a form link.
+    MCP_DRAFT_IN_CHAT_PAUSED = _env_flag("MCP_DRAFT_IN_CHAT_PAUSED")
     # Agreements on the chat path's terms page per address per UTC day
     # (assistant_ip_limit.py); IPv6 counts by /64. Past it the person gets
     # the site's form instead. FHI_SPEND_ASSISTANT_DAILY_APPEALS stays the
