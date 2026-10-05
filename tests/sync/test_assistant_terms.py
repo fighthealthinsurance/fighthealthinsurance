@@ -278,6 +278,52 @@ class AgreeTest(TermsTestBase):
         self.assertFalse(Denial.objects.exists())
 
 
+class AgreeRefusalTest(TermsTestBase):
+    def test_switching_keeps_the_outside_ai_choice_as_it_was(self):
+        code, _, _ = self.open_terms()
+        response = self.client.post(
+            AGREE,
+            {
+                "token": code,
+                "finish": "site",
+                "denial_text": "My own words.",
+                "email": EMAIL,
+                "use_external_models": "",
+            },
+        )
+        self.assertTemplateUsed(response, "scrub.html")
+        body = response.content.decode()
+        self.assertIn(EMAIL, body)
+        self.assertNotRegex(body, r'id="use_external_models"[^>]*\schecked[\s>]')
+
+    def test_a_failed_bot_check_opens_the_site_form(self):
+        code, draft, _ = self.open_terms()
+        with patch(
+            "fighthealthinsurance.forms.ReCaptchaOptionalMixin._is_recaptcha_enabled",
+            return_value=True,
+        ):
+            response = self.client.post(AGREE, terms_form(code))
+        self.assertTemplateUsed(response, "scrub.html")
+        self.assertFalse(Denial.objects.exists())
+        self.assertFalse(AssistantAgreementCount.objects.exists())
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, assistant_drafts.ON_SITE)
+
+    def test_the_denial_is_an_assistant_one_before_background_work_starts(self):
+        seen = []
+
+        def dispatch(denial_id, **kwargs):
+            seen.append(Denial.objects.get(denial_id=denial_id).channel)
+
+        code, _, _ = self.open_terms()
+        with patch(
+            "fighthealthinsurance.ml.ml_speculative_appeals_helper.dispatch_speculative_appeals",
+            side_effect=dispatch,
+        ):
+            self.client.post(AGREE, terms_form(code))
+        self.assertEqual(seen, ["assistant"])
+
+
 class DraftLinkTest(TestCase):
     def setUp(self):
         super().setUp()
@@ -378,7 +424,17 @@ class ContinueTest(TestCase):
         body = page.content.decode()
         self.assertIn('name="token"', body)
         self.assertNotIn("googletagmanager", body)
-        self.assertEqual(page["Referrer-Policy"], "no-referrer")
+        # same-origin: under no-referrer a browser's POST carries
+        # "Origin: null", which the CSRF check refuses.
+        self.assertEqual(page["Referrer-Policy"], "same-origin")
+
+    def test_an_error_report_from_the_page_carries_no_local_variables(self):
+        from fighthealthinsurance.assistant_handoff_views import _NoLocalVariables
+
+        response = self.client.post(self.path, {"token": self.token, "email": "x"})
+        self.assertIsInstance(
+            response.wsgi_request.exception_reporter_filter, _NoLocalVariables
+        )
 
     def test_the_right_email_binds_the_browser_and_opens_the_appeals_page(self):
         response = self.client.post(self.path, {"token": self.token, "email": EMAIL})
@@ -449,6 +505,19 @@ class SavedDraftsNeedNoModelTest(TestCase):
                     "imaging is medically necessary for my care. Please reverse it."
                 ),
             )
+        self.setUp_scoring()
+
+    def setUp_scoring(self):
+        Denial.objects.filter(pk=self.denial.pk).update(use_external=True)
+        self.enterContext(
+            patch("fighthealthinsurance.ml.letter_quality.enabled", return_value=True)
+        )
+        self.scored = self.enterContext(
+            patch(
+                "fighthealthinsurance.ml.letter_quality.score_letter",
+                new_callable=AsyncMock,
+            )
+        )
 
     def stream(self):
         async def collect():
@@ -480,6 +549,7 @@ class SavedDraftsNeedNoModelTest(TestCase):
         ) as pmt:
             frames = self.stream()
         generator.make_appeals.assert_not_called()
+        self.assertFalse(self.scored.called)
         rag.assert_not_called()
         citations.assert_not_called()
         pmt.find_context_for_denial.assert_not_called()

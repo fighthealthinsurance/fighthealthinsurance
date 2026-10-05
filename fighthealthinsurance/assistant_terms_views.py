@@ -103,6 +103,21 @@ def _error_summary(form: Any) -> list[dict[str, str]]:
     return summary
 
 
+def _site_form_filled(request: HttpRequest) -> Any:
+    """The site form, filled with what the terms page posted: the email,
+    ZIP and the optional choices as the person left them."""
+    post = request.POST
+    return core_forms.DenialForm(
+        initial={
+            "email": post.get("email", ""),
+            "zip": post.get("zip", ""),
+            "use_external_models": bool(post.get("use_external_models")),
+            "store_raw_email": bool(post.get("store_raw_email")),
+            "subscribe": bool(post.get("subscribe")),
+        }
+    )
+
+
 def render_terms(
     request: HttpRequest, token: str, letter: str, form: Any = None
 ) -> HttpResponse:
@@ -153,6 +168,9 @@ class AssistantAgreeView(View):
             return self._to_site(request, token, binder, content, letter)
         form = core_forms.AssistantTermsForm(request.POST)
         if not form.is_valid():
+            if "captcha" in form.errors:
+                # A failed bot check is a refusal like the others.
+                return self._to_site(request, token, binder, content, letter, form)
             return render_terms(request, token, letter, form)
         draft = assistant_drafts.waiting_draft(content.draft)
         if draft is None:
@@ -191,18 +209,7 @@ class AssistantAgreeView(View):
         if claim_handoff(token, binder=binder) is None:
             return render_landing(request, dead=True)
         assistant_drafts.finish_on_site(assistant_drafts.waiting_draft(content.draft))
-        filled = None
-        if form is not None and hasattr(form, "cleaned_data"):
-            filled = core_forms.DenialForm(
-                initial={
-                    "email": form.cleaned_data.get("email", ""),
-                    "zip": form.cleaned_data.get("zip", ""),
-                    "use_external_models": form.cleaned_data.get(
-                        "use_external_models", True
-                    ),
-                }
-            )
-        return render_site_form(request, content, letter, filled)
+        return render_site_form(request, content, letter, _site_form_filled(request))
 
     def _create_denial(self, request: HttpRequest, form: Any) -> Any:
         from fhi_users.audit import extract_tracking_info
@@ -228,9 +235,7 @@ class AssistantAgreeView(View):
             referral_source=referral_source or None,
             referral_source_details=referral_source_details or None,
             tracking_info=extract_tracking_info(request=request, is_professional=False),
-        )
-        Denial.objects.filter(denial_id=info.denial_id).update(
-            channel=spend.CHANNEL_ASSISTANT
+            channel=spend.CHANNEL_ASSISTANT,
         )
         return Denial.objects.get(denial_id=info.denial_id)
 
@@ -306,6 +311,7 @@ class AssistantContinueView(View):
     def dispatch(
         self, request: HttpRequest, *args: Any, **kwargs: Any
     ) -> HttpResponseBase:
+        request.exception_reporter_filter = _NoLocalVariables()  # type: ignore[attr-defined]
         if not assistant_drafts.draft_in_chat_enabled():
             # Our own dead page, so the token is cleared before anything runs.
             return self._dead(request)
@@ -333,9 +339,7 @@ class AssistantContinueView(View):
             },
             status=200 if link_works else 404,
         )
-        response["Referrer-Policy"] = "no-referrer"
-        response["X-Robots-Tag"] = "noindex, nofollow"
-        return response
+        return _private(response)
 
     def _dead(self, request: HttpRequest) -> HttpResponse:
         return self._page(request, link_works=False)
@@ -376,6 +380,4 @@ class AssistantContinueView(View):
         target = reverse("generate_appeal")
         if ref:
             target = f"{target}?{urlencode({DENIAL_REF_QUERY_PARAM: ref})}"
-        response = redirect(target)
-        response["Referrer-Policy"] = "no-referrer"
-        return response
+        return _private(redirect(target))

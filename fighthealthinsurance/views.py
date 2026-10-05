@@ -1969,11 +1969,11 @@ def subscribe_from_appeal_flow(request, email) -> None:
             defaults=defaults,
         )
     except Exception as e:
-        logger.debug(f"Error subscribing {email} to mailing list: {e}")
+        logger.debug(f"Error subscribing to mailing list: {type(e).__name__}")
         try:
             models.MailingListSubscriber.objects.filter(email=email).update(**defaults)
         except Exception as e2:
-            logger.warning(f"Error updating subscriber? {email}!?!")
+            logger.warning(f"Error updating subscriber: {type(e2).__name__}")
 
 
 class InitialProcessView(generic.FormView):

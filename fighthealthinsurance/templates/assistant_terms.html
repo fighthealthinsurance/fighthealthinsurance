@@ -17,18 +17,28 @@ here unchanged.
   import * as main from '{% static "js/dist/scrub.bundle.js" %}';
 </script>
 <script>
-  // "Finish on this site instead" takes the letter as it is now in the box.
+  // "Finish on this site instead" takes the letter, email, ZIP and the
+  // optional choices as they are now on the page.
   document.addEventListener("DOMContentLoaded", function () {
     var site = document.getElementById("assistant-finish-on-site");
     if (!site) {
       return;
     }
     site.addEventListener("submit", function () {
-      var box = document.getElementById("denial_text");
-      var carried = document.getElementById("assistant-site-letter");
-      if (box && carried) {
-        carried.value = box.value;
-      }
+      ["denial_text", "email", "store_zip"].forEach(function (id) {
+        var from = document.getElementById(id);
+        var to = site.querySelector('[data-carry="' + id + '"]');
+        if (from && to) {
+          to.value = from.value;
+        }
+      });
+      ["use_external_models", "store_raw_email", "subscribe"].forEach(function (id) {
+        var from = document.getElementById(id);
+        var to = site.querySelector('[data-carry="' + id + '"]');
+        if (from && to) {
+          to.value = from.checked ? "checked" : "";
+        }
+      });
     });
   });
 </script>
@@ -228,7 +238,12 @@ here unchanged.
 		{% csrf_token %}
 		<input type="hidden" name="token" value="{{ token }}">
 		<input type="hidden" name="finish" value="site">
-		<input type="hidden" name="denial_text" id="assistant-site-letter" value="">
+		<input type="hidden" name="denial_text" data-carry="denial_text" value="">
+		<input type="hidden" name="email" data-carry="email" value="">
+		<input type="hidden" name="zip" data-carry="store_zip" value="">
+		<input type="hidden" name="use_external_models" data-carry="use_external_models" value="checked">
+		<input type="hidden" name="store_raw_email" data-carry="store_raw_email" value="">
+		<input type="hidden" name="subscribe" data-carry="subscribe" value="">
 		<button type="submit" class="fhi-button fhi-button-quiet" id="assistant-finish-here">Finish on this site instead</button>
 	</form>
 	</div>
