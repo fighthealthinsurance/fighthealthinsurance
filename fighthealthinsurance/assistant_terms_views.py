@@ -258,7 +258,9 @@ class AssistantAgreeView(View):
             finish_in=consent.FINISH_IN_CHAT,
             assistant_client=content.client,
         )
-        linked = assistant_drafts.agree(draft, denial)
+        linked = assistant_drafts.agree(
+            draft, denial, content.procedure, content.condition
+        )
         token = assistant_continue.mint(denial)
         emailed = assistant_continue.send(data["email"], token)
         started = linked and self._start(denial)

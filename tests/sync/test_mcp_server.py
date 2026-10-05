@@ -2420,6 +2420,35 @@ class ChatPathToolsTest(TestCase):
         self.assertEqual(result.structuredContent["next"], "check_again")
         self.assertNotIn(str(denial.uuid), json.dumps(result.structuredContent))
 
+    def test_a_lost_signal_is_an_error_and_a_repeat_signals_again(self):
+        from fighthealthinsurance import assistant_drafts
+
+        rows = [("What happened?", "")]
+        denial, draft_id = self._draft(status="questions")
+        denial.generated_questions = rows
+        denial.save(update_fields=["generated_questions"])
+        models.AssistantDraft.objects.filter(denial=denial).update(
+            questions=assistant_drafts.clean_questions(rows)
+        )
+        arguments = {
+            "draft_id": draft_id,
+            "answers": [
+                {"name": assistant_drafts.clean_questions(rows)[0]["name"], "value": "x"}
+            ],
+        }
+        with mock.patch(SIGNAL, mock.AsyncMock(side_effect=RuntimeError)):
+            failed = async_to_sync(call)(
+                "answer_appeal_questions", arguments, routes=chat_routes()
+            )
+        self.assertTrue(failed.isError)
+        self.assertIn("Please try again", text_of(failed))
+        with mock.patch(SIGNAL, mock.AsyncMock()) as signal:
+            again = async_to_sync(call)(
+                "answer_appeal_questions", arguments, routes=chat_routes()
+            )
+        self.assertFalse(again.isError, text_of(again))
+        signal.assert_awaited_once_with(str(denial.uuid))
+
     def test_an_unknown_answer_name_is_refused_by_name(self):
         from fighthealthinsurance import assistant_drafts
 

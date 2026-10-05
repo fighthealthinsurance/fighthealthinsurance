@@ -1699,7 +1699,8 @@ ANSWER_APPEAL_QUESTIONS_DESCRIPTION = (
     "choices or skip for a choice question, and up to 1,000 characters for a "
     "text question. Never answer for them or guess; a question they skip can "
     "be left out. The answers are kept with their appeal, as answers given "
-    "on the site are. Send them once: calling again returns the status. Then "
+    "on the site are. Send them once: calling again returns the status. If "
+    "it fails, call it again with the same answers. Then "
     "pass on tell_the_person and follow next, as with get_appeal_drafts. "
     "Don't open the link or fill in the form yourself."
 )
@@ -1828,8 +1829,9 @@ async def _signal_answers(denial_uuid: str) -> None:
     try:
         await signal_assistant_answers_filed(denial_uuid)
     except Exception as e:
-        # The answers are filed; a repeat call sends the signal again.
+        # The answers are filed and a repeat call signals again, so ask for one.
         logger.warning(f"assistant answers signal failed: {type(e).__name__}")
+        raise SiteFailure("answers filed, letters not started") from e
 
 
 # ---------------------------------------------------------------------------

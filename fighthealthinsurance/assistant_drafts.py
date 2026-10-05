@@ -178,18 +178,26 @@ def waiting_draft(pk: object) -> Optional[AssistantDraft]:
     ).first()
 
 
-def agree(draft: AssistantDraft, denial: Denial) -> bool:
-    """Tie a waiting draft to the denial the person just agreed for, once.
-    False when another request got there first or it moved on."""
+def agree(
+    draft: AssistantDraft, denial: Denial, procedure: str = "", condition: str = ""
+) -> bool:
+    """Tie a waiting draft to the denial the person just agreed for, once,
+    with the procedure and condition the link carried (kept only in the
+    sealed link until now). False when another request got there first or
+    it moved on."""
+    procedure = (procedure or "")[:FIELD_MAX_CHARS]
+    condition = (condition or "")[:FIELD_MAX_CHARS]
     linked = AssistantDraft.objects.filter(
         pk=draft.pk,
         denial__isnull=True,
         status=WAITING,
         expires_at__gt=timezone.now(),
-    ).update(denial=denial)
+    ).update(denial=denial, procedure=procedure, condition=condition)
     if linked != 1:
         return False
     draft.denial = denial
+    draft.procedure = procedure
+    draft.condition = condition
     mark_agreed(draft)
     return True
 

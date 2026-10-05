@@ -376,6 +376,14 @@ class StartTest(TestCase):
         self.assertEqual((content.kind, content.draft), ("chat", draft.pk))
         self.assertEqual(content.procedure, "MRI")
 
+    def test_the_procedure_stays_sealed_in_the_link_until_the_person_agrees(self):
+        started = tools.start("A letter long enough to keep.", "MRI", "migraine", "")
+        draft = drafts.find_draft(started.draft_id)
+        self.assertEqual((draft.procedure, draft.condition), ("", ""))
+        self.assertTrue(drafts.agree(draft, a_denial(), "MRI", "migraine"))
+        draft.refresh_from_db()
+        self.assertEqual((draft.procedure, draft.condition), ("MRI", "migraine"))
+
     @override_settings(MCP_PREPARE_APPEAL_MAX_LIVE=1)
     def test_at_the_link_cap_neither_is_made(self):
         tools.start("A letter long enough to keep.", "", "", "")

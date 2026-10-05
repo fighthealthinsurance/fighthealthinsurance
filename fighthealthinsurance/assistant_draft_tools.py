@@ -126,9 +126,10 @@ class Started:
 
 def start(letter: str, procedure: str, condition: str, client: str) -> Started:
     """A waiting draft and the chat link that names it, together or neither.
-    Raises HandoffCapacityError at the link caps."""
+    The procedure and condition stay sealed in the link until the person
+    agrees (drafts.agree). Raises HandoffCapacityError at the link caps."""
     with transaction.atomic():
-        new = drafts.create_draft(None, procedure=procedure, condition=condition)
+        new = drafts.create_draft(None)
         handoff = assistant_handoff.create_handoff(
             letter,
             procedure,
