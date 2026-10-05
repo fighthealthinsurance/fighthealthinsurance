@@ -76,3 +76,12 @@ class ChatRoutingPolicyInput:
     """
 
     window_minutes: int = 7 * 24 * 60
+
+
+@dataclass
+class AssistantAppealInput:
+    """Input for ``AssistantAppealWorkflow``: the case an assistant's draft
+    belongs to, by the same opaque pair the appeal journey uses."""
+
+    hashed_email: str
+    denial_uuid: str

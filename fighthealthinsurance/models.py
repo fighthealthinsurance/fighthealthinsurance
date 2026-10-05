@@ -5243,3 +5243,40 @@ class ConsentRecord(models.Model):
 
     def __str__(self) -> str:
         return f"ConsentRecord({self.pk}, denial {self.denial_id}, {self.channel})"
+
+
+class AssistantDraft(models.Model):
+    """Letters being drafted in the background for an AI assistant
+    (assistant_drafts.py). The assistant holds a random id; only its digest
+    is here. Status and the questions asked, no answers and no letter text;
+    it goes with its denial and is swept once it expires."""
+
+    STATUSES = (
+        ("waiting_for_agreement", "waiting_for_agreement"),
+        ("reading", "reading"),
+        ("questions", "questions"),
+        ("drafting", "drafting"),
+        ("ready", "ready"),
+        ("on_site", "on_site"),
+        ("stopped", "stopped"),
+        ("expired", "expired"),
+        ("site_only", "site_only"),
+    )
+
+    denial = models.ForeignKey(
+        Denial, on_delete=models.CASCADE, related_name="assistant_drafts"
+    )
+    draft_id_digest = models.CharField(max_length=64, unique=True)
+    status = models.CharField(
+        max_length=24, choices=STATUSES, default="waiting_for_agreement"
+    )
+    status_at = models.DateTimeField(auto_now_add=True)
+    questions = models.JSONField(default=list, blank=True)
+    answers_at = models.DateTimeField(null=True, blank=True)
+    procedure = models.CharField(max_length=80, blank=True, default="")
+    condition = models.CharField(max_length=80, blank=True, default="")
+    expires_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    def __str__(self) -> str:
+        return f"AssistantDraft({self.pk}, denial {self.denial_id}, {self.status})"

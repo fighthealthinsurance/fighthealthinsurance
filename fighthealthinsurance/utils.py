@@ -2247,6 +2247,11 @@ async def execute_critical_optional_fireandforget(
         logger.opt(exception=True).error(f"Timed out waiting for required tasks?")
     except Exception as e:
         logger.opt(exception=True).error(f"Error executing required tasks {e}")
+    except BaseException:
+        # The consumer stopped (cancelled or closed): stop what we started.
+        for owned in (*all_tasks, *required_tasks, *optional_tasks):
+            owned.cancel()
+        raise
 
     if timeout is None:
         logger.debug("No timeout set, so all tasks should be done")

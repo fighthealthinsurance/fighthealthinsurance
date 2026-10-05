@@ -68,6 +68,10 @@ elif [ -n "$SWEEP_ASSISTANT_HANDOFFS" ]; then
   # whatever the MCP flags say, so turning the feature off still empties
   # the table.
   exec python manage.py sweep_assistant_handoffs
+elif [ -n "$SWEEP_ASSISTANT_DRAFTS" ]; then
+  # Assistant drafts sweep (k8s/assistant-drafts-sweep-cronjob.yaml, hourly):
+  # delete drafts past their expiry. Runs whatever the MCP flags say.
+  exec python manage.py sweep_assistant_drafts
 elif [ -n "$TEMPORAL_WORKER" ]; then
   # Long-running Temporal worker hosting SendFaxWorkflow + fax activities.
   # Unlike the Ray launchers above this stays in the foreground; exec so signals
