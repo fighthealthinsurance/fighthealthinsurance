@@ -3,7 +3,7 @@
  * Handles localStorage persistence of user information with privacy scrubbing support.
  */
 
-import { typedValuePattern } from "./typed_value_pattern";
+import { replaceTypedValue, typedValueRegExp } from "./typed_value_pattern";
 
 // Storage key for user info
 const USER_INFO_KEY = "fhi_user_info";
@@ -90,51 +90,51 @@ export function getExternalModelsPreference(): boolean {
  * Scrub personal info from a message, replacing with placeholders. Each
  * value is found however the message spaces it: any run of whitespace
  * between its words (a line break in a pasted letter) counts as the one
- * space typed (typed_value_pattern.ts).
+ * space typed. And each is found only as whole words, in any script: a
+ * first name "Ann" leaves "annual" alone, "José" is found before a comma,
+ * and an email is not found inside a longer one (typed_value_pattern.ts).
  */
 export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): string {
   if (!userInfo || !message) return message;
 
   let scrubbedMessage = message;
-  // A value with no words is not looked for.
-  const replaceValue = (value: string, wrap: (pattern: string) => string, placeholder: string): void => {
-    const pattern = typedValuePattern(value);
-    if (pattern !== null) {
-      scrubbedMessage = scrubbedMessage.replace(new RegExp(wrap(pattern), "gi"), placeholder);
+  // A value with no words, or only an initial, is not looked for.
+  const replaceValue = (value: string, placeholder: string): void => {
+    const typed = typedValueRegExp(value);
+    if (typed !== null) {
+      scrubbedMessage = replaceTypedValue(scrubbedMessage, typed, placeholder);
     }
   };
-  const asIs = (pattern: string): string => pattern;
-  const wholeWords = (pattern: string): string => `\\b${pattern}\\b`;
 
   // Replace email first (before names) to avoid corrupting email addresses
   // e.g., alice@example.com -> {{FIRST_NAME}}@example.com
   if (userInfo.email) {
-    replaceValue(userInfo.email, asIs, "{{Your Email Address}}");
+    replaceValue(userInfo.email, "{{Your Email Address}}");
   }
 
   // Replace combined "firstName lastName" before individual names to avoid
   // partial matches (e.g., replacing firstName first could prevent lastName match)
   if (userInfo.firstName && userInfo.lastName) {
-    replaceValue(`${userInfo.firstName} ${userInfo.lastName}`, wholeWords, "{{PATIENT_NAME}}");
+    replaceValue(`${userInfo.firstName} ${userInfo.lastName}`, "{{PATIENT_NAME}}");
   }
 
   // Replace individual names (catches occurrences not part of the combined pattern)
   if (userInfo.firstName) {
-    replaceValue(userInfo.firstName, wholeWords, "{{FIRST_NAME}}");
+    replaceValue(userInfo.firstName, "{{FIRST_NAME}}");
   }
 
   if (userInfo.lastName) {
-    replaceValue(userInfo.lastName, wholeWords, "{{LAST_NAME}}");
+    replaceValue(userInfo.lastName, "{{LAST_NAME}}");
   }
 
   // Replace address
   if (userInfo.address) {
-    replaceValue(userInfo.address, asIs, "{{ADDRESS}}");
+    replaceValue(userInfo.address, "{{ADDRESS}}");
   }
 
   // Replace city
   if (userInfo.city) {
-    replaceValue(userInfo.city, wholeWords, "{{CITY}}");
+    replaceValue(userInfo.city, "{{CITY}}");
   }
 
   // State is deliberately NOT scrubbed. It is coarse (1 of 50), and the
@@ -145,7 +145,7 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
 
   // Replace zip code
   if (userInfo.zipCode) {
-    replaceValue(userInfo.zipCode, wholeWords, "{{ZIP_CODE}}");
+    replaceValue(userInfo.zipCode, "{{ZIP_CODE}}");
   }
 
   return scrubbedMessage;

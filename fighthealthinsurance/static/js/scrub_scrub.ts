@@ -2,65 +2,76 @@ import {
   setLocalStorageItemWithTTL,
   type ScrubberStorageKey,
 } from "./shared";
-import { typedValuePattern } from "./typed_value_pattern";
+import { replaceTypedValue, typedValueRegExp, WORD_CHARACTERS } from "./typed_value_pattern";
+
+// A rule's label starts a word, so "inpatient care" and "outpatient
+// services" are not read as a "patient" label and their next word taken
+// for the person's name. The labels are English words, so \b, which knows
+// only A to Z, is enough to find where one starts. The word after a label
+// is taken whole in any script: \w in a rule is a letter, a mark, a digit
+// or an underscore (the u flag; JavaScript's own \w is A to Z), so "Dear
+// José" takes "José", not "Jos" with its "é" left behind.
+function labelRule(source: string): RegExp {
+  return new RegExp("\\b" + source.replace(/\\w/g, `[${WORD_CHARACTERS}_]`), "gmiu");
+}
 
 // The middle column is the storage key, typed so a new rule cannot store
 // under a key that clearFormData does not clear.
 type ScrubRegex = [RegExp, ScrubberStorageKey, string];
 var scrubRegex: ScrubRegex[] = [
   [
-    new RegExp("patents?:?\\s+(?<token>\\w+)", "gmi"),
+    labelRule("patents?:?\\s+(?<token>\\w+)"),
     "name",
     "Patient: {{FIRST_NAME}} {{LAST_NAME}}",
   ],
   [
-    new RegExp("patients?:?\\s+(?<token>\\w+)", "gmi"),
+    labelRule("patients?:?\\s+(?<token>\\w+)"),
     "name",
     "Patient: {{FIRST_NAME}} {{LAST_NAME}}",
   ],
   [
-    new RegExp("member:\\s+(?<token>\\w+)", "gmi"),
+    labelRule("member:\\s+(?<token>\\w+)"),
     "name",
     "Member: {{FIRST_NAME}} {{LAST_NAME}}",
   ],
   [
-    new RegExp("member:\\s+(?<token>\\w+\\s+\\w+)", "gmi"),
+    labelRule("member:\\s+(?<token>\\w+\\s+\\w+)"),
     "name",
     "Member: {{FIRST_NAME}} {{LAST_NAME}}",
   ],
   [
-    new RegExp("dear\\s+(?<token>\\w+\\s+\\w+)", "gmi"),
+    labelRule("dear\\s+(?<token>\\w+\\s+\\w+)"),
     "name",
     "Dear {{FIRST_NAME}} {{LAST_NAME}}",
   ],
   [
-    new RegExp("dear\\s+(?<token>\\w+\\s+\\w+)\\s*\.?\\w+", "gmi"),
+    labelRule("dear\\s+(?<token>\\w+\\s+\\w+)\\s*\.?\\w+"),
     "name",
     "Dear {{FIRST_NAME}} {{LAST_NAME}}",
   ],
-  [new RegExp("dear\\s+(?<token>\\w+)", "gmi"), "name", "Dear {{FIRST_NAME}} {{LAST_NAME}}"],
+  [labelRule("dear\\s+(?<token>\\w+)"), "name", "Dear {{FIRST_NAME}} {{LAST_NAME}}"],
   [
-    new RegExp("Subscriber\\s*ID\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"),
+    labelRule("Subscriber\\s*ID\\s*.?\\s*.?\\s*(?<token>\\w+)"),
     "subscriber_id",
     "Subscriber ID: {{SCSID}}",
   ],
   [
-    new RegExp("Group\\s*ID\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"),
+    labelRule("Group\\s*ID\\s*.?\\s*.?\\s*(?<token>\\w+)"),
     "group_id",
     "Group ID: {{GPID}}",
   ],
   [
-    new RegExp("Group\\s*.?\\s*:\\s*(?<token>\\w+)", "gmi"),
+    labelRule("Group\\s*.?\\s*:\\s*(?<token>\\w+)"),
     "group_id",
     "Group ID: {{GPID}}",
   ],
   [
-    new RegExp("Subscriber\\s*number\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"),
+    labelRule("Subscriber\\s*number\\s*.?\\s*.?\\s*(?<token>\\w+)"),
     "subscriber_id",
     "Subscriber ID: {{SCSID}}",
   ],
   [
-    new RegExp("Group\\s*number\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"),
+    labelRule("Group\\s*number\\s*.?\\s*.?\\s*(?<token>\\w+)"),
     "group_id",
     "Group ID: {{GPID}}",
   ],
@@ -81,24 +92,34 @@ const storeIdToPlaceholder: Record<string, string> = {
   phone_number: "{{Your Phone Number}}",
 };
 
+// The boxes a person types in. A tick box's value is set by the page, not
+// typed: store_raw_email's is "checked", and taken out of the letter it
+// turned every "checked" in it into a placeholder.
+const TYPED_INPUT_TYPES = ["text", "email", "tel", "search", "number"];
+
+function typedIn(node: HTMLInputElement): boolean {
+  return TYPED_INPUT_TYPES.indexOf(node.type) >= 0 && node.value !== "";
+}
+
 function scrubText(text: string): string {
-  var reservedTokens = [];
+  const reservedTokens: [RegExp, string][] = [];
   var nodes = document.querySelectorAll("input");
   for (let i = 0; i < nodes.length; i++) {
     var node = nodes[i];
-    // What the person typed is found however the letter spaces it: a typed
-    // "123 Sample Street Apt 4B" matches the street with "Apt 4B" on the
-    // line under it (typed_value_pattern.ts).
-    const pattern = node.id.startsWith("store_") ? typedValuePattern(node.value) : null;
-    if (pattern !== null) {
+    // What the person typed is found however the letter spaces it, and only
+    // as whole words: a typed "123 Sample Street Apt 4B" matches the street
+    // with "Apt 4B" on the line under it, and a typed "Ann" leaves "annual"
+    // alone (typed_value_pattern.ts).
+    const typed = node.id.startsWith("store_") && typedIn(node) ? typedValueRegExp(node.value) : null;
+    if (typed !== null) {
       const placeholder = storeIdToPlaceholder[node.id] || `{{${node.id}}}`;
-      reservedTokens.push([new RegExp(pattern, "gi"), placeholder]);
+      reservedTokens.push([typed, placeholder]);
       for (let j = 0; j < nodes.length; j++) {
         var secondNode = nodes[j];
-        const together = secondNode.value != "" ? typedValuePattern(node.value + secondNode.value) : null;
+        const together = typedIn(secondNode) ? typedValueRegExp(node.value + secondNode.value) : null;
         if (together !== null) {
           const secondPlaceholder = storeIdToPlaceholder[secondNode.id] || `{{${secondNode.id}}}`;
-          reservedTokens.push([new RegExp(together, "gi"), placeholder + " " + secondPlaceholder]);
+          reservedTokens.push([together, placeholder + " " + secondPlaceholder]);
         }
       }
     }
@@ -126,8 +147,10 @@ function scrubText(text: string): string {
     }
     text = text.replace(scrubRegex[i][0], scrubRegex[i][2]);
   }
+  // A match is whole words, so a placeholder no longer needs a space in
+  // front of it to keep it off the rest of a word it was cut out of.
   for (let i = 0; i < reservedTokens.length; i++) {
-    text = text.replace(reservedTokens[i][0], " " + reservedTokens[i][1]);
+    text = replaceTypedValue(text, reservedTokens[i][0], reservedTokens[i][1]);
   }
   return text;
 }

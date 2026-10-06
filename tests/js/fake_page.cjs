@@ -63,6 +63,18 @@ class FakeElement {
     return this.attributes[name];
   }
 
+  // An input's type the way a browser reports it: lowercased, and "text"
+  // when the markup gives none. Other elements report what was set.
+  get type() {
+    const type = this.attributes.type;
+    if (this.tagName !== 'INPUT') return type;
+    return type ? String(type).toLowerCase() : 'text';
+  }
+
+  set type(value) {
+    this.attributes.type = String(value);
+  }
+
   removeAttribute(name) {
     if (name === 'id') this.id = '';
     else if (name === 'class') this.className = '';
