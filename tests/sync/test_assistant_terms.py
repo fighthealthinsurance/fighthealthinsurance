@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 from asgiref.sync import async_to_sync
 from django.core import mail
 from django.core.management import call_command
+from django.http import HttpResponse
 from django.test import Client, RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -310,13 +311,41 @@ class AgreeRefusalTest(TermsTestBase):
         self.assertIn(EMAIL, body)
         self.assertNotRegex(body, r'id="use_external_models"[^>]*\schecked[\s>]')
 
-    def test_a_failed_bot_check_opens_the_site_form(self):
+    def test_an_unticked_bot_check_asks_again_on_the_terms_page(self):
         code, draft, _ = self.open_terms()
         with patch(
             "fighthealthinsurance.forms.ReCaptchaOptionalMixin._is_recaptcha_enabled",
             return_value=True,
         ):
-            response = self.client.post(AGREE, terms_form(code))
+            # Stubbed: a rendered widget here can hang a later sync test file.
+            with patch(
+                "fighthealthinsurance.assistant_terms_views.render_terms",
+                return_value=HttpResponse("terms"),
+            ) as render:
+                self.client.post(AGREE, terms_form(code))
+        form = render.call_args.args[3]
+        self.assertEqual(
+            [e.code for e in form.errors.as_data()["captcha"]], ["required"]
+        )
+        self.assertFalse(Denial.objects.exists())
+        self.assertFalse(AssistantAgreementCount.objects.exists())
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, assistant_drafts.WAITING)
+
+    def test_a_failed_bot_check_opens_the_site_form(self):
+        from django_recaptcha.client import RecaptchaResponse
+
+        code, draft, _ = self.open_terms()
+        with patch(
+            "fighthealthinsurance.forms.ReCaptchaOptionalMixin._is_recaptcha_enabled",
+            return_value=True,
+        ), patch(
+            "django_recaptcha.fields.client.submit",
+            return_value=RecaptchaResponse(is_valid=False),
+        ):
+            response = self.client.post(
+                AGREE, {**terms_form(code), "g-recaptcha-response": "rejected"}
+            )
         self.assertTemplateUsed(response, "scrub.html")
         self.assertFalse(Denial.objects.exists())
         self.assertFalse(AssistantAgreementCount.objects.exists())
