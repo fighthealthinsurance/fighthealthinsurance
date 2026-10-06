@@ -316,7 +316,9 @@ String.prototype.replace = function (pattern, replacement) {
 // -------------------------------------------------------------- words
 
 const CASED_LETTER = /^[\p{Lu}\p{Ll}\p{Lt}]$/u;
-const DECIMAL_DIGIT = /^\p{Nd}$/u;
+// Any number character, as the scrubber has it: 0-9, other scripts' digits,
+// and ½, ² or Ⅳ, so "14½" is one word.
+const NUMBER = /^\p{N}$/u;
 const LETTER = /^\p{L}$/u;
 const MARK = /^\p{M}$/u;
 const LETTER_DIGIT_OR_MARK = /^[\p{L}\p{N}\p{M}]$/u;
@@ -325,11 +327,11 @@ function codePointAt(text, i) {
   return String.fromCodePoint(text.codePointAt(i));
 }
 
-// A letter of a script with capitals, or a decimal digit.
+// A letter of a script with capitals, or a number character.
 function casedOrDigit(ch) {
   return (
     CASED_LETTER.test(ch) ||
-    DECIMAL_DIGIT.test(ch) ||
+    NUMBER.test(ch) ||
     (LETTER.test(ch) && ch.toUpperCase() !== ch.toLowerCase())
   );
 }
@@ -639,6 +641,9 @@ function generator(seed) {
 // The cases the reviews found, and the gaps they listed, first.
 const HAND_WRITTEN = [
   [{fname: 'Ann', lname: 'Doe'}, '患者Ann Doe的申请'],
+  [{street: '4½'}, 'I live at 14½ and Ann Doe.'],
+  [{lname: 'Doe²'}, '2Doe² and Doe²'],
+  [{street: '12 Ⅳ St'}, 'Unit 12 Ⅳ Street'],
   [{email: 'ann@example.com'}, '我的电子邮箱是ann@example.com。'],
   [{street: '123 Main St , Apt 4B'}, '123 Main St , Apt 4B'],
   [{fname: 'José', lname: "O'Neill"}, "Dear José O'Neill"],

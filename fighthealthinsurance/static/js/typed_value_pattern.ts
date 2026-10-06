@@ -63,7 +63,9 @@ function escapeRegExp(text: string): string {
 const LETTER_OR_DIGIT = new RegExp("[\\p{L}\\p{N}]", "u");
 const LETTER = new RegExp("^\\p{L}$", "u");
 const CASED_LETTER = new RegExp("^[\\p{Lu}\\p{Ll}\\p{Lt}]$", "u");
-const DIGIT = new RegExp("^\\p{Nd}$", "u");
+// Any number character: 0-9 and other scripts' digits, and also ½, ² and Ⅳ,
+// so "14½" is one word and a typed "4½" is not looked for inside it.
+const DIGIT = new RegExp("^\\p{N}$", "u");
 const MARK = new RegExp("^\\p{M}$", "u");
 
 // The placeholders the site puts in text: the scrubbers' own, the label
@@ -96,7 +98,7 @@ function characterBefore(text: string, index: number): string {
   return text.charAt(index - 1);
 }
 
-// A letter of a script with capitals, or a digit.
+// A letter of a script with capitals, or a number character.
 function casedLetterOrDigit(character: string): boolean {
   return (
     CASED_LETTER.test(character) ||
