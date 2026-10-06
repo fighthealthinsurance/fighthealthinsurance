@@ -2366,3 +2366,19 @@ def strip_internal_keys(parameters: dict) -> dict:
     body can never smuggle internal flags into the generator.
     """
     return {k: v for k, v in parameters.items() if not k.startswith("_")}
+
+
+# Invisible characters that can hide or reorder text: bidirectional controls,
+# zero-width spaces and joiners-of-nothing, the Mongolian vowel separator,
+# interlinear annotation marks, Unicode tag characters and the supplementary
+# variation selectors (which can carry hidden bytes after a visible
+# character). The joiners Persian and Indic scripts need (U+200C, U+200D)
+# and the emoji variation selectors (U+FE00 to U+FE0F) stay.
+INVISIBLE_CONTROLS = re.compile(
+    "[؜᠎​‎‏‪-‮⁠-⁤⁦-⁩" "﻿￹-￻\U000e0000-\U000e007f\U000e0100-\U000e01ef]"
+)
+
+
+def strip_invisible_controls(text: str) -> str:
+    """``text`` without INVISIBLE_CONTROLS."""
+    return INVISIBLE_CONTROLS.sub("", text)

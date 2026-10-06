@@ -259,7 +259,9 @@ class AssistantAgreeView(View):
             finish_in=consent.FINISH_IN_CHAT,
             assistant_client=content.client,
         )
-        linked = assistant_drafts.agree(draft, denial)
+        linked = assistant_drafts.agree(
+            draft, denial, content.procedure, content.condition
+        )
 
         def give_back() -> None:
             spend.release_generation(reservation)

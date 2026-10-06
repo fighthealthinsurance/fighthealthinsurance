@@ -33,7 +33,7 @@ from fighthealthinsurance.denial_context import (
     question_text_for_field,
 )
 from fighthealthinsurance.models import AssistantDraft, Denial
-from fighthealthinsurance.utils import is_real_appeal
+from fighthealthinsurance.utils import is_real_appeal, strip_invisible_controls
 
 WAITING = "waiting_for_agreement"
 READING = "reading"
@@ -82,6 +82,10 @@ DRAFTS = Counter(
 
 class UnknownQuestion(ValueError):
     """An answer named a question this draft never asked."""
+
+
+class NotWaitingForAnswers(ValueError):
+    """The draft has its answers already, or has moved on without them."""
 
 
 @dataclass(frozen=True)
@@ -174,18 +178,26 @@ def waiting_draft(pk: object) -> Optional[AssistantDraft]:
     ).first()
 
 
-def agree(draft: AssistantDraft, denial: Denial) -> bool:
-    """Tie a waiting draft to the denial the person just agreed for, once.
-    False when another request got there first or it moved on."""
+def agree(
+    draft: AssistantDraft, denial: Denial, procedure: str = "", condition: str = ""
+) -> bool:
+    """Tie a waiting draft to the denial the person just agreed for, once,
+    with the procedure and condition the link carried (kept only in the
+    sealed link until now). False when another request got there first or
+    it moved on."""
+    procedure = (procedure or "")[:FIELD_MAX_CHARS]
+    condition = (condition or "")[:FIELD_MAX_CHARS]
     linked = AssistantDraft.objects.filter(
         pk=draft.pk,
         denial__isnull=True,
         status=WAITING,
         expires_at__gt=timezone.now(),
-    ).update(denial=denial)
+    ).update(denial=denial, procedure=procedure, condition=condition)
     if linked != 1:
         return False
     draft.denial = denial
+    draft.procedure = procedure
+    draft.condition = condition
     mark_agreed(draft)
     return True
 
@@ -235,23 +247,27 @@ def clean_questions(rows: Any) -> list[dict[str, Any]]:
     form uses, the label is cut at QUESTION_MAX_CHARS, and a question with
     a URL or a key the review step owns is left out. The suggested answer
     stays out too: assistants answer with whatever hint they are given.
+    Invisible controls come out of the label, never out of the name.
     """
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for row in rows or []:
         question = _question_text(row)
-        if question is None or question in RESERVED_QA_KEYS or _URL.search(question):
+        if question is None or question in RESERVED_QA_KEYS:
+            continue
+        label = strip_invisible_controls(question).strip()
+        if not label or _URL.search(label):
             continue
         name = question_field_name(question)
         if name in seen:
             continue
         seen.add(name)
-        choices = _choices(question)
+        choices = _choices(label)
         out.append(
             {
                 "name": name,
-                "kind": _kind(question, choices),
-                "label": question[:QUESTION_MAX_CHARS],
+                "kind": _kind(label, choices),
+                "label": label[:QUESTION_MAX_CHARS],
                 "choices": choices,
             }
         )
@@ -278,8 +294,8 @@ def _checked_value(question: dict[str, Any], value: str) -> Optional[str]:
 def file_answers(draft: AssistantDraft, answers: Any) -> int:
     """File the person's answers the way the site's questions page does.
 
-    Only while the draft is waiting for answers, and only under names this
-    draft issued; anything else is refused by name before anything is
+    Only while the draft is waiting for answers, once, and only under names
+    this draft issued; anything else is refused by name before anything is
     written. "skip" files nothing. Returns how many were filed.
     """
     if not isinstance(answers, list) or len(answers) > MAX_ANSWERS:
@@ -291,8 +307,13 @@ def file_answers(draft: AssistantDraft, answers: Any) -> int:
             .filter(pk=draft.pk, expires_at__gt=timezone.now())
             .first()
         )
-        if current is None or current.status != QUESTIONS or current.denial_id is None:
-            raise ValueError("this draft is not waiting for answers")
+        if (
+            current is None
+            or current.status != QUESTIONS
+            or current.denial_id is None
+            or current.answers_at is not None
+        ):
+            raise NotWaitingForAnswers("this draft is not waiting for answers")
         denial = Denial.objects.select_for_update().get(pk=current.denial_id)
         return _file_answers(current, denial, answers)
 
@@ -319,7 +340,8 @@ def _file_answers(draft: AssistantDraft, denial: Denial, answers: list) -> int:
         if not isinstance(value, str):
             raise ValueError(f"{name}: the answer must be text")
         checked = _checked_value(
-            issued[name], " ".join(value.split())[:ANSWER_MAX_CHARS]
+            issued[name],
+            " ".join(strip_invisible_controls(value).split())[:ANSWER_MAX_CHARS],
         )
         if checked is not None:
             updates[qa_key_for_question(str(texts[name]))] = checked
@@ -336,8 +358,8 @@ def collect_letters(denial: Denial) -> list[dict[str, Any]]:
 
     The rows the appeal page replays, less the chosen copies: real text,
     each distinct text once, with the denial's own values substituted,
-    newest first, at most three, each cut at LETTER_MAX_CHARS with the
-    placeholders still in it listed.
+    newest first, at most three, each without invisible controls and cut at
+    LETTER_MAX_CHARS with the placeholders still in it listed.
     """
     from fighthealthinsurance.appeal_fingerprints import fingerprint_text
     from fighthealthinsurance.common_view_logic import (
@@ -356,7 +378,7 @@ def collect_letters(denial: Denial) -> list[dict[str, Any]]:
         if fingerprint in seen:
             continue
         seen.add(fingerprint)
-        content = substitute_appeal_fields(denial, text)
+        content = strip_invisible_controls(substitute_appeal_fields(denial, text))
         cut = len(content) > LETTER_MAX_CHARS
         content = content[:LETTER_MAX_CHARS]
         letters.append(

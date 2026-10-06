@@ -101,6 +101,8 @@ ASSISTANT_TEXT_MODULES = (
     "fighthealthinsurance.assistant_handoff_views",
     "fighthealthinsurance.assistant_terms_views",
     "fighthealthinsurance.assistant_continue",
+    "fighthealthinsurance.assistant_drafts",
+    "fighthealthinsurance.assistant_draft_tools",
 )
 
 

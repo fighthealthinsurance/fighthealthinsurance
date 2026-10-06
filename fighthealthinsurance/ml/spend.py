@@ -601,6 +601,23 @@ def _assistant_daily_cap() -> Optional[int]:
     return cap
 
 
+def assistant_budget_left() -> bool:
+    """Whether a new assistant appeal could get its letters now: the
+    assistant use neither paused nor over its month, and today's
+    generations not all reserved. From this process's copy, like allows."""
+    try:
+        if not allows(FHI, ASSISTANT) or not allows(DEEPINFRA, ASSISTANT):
+            return False
+        cap = _assistant_daily_cap()
+        if cap is None:
+            return True
+        taken = _ledger.snapshot().day_total(counter(FHI, ASSISTANT), _today())
+        return taken < cap
+    except Exception as e:
+        logger.warning(f"Spend check failed: {type(e).__name__}")
+        return False
+
+
 @dataclass(frozen=True)
 class Reservation:
     """One of a UTC day's assistant generations, held until released."""
