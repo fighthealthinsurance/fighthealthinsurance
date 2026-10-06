@@ -73,9 +73,9 @@ _PLACEHOLDER = re.compile(
 _OMITTED = r"(?:internal )?(?:citations?|quotation marks|quotations?|footnotes?)"
 # The note a quotation carries, any case: [Emphasis added], [Sic].
 _QUOTATION_NOTE = (
-    r"emphasis (?:added|ours|in original|omitted|supplied|mine)"
+    r"emphasis (?:added|ours|in (?:the )?original|omitted|supplied|mine)"
     rf"|{_OMITTED}(?:,? and {_OMITTED})* omitted"
-    r"|(?:alterations?|brackets) in original"
+    r"|(?:alterations?|brackets) in (?:the )?original"
     r"|cleaned up"
     r"|sic"
 )
@@ -83,12 +83,13 @@ _QUOTATION_NOTE = (
 # it: a fill-in that mentions a regulation or a year ([USC Specialist's
 # Name], [Month, 2018], [Current dose, e.g. 0.125 mg]) stays listed.
 #
-# [Id.], [Id. at 5], [Ibid.], [Ibid], and one or more quotation notes:
+# [Id.], [Id. at 5], [Ibid., p. 12], [Ibid], and one or more quotation notes:
 # [Emphasis added; citations omitted]. A reference number or a list of them
 # ([1], [3, 4], [2-5]) needs no rule: _PLACEHOLDER never finds one, as it
 # starts with no capital.
 _WHOLE_CITATION = re.compile(
-    r"(?:Id|Ibid)\.(?:,? at \S.*)?|Ibid"
+    # A locator is a number: [Id. at PAGE_NUMBER] is still to be filled in.
+    r"(?:(?:Id|Ibid)\.|Ibid)(?:,?\s*(?:at|pp?\.)\s*\d[\d\-–, ]*)?"
     rf"|(?i:(?:{_QUOTATION_NOTE})(?:(?:\s*[,;]\s*|\s+)(?:and\s+)?(?:{_QUOTATION_NOTE}))*)"
     r"\.?"
 )
@@ -98,9 +99,11 @@ _WHOLE_CITATION = re.compile(
 _REGULATION = re.compile(
     r"(?:(?:See(?: also)?|Cf\.|Under|Per|Pursuant to)\s+)?(?:Title\s+)?(?:"
     r"\d+\s+(?:CFR|C\.F\.R\.|U\.S\.C\.|USC)\s*§*\s*\d[\w.\-]*(?:\(\w+\))*"
+    r"(?:\s*(?:,|and)\s*\d[\w.\-]*(?:\(\w+\))*)*"
     r"|(?:CMS\s+|Medicare\s+)?(?:NCD|LCD)\s+L?\d+(?:\.\d+)*"
     r"|Pub\.\s?L\.\s?(?:No\.\s?)?\d+-\d+"
     r"|(?:[A-Z][A-Za-z]{1,10}\s+)?§{1,2}\s*\d[\w.\-]*(?:\(\w+\))*"
+    r"(?:\s*(?:,|and)\s*\d[\w.\-]*(?:\(\w+\))*)*"
     r"|(?:[A-Z]{2,6}\s+)?Sec(?:tion|\.)\s?\d+(?:\.\d+)*(?:\(\w+\))*"
     r")"
 )
@@ -109,15 +112,18 @@ _REGULATION = re.compile(
 _REFERENCE_MARK = re.compile(
     r"Ref(?:erence)?s?\.?\s*\d+(?:\s*(?:,|–|-|and|,\s*and)\s*\d+)*"
 )
-# Authors, then et al. or a year (or both), the whole bracket: [Smith et al.],
-# [Smith 2020a], [Smith and Jones, 2019], [American Diabetes Association
-# (2023)]. _FILL_IN_WORDS keeps dates and prompts out: [Month, 2018], [Late
-# 2018], [Plan Year 2026], [Your Name, 2026], [DD Month 2026].
+# Authors, then et al. or a year (or both), maybe a page, the whole bracket:
+# [Smith et al.], [Smith 2020a], [Smith and Jones, 2019], [Smith et al., 2020,
+# p. 3], [American Diabetes Association (2023)]. An author is a capitalised
+# word of letters, so [XX-XX-2026] and [MEMBER_ID_2026] are fill-ins.
+# _FILL_IN_WORDS keeps dates and prompts out where there is no et al.:
+# [Month, 2018], [Late 2018], [Plan Year 2026], [Your Name, 2026].
 _AUTHORS = re.compile(
-    r"[A-Z][\w'’.\-]*(?:,?\s+(?:[A-Z][\w'’.\-]*|and|&|of|for|the))*"
-    r"(?:\s+et\s+al\.?)?(?:,?\s+\(?(?:19|20)\d\d[a-z]?\)?)?"
+    r"[A-Z][A-Za-z'’.\-]*(?:,?\s+(?:[A-Z][A-Za-z'’.\-]*|and|&|of|for|the))*"
+    r"(?:,?\s+et\s+al\.?)?(?:,?\s+\(?(?:19|20)\d\d[a-z]?\)?)?"
+    r"(?:,?\s+pp?\.\s*\d[\d\-–]*)?"
 )
-_ENDS_IN_YEAR = re.compile(r"(?:19|20)\d\d[a-z]?\)?$")
+_HAS_YEAR = re.compile(r"\s\(?(?:19|20)\d\d[a-z]?\)?(?:,?\s+pp?\.\s*\d[\d\-–]*)?$")
 _FILL_IN_WORDS = frozenset(
     "jan january feb february mar march apr april may jun june jul july aug "
     "august sep sept september oct october nov november dec december month "
@@ -415,9 +421,12 @@ def _file_answers(draft: AssistantDraft, denial: Denial, answers: list) -> int:
 def _is_authors(inside: str) -> bool:
     if not _AUTHORS.fullmatch(inside):
         return False
+    if re.search(r"\bet\s+al\b", inside):
+        # No fill-in says et al.: [May et al., 2020] is a citation.
+        return True
     if any(w in _FILL_IN_WORDS for w in re.findall(r"[a-z]+", inside.lower())):
         return False
-    return "et al" in inside or bool(_ENDS_IN_YEAR.search(inside))
+    return bool(_HAS_YEAR.search(inside))
 
 
 def _is_citation(bracket: str) -> bool:

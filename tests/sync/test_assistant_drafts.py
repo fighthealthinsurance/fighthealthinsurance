@@ -133,6 +133,9 @@ FILL_INS_MAIN_LISTED = (
     "[Dose: 0.125 mg]",
     "[Vivelle Dot 0.025 mg patch]",
     "[Reference Number]",
+    "[XX-XX-2026]",
+    "[MEMBER_ID_2026]",
+    "[Id. at PAGE_NUMBER]",
 )
 # Brackets main listed that no citation rule takes, so they stay listed:
 # exhibits and attachments (see placeholders_in), a PubMed id and a link's
@@ -158,6 +161,7 @@ CITATIONS_MAIN_LISTED = (
     "[Medicare LCD L33822]",
     "[Pub. L. 111-148]",
     "[ERISA § 503]",
+    "[See 42 C.F.R. §§ 438.210, 438.404]",
     "[Section 438.210]",
     "[Section 2.1]",
     "[Sec. 4.3]",
@@ -182,6 +186,8 @@ CITATIONS_MAIN_LISTED = (
     "[American Diabetes Association, 2023]",
     "[O'Brien (2018)]",
     "[Narang et al., 2017]",
+    "[May et al., 2020]",
+    "[Smith et al., 2020, p. 3]",
     "[WATER Trial (2017)]",
     # A quotation's notes.
     "[Emphasis added]",
@@ -190,6 +196,7 @@ CITATIONS_MAIN_LISTED = (
     "[Emphasis omitted]",
     "[Emphasis supplied]",
     "[Emphasis mine]",
+    "[Emphasis in the original]",
     "[EMPHASIS ADDED]",
     "[Internal citations omitted]",
     "[Internal quotation marks omitted]",
@@ -208,6 +215,7 @@ CITATIONS_MAIN_LISTED = (
     "[Id. at 5]",
     "[Ibid.]",
     "[Ibid]",
+    "[Ibid., p. 12]",
 )
 # Brackets main never listed, which are still not listed: too short, too
 # long, or not starting with a capital.
