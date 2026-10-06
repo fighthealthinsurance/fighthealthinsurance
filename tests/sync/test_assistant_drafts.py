@@ -118,6 +118,21 @@ FILL_INS_MAIN_LISTED = (
     "[Section number]",
     # A {{...}} inside makes a bracket a fill-in, whatever else it holds.
     "[Smith et al. {{YEAR}}]",
+    # A citation word or a year in a fill-in doesn't make it a citation: only
+    # a bracket that is a citation as a whole is one (found in eval letters).
+    "[USC Specialist's Name]",
+    "[Month, 2018]",
+    "[Late 2018]",
+    "[Month Day, 2026]",
+    "[January XX, 2026]",
+    "[DD Month 2026]",
+    "[Your Name, 2026]",
+    "[Insert Date, 2026]",
+    "[Signature Date 2026]",
+    "[Current dose, e.g. 0.125 mg]",
+    "[Dose: 0.125 mg]",
+    "[Vivelle Dot 0.025 mg patch]",
+    "[Reference Number]",
 )
 # Brackets main listed that no citation rule takes, so they stay listed:
 # exhibits and attachments (see placeholders_in), a PubMed id and a link's
@@ -146,6 +161,17 @@ CITATIONS_MAIN_LISTED = (
     "[Section 438.210]",
     "[Section 2.1]",
     "[Sec. 4.3]",
+    "[Section 1557]",
+    "[ERISA Section 503]",
+    "[ACA Section 2719]",
+    "[SSA Section 1862(a)(1)(A)]",
+    # A reference marker with a capital.
+    "[Reference 1]",
+    "[References 2, 3]",
+    "[References 6-10]",
+    "[References 1–4]",
+    "[Ref. 1]",
+    "[Refs. 2-4]",
     # Authors and a year.
     "[Smith et al.]",
     "[Smith et al. 2020]",
@@ -155,11 +181,15 @@ CITATIONS_MAIN_LISTED = (
     "[Smith & Jones 2019b]",
     "[American Diabetes Association, 2023]",
     "[O'Brien (2018)]",
+    "[Narang et al., 2017]",
+    "[WATER Trial (2017)]",
     # A quotation's notes.
     "[Emphasis added]",
     "[Emphasis ours]",
     "[Emphasis in original]",
     "[Emphasis omitted]",
+    "[Emphasis supplied]",
+    "[Emphasis mine]",
     "[EMPHASIS ADDED]",
     "[Internal citations omitted]",
     "[Internal quotation marks omitted]",

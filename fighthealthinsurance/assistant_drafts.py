@@ -73,46 +73,57 @@ _PLACEHOLDER = re.compile(
 _OMITTED = r"(?:internal )?(?:citations?|quotation marks|quotations?|footnotes?)"
 # The note a quotation carries, any case: [Emphasis added], [Sic].
 _QUOTATION_NOTE = (
-    r"emphasis (?:added|ours|in original|omitted)"
+    r"emphasis (?:added|ours|in original|omitted|supplied|mine)"
     rf"|{_OMITTED}(?:,? and {_OMITTED})* omitted"
     r"|(?:alterations?|brackets) in original"
     r"|cleaned up"
     r"|sic"
 )
-# A citation that is the whole of its bracket. A reference number or a list
-# of them ([1], [3, 4], [2-5]) needs no rule: _PLACEHOLDER never finds one,
-# as it starts with no capital.
+# Each rule below must match the whole of a bracket's inside, never a part of
+# it: a fill-in that mentions a regulation or a year ([USC Specialist's
+# Name], [Month, 2018], [Current dose, e.g. 0.125 mg]) stays listed.
+#
+# [Id.], [Id. at 5], [Ibid.], [Ibid], and one or more quotation notes:
+# [Emphasis added; citations omitted]. A reference number or a list of them
+# ([1], [3, 4], [2-5]) needs no rule: _PLACEHOLDER never finds one, as it
+# starts with no capital.
 _WHOLE_CITATION = re.compile(
-    # [Id.], [Id. at 5], [Ibid.], [Ibid].
     r"(?:Id|Ibid)\.(?:,? at \S.*)?|Ibid"
-    # One quotation note or several: [Emphasis added; citations omitted].
     rf"|(?i:(?:{_QUOTATION_NOTE})(?:(?:\s*[,;]\s*|\s+)(?:and\s+)?(?:{_QUOTATION_NOTE}))*)"
     r"\.?"
 )
-# A mark that makes any bracket holding it a citation.
-_CITATION_MARK = re.compile(
-    # A regulation or statute: [42 CFR 438.210], [CMS NCD 220.2], [ERISA § 503].
-    r"\bCFR\b|C\.F\.R\.|U\.S\.C\.|\bUSC\b|\bNCD\b|\bLCD\b|\bPub\. ?L\.|§"
-    # A section number: one with three digits after the point ([See
-    # 438.210]), so an example value such as 98.6, 72.5 or $1,234.56 in a
-    # fill-in is not one, or one after Section or Sec. ([Section 2.1]).
-    r"|(?<![\w.,$])\d+\.\d{3,}(?![\w.])"
-    r"|\bSec(?:tion|\.) ?\d+(?:\.\d+)+"
-    # Authors: [Smith et al.], [Smith et al. 2020].
-    r"|\bet al\b"
+# A regulation or statute, the whole bracket: [See 42 CFR 438.210], [Title 42
+# U.S.C. 300gg-19], [CMS NCD 220.2], [Medicare LCD L33822], [Pub. L.
+# 111-148], [ERISA § 503], [Section 438.210], [ACA Section 2719].
+_REGULATION = re.compile(
+    r"(?:(?:See(?: also)?|Cf\.|Under|Per|Pursuant to)\s+)?(?:Title\s+)?(?:"
+    r"\d+\s+(?:CFR|C\.F\.R\.|U\.S\.C\.|USC)\s*§*\s*\d[\w.\-]*(?:\(\w+\))*"
+    r"|(?:CMS\s+|Medicare\s+)?(?:NCD|LCD)\s+L?\d+(?:\.\d+)*"
+    r"|Pub\.\s?L\.\s?(?:No\.\s?)?\d+-\d+"
+    r"|(?:[A-Z][A-Za-z]{1,10}\s+)?§{1,2}\s*\d[\w.\-]*(?:\(\w+\))*"
+    r"|(?:[A-Z]{2,6}\s+)?Sec(?:tion|\.)\s?\d+(?:\.\d+)*(?:\(\w+\))*"
+    r")"
 )
-# Authors and a year: [Smith 2020], [Smith and Jones, 2019a], [American
-# Diabetes Association (2023)]. Each word before the year is capitalised,
-# or "and" or "&", so [Insert date of denial, e.g. 01/02/2026] and [Insert
-# year, e.g. 2026] are fill-ins.
-_AUTHOR_YEAR = re.compile(
-    r"[A-Z][\w'’&.-]*(?:,?\s+(?:[A-Z][\w'’&.-]*|and|&))*,?\s+\(?(?:19|20)\d\d[a-z]?\)?"
+# A reference marker with a capital: [Reference 1], [Refs. 2-4], [References
+# 1, 3 and 5].
+_REFERENCE_MARK = re.compile(
+    r"Ref(?:erence)?s?\.?\s*\d+(?:\s*(?:,|–|-|and|,\s*and)\s*\d+)*"
 )
-# A month or Year before the year makes it a date: [March 2026], [Plan Year 2026].
-_DATED = re.compile(
-    r"(?i:\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?"
-    r"|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
-    r"|year)\b)\.?,?\s+\(?(?:19|20)\d\d[a-z]?\)?$"
+# Authors, then et al. or a year (or both), the whole bracket: [Smith et al.],
+# [Smith 2020a], [Smith and Jones, 2019], [American Diabetes Association
+# (2023)]. _FILL_IN_WORDS keeps dates and prompts out: [Month, 2018], [Late
+# 2018], [Plan Year 2026], [Your Name, 2026], [DD Month 2026].
+_AUTHORS = re.compile(
+    r"[A-Z][\w'’.\-]*(?:,?\s+(?:[A-Z][\w'’.\-]*|and|&|of|for|the))*"
+    r"(?:\s+et\s+al\.?)?(?:,?\s+\(?(?:19|20)\d\d[a-z]?\)?)?"
+)
+_ENDS_IN_YEAR = re.compile(r"(?:19|20)\d\d[a-z]?\)?$")
+_FILL_IN_WORDS = frozenset(
+    "jan january feb february mar march apr april may jun june jul july aug "
+    "august sep sept september oct october nov november dec december month "
+    "day year date dd mm yy yyyy late early mid insert your name signature "
+    "spring summer fall autumn winter plan dob birth service approx around "
+    "since before after eg".split()
 )
 # A question that ends with its options in brackets: "(inpatient/outpatient)".
 _CHOICES = re.compile(r"\(([^()]+)\)\s*\?\s*$")
@@ -401,9 +412,17 @@ def _file_answers(draft: AssistantDraft, denial: Denial, answers: list) -> int:
     return len(updates)
 
 
+def _is_authors(inside: str) -> bool:
+    if not _AUTHORS.fullmatch(inside):
+        return False
+    if any(w in _FILL_IN_WORDS for w in re.findall(r"[a-z]+", inside.lower())):
+        return False
+    return "et al" in inside or bool(_ENDS_IN_YEAR.search(inside))
+
+
 def _is_citation(bracket: str) -> bool:
-    """Whether a bracket _PLACEHOLDER found is a citation or a quotation's
-    note, which the assistant has nothing to fill in for."""
+    """Whether a bracket _PLACEHOLDER found is, as a whole, a citation or a
+    quotation's note, which the assistant has nothing to fill in for."""
     inside = bracket[1:-1].strip()
     if "[" in inside or _PLACEHOLDER.search(inside):
         # A fill-in may be in there ([See [Your Name], [Cite {{YEAR}}]), and
@@ -411,8 +430,9 @@ def _is_citation(bracket: str) -> bool:
         return False
     return bool(
         _WHOLE_CITATION.fullmatch(inside)
-        or _CITATION_MARK.search(inside)
-        or (_AUTHOR_YEAR.fullmatch(inside) and not _DATED.search(inside))
+        or _REGULATION.fullmatch(inside)
+        or _REFERENCE_MARK.fullmatch(inside)
+        or _is_authors(inside)
     )
 
 
@@ -432,10 +452,11 @@ def placeholders_in(text: str) -> list[str]:
     Name]" as well. Never listed, as on main: [It], [doctor name], [1], [3,
     4], [42 CFR 438.210], or a bracket with over 41 characters inside.
 
-    Left out as citations: a regulation or statute ([See 42 CFR 438.210],
-    [CMS NCD 220.2], [Medicare LCD L33822], [Pub. L. 111-148], [ERISA §
-    503], [Section 438.210], [Section 2.1]); authors and a year ([Smith et
-    al.], [Smith 2020], [Smith and Jones, 2019a]); a
+    Left out, only when the whole bracket is one: a regulation or statute
+    ([See 42 CFR 438.210], [CMS NCD 220.2], [Medicare LCD L33822], [Pub. L.
+    111-148], [ERISA § 503], [Section 438.210], [Section 2.1]); a reference
+    marker ([Reference 1], [Refs. 2-4]); authors with et al. or a year
+    ([Smith et al.], [Smith 2020], [Smith and Jones, 2019a]); a
     quotation's notes ([Emphasis added], [Emphasis ours], [Internal
     citations omitted], [Footnotes and citations omitted], [Alterations in
     original], [Brackets in original], [Cleaned up], [Sic]); [Id.] and
