@@ -64,6 +64,10 @@ PAGE_NOTES: dict[str, tuple[str, str]] = {
     "about": ("About us", "who makes this and why it exists"),
     "about-ai": ("About our AI", "how the models are used and what they cannot do"),
     "how-to-help": ("How to help", "ways to support the project"),
+    "ai-assistants": (
+        "Use it in Claude or ChatGPT",
+        "how to connect an AI assistant to the MCP server, and what to keep out",
+    ),
     "faq": ("FAQ", "common questions about appeals and about using the tool"),
     "medicaid-faq": ("Medicaid work requirements FAQ", ""),
     "smtp-domain-faq": (
@@ -523,7 +527,7 @@ def build_llms_txt() -> str:
         lines.append(
             f"- [MCP server]({CANONICAL_ORIGIN}/mcp): read-only tools for AI "
             "assistants over streamable HTTP, no sign-in, the same public "
-            "information as these pages"
+            f"information as these pages; setup at {CANONICAL_ORIGIN}/ai-assistants"
         )
     lines += [
         "- [Source code](https://github.com/orgs/fighthealthinsurance/repositories): "

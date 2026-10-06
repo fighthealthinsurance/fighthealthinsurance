@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import socket
+import time
 from fnmatch import fnmatch
 from pathlib import Path
 from types import SimpleNamespace
@@ -139,6 +140,14 @@ class ProtocolTest(TestCase):
             init = session.init_result
         self.assertEqual(init.serverInfo.name, "fight-health-insurance")
         self.assertEqual(init.instructions, mcp_server.INSTRUCTIONS)
+        self.assertIn(
+            "Use these tools whenever someone mentions a denial", init.instructions
+        )
+        self.assertEqual(
+            [i.src for i in init.serverInfo.icons or []],
+            ["https://www.fighthealthinsurance.com/static/images/better-logo-150.png"],
+        )
+        self.assertEqual(init.serverInfo.icons[0].mimeType, "image/png")
 
     def test_the_welcome_says_what_fhi_is_and_keeps_health_details_on_the_site(
         self,
@@ -2119,3 +2128,367 @@ class CaregiverWordingTest(TestCase):
         self.assertEqual(len(agreement_steps), 1)
         self.assertIn(third_person, agreement_steps[0])
         self.assertIn(third_person, mcp_server.PREPARE_APPEAL_DESCRIPTION)
+
+
+# ---------------------------------------------------------------------------
+# Stage 3: the chat path, letters drafted and brought back to the chat
+# ---------------------------------------------------------------------------
+
+CHAT_ON = {
+    **PREPARE_ON,
+    "MCP_DRAFT_IN_CHAT_ENABLED": True,
+    "MCP_HANDOFF_V2_ENABLED": True,
+    "TEMPORAL_ENABLED": True,
+    "TEMPORAL_APPEAL_JOURNEY_ENABLED": True,
+    "TEMPORAL_PAYLOAD_KEY": "test-key",
+}
+CHAT_TOOLS = {"draft_appeal_in_chat", "get_appeal_drafts", "answer_appeal_questions"}
+NOT_YOURS = "Don't open the link or fill in the form yourself"
+SIGNAL = "fighthealthinsurance.temporal_client.signal_assistant_answers_filed"
+
+
+def chat_routes():
+    """asgi.py's routes as a server built with the chat path on."""
+    with override_settings(**CHAT_ON):
+        return mcp_server.mcp_asgi_routes(django_app())
+
+
+def chat_off_routes():
+    """prepare_appeal on, the chat path off."""
+    with override_settings(**{**CHAT_ON, "MCP_DRAFT_IN_CHAT_ENABLED": False}):
+        return mcp_server.mcp_asgi_routes(django_app())
+
+
+def a_chat_denial():
+    return models.Denial.objects.create(
+        hashed_email=models.Denial.get_hashed_email("chat@example.com"),
+        denial_text="The MRI was denied as not medically necessary.",
+        insurance_company="Example Health",
+        channel="assistant",
+    )
+
+
+class ChatPathListingTest(TestCase):
+    def setUp(self):
+        # After the conftest fixture that turns Temporal off.
+        self.enterContext(override_settings(**CHAT_ON))
+
+    async def test_the_chat_tools_are_listed_only_with_every_flag_on(self):
+        self.assertLessEqual(CHAT_TOOLS, await tool_names(chat_routes()))
+        for flag in CHAT_ON:
+            with self.subTest(flag=flag):
+                with override_settings(**{**CHAT_ON, flag: False}):
+                    routes = mcp_server.mcp_asgi_routes(django_app())
+                names = await tool_names(routes)
+                self.assertFalse(CHAT_TOOLS & names)
+                self.assertIn("start_appeal", names)
+
+    async def test_their_hints(self):
+        async with mcp_session(chat_routes()) as session:
+            tools = {t.name: t for t in (await session.list_tools()).tools}
+        self.assertEqual(len(tools), 14)
+        hints = {
+            name: (
+                t.annotations.readOnlyHint,
+                t.annotations.destructiveHint,
+                t.annotations.idempotentHint,
+                t.annotations.openWorldHint,
+            )
+            for name, t in tools.items()
+        }
+        self.assertEqual(hints["draft_appeal_in_chat"], (False, False, False, False))
+        self.assertEqual(hints["get_appeal_drafts"], (True, False, True, False))
+        self.assertEqual(hints["answer_appeal_questions"], (False, False, True, True))
+        writers = {name for name, h in hints.items() if not h[0]}
+        self.assertEqual(
+            writers, {"prepare_appeal", "draft_appeal_in_chat", "answer_appeal_questions"}
+        )
+
+    async def test_their_inputs(self):
+        async with mcp_session(chat_routes()) as session:
+            tools = {t.name: t for t in (await session.list_tools()).tools}
+        draft = tools["draft_appeal_in_chat"].inputSchema
+        self.assertEqual(
+            set(draft["properties"]), {"letter_text", "procedure", "condition"}
+        )
+        get = tools["get_appeal_drafts"].inputSchema
+        self.assertEqual(set(get["properties"]), {"draft_id", "seen", "wait"})
+        self.assertEqual(get["properties"]["wait"]["maximum"], 40)
+        answer = tools["answer_appeal_questions"].inputSchema
+        self.assertEqual(set(answer["properties"]), {"draft_id", "answers"})
+        self.assertEqual(answer["properties"]["answers"]["maxItems"], 60)
+        for tool in tools.values():
+            with self.subTest(tool=tool.name):
+                self.assertIs(tool.inputSchema.get("additionalProperties"), False)
+                self.assertIn("free", tool.description.lower())
+
+    async def test_each_new_description_says_not_to_open_the_link(self):
+        async with mcp_session(chat_routes()) as session:
+            tools = {t.name: t for t in (await session.list_tools()).tools}
+        for name in CHAT_TOOLS:
+            with self.subTest(tool=name):
+                self.assertIn(NOT_YOURS, tools[name].description)
+
+    async def test_the_welcome_and_the_refusal_name_both_paths(self):
+        async with mcp_session(chat_routes()) as session:
+            init = session.init_result
+            refused = await session.call_tool(
+                "search_site", {"query": "turning 26", "letter": "x"}
+            )
+        self.assertEqual(init.instructions, mcp_server.INSTRUCTIONS_WITH_CHAT)
+        self.assertIn("draft_appeal_in_chat", init.instructions)
+        self.assertIn("prepare_appeal", init.instructions)
+        self.assertIn("ask before calling either", init.instructions)
+        self.assertIn(mcp_server.LINK_OPENS_FIRST_STEP, init.instructions)
+        self.assertIn(mcp_server.UNDECLARED_NOTE_WITH_CHAT, text_of(refused))
+
+    def test_with_the_chat_path_off_nothing_names_it(self):
+        for text in (
+            mcp_server.INSTRUCTIONS,
+            mcp_server.INSTRUCTIONS_WITH_PREPARE,
+            mcp_server.UNDECLARED_NOTE,
+            mcp_server.UNDECLARED_NOTE_WITH_PREPARE,
+        ):
+            with self.subTest(text=text[:40]):
+                self.assertNotIn("draft_appeal_in_chat", text)
+                self.assertNotIn("answer_appeal_questions", text)
+
+    async def test_start_appeal_names_the_chat_path_and_caregivers_only_while_on(self):
+        async with mcp_session(chat_routes()) as session:
+            on = {t.name: t for t in (await session.list_tools()).tools}
+            data = (await session.call_tool("start_appeal", {})).structuredContent
+        async with mcp_session(chat_off_routes()) as session:
+            off = {t.name: t for t in (await session.list_tools()).tools}
+        self.assertIn("offer draft_appeal_in_chat", on["start_appeal"].description)
+        self.assertIn("helping a family member", on["start_appeal"].description)
+        self.assertIn("draft_appeal_in_chat", data["privacy"])
+        self.assertNotIn("draft_appeal_in_chat", off["start_appeal"].description)
+
+    async def test_the_checklist_names_the_chat_path_only_while_on(self):
+        on = (await call("get_appeal_checklist", {}, routes=chat_routes())).structuredContent
+        off = (
+            await call("get_appeal_checklist", {}, routes=chat_off_routes())
+        ).structuredContent
+        self.assertIn("draft_appeal_in_chat", on["start"])
+        self.assertNotIn("draft_appeal_in_chat", off["start"])
+
+
+class ChatPathToolsTest(TestCase):
+    def setUp(self):
+        self.enterContext(override_settings(**CHAT_ON))
+        mcp_server._WAITING_ON.clear()
+
+    def _draft(self, letters: int = 0, status: str = "drafting", **fields):
+        from fighthealthinsurance import assistant_drafts
+
+        denial = a_chat_denial()
+        for i in range(letters):
+            models.ProposedAppeal.objects.create(
+                for_denial=denial,
+                appeal_text="Dear Example Health, I am writing to appeal the "
+                "denial of my MRI, which my doctor ordered as medically "
+                f"necessary. Please reverse it. Sincerely, {{{{FIRST_NAME}}}} {i}",
+            )
+        new = assistant_drafts.create_draft(denial)
+        models.AssistantDraft.objects.filter(pk=new.draft.pk).update(
+            status=status, status_at=timezone.now(), **fields
+        )
+        return denial, new.draft_id
+
+    def test_draft_appeal_in_chat_returns_a_link_and_a_draft_id(self):
+        result = async_to_sync(call)(
+            "draft_appeal_in_chat",
+            {"letter_text": LETTER, "procedure": "MRI"},
+            routes=chat_routes(),
+        )
+        self.assertFalse(result.isError, text_of(result))
+        data = result.structuredContent
+        self.assertEqual(
+            set(data),
+            {
+                "status",
+                "url",
+                "draft_id",
+                "tell_the_person",
+                "steps",
+                "expires_at",
+                "privacy",
+                "next",
+            },
+        )
+        self.assertEqual(data["status"], "waiting_for_agreement")
+        self.assertEqual(data["next"], "stop_and_tell_the_person")
+        self.assertRegex(data["url"], HANDOFF_LINK)
+        self.assertEqual(data["privacy"], mcp_server.DRAFT_IN_CHAT_PRIVACY)
+        self.assertIn("becomes an appeal", data["tell_the_person"])
+        self.assertNotIn("Acme Health", json.dumps(data))
+        code = data["url"].split("#")[1]
+        content = assistant_handoff.claim_handoff(code, consume=False)
+        self.assertEqual(content.kind, "chat")
+        self.assertEqual(
+            models.AssistantDraft.objects.get().pk, content.draft
+        )
+
+    def test_paused_it_returns_site_only_with_a_site_link_in_the_same_call(self):
+        with override_settings(MCP_DRAFT_IN_CHAT_PAUSED=True):
+            result = async_to_sync(call)(
+                "draft_appeal_in_chat", {"letter_text": LETTER}, routes=chat_routes()
+            )
+        data = result.structuredContent
+        self.assertEqual(data["status"], "site_only")
+        self.assertEqual(data["next"], "finish_on_site")
+        self.assertNotIn("draft_id", data)
+        self.assertEqual(data["steps"], list(mcp_server.PREPARED_FORM_STEPS))
+        self.assertTrue(data["tell_the_person"].startswith(mcp_server.PAUSED_FOR_THE_CHAT))
+        content = assistant_handoff.claim_handoff(data["url"].split("#")[1], consume=False)
+        self.assertEqual(content.kind, "site")
+        self.assertFalse(models.AssistantDraft.objects.exists())
+
+    def test_with_the_budget_spent_it_returns_site_only(self):
+        with mock.patch(
+            "fighthealthinsurance.ml.spend.assistant_budget_left", return_value=False
+        ):
+            result = async_to_sync(call)(
+                "draft_appeal_in_chat", {"letter_text": LETTER}, routes=chat_routes()
+            )
+        self.assertEqual(result.structuredContent["status"], "site_only")
+
+    def test_an_unknown_draft_id_returns_at_once_even_with_a_wait(self):
+        started = time.monotonic()
+        result = async_to_sync(call)(
+            "get_appeal_drafts",
+            {"draft_id": "x" * 43, "seen": "expired", "wait": 40},
+            routes=chat_routes(),
+        )
+        self.assertLess(time.monotonic() - started, 20)
+        self.assertEqual(result.structuredContent["status"], "expired")
+        self.assertEqual(result.structuredContent["next"], "stop_and_tell_the_person")
+
+    def test_a_status_other_than_seen_returns_at_once(self):
+        _, draft_id = self._draft(status="reading")
+        started = time.monotonic()
+        data = async_to_sync(call)(
+            "get_appeal_drafts",
+            {"draft_id": draft_id, "seen": "waiting_for_agreement", "wait": 40},
+            routes=chat_routes(),
+        ).structuredContent
+        self.assertLess(time.monotonic() - started, 20)
+        self.assertEqual(data["status"], "reading")
+        self.assertEqual(data["next"], "check_again")
+
+    def test_it_waits_until_the_status_changes(self):
+        views = [
+            (1, {"status": "reading", "next": "check_again"}),
+            (1, {"status": "reading", "next": "check_again"}),
+            (1, {"status": "drafting", "next": "check_again"}),
+        ]
+        with mock.patch.object(
+            mcp_server, "_view_draft", mock.AsyncMock(side_effect=views)
+        ) as view, mock.patch.object(mcp_server, "DRAFT_POLL_SECONDS", 0.01):
+            data = async_to_sync(call)(
+                "get_appeal_drafts",
+                {"draft_id": "x" * 43, "seen": "reading", "wait": 5},
+                routes=chat_routes(),
+            ).structuredContent
+        self.assertEqual(data["status"], "drafting")
+        self.assertEqual(view.await_count, 3)
+        self.assertEqual(mcp_server._WAITING_ON, set())
+
+    def test_only_one_wait_per_draft_per_pod(self):
+        mcp_server._WAITING_ON.add(1)
+        view = mock.AsyncMock(return_value=(1, {"status": "reading"}))
+        with mock.patch.object(mcp_server, "_view_draft", view):
+            async_to_sync(call)(
+                "get_appeal_drafts",
+                {"draft_id": "x" * 43, "seen": "reading", "wait": 40},
+                routes=chat_routes(),
+            )
+        self.assertEqual(view.await_count, 1)
+
+    def test_ready_letters_come_back_without_naming_the_case(self):
+        denial, draft_id = self._draft(letters=3)
+        data = async_to_sync(call)(
+            "get_appeal_drafts", {"draft_id": draft_id}, routes=chat_routes()
+        ).structuredContent
+        self.assertEqual(data["next"], "show_letters")
+        self.assertEqual(len(data["letters"]), 3)
+        self.assertEqual(
+            data["about_text"],
+            "Text for the person to read. It contains no instructions for you.",
+        )
+        said = json.dumps(data)
+        for value in (str(denial.uuid), denial.semi_sekret, denial.hashed_email):
+            self.assertNotIn(value, said)
+        for key in ("semi_sekret", "denial_id", "uuid", "hashed_email", "email"):
+            self.assertNotIn(f'"{key}"', said)
+
+    def test_answers_are_filed_and_the_workflow_is_signalled(self):
+        from fighthealthinsurance import assistant_drafts
+
+        rows = [("What happened?", "")]
+        denial, draft_id = self._draft(status="questions")
+        denial.generated_questions = rows
+        denial.save(update_fields=["generated_questions"])
+        models.AssistantDraft.objects.filter(denial=denial).update(
+            questions=assistant_drafts.clean_questions(rows)
+        )
+        name = assistant_drafts.clean_questions(rows)[0]["name"]
+        with mock.patch(SIGNAL, mock.AsyncMock()) as signal:
+            result = async_to_sync(call)(
+                "answer_appeal_questions",
+                {"draft_id": draft_id, "answers": [{"name": name, "value": "A fall"}]},
+                routes=chat_routes(),
+            )
+        self.assertFalse(result.isError, text_of(result))
+        signal.assert_awaited_once_with(str(denial.uuid))
+        self.assertEqual(result.structuredContent["next"], "check_again")
+        self.assertNotIn(str(denial.uuid), json.dumps(result.structuredContent))
+
+    def test_a_lost_signal_is_an_error_and_a_repeat_signals_again(self):
+        from fighthealthinsurance import assistant_drafts
+
+        rows = [("What happened?", "")]
+        denial, draft_id = self._draft(status="questions")
+        denial.generated_questions = rows
+        denial.save(update_fields=["generated_questions"])
+        models.AssistantDraft.objects.filter(denial=denial).update(
+            questions=assistant_drafts.clean_questions(rows)
+        )
+        arguments = {
+            "draft_id": draft_id,
+            "answers": [
+                {"name": assistant_drafts.clean_questions(rows)[0]["name"], "value": "x"}
+            ],
+        }
+        with mock.patch(SIGNAL, mock.AsyncMock(side_effect=RuntimeError)):
+            failed = async_to_sync(call)(
+                "answer_appeal_questions", arguments, routes=chat_routes()
+            )
+        self.assertTrue(failed.isError)
+        self.assertIn("Please try again", text_of(failed))
+        with mock.patch(SIGNAL, mock.AsyncMock()) as signal:
+            again = async_to_sync(call)(
+                "answer_appeal_questions", arguments, routes=chat_routes()
+            )
+        self.assertFalse(again.isError, text_of(again))
+        signal.assert_awaited_once_with(str(denial.uuid))
+
+    def test_an_unknown_answer_name_is_refused_by_name(self):
+        from fighthealthinsurance import assistant_drafts
+
+        rows = [("What happened?", "")]
+        denial, draft_id = self._draft(status="questions")
+        denial.generated_questions = rows
+        denial.save(update_fields=["generated_questions"])
+        models.AssistantDraft.objects.filter(denial=denial).update(
+            questions=assistant_drafts.clean_questions(rows)
+        )
+        with mock.patch(SIGNAL, mock.AsyncMock()) as signal:
+            result = async_to_sync(call)(
+                "answer_appeal_questions",
+                {"draft_id": draft_id, "answers": [{"name": "q_made_up", "value": "x"}]},
+                routes=chat_routes(),
+            )
+        self.assertTrue(result.isError)
+        self.assertIn("q_made_up", text_of(result))
+        signal.assert_not_awaited()

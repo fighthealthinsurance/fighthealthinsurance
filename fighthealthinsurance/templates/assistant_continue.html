@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% comment %}
+Where the emailed link back to an assistant's letters lands
+(assistant_terms_views.ContinueView). The link carries its token after "#";
+the first script moves it into the form and clears the address bar. The view
+renders this with no_third_party_scripts.
+{% endcomment %}
+{% block title %}
+{% if link_works %}Your appeal letters{% else %}This link no longer works{% endif %}
+{% endblock title %}
+
+{% block scriptmagic %}
+<script>
+  (function () {
+    var hash = window.location.hash || "";
+    var token = hash.charAt(0) === "#" ? hash.slice(1, 44) : "";
+    if (hash) {
+      try {
+        window.history.replaceState(null, "", window.location.pathname);
+      } catch (e) {}
+    }
+    document.addEventListener("DOMContentLoaded", function () {
+      var field = document.getElementById("continue-token");
+      if (field && !field.value && /^[A-Za-z0-9_-]{43}$/.test(token)) {
+        field.value = token;
+      }
+      var ready = document.getElementById("continue-ready");
+      var dead = document.getElementById("continue-dead");
+      if (field && !field.value && ready && dead) {
+        ready.hidden = true;
+        dead.hidden = false;
+      }
+    });
+  })();
+</script>
+{% endblock scriptmagic %}
+
+{% block extra_style %}
+<meta name="robots" content="noindex, nofollow">
+{% endblock extra_style %}
+
+{% block content %}
+<section id="assistant-continue">
+    <div class="fhi-page fhi-page-centred">
+        {% if link_works %}
+        <div id="continue-ready">
+        {% include "partials/page_title.html" with title="Your appeal letters" %}
+        <p>To keep your case private, type the email address you used when you agreed. Then we'll show you the letters we drafted.</p>
+        {% if wrong_email %}
+        <div class="fhi-notice fhi-notice-danger" role="alert" id="continue-wrong-email">
+            That email address doesn't match this link. Check it for a typo and try again. After {{ tries }} wrong tries the link stops working.
+        </div>
+        {% endif %}
+        <form action="{% url 'assistant_continue' %}" method="post" class="fhi-stack">
+            {% csrf_token %}
+            <input type="hidden" name="token" id="continue-token" value="{{ token }}">
+            <div class="fhi-field-group">
+                <label for="{{ form.email.id_for_label }}" class="fhi-label">{{ form.email.label }}</label>
+                {{ form.email }}
+                {{ form.email.errors }}
+            </div>
+            <button type="submit" id="continue-submit" class="fhi-button fhi-button-primary fhi-button-large">Show my letters</button>
+        </form>
+        </div>
+        {% endif %}
+        <div id="continue-dead"{% if link_works %} hidden{% endif %}>
+        {% include "partials/page_title.html" with title="This link no longer works" %}
+        <p>The link in our email works for {{ link_days }} days, and stops working after {{ tries }} wrong email addresses or if you ask us to delete your data.</p>
+        <p><strong>Need help?</strong> Email <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.</p>
+        <p><a href="{% url 'scan' %}">Start a new appeal</a></p>
+        </div>
+    </div>
+</section>
+{% endblock content %}

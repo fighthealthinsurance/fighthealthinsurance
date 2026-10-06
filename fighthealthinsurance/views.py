@@ -48,7 +48,12 @@ from django_encrypted_filefield.crypt import Cryptographer
 from loguru import logger
 from PIL import Image
 
-from fighthealthinsurance import common_view_logic, consent, intake_resume
+from fighthealthinsurance import (
+    assistant_handoff_views,
+    common_view_logic,
+    consent,
+    intake_resume,
+)
 from fighthealthinsurance import forms as core_forms, models
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
@@ -79,6 +84,7 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import (
     is_valid_denial_id,
+    ai_assistants_page_enabled,
     medicaid_eligibility_page_enabled,
     notify_interested_professional,
     send_fallback_email,
@@ -611,6 +617,42 @@ class MedicaidEligibilityView(StaticIshView):
         # functools.wraps keeps view_class / view_initkwargs / __name__ that
         # Django attaches to the as_view callable and that middleware and
         # URL introspection read.
+        return view
+
+
+class AiAssistantsView(StaticIshView):
+    """How to connect Claude or ChatGPT to the MCP server. 404 while the
+    server is off, checked outside the page cache like MedicaidEligibilityView."""
+
+    template_name = "ai_assistants.html"
+
+    def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
+        from fighthealthinsurance.assistant_drafts import draft_in_chat_enabled
+        from fighthealthinsurance.mcp_server import prepare_appeal_enabled
+
+        context = super().get_context_data(**kwargs)
+        context["prepare_appeal_on"] = prepare_appeal_enabled()
+        context["chat_path_on"] = draft_in_chat_enabled() and bool(
+            getattr(settings, "MCP_HANDOFF_V2_ENABLED", False)
+        )
+        return context
+
+    @classonlymethod
+    def as_view(  # type: ignore[override]
+        cls, **initkwargs: typing.Any
+    ) -> typing.Callable[..., HttpResponseBase]:
+        cached_view = super().as_view(**initkwargs)
+
+        @functools.wraps(cached_view)
+        def view(
+            request: HttpRequest, *args: typing.Any, **kwargs: typing.Any
+        ) -> HttpResponseBase:
+            if not ai_assistants_page_enabled():
+                from django.http import Http404
+
+                raise Http404("This page is not available yet.")
+            return cached_view(request, *args, **kwargs)
+
         return view
 
 
@@ -1942,6 +1984,37 @@ INTAKE_FIELDS_WITH_A_MESSAGE = frozenset(
 )
 
 
+def subscribe_from_appeal_flow(request, email) -> None:
+    """Add the person to the mailing list from an intake form that ticked it."""
+    # Get name from the POST data (it's not stored in cleaned_data for privacy)
+    fname = request.POST.get("fname", "")
+    lname = request.POST.get("lname", "")
+    name = f"{fname} {lname}".strip()
+    referral_source = request.POST.get("referral_source", "")
+    referral_source_details = request.POST.get("referral_source_details", "")
+    defaults = {
+        "comments": "From appeal flow",
+        "referral_source": referral_source,
+        "referral_source_details": referral_source_details,
+    }
+    if len(name) > 2:
+        defaults["name"] = name
+    # Use get_or_create to avoid duplicate subscriptions
+    try:
+        models.MailingListSubscriber.objects.get_or_create(
+            email=email,
+            defaults=defaults,
+        )
+    except Exception as e:
+        logger.debug(f"Error subscribing to mailing list: {type(e).__name__}")
+        try:
+            # Blank values would wipe what an existing subscriber already has.
+            updates = {key: value for key, value in defaults.items() if value}
+            models.MailingListSubscriber.objects.filter(email=email).update(**updates)
+        except Exception as e2:
+            logger.warning(f"Error updating subscriber: {type(e2).__name__}")
+
+
 class InitialProcessView(generic.FormView):
     """
     Initial denial processing view that creates a denial record and begins the appeal flow.
@@ -1952,6 +2025,12 @@ class InitialProcessView(generic.FormView):
 
     template_name = "scrub.html"
     form_class = core_forms.DenialForm
+
+    def post(self, request, *args, **kwargs):
+        # Read once and cleared before validation, so a failed submission
+        # doesn't leave them for a later case; applied in a later change.
+        self.handoff_context = assistant_handoff_views.handoff_context_for(request)
+        return super().post(request, *args, **kwargs)
 
     def get_ocr_result(self) -> typing.Optional[str]:
         if self.request.method == "POST":
@@ -2096,36 +2175,7 @@ class InitialProcessView(generic.FormView):
 
         # Handle mailing list subscription
         if cleaned_data.get("subscribe"):
-            email = cleaned_data.get("email")
-            # Get name from the POST data (it's not stored in cleaned_data for privacy)
-            fname = self.request.POST.get("fname", "")
-            lname = self.request.POST.get("lname", "")
-            name = f"{fname} {lname}".strip()
-            referral_source = self.request.POST.get("referral_source", "")
-            referral_source_details = self.request.POST.get(
-                "referral_source_details", ""
-            )
-            defaults = {
-                "comments": "From appeal flow",
-                "referral_source": referral_source,
-                "referral_source_details": referral_source_details,
-            }
-            if len(name) > 2:
-                defaults["name"] = name
-            # Use get_or_create to avoid duplicate subscriptions
-            try:
-                models.MailingListSubscriber.objects.get_or_create(
-                    email=email,
-                    defaults=defaults,
-                )
-            except Exception as e:
-                logger.debug(f"Error subscribing {email} to mailing list: {e}")
-                try:
-                    models.MailingListSubscriber.objects.filter(email=email).update(
-                        **defaults
-                    )
-                except Exception as e2:
-                    logger.warning(f"Error updating subscriber? {email}!?!")
+            subscribe_from_appeal_flow(self.request, cleaned_data.get("email"))
 
         # Get microsite slug from request if available and validate it
         microsite_slug = self.request.POST.get(

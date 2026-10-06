@@ -2247,6 +2247,11 @@ async def execute_critical_optional_fireandforget(
         logger.opt(exception=True).error(f"Timed out waiting for required tasks?")
     except Exception as e:
         logger.opt(exception=True).error(f"Error executing required tasks {e}")
+    except BaseException:
+        # The consumer stopped (cancelled or closed): stop what we started.
+        for owned in (*all_tasks, *required_tasks, *optional_tasks):
+            owned.cancel()
+        raise
 
     if timeout is None:
         logger.debug("No timeout set, so all tasks should be done")
@@ -2334,6 +2339,11 @@ def extract_file_text(path: str) -> str:
             return ""
 
 
+def ai_assistants_page_enabled() -> bool:
+    """The Claude/ChatGPT setup page serves only while the MCP server it describes is on."""
+    return bool(getattr(settings, "MCP_SERVER_ENABLED", False))
+
+
 def medicaid_eligibility_page_enabled() -> bool:
     """Whether the experimental Medicaid eligibility landing page is staged on.
 
@@ -2356,3 +2366,19 @@ def strip_internal_keys(parameters: dict) -> dict:
     body can never smuggle internal flags into the generator.
     """
     return {k: v for k, v in parameters.items() if not k.startswith("_")}
+
+
+# Invisible characters that can hide or reorder text: bidirectional controls,
+# zero-width spaces and joiners-of-nothing, the Mongolian vowel separator,
+# interlinear annotation marks, Unicode tag characters and the supplementary
+# variation selectors (which can carry hidden bytes after a visible
+# character). The joiners Persian and Indic scripts need (U+200C, U+200D)
+# and the emoji variation selectors (U+FE00 to U+FE0F) stay.
+INVISIBLE_CONTROLS = re.compile(
+    "[؜᠎​‎‏‪-‮⁠-⁤⁦-⁩" "﻿￹-￻\U000e0000-\U000e007f\U000e0100-\U000e01ef]"
+)
+
+
+def strip_invisible_controls(text: str) -> str:
+    """``text`` without INVISIBLE_CONTROLS."""
+    return INVISIBLE_CONTROLS.sub("", text)

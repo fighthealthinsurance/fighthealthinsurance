@@ -18,6 +18,7 @@ from typing import (
     Iterable,
     Iterator,
     List,
+    Mapping,
     Optional,
     Tuple,
     AsyncGenerator,
@@ -2190,6 +2191,32 @@ def served_reserve_for_another_state() -> Q:
     )
 
 
+def appeal_replay_queryset(denial) -> QuerySet:
+    """The stored drafts the appeal page replays for a denial, newest first."""
+    return (
+        ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
+        .exclude(served_reserve_for_another_state())
+        .order_by(F("created_at").desc(nulls_last=True), "-id")
+        .all()
+    )
+
+
+# Keys of a generation's parameters that a stored answer never supplies.
+_NOT_ANSWERS = frozenset(
+    {
+        "csrfmiddlewaretoken",
+        "denial_id",
+        "email",
+        "semi_sekret",
+        "questionnaire",
+        "professional_to_finish",
+        "reconnect",
+        "medical_context",
+        "misc",
+    }
+)
+
+
 class DenialCreatorHelper:
     regex_denial_processor = ProcessDenialRegex()
     zip_engine = uszipcode.search.SearchEngine()
@@ -2525,6 +2552,7 @@ class DenialCreatorHelper:
         referral_source: Optional[str] = None,
         referral_source_details: Optional[str] = None,
         tracking_info: Optional[TrackingInfo] = None,
+        channel: Optional[str] = None,
     ):
         """
         Create or update an existing denial.
@@ -2555,6 +2583,8 @@ class DenialCreatorHelper:
             referral_source: Optional referral source (e.g., "Search Engine", "Friend or Family").
             referral_source_details: Optional free-text details about the referral source.
             tracking_info: Optional TrackingInfo with user_agent, ASN, and IP (for professionals).
+            channel: Optional channel for a new denial ("assistant"), set before
+                     any background work starts so its spend is counted there.
 
         Returns:
             The created or updated Denial object.
@@ -2573,6 +2603,7 @@ class DenialCreatorHelper:
         professional_to_finish = creating_professional is not None
         # Build tracking kwargs
         tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
+        channel_kwargs = {"channel": channel} if channel else {}
 
         # If we don't have a denial we're making a new one
         is_new_denial = denial is None
@@ -2597,6 +2628,7 @@ class DenialCreatorHelper:
                     referral_source=referral_source,
                     referral_source_details=referral_source_details,
                     **tracking_kwargs,
+                    **channel_kwargs,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -2623,6 +2655,7 @@ class DenialCreatorHelper:
                     referral_source=referral_source,
                     referral_source_details=referral_source_details,
                     **tracking_kwargs,
+                    **channel_kwargs,
                 )
         else:
             # Captured before the overwrite: everything derived from the denial
@@ -4766,16 +4799,31 @@ class AppealsBackendHelper:
 
     @classmethod
     def generate_appeals_for_denial(
-        cls, denial, background: bool = True, lease_epoch: Optional[int] = None
+        cls,
+        denial,
+        background: bool = True,
+        lease_epoch: Optional[int] = None,
+        answers: Optional[Mapping[str, str]] = None,
     ):
         """Internal entry point: the caller already holds a loaded, authorized
         ``Denial``. Builds the parameters itself (including the private
         identity key), so internal dispatchers never construct the public
         parameter dict by hand -- and the public path never learns to accept
         a caller-supplied hash. ``background=True`` also keeps these runs
-        from consuming the user's interactive ``gen_attempts`` budget."""
+        from consuming the user's interactive ``gen_attempts`` budget.
+        ``answers`` are sent as the questions page sends its post (a
+        questionnaire submission), with no control key among them."""
+        parameters: dict[str, Any] = {}
+        if answers:
+            parameters.update(
+                (k, v)
+                for k, v in answers.items()
+                if k not in _NOT_ANSWERS and not k.startswith("_")
+            )
+            parameters["questionnaire"] = True
         return cls.generate_appeals(
             {
+                **parameters,
                 "denial_id": denial.denial_id,
                 "email": None,
                 "semi_sekret": denial.semi_sekret,
@@ -5065,12 +5113,7 @@ class AppealsBackendHelper:
         # whatever the database happened to return. created_at is null on legacy
         # rows, and Postgres sorts NULLs first on DESC, which would have handed
         # those rows the whole budget; nulls_last puts them where they belong.
-        existing_appeals = (
-            ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
-            .exclude(served_reserve_for_another_state())
-            .order_by(F("created_at").desc(nulls_last=True), "-id")
-            .all()
-        )
+        existing_appeals = appeal_replay_queryset(denial)
         # Everything already delivered to this client, by normalized raw text.
         # Grown by every path that ships an appeal (existing rows, streamed
         # drafts, the early reserve flush, synthesis, the end-of-flow
@@ -5209,6 +5252,11 @@ class AppealsBackendHelper:
 
         old = 0
         new = 0
+        # Letters drafted for an assistant, reopened on the site: replayed
+        # without scoring, and with three of them no model is called at all.
+        assistant_reopen = (
+            not background and spend.channel_of(denial) == spend.CHANNEL_ASSISTANT
+        )
         # Stored drafts the cap keeps off the screen, by normalized text. They
         # are NOT served: a synthesis result or a live draft that lands on one
         # of them is new to this user and must be delivered (the uniqueness
@@ -5241,7 +5289,11 @@ class AppealsBackendHelper:
                 old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
                 served_keys.add(key)
-                if scoring_active and letter_quality.needs_scoring(appeal):
+                if (
+                    scoring_active
+                    and not assistant_reopen
+                    and letter_quality.needs_scoring(appeal)
+                ):
                     # An unscored (or older-rubric) draft must not sort
                     # below every fresh one just for being older.
                     _start_scoring(str(appeal.id), appeal.appeal_text)
@@ -5263,6 +5315,25 @@ class AppealsBackendHelper:
                 f"served {old} stored drafts (newest first), held back "
                 f"{len(held_back_keys)}"
             )
+
+        if assistant_reopen and old >= cls.ENOUGH_APPEALS:
+            yield json.dumps(
+                {
+                    "type": "status",
+                    "phase": "done",
+                    "message": f"Complete: 0 new and {old} existing appeals generated",
+                    "new_appeals": 0,
+                    "existing_appeals": old,
+                    "total_appeals": old,
+                    "generation_id": generation_id,
+                    "make_appeals_seconds": -1.0,
+                    "first_model": "none",
+                    "shed_tier": None,
+                    "models_tried": "none",
+                    "speculative_appeals": 0,
+                }
+            ) + "\n"
+            return
 
         # --- Early speculative fallback ---
         # What the precompute had ready before this run started. Logged here so

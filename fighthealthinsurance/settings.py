@@ -178,6 +178,26 @@ class Base(Configuration):
     # page reads it on every request, so turning it off stops outstanding
     # links at once.
     MCP_PREPARE_APPEAL_ENABLED = _env_flag("MCP_PREPARE_APPEAL_ENABLED")
+    # Handoff links v2 (assistant_handoff.py): the payload says what kind of
+    # link it is and which client made it, and a link binds to the first
+    # browser that opens it. Links made before the flag still open.
+    MCP_HANDOFF_V2_ENABLED = _env_flag("MCP_HANDOFF_V2_ENABLED")
+    # The chat path: letters drafted in the background for an assistant to
+    # bring back (assistant_drafts.py, workflows/assistant_appeal.py). Off by
+    # default, on in Dev; it counts as on only with MCP_SERVER_ENABLED,
+    # MCP_PREPARE_APPEAL_ENABLED, TEMPORAL_ENABLED and
+    # TEMPORAL_APPEAL_JOURNEY_ENABLED as well (assistant_drafts.draft_in_chat_enabled).
+    MCP_DRAFT_IN_CHAT_ENABLED = _env_flag("MCP_DRAFT_IN_CHAT_ENABLED")
+    # Pauses the chat path without taking its tools away (clients cache tool
+    # lists): draft_appeal_in_chat then answers site_only with a form link.
+    MCP_DRAFT_IN_CHAT_PAUSED = _env_flag("MCP_DRAFT_IN_CHAT_PAUSED")
+    # Agreements on the chat path's terms page per address per UTC day
+    # (assistant_ip_limit.py); IPv6 counts by /64. Past it the person gets
+    # the site's form instead. FHI_SPEND_ASSISTANT_DAILY_APPEALS stays the
+    # global limit.
+    MCP_ASSISTANT_PER_IP_DAILY = _env_int(
+        "MCP_ASSISTANT_PER_IP_DAILY", 5, minimum=1, maximum=10_000
+    )
     # prepare_appeal's caps, counted from the table so they hold across pods
     # (soft at the edge: two pods can pass the check together): links live
     # at once, and links made in the last minute and not yet opened (opening
@@ -684,6 +704,7 @@ class Base(Configuration):
                     "fighthealthinsurance.context_processors.canonical_url_context",
                     "fighthealthinsurance.context_processors.site_banner_context",
                     "fighthealthinsurance.context_processors.advanced_ocr_context",
+                    "fighthealthinsurance.context_processors.feature_pages_context",
                 ],
             },
         },
@@ -960,6 +981,8 @@ class Dev(Base):
     # MCP_SERVER_ENABLED=0 (only uvicorn serves it; runserver never loads
     # asgi.py).
     MCP_SERVER_ENABLED = _env_flag("MCP_SERVER_ENABLED", "1")
+    MCP_HANDOFF_V2_ENABLED = _env_flag("MCP_HANDOFF_V2_ENABLED", "1")
+    MCP_DRAFT_IN_CHAT_ENABLED = _env_flag("MCP_DRAFT_IN_CHAT_ENABLED", "1")
     CSRF_TRUSTED_ORIGINS = [
         "https://fightpaperwork.com",
         "https://localhost:3000",
