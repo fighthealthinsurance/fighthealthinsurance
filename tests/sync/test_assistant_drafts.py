@@ -136,6 +136,7 @@ FILL_INS_MAIN_LISTED = (
     "[XX-XX-2026]",
     "[MEMBER_ID_2026]",
     "[Id. at PAGE_NUMBER]",
+    "[NPI, e.g. 2026]",
 )
 # Brackets main listed that no citation rule takes, so they stay listed:
 # exhibits and attachments (see placeholders_in), a PubMed id and a link's
@@ -187,6 +188,9 @@ CITATIONS_MAIN_LISTED = (
     "[O'Brien (2018)]",
     "[Narang et al., 2017]",
     "[May et al., 2020]",
+    "[García et al., 2020]",
+    "[Smith et al., 2020; Jones et al., 2021]",
+    "[Ng 2019; O'Brien (2018)]",
     "[Smith et al., 2020, p. 3]",
     "[WATER Trial (2017)]",
     # A quotation's notes.

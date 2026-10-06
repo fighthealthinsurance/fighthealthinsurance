@@ -118,11 +118,17 @@ _REFERENCE_MARK = re.compile(
 # word of letters, so [XX-XX-2026] and [MEMBER_ID_2026] are fill-ins.
 # _FILL_IN_WORDS keeps dates and prompts out where there is no et al.:
 # [Month, 2018], [Late 2018], [Plan Year 2026], [Your Name, 2026].
-_AUTHORS = re.compile(
-    r"[A-Z][A-Za-z'’.\-]*(?:,?\s+(?:[A-Z][A-Za-z'’.\-]*|and|&|of|for|the))*"
+# An author's word: letters of any script, with apostrophes, stops and
+# hyphens (O'Brien, García, Smith-Jones), never a digit or an underscore.
+_AUTHOR_WORD = r"[^\W\d_](?:[^\W\d_]|['’.\-])*"
+_ONE_SOURCE = (
+    rf"{_AUTHOR_WORD}(?:,?\s+(?:{_AUTHOR_WORD}|and|&|of|for|the))*"
     r"(?:,?\s+et\s+al\.?)?(?:,?\s+\(?(?:19|20)\d\d[a-z]?\)?)?"
     r"(?:,?\s+pp?\.\s*\d[\d\-–]*)?"
 )
+# One source or several: [Smith et al., 2020; Jones et al., 2021].
+_AUTHORS = re.compile(rf"{_ONE_SOURCE}(?:\s*;\s*{_ONE_SOURCE})*")
+_AUTHOR_JOINERS = frozenset(("and", "of", "for", "the", "et", "al", "al."))
 _HAS_YEAR = re.compile(r"\s\(?(?:19|20)\d\d[a-z]?\)?(?:,?\s+pp?\.\s*\d[\d\-–]*)?$")
 _FILL_IN_WORDS = frozenset(
     "jan january feb february mar march apr april may jun june jul july aug "
@@ -418,15 +424,26 @@ def _file_answers(draft: AssistantDraft, denial: Denial, answers: list) -> int:
     return len(updates)
 
 
+def _is_one_source(source: str) -> bool:
+    source = source.strip()
+    # Every author's word is capitalised, the year and page aside: [NPI,
+    # e.g. 2026] is a fill-in.
+    names = re.sub(r"\(?(?:19|20)\d\d[a-z]?\)?|pp?\.\s*\d[\d\-–]*", " ", source)
+    for word in re.findall(_AUTHOR_WORD, names):
+        if word not in _AUTHOR_JOINERS and not word[0].isupper():
+            return False
+    if re.search(r"\bet\s+al\b", source):
+        # No fill-in says et al.: [May et al., 2020] is a citation.
+        return True
+    if any(w in _FILL_IN_WORDS for w in re.findall(r"[^\W\d_]+", source.lower())):
+        return False
+    return bool(_HAS_YEAR.search(source))
+
+
 def _is_authors(inside: str) -> bool:
     if not _AUTHORS.fullmatch(inside):
         return False
-    if re.search(r"\bet\s+al\b", inside):
-        # No fill-in says et al.: [May et al., 2020] is a citation.
-        return True
-    if any(w in _FILL_IN_WORDS for w in re.findall(r"[a-z]+", inside.lower())):
-        return False
-    return bool(_HAS_YEAR.search(inside))
+    return all(_is_one_source(source) for source in inside.split(";"))
 
 
 def _is_citation(bracket: str) -> bool:
