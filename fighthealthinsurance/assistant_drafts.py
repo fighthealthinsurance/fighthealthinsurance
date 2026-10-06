@@ -63,8 +63,79 @@ FIELD_MAX_CHARS = 80
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _URL = re.compile(r"https?://|www\.", re.IGNORECASE)
+# What a letter lists for the assistant to fill in (placeholders_in), less
+# its citations: {{FIRST_NAME}}, {diagnosis}, a bracket that starts with a
+# capital ([Your Name], [DOB: MM/DD/YYYY]) and $your_name_here.
 _PLACEHOLDER = re.compile(
     r"\{\{?[A-Za-z_][A-Za-z0-9_ ]*\}\}?|\[[A-Z][^\]\n]{2,40}\]|\$[a-z][a-z_]{2,}\b"
+)
+# What a quotation's note says was left out: [Internal citations omitted].
+_OMITTED = r"(?:internal )?(?:citations?|quotation marks|quotations?|footnotes?)"
+# The note a quotation carries, any case: [Emphasis added], [Sic].
+_QUOTATION_NOTE = (
+    r"emphasis (?:added|ours|in (?:the )?original|omitted|supplied|mine)"
+    rf"|{_OMITTED}(?:,? and {_OMITTED})* omitted"
+    r"|(?:alterations?|brackets) in (?:the )?original"
+    r"|cleaned up"
+    r"|sic"
+)
+# Each rule below must match the whole of a bracket's inside, never a part of
+# it: a fill-in that mentions a regulation or a year ([USC Specialist's
+# Name], [Month, 2018], [Current dose, e.g. 0.125 mg]) stays listed.
+#
+# [Id.], [Id. at 5], [Ibid., p. 12], [Ibid], and one or more quotation notes:
+# [Emphasis added; citations omitted]. A reference number or a list of them
+# ([1], [3, 4], [2-5]) needs no rule: _PLACEHOLDER never finds one, as it
+# starts with no capital.
+_WHOLE_CITATION = re.compile(
+    # A locator is a number: [Id. at PAGE_NUMBER] is still to be filled in.
+    r"(?:(?:Id|Ibid)\.|Ibid)(?:,?\s*(?:at|pp?\.)\s*\d[\d\-–, ]*)?"
+    rf"|(?i:(?:{_QUOTATION_NOTE})(?:(?:\s*[,;]\s*|\s+)(?:and\s+)?(?:{_QUOTATION_NOTE}))*)"
+    r"\.?"
+)
+# A regulation or statute, the whole bracket: [See 42 CFR 438.210], [Title 42
+# U.S.C. 300gg-19], [CMS NCD 220.2], [Medicare LCD L33822], [Pub. L.
+# 111-148], [ERISA § 503], [Section 438.210], [ACA Section 2719].
+_REGULATION = re.compile(
+    r"(?:(?:See(?: also)?|Cf\.|Under|Per|Pursuant to)\s+)?(?:Title\s+)?(?:"
+    r"\d+\s+(?:CFR|C\.F\.R\.|U\.S\.C\.|USC)\s*§*\s*\d[\w.\-]*(?:\(\w+\))*"
+    r"(?:\s*(?:,|and)\s*\d[\w.\-]*(?:\(\w+\))*)*"
+    r"|(?:CMS\s+|Medicare\s+)?(?:NCD|LCD)\s+L?\d+(?:\.\d+)*"
+    r"|Pub\.\s?L\.\s?(?:No\.\s?)?\d+-\d+"
+    r"|(?:[A-Z][A-Za-z]{1,10}\s+)?§{1,2}\s*\d[\w.\-]*(?:\(\w+\))*"
+    r"(?:\s*(?:,|and)\s*\d[\w.\-]*(?:\(\w+\))*)*"
+    r"|(?:[A-Z]{2,6}\s+)?Sec(?:tion|\.)\s?\d+(?:\.\d+)*(?:\(\w+\))*"
+    r")"
+)
+# A reference marker with a capital: [Reference 1], [Refs. 2-4], [References
+# 1, 3 and 5].
+_REFERENCE_MARK = re.compile(
+    r"Ref(?:erence)?s?\.?\s*\d+(?:\s*(?:,|–|-|and|,\s*and)\s*\d+)*"
+)
+# Authors, then et al. or a year (or both), maybe a page, the whole bracket:
+# [Smith et al.], [Smith 2020a], [Smith and Jones, 2019], [Smith et al., 2020,
+# p. 3], [American Diabetes Association (2023)]. An author is a capitalised
+# word of letters, so [XX-XX-2026] and [MEMBER_ID_2026] are fill-ins.
+# _FILL_IN_WORDS keeps dates and prompts out where there is no et al.:
+# [Month, 2018], [Late 2018], [Plan Year 2026], [Your Name, 2026].
+# An author's word: letters of any script, with apostrophes, stops and
+# hyphens (O'Brien, García, Smith-Jones), never a digit or an underscore.
+_AUTHOR_WORD = r"[^\W\d_](?:[^\W\d_]|['’.\-])*"
+_ONE_SOURCE = (
+    rf"{_AUTHOR_WORD}(?:,?\s+(?:{_AUTHOR_WORD}|and|&|of|for|the))*"
+    r"(?:,?\s+et\s+al\.?)?(?:,?\s+\(?(?:19|20)\d\d[a-z]?\)?)?"
+    r"(?:,?\s+pp?\.\s*\d[\d\-–]*)?"
+)
+# One source or several: [Smith et al., 2020; Jones et al., 2021].
+_AUTHORS = re.compile(rf"{_ONE_SOURCE}(?:\s*;\s*{_ONE_SOURCE})*")
+_AUTHOR_JOINERS = frozenset(("and", "of", "for", "the", "et", "al", "al."))
+_HAS_YEAR = re.compile(r"\s\(?(?:19|20)\d\d[a-z]?\)?(?:,?\s+pp?\.\s*\d[\d\-–]*)?$")
+_FILL_IN_WORDS = frozenset(
+    "jan january feb february mar march apr april may jun june jul july aug "
+    "august sep sept september oct october nov november dec december month "
+    "day year date dd mm yy yyyy late early mid insert your name signature "
+    "spring summer fall autumn winter plan dob birth service approx around "
+    "since before after eg".split()
 )
 # A question that ends with its options in brackets: "(inpatient/outpatient)".
 _CHOICES = re.compile(r"\(([^()]+)\)\s*\?\s*$")
@@ -353,6 +424,83 @@ def _file_answers(draft: AssistantDraft, denial: Denial, answers: list) -> int:
     return len(updates)
 
 
+def _is_one_source(source: str) -> bool:
+    source = source.strip()
+    # Every author's word is capitalised, the year and page aside: [NPI,
+    # e.g. 2026] is a fill-in.
+    names = re.sub(r"\(?(?:19|20)\d\d[a-z]?\)?|pp?\.\s*\d[\d\-–]*", " ", source)
+    for word in re.findall(_AUTHOR_WORD, names):
+        if word not in _AUTHOR_JOINERS and not word[0].isupper():
+            return False
+    if re.search(r"\bet\s+al\b", source):
+        # No fill-in says et al.: [May et al., 2020] is a citation.
+        return True
+    if any(w in _FILL_IN_WORDS for w in re.findall(r"[^\W\d_]+", source.lower())):
+        return False
+    return bool(_HAS_YEAR.search(source))
+
+
+def _is_authors(inside: str) -> bool:
+    if not _AUTHORS.fullmatch(inside):
+        return False
+    return all(_is_one_source(source) for source in inside.split(";"))
+
+
+def _is_citation(bracket: str) -> bool:
+    """Whether a bracket _PLACEHOLDER found is, as a whole, a citation or a
+    quotation's note, which the assistant has nothing to fill in for."""
+    inside = bracket[1:-1].strip()
+    if "[" in inside or _PLACEHOLDER.search(inside):
+        # A fill-in may be in there ([See [Your Name], [Cite {{YEAR}}]), and
+        # it is listed only as part of this bracket, so the bracket stays.
+        return False
+    return bool(
+        _WHOLE_CITATION.fullmatch(inside)
+        or _REGULATION.fullmatch(inside)
+        or _REFERENCE_MARK.fullmatch(inside)
+        or _is_authors(inside)
+    )
+
+
+def placeholders_in(text: str) -> list[str]:
+    """The fill-ins left in a letter, each once, sorted, each exactly as the
+    letter has it.
+
+    What main has always listed (_PLACEHOLDER, read left to right), less
+    the brackets that are clearly citations or a quotation's notes, and
+    nothing else. Listed: {{FIRST_NAME}}, {diagnosis}, $your_name_here and
+    a bracket that starts with a capital, whatever else is in it ([Dr.
+    Name], [ICD-10 Code], [Claim Number: ], [DOB: MM/DD/YYYY], [Physician
+    Name, M.D.], [Your {{FIRST_NAME}}]). Each is a piece of the letter
+    itself. A {{...}} or $name inside a listed bracket is not listed again,
+    nor is a bracket opened inside one: a bracket runs to the first "]", so
+    "Ref [Dear [Your Name] Sir]" lists "[Dear [Your Name]" and not "[Your
+    Name]" as well. Never listed, as on main: [It], [doctor name], [1], [3,
+    4], [42 CFR 438.210], or a bracket with over 41 characters inside.
+
+    Left out, only when the whole bracket is one: a regulation or statute
+    ([See 42 CFR 438.210], [CMS NCD 220.2], [Medicare LCD L33822], [Pub. L.
+    111-148], [ERISA § 503], [Section 438.210], [Section 2.1]); a reference
+    marker ([Reference 1], [Refs. 2-4]); authors with et al. or a year
+    ([Smith et al.], [Smith 2020], [Smith and Jones, 2019a]); a
+    quotation's notes ([Emphasis added], [Emphasis ours], [Internal
+    citations omitted], [Footnotes and citations omitted], [Alterations in
+    original], [Brackets in original], [Cleaned up], [Sic]); [Id.] and
+    [Ibid]. A bracket with a fill-in inside it is never one (_is_citation).
+
+    [Exhibit A], [Attachment B] and [Appendix C] stay listed, as main
+    listed them: a template uses the same words for an attachment still to
+    be named. Listing one that names a real attachment costs the assistant
+    a question; leaving out one still to be named leaves a blank in the
+    letter.
+    """
+    return sorted(
+        found
+        for found in set(_PLACEHOLDER.findall(text))
+        if not (found.startswith("[") and _is_citation(found))
+    )
+
+
 def collect_letters(denial: Denial) -> list[dict[str, Any]]:
     """The letters the site would show, as the assistant gets them.
 
@@ -384,7 +532,7 @@ def collect_letters(denial: Denial) -> list[dict[str, Any]]:
         letters.append(
             {
                 "text": content,
-                "placeholders": sorted(set(_PLACEHOLDER.findall(content))),
+                "placeholders": placeholders_in(content),
                 "cut_short": cut,
             }
         )
