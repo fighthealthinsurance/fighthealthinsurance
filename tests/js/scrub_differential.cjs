@@ -124,19 +124,23 @@ const main = scrubbersIn(spec.main);
 // Main's label rules ("Dear", "Patient:", ...), read out of its compiled
 // scrubber: each is new RegExp("<source>", "gmi").
 const MAIN_LABEL_SOURCES = new Set();
-{
-  const compiled = require('fs').readFileSync(path.join(spec.main, 'scrub_scrub.js'), 'utf8');
+// The label rules' sources, main's and the branch's (the branch only keeps a
+// label from eating a placeholder's braces), so both runs' label steps are
+// told apart from the typed values'.
+for (const dir of [spec.main, ...(spec.branch !== 'main' && spec.branch !== 'identity' ? [spec.branch] : [])]) {
+  const compiled = require('fs').readFileSync(path.join(dir, 'scrub_scrub.js'), 'utf8');
   const rule = /new RegExp\(("(?:[^"\\]|\\.)*"), "gmi"\)/g;
   let m;
   while ((m = rule.exec(compiled)) !== null) {
-    // A JavaScript string literal from main's own file, not JSON: one of
+    // A JavaScript string literal from the file itself, not JSON: one of
     // them has a \. in it.
     MAIN_LABEL_SOURCES.add(new RegExp(new Function('return ' + m[1])(), 'gmi').source);
   }
-  if (MAIN_LABEL_SOURCES.size < 10) {
-    throw new Error("could not read main's label rules: " + MAIN_LABEL_SOURCES.size);
-  }
 }
+if (MAIN_LABEL_SOURCES.size < 10) {
+  throw new Error("could not read the label rules: " + MAIN_LABEL_SOURCES.size);
+}
+
 const mainPattern = require(path.join(spec.main, 'typed_value_pattern.js')).typedValuePattern;
 const branch =
   spec.branch === 'main' ? main : spec.branch === 'identity' ? null : scrubbersIn(spec.branch);
@@ -320,6 +324,7 @@ const CASED_LETTER = /^[\p{Lu}\p{Ll}\p{Lt}]$/u;
 // and ½, ² or Ⅳ, so "14½" is one word.
 const NUMBER = /^\p{N}$/u;
 const LETTER = /^\p{L}$/u;
+const CASED_SCRIPT_LETTER = /^[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Armenian}]$/u;
 const MARK = /^\p{M}$/u;
 const LETTER_DIGIT_OR_MARK = /^[\p{L}\p{N}\p{M}]$/u;
 
@@ -332,7 +337,7 @@ function casedOrDigit(ch) {
   return (
     CASED_LETTER.test(ch) ||
     NUMBER.test(ch) ||
-    (LETTER.test(ch) && ch.toUpperCase() !== ch.toLowerCase())
+    (LETTER.test(ch) && (ch.toUpperCase() !== ch.toLowerCase() || CASED_SCRIPT_LETTER.test(ch)))
   );
 }
 
@@ -382,6 +387,8 @@ function lettersDigitsAndMarks(text) {
 // More than one run of word characters and letters of a script without
 // capitals, all told.
 function ofSeveralWords(value) {
+  // Typed as more than one piece ("# 4B") counts, as the scrubber has it.
+  if (value.trim().split(/\s+/).length > 1) return true;
   let words = wordMap(value).words.length;
   for (let i = 0; i < value.length; ) {
     const ch = codePointAt(value, i);
@@ -641,6 +648,11 @@ function generator(seed) {
 // The cases the reviews found, and the gaps they listed, first.
 const HAND_WRITTEN = [
   [{fname: 'Ann', lname: 'Doe'}, '患者Ann Doe的申请'],
+  [{street: '# 4B'}, 'Unit # 4BC'],
+  [{fname: 'Nǀuu'}, 'preNǀuupost and Nǀuu'],
+  [{}, 'Subscriber ID {{SCSID}} and Group ID {{GPID}}'],
+  [{}, 'Subscriber ID: 123456789 and Group #: 4455'],
+  [{}, 'Subscriber ID {123456789 and Group ID {4455'],
   [{street: '4½'}, 'I live at 14½ and Ann Doe.'],
   [{lname: 'Doe²'}, '2Doe² and Doe²'],
   [{street: '12 Ⅳ St'}, 'Unit 12 Ⅳ Street'],
@@ -826,7 +838,16 @@ function compare(counts, which, typed, typedValues, letter, mainRun, branchRun, 
         counts.mainMatchesFromUntypedBoxes++;
         continue;
       }
-      if (strictlyInsideOneWord(map, taken)) {
+      // The exemption, the bug being fixed: a value typed as one piece that
+      // main cut out of a word, its match starting or ending inside a word
+      // ("M" in "Example", "J." in "McJ."). A value typed as more pieces
+      // ("# 4B") is never exempt: the branch takes those out whole, run-on
+      // words included. The label rules are main's and checked as before.
+      const lo = Math.min(...c.removed);
+      const hi = Math.max(...c.removed) + 1;
+      const cutsAWord = (i) => i > 0 && i < letter.length && map.index[i - 1] >= 0 && map.index[i - 1] === map.index[i];
+      const onePiece = !s.source.includes('\\s+');
+      if (label ? strictlyInsideOneWord(map, taken) : onePiece && (cutsAWord(lo) || cutsAWord(hi))) {
         counts.mainMatchesInsideAWord++;
         continue;
       }
@@ -868,7 +889,7 @@ function compare(counts, which, typed, typedValues, letter, mainRun, branchRun, 
       re.lastIndex = start + 1;
       const letters = [];
       for (let k = start; k < end; k++) if (searchedHeld[k]) letters.push(k);
-      if (strictlyInsideOneWord(searchedMap, letters)) continue;
+      if (!several && strictlyInsideOneWord(searchedMap, letters)) continue;
       mark(inAMatch, start, end);
       if (several && !edgeAt(searchedMap, start)) {
         mark(runOn, searchedMap.words[searchedMap.index[start]].start, start);

@@ -63,6 +63,12 @@ function escapeRegExp(text: string): string {
 const LETTER_OR_DIGIT = new RegExp("[\\p{L}\\p{N}]", "u");
 const LETTER = new RegExp("^\\p{L}$", "u");
 const CASED_LETTER = new RegExp("^[\\p{Lu}\\p{Ll}\\p{Lt}]$", "u");
+// A letter of a script that has capitals, even one with no case of its own
+// (Latin "ǀ"), so it joins the letters either side into one word.
+const CASED_SCRIPT_LETTER = new RegExp(
+  "^[\\p{Script=Latin}\\p{Script=Greek}\\p{Script=Cyrillic}\\p{Script=Armenian}]$",
+  "u",
+);
 // Any number character: 0-9 and other scripts' digits, and also ½, ² and Ⅳ,
 // so "14½" is one word and a typed "4½" is not looked for inside it.
 const DIGIT = new RegExp("^\\p{N}$", "u");
@@ -103,7 +109,8 @@ function casedLetterOrDigit(character: string): boolean {
   return (
     CASED_LETTER.test(character) ||
     DIGIT.test(character) ||
-    (LETTER.test(character) && character.toUpperCase() !== character.toLowerCase())
+    (LETTER.test(character) &&
+      (character.toUpperCase() !== character.toLowerCase() || CASED_SCRIPT_LETTER.test(character)))
   );
 }
 
@@ -171,7 +178,9 @@ export function typedValue(value: string): TypedValue | null {
   const words = value.split(/\s+/).filter((word) => word !== "");
   return {
     pattern: new RegExp(words.map(escapeRegExp).join("\\s+"), "gi"),
-    runsOn: wordsIn(value) > 1,
+    // Typed as more than one piece ("# 4B") counts too: main's match crossed
+    // the space, so it is never a match inside one word.
+    runsOn: wordsIn(value) > 1 || words.length > 1,
   };
 }
 

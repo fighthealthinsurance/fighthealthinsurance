@@ -40,27 +40,27 @@ var scrubRegex: ScrubRegex[] = [
   ],
   [new RegExp("dear\\s+(?<token>\\w+)", "gmi"), "name", "Dear {{FIRST_NAME}} {{LAST_NAME}}"],
   [
-    new RegExp("Subscriber\\s*ID\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"),
+    new RegExp("Subscriber\\s*ID\\s*(?!\\{\\{).?\\s*(?!\\{\\{).?\\s*(?<token>\\w+)", "gmi"),
     "subscriber_id",
     "Subscriber ID: {{SCSID}}",
   ],
   [
-    new RegExp("Group\\s*ID\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"),
+    new RegExp("Group\\s*ID\\s*(?!\\{\\{).?\\s*(?!\\{\\{).?\\s*(?<token>\\w+)", "gmi"),
     "group_id",
     "Group ID: {{GPID}}",
   ],
   [
-    new RegExp("Group\\s*.?\\s*:\\s*(?<token>\\w+)", "gmi"),
+    new RegExp("Group\\s*(?!\\{\\{).?\\s*:\\s*(?<token>\\w+)", "gmi"),
     "group_id",
     "Group ID: {{GPID}}",
   ],
   [
-    new RegExp("Subscriber\\s*number\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"),
+    new RegExp("Subscriber\\s*number\\s*(?!\\{\\{).?\\s*(?!\\{\\{).?\\s*(?<token>\\w+)", "gmi"),
     "subscriber_id",
     "Subscriber ID: {{SCSID}}",
   ],
   [
-    new RegExp("Group\\s*number\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"),
+    new RegExp("Group\\s*number\\s*(?!\\{\\{).?\\s*(?!\\{\\{).?\\s*(?<token>\\w+)", "gmi"),
     "group_id",
     "Group ID: {{GPID}}",
   ],
