@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock, patch
 import aiohttp
 from asgiref.sync import async_to_sync
 from django.core.management import call_command
-from django.test import TestCase, TransactionTestCase, override_settings
+from django.test import (
+    SimpleTestCase,
+    TestCase,
+    TransactionTestCase,
+    override_settings,
+)
 from django.utils import timezone
 
 from fighthealthinsurance import appeal_journey_core
@@ -310,6 +315,17 @@ class LettersTest(TestCase):
         self.assertIn("$your_name_here", letter["placeholders"])
         self.assertNotIn("$500", letter["placeholders"])
 
+    def test_citations_in_a_letter_are_not_listed_as_placeholders(self):
+        denial = a_denial()
+        self._row(
+            denial,
+            LETTER + " Coverage follows [CMS NCD 220.2], [42 CFR 438.210] and "
+            "the evidence [1], [Smith et al. 2020].",
+        )
+        [letter] = drafts.collect_letters(denial)
+        cited = {"[CMS NCD 220.2]", "[42 CFR 438.210]", "[1]", "[Smith et al. 2020]"}
+        self.assertEqual(cited & set(letter["placeholders"]), set())
+
     def test_a_long_letter_is_cut_and_says_so(self):
         denial = a_denial()
         self._row(denial, LETTER + " more. " * 2000)
@@ -338,6 +354,58 @@ class LettersTest(TestCase):
             denial, generation_lease.new_holder("interactive"), steal=True
         )
         self.assertTrue(drafts.site_took_generation(denial))
+
+
+class PlaceholdersTest(SimpleTestCase):
+    """What a letter lists for the assistant to fill in: fill-in prompts,
+    never citations."""
+
+    def test_fill_in_prompts_are_placeholders(self):
+        for prompt in (
+            "[DATE]",
+            "[Your Phone Number]",
+            "[Patient Name]",
+            "[Member ID]",
+            "[Patient's Name]",
+            "[Patient’s Name]",
+            "[City, State ZIP]",
+            "{{FIRST_NAME}}",
+            "{diagnosis}",
+            "$your_name_here",
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(
+                    drafts.placeholders_in(f"Signed {prompt} today."), [prompt]
+                )
+
+    def test_citations_are_not_placeholders(self):
+        for citation in (
+            "[CMS NCD 220.2]",
+            "[42 CFR 438.210]",
+            "[1]",
+            "[Smith et al. 2020]",
+            "[29 C.F.R. 2560.503-1]",
+            "[Id.]",
+        ):
+            with self.subTest(citation=citation):
+                self.assertEqual(
+                    drafts.placeholders_in(f"As required {citation}, reverse it."),
+                    [],
+                )
+
+    def test_a_links_text_is_not_a_placeholder(self):
+        self.assertEqual(
+            drafts.placeholders_in(
+                "See the [Coverage Policy](https://example.com/policy)."
+            ),
+            [],
+        )
+
+    def test_each_fill_in_is_listed_once_sorted(self):
+        self.assertEqual(
+            drafts.placeholders_in("[Your Name], [DATE], [Your Name] per [1]."),
+            ["[DATE]", "[Your Name]"],
+        )
 
 
 class GenerationAnswersTest(TestCase):

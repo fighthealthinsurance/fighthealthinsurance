@@ -63,8 +63,17 @@ FIELD_MAX_CHARS = 80
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _URL = re.compile(r"https?://|www\.", re.IGNORECASE)
+# The fill-ins a letter lists (placeholders_in): {{FIRST_NAME}} or
+# {diagnosis}, $your_name_here, and a bracketed prompt in words, such as
+# [DATE], [Your Name] or [Member ID]. A bracket with a digit or a full stop
+# in it is a citation, not a fill-in ([1], [CMS NCD 220.2],
+# [42 CFR 438.210], [Smith et al. 2020]), and so is a link's text
+# ([Coverage Policy](https://...)). The bracket rule is the fax form's
+# "brackets around a capitalised name" (letter_placeholders.json).
 _PLACEHOLDER = re.compile(
-    r"\{\{?[A-Za-z_][A-Za-z0-9_ ]*\}\}?|\[[A-Z][^\]\n]{2,40}\]|\$[a-z][a-z_]{2,}\b"
+    r"\{\{?[A-Za-z_][A-Za-z0-9_ ]*\}\}?"
+    r"|\[[A-Z][A-Za-z_'\u2019#/&(), -]{2,40}\](?!\()"
+    r"|\$[a-z][a-z_]{2,}\b"
 )
 # A question that ends with its options in brackets: "(inpatient/outpatient)".
 _CHOICES = re.compile(r"\(([^()]+)\)\s*\?\s*$")
@@ -353,6 +362,11 @@ def _file_answers(draft: AssistantDraft, denial: Denial, answers: list) -> int:
     return len(updates)
 
 
+def placeholders_in(text: str) -> list[str]:
+    """The fill-ins left in a letter, each once, sorted (see _PLACEHOLDER)."""
+    return sorted(set(_PLACEHOLDER.findall(text)))
+
+
 def collect_letters(denial: Denial) -> list[dict[str, Any]]:
     """The letters the site would show, as the assistant gets them.
 
@@ -384,7 +398,7 @@ def collect_letters(denial: Denial) -> list[dict[str, Any]]:
         letters.append(
             {
                 "text": content,
-                "placeholders": sorted(set(_PLACEHOLDER.findall(content))),
+                "placeholders": placeholders_in(content),
                 "cut_short": cut,
             }
         )

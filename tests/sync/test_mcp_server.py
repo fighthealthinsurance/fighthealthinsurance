@@ -39,6 +39,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from fighthealthinsurance import (
     agent_docs,
+    assistant_draft_tools,
     assistant_handoff,
     glossary,
     mcp_server,
@@ -2278,17 +2279,20 @@ class ChatPathToolsTest(TestCase):
         self.enterContext(override_settings(**CHAT_ON))
         mcp_server._WAITING_ON.clear()
 
-    def _draft(self, letters: int = 0, status: str = "drafting", **fields):
-        from fighthealthinsurance import assistant_drafts
-
-        denial = a_chat_denial()
-        for i in range(letters):
+    def _letters(self, denial, count: int):
+        for i in range(count):
             models.ProposedAppeal.objects.create(
                 for_denial=denial,
                 appeal_text="Dear Example Health, I am writing to appeal the "
                 "denial of my MRI, which my doctor ordered as medically "
                 f"necessary. Please reverse it. Sincerely, {{{{FIRST_NAME}}}} {i}",
             )
+
+    def _draft(self, letters: int = 0, status: str = "drafting", **fields):
+        from fighthealthinsurance import assistant_drafts
+
+        denial = a_chat_denial()
+        self._letters(denial, letters)
         new = assistant_drafts.create_draft(denial)
         models.AssistantDraft.objects.filter(pk=new.draft.pk).update(
             status=status, status_at=timezone.now(), **fields
@@ -2404,6 +2408,57 @@ class ChatPathToolsTest(TestCase):
                 routes=chat_routes(),
             )
         self.assertEqual(view.await_count, 1)
+
+    def _structured(self, result) -> dict[str, Any]:
+        """A reply's structuredContent, which says what its text says."""
+        self.assertFalse(result.isError, text_of(result))
+        self.assertIsNotNone(result.structuredContent, text_of(result))
+        self.assertEqual(result.structuredContent, json.loads(text_of(result)))
+        return result.structuredContent
+
+    def test_a_reply_at_once_carries_structured_content(self):
+        _, draft_id = self._draft(letters=3)
+        result = async_to_sync(call)(
+            "get_appeal_drafts", {"draft_id": draft_id}, routes=chat_routes()
+        )
+        self.assertEqual(self._structured(result)["next"], "show_letters")
+
+    def test_a_reply_after_a_long_poll_carries_structured_content(self):
+        # The letters land during the wait; each look reads the database.
+        denial, draft_id = self._draft(status="drafting")
+        looks: list[str] = []
+        look = assistant_draft_tools.view_by_id
+
+        def letters_land_on_the_second_look(asked: str):
+            looks.append(asked)
+            if len(looks) == 2:
+                self._letters(denial, 3)
+            return look(asked)
+
+        with mock.patch.object(
+            assistant_draft_tools,
+            "view_by_id",
+            side_effect=letters_land_on_the_second_look,
+        ), mock.patch.object(mcp_server, "DRAFT_POLL_SECONDS", 0.01):
+            result = async_to_sync(call)(
+                "get_appeal_drafts",
+                {"draft_id": draft_id, "seen": "drafting", "wait": 5},
+                routes=chat_routes(),
+            )
+        self.assertEqual(len(looks), 2)
+        self.assertEqual(self._structured(result)["next"], "show_letters")
+
+    def test_a_reply_after_a_long_poll_that_runs_out_carries_structured_content(
+        self,
+    ):
+        _, draft_id = self._draft(status="reading")
+        with mock.patch.object(mcp_server, "DRAFT_POLL_SECONDS", 0.2):
+            result = async_to_sync(call)(
+                "get_appeal_drafts",
+                {"draft_id": draft_id, "seen": "reading", "wait": 1},
+                routes=chat_routes(),
+            )
+        self.assertEqual(self._structured(result)["status"], "reading")
 
     def test_ready_letters_come_back_without_naming_the_case(self):
         denial, draft_id = self._draft(letters=3)
