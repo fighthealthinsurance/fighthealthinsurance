@@ -1,258 +1,245 @@
-// A value the person typed (their name, their street) as a regular
-// expression that finds it in a letter however the letter spaces it, and
-// only where it stands as whole words, and the replace that puts a
-// placeholder in its place. Used by Remove personal details (scrub_scrub.ts)
-// and by the chat's scrubPersonalInfo (user_info_storage.ts).
+// What the person typed (their name, their street) found in a letter, and
+// taken out of it where it stands as whole words. Used by Remove personal
+// details (scrub_scrub.ts) and by the chat's scrubPersonalInfo
+// (user_info_storage.ts).
 //
 // Spacing: each word is escaped, and any run of whitespace between words
-// (spaces, a tab, a line break) is taken as equal. A letter often puts "Apt
-// 4B" on the line under "123 Sample Street", so a typed "123 Sample Street
-// Apt 4B" matched with its literal spaces was left in the letter.
+// (spaces, a tab, a line break, a non-breaking space) is taken as equal. A
+// letter often puts "Apt 4B" on the line under "123 Sample Street", so a
+// typed "123 Sample Street Apt 4B" matched with its literal spaces was left
+// in the letter. A word is whatever was typed between spaces, punctuation
+// and all, so a typed "123 Main St , Apt 4B" finds the same text.
 //
-// Whole words: a letter or a digit, in any script, right before or right
-// after the value stops the match. Matched anywhere, a typed "Ann" took the
-// "ann" out of "annual" and an "Ed" the "ed" out of "denied", and in a live
-// test a short first name turned "Example Health Plan" into "Exa
-// {{FIRST_NAME}}ple Health Plan" before the letter was drafted from. \b knows
-// only A to Z, so it would never end a match after the "é" of "José" and
-// would let "Jos" match inside "José". The edges are tested over Unicode
-// letters, the marks that sit on them, and digits (the u flag): after the
-// value with a lookahead; before it by matching the one character there (or
-// the start of the text) and putting it back, which is what
-// replaceTypedValue is for. A lookbehind would say it more simply, but
-// Safari before 16.4 (iOS 15 and early iOS 16) cannot read one, and a
-// pattern it cannot read throws.
+// Whole words: matched anywhere, a typed "Ann" took the "ann" out of
+// "annual" and an "Ed" the "ed" out of "denied", and in a live test a typed
+// "M" turned "Example Health Plan" into "Exa {{FIRST_NAME}}ple Health Plan"
+// before the letter was drafted from. So a match is left where it sits
+// inside a longer word: where the character right before it or right after
+// it is part of the same word as the match's own first or last character
+// (inOneWord). That is the one thing matching anywhere took out that this
+// leaves in. Part of the same word:
+// - letters that have capitals (Latin, Greek, Cyrillic, ...) and digits run
+//   together: "Ann" stays in "Joann", "Annie" and "Ann2";
+// - a mark is part of the letter it sits on: "Jose" stays in a "José"
+//   written with a combining accent;
+// - but each letter of a script without capitals is a word to itself.
+//   Chinese, Japanese and Thai put no space between words, and Korean,
+//   Arabic and Hebrew join particles and prefixes to a name ("김민수님께",
+//   "ومحمد"), so 王小明 is still taken out of "患者王小明的申请" (and the
+//   王 out of 王国, as matching anywhere did);
+// - and a change between such a script and one with capitals or a digit is
+//   the edge of a word: "Ann Doe" is taken out of "患者Ann Doe的申请", an
+//   email out of "我的电子邮箱是ann@example.com。".
+// Nothing else is part of a word. An apostrophe, a hyphen, a period or an
+// underscore is not, so "Brien" is taken out of "O'Brien", "Smith" out of
+// "Smith-Jones" and an email out of "first.ann@example.com", as before.
+// A lone initial is looked for too: as a whole word, a typed "A" takes the
+// "a" out of "a plan", where matching anywhere took it out of every word.
 //
-// Apostrophes: an apostrophe joined to a word is part of it. A typed "Brien"
-// is not taken out of "O'Brien", nor "Don" out of "don't", but "Ann's" loses
-// its "Ann". A straight apostrophe typed in the value also finds the curly
-// one a letter prints (O’Brien). A hyphen is not part of a word: a typed
-// "Smith" is taken out of "Smith-Jones", which is still the person's name.
+// Safari before 16.4 (iOS 15 and early iOS 16) cannot read a lookbehind,
+// and a pattern it cannot read throws. So the edges are not in the pattern:
+// typedValueMatches tests them from where each match starts and ends.
 //
-// Ends: punctuation at either end of what was typed ("Jr.", "4B,") is left
-// off, so the edges are tested where the value's letters start and stop, and
-// "123 Sample St." finds "123 Sample St" as well.
+// Every value is looked for in the text as it is, before any is taken out
+// (takeOutTypedValues), so taking one out never hides another, and a
+// {{PLACEHOLDER}} in the text is passed over whole. Taken out one after
+// another, a first name inside the street ("77 Ann St") broke the street up
+// and left the rest of it, and a last name "Name" turned "{{PATIENT_NAME}}"
+// into "{{PATIENT_{{LAST_NAME}}}}".
 //
-// Scripts without capitals: Chinese, Japanese and Thai put no space between
-// words, and Korean, Arabic and Hebrew join particles and prefixes to a name
-// ("김민수님께", "ومحمد"). So there is no edge on a side of the value that
-// starts or ends with a letter that has no capital form: 王小明 is found in
-// "患者王小明的申请", as it was before whole words. That also takes the 王
-// out of 王国, but in an English letter these scripts are almost always the
-// name, and too much taken out is the safe side. Latin, Cyrillic and Greek
-// letters have capitals and keep both edges.
-//
-// What kind of value it is loosens the edge after it (TypedValueKind):
-// - "street": a letter often prints the street longer than it was typed
-//   (the intake page's own hint is "283 24th St"). Its last word runs on to
-//   the end of the word the letter has, so "St" finds "Street" and "Apt 4"
-//   finds "Apt 4B". A suffix, unit or direction anywhere in it finds its
-//   other form too ("Street" finds "ST", "Rd" finds "ROAD", "N" finds
-//   "NORTH"), and a period or comma after a word inside it may or may not be
-//   printed. A street starts with its house number, which keeps its edge, so
-//   this does not take ordinary words.
-// - "zip": a five-digit ZIP code finds the four digits a letter prints
-//   after it ("62701-1234", "62701 1234", "627011234"), and a typed ZIP+4
-//   finds the five digits alone. A longer number with the ZIP inside it
-//   ("claim 627012") is still left.
-//
-// fullNameRegExp finds the first and last name together where the letter
-// prints a longer form of the typed first name: "Chris" and "Doe" find
-// "Christopher Doe" and "DOE, CHRISTOPHER". On its own the first name is
-// still a whole word, so "Ed" leaves "Edward" and "Ann" leaves "annual".
-// The longer form has to start with a capital, so "Sam" and "Price" leave
-// "the same price".
-//
-// Not looked for at all (null):
-// - a value with no letters or digits, which would match everywhere;
-// - a lone initial: one letter or digit. As a whole word it is also "a",
-//   "I", Medicare's "Part B" and every "1." in a list, so taking it out
-//   would wreck the letter, and an initial on its own says almost nothing
-//   about who someone is. A single character from a script without
-//   capitals, like the surname 王 or 김, is a whole name and turns up in an
-//   English letter only as that name, so it is still looked for.
-
-// What words are made of, in a character class with the u flag: letters in
-// any script, the marks that sit on them, and digits.
-export const WORD_CHARACTERS = "\\p{L}\\p{M}\\p{N}";
-const LETTER_OR_DIGIT = `[${WORD_CHARACTERS}]`;
-const APOSTROPHE = "['\\u2019]";
-// The start of the text or a character that is not part of a word, and an
-// apostrophe after it if there is one: so not right after a letter or
-// digit, nor after one and an apostrophe.
-const BEFORE = `((?:^|[^${WORD_CHARACTERS}'\\u2019])${APOSTROPHE}?)`;
-// Not before a letter or digit, nor before an apostrophe and one, except
-// the possessive "'s".
-const AFTER = `(?!${LETTER_OR_DIGIT})(?!${APOSTROPHE}(?!s(?!${LETTER_OR_DIGIT}))${LETTER_OR_DIGIT})`;
-// Matched in a word instead of AFTER: the rest of the word, however long.
-const RUN_ON = `[${WORD_CHARACTERS}]*`;
-const PUNCTUATION_AT_THE_ENDS = new RegExp(`^[^${WORD_CHARACTERS}]+|[^${WORD_CHARACTERS}]+$`, "gu");
-const LETTERS_AND_DIGITS = new RegExp("[\\p{L}\\p{N}]", "gu");
-const ONE_CHARACTER_NAME = new RegExp("^\\p{Lo}$", "u");
-// A letter with no capital form at the start or the end of a word (the marks
-// on it included): Han, kana, Hangul, Thai, Arabic, Hebrew and the like.
-const CASED_LETTER = "[\\p{Lu}\\p{Ll}\\p{Lt}]";
-const STARTS_CASELESS = new RegExp(`^(?!${CASED_LETTER})\\p{L}`, "u");
-const ENDS_CASELESS = new RegExp(`(?!${CASED_LETTER})\\p{L}\\p{M}*$`, "u");
-// A ZIP code as typed, and the four digits a letter may print after one.
-const ZIP_CODE = /^(\d{5})(?:[-\s]?\d{4})?$/;
-const PLUS_FOUR = "(?:[- ]?\\d{4})?";
-
-// The forms of a word in a street that a letter may print in place of the
-// one typed, lower case. Each word of a typed street is looked up here.
-const STREET_WORD_FORMS: string[][] = [
-  ["st", "street"],
-  ["ave", "av", "avenue"],
-  ["rd", "road"],
-  ["dr", "drive"],
-  ["ln", "lane"],
-  ["blvd", "boulevard"],
-  ["ct", "court"],
-  ["pl", "place"],
-  ["cir", "circle"],
-  ["hwy", "highway"],
-  ["pkwy", "parkway"],
-  ["ter", "terrace"],
-  ["apt", "apartment"],
-  ["ste", "suite"],
-  ["n", "north"],
-  ["s", "south"],
-  ["e", "east"],
-  ["w", "west"],
-  ["ne", "northeast"],
-  ["nw", "northwest"],
-  ["se", "southeast"],
-  ["sw", "southwest"],
-];
-
-export type TypedValueKind = "words" | "street" | "zip";
-export type NameOrder = "first last" | "last, first";
+// Also: punctuation at either end of what was typed ("Jr.", "4B,") is left
+// off, so a typed "123 Sample St." finds "123 Sample St" as well; a
+// straight apostrophe typed finds the curly one a letter prints (O’Brien),
+// and the other way round; and a value with no letter or digit is not
+// looked for at all (null), since it would match all over the letter.
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// The words of what was typed, without punctuation at its ends, or null
-// where it is not looked for (see above).
-function typedWords(value: string): string[] | null {
-  const trimmed = value.replace(PUNCTUATION_AT_THE_ENDS, "");
-  const lettersAndDigits = trimmed.match(LETTERS_AND_DIGITS) || [];
-  if (lettersAndDigits.length === 0) {
+const PUNCTUATION_AT_THE_ENDS = new RegExp("^[^\\p{L}\\p{M}\\p{N}]+|[^\\p{L}\\p{M}\\p{N}]+$", "gu");
+const LETTER_OR_DIGIT = new RegExp("[\\p{L}\\p{N}]", "u");
+const APOSTROPHES = /['\u2019]/g;
+const PLACEHOLDER = "\\{\\{[^{}]*\\}\\}";
+
+const CASED_OR_DIGIT = new RegExp("^[\\p{Lu}\\p{Ll}\\p{Lt}\\p{N}]$", "u");
+const ANY_LETTER = new RegExp("^\\p{L}$", "u");
+const ANY_MARK = new RegExp("^\\p{M}$", "u");
+
+// What a character is to a word: a letter with a capital form or a digit
+// ("cased"), a letter of a script without capitals ("caseless"), a mark, or
+// not part of a word (null).
+type CharacterKind = "cased" | "caseless" | "mark" | null;
+
+function kindOf(character: string): CharacterKind {
+  if (character === "") {
     return null;
   }
-  if (lettersAndDigits.length === 1 && !ONE_CHARACTER_NAME.test(lettersAndDigits[0])) {
-    return null;
+  if (ANY_MARK.test(character)) {
+    return "mark";
   }
-  return trimmed.split(/\s+/).filter((word) => word !== "");
+  if (CASED_OR_DIGIT.test(character)) {
+    return "cased";
+  }
+  return ANY_LETTER.test(character) ? "caseless" : null;
 }
 
-function wordPattern(word: string): string {
-  return escapeRegExp(word).replace(/['’]/g, APOSTROPHE);
+// The character (a whole code point) that starts at index, or "".
+function characterAt(text: string, index: number): string {
+  return index < text.length ? String.fromCodePoint(text.codePointAt(index) as number) : "";
 }
 
-// The word in either case, letter by letter, for a regular expression made
-// without the i flag; with capitalFirst, its first letter only as a capital.
-// (With the i flag, \p{Lu} matches small letters too, so a capital cannot be
-// asked for any other way.)
-function eitherCase(word: string, capitalFirst: boolean): string {
-  return Array.from(word)
-    .map((character, i) => {
-      const lower = character.toLowerCase();
-      const upper = character.toUpperCase();
-      if (lower === upper) {
-        return wordPattern(character);
-      }
-      if (i === 0 && capitalFirst) {
-        return escapeRegExp(upper);
-      }
-      return "(?:" + escapeRegExp(lower) + "|" + escapeRegExp(upper) + ")";
-    })
-    .join("");
-}
-
-function streetWordForms(word: string): string[] | null {
-  const lower = word.toLowerCase();
-  for (const forms of STREET_WORD_FORMS) {
-    if (forms.indexOf(lower) >= 0) {
-      return forms;
+// The character (a whole code point) that ends at index, or "".
+function characterBefore(text: string, index: number): string {
+  if (index <= 0) {
+    return "";
+  }
+  const low = text.charCodeAt(index - 1);
+  if (low >= 0xdc00 && low <= 0xdfff && index >= 2) {
+    const high = text.charCodeAt(index - 2);
+    if (high >= 0xd800 && high <= 0xdbff) {
+      return text.slice(index - 2, index);
     }
+  }
+  return text.charAt(index - 1);
+}
+
+// The kind of the letter or digit before index, through any marks on it.
+function kindBefore(text: string, index: number): CharacterKind {
+  let at = index;
+  while (at > 0) {
+    const character = characterBefore(text, at);
+    const kind = kindOf(character);
+    if (kind !== "mark") {
+      return kind;
+    }
+    at -= character.length;
   }
   return null;
 }
 
-// A typed street: every word as typed or in another form of it, a period or
-// comma after any word but the last, and the last word running on (unless
-// it ends in a script without capitals, which has no edge after it to run
-// past and would take the rest of the sentence with it).
-function streetPattern(words: string[]): string {
-  const bare = words.map((word) => word.replace(/[.,]+$/, "")).filter((word) => word !== "");
-  return bare
-    .map((word, i) => {
-      const forms = streetWordForms(word);
-      const pattern = forms === null ? wordPattern(word) : "(?:" + forms.join("|") + ")";
-      return i === bare.length - 1 && !ENDS_CASELESS.test(word) ? pattern + RUN_ON : pattern;
-    })
-    .join("[.,]*\\s+");
-}
-
-// The pattern with the edges around it, except on a side where its text
-// starts or ends with a letter that has no capital form.
-function withEdges(firstWord: string, lastWord: string, pattern: string, flags: string): RegExp {
-  const before = STARTS_CASELESS.test(firstWord) ? "()" : BEFORE;
-  const after = ENDS_CASELESS.test(lastWord) ? "" : AFTER;
-  return new RegExp(before + "(" + pattern + ")" + after, flags);
-}
-
-// Null where the value is not looked for (see above). Replace with
-// replaceTypedValue, not String.replace: a match starts with the character
-// before the value, which has to stay.
-export function typedValueRegExp(value: string, kind: TypedValueKind = "words"): RegExp | null {
-  const words = typedWords(value);
-  if (words === null) {
-    return null;
+// Whether the characters either side of index are part of one word (see
+// above).
+function inOneWord(text: string, index: number): boolean {
+  const after = kindOf(characterAt(text, index));
+  if (after === null) {
+    return false;
   }
-  const first = words[0];
-  const last = words[words.length - 1];
-  if (kind === "zip") {
-    const zip = ZIP_CODE.exec(words.join(" "));
-    if (zip !== null) {
-      return withEdges(first, last, zip[1] + PLUS_FOUR, "giu");
+  const before = kindBefore(text, index);
+  if (before === null) {
+    return false;
+  }
+  return after === "mark" || (before === "cased" && after === "cased");
+}
+
+// Where each {{PLACEHOLDER}} in the text is, as [start, end).
+function placeholdersIn(text: string): [number, number][] {
+  const spans: [number, number][] = [];
+  const placeholder = new RegExp(PLACEHOLDER, "g");
+  let found: RegExpExecArray | null;
+  while ((found = placeholder.exec(text)) !== null) {
+    spans.push([found.index, found.index + found[0].length]);
+  }
+  return spans;
+}
+
+function overlapsAny(spans: [number, number][], start: number, end: number): boolean {
+  for (let i = 0; i < spans.length; i++) {
+    if (spans[i][0] < end && spans[i][1] > start) {
+      return true;
     }
   }
-  if (kind === "street") {
-    return withEdges(first, last, streetPattern(words), "giu");
-  }
-  return withEdges(first, last, words.map(wordPattern).join("\\s+"), "giu");
+  return false;
 }
 
-// The first and last name together, in the order given, with the first
-// name's last word running on to the end of the word the letter prints and
-// starting with a capital there (see above). Null where either name is not
-// looked for, or where the first name ends in a script without capitals,
-// which typedValueRegExp already finds inside a longer word. Replace with
-// replaceTypedValue.
-export function fullNameRegExp(firstName: string, lastName: string, order: NameOrder): RegExp | null {
-  const first = typedWords(firstName);
-  const last = typedWords(lastName);
-  if (first === null || last === null || ENDS_CASELESS.test(first[first.length - 1])) {
+// The value as a pattern, or null where it is not looked for (see above).
+// The pattern also matches every {{PLACEHOLDER}}, in its first group, so
+// the search passes over each one whole. Use with typedValueMatches or
+// takeOutTypedValues, which leave those, and a match inside a longer word.
+export function typedValueRegExp(value: string): RegExp | null {
+  const trimmed = value.replace(PUNCTUATION_AT_THE_ENDS, "");
+  if (!LETTER_OR_DIGIT.test(trimmed)) {
     return null;
   }
-  const firstPattern =
-    first.map((word, i) => eitherCase(word, i === first.length - 1)).join("\\s+") + "[\\p{L}\\p{M}]*";
-  const lastPattern = last.map((word) => eitherCase(word, false)).join("\\s+");
-  return order === "first last"
-    ? withEdges(first[0], last[last.length - 1], firstPattern + "\\s+" + lastPattern, "gu")
-    : withEdges(last[0], first[first.length - 1], lastPattern + "\\s*,\\s*" + firstPattern, "gu");
+  const words = trimmed.split(/\s+/).filter((word) => word !== "");
+  const pattern = words.map((word) => escapeRegExp(word).replace(APOSTROPHES, "['\u2019]")).join("\\s+");
+  return new RegExp("(" + PLACEHOLDER + ")|" + pattern, "giu");
 }
 
-// The text with each match of a typedValueRegExp replaced: by the
-// placeholder, or by what a function makes of the value as the text has it.
-export function replaceTypedValue(
-  text: string,
-  typed: RegExp,
-  replacement: string | ((found: string) => string),
-): string {
-  return text.replace(typed, (_match: string, before: string, found: string) =>
-    before + (typeof replacement === "string" ? replacement : replacement(found)),
-  );
+// Every place the value stands as whole words in the text, as [start,
+// end), overlapping ones too. After a match the search goes on from the
+// next character, so a match that is not whole words (or one that is) does
+// not hide another that starts inside it.
+export function typedValueMatches(text: string, typed: RegExp): [number, number][] {
+  const placeholders = placeholdersIn(text);
+  const found: [number, number][] = [];
+  typed.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = typed.exec(text)) !== null) {
+    if (match[1] !== undefined) {
+      // A placeholder: the search goes on after it.
+      continue;
+    }
+    const start = match.index;
+    const end = start + match[0].length;
+    if (!inOneWord(text, start) && !inOneWord(text, end) && !overlapsAny(placeholders, start, end)) {
+      found.push([start, end]);
+    }
+    typed.lastIndex = start + characterAt(text, start).length;
+  }
+  typed.lastIndex = 0;
+  return found;
+}
+
+// The text with every typed value taken out where it stands as whole
+// words, each replaced by its placeholder. Every value is looked for in the
+// text as it is, before any is taken out, so taking one out never hides
+// another: a first name inside the street ("77 Ann St") or the email
+// ("ann.doe@example.com") no longer breaks the street or the email up and
+// leaves the rest of it. Where matches overlap, the whole run of them comes
+// out, and in its place go the placeholders of the matches in it that are
+// not inside another, in order: "Ann Doe", found as the full name and as
+// each name, becomes {{PATIENT_NAME}}, and a street that runs into a city
+// starting with the street's last word becomes "{{ADDRESS}} {{CITY}}". Of
+// two matches of the same text, the value listed first gives the
+// placeholder.
+export function takeOutTypedValues(text: string, values: [RegExp, string][]): string {
+  const found: { start: number; end: number; order: number; placeholder: string }[] = [];
+  for (let order = 0; order < values.length; order++) {
+    const matches = typedValueMatches(text, values[order][0]);
+    for (let i = 0; i < matches.length; i++) {
+      found.push({ start: matches[i][0], end: matches[i][1], order, placeholder: values[order][1] });
+    }
+  }
+  found.sort((a, b) => a.start - b.start || b.end - a.end || a.order - b.order);
+  // Runs of overlapping matches, each with the placeholders of the matches
+  // that start it or carry it further.
+  const runs: { start: number; end: number; placeholders: string[] }[] = [];
+  for (let i = 0; i < found.length; i++) {
+    const last = runs[runs.length - 1];
+    if (last !== undefined && found[i].start < last.end) {
+      if (found[i].end > last.end) {
+        last.end = found[i].end;
+        last.placeholders.push(found[i].placeholder);
+      }
+    } else {
+      runs.push({ start: found[i].start, end: found[i].end, placeholders: [found[i].placeholder] });
+    }
+  }
+  if (runs.length === 0) {
+    return text;
+  }
+  // Each character stays, or starts a run and becomes its placeholders, or
+  // is the rest of a run and goes.
+  let next = 0;
+  return text.replace(/[\s\S]/g, (character: string, offset: number) => {
+    while (next < runs.length && runs[next].end <= offset) {
+      next++;
+    }
+    const run = runs[next];
+    if (run === undefined || offset < run.start) {
+      return character;
+    }
+    return offset === run.start ? run.placeholders.join(" ") : "";
+  });
 }

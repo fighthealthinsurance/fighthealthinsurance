@@ -7,12 +7,12 @@ through typed_value_pattern.ts. It matched anywhere, so a short first name
 was taken out of the middle of other words: in a live test one turned
 "Example Health Plan" into "Exa {{FIRST_NAME}}ple Health Plan", and an "Ed",
 "Al", "Ann" or "Sam" would turn "denied", "medically", "annual" and "same"
-into placeholders before the letter was drafted from. A value is now found
-only with no letter or digit, in any script, right before or after it.
-Where whole words left in what matching anywhere had taken out, the edges
-are loosened: for names in scripts without capitals, for a street or ZIP
-code the letter prints longer than it was typed, and for a first name the
-letter prints longer when the last name follows it.
+into placeholders before the letter was drafted from. A value is now left
+only where it sits inside a longer word: a letter or digit of the same word
+right before or after it. Each letter of a script without capitals is a
+word to itself, and a change of script is the edge of a word. Everything
+else matching anywhere took out still comes out, which
+test_scrub_never_leaves_what_main_removed.py checks against main itself.
 
 These compile the real TypeScript with the repo's own tsc (the same flags as
 test_entity_fetcher_behaviour.py), run it in node through
@@ -52,11 +52,12 @@ ALSO_COMPILED = (JS / "scrub_scrub.ts", JS / "user_info_storage.ts")
 DRIVER = REPO_ROOT / "tests" / "js" / "scrub_whole_words_behaviour.cjs"
 
 
-@pytest.fixture(scope="module")
-def compiled(tmp_path_factory) -> pathlib.Path:
-    """typed_value_pattern.ts and the two scrubbers, compiled the way the
-    bundle is built."""
-    out = tmp_path_factory.mktemp("scrub-whole-words")
+def compile_typescript(
+    out: pathlib.Path, sources: list[pathlib.Path], cwd: pathlib.Path
+) -> None:
+    """The sources compiled into out the way the bundle is built (the same
+    flags as test_entity_fetcher_behaviour.py), failing the test where tsc
+    reports an error or leaves a file out."""
     result = subprocess.run(
         [
             NODE,
@@ -76,26 +77,31 @@ def compiled(tmp_path_factory) -> pathlib.Path:
             "--skipLibCheck",
             "--outDir",
             str(out),
-            str(MODULE),
-            *(str(path) for path in ALSO_COMPILED),
+            *(str(path) for path in sources),
         ],
-        cwd=str(JS),
+        cwd=str(cwd),
         capture_output=True,
         text=True,
         timeout=300,
     )
-    for name in (
-        "typed_value_pattern.js",
-        "scrub_scrub.js",
-        "shared.js",
-        "user_info_storage.js",
-    ):
+    for source in sources:
+        name = source.with_suffix(".js").name
         if not (out / name).exists():
             pytest.fail(
                 f"tsc did not emit {name}\n"
                 f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
             )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.fixture(scope="module")
+def compiled(tmp_path_factory) -> pathlib.Path:
+    """typed_value_pattern.ts and the two scrubbers, compiled the way the
+    bundle is built, with shared.ts, which scrub_scrub.ts imports."""
+    out = tmp_path_factory.mktemp("scrub-whole-words")
+    compile_typescript(out, [MODULE, *ALSO_COMPILED], cwd=JS)
+    if not (out / "shared.js").exists():
+        pytest.fail("tsc did not emit shared.js")
     return out / "typed_value_pattern.js"
 
 
@@ -170,21 +176,25 @@ def test_a_name_is_found_at_either_end_of_the_text_and_beside_punctuation(
 
 
 @needs_node
-def test_an_apostrophe_joined_to_a_word_is_part_of_it(compiled):
+def test_an_apostrophe_is_not_part_of_a_word(compiled):
+    """Matching anywhere took "Brien" out of "O'Brien" and "Don" out of
+    "don't", and an apostrophe is not a letter or a digit, so whole words
+    take them out too. A typed straight apostrophe finds a printed curly
+    one, and the other way round."""
     assert_found(
         compiled,
         {
             ("Don", "We don't cover it. Don't wait, Don."): (
-                "We don't cover it. Don't wait, [[Don]]."
+                "We [[don]]'t cover it. [[Don]]'t wait, [[Don]]."
             ),
             ("Brien", "O'Brien and O’Brien, not Brien"): (
-                "O'Brien and O’Brien, not [[Brien]]"
+                "O'[[Brien]] and O’[[Brien]], not [[Brien]]"
             ),
-            # Typed straight, printed curly, and the other way round.
             ("O'Brien", "Dear O’Brien, O'Brien's file"): (
                 "Dear [[O’Brien]], [[O'Brien]]'s file"
             ),
             ("O’Brien", "O'BRIEN"): "[[O'BRIEN]]",
+            ("Doe", "DOE'S appeal"): "[[DOE]]'S appeal",
         },
     )
 
@@ -230,9 +240,9 @@ def test_accented_names_are_whole_words_too(compiled):
             ("Jos", "Dear José"): "Dear José",
             ("Zoë", "Zoë. Zoëlla."): "[[Zoë]]. Zoëlla.",
             ("Núñez", "Ann Núñez-Ruiz, Núñezes"): "Ann [[Núñez]]-Ruiz, Núñezes",
-            # A letter or a mark after the value stops it: "José" written
+            # A mark after the value sits on its last letter: "José" written
             # with a combining accent is not a typed "Jose".
-            ("Jose", "Jose\u0301 and Jose."): "Jose\u0301 and [[Jose]].",
+            ("Jose", "José and Jose."): "José and [[Jose]].",
         },
     )
 
@@ -252,9 +262,9 @@ def test_names_in_other_scripts_with_capitals_are_whole_words_too(compiled):
 @needs_node
 def test_a_name_in_a_script_without_capitals_is_found_in_running_text(compiled):
     """Chinese, Japanese and Thai put no space between words, and Korean,
-    Arabic and Hebrew join particles and prefixes to a name. Matched only as
-    whole words these names were left in the letter, where matching anywhere
-    had taken them out. Too much taken out (王 from 王国) is the safe side."""
+    Arabic and Hebrew join particles and prefixes to a name. Each letter of
+    these scripts is a word to itself, so the name is found as matching
+    anywhere found it, 王 in 王国 too."""
     assert_found(
         compiled,
         {
@@ -269,7 +279,7 @@ def test_a_name_in_a_script_without_capitals_is_found_in_running_text(compiled):
             ("สมชาย", "เรียนคุณสมชาย"): "เรียนคุณ[[สมชาย]]",
             ("محمد", "إلى ومحمد"): "إلى و[[محمد]]",
             ("דוד", "שלום לדוד"): "שלום ל[[דוד]]",
-            # A number at the start keeps its edge.
+            # A digit before the house number is the same word.
             ("123 王府井大街", "1123 王府井大街, 123 王府井大街"): (
                 "1123 王府井大街, [[123 王府井大街]]"
             ),
@@ -278,18 +288,36 @@ def test_a_name_in_a_script_without_capitals_is_found_in_running_text(compiled):
 
 
 @needs_node
-def test_a_lone_initial_is_not_looked_for(compiled):
-    """As a whole word an initial is also "a", "I", Medicare's "Part B" and
-    every "1." in a list, and on its own it says almost nothing about who
-    someone is. One character from a script without capitals is a whole
-    name, and still found."""
+def test_a_change_of_script_is_the_edge_of_a_word(compiled):
+    """A Latin name or an email in Chinese text has a Chinese letter right
+    against it. Matching anywhere took it out, and the first version of
+    whole words left it in."""
     assert_found(
         compiled,
         {
-            ("A", "a plan"): None,
-            ("J.", "J. Doe"): None,
-            ("B", "Medicare Part B"): None,
-            ("7", "1. 7 days"): None,
+            ("Ann Doe", "患者Ann Doe的申请"): "患者[[Ann Doe]]的申请",
+            ("ann@example.com", "我的电子邮箱是ann@example.com。"): (
+                "我的电子邮箱是[[ann@example.com]]。"
+            ),
+            ("62701", "邮编62701号"): "邮编[[62701]]号",
+            ("Ann", "Ann王 王Ann"): "[[Ann]]王 王[[Ann]]",
+        },
+    )
+
+
+@needs_node
+def test_a_lone_initial_is_found_as_a_whole_word(compiled):
+    """Matching anywhere took a typed initial out of every word. Whole words
+    take it out only where it stands alone, "A Smith" and "a plan" alike: it
+    stands as a word there, so leaving it would leave in what matching
+    anywhere took out. A value with no letter or digit is not looked for."""
+    assert_found(
+        compiled,
+        {
+            ("A", "a plan, A Smith"): "[[a]] plan, [[A]] Smith",
+            ("J.", "J. Doe"): "[[J]]. Doe",
+            ("B", "Medicare Part B"): "Medicare Part [[B]]",
+            ("M", "Example Health Plan"): "Example Health Plan",
             ("-", "a - b"): None,
             ("", "text"): None,
             ("   ", "text"): None,
@@ -309,6 +337,10 @@ def test_addresses_and_numbers_are_found_only_whole(compiled):
             ("123 Sample Street", "1123 Sample Street; 123 Sample Streets"): (
                 "1123 Sample Street; 123 Sample Streets"
             ),
+            # A comma typed on its own is a word of the street like any other.
+            ("123 Main St , Apt 4B", "123 Main St , Apt 4B"): (
+                "[[123 Main St , Apt 4B]]"
+            ),
             ("4B", "Apt 4B, not 14B or 4BX"): "Apt [[4B]], not 14B or 4BX",
             ("#4B", "Unit #4B"): "Unit #[[4B]]",
             # Punctuation at the ends of what was typed is left off.
@@ -321,115 +353,55 @@ def test_addresses_and_numbers_are_found_only_whole(compiled):
             ("XYZ000000", "Member ID: XYZ000000. Ref XYZ0000001"): (
                 "Member ID: [[XYZ000000]]. Ref XYZ0000001"
             ),
+        },
+    )
+
+
+@needs_node
+def test_a_zip_plus_four_is_found_however_it_is_spaced(compiled):
+    assert_found(
+        compiled,
+        {
+            ("62701 1234", "62701  1234; 62701\t1234; 62701 1234"): (
+                "[[62701  1234]]; [[62701\t1234]]; [[62701 1234]]"
+            ),
+            ("62701-1234", "IL 62701-1234, IL 62701"): "IL [[62701-1234]], IL 62701",
+        },
+    )
+
+
+@needs_node
+def test_an_email_is_found_after_a_period_but_not_after_a_letter(compiled):
+    """A letter or a digit right against the email is part of a longer one
+    ("jann.doe@example.com"). A period is not a letter: matching anywhere
+    took the typed email out of "first.ann@example.com" and
+    "ann@example.com.au", and so do whole words."""
+    assert_found(
+        compiled,
+        {
             ("ann.doe@example.com", "jann.doe@example.com or ann.doe@example.com."): (
                 "jann.doe@example.com or [[ann.doe@example.com]]."
             ),
+            ("ann@example.com", "first.ann@example.com, ann@example.com.au"): (
+                "first.[[ann@example.com]], [[ann@example.com]].au"
+            ),
+            ("ann@example.com", "ann@example.comx"): "ann@example.comx",
         },
     )
 
 
 @needs_node
-def test_a_street_is_found_where_the_letter_writes_it_out_longer(compiled):
-    """The intake page's hint is "283 24th St", and a letter prints "283
-    24th Street". The street's last word runs on to the end of the word, a
-    suffix or direction finds its other form either way round, and the house
-    number keeps its edge."""
+def test_a_placeholder_is_never_written_into(compiled):
     assert_found(
         compiled,
         {
-            ("283 24th St", "283 24th Street", "street"): "[[283 24th Street]]",
-            ("123 Main St", "123 MAIN STREET\nSpringfield", "street"): (
-                "[[123 MAIN STREET]]\nSpringfield"
+            ("Name", "{{PATIENT_NAME}} and {{LAST_NAME}}, Name."): (
+                "{{PATIENT_NAME}} and {{LAST_NAME}}, [[Name]]."
             ),
-            ("123 Main Street", "123 MAIN ST, Springfield", "street"): (
-                "[[123 MAIN ST]], Springfield"
+            ("Your Email", "Write to {{Your Email Address}}."): (
+                "Write to {{Your Email Address}}."
             ),
-            ("9 Oak Ave", "9 OAK AVENUE", "street"): "[[9 OAK AVENUE]]",
-            ("12 Elm Rd", "12 Elm Road", "street"): "[[12 Elm Road]]",
-            ("123 N Main St", "123 North Main Street", "street"): (
-                "[[123 North Main Street]]"
-            ),
-            ("283 24th St Apt 4", "283 24th St\nApt 4B", "street"): (
-                "[[283 24th St\nApt 4B]]"
-            ),
-            ("123 Main St. Apt 4B", "123 Main St, Apt 4B.", "street"): (
-                "[[123 Main St, Apt 4B]]."
-            ),
-            ("123 Main St", "1123 Main Street", "street"): "1123 Main Street",
-            # A street in a script without capitals does not run on into the
-            # rest of the sentence.
-            ("123 王府井大街", "123 王府井大街北京市", "street"): (
-                "[[123 王府井大街]]北京市"
-            ),
-            # Not a street: the last word is still a whole word.
-            ("123 Main St", "123 Main Street"): "123 Main Street",
-        },
-    )
-
-
-@needs_node
-def test_a_zip_code_takes_the_four_digits_after_it(compiled):
-    assert_found(
-        compiled,
-        {
-            ("94103", "CA 941031234", "zip"): "CA [[941031234]]",
-            ("62701", "IL 62701-1234, IL 62701 1234.", "zip"): (
-                "IL [[62701-1234]], IL [[62701 1234]]."
-            ),
-            ("62701-1234", "IL 62701, IL 62701-0000", "zip"): (
-                "IL [[62701]], IL [[62701-0000]]"
-            ),
-            # A longer number with the ZIP inside it, and a number on the
-            # next line, stay.
-            ("62701", "claim 627012, 162701, 62701\n2026", "zip"): (
-                "claim 627012, 162701, [[62701]]\n2026"
-            ),
-            # Not five digits: found as typed.
-            ("SW1A 1AA", "London SW1A 1AA", "zip"): "London [[SW1A 1AA]]",
-        },
-    )
-
-
-def assert_full_name_found(compiled: pathlib.Path, cases: dict) -> None:
-    """Each (first name, last name, order, text) marked where fullNameRegExp
-    finds it, or None where it is not looked for."""
-    pairs = list(cases)
-    result = run(compiled, fullName=[list(pair) for pair in pairs])
-    assert result["logs"] == []
-    for pair, found in zip(pairs, result["found"], strict=True):
-        assert found == cases[pair], pair
-
-
-@needs_node
-def test_a_longer_first_name_is_found_when_the_last_name_follows(compiled):
-    """A typed "Chris" or "Matt" where the insurer prints the legal name. On
-    its own the first name is still a whole word; the longer form has to
-    start with a capital, so ordinary words before a last name that is also
-    a word stay."""
-    assert_full_name_found(
-        compiled,
-        {
-            ("Chris", "Doe", "first last", "Christopher Doe, CHRISTOPHER DOE"): (
-                "[[Christopher Doe]], [[CHRISTOPHER DOE]]"
-            ),
-            ("Chris", "Doe", "first last", "Chris Doe and Christa Doering"): (
-                "[[Chris Doe]] and Christa Doering"
-            ),
-            ("Chris", "Doe", "last, first", "DOE, CHRISTOPHER; Doe,Chris"): (
-                "[[DOE, CHRISTOPHER]]; [[Doe,Chris]]"
-            ),
-            ("Sam", "Price", "first last", "the same price, Samuel Price"): (
-                "the same price, [[Samuel Price]]"
-            ),
-            ("Ann", "Doe", "first last", "annual Doe; Annette Doe's file"): (
-                "annual Doe; [[Annette Doe]]'s file"
-            ),
-            ("José", "Núñez", "first last", "JOSÉ NÚÑEZ, Joséphine Núñez"): (
-                "[[JOSÉ NÚÑEZ]], [[Joséphine Núñez]]"
-            ),
-            # Already found inside a longer word on its own.
-            ("伟明", "王", "first last", "伟明 王"): None,
-            ("J", "Doe", "first last", "John Doe"): None,
+            ("Ann", "{{FIRST_NAME}}Ann"): "{{FIRST_NAME}}[[Ann]]",
         },
     )
 
@@ -446,20 +418,16 @@ CHAT_USER = {
     "acceptedTerms": True,
 }
 ACCENTED_USER = dict(CHAT_USER, firstName="José", lastName="Núñez")
-SHORT_FORMS_USER = dict(
-    CHAT_USER, firstName="Chris", lastName="Doe", address="123 Main St"
-)
 CHAT_SCRUBBED = [
     (
         "My annual limit was reached and Annette Doering was denied, Ann.",
         CHAT_USER,
         "My annual limit was reached and Annette Doering was denied, {{FIRST_NAME}}.",
     ),
-    # The ZIP+4 goes with the ZIP.
     (
         "Ann\nDoe, 123 Sample Street\nApt 4B, Mesa AZ 85201-1234",
         CHAT_USER,
-        "{{PATIENT_NAME}}, {{ADDRESS}}, {{CITY}} AZ {{ZIP_CODE}}",
+        "{{PATIENT_NAME}}, {{ADDRESS}}, {{CITY}} AZ {{ZIP_CODE}}-1234",
     ),
     (
         "Mesalamine was denied. Write to joann@example.com or ann@example.com.",
@@ -483,22 +451,46 @@ CHAT_SCRUBBED = [
         ACCENTED_USER,
         "{{PATIENT_NAME}}",
     ),
-    # A pasted letter that prints the street and the first name longer
-    # than they were typed.
-    (
-        "CHRISTOPHER DOE\n123 MAIN STREET\nDOE, CHRISTOPHER",
-        SHORT_FORMS_USER,
-        "{{PATIENT_NAME}}\n{{ADDRESS}}\n{{PATIENT_NAME}}",
-    ),
-    (
-        "I live at 283 24th Street. Christopher stays.",
-        dict(SHORT_FORMS_USER, address="283 24th St"),
-        "I live at {{ADDRESS}}. Christopher stays.",
-    ),
     (
         "患者王小明的申请",
         dict(CHAT_USER, firstName="小明", lastName="王"),
         "患者{{LAST_NAME}}{{FIRST_NAME}}的申请",
+    ),
+    (
+        "我的电子邮箱是ann@example.com。",
+        CHAT_USER,
+        "我的电子邮箱是{{Your Email Address}}。",
+    ),
+    (
+        "62701  1234 and 62701\t1234",
+        dict(CHAT_USER, zipCode="62701 1234"),
+        "{{ZIP_CODE}} and {{ZIP_CODE}}",
+    ),
+    # A placeholder already there is passed over whole, the one the full name
+    # just became too.
+    (
+        "Joe Name applied. {{PATIENT_NAME}}",
+        dict(CHAT_USER, firstName="Joe", lastName="Name"),
+        "{{PATIENT_NAME}} applied. {{PATIENT_NAME}}",
+    ),
+    # "Same" is not the first name "Sam" written out longer.
+    (
+        "Same day services require prior authorization.",
+        dict(CHAT_USER, firstName="Sam", lastName="Day"),
+        "Same {{LAST_NAME}} services require prior authorization.",
+    ),
+    # Every value is looked for before any is taken out, so a first name
+    # inside the street or the email does not break them up.
+    (
+        "I live at 77 Ann St. Write to ann.doe@example.com",
+        dict(CHAT_USER, address="77 Ann St", email="ann.doe@example.com"),
+        "I live at {{ADDRESS}}. Write to {{Your Email Address}}",
+    ),
+    # Where two overlap, all of both comes out.
+    (
+        "10 Main St Louis",
+        dict(CHAT_USER, address="10 Main St", city="St Louis"),
+        "{{ADDRESS}} {{CITY}}",
     ),
 ]
 
@@ -518,14 +510,57 @@ def test_nothing_needs_a_lookbehind_that_older_safari_cannot_read(compiled):
     """Safari before 16.4 (iOS 15 and early iOS 16) throws on a pattern with
     a lookbehind in it. Built when the scrubber loads, one would stop the
     whole intake page there; built per value, Remove personal details and
-    the chat. So the character before a value is matched and put back
-    instead (typed_value_pattern.ts), and this runs both scrubbers where
-    making a lookbehind throws."""
+    the chat. So the edges are tested in code instead (typed_value_pattern.ts),
+    and this runs both scrubbers where making a lookbehind throws."""
     message = "Dear José, your annual limit"
     chat = run(compiled, noLookbehind=True, chat=[[message, ACCENTED_USER]])
     assert chat["scrubbed"] == ["Dear {{FIRST_NAME}}, your annual limit"]
     found = run(compiled, noLookbehind=True, find=[["Ann", "Ann's annual"]])
     assert found["found"] == ["[[Ann]]'s annual"]
+
+
+# What the intake page loads to take details out of a letter.
+SHIPPED = (
+    "typed_value_pattern.js",
+    "scrub_scrub.js",
+    "user_info_storage.js",
+    "shared.js",
+)
+
+
+@needs_node
+def test_no_shipped_scrubber_has_a_lookbehind_in_it(compiled):
+    """The test above catches a lookbehind made with new RegExp. A regular
+    expression literal is not made that way, so the compiled files are read
+    too: every literal, and every string that could become a pattern."""
+    result = run(
+        compiled,
+        lookbehinds={
+            "typescript": str(TSC.parents[1]),
+            "files": [str(compiled.parent / name) for name in SHIPPED],
+        },
+    )
+    assert result["found"] == []
+
+
+@needs_node
+def test_the_lookbehind_check_finds_one_in_a_literal(compiled):
+    """So the test above passing is the files having none, not the check
+    missing them. A comment that mentions one is not code."""
+    result = run(
+        compiled,
+        lookbehinds={
+            "typescript": str(TSC.parents[1]),
+            "sources": {
+                "literal.js": "var a = /(?<=x)y/g; // (?<!z)\nvar b = 1;",
+                "string.js": 'var c = new RegExp("(?<!x)y", "u");',
+            },
+        },
+    )
+    assert result["found"] == [
+        ["literal.js", "/(?<=x)y/g"],
+        ["string.js", '"(?<!x)y"'],
+    ]
 
 
 # Remove personal details, typed into About you on the intake page.
@@ -541,14 +576,14 @@ LETTER = (
     "Ann Doe\n123 Sample Street\nApt 4B\nSpringfield, IL 62701\n\n"
     "Dear Ann Doe,\n\n"
     "Your annual limit was reached. We checked the records for your "
-    "inpatient stay and outpatient services, and Annette Doering's notes."
+    "review, and Annette Doering's notes. Write to ann.doe@example.com."
 )
 LETTER_REMOVED = (
     "Acme Example Health Plan\nPO Box 0000\nAnytown, NY 00000\n\n"
     "{{FIRST_NAME}} {{LAST_NAME}}\n{{ADDRESS}}\nSpringfield, IL {{ZIP_CODE}}\n\n"
     "Dear {{FIRST_NAME}} {{LAST_NAME}},\n\n"
     "Your annual limit was reached. We checked the records for your "
-    "inpatient stay and outpatient services, and Annette Doering's notes."
+    "review, and Annette Doering's notes. Write to {{Your Email Address}}."
 )
 
 
@@ -584,6 +619,13 @@ class RemovePersonalDetailsTest(TestCase):
         )
         return result["letters"]
 
+    def assert_removed(self, cases: list) -> None:
+        """Each (typed, letter, letter after Remove personal details)."""
+        letters = self.remove(*((typed, letter) for typed, letter, _ in cases))
+        for (_, letter, expected), removed in zip(cases, letters, strict=True):
+            with self.subTest(letter=letter):
+                self.assertEqual(removed, expected)
+
     def test_the_page_has_the_boxes_these_cases_type_into(self):
         """And a tick box whose id the scrubber reads (store_raw_email), with
         a value that is a word a letter can hold."""
@@ -596,35 +638,33 @@ class RemovePersonalDetailsTest(TestCase):
 
     def test_what_was_typed_comes_out_and_the_words_around_it_stay(self):
         """The street across two lines, the name in the address block and
-        the greeting; "annual", "Annette", "Doering's", "checked",
-        "inpatient" and "outpatient" left as they were."""
+        the greeting, the email; "annual", "Annette", "Doering's" and
+        "checked" left as they were."""
         self.assertEqual(self.remove((ANN, LETTER)), [LETTER_REMOVED])
 
     def test_short_names_leave_the_words_they_sit_inside(self):
-        cases = {
-            "The claim was denied, Ed.": (
-                {"store_fname": "Ed"},
-                "The claim was denied, {{FIRST_NAME}}.",
-            ),
-            "Not medically necessary for Al.": (
-                {"store_fname": "Al"},
-                "Not medically necessary for {{FIRST_NAME}}.",
-            ),
-            "The same applies to Sam.": (
-                {"store_fname": "Sam"},
-                "The same applies to {{FIRST_NAME}}.",
-            ),
-            # The live report: one typed letter took the "m" out of Example.
-            "Example Health Plan": ({"store_fname": "M"}, "Example Health Plan"),
-        }
-        letters = self.remove(
-            *((typed, letter) for letter, (typed, _) in cases.items())
+        self.assert_removed(
+            [
+                (
+                    {"store_fname": "Ed"},
+                    "The claim was denied, Ed.",
+                    "The claim was denied, {{FIRST_NAME}}.",
+                ),
+                (
+                    {"store_fname": "Al"},
+                    "Not medically necessary for Al.",
+                    "Not medically necessary for {{FIRST_NAME}}.",
+                ),
+                (
+                    {"store_fname": "Sam"},
+                    "The same applies to Sam.",
+                    "The same applies to {{FIRST_NAME}}.",
+                ),
+                # The live report: one typed letter took the "m" out of
+                # Example.
+                ({"store_fname": "M"}, "Example Health Plan", "Example Health Plan"),
+            ]
         )
-        for (letter, (_, expected)), removed in zip(
-            cases.items(), letters, strict=True
-        ):
-            with self.subTest(letter=letter):
-                self.assertEqual(removed, expected)
 
     def test_it_loads_and_runs_where_a_lookbehind_throws(self):
         """The label rules are made when the scrubber loads, and the intake
@@ -634,82 +674,122 @@ class RemovePersonalDetailsTest(TestCase):
             self.remove((ANN, LETTER), noLookbehind=True), [LETTER_REMOVED]
         )
 
-    def test_an_accented_name_after_dear_is_taken_whole(self):
-        """The greeting rule read "Dear José" as "Dear Jos" and left the
-        "é" behind it."""
-        self.assertEqual(
-            self.remove(({}, "Dear José Núñez,\nYour request")),
-            ["Dear {{FIRST_NAME}} {{LAST_NAME}},\nYour request"],
-        )
-
-    def test_what_the_letter_prints_longer_than_it_was_typed_comes_out(self):
-        """A nickname typed where the letter prints the legal name, and the
-        street and ZIP the way the intake page's hint has them ("283 24th
-        St"). Matched only as whole words these stayed in the letter. The
-        long first name on its own, with no last name after it, stays."""
-        typed = {
-            "store_fname": "Chris",
-            "store_lname": "Doe",
-            "store_street": "123 Main St Apt 4",
-            "store_zip": "62701",
-        }
-        letter = (
-            "Christopher Doe\n123 MAIN STREET\nAPT 4B\nSpringfield, IL 627011234\n\n"
-            "Re: DOE, CHRISTOPHER. Dr. Christopher Roe reviewed it."
-        )
-        self.assertEqual(
-            self.remove((typed, letter)),
-            [
-                "{{FIRST_NAME}} {{LAST_NAME}}\n{{ADDRESS}}\nSpringfield, IL "
-                "{{ZIP_CODE}}\n\nRe: {{LAST_NAME}}, {{FIRST_NAME}}. Dr. "
-                "Christopher Roe reviewed it."
-            ],
-        )
-
     def test_a_name_in_running_text_without_spaces_comes_out(self):
         """Chinese and Japanese put no space between words, and Korean joins
-        a particle or an honorific to the name."""
-        cases = [
-            (
-                {"store_fname": "小明", "store_lname": "王"},
-                "患者王小明的申请被拒绝",
-                "患者{{LAST_NAME}}{{FIRST_NAME}}的申请被拒绝",
-            ),
-            (
-                {"store_fname": "민수", "store_lname": "김"},
-                "김민수님께, 김민수의 청구",
-                "{{LAST_NAME}}{{FIRST_NAME}}님께, {{LAST_NAME}}{{FIRST_NAME}}의 청구",
-            ),
-            (
-                {"store_fname": "太郎", "store_lname": "田中"},
-                "田中太郎様、田中さん",
-                "{{LAST_NAME}}{{FIRST_NAME}}様、{{LAST_NAME}}さん",
-            ),
-        ]
-        letters = self.remove(*((typed, letter) for typed, letter, _ in cases))
-        for (_, letter, expected), removed in zip(cases, letters, strict=True):
-            with self.subTest(letter=letter):
-                self.assertEqual(removed, expected)
+        a particle or an honorific to the name. The last and first name run
+        together are also what the page looks for, as one."""
+        self.assert_removed(
+            [
+                (
+                    {"store_fname": "小明", "store_lname": "王"},
+                    "患者王小明的申请被拒绝",
+                    "患者{{LAST_NAME}} {{FIRST_NAME}}的申请被拒绝",
+                ),
+                (
+                    {"store_fname": "민수", "store_lname": "김"},
+                    "김민수님께, 김민수의 청구",
+                    "{{LAST_NAME}} {{FIRST_NAME}}님께, {{LAST_NAME}} {{FIRST_NAME}}의 청구",
+                ),
+                (
+                    {"store_fname": "太郎", "store_lname": "田中"},
+                    "田中太郎様、田中さん",
+                    "{{LAST_NAME}} {{FIRST_NAME}}様、{{LAST_NAME}}さん",
+                ),
+            ]
+        )
 
     def test_the_email_typed_comes_out_whole(self):
         """The Email box was never read, and only the name cut out of the
-        middle of it broke it up."""
-        typed = {
-            "store_fname": "Ann",
-            "store_lname": "Smith",
-            "email": "asmith@example.com",
-        }
-        letter = "Write to asmith@example.com or ann.smith@example.org."
-        self.assertEqual(
-            self.remove((typed, letter)),
+        middle of it broke it up. A name inside the typed email comes out
+        with it."""
+        self.assert_removed(
             [
-                "Write to {{Your Email Address}} or "
-                "{{FIRST_NAME}}.{{LAST_NAME}}@example.org."
-            ],
+                (
+                    {
+                        "store_fname": "Ann",
+                        "store_lname": "Smith",
+                        "email": "asmith@example.com",
+                    },
+                    "Write to asmith@example.com or ann.smith@example.org.",
+                    "Write to {{Your Email Address}} or "
+                    "{{FIRST_NAME}}.{{LAST_NAME}}@example.org.",
+                ),
+                (
+                    {
+                        "store_fname": "Ann",
+                        "store_lname": "Doe",
+                        "email": "ann.doe@example.com",
+                    },
+                    "Write to ann.doe@example.com.",
+                    "Write to {{Your Email Address}}.",
+                ),
+            ]
         )
 
-    def test_a_label_inside_a_word_is_not_a_label(self):
-        """ "patient" inside "inpatient" took the next word as the person's
-        name and wrote a Patient label into the middle of the sentence."""
-        letter = "Your inpatient admission and outpatient visits; a subgroup: none."
-        self.assertEqual(self.remove(({}, letter)), [letter])
+    def test_what_the_review_found_left_in_comes_out(self):
+        """Each of these left a name, an email, a street or a ZIP code in
+        the letter that matching anywhere took out. The greeting rule reads
+        what main's did ("Dear Jos"), so the "é" it leaves stays, as on main;
+        the last name after it comes out."""
+        self.assert_removed(
+            [
+                (
+                    {"store_fname": "Ann", "store_lname": "Doe"},
+                    "患者Ann Doe的申请",
+                    "患者{{FIRST_NAME}} {{LAST_NAME}}的申请",
+                ),
+                (
+                    {"email": "ann@example.com"},
+                    "我的电子邮箱是ann@example.com。",
+                    "我的电子邮箱是{{Your Email Address}}。",
+                ),
+                (
+                    {"store_street": "123 Main St , Apt 4B"},
+                    "123 Main St , Apt 4B",
+                    "{{ADDRESS}}",
+                ),
+                (
+                    {"store_fname": "José", "store_lname": "O'Neill"},
+                    "Dear José O'Neill",
+                    "Dear {{FIRST_NAME}} {{LAST_NAME}}é {{LAST_NAME}}",
+                ),
+                (
+                    {"store_fname": "José", "store_lname": "Smith-Jones"},
+                    "Dear José Smith-Jones",
+                    "Dear {{FIRST_NAME}} {{LAST_NAME}}é {{LAST_NAME}}",
+                ),
+                (
+                    {"store_zip": "62701 1234"},
+                    "IL 62701  1234, IL 62701\t1234, IL 62701 1234",
+                    "IL {{ZIP_CODE}}, IL {{ZIP_CODE}}, IL {{ZIP_CODE}}",
+                ),
+                (
+                    {"store_fname": "Chris", "store_lname": "Doe"},
+                    "CHRISTOPHER DOE'S appeal",
+                    "CHRISTOPHER {{LAST_NAME}}'S appeal",
+                ),
+                (
+                    {"store_fname": "A", "store_lname": "Smith"},
+                    "A Smith",
+                    "{{FIRST_NAME}} {{LAST_NAME}}",
+                ),
+                (
+                    {"store_fname": "Joe", "store_lname": "Name"},
+                    "Joe Name applied. {{PATIENT_NAME}}",
+                    "{{FIRST_NAME}} {{LAST_NAME}} applied. {{PATIENT_NAME}}",
+                ),
+            ]
+        )
+
+    def test_the_text_after_a_patient_label_stays(self):
+        """The label rules are main's, which take one word made of A to Z
+        after "Patient:", so Chinese running on after it stays."""
+        self.assert_removed(
+            [
+                (
+                    {"store_fname": "小明", "store_lname": "王"},
+                    "Patient: 王小明患有2型糖尿病。",
+                    "Patient: {{LAST_NAME}} {{FIRST_NAME}}患有2型糖尿病。",
+                ),
+            ]
+        )

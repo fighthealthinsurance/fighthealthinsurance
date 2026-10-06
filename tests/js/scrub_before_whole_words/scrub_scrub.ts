@@ -2,7 +2,7 @@ import {
   setLocalStorageItemWithTTL,
   type ScrubberStorageKey,
 } from "./shared";
-import { takeOutTypedValues, typedValueRegExp } from "./typed_value_pattern";
+import { typedValuePattern } from "./typed_value_pattern";
 
 // The middle column is the storage key, typed so a new rule cannot store
 // under a key that clearFormData does not clear.
@@ -81,47 +81,24 @@ const storeIdToPlaceholder: Record<string, string> = {
   phone_number: "{{Your Phone Number}}",
 };
 
-// The boxes a person types in. A tick box's value is set by the page, not
-// typed: store_raw_email's is "checked", and taken out of the letter it
-// turned every "checked" in it into a placeholder.
-const TYPED_INPUT_TYPES = ["text", "email", "tel", "search", "number"];
-
-function typedIn(node: HTMLInputElement): boolean {
-  return TYPED_INPUT_TYPES.indexOf(node.type) >= 0 && node.value !== "";
-}
-
-// The boxes whose value is taken out of the letter: About you, and the
-// email. The letter is kept and may be read by staff, and the email only as
-// "how we store it" says, so an email left in the letter got around that.
-function removedFromTheLetter(node: HTMLInputElement): boolean {
-  return (node.id.startsWith("store_") || node.id === "email") && typedIn(node);
-}
-
 function scrubText(text: string): string {
-  var reservedTokens: [RegExp, string][] = [];
+  var reservedTokens = [];
   var nodes = document.querySelectorAll("input");
   for (let i = 0; i < nodes.length; i++) {
     var node = nodes[i];
-    // What the person typed is found however the letter spaces it, and only
-    // as whole words: a typed "123 Sample Street Apt 4B" matches the street
-    // with "Apt 4B" on the line under it, and a typed "Ann" leaves "annual"
-    // alone (typed_value_pattern.ts).
-    const typed = removedFromTheLetter(node) ? typedValueRegExp(node.value) : null;
-    if (typed !== null) {
+    // What the person typed is found however the letter spaces it: a typed
+    // "123 Sample Street Apt 4B" matches the street with "Apt 4B" on the
+    // line under it (typed_value_pattern.ts).
+    const pattern = node.id.startsWith("store_") ? typedValuePattern(node.value) : null;
+    if (pattern !== null) {
       const placeholder = storeIdToPlaceholder[node.id] || `{{${node.id}}}`;
-      reservedTokens.push([typed, placeholder]);
-      // Each About you box is also looked for run together with every
-      // other typed box ("AnnDoe"); the email box, which main did not read,
-      // only on its own.
-      if (node.id === "email") {
-        continue;
-      }
+      reservedTokens.push([new RegExp(pattern, "gi"), placeholder]);
       for (let j = 0; j < nodes.length; j++) {
         var secondNode = nodes[j];
-        const together = typedIn(secondNode) ? typedValueRegExp(node.value + secondNode.value) : null;
+        const together = secondNode.value != "" ? typedValuePattern(node.value + secondNode.value) : null;
         if (together !== null) {
           const secondPlaceholder = storeIdToPlaceholder[secondNode.id] || `{{${secondNode.id}}}`;
-          reservedTokens.push([together, placeholder + " " + secondPlaceholder]);
+          reservedTokens.push([new RegExp(together, "gi"), placeholder + " " + secondPlaceholder]);
         }
       }
     }
@@ -149,10 +126,9 @@ function scrubText(text: string): string {
     }
     text = text.replace(scrubRegex[i][0], scrubRegex[i][2]);
   }
-  // Each value is looked for in the letter as the labels left it, and a
-  // match is whole words, so a placeholder no longer needs a space in front
-  // of it to keep it off the rest of a word it was cut out of.
-  text = takeOutTypedValues(text, reservedTokens);
+  for (let i = 0; i < reservedTokens.length; i++) {
+    text = text.replace(reservedTokens[i][0], " " + reservedTokens[i][1]);
+  }
   return text;
 }
 

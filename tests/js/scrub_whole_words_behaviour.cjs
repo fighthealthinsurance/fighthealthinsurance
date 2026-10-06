@@ -7,21 +7,25 @@
 //
 // scrub_scrub.js, shared.js and user_info_storage.js sit beside it. The spec
 // is one of:
-//   {"find": [[value, text, kind?], ...]}
-//        each text with every match of what was typed (typedValueRegExp,
-//        through replaceTypedValue) put in [[double brackets]], or null
-//        where the value is not looked for at all; kind is "street" or
-//        "zip" where given
-//   {"fullName": [[first name, last name, order, text], ...]}
-//        the same for fullNameRegExp, order "first last" or "last, first"
+//   {"find": [[value, text], ...]}
+//        each text with every place what was typed is found as whole words
+//        (typedValueRegExp, typedValueMatches) put in [[double brackets]],
+//        overlapping ones as one, or null where the value is not looked for
 //   {"remove": {"inputs": [{id, type, value}, ...], "cases": [[typed, letter], ...]}}
 //        each letter after Remove personal details (scrub_scrub.ts clean),
 //        on a page with the intake page's inputs: every one, with the value
 //        the page gives it, then {field id: value} typed over them
 //   {"chat": [[message, userInfo], ...]}
 //        what the chat's scrubPersonalInfo makes of each message
+//   {"lookbehinds": {"typescript": path, "files": [path, ...], "sources": {name: code}}}
+//        every regular expression literal, and every string, in the
+//        compiled files (and in the sources given inline) that has a
+//        lookbehind in it, read with the TypeScript parser so comments
+//        are not counted
 // With "noLookbehind": true, a regular expression with a lookbehind in it
-// throws when it is made, as it does in Safari before 16.4.
+// throws when it is made with new RegExp, as it does in Safari before 16.4.
+// A regular expression literal is not made that way, which is what
+// "lookbehinds" is for.
 // Writes one JSON object to stdout, with every console call recorded.
 
 const path = require('path');
@@ -53,13 +57,55 @@ for (const level of ['debug', 'log', 'info', 'warn', 'error', 'trace', 'dir', 't
   console[level] = (...args) => logs.push([level].concat(args.map((a) => String(a))));
 }
 
-if (spec.find || spec.fullName) {
-  const {fullNameRegExp, replaceTypedValue, typedValueRegExp} = require(path.resolve(modulePath));
-  const mark = (typed, text) =>
-    typed === null ? null : replaceTypedValue(text, typed, (match) => '[[' + match + ']]');
-  const found = spec.find
-    ? spec.find.map(([value, text, kind]) => mark(typedValueRegExp(value, kind), text))
-    : spec.fullName.map(([first, last, order, text]) => mark(fullNameRegExp(first, last, order), text));
+if (spec.lookbehinds) {
+  const ts = require(spec.lookbehinds.typescript);
+  const sources = Object.assign({}, spec.lookbehinds.sources || {});
+  for (const file of spec.lookbehinds.files || []) {
+    sources[path.basename(file)] = require('fs').readFileSync(file, 'utf8');
+  }
+  const LOOKBEHIND = /\(\?<[=!]/;
+  const found = [];
+  for (const [name, code] of Object.entries(sources)) {
+    const file = ts.createSourceFile(name, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    const visit = (node) => {
+      if (
+        node.kind === ts.SyntaxKind.RegularExpressionLiteral ||
+        node.kind === ts.SyntaxKind.StringLiteral ||
+        node.kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral ||
+        node.kind === ts.SyntaxKind.TemplateHead ||
+        node.kind === ts.SyntaxKind.TemplateMiddle ||
+        node.kind === ts.SyntaxKind.TemplateTail
+      ) {
+        if (LOOKBEHIND.test(node.text)) found.push([name, node.getText(file)]);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+  }
+  process.stdout.write(JSON.stringify({found, logs}) + '\n');
+  process.exit(0);
+}
+
+if (spec.find) {
+  const {typedValueMatches, typedValueRegExp} = require(path.resolve(modulePath));
+  const mark = (typed, text) => {
+    if (typed === null) return null;
+    // Overlapping matches as one run.
+    const runs = [];
+    for (const [start, end] of typedValueMatches(text, typed)) {
+      const last = runs[runs.length - 1];
+      if (last && start < last[1]) last[1] = Math.max(last[1], end);
+      else runs.push([start, end]);
+    }
+    let out = '';
+    let at = 0;
+    for (const [start, end] of runs) {
+      out += text.slice(at, start) + '[[' + text.slice(start, end) + ']]';
+      at = end;
+    }
+    return out + text.slice(at);
+  };
+  const found = spec.find.map(([value, text]) => mark(typedValueRegExp(value), text));
   process.stdout.write(JSON.stringify({found, logs}) + '\n');
   process.exit(0);
 }
