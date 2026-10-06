@@ -1355,9 +1355,10 @@ _SCAN_UPLOAD_STEP = (
 _SCAN_AFTER_LETTER_STEPS = (
     "Press 'Remove personal details', then take out anything "
     "personal it missed, such as a name, address or member ID.",
-    "Tick the boxes: it's their own appeal, they have read the "
-    "privacy policy, they have taken out personal details, and "
-    "they agree to the terms of service.",
+    "Tick the boxes: it's their own appeal or one for someone they're "
+    "helping who asked them to, they have read the privacy policy, they "
+    "have taken out personal details, and they agree to the terms of "
+    "service.",
     "Under 'Optional choices', 'Use outside AI services to get more appeal "
     "drafts' is ticked by default. While it is ticked, the letter "
     "is shared with outside AI services, under their own terms. "
@@ -1413,7 +1414,8 @@ PREPARE_APPEAL_DESCRIPTION = (
     "sent or how long it's kept, and give them the link exactly as returned, "
     "with the steps. Don't open the link or fill in the form yourself: the "
     "agreements on that page are the person's to make. It's for a person's "
-    "own appeal; doctors' offices have a separate professional version. "
+    "own appeal, or one for someone they're helping who asked them to; "
+    "doctors' offices have a separate professional version. "
     "Fight Health Insurance is free; the optional fax service is pay what "
     "you want, including $0. If the person would rather not send the letter "
     "through you, use start_appeal and they can paste it on the site."

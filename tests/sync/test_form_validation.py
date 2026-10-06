@@ -282,7 +282,7 @@ class TestDenialForm(TestCase):
         self.assertFalse(form.is_valid())
         self.assertEqual(
             form.errors["personalonly"],
-            ["Please tick the box to confirm this is for your own appeal."],
+            ["Please tick the box to confirm this appeal is yours, or for someone you're helping who asked you to."],
         )
 
     def test_the_professional_form_does_not_ask_for_the_personal_use_box(self):
@@ -297,7 +297,7 @@ class TestDenialForm(TestCase):
             for name, messages in DenialForm.INTAKE_ERROR_MESSAGES.items()
         }
         expected["personalonly"] = [
-            "Please tick the box to confirm this is for your own appeal."
+            "Please tick the box to confirm this appeal is yours, or for someone you're helping who asked you to."
         ]
         self.assertEqual(dict(errors), expected)
 

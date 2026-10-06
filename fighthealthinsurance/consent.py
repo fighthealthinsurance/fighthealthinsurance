@@ -10,8 +10,8 @@ from typing import Any, Mapping, Optional
 from loguru import logger
 
 # The "Last updated" date each policy page shows; tests hold them equal.
-TERMS_VERSION = datetime.date(2026, 9, 8)
-PRIVACY_VERSION = datetime.date(2026, 9, 12)
+TERMS_VERSION = datetime.date(2026, 10, 5)
+PRIVACY_VERSION = datetime.date(2026, 10, 5)
 
 CHANNEL_SITE = "site"
 CHANNEL_ASSISTANT = "assistant"
@@ -24,11 +24,12 @@ BOXES: dict[str, str] = {
     "privacy": "I have read and understand the privacy policy.",
     "tos": (
         "I agree to the terms of service. I'll use this site only for my own "
-        "insurance appeals, not to diagnose or treat any condition."
+        "insurance appeals, or for someone I'm helping who asked me to, not to "
+        "diagnose or treat any condition."
     ),
     "personalonly": (
-        "This is for my own appeal. (Doctors, therapists and offices: see our "
-        "professional version.)"
+        "This is for my own appeal or for someone I'm helping who asked me "
+        "to. (Doctors, therapists and offices: see our professional version.)"
     ),
 }
 

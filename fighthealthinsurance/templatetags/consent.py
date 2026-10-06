@@ -21,13 +21,15 @@ def consent_label(name: str) -> SafeString:
     if name == "tos":
         return format_html(
             'I agree to the <a href="{}">terms of service</a>. I\'ll use this site '
-            "only for my own insurance appeals, not to diagnose or treat any condition.",
+            "only for my own insurance appeals, or for someone I'm helping who asked "
+            "me to, not to diagnose or treat any condition.",
             reverse("tos"),
         )
     if name == "personalonly":
         return format_html(
-            "This is for <b>my own appeal</b>. (Doctors, therapists and offices: see "
-            'our <a href="{}">professional version</a>.)',
+            "This is for <b>my own appeal</b> or for someone I'm helping who asked "
+            'me to. (Doctors, therapists and offices: see our <a href="{}">professional '
+            "version</a>.)",
             reverse("pro_version"),
         )
     raise template.TemplateSyntaxError(f"No agreement box named {name!r}")
