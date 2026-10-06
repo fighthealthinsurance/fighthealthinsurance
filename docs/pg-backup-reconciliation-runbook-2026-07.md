@@ -398,6 +398,224 @@ kubectl -n totallylegitco get prometheusrule fhi-pg-main-9-backup-wal   # alerts
   feel doubtful. The 26h-backup-age and WAL alerts in
   `k8s/fhi-pg-main-9-alerts.yaml` are the always-on version.
 
+### Restore check — read-only archive, disposable cluster
+
+Run this after fixing backup/WAL failures or changing the operator, plugin, or
+storage configuration. It restores the newest completed `-9` backup into a
+new single-instance cluster, checks application data, and removes the restored
+copy. Allow capacity for another copy of `-9` on `encrypted-local-path`.
+Use Bash, `kubectl`, `jq`, and the AWS CLI for the credential checks below.
+
+#### 1. Prepare a read-only recovery store
+
+Create a separate B2 application key for bucket `fhi-pg-backup-second`, restricted
+to file prefix `fhi-pg-main-9/`, with exactly `listBuckets`, `listFiles`, and
+`readFiles`. `listBuckets` permits Barman's `HeadBucket` check; the file
+capabilities permit listing and reading base backups and WAL. These steps address
+the bucket directly and do not need `listAllBucketNames`. Do not grant write or
+delete capabilities. See [Backblaze's S3 capability mapping](https://www.backblaze.com/docs/cloud-storage-s3-compatible-app-keys).
+
+Provision `pg-backup2-recovery-readonly` through the normal secret process, with
+keys `PG_ACCESS_KEY_ID` and `PG_ACCESS_SECRET_KEY`. Use that same identity in an
+AWS CLI profile named `fhi-pg9-recovery`; keep credentials out of this repository
+and shell history. Preserve the checksum settings from
+`k8s/fhi-pg-main-9-objectstore.yaml`:
+
+```yaml
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: fhi-backup-store-9-readonly
+  namespace: totallylegitco
+spec:
+  configuration:
+    destinationPath: s3://fhi-pg-backup-second/
+    endpointURL: https://s3.us-west-004.backblazeb2.com
+    s3Credentials:
+      accessKeyId:
+        name: pg-backup2-recovery-readonly
+        key: PG_ACCESS_KEY_ID
+      secretAccessKey:
+        name: pg-backup2-recovery-readonly
+        key: PG_ACCESS_SECRET_KEY
+  instanceSidecarConfiguration:
+    env:
+      - name: AWS_REQUEST_CHECKSUM_CALCULATION
+        value: when_required
+      - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+        value: when_required
+```
+
+Save as `pg9-recovery-store.yaml`, review with
+`kubectl apply --server-side --dry-run=server -f pg9-recovery-store.yaml`, then
+apply it. Keep the existing writer ObjectStore and Secret unchanged.
+
+**VALIDATION — credentials:** use an authorized writer to create an empty,
+disposable object under `fhi-pg-main-9/credential-probes/`. Set `PROBE_KEY` to
+its exact key. Never use a backup or WAL object for these probes.
+
+```bash
+export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
+B2_ENDPOINT=https://s3.us-west-004.backblazeb2.com
+B2_BUCKET=fhi-pg-backup-second
+# Set PROBE_KEY to the disposable object created by the writer.
+: "${PROBE_KEY:?set the disposable probe key}"
+PROBE_FILE=$(mktemp)  # empty regular file for the upload-denial probe
+aws --profile fhi-pg9-recovery --endpoint-url "$B2_ENDPOINT" s3api head-bucket \
+  --bucket "$B2_BUCKET"
+aws --profile fhi-pg9-recovery --endpoint-url "$B2_ENDPOINT" s3api list-objects-v2 \
+  --bucket "$B2_BUCKET" --prefix fhi-pg-main-9/ --max-keys 1
+aws --profile fhi-pg9-recovery --endpoint-url "$B2_ENDPOINT" s3api head-object \
+  --bucket "$B2_BUCKET" --key "$PROBE_KEY"
+# Both commands below MUST fail with AccessDenied.
+aws --profile fhi-pg9-recovery --endpoint-url "$B2_ENDPOINT" s3api put-object \
+  --bucket "$B2_BUCKET" --key "$PROBE_KEY" --body "$PROBE_FILE"
+aws --profile fhi-pg9-recovery --endpoint-url "$B2_ENDPOINT" s3api delete-object \
+  --bucket "$B2_BUCKET" --key "$PROBE_KEY"
+```
+
+Run the two denial probes individually; a connection error is not proof of
+denied access. If either succeeds, stop and revoke/fix the recovery key. Remove
+the disposable object, including any versions, with the authorized writer.
+Remove the local empty file with `rm "$PROBE_FILE"`.
+Confirm the key's bucket, prefix, and capability restrictions in B2 before
+proceeding.
+
+#### 2. Select the backup and create the restore cluster
+
+Run in one Bash session. The 26h freshness limit matches `FhiPg9BackupTooOld`.
+If selection fails or the backup is stale, stop and use Phases 3/3a to repair
+backups before retrying.
+
+```bash
+set -euo pipefail
+umask 077
+DRILL_DIR=$(mktemp -d)
+DRILL_NAME="fhi-pg9-drill-$(date -u +%Y%m%d%H%M%S)"
+kubectl -n totallylegitco get backup -o json > "$DRILL_DIR/backups.json"
+read -r BACKUP_NAME BACKUP_ID BACKUP_STOP < <(
+  jq -er '[.items[] | select(
+    .spec.cluster.name == "fhi-pg-main-9" and .spec.method == "plugin" and
+    .spec.pluginConfiguration.name == "barman-cloud.cloudnative-pg.io" and
+    .status.phase == "completed" and (.status.backupId // "") != "" and
+    (.status.stoppedAt // "") != ""
+  )] | sort_by(.status.stoppedAt) | last | select(. != null) |
+    [.metadata.name, .status.backupId, .status.stoppedAt] | @tsv' "$DRILL_DIR/backups.json"
+)
+BACKUP_AGE=$(( $(date +%s) - $(date -d "$BACKUP_STOP" +%s) ))
+if [ "$BACKUP_AGE" -lt 0 ] || [ "$BACKUP_AGE" -gt 93600 ]; then
+  printf 'Backup completion time is in the future or older than 26h: %s\n' "$BACKUP_STOP" >&2
+  exit 1
+fi
+printf 'Restore %s (backup ID %s, completed %s) into %s\n' \
+  "$BACKUP_NAME" "$BACKUP_ID" "$BACKUP_STOP" "$DRILL_NAME"
+kubectl -n totallylegitco get cluster fhi-pg-main-9 -o json > "$DRILL_DIR/source.json"
+jq --arg name "$DRILL_NAME" --arg backup "$BACKUP_ID" '{
+  apiVersion: "postgresql.cnpg.io/v1", kind: "Cluster",
+  metadata: {name: $name, namespace: "totallylegitco", labels: {"fhi-restore-drill": "pg9"}},
+  spec: {
+    instances: 1, imageName: .spec.imageName,
+    storage: .spec.storage, resources: (.spec.resources // {}),
+    postgresql: {parameters: (.spec.postgresql.parameters // {})},
+    env: [
+      {name: "AWS_REQUEST_CHECKSUM_CALCULATION", value: "when_required"},
+      {name: "AWS_RESPONSE_CHECKSUM_VALIDATION", value: "when_required"}
+    ],
+    bootstrap: {recovery: {source: "pg9-archive", recoveryTarget: {
+      backupID: $backup, targetImmediate: true
+    }}},
+    externalClusters: [{name: "pg9-archive", plugin: {
+      name: "barman-cloud.cloudnative-pg.io", parameters: {
+        barmanObjectName: "fhi-backup-store-9-readonly", serverName: "fhi-pg-main-9"
+      }
+    }}]
+  }
+}' "$DRILL_DIR/source.json" > "$DRILL_DIR/restore.json"
+cat "$DRILL_DIR/restore.json"
+kubectl apply --server-side --dry-run=server -f "$DRILL_DIR/restore.json"
+```
+
+Review the new name, image, storage request, backup ID, and read-only store.
+`serverName: fhi-pg-main-9` identifies the archive to **read**; it is not the new
+cluster's name. There is no `spec.plugins` or backup schedule, so the drill does
+not archive into that lineage. The PostgreSQL settings come from the source
+because recovery requires compatible settings such as `max_connections`.
+`targetImmediate` stops at the selected backup's first consistent point; this
+checks that backup and the WAL needed to finish it, not later PITR targets.
+
+```bash
+DRILL_STARTED=$(date +%s)
+kubectl create -f "$DRILL_DIR/restore.json"
+kubectl -n totallylegitco wait --for=condition=Ready \
+  "cluster/$DRILL_NAME" --timeout=7200s
+printf 'Recovery readiness: %ss\n' "$(( $(date +%s) - DRILL_STARTED ))"
+kubectl -n totallylegitco get cluster "$DRILL_NAME" -o json | jq -e '
+  (.spec.plugins // [] | length) == 0 and
+  .spec.bootstrap.recovery.recoveryTarget.backupID != null'
+```
+
+Adjust the two-hour timeout to the observed restore time. If create, readiness,
+or the no-archiver check fails, use the failure/cleanup steps below; do not mark
+the drill passed.
+
+#### 3. Check data, then remove the restored copy
+
+**VALIDATION:** both results below must be `t`. These are presence checks on
+stored rows, without printing patient data. Add checks for the application's
+critical data when you need stronger assurance.
+
+```bash
+kubectl -n totallylegitco exec "$DRILL_NAME-1" -c postgres -- \
+  psql -X -U postgres -d app -At -v ON_ERROR_STOP=1 -c \
+  "BEGIN READ ONLY;
+   SELECT EXISTS (SELECT 1 FROM public.django_migrations),
+          EXISTS (SELECT 1 FROM public.auth_user);
+   COMMIT;"
+```
+
+The migration's decommission gate additionally requires the source-versus-restored
+comparison in [Phase 11e](pg8-to-pg9-migration-runbook.md#11e-restore-drill--the-only-real-proof-of-a-backup)
+before cleanup. A live primary can have newer data than the selected backup;
+this recurring check does not require equal live row counts.
+
+**ACTION — cleanup, after either success or failure:**
+
+```bash
+: "${DRILL_NAME:?set the exact drill cluster name}"
+kubectl -n totallylegitco delete cluster "$DRILL_NAME" --ignore-not-found --wait=true --timeout=300s
+kubectl -n totallylegitco delete pvc -l "cnpg.io/cluster=$DRILL_NAME" \
+  --wait=true --timeout=300s
+kubectl -n totallylegitco get cluster,pod,pvc -l "cnpg.io/cluster=$DRILL_NAME"
+kubectl get pv -o custom-columns=NAME:.metadata.name,CLAIM:.spec.claimRef.name,STATUS:.status.phase
+```
+
+Confirm the Cluster is gone and no drill Pods/PVCs or backing volumes remain.
+PV deletion can lag PVC deletion; wait for the storage controller to finish.
+If a PV has `Retain` policy or its storage cleanup failed, remove the retained
+drill data through the storage provider's procedure before passing the gate.
+Keep the recovery ObjectStore/Secret for later drills; never delete the writer
+store, source Cluster, or archive objects as part of drill cleanup.
+
+**If the drill fails:** record the backup ID, failed step, and error in the
+restricted operations log. Inspect `kubectl -n totallylegitco describe cluster
+"$DRILL_NAME"`, then `kubectl -n totallylegitco get pods -l
+"cnpg.io/cluster=$DRILL_NAME"`; describe failed Pods and check their recovery
+job/plugin logs. Archive access denial means check the recovery key's prefix and
+capabilities; missing WAL or stalled archiving means return to Phase 3a.
+Clean up the restored copy even if recovery never completed. If the shell session
+was lost, find its exact name with `kubectl -n totallylegitco get cluster -l
+fhi-restore-drill=pg9`, or from remaining PVCs' `cnpg.io/cluster` labels if the
+Cluster is already gone. Set `DRILL_NAME` to that name and repeat cleanup.
+A leftover cluster or volume contains a copy of production data.
+
+**GATE:** the newest completed backup is no more than 26h old, that exact backup
+restored, the data checks passed, and cleanup is confirmed. Record the backup ID,
+completion time, restore duration, check results, and cleanup in the restricted
+operations log. Keep any failed attempt as a failure even after cleanup; rerun
+after fixing the cause. Remove the local scratch directory once evidence is
+recorded (`rm -r "$DRILL_DIR"`).
+
 ### Redeploy idempotency — a redeploy can never mint a second install
 
 - **colo-scripts** `playbooks/cluster-setup.yaml`: the plugin is exactly ONE
