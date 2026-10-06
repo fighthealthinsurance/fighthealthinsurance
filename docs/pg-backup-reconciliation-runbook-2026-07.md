@@ -405,6 +405,7 @@ storage configuration. It restores the newest completed `-9` backup into a
 new single-instance cluster, checks application data, and removes the restored
 copy. Allow capacity for another copy of `-9` on `encrypted-local-path`.
 Use Bash, `kubectl`, `jq`, and the AWS CLI for the credential checks below.
+The restore steps also require GNU `date` for the `date -d` backup-age check.
 
 #### 1. Prepare a read-only recovery store
 
