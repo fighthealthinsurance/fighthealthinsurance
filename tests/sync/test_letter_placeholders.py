@@ -34,6 +34,7 @@ from fighthealthinsurance.letter_placeholders import (
     describe_placeholders,
     find_placeholders_as_written,
     find_unfilled_placeholders,
+    placeholder_spans,
 )
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -350,6 +351,18 @@ def test_lines_to_write_on_are_told_apart_by_length_as_they_are_written():
         "________",
         "[Your Name]",
         "______________",
+    ]
+
+
+def test_a_blanks_span_is_the_blank_as_the_letter_has_it():
+    """Blanks inside a blank included, where the written list has what is
+    left of it once they are taken out."""
+    text = "Ref XXX. Signed [Your {{FIRST_NAME}}], [Your [sic] Name]."
+    assert [text[start:end] for start, end in placeholder_spans(text)] == [
+        "XXX",
+        "[Your {{FIRST_NAME}}]",
+        "{{FIRST_NAME}}",
+        "[Your [sic] Name]",
     ]
 
 

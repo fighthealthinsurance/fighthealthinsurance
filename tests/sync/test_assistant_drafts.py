@@ -1,11 +1,16 @@
 """assistant_drafts.py: the chat path's bookkeeping, letters and sweep."""
 
 import asyncio
+import json
 import os
+import random
+import re
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
+import yaml
 from asgiref.sync import async_to_sync
 from django.core.management import call_command
 from django.test import (
@@ -23,7 +28,10 @@ from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 from fighthealthinsurance.denial_context import load_qa, merge_qa
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
-from fighthealthinsurance.letter_placeholders import find_placeholders_as_written
+from fighthealthinsurance.letter_placeholders import (
+    PATTERNS_FILE,
+    find_placeholders_as_written,
+)
 from fighthealthinsurance.ml import ml_models, spend
 from fighthealthinsurance.models import (
     AssistantDraft,
@@ -46,6 +54,64 @@ LETTER = (
     "The scan is medically necessary for my [Diagnosis] and the treatment "
     "plan my doctor set out. Please reverse the decision. Sincerely, "
     "[Your Name]"
+)
+
+
+# What main listed before placeholders_in: every bracket that starts with a
+# capital, citations and all, with {{...}}, {...} and $name.
+MAIN_PLACEHOLDER = re.compile(
+    r"\{\{?[A-Za-z_][A-Za-z0-9_ ]*\}\}?|\[[A-Z][^\]\n]{2,40}\]|\$[a-z][a-z_]{2,}\b"
+)
+# Fill-ins main listed, each one the fax form refuses to send.
+FILL_INS_MAIN_LISTED = (
+    # Refused as a whole.
+    "[Your Name]",
+    "[Patient Name]",
+    "[Patient's Name]",
+    "[Patient’s Name]",
+    "[Member ID]",
+    "[Date of Service]",
+    "[Insurance Company Name]",
+    "[Provider's NPI Number]",
+    "[Phone Number]",
+    "[Signature]",
+    "[Today's Date]",
+    "[CPT Code]",
+    "[INSERT DATE]",
+    "[CLAIM_NUMBER]",
+    "[Address Line 1]",
+    "[City, State ZIP]",
+    "[Date: MM/DD/YYYY]",
+    "[Date of Birth: MM/DD/YYYY]",
+    "[Phone: (555) 555-5555]",
+    "[Insert date of denial, e.g. 01/02/2026]",
+    "[Your Name, Ph.D.]",
+    # Refused for a blank inside it.
+    "[DOB: MM/DD/YYYY]",
+    "[Member ID: XXXXXX]",
+    "[Policy Number: XXXXXXXX]",
+    "[Group Number: XXXXXX]",
+    "[Claim Number: XXX-XX-XXXX]",
+    "[Claim #: ________]",
+    "[NPI: XXXXXXXXXX]",
+    "[ICD-10: XXX.X]",
+    "[Amount Billed: $X,XXX.XX]",
+    "[Your {{FIRST_NAME}}]",
+    "[Patient: {{FIRST_NAME}} {{LAST_NAME}}]",
+    "[Subscriber ID: {{SCSID}}]",
+)
+# Brackets main listed that the fax form lets through: citations and the
+# notes that go with a quotation.
+CITATIONS_MAIN_LISTED = (
+    "[CMS NCD 220.2]",
+    "[Smith et al. 2020]",
+    "[Id.]",
+    "[PMID: 12345678]",
+    "[Exhibit 1]",
+    "[Section 2.1]",
+    "[Emphasis added]",
+    "[Internal citations omitted]",
+    "[Sic]",
 )
 
 
@@ -337,6 +403,20 @@ class LettersTest(TestCase):
             with self.subTest(line=line):
                 self.assertIn(line, letter["placeholders"])
 
+    def test_a_letter_cut_short_lists_only_what_its_text_has(self):
+        denial = a_denial()
+        self._row(
+            denial, LETTER + " Born [DOB: MM/DD/YYYY], [Your {{FIRST_NAME}}]." * 300
+        )
+        [letter] = drafts.collect_letters(denial)
+        self.assertTrue(letter["cut_short"])
+        self.assertEqual(
+            [found for found in letter["placeholders"] if found not in letter["text"]],
+            [],
+        )
+        self.assertIn("[DOB: MM/DD/YYYY]", letter["placeholders"])
+        self.assertIn("[Your {{FIRST_NAME}}]", letter["placeholders"])
+
     def test_a_long_letter_is_cut_and_says_so(self):
         denial = a_denial()
         self._row(denial, LETTER + " more. " * 2000)
@@ -457,6 +537,122 @@ class PlaceholdersTest(SimpleTestCase):
             drafts.placeholders_in("[Your Name], [DATE], [Your Name] per [1]."),
             ["[DATE]", "[Your Name]"],
         )
+
+    def test_a_bracket_stopped_for_a_blank_inside_it_is_listed_whole(self):
+        # The fax form stops [DOB: MM/DD/YYYY] for its MM/DD/YYYY, so the
+        # bracket is what the assistant fills in.
+        for prompt in (
+            "[DOB: MM/DD/YYYY]",
+            "[Member ID: XXXXXX]",
+            "[Claim #: ________]",
+            "[ICD-10: XXX.X]",
+            "[Patient: {{FIRST_NAME}} {{LAST_NAME}}]",
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(
+                    drafts.placeholders_in(f"Signed {prompt} today."), [prompt]
+                )
+
+    def test_a_bracket_with_a_blank_inside_is_listed_as_the_letter_has_it(self):
+        # Not as the fax form reads it once {{FIRST_NAME}} is taken out,
+        # "[Your               ]", which is in no letter. {{FIRST_NAME}} on
+        # its own is listed too.
+        self.assertEqual(
+            drafts.placeholders_in(
+                "Dear {{FIRST_NAME}}, signed [Your {{FIRST_NAME}}] and "
+                "[Your [sic] Name]."
+            ),
+            ["[Your [sic] Name]", "[Your {{FIRST_NAME}}]", "{{FIRST_NAME}}"],
+        )
+
+    def test_every_fill_in_main_listed_is_still_listed(self):
+        letter = "\n".join(
+            f"Line {i}: {bracket}."
+            for i, bracket in enumerate(FILL_INS_MAIN_LISTED + CITATIONS_MAIN_LISTED)
+        )
+        main_listed = set(MAIN_PLACEHOLDER.findall(letter))
+        self.assertEqual(main_listed, set(FILL_INS_MAIN_LISTED + CITATIONS_MAIN_LISTED))
+        # Main's list less its citations, and nothing else.
+        self.assertEqual(
+            set(drafts.placeholders_in(letter)),
+            main_listed - set(CITATIONS_MAIN_LISTED),
+        )
+
+    def test_every_fill_in_main_listed_in_the_apps_own_templates_is_listed(self):
+        fixtures = Path(drafts.__file__).with_name("fixtures")
+        templates = [
+            row["fields"]
+            for name in ("initial.yaml", "followup.yaml")
+            for row in yaml.safe_load((fixtures / name).read_text(encoding="utf-8"))
+            if row["model"] == "fighthealthinsurance.appealtemplates"
+        ]
+        self.assertTrue(templates)
+        for template in templates:
+            letter = template["appeal_text"]
+            with self.subTest(template=template["name"]):
+                self.assertEqual(
+                    set(MAIN_PLACEHOLDER.findall(letter))
+                    - set(drafts.placeholders_in(letter)),
+                    set(),
+                )
+
+    def test_every_listed_placeholder_is_in_the_letter(self):
+        """Whatever the letter, each fill-in listed is in it exactly as
+        listed: never one put together from a blank the fax form has taken
+        out. Letters made at random from fill-ins, citations, links, stray
+        brackets and every example in letter_placeholders.json, and cut
+        anywhere, as a long letter is."""
+        spec = json.loads(PATTERNS_FILE.read_text(encoding="utf-8"))
+        pieces = (
+            list(FILL_INS_MAIN_LISTED)
+            + list(CITATIONS_MAIN_LISTED)
+            + [
+                example
+                for section in ("ignore", "placeholders")
+                for entry in spec[section]
+                for example in entry["examples"]
+            ]
+            + spec["reference_links"]["examples"]
+            + [
+                "{{FIRST_NAME}}",
+                "{diagnosis}",
+                "$your_name_here",
+                "[Your [sic] Name]",
+                "[Your [Member ID]",
+                "[Coverage Policy](https://example.com/policy)",
+                "[Policy dated MM/DD/YYYY](https://example.com/policy)",
+                "[Coverage Policy][1]",
+                "\n[1]: https://example.com/policy\n",
+                "XXXXXX",
+                "MM/DD/YYYY",
+                "________",
+                "[",
+                "]",
+                "{{",
+                "}}",
+                "[Your ",
+                "Name]",
+                "Dear Example Health,",
+                "\n",
+            ]
+        )
+        rng = random.Random(20261006)
+        letters = list(pieces)
+        for _ in range(500):
+            letter = "".join(
+                rng.choice(pieces) + rng.choice(("", " ", ", ", "\n"))
+                for _ in range(rng.randint(1, 8))
+            )
+            letters.append(letter)
+            letters.append(letter[: rng.randint(0, len(letter))])
+        wrong = []
+        for letter in letters:
+            listed = drafts.placeholders_in(letter)
+            if listed != sorted(set(listed)) or any(
+                found not in letter for found in listed
+            ):
+                wrong.append((letter, listed))
+        self.assertEqual(wrong, [])
 
 
 class GenerationAnswersTest(TestCase):

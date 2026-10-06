@@ -10,6 +10,7 @@ collect_letters, and nothing is kept past expires_at.
 """
 
 import base64
+import bisect
 import hashlib
 import re
 import secrets
@@ -32,7 +33,7 @@ from fighthealthinsurance.denial_context import (
     question_field_name,
     question_text_for_field,
 )
-from fighthealthinsurance.letter_placeholders import find_placeholders_as_written
+from fighthealthinsurance.letter_placeholders import placeholder_spans
 from fighthealthinsurance.models import AssistantDraft, Denial
 from fighthealthinsurance.utils import is_real_appeal, strip_invisible_controls
 
@@ -68,6 +69,8 @@ _URL = re.compile(r"https?://|www\.", re.IGNORECASE)
 # lists (placeholders_in). Its bracketed fill-ins come from the fax form's
 # own rules instead (letter_placeholders.py).
 _PLACEHOLDER = re.compile(r"\{\{?[A-Za-z_][A-Za-z0-9_ ]*\}\}?|\$[a-z][a-z_]{2,}\b")
+# A bracket on one line with no bracket inside it: [DOB: MM/DD/YYYY].
+_BRACKET = re.compile(r"\[[^\[\]\n]*\]")
 # A question that ends with its options in brackets: "(inpatient/outpatient)".
 _CHOICES = re.compile(r"\(([^()]+)\)\s*\?\s*$")
 _YES_NO_STARTS = frozenset(
@@ -355,22 +358,51 @@ def _file_answers(draft: AssistantDraft, denial: Denial, answers: list) -> int:
     return len(updates)
 
 
-def placeholders_in(text: str) -> list[str]:
-    """The fill-ins left in a letter, each once, sorted.
+def _span_holding(
+    spans: list[tuple[int, int]], start: int, end: int
+) -> Optional[tuple[int, int]]:
+    """The one of ``spans`` (sorted, none overlapping) that holds start to
+    end, if any: only the last to begin at or before start can."""
+    at = bisect.bisect_right(spans, start, key=lambda span: span[0]) - 1
+    if at >= 0 and end <= spans[at][1]:
+        return spans[at]
+    return None
 
-    {{FIRST_NAME}}, {diagnosis} and $your_name_here (_PLACEHOLDER), and
-    every bracket the fax form would stop the letter for, with all of the
-    fax form's bracket rules (letter_placeholders.json): [Your Name],
-    [Address Line 1], [Date: MM/DD/YYYY], [doctor name], [his/her]. A
-    bracket the fax form lets through is not listed either: a citation
-    ([1], [CMS NCD 220.2], [Smith et al. 2020], [Id.]), a link's text
-    ([Coverage Policy](https://...)) or a quotation's note ([Emphasis
-    added], [Internal citations omitted]).
+
+def placeholders_in(text: str) -> list[str]:
+    """The fill-ins left in a letter, each once, sorted, each exactly as the
+    letter has it.
+
+    Every bracket the fax form would stop the letter for, with all of the
+    fax form's rules (letter_placeholders.json): one it stops as a whole
+    ([Your Name], [Address Line 1], [Date: MM/DD/YYYY], [doctor name],
+    [his/her]) and one it stops for a blank inside it, which is listed
+    whole ([DOB: MM/DD/YYYY], [Member ID: XXXXXX], [Your {{FIRST_NAME}}]).
+    Then {{FIRST_NAME}}, {diagnosis} and $your_name_here (_PLACEHOLDER),
+    except inside a bracket already listed. A bracket the fax form lets
+    through is not listed: a citation ([1], [CMS NCD 220.2], [Smith et al.
+    2020], [Id.]), a link's text ([Coverage Policy](https://...)) or a
+    quotation's note ([Emphasis added], [Internal citations omitted]).
+    Nor is a blank the fax form stops outside any bracket, such as XXX or
+    ___ on its own.
     """
-    brackets = (
-        found for found in find_placeholders_as_written(text) if found.startswith("[")
+    brackets = [match.span() for match in _BRACKET.finditer(text)]
+    listed: set[tuple[int, int]] = set()
+    for start, end in placeholder_spans(text):
+        if text[start] == "[":
+            # The fax form's own bracket: what it matched, read from the
+            # letter rather than from what was left once the blanks inside
+            # it were taken out, so [Your {{FIRST_NAME}}] stays as it is.
+            listed.add((start, end))
+        elif (around := _span_holding(brackets, start, end)) is not None:
+            listed.add(around)
+    spans = sorted(listed)
+    loose = (
+        match.group(0)
+        for match in _PLACEHOLDER.finditer(text)
+        if _span_holding(spans, *match.span()) is None
     )
-    return sorted(set(_PLACEHOLDER.findall(text)).union(brackets))
+    return sorted({text[start:end] for start, end in spans}.union(loose))
 
 
 def collect_letters(denial: Denial) -> list[dict[str, Any]]:

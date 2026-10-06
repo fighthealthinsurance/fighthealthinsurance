@@ -8,6 +8,7 @@ one and enters its lifespan itself, as uvicorn would.
 """
 
 import ast
+import asyncio
 import contextlib
 import json
 import logging
@@ -2274,10 +2275,42 @@ class ChatPathListingTest(TestCase):
         self.assertNotIn("draft_appeal_in_chat", off["start"])
 
 
+_REAL_SLEEP = asyncio.sleep
+
+
+class _Clock:
+    """mcp_server's clock, moved on by hand: its asyncio.sleep returns at
+    once and moves the clock on by what it was asked to sleep. Each sleep
+    notes how long, and which drafts had a wait running while it slept."""
+
+    def __init__(self):
+        self.now = 1000.0
+        self.slept: list[float] = []
+        self.waiting: list[set[int]] = []
+
+    async def _sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.waiting.append(set(mcp_server._WAITING_ON))
+        self.now += seconds
+        await _REAL_SLEEP(0)
+
+    @contextlib.contextmanager
+    def running(self):
+        # Only mcp_server's names change: the event loop and the MCP SDK
+        # keep the real clock and the real sleep.
+        fake_time = SimpleNamespace(**{**vars(time), "monotonic": lambda: self.now})
+        fake_asyncio = SimpleNamespace(**{**vars(asyncio), "sleep": self._sleep})
+        with mock.patch.object(mcp_server, "time", fake_time), mock.patch.object(
+            mcp_server, "asyncio", fake_asyncio
+        ):
+            yield self
+
+
 class ChatPathToolsTest(TestCase):
     def setUp(self):
         self.enterContext(override_settings(**CHAT_ON))
         mcp_server._WAITING_ON.clear()
+        self.addCleanup(mcp_server._WAITING_ON.clear)
 
     def _letters(self, denial, count: int):
         for i in range(count):
@@ -2398,16 +2431,41 @@ class ChatPathToolsTest(TestCase):
         self.assertEqual(view.await_count, 3)
         self.assertEqual(mcp_server._WAITING_ON, set())
 
+    def _looks_at(self, clock: _Clock) -> list[float]:
+        """Each time get_appeal_drafts reads the draft, by the clock."""
+        looks: list[float] = []
+        view = mcp_server._view_draft
+
+        async def look(draft_id: str):
+            looks.append(clock.now)
+            return await view(draft_id)
+
+        self.enterContext(mock.patch.object(mcp_server, "_view_draft", look))
+        return looks
+
     def test_only_one_wait_per_draft_per_pod(self):
-        mcp_server._WAITING_ON.add(1)
-        view = mock.AsyncMock(return_value=(1, {"status": "reading"}))
-        with mock.patch.object(mcp_server, "_view_draft", view):
-            async_to_sync(call)(
+        _, draft_id = self._draft(status="reading")
+        pk = models.AssistantDraft.objects.get().pk
+        at_once = async_to_sync(call)(
+            "get_appeal_drafts", {"draft_id": draft_id}, routes=chat_routes()
+        )
+        # Another call is already waiting on this draft.
+        mcp_server._WAITING_ON.add(pk)
+        clock = _Clock()
+        looks = self._looks_at(clock)
+        with clock.running():
+            result = async_to_sync(call)(
                 "get_appeal_drafts",
-                {"draft_id": "x" * 43, "seen": "reading", "wait": 40},
+                {"draft_id": draft_id, "seen": "reading", "wait": 40},
                 routes=chat_routes(),
             )
-        self.assertEqual(view.await_count, 1)
+        # One look and no wait: the same reply a call without a wait gets,
+        # structured content and all.
+        self.assertEqual((len(looks), clock.slept), (1, []))
+        self.assertEqual(self._structured(result), self._structured(at_once))
+        self.assertEqual(result.structuredContent["status"], "reading")
+        # The other call's wait is still its own to end.
+        self.assertEqual(mcp_server._WAITING_ON, {pk})
 
     def _structured(self, result) -> dict[str, Any]:
         """A reply's structuredContent, which says what its text says."""
@@ -2452,13 +2510,25 @@ class ChatPathToolsTest(TestCase):
         self,
     ):
         _, draft_id = self._draft(status="reading")
-        with mock.patch.object(mcp_server, "DRAFT_POLL_SECONDS", 0.2):
+        pk = models.AssistantDraft.objects.get().pk
+        clock = _Clock()
+        started = clock.now
+        looks = self._looks_at(clock)
+        with clock.running(), mock.patch.object(mcp_server, "DRAFT_POLL_SECONDS", 2.0):
             result = async_to_sync(call)(
                 "get_appeal_drafts",
-                {"draft_id": draft_id, "seen": "reading", "wait": 1},
+                {"draft_id": draft_id, "seen": "reading", "wait": 5},
                 routes=chat_routes(),
             )
-        self.assertEqual(self._structured(result)["status"], "reading")
+        # It looked at once and after each sleep, every 2 seconds and then
+        # the last second, until the 5 seconds ran out, with the draft held
+        # as waited on throughout and let go after.
+        self.assertEqual(clock.slept, [2.0, 2.0, 1.0])
+        self.assertEqual([at - started for at in looks], [0.0, 2.0, 4.0, 5.0])
+        self.assertEqual(clock.waiting, [{pk}, {pk}, {pk}])
+        self.assertEqual(mcp_server._WAITING_ON, set())
+        data = self._structured(result)
+        self.assertEqual((data["status"], data["next"]), ("reading", "check_again"))
 
     def test_ready_letters_come_back_without_naming_the_case(self):
         denial, draft_id = self._draft(letters=3)
