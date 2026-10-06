@@ -219,9 +219,20 @@ class IdleLedgerTest(TestCase):
             spend._ledger._refreshed_at = time.monotonic()
             spend._ledger._landed.set()
 
-        threading.Thread(target=land).start()
+        thread = threading.Thread(target=land)
+        thread.start()
+        self.addCleanup(thread.join)
         self.assertTrue(spend._ledger.wait_until_loaded(2.0))
 
     def test_an_unreadable_ledger_still_refuses_after_the_wait(self):
         self.assertFalse(spend._ledger.wait_until_loaded(0.05))
         self.assertFalse(spend.allows(spend.FHI, spend.ASSISTANT))
+
+    def test_a_refresh_that_lands_before_the_wait_is_not_missed(self):
+        import time
+
+        spend._ledger._refreshed_at = time.monotonic()
+        spend._ledger._landed.set()
+        started = time.monotonic()
+        self.assertTrue(spend._ledger.wait_until_loaded(2.0))
+        self.assertLess(time.monotonic() - started, 0.5)

@@ -369,15 +369,24 @@ class _Ledger:
             )
             self._thread.start()
 
+    def start(self) -> None:
+        """Start the worker at process boot, so a quiet process loads its copy."""
+        self._ensure_worker()
+        self._wake.set()
+
     def fresh(self) -> bool:
         return time.monotonic() - self._refreshed_at <= STALE_SECONDS
 
     def wait_until_loaded(self, timeout: float) -> bool:
         """Block (never on the event loop) until a refresh has landed within
         STALE_SECONDS, at most ``timeout``. Doesn't touch the database."""
-        if not getattr(settings, "FHI_SPEND_BACKGROUND", True) or self.fresh():
+        if not getattr(settings, "FHI_SPEND_BACKGROUND", True):
             return True
+        # Clear before checking: _refresh stamps the time before it signals,
+        # so a refresh landing at any point here is seen.
         self._landed.clear()
+        if self.fresh():
+            return True
         self._ensure_worker()
         self._refresh_wanted.set()
         self._wake.set()

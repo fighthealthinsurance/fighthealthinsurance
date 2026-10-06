@@ -1814,8 +1814,17 @@ async def _drafting_open() -> bool:
     """Whether a new chat draft may start now (else site_only)."""
     if getattr(settings, "MCP_DRAFT_IN_CHAT_PAUSED", False):
         return False
-    # The wait is an Event, not the database, so a thread is enough.
-    await asyncio.to_thread(spend._ledger.wait_until_loaded, LEDGER_LOAD_WAIT_SECONDS)
+    # The wait is an Event, not the database, so a thread is enough; the
+    # deadline is kept here so a busy thread pool can't stretch it.
+    try:
+        await asyncio.wait_for(
+            asyncio.to_thread(
+                spend._ledger.wait_until_loaded, LEDGER_LOAD_WAIT_SECONDS
+            ),
+            LEDGER_LOAD_WAIT_SECONDS,
+        )
+    except TimeoutError:
+        pass
     return spend.assistant_budget_left()
 
 

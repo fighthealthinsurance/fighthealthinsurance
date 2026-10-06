@@ -80,6 +80,11 @@ application = ProtocolTypeRouter(
 
 from django.conf import settings
 
+from fighthealthinsurance.ml import spend as _spend
+
+# Load the spend ledger at boot, not on the first request.
+_spend._ledger.start()
+
 # Sentry only fires from real (non-local) deployments. "endpoint set and
 # DEBUG off" is not enough: dev machines routinely carry the production
 # SENTRY_ENDPOINT plus a Prod DJANGO_CONFIGURATION (copied .env files, and
