@@ -1806,10 +1806,16 @@ def chat_path_enabled() -> bool:
     return assistant_drafts.draft_in_chat_enabled() and assistant_handoff.v2_enabled()
 
 
-def _drafting_open() -> bool:
+# How long a cold pod waits for its first read of the spend ledger.
+LEDGER_LOAD_WAIT_SECONDS = 3.0
+
+
+async def _drafting_open() -> bool:
     """Whether a new chat draft may start now (else site_only)."""
     if getattr(settings, "MCP_DRAFT_IN_CHAT_PAUSED", False):
         return False
+    # The wait is an Event, not the database, so a thread is enough.
+    await asyncio.to_thread(spend._ledger.wait_until_loaded, LEDGER_LOAD_WAIT_SECONDS)
     return spend.assistant_budget_left()
 
 
@@ -2319,7 +2325,7 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
             letter, treatment, diagnosis = _checked_letter(
                 letter_text, procedure, condition
             )
-            if not _drafting_open():
+            if not await _drafting_open():
                 prepared = await _prepared_form(letter, treatment, diagnosis, ctx)
                 return {
                     **prepared,
