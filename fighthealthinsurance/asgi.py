@@ -51,7 +51,7 @@ if get_env_variable("FHI_WS_ENFORCE_ORIGIN", "true").lower() not in (
 
 
 def http_and_lifespan_routes(django_http_app: Any) -> dict[str, Any]:
-    """The "http" entry, plus "lifespan" when the read-only MCP server is on.
+    """The "http" entry, plus "lifespan" when the MCP server is on.
 
     With MCP_SERVER_ENABLED off (the default) this is Django alone, /mcp is
     an ordinary 404, and the MCP server is never mounted. With it on, a small
