@@ -149,20 +149,6 @@ def find_placeholders_as_written(text: str) -> list[str]:
     return _once_each([spot.written for spot in _find_spots(text)])
 
 
-def placeholder_spans(text: str) -> list[tuple[int, int]]:
-    """Where each blank in ``text`` is, as (start, end), in the order they
-    appear, so ``text[start:end]`` is the blank exactly as the letter has it.
-
-    That can differ from ``find_placeholders_as_written``, which gives what
-    is left of a blank once the blanks inside it are taken out:
-    ``[Your {{FIRST_NAME}}]`` is ``[Your               ]`` there, and
-    ``[Your {{FIRST_NAME}}]`` here.
-    """
-    # Blanking out keeps every length, so a place in what is left of the
-    # letter is the same place in the letter.
-    return [(spot.at, spot.at + len(spot.written)) for spot in _find_spots(text)]
-
-
 @dataclass(frozen=True)
 class BlanksToName:
     # Each blank, once, as a message names it: first the ones it has room

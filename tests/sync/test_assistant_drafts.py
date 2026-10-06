@@ -28,10 +28,7 @@ from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 from fighthealthinsurance.denial_context import load_qa, merge_qa
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
-from fighthealthinsurance.letter_placeholders import (
-    PATTERNS_FILE,
-    find_placeholders_as_written,
-)
+from fighthealthinsurance.letter_placeholders import PATTERNS_FILE
 from fighthealthinsurance.ml import ml_models, spend
 from fighthealthinsurance.models import (
     AssistantDraft,
@@ -57,14 +54,14 @@ LETTER = (
 )
 
 
-# What main listed before placeholders_in: every bracket that starts with a
-# capital, citations and all, with {{...}}, {...} and $name.
+# What main listed before placeholders_in, kept here as main had it: every
+# bracket that starts with a capital, citations and all, with {{...}}, {...}
+# and $name. placeholders_in lists this, less CITATIONS_MAIN_LISTED.
 MAIN_PLACEHOLDER = re.compile(
     r"\{\{?[A-Za-z_][A-Za-z0-9_ ]*\}\}?|\[[A-Z][^\]\n]{2,40}\]|\$[a-z][a-z_]{2,}\b"
 )
-# Fill-ins main listed, each one the fax form refuses to send.
+# Fill-ins main listed, each still listed.
 FILL_INS_MAIN_LISTED = (
-    # Refused as a whole.
     "[Your Name]",
     "[Patient Name]",
     "[Patient's Name]",
@@ -86,7 +83,15 @@ FILL_INS_MAIN_LISTED = (
     "[Phone: (555) 555-5555]",
     "[Insert date of denial, e.g. 01/02/2026]",
     "[Your Name, Ph.D.]",
-    # Refused for a blank inside it.
+    # A digit, full stop, colon or semicolon, with no fill-in word first.
+    "[Dr. Name]",
+    "[ICD-10 Code]",
+    "[Policy No.]",
+    "[Claim Number: ]",
+    "[Member ID:]",
+    "[Physician Name, M.D.]",
+    "[Diagnosis; Procedure]",
+    # A blank inside it.
     "[DOB: MM/DD/YYYY]",
     "[Member ID: XXXXXX]",
     "[Policy Number: XXXXXXXX]",
@@ -99,20 +104,203 @@ FILL_INS_MAIN_LISTED = (
     "[Your {{FIRST_NAME}}]",
     "[Patient: {{FIRST_NAME}} {{LAST_NAME}}]",
     "[Subscriber ID: {{SCSID}}]",
+    # A year or a number with a point in an example value, which no
+    # citation rule takes.
+    "[Month of denial, e.g. March 2026]",
+    "[Insert year, e.g. 2026]",
+    "[Plan Year 2026]",
+    "[A1c: 7.2%]",
+    "[BMI 32.5]",
+    "[Weight: 150.5 lbs]",
+    "[Amount Billed: $1,234.56]",
+    "[Phone: 555.555.5555]",
+    "[ICD-10 Code: E11.9]",
+    "[Section number]",
+    # A {{...}} inside makes a bracket a fill-in, whatever else it holds.
+    "[Smith et al. {{YEAR}}]",
 )
-# Brackets main listed that the fax form lets through: citations and the
-# notes that go with a quotation.
-CITATIONS_MAIN_LISTED = (
-    "[CMS NCD 220.2]",
-    "[Smith et al. 2020]",
-    "[Id.]",
-    "[PMID: 12345678]",
+# Brackets main listed that no citation rule takes, so they stay listed:
+# exhibits and attachments (see placeholders_in), a PubMed id and a link's
+# text.
+OTHER_BRACKETS_MAIN_LISTED = (
+    "[Exhibit A]",
     "[Exhibit 1]",
-    "[Section 2.1]",
-    "[Emphasis added]",
-    "[Internal citations omitted]",
-    "[Sic]",
+    "[Attachment B]",
+    "[Appendix C]",
+    "[PMID: 12345678]",
+    "[Coverage Policy]",
 )
+# Brackets main listed that are citations or a quotation's notes, which are
+# no longer listed. A reference number or list ([1], [3, 4], [2-5]) never
+# starts with a capital, so main never listed one (NEVER_LISTED).
+CITATIONS_MAIN_LISTED = (
+    # A regulation or statute.
+    "[CMS NCD 220.2]",
+    "[See 42 CFR 438.210]",
+    "[See 29 C.F.R. 2560.503-1]",
+    "[Title 42 U.S.C. 300gg-19]",
+    "[Cf. 29 USC 1133]",
+    "[Medicare LCD L33822]",
+    "[Pub. L. 111-148]",
+    "[ERISA § 503]",
+    "[Section 438.210]",
+    "[Section 2.1]",
+    "[Sec. 4.3]",
+    # Authors and a year.
+    "[Smith et al.]",
+    "[Smith et al. 2020]",
+    "[Smith 2020]",
+    "[Smith 2020a]",
+    "[Smith and Jones, 2019]",
+    "[Smith & Jones 2019b]",
+    "[American Diabetes Association, 2023]",
+    "[O'Brien (2018)]",
+    # A quotation's notes.
+    "[Emphasis added]",
+    "[Emphasis ours]",
+    "[Emphasis in original]",
+    "[Emphasis omitted]",
+    "[EMPHASIS ADDED]",
+    "[Internal citations omitted]",
+    "[Internal quotation marks omitted]",
+    "[Internal footnotes omitted]",
+    "[Footnotes omitted]",
+    "[Footnotes and citations omitted]",
+    "[Citations omitted]",
+    "[Alterations in original]",
+    "[Brackets in original]",
+    "[Cleaned up]",
+    "[Sic]",
+    "[Emphasis added; citations omitted]",
+    "[Citations and quotation marks omitted]",
+    # Id. and Ibid.
+    "[Id.]",
+    "[Id. at 5]",
+    "[Ibid.]",
+    "[Ibid]",
+)
+# Brackets main never listed, which are still not listed: too short, too
+# long, or not starting with a capital.
+NEVER_LISTED = (
+    "[It]",
+    "[We]",
+    "[National Comprehensive Cancer Network Clinical Practice Guidelines]",
+    "[1]",
+    "[12]",
+    "[3, 4]",
+    "[2-5]",
+    "[42 CFR 438.210]",
+    "[§ 2719]",
+    "[doctor name]",
+    "[his/her]",
+    "[sic]",
+)
+
+
+def generated_brackets():
+    """Brackets made from parts, as (fill-ins, citations): every pairing of
+    a label with a fill-in shape, and of authors, regulations and notes
+    with the ways a letter writes them. Only the ones main listed."""
+    labels = (
+        "Name",
+        "Your Name",
+        "Dr. Name",
+        "Patient Name",
+        "Member ID",
+        "Policy No.",
+        "Claim Number",
+        "ICD-10 Code",
+        "CPT Code",
+        "Physician Name, M.D.",
+        "Date of Birth",
+        "Group Number",
+        "NPI",
+        "Date of Service",
+        "Provider",
+        "Insurance Company",
+    )
+    shapes = (
+        "[{}]",
+        "[{}:]",
+        "[{}: ]",
+        "[{}: XXXXXX]",
+        "[{}: MM/DD/YYYY]",
+        "[{}: ________]",
+        "[{}, e.g. 2026]",
+        "[{}, e.g. 98.6]",
+        "[{} No.]",
+        "[{}; if any]",
+        "[{}: {{{{SCSID}}}}]",
+        "[{} $your_name_here]",
+    )
+    fill_ins = {shape.format(label) for label in labels for shape in shapes}
+    authors = (
+        "Smith",
+        "Smith and Jones",
+        "Smith & Jones",
+        "O'Brien",
+        "Lee, Park and Kim",
+        "American Diabetes Association",
+        "NCCN",
+        "Smith et al.",
+    )
+    years = ("1998", "2020", "2020a", "2024b")
+    citations = {
+        shape.format(author, year)
+        for author in authors
+        for year in years
+        for shape in ("[{} {}]", "[{}, {}]", "[{} ({})]")
+    }
+    citations |= {
+        f"[{lead} {cite}]"
+        for lead in ("See", "Cf.", "Under", "Per")
+        for cite in (
+            "42 CFR 438.210",
+            "45 C.F.R. § 147.136",
+            "29 U.S.C. § 1133",
+            "42 USC 300gg-19",
+            "NCD 220.2",
+            "LCD L33822",
+            "Pub. L. 111-148",
+            "§ 2719",
+            "Section 438.210",
+            "Section 2.1",
+            "Sec. 2.1",
+        )
+    }
+    notes = (
+        "emphasis added",
+        "emphasis ours",
+        "emphasis in original",
+        "emphasis omitted",
+        "internal citations omitted",
+        "internal quotation marks omitted",
+        "footnotes omitted",
+        "footnotes and citations omitted",
+        "citations omitted",
+        "alterations in original",
+        "brackets in original",
+        "cleaned up",
+        "sic",
+    )
+    written = (str.capitalize, str.title, str.upper)
+    citations |= {f"[{case(note)}]" for note in notes for case in written}
+    citations |= {
+        f"[{first.capitalize()}{between}{second}]"
+        for first in notes
+        for second in notes
+        if first != second
+        for between in ("; ", ", ", " and ")
+    }
+    citations |= {f"[{cite}]" for cite in ("Id.", "Id. at 12", "Ibid.", "Ibid")}
+
+    def main_lists(bracket):
+        return MAIN_PLACEHOLDER.fullmatch(bracket) is not None
+
+    return (
+        sorted(filter(main_lists, fill_ins)),
+        sorted(filter(main_lists, citations)),
+    )
 
 
 def a_denial(**fields):
@@ -448,31 +636,12 @@ class LettersTest(TestCase):
 
 
 class PlaceholdersTest(SimpleTestCase):
-    """What a letter lists for the assistant to fill in: fill-in prompts,
-    never citations."""
+    """What a letter lists for the assistant to fill in: what main listed,
+    less citations and a quotation's notes, and nothing main never listed."""
 
-    def test_fill_in_prompts_are_placeholders(self):
-        for prompt in (
+    def test_fill_ins_main_listed_are_listed(self):
+        for prompt in FILL_INS_MAIN_LISTED + (
             "[DATE]",
-            "[Your Phone Number]",
-            "[Patient Name]",
-            "[Member ID]",
-            "[Patient's Name]",
-            "[Patient’s Name]",
-            "[City, State ZIP]",
-            # A digit, colon, semicolon or full stop in a prompt that starts
-            # with a fill-in word: the fax form stops these too.
-            "[Address Line 1]",
-            "[Address Line 2]",
-            "[Insert date of denial, e.g. 01/02/2026]",
-            "[Date: MM/DD/YYYY]",
-            "[Date of Service: MM/DD/YYYY]",
-            "[Phone: (555) 555-5555]",
-            "[Insert Specific Reason; e.g. step therapy]",
-            "[Your Name, Ph.D.]",
-            # In lower case, and a choice of pronouns.
-            "[doctor name]",
-            "[his/her]",
             "{{FIRST_NAME}}",
             "{diagnosis}",
             "$your_name_here",
@@ -482,55 +651,43 @@ class PlaceholdersTest(SimpleTestCase):
                     drafts.placeholders_in(f"Signed {prompt} today."), [prompt]
                 )
 
-    def test_citations_are_not_placeholders(self):
-        for citation in (
-            "[CMS NCD 220.2]",
-            "[42 CFR 438.210]",
-            "[1]",
-            "[Smith et al. 2020]",
-            "[29 C.F.R. 2560.503-1]",
-            "[Id.]",
-            # The notes that go with a quotation.
-            "[Emphasis added]",
-            "[Internal citations omitted]",
-            "[Sic]",
-        ):
+    def test_fill_ins_with_a_digit_stop_or_colon_are_all_listed(self):
+        letter = (
+            "Physician: [Dr. Name]\nCode: [ICD-10 Code]\nPolicy: [Policy No.]\n"
+            "Claim: [Claim Number: ]\nMember: [Member ID:]\n"
+            "Signed, [Physician Name, M.D.]"
+        )
+        self.assertEqual(
+            drafts.placeholders_in(letter),
+            [
+                "[Claim Number: ]",
+                "[Dr. Name]",
+                "[ICD-10 Code]",
+                "[Member ID:]",
+                "[Physician Name, M.D.]",
+                "[Policy No.]",
+            ],
+        )
+
+    def test_citations_and_quotation_notes_are_not_listed(self):
+        for citation in CITATIONS_MAIN_LISTED:
             with self.subTest(citation=citation):
                 self.assertEqual(
                     drafts.placeholders_in(f"As required {citation}, reverse it."),
                     [],
                 )
 
-    def test_a_links_text_is_not_a_placeholder(self):
-        for letter in (
-            "See the [Coverage Policy](https://example.com/policy).",
-            "See the [Coverage Policy][1].\n\n[1]: https://example.com/policy",
-        ):
-            with self.subTest(letter=letter):
-                self.assertEqual(drafts.placeholders_in(letter), [])
+    def test_exhibits_and_other_brackets_main_listed_stay_listed(self):
+        for bracket in OTHER_BRACKETS_MAIN_LISTED:
+            with self.subTest(bracket=bracket):
+                self.assertEqual(
+                    drafts.placeholders_in(f"See {bracket} enclosed."), [bracket]
+                )
 
-    def test_the_brackets_listed_are_the_ones_the_fax_form_stops(self):
-        # The fax form refuses a letter with any of these left in, so the
-        # assistant is asked to fill in each, and nothing it lets through.
-        letter = (
-            "[Your Name]\n[Address Line 1]\n[City, State ZIP]\n"
-            "Re: [patient's name], denied on [insert date of denial, e.g. "
-            "01/02/2026] under [CMS NCD 220.2] [1]. [Emphasis added] "
-            "[his/her] doctor says so [Id.]."
-        )
-        listed = drafts.placeholders_in(letter)
-        self.assertEqual(
-            listed,
-            [
-                "[Address Line 1]",
-                "[City, State ZIP]",
-                "[Your Name]",
-                "[his/her]",
-                "[insert date of denial, e.g. 01/02/2026]",
-                "[patient's name]",
-            ],
-        )
-        self.assertEqual(listed, sorted(find_placeholders_as_written(letter)))
+    def test_brackets_main_never_listed_are_not_listed(self):
+        for bracket in NEVER_LISTED:
+            with self.subTest(bracket=bracket):
+                self.assertEqual(drafts.placeholders_in(f"So {bracket} said."), [])
 
     def test_each_fill_in_is_listed_once_sorted(self):
         self.assertEqual(
@@ -538,45 +695,87 @@ class PlaceholdersTest(SimpleTestCase):
             ["[DATE]", "[Your Name]"],
         )
 
-    def test_a_bracket_stopped_for_a_blank_inside_it_is_listed_whole(self):
-        # The fax form stops [DOB: MM/DD/YYYY] for its MM/DD/YYYY, so the
-        # bracket is what the assistant fills in.
-        for prompt in (
-            "[DOB: MM/DD/YYYY]",
-            "[Member ID: XXXXXX]",
-            "[Claim #: ________]",
-            "[ICD-10: XXX.X]",
-            "[Patient: {{FIRST_NAME}} {{LAST_NAME}}]",
-        ):
-            with self.subTest(prompt=prompt):
-                self.assertEqual(
-                    drafts.placeholders_in(f"Signed {prompt} today."), [prompt]
-                )
-
-    def test_a_bracket_with_a_blank_inside_is_listed_as_the_letter_has_it(self):
-        # Not as the fax form reads it once {{FIRST_NAME}} is taken out,
-        # "[Your               ]", which is in no letter. {{FIRST_NAME}} on
-        # its own is listed too.
+    def test_a_fill_in_inside_a_listed_bracket_is_not_listed_again(self):
+        # {{FIRST_NAME}} on its own is listed; inside a bracket, the bracket is.
         self.assertEqual(
             drafts.placeholders_in(
-                "Dear {{FIRST_NAME}}, signed [Your {{FIRST_NAME}}] and "
-                "[Your [sic] Name]."
+                "Dear {{FIRST_NAME}}, signed [Your {{FIRST_NAME}}] for "
+                "[Patient $your_name_here]."
             ),
-            ["[Your [sic] Name]", "[Your {{FIRST_NAME}}]", "{{FIRST_NAME}}"],
+            ["[Patient $your_name_here]", "[Your {{FIRST_NAME}}]", "{{FIRST_NAME}}"],
         )
 
-    def test_every_fill_in_main_listed_is_still_listed(self):
-        letter = "\n".join(
-            f"Line {i}: {bracket}."
-            for i, bracket in enumerate(FILL_INS_MAIN_LISTED + CITATIONS_MAIN_LISTED)
-        )
-        main_listed = set(MAIN_PLACEHOLDER.findall(letter))
-        self.assertEqual(main_listed, set(FILL_INS_MAIN_LISTED + CITATIONS_MAIN_LISTED))
-        # Main's list less its citations, and nothing else.
+    def test_a_bracket_opened_inside_a_listed_one_is_not_listed_on_its_own(self):
+        # Read left to right, the first bracket runs to the first "]", as
+        # on main: [Your Name] is part of it, and {{X}} comes after it.
         self.assertEqual(
-            set(drafts.placeholders_in(letter)),
-            main_listed - set(CITATIONS_MAIN_LISTED),
+            drafts.placeholders_in("Ref [Dear [Your Name] Sir {{X}}] ok"),
+            ["[Dear [Your Name]", "{{X}}"],
         )
+
+    def test_a_bracket_with_a_fill_in_inside_is_never_a_citation(self):
+        for bracket in (
+            "[See 42 CFR [Your Name]",
+            "[Emphasis added [Your Name]",
+            "[Smith et al. {{YEAR}}]",
+            "[Id. at $page_number]",
+        ):
+            with self.subTest(bracket=bracket):
+                self.assertEqual(
+                    drafts.placeholders_in(f"Per {bracket} today."), [bracket]
+                )
+
+    def test_what_is_listed_is_what_main_listed_less_its_citations(self):
+        """Letters made at random from generated and hand-written brackets
+        (fill-ins, citations of every kind, ones main never listed) with
+        {{...}}, {...} and $name between them, and cut anywhere, as a long
+        letter is: each lists exactly what main's pattern finds in it, less
+        the citations."""
+        fill_ins, citations = generated_brackets()
+        # A large corpus, all of it brackets main listed.
+        self.assertGreater(len(fill_ins), 150)
+        self.assertGreater(len(citations), 300)
+        fill_ins += FILL_INS_MAIN_LISTED + OTHER_BRACKETS_MAIN_LISTED
+        citations += CITATIONS_MAIN_LISTED
+        self.assertEqual(
+            [
+                bracket
+                for bracket in fill_ins + citations
+                if not MAIN_PLACEHOLDER.fullmatch(bracket)
+            ],
+            [],
+        )
+        self.assertEqual(
+            [bracket for bracket in NEVER_LISTED if MAIN_PLACEHOLDER.search(bracket)],
+            [],
+        )
+        pieces = (
+            fill_ins
+            + citations
+            + list(NEVER_LISTED)
+            + ["{{FIRST_NAME}}", "{diagnosis}", "$your_name_here", "It cost $500."]
+        )
+        rng = random.Random(20261006)
+        shuffled = rng.sample(pieces, len(pieces))
+        # Every piece at least once, then at random.
+        letters = [
+            "\n".join(shuffled[start : start + 7])
+            for start in range(0, len(shuffled), 7)
+        ]
+        for _ in range(2_000):
+            letter = "".join(
+                rng.choice(pieces) + rng.choice((" ", ", ", "\n", " and ", ". "))
+                for _ in range(rng.randint(1, 12))
+            )
+            letters.append(letter)
+            letters.append(letter[: rng.randint(0, len(letter))])
+        wrong = []
+        for letter in letters:
+            expected = sorted(set(MAIN_PLACEHOLDER.findall(letter)) - set(citations))
+            listed = drafts.placeholders_in(letter)
+            if listed != expected:
+                wrong.append((letter, listed, expected))
+        self.assertEqual(wrong[:5], [])
 
     def test_every_fill_in_main_listed_in_the_apps_own_templates_is_listed(self):
         fixtures = Path(drafts.__file__).with_name("fixtures")
@@ -591,21 +790,21 @@ class PlaceholdersTest(SimpleTestCase):
             letter = template["appeal_text"]
             with self.subTest(template=template["name"]):
                 self.assertEqual(
-                    set(MAIN_PLACEHOLDER.findall(letter))
-                    - set(drafts.placeholders_in(letter)),
-                    set(),
+                    drafts.placeholders_in(letter),
+                    sorted(set(MAIN_PLACEHOLDER.findall(letter))),
                 )
 
     def test_every_listed_placeholder_is_in_the_letter(self):
         """Whatever the letter, each fill-in listed is in it exactly as
-        listed: never one put together from a blank the fax form has taken
-        out. Letters made at random from fill-ins, citations, links, stray
-        brackets and every example in letter_placeholders.json, and cut
-        anywhere, as a long letter is."""
+        listed, and main listed it too. Letters made at random from
+        fill-ins, citations, links, stray and nested brackets and every
+        example in letter_placeholders.json, and cut anywhere."""
         spec = json.loads(PATTERNS_FILE.read_text(encoding="utf-8"))
         pieces = (
             list(FILL_INS_MAIN_LISTED)
+            + list(OTHER_BRACKETS_MAIN_LISTED)
             + list(CITATIONS_MAIN_LISTED)
+            + list(NEVER_LISTED)
             + [
                 example
                 for section in ("ignore", "placeholders")
@@ -620,25 +819,24 @@ class PlaceholdersTest(SimpleTestCase):
                 "[Your [sic] Name]",
                 "[Your [Member ID]",
                 "[Coverage Policy](https://example.com/policy)",
-                "[Policy dated MM/DD/YYYY](https://example.com/policy)",
                 "[Coverage Policy][1]",
                 "\n[1]: https://example.com/policy\n",
                 "XXXXXX",
                 "MM/DD/YYYY",
-                "________",
                 "[",
                 "]",
                 "{{",
                 "}}",
                 "[Your ",
                 "Name]",
+                "[See 42 CFR ",
                 "Dear Example Health,",
                 "\n",
             ]
         )
         rng = random.Random(20261006)
         letters = list(pieces)
-        for _ in range(500):
+        for _ in range(1_000):
             letter = "".join(
                 rng.choice(pieces) + rng.choice(("", " ", ", ", "\n"))
                 for _ in range(rng.randint(1, 8))
@@ -648,8 +846,10 @@ class PlaceholdersTest(SimpleTestCase):
         wrong = []
         for letter in letters:
             listed = drafts.placeholders_in(letter)
-            if listed != sorted(set(listed)) or any(
-                found not in letter for found in listed
+            if (
+                listed != sorted(set(listed))
+                or any(found not in letter for found in listed)
+                or not set(listed) <= set(MAIN_PLACEHOLDER.findall(letter))
             ):
                 wrong.append((letter, listed))
         self.assertEqual(wrong, [])

@@ -10,7 +10,6 @@ collect_letters, and nothing is kept past expires_at.
 """
 
 import base64
-import bisect
 import hashlib
 import re
 import secrets
@@ -33,7 +32,6 @@ from fighthealthinsurance.denial_context import (
     question_field_name,
     question_text_for_field,
 )
-from fighthealthinsurance.letter_placeholders import placeholder_spans
 from fighthealthinsurance.models import AssistantDraft, Denial
 from fighthealthinsurance.utils import is_real_appeal, strip_invisible_controls
 
@@ -65,12 +63,57 @@ FIELD_MAX_CHARS = 80
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _URL = re.compile(r"https?://|www\.", re.IGNORECASE)
-# The {{FIRST_NAME}}, {diagnosis} and $your_name_here fill-ins a letter
-# lists (placeholders_in). Its bracketed fill-ins come from the fax form's
-# own rules instead (letter_placeholders.py).
-_PLACEHOLDER = re.compile(r"\{\{?[A-Za-z_][A-Za-z0-9_ ]*\}\}?|\$[a-z][a-z_]{2,}\b")
-# A bracket on one line with no bracket inside it: [DOB: MM/DD/YYYY].
-_BRACKET = re.compile(r"\[[^\[\]\n]*\]")
+# What a letter lists for the assistant to fill in (placeholders_in), less
+# its citations: {{FIRST_NAME}}, {diagnosis}, a bracket that starts with a
+# capital ([Your Name], [DOB: MM/DD/YYYY]) and $your_name_here.
+_PLACEHOLDER = re.compile(
+    r"\{\{?[A-Za-z_][A-Za-z0-9_ ]*\}\}?|\[[A-Z][^\]\n]{2,40}\]|\$[a-z][a-z_]{2,}\b"
+)
+# What a quotation's note says was left out: [Internal citations omitted].
+_OMITTED = r"(?:internal )?(?:citations?|quotation marks|quotations?|footnotes?)"
+# The note a quotation carries, any case: [Emphasis added], [Sic].
+_QUOTATION_NOTE = (
+    r"emphasis (?:added|ours|in original|omitted)"
+    rf"|{_OMITTED}(?:,? and {_OMITTED})* omitted"
+    r"|(?:alterations?|brackets) in original"
+    r"|cleaned up"
+    r"|sic"
+)
+# A citation that is the whole of its bracket. A reference number or a list
+# of them ([1], [3, 4], [2-5]) needs no rule: _PLACEHOLDER never finds one,
+# as it starts with no capital.
+_WHOLE_CITATION = re.compile(
+    # [Id.], [Id. at 5], [Ibid.], [Ibid].
+    r"(?:Id|Ibid)\.(?:,? at \S.*)?|Ibid"
+    # One quotation note or several: [Emphasis added; citations omitted].
+    rf"|(?i:(?:{_QUOTATION_NOTE})(?:(?:\s*[,;]\s*|\s+)(?:and\s+)?(?:{_QUOTATION_NOTE}))*)"
+    r"\.?"
+)
+# A mark that makes any bracket holding it a citation.
+_CITATION_MARK = re.compile(
+    # A regulation or statute: [42 CFR 438.210], [CMS NCD 220.2], [ERISA § 503].
+    r"\bCFR\b|C\.F\.R\.|U\.S\.C\.|\bUSC\b|\bNCD\b|\bLCD\b|\bPub\. ?L\.|§"
+    # A section number: one with three digits after the point ([See
+    # 438.210]), so an example value such as 98.6, 72.5 or $1,234.56 in a
+    # fill-in is not one, or one after Section or Sec. ([Section 2.1]).
+    r"|(?<![\w.,$])\d+\.\d{3,}(?![\w.])"
+    r"|\bSec(?:tion|\.) ?\d+(?:\.\d+)+"
+    # Authors: [Smith et al.], [Smith et al. 2020].
+    r"|\bet al\b"
+)
+# Authors and a year: [Smith 2020], [Smith and Jones, 2019a], [American
+# Diabetes Association (2023)]. Each word before the year is capitalised,
+# or "and" or "&", so [Insert date of denial, e.g. 01/02/2026] and [Insert
+# year, e.g. 2026] are fill-ins.
+_AUTHOR_YEAR = re.compile(
+    r"[A-Z][\w'’&.-]*(?:,?\s+(?:[A-Z][\w'’&.-]*|and|&))*,?\s+\(?(?:19|20)\d\d[a-z]?\)?"
+)
+# A month or Year before the year makes it a date: [March 2026], [Plan Year 2026].
+_DATED = re.compile(
+    r"(?i:\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?"
+    r"|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
+    r"|year)\b)\.?,?\s+\(?(?:19|20)\d\d[a-z]?\)?$"
+)
 # A question that ends with its options in brackets: "(inpatient/outpatient)".
 _CHOICES = re.compile(r"\(([^()]+)\)\s*\?\s*$")
 _YES_NO_STARTS = frozenset(
@@ -358,51 +401,57 @@ def _file_answers(draft: AssistantDraft, denial: Denial, answers: list) -> int:
     return len(updates)
 
 
-def _span_holding(
-    spans: list[tuple[int, int]], start: int, end: int
-) -> Optional[tuple[int, int]]:
-    """The one of ``spans`` (sorted, none overlapping) that holds start to
-    end, if any: only the last to begin at or before start can."""
-    at = bisect.bisect_right(spans, start, key=lambda span: span[0]) - 1
-    if at >= 0 and end <= spans[at][1]:
-        return spans[at]
-    return None
+def _is_citation(bracket: str) -> bool:
+    """Whether a bracket _PLACEHOLDER found is a citation or a quotation's
+    note, which the assistant has nothing to fill in for."""
+    inside = bracket[1:-1].strip()
+    if "[" in inside or _PLACEHOLDER.search(inside):
+        # A fill-in may be in there ([See [Your Name], [Cite {{YEAR}}]), and
+        # it is listed only as part of this bracket, so the bracket stays.
+        return False
+    return bool(
+        _WHOLE_CITATION.fullmatch(inside)
+        or _CITATION_MARK.search(inside)
+        or (_AUTHOR_YEAR.fullmatch(inside) and not _DATED.search(inside))
+    )
 
 
 def placeholders_in(text: str) -> list[str]:
     """The fill-ins left in a letter, each once, sorted, each exactly as the
     letter has it.
 
-    Every bracket the fax form would stop the letter for, with all of the
-    fax form's rules (letter_placeholders.json): one it stops as a whole
-    ([Your Name], [Address Line 1], [Date: MM/DD/YYYY], [doctor name],
-    [his/her]) and one it stops for a blank inside it, which is listed
-    whole ([DOB: MM/DD/YYYY], [Member ID: XXXXXX], [Your {{FIRST_NAME}}]).
-    Then {{FIRST_NAME}}, {diagnosis} and $your_name_here (_PLACEHOLDER),
-    except inside a bracket already listed. A bracket the fax form lets
-    through is not listed: a citation ([1], [CMS NCD 220.2], [Smith et al.
-    2020], [Id.]), a link's text ([Coverage Policy](https://...)) or a
-    quotation's note ([Emphasis added], [Internal citations omitted]).
-    Nor is a blank the fax form stops outside any bracket, such as XXX or
-    ___ on its own.
+    What main has always listed (_PLACEHOLDER, read left to right), less
+    the brackets that are clearly citations or a quotation's notes, and
+    nothing else. Listed: {{FIRST_NAME}}, {diagnosis}, $your_name_here and
+    a bracket that starts with a capital, whatever else is in it ([Dr.
+    Name], [ICD-10 Code], [Claim Number: ], [DOB: MM/DD/YYYY], [Physician
+    Name, M.D.], [Your {{FIRST_NAME}}]). Each is a piece of the letter
+    itself. A {{...}} or $name inside a listed bracket is not listed again,
+    nor is a bracket opened inside one: a bracket runs to the first "]", so
+    "Ref [Dear [Your Name] Sir]" lists "[Dear [Your Name]" and not "[Your
+    Name]" as well. Never listed, as on main: [It], [doctor name], [1], [3,
+    4], [42 CFR 438.210], or a bracket with over 41 characters inside.
+
+    Left out as citations: a regulation or statute ([See 42 CFR 438.210],
+    [CMS NCD 220.2], [Medicare LCD L33822], [Pub. L. 111-148], [ERISA §
+    503], [Section 438.210], [Section 2.1]); authors and a year ([Smith et
+    al.], [Smith 2020], [Smith and Jones, 2019a]); a
+    quotation's notes ([Emphasis added], [Emphasis ours], [Internal
+    citations omitted], [Footnotes and citations omitted], [Alterations in
+    original], [Brackets in original], [Cleaned up], [Sic]); [Id.] and
+    [Ibid]. A bracket with a fill-in inside it is never one (_is_citation).
+
+    [Exhibit A], [Attachment B] and [Appendix C] stay listed, as main
+    listed them: a template uses the same words for an attachment still to
+    be named. Listing one that names a real attachment costs the assistant
+    a question; leaving out one still to be named leaves a blank in the
+    letter.
     """
-    brackets = [match.span() for match in _BRACKET.finditer(text)]
-    listed: set[tuple[int, int]] = set()
-    for start, end in placeholder_spans(text):
-        if text[start] == "[":
-            # The fax form's own bracket: what it matched, read from the
-            # letter rather than from what was left once the blanks inside
-            # it were taken out, so [Your {{FIRST_NAME}}] stays as it is.
-            listed.add((start, end))
-        elif (around := _span_holding(brackets, start, end)) is not None:
-            listed.add(around)
-    spans = sorted(listed)
-    loose = (
-        match.group(0)
-        for match in _PLACEHOLDER.finditer(text)
-        if _span_holding(spans, *match.span()) is None
+    return sorted(
+        found
+        for found in set(_PLACEHOLDER.findall(text))
+        if not (found.startswith("[") and _is_citation(found))
     )
-    return sorted({text[start:end] for start, end in spans}.union(loose))
 
 
 def collect_letters(denial: Denial) -> list[dict[str, Any]]:
