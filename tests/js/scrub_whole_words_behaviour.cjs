@@ -7,10 +7,13 @@
 //
 // scrub_scrub.js, shared.js and user_info_storage.js sit beside it. The spec
 // is one of:
-//   {"find": [[value, text], ...]}
+//   {"find": [[value, text, kind?], ...]}
 //        each text with every match of what was typed (typedValueRegExp,
 //        through replaceTypedValue) put in [[double brackets]], or null
-//        where the value is not looked for at all
+//        where the value is not looked for at all; kind is "street" or
+//        "zip" where given
+//   {"fullName": [[first name, last name, order, text], ...]}
+//        the same for fullNameRegExp, order "first last" or "last, first"
 //   {"remove": {"inputs": [{id, type, value}, ...], "cases": [[typed, letter], ...]}}
 //        each letter after Remove personal details (scrub_scrub.ts clean),
 //        on a page with the intake page's inputs: every one, with the value
@@ -50,12 +53,13 @@ for (const level of ['debug', 'log', 'info', 'warn', 'error', 'trace', 'dir', 't
   console[level] = (...args) => logs.push([level].concat(args.map((a) => String(a))));
 }
 
-if (spec.find) {
-  const {replaceTypedValue, typedValueRegExp} = require(path.resolve(modulePath));
-  const found = spec.find.map(([value, text]) => {
-    const typed = typedValueRegExp(value);
-    return typed === null ? null : replaceTypedValue(text, typed, (match) => '[[' + match + ']]');
-  });
+if (spec.find || spec.fullName) {
+  const {fullNameRegExp, replaceTypedValue, typedValueRegExp} = require(path.resolve(modulePath));
+  const mark = (typed, text) =>
+    typed === null ? null : replaceTypedValue(text, typed, (match) => '[[' + match + ']]');
+  const found = spec.find
+    ? spec.find.map(([value, text, kind]) => mark(typedValueRegExp(value, kind), text))
+    : spec.fullName.map(([first, last, order, text]) => mark(fullNameRegExp(first, last, order), text));
   process.stdout.write(JSON.stringify({found, logs}) + '\n');
   process.exit(0);
 }

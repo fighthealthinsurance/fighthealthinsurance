@@ -2,7 +2,13 @@ import {
   setLocalStorageItemWithTTL,
   type ScrubberStorageKey,
 } from "./shared";
-import { replaceTypedValue, typedValueRegExp, WORD_CHARACTERS } from "./typed_value_pattern";
+import {
+  fullNameRegExp,
+  replaceTypedValue,
+  typedValueRegExp,
+  WORD_CHARACTERS,
+  type TypedValueKind,
+} from "./typed_value_pattern";
 
 // A rule's label starts a word, so "inpatient care" and "outpatient
 // services" are not read as a "patient" label and their next word taken
@@ -101,8 +107,30 @@ function typedIn(node: HTMLInputElement): boolean {
   return TYPED_INPUT_TYPES.indexOf(node.type) >= 0 && node.value !== "";
 }
 
+// The boxes whose value is taken out of the letter: About you, and the
+// email. The letter is kept and may be read by staff, and the email only as
+// "how we store it" says, so an email left in the letter got around that.
+function removedFromTheLetter(node: HTMLInputElement): boolean {
+  return (node.id.startsWith("store_") || node.id === "email") && typedIn(node);
+}
+
+// A street or a ZIP code is found where the letter prints it longer than it
+// was typed (typed_value_pattern.ts).
+function kindOf(id: string): TypedValueKind {
+  if (id === "store_street") {
+    return "street";
+  }
+  return id === "store_zip" ? "zip" : "words";
+}
+
 function scrubText(text: string): string {
+  // Taken out before the rest: the email, before a name inside it
+  // ("ann.doe@example.com") is cut out of it, and the first and last name
+  // together, before the last name alone leaves a longer form of the first
+  // ("Christopher Doe") behind it.
+  const leadingTokens: [RegExp, string][] = [];
   const reservedTokens: [RegExp, string][] = [];
+  const typedValues: Record<string, string> = {};
   var nodes = document.querySelectorAll("input");
   for (let i = 0; i < nodes.length; i++) {
     var node = nodes[i];
@@ -110,9 +138,14 @@ function scrubText(text: string): string {
     // as whole words: a typed "123 Sample Street Apt 4B" matches the street
     // with "Apt 4B" on the line under it, and a typed "Ann" leaves "annual"
     // alone (typed_value_pattern.ts).
-    const typed = node.id.startsWith("store_") && typedIn(node) ? typedValueRegExp(node.value) : null;
+    const typed = removedFromTheLetter(node) ? typedValueRegExp(node.value, kindOf(node.id)) : null;
     if (typed !== null) {
       const placeholder = storeIdToPlaceholder[node.id] || `{{${node.id}}}`;
+      typedValues[node.id] = node.value;
+      if (node.id === "email") {
+        leadingTokens.push([typed, placeholder]);
+        continue;
+      }
       reservedTokens.push([typed, placeholder]);
       for (let j = 0; j < nodes.length; j++) {
         var secondNode = nodes[j];
@@ -124,12 +157,23 @@ function scrubText(text: string): string {
       }
     }
   }
+  const firstName = typedValues["store_fname"] || "";
+  const lastName = typedValues["store_lname"] || "";
+  const firstLast = fullNameRegExp(firstName, lastName, "first last");
+  if (firstLast !== null) {
+    leadingTokens.push([firstLast, "{{FIRST_NAME}} {{LAST_NAME}}"]);
+  }
+  const lastFirst = fullNameRegExp(firstName, lastName, "last, first");
+  if (lastFirst !== null) {
+    leadingTokens.push([lastFirst, "{{LAST_NAME}}, {{FIRST_NAME}}"]);
+  }
+  const tokens = leadingTokens.concat(reservedTokens);
   // Log only sizes: the raw text and the reserved-token regexes contain PII.
   console.debug(
     "scrub: text length",
     text.length,
     "reserved tokens",
-    reservedTokens.length,
+    tokens.length,
     "rules",
     scrubRegex.length,
   );
@@ -149,8 +193,8 @@ function scrubText(text: string): string {
   }
   // A match is whole words, so a placeholder no longer needs a space in
   // front of it to keep it off the rest of a word it was cut out of.
-  for (let i = 0; i < reservedTokens.length; i++) {
-    text = replaceTypedValue(text, reservedTokens[i][0], reservedTokens[i][1]);
+  for (let i = 0; i < tokens.length; i++) {
+    text = replaceTypedValue(text, tokens[i][0], tokens[i][1]);
   }
   return text;
 }

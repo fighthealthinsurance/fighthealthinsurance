@@ -3,7 +3,12 @@
  * Handles localStorage persistence of user information with privacy scrubbing support.
  */
 
-import { replaceTypedValue, typedValueRegExp } from "./typed_value_pattern";
+import {
+  fullNameRegExp,
+  replaceTypedValue,
+  typedValueRegExp,
+  type TypedValueKind,
+} from "./typed_value_pattern";
 
 // Storage key for user info
 const USER_INFO_KEY = "fhi_user_info";
@@ -99,11 +104,13 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
 
   let scrubbedMessage = message;
   // A value with no words, or only an initial, is not looked for.
-  const replaceValue = (value: string, placeholder: string): void => {
-    const typed = typedValueRegExp(value);
+  const replaceTyped = (typed: RegExp | null, placeholder: string): void => {
     if (typed !== null) {
       scrubbedMessage = replaceTypedValue(scrubbedMessage, typed, placeholder);
     }
+  };
+  const replaceValue = (value: string, placeholder: string, kind?: TypedValueKind): void => {
+    replaceTyped(typedValueRegExp(value, kind), placeholder);
   };
 
   // Replace email first (before names) to avoid corrupting email addresses
@@ -113,9 +120,13 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
   }
 
   // Replace combined "firstName lastName" before individual names to avoid
-  // partial matches (e.g., replacing firstName first could prevent lastName match)
+  // partial matches (e.g., replacing firstName first could prevent lastName match),
+  // and where a letter pasted in prints a longer form of the first name typed:
+  // "Chris" and "Doe" find "Christopher Doe" and "DOE, CHRISTOPHER".
   if (userInfo.firstName && userInfo.lastName) {
     replaceValue(`${userInfo.firstName} ${userInfo.lastName}`, "{{PATIENT_NAME}}");
+    replaceTyped(fullNameRegExp(userInfo.firstName, userInfo.lastName, "first last"), "{{PATIENT_NAME}}");
+    replaceTyped(fullNameRegExp(userInfo.firstName, userInfo.lastName, "last, first"), "{{PATIENT_NAME}}");
   }
 
   // Replace individual names (catches occurrences not part of the combined pattern)
@@ -127,9 +138,10 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
     replaceValue(userInfo.lastName, "{{LAST_NAME}}");
   }
 
-  // Replace address
+  // Replace address, also where the message prints it longer than it was
+  // typed: "123 Main St" finds "123 MAIN STREET" (typed_value_pattern.ts).
   if (userInfo.address) {
-    replaceValue(userInfo.address, "{{ADDRESS}}");
+    replaceValue(userInfo.address, "{{ADDRESS}}", "street");
   }
 
   // Replace city
@@ -143,9 +155,9 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
   // the model could never learn it and re-asked forever — a guaranteed chat
   // loop. restorePersonalInfo still expands {{STATE}} for legacy history.
 
-  // Replace zip code
+  // Replace zip code, and the ZIP+4 after it
   if (userInfo.zipCode) {
-    replaceValue(userInfo.zipCode, "{{ZIP_CODE}}");
+    replaceValue(userInfo.zipCode, "{{ZIP_CODE}}", "zip");
   }
 
   return scrubbedMessage;
