@@ -23,6 +23,7 @@ from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 from fighthealthinsurance.denial_context import load_qa, merge_qa
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
+from fighthealthinsurance.letter_placeholders import find_placeholders_as_written
 from fighthealthinsurance.ml import ml_models, spend
 from fighthealthinsurance.models import (
     AssistantDraft,
@@ -326,6 +327,16 @@ class LettersTest(TestCase):
         cited = {"[CMS NCD 220.2]", "[42 CFR 438.210]", "[1]", "[Smith et al. 2020]"}
         self.assertEqual(cited & set(letter["placeholders"]), set())
 
+    def test_every_line_of_a_sender_block_is_listed(self):
+        denial = a_denial()
+        self._row(
+            denial, "[Your Name]\n[Address Line 1]\n[City, State ZIP]\n\n" + LETTER
+        )
+        [letter] = drafts.collect_letters(denial)
+        for line in ("[Your Name]", "[Address Line 1]", "[City, State ZIP]"):
+            with self.subTest(line=line):
+                self.assertIn(line, letter["placeholders"])
+
     def test_a_long_letter_is_cut_and_says_so(self):
         denial = a_denial()
         self._row(denial, LETTER + " more. " * 2000)
@@ -369,6 +380,19 @@ class PlaceholdersTest(SimpleTestCase):
             "[Patient's Name]",
             "[Patient’s Name]",
             "[City, State ZIP]",
+            # A digit, colon, semicolon or full stop in a prompt that starts
+            # with a fill-in word: the fax form stops these too.
+            "[Address Line 1]",
+            "[Address Line 2]",
+            "[Insert date of denial, e.g. 01/02/2026]",
+            "[Date: MM/DD/YYYY]",
+            "[Date of Service: MM/DD/YYYY]",
+            "[Phone: (555) 555-5555]",
+            "[Insert Specific Reason; e.g. step therapy]",
+            "[Your Name, Ph.D.]",
+            # In lower case, and a choice of pronouns.
+            "[doctor name]",
+            "[his/her]",
             "{{FIRST_NAME}}",
             "{diagnosis}",
             "$your_name_here",
@@ -386,6 +410,10 @@ class PlaceholdersTest(SimpleTestCase):
             "[Smith et al. 2020]",
             "[29 C.F.R. 2560.503-1]",
             "[Id.]",
+            # The notes that go with a quotation.
+            "[Emphasis added]",
+            "[Internal citations omitted]",
+            "[Sic]",
         ):
             with self.subTest(citation=citation):
                 self.assertEqual(
@@ -394,12 +422,35 @@ class PlaceholdersTest(SimpleTestCase):
                 )
 
     def test_a_links_text_is_not_a_placeholder(self):
-        self.assertEqual(
-            drafts.placeholders_in(
-                "See the [Coverage Policy](https://example.com/policy)."
-            ),
-            [],
+        for letter in (
+            "See the [Coverage Policy](https://example.com/policy).",
+            "See the [Coverage Policy][1].\n\n[1]: https://example.com/policy",
+        ):
+            with self.subTest(letter=letter):
+                self.assertEqual(drafts.placeholders_in(letter), [])
+
+    def test_the_brackets_listed_are_the_ones_the_fax_form_stops(self):
+        # The fax form refuses a letter with any of these left in, so the
+        # assistant is asked to fill in each, and nothing it lets through.
+        letter = (
+            "[Your Name]\n[Address Line 1]\n[City, State ZIP]\n"
+            "Re: [patient's name], denied on [insert date of denial, e.g. "
+            "01/02/2026] under [CMS NCD 220.2] [1]. [Emphasis added] "
+            "[his/her] doctor says so [Id.]."
         )
+        listed = drafts.placeholders_in(letter)
+        self.assertEqual(
+            listed,
+            [
+                "[Address Line 1]",
+                "[City, State ZIP]",
+                "[Your Name]",
+                "[his/her]",
+                "[insert date of denial, e.g. 01/02/2026]",
+                "[patient's name]",
+            ],
+        )
+        self.assertEqual(listed, sorted(find_placeholders_as_written(letter)))
 
     def test_each_fill_in_is_listed_once_sorted(self):
         self.assertEqual(
