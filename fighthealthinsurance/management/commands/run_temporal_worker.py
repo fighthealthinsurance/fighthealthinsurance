@@ -233,6 +233,10 @@ class Command(BaseCommand):
         shutdown_tasks: list = []
         stop = asyncio.Event()
         install_shutdown_handlers(workers, stop, self.stdout.write, shutdown_tasks)
+        from fighthealthinsurance.ml import spend
+
+        # Load the spend ledger at boot, not on the first activity.
+        spend._ledger.start()
         if early_stop is not None and early_stop.is_set():
             # Caught by the bootstrap-time handler before the loop existed.
             stop.set()

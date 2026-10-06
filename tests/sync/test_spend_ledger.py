@@ -186,3 +186,53 @@ class ReservationRaceTest(TestCase):
         self.assertEqual(SpendCounter.objects.get(day=TODAY, name=NAME).amount, 2)
         self.assertEqual(SpendCounter.objects.filter(name=NAME).count(), 1)
         self.assertEqual(SpendReservation.objects.count(), 1)
+
+
+@override_settings(FHI_SPEND_BACKGROUND=True)
+class IdleLedgerTest(TestCase):
+    """A process with no traffic keeps its copy loaded, so the first assistant
+    request after a quiet spell isn't refused."""
+
+    def setUp(self):
+        spend._ledger.reset_for_tests()
+        self.addCleanup(spend._ledger.reset_for_tests)
+        self.enterContext(patch.object(spend._ledger, "_ensure_worker"))
+
+    def test_an_idle_process_refreshes_on_its_own_and_still_allows_assistant(self):
+        import time
+
+        from django.db import connections
+
+        spend._ledger._refreshed_at = time.monotonic() - spend.STALE_SECONDS - 1
+        self.assertFalse(spend.allows(spend.FHI, spend.ASSISTANT))
+        spend._ledger._refresh_wanted.clear()
+        with patch.object(connections, "close_all"):
+            spend._ledger._tick()
+        self.assertTrue(spend.allows(spend.FHI, spend.ASSISTANT))
+
+    def test_a_cold_process_waits_for_its_first_read(self):
+        import threading
+        import time
+
+        def land():
+            time.sleep(0.1)
+            spend._ledger._refreshed_at = time.monotonic()
+            spend._ledger._landed.set()
+
+        thread = threading.Thread(target=land)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.assertTrue(spend._ledger.wait_until_loaded(2.0))
+
+    def test_an_unreadable_ledger_still_refuses_after_the_wait(self):
+        self.assertFalse(spend._ledger.wait_until_loaded(0.05))
+        self.assertFalse(spend.allows(spend.FHI, spend.ASSISTANT))
+
+    def test_a_refresh_that_lands_before_the_wait_is_not_missed(self):
+        import time
+
+        spend._ledger._refreshed_at = time.monotonic()
+        spend._ledger._landed.set()
+        started = time.monotonic()
+        self.assertTrue(spend._ledger.wait_until_loaded(2.0))
+        self.assertLess(time.monotonic() - started, 0.5)

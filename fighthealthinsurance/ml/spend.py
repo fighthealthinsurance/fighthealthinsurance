@@ -37,7 +37,7 @@ of this month's counters and never touches the database. :func:`record`
 adds to this process's pending total for that counter and day. A single
 daemon thread per process writes the pending totals (subtracting only what
 a write stored, so a failed write is retried, never lost) and refreshes the
-copy at most every REFRESH_SECONDS, each step on its own connection closed
+copy every REFRESH_SECONDS whether or not anyone asked, each step on its own connection closed
 afterwards. Pending totals are one number per counter and day, so a stalled
 database cannot make them pile up. Until the first refresh lands (or while
 the database cannot be read, so no refresh has landed for STALE_SECONDS),
@@ -308,6 +308,7 @@ class _Ledger:
         self._refreshed_at = float("-inf")
         self._refresh_wanted = threading.Event()
         self._wake = threading.Event()
+        self._landed = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._local_pauses: Dict[str, datetime.date] = {}
 
@@ -368,29 +369,59 @@ class _Ledger:
             )
             self._thread.start()
 
+    def start(self) -> None:
+        """Start the worker at process boot, so a quiet process loads its copy."""
+        self._ensure_worker()
+        self._wake.set()
+
+    def fresh(self) -> bool:
+        return time.monotonic() - self._refreshed_at <= STALE_SECONDS
+
+    def wait_until_loaded(self, timeout: float) -> bool:
+        """Block (never on the event loop) until a refresh has landed within
+        STALE_SECONDS, at most ``timeout``. Doesn't touch the database."""
+        if not getattr(settings, "FHI_SPEND_BACKGROUND", True):
+            return True
+        # Clear before checking: _refresh stamps the time before it signals,
+        # so a refresh landing at any point here is seen.
+        self._landed.clear()
+        if self.fresh():
+            return True
+        self._ensure_worker()
+        self._refresh_wanted.set()
+        self._wake.set()
+        self._landed.wait(timeout=timeout)
+        return self.fresh()
+
     def _run(self) -> None:
         self._refresh_wanted.set()
         while True:
             self._wake.wait(timeout=WRITE_EVERY_SECONDS)
             self._wake.clear()
-            try:
-                self._write_pending()
-                if self._refresh_wanted.is_set():
-                    self._refresh_wanted.clear()
-                    self._refresh()
-            except Exception as e:
-                # Pending totals stay pending and are written next time.
-                logger.warning(f"Spend ledger work failed: {type(e).__name__}")
-            finally:
-                try:
-                    from django.db import connections
+            self._tick()
 
-                    connections.close_all()
-                except Exception:
-                    pass
+    def _tick(self) -> None:
+        # Refresh on our own schedule, so an idle process's copy never goes stale.
+        if time.monotonic() - self._refreshed_at >= REFRESH_SECONDS:
+            self._refresh_wanted.set()
+        try:
+            self._write_pending()
             if self._refresh_wanted.is_set():
-                # A failed refresh is tried again, but not in a tight loop.
-                time.sleep(WRITE_EVERY_SECONDS)
+                self._refresh_wanted.clear()
+                self._refresh()
+        except Exception as e:
+            # Pending totals stay pending and are written next time.
+            logger.warning(f"Spend ledger work failed: {type(e).__name__}")
+        finally:
+            try:
+                from django.db import connections
+
+                connections.close_all()
+            except Exception:
+                pass
+        if self._refresh_wanted.is_set():
+            # A failed refresh is tried again, but not in a tight loop.
+            time.sleep(WRITE_EVERY_SECONDS)
 
     def _write_pending(self) -> None:
         """Store each pending total, subtracting only what was stored."""
@@ -443,6 +474,7 @@ class _Ledger:
         with self._lock:
             self._view = view
         self._refreshed_at = time.monotonic()
+        self._landed.set()
 
     # --- tests --------------------------------------------------------------
 
