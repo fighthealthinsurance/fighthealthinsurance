@@ -3,7 +3,7 @@
  * Handles localStorage persistence of user information with privacy scrubbing support.
  */
 
-import { takeOutTypedValues, typedValueRegExp } from "./typed_value_pattern";
+import { takeOutTypedValues, typedValue, type TypedValue } from "./typed_value_pattern";
 
 // Storage key for user info
 const USER_INFO_KEY = "fhi_user_info";
@@ -90,9 +90,12 @@ export function getExternalModelsPreference(): boolean {
  * Scrub personal info from a message, replacing with placeholders. Each
  * value is found however the message spaces it: any run of whitespace
  * between its words (a line break in a pasted letter) counts as the one
- * space typed. And each is found only as whole words, in any script: a
- * first name "Ann" leaves "annual" alone, and "José" is found before a
- * comma (typed_value_pattern.ts).
+ * space typed. A value of one word is found only where it stands whole, in
+ * any script with capitals: a first name "Ann" leaves "annual" alone, and
+ * "José" is found before a comma. A value of more words that runs on into
+ * a longer word comes out with all of it ("283 24th Street" for a typed
+ * "283 24th St"). Names in scripts without capitals are found anywhere
+ * (typed_value_pattern.ts).
  */
 export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): string {
   if (!userInfo || !message) return message;
@@ -103,9 +106,9 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
   // inside another, the outer one gives the placeholder, and where two are
   // found in the same text, the one listed first. A value with no letter or
   // digit is not looked for.
-  const values: [RegExp, string][] = [];
+  const values: [TypedValue, string][] = [];
   const replaceValue = (value: string, placeholder: string): void => {
-    const typed = typedValueRegExp(value);
+    const typed = typedValue(value);
     if (typed !== null) {
       values.push([typed, placeholder]);
     }

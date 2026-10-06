@@ -1,7 +1,7 @@
 'use strict';
 // Run main's scrubbers and this branch's over the same generated letters and
-// report where this branch leaves a personal detail that main took out.
-// Driven by tests/sync/test_scrub_never_leaves_what_main_removed.py.
+// report every place this branch differs from main in a way the rule does
+// not allow. Driven by tests/sync/test_scrub_never_leaves_what_main_removed.py.
 //
 //   node scrub_differential.cjs '<spec json>'
 //
@@ -15,39 +15,59 @@
 //            that the comparison itself can pass and can fail
 //   inputs   [{id, type, value}, ...]: every input of the intake page, with
 //            the value the page gives it
-//   count    how many generated cases, after the hand-written ones
-//   seed     for the generator, so every run makes the same letters
+//   count    how many generated cases per seed, after the hand-written ones
+//   seeds    for the generator, so every run makes the same letters
 //
 // Each case is what was typed (first and last name, email, street, ZIP and,
 // for the chat, city) and a letter. Both run through Remove personal
 // details (scrub_scrub.ts clean, on a page with the intake page's inputs)
 // and the chat's scrubPersonalInfo (user_info_storage.ts).
 //
+// Words, as typed_value_pattern.ts has them, written again here rather than
+// imported so the check does not share a mistake with what it checks: a
+// word character is a letter of a script with capitals, a decimal digit, or
+// a mark on one of those; a word is a run of them; there is a word edge
+// between two characters unless both are word characters. A letter of a
+// script without capitals (Chinese, Korean, Arabic, ...) is not a word
+// character. A value has more than one word where it has more than one run
+// of word characters and letters of a script without capitals all told.
+//
 // What is checked, per case and per scrubber:
 //
-// 1. Nothing main took out is left. Every String.prototype.replace the
-//    scrubbers make on the text is recorded, so each character of the
-//    output is known to be a character of the letter or one put in. For
-//    each match main replaced, every letter, mark or digit of the letter it
-//    took out must be gone from the branch's output too, unless the match
-//    sat strictly inside a longer word: a letter or digit of the same word
-//    directly before or after it in the letter. "Same word" counts a mark
-//    as part of the letter it sits on, and a change between a script with
-//    capitals (or a digit) and one without, or two letters of a script
-//    without capitals (Chinese, Japanese, Thai, ...), as a word boundary:
-//    "Ann" in "患者Ann" and 王小明 in "患者王小明的申请" stand as words. That
+// 1. Nothing main took out is left, but for a match that lies strictly
+//    inside one word. Every String.prototype.replace the scrubbers make on
+//    the text is recorded, so each character of the output is known to be a
+//    character of the letter or one put in. For each match main replaced,
+//    every letter, digit or mark of the letter it took out must be gone
+//    from the branch's output too, unless the letters, digits and marks of
+//    the match all lie in one word of the letter that goes on past them:
+//    the "ann" of "annual", the "a." of "Mesa.", a value of one word left
+//    inside a longer one. A match with a word edge inside it ("283 24th St"
+//    in "283 24th Street", "Smith-Jones" in "Smith-Joneses") or with a
+//    letter of a script without capitals in it is held to it in full. That
 //    covers main's label rules too ("Dear Bob Roe" with nothing typed).
 //    Matches from a value nobody typed (main also took the tick boxes'
 //    "checked" out) are not held to this.
-// 2. Nothing main kept is taken out. A word of the letter (a run of letters
-//    and digits of a script with capitals, or one letter of a script
-//    without) that main left whole must be left whole by the branch, unless
-//    it is one of the words of a value the scrubber looks for (what was
-//    typed, and for Remove personal details each box's value run together
-//    with another's, which main looked for too).
-// 3. No placeholder is written into. The branch never replaces a character
-//    of a {{PLACEHOLDER}}, one already in the letter or one it put in, nor
-//    puts text inside one, and every {{ in its output closes.
+// 2. Nothing main kept is taken out, but the rest of a word a value of more
+//    words runs on into. Each character of the letter main kept and the
+//    branch took out must lie inside a match of a value the scrubber looks
+//    for, found anywhere the way main found it in the text the values are
+//    taken out of (for Remove personal details, the letter after the label
+//    rules), that is not strictly inside one word as in 1 (main's chat
+//    found names only with \b, which knew only A to Z, and main's Remove
+//    personal details lost a value that an earlier one had broken up, so
+//    this is main's matching rather than what main's chat took out); or it
+//    must be the rest of the word that such a match of a value of more than
+//    one word starts or ends inside, between the match and that word's own
+//    end, and nothing past it. And of every word of that text the branch's
+//    typed values took a character out of, they took out the whole word.
+// 3. No placeholder of the site is written into. The branch never replaces
+//    a character of a site placeholder ({{UPPER_CASE}} and the mixed-case
+//    ones the code writes, listed in SITE_PLACEHOLDER), one already in the
+//    letter or one it put in, nor puts text inside one; what its typed
+//    values put in is site placeholders only; and every brace it put in is
+//    part of one. Other text in double braces is text like the rest and is
+//    held to 1 and 2.
 //
 // Writes one JSON object to stdout: the counts, and for each kind of
 // violation how many there were and the first few.
@@ -123,15 +143,27 @@ const branch =
 
 // ------------------------------------------------------- following the text
 
+// The placeholders the site writes: {{UPPER_CASE}}, and the mixed-case ones
+// the scrubbers, the letters and the replies use.
+const SITE_PLACEHOLDER = new RegExp(
+  '\\{\\{(?:[A-Z][A-Z0-9_ ]*|Your Name|Your Email Address|Your Phone Number|Your Address|' +
+    'date|today|insurance_company|patient_name|patient_dob|provider_name|provider_npi|' +
+    'practice_name|practice_address)\\}\\}',
+  'g',
+);
+const ONLY_SITE_PLACEHOLDERS = new RegExp(
+  '^(?:' + SITE_PLACEHOLDER.source + '(?: ' + SITE_PLACEHOLDER.source + ')*)?$',
+);
+
 // Where each character of the text came from: its index in the letter, or
-// -1 for one a replacement put in; and which placeholder it is part of, 0
-// for none.
+// -1 for one a replacement put in; and which site placeholder it is part
+// of, 0 for none.
 let tracker = null;
 let nextPlaceholderId = 1;
 
 function placeholderIds(text) {
   const ids = new Array(text.length).fill(0);
-  const re = /\{\{[^{}]*\}\}/g;
+  const re = new RegExp(SITE_PLACEHOLDER.source, 'g');
   let m;
   while ((m = re.exec(text)) !== null) {
     const id = nextPlaceholderId++;
@@ -215,6 +247,8 @@ function step(str, pattern, records, result) {
         matched: m,
         rep,
         removed,
+        // What it took out of the text it was given, as [start, end).
+        at: [r.offset + p, r.offset + m.length - s],
         touches,
         firstOrigin: t.origin[r.offset],
         lastOrigin: t.origin[r.offset + m.length - 1],
@@ -231,6 +265,8 @@ function step(str, pattern, records, result) {
   t.steps.push({
     source: pattern instanceof RegExp ? pattern.source : String(pattern),
     flags: pattern instanceof RegExp ? pattern.flags : '',
+    before: str,
+    originBefore: t.origin,
     changes,
   });
   t.text = result;
@@ -279,77 +315,95 @@ String.prototype.replace = function (pattern, replacement) {
 
 // -------------------------------------------------------------- words
 
-const CASED_OR_DIGIT = /^[\p{Lu}\p{Ll}\p{Lt}\p{N}]$/u;
+const CASED_LETTER = /^[\p{Lu}\p{Ll}\p{Lt}]$/u;
+const DECIMAL_DIGIT = /^\p{Nd}$/u;
 const LETTER = /^\p{L}$/u;
 const MARK = /^\p{M}$/u;
+const LETTER_DIGIT_OR_MARK = /^[\p{L}\p{N}\p{M}]$/u;
 
-// "cased" (a letter with a capital form, or a digit), "caseless" (a letter
-// of a script without capitals), "mark", or null (not part of a word).
-function kindOf(ch) {
-  if (ch === '') return null;
-  if (MARK.test(ch)) return 'mark';
-  if (CASED_OR_DIGIT.test(ch)) return 'cased';
-  if (LETTER.test(ch)) return 'caseless';
-  return null;
+function codePointAt(text, i) {
+  return String.fromCodePoint(text.codePointAt(i));
 }
 
-function charAt(text, i) {
-  return i >= text.length ? '' : String.fromCodePoint(text.codePointAt(i));
+// A letter of a script with capitals, or a decimal digit.
+function casedOrDigit(ch) {
+  return (
+    CASED_LETTER.test(ch) ||
+    DECIMAL_DIGIT.test(ch) ||
+    (LETTER.test(ch) && ch.toUpperCase() !== ch.toLowerCase())
+  );
 }
 
-function charBefore(text, i) {
-  if (i <= 0) return '';
-  const low = text.charCodeAt(i - 1);
-  if (low >= 0xdc00 && low <= 0xdfff && i >= 2) {
-    const high = text.charCodeAt(i - 2);
-    if (high >= 0xd800 && high <= 0xdbff) return text.slice(i - 2, i);
-  }
-  return text.slice(i - 1, i);
-}
-
-// The kind of the word character before i, through the marks on it.
-function kindBefore(text, i) {
-  let at = i;
-  while (at > 0) {
-    const ch = charBefore(text, at);
-    const kind = kindOf(ch);
-    if (kind !== 'mark') return kind;
-    at -= ch.length;
-  }
-  return null;
-}
-
-// Whether the characters either side of i are one word.
-function inOneWord(text, i) {
-  const after = kindOf(charAt(text, i));
-  if (after === null) return false;
-  const before = kindBefore(text, i);
-  if (before === null) return false;
-  if (after === 'mark') return true;
-  return before === 'cased' && after === 'cased';
-}
-
-// The words of a text: runs of letters (with capitals) and digits, and each
-// letter of a script without capitals on its own, with the marks on them.
-function wordsOf(text) {
+// The words of a text, read from the start: for each code unit, the index
+// of the word it is part of or -1, and each word as {start, end}. A mark
+// is part of the word its letter or digit is.
+function wordMap(text) {
+  const index = new Int32Array(text.length).fill(-1);
   const words = [];
+  let baseIsWord = false;
   let current = null;
   for (let i = 0; i < text.length; ) {
-    const ch = charAt(text, i);
-    const kind = kindOf(ch);
-    if (kind === 'cased' && current !== null && current.kind === 'cased') {
+    const ch = codePointAt(text, i);
+    const mark = MARK.test(ch);
+    const isWord = mark ? baseIsWord : casedOrDigit(ch);
+    if (!mark) baseIsWord = isWord;
+    if (isWord) {
+      if (current === null) {
+        current = {start: i, end: i};
+        words.push(current);
+      }
       current.end = i + ch.length;
-    } else if (kind === 'cased' || kind === 'caseless') {
-      current = {start: i, end: i + ch.length, kind};
-      words.push(current);
-    } else if (kind === 'mark' && current !== null) {
-      current.end = i + ch.length;
+      for (let k = i; k < i + ch.length; k++) index[k] = words.length - 1;
     } else {
       current = null;
     }
     i += ch.length;
   }
-  return words;
+  return {index, words};
+}
+
+function edgeAt(map, i) {
+  return !(i > 0 && i < map.index.length && map.index[i - 1] >= 0 && map.index[i] >= 0);
+}
+
+// Letters, digits and marks, per code unit.
+function lettersDigitsAndMarks(text) {
+  const flags = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; ) {
+    const ch = codePointAt(text, i);
+    if (LETTER_DIGIT_OR_MARK.test(ch)) for (let k = i; k < i + ch.length; k++) flags[k] = 1;
+    i += ch.length;
+  }
+  return flags;
+}
+
+// More than one run of word characters and letters of a script without
+// capitals, all told.
+function ofSeveralWords(value) {
+  let words = wordMap(value).words.length;
+  for (let i = 0; i < value.length; ) {
+    const ch = codePointAt(value, i);
+    if (LETTER.test(ch) && !casedOrDigit(ch)) words++;
+    i += ch.length;
+  }
+  return words > 1;
+}
+
+// Whether these positions of the letter (its letters, digits and marks in
+// one match) all lie in one word that goes on past them.
+function strictlyInsideOneWord(map, positions) {
+  if (positions.length === 0) return false;
+  const w = map.index[positions[0]];
+  if (w < 0) return false;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const p of positions) {
+    if (map.index[p] !== w) return false;
+    lo = Math.min(lo, p);
+    hi = Math.max(hi, p + 1);
+  }
+  const word = map.words[w];
+  return word.start < lo || word.end > hi;
 }
 
 function escapeRegExp(text) {
@@ -374,30 +428,31 @@ const FIRST = [
   'José', 'Zoë', 'Renée', 'Mary Ann', 'Mary-Ann', 'Jean-Luc', "D'Andre", 'J.', 'Name',
   'Joe', 'Will', 'Hope', 'Day', 'Same', '小明', '伟', '太郎', '민수', 'Мария', 'Ελένη',
   'محمد', ' Ann ', 'ANN', 'ann', 'Lee', 'Ma', 'Patient', 'Dear', 'Ng', 'Ann.', 'Dr. Ann',
-  'Ann Ann', 'Anna', 'Lee Ann', 'Ann王', 'Mary Ann Lee',
+  'Ann Ann', 'Anna', 'Lee Ann', 'Ann王', 'Mary Ann Lee', 'A.', 'M.', 'علي', '김민수', '지은',
+  'أحمد', 'فاطمة',
 ];
 const LAST = [
   'Doe', 'Day', 'Smith', 'Smith-Jones', "O'Neill", 'O’Brien', 'de la Cruz', 'Núñez',
   'van der Berg', '王', '田中', '김', 'Name', 'Price', 'Patient', 'Doering', 'Lee', 'Li',
   'Ng', 'Group', 'Member', 'Ann', 'Same', 'Jones Jr.', "D'Angelo-Ruiz", 'Müller',
-  'MacDonald', 'St. John', 'Doe,', 'X', 'Lee Ann', 'Smith Smith', 'Ann Lee',
+  'MacDonald', 'St. John', 'Doe,', 'X', 'Lee Ann', 'Smith Smith', 'Ann Lee', 'حسن', '박',
 ];
 const EMAIL = [
   'ann@example.com', 'ann.doe@example.com', 'asmith@example.org', 'j.doe+fhi@mail.example.net',
   'ann_doe@example.com', 'sam@day.example', 'min.su@example.kr', 'jose.nunez@example.com',
-  'x@y.z', 'ANN@EXAMPLE.COM',
+  'x@y.z', 'ANN@EXAMPLE.COM', 'ali@example.com',
 ];
 const STREET = [
   '123 Main St', '123 Main St , Apt 4B', '123 Main St, Apt 4B', '123 Sample Street Apt 4B',
   '283 24th St', '9 Oak Ave.', '#4B 12 Elm Rd', '123 王府井大街', "1 Rue de l'Église",
   '500 N. State St', 'PO Box 12', '12 Day St', '4 Sam Ct', '77 Ann St.', '10 Downing St',
   '1600 Pennsylvania Ave NW', '123 Main St. ,  Apt. 4B', '5 Ave . B', '1 José St',
-  '10 Main St', '9 Lee Ann Ct', '62701 Ann St',
+  '10 Main St', '9 Lee Ann Ct', '62701 Ann St', '283 24th St.', '12 Ann Way',
 ];
 const ZIP = ['62701', '62701-1234', '62701 1234', '94103', 'SW1A 1AA', '02134', '1234', '627011234', '62701\t1234'];
 const CITY = [
   'Springfield', 'Mesa', 'Day', 'Saint-Denis', 'São Paulo', '北京', 'Same', 'Ann Arbor',
-  'St Louis', 'San José', 'Lee',
+  'St Louis', 'San José', 'Lee', 'San Francisco',
 ];
 // Names in the letter that nobody typed, where a typed value is empty.
 const UNTYPED = ['Bob', 'Roe', 'Kim', 'Pat Roe', 'Ana', 'Lu'];
@@ -433,6 +488,13 @@ const MEDICAL = [
   'Physical therapy is covered at 80%.',
   'Group: Acme Employees',
   'Lee Memorial',
+  'This is a denial of a claim... Part A. You have a right',
+  'Medicare Part A. covers a.m. visits at Mesa.',
+  'السلام عليكم، توكلت على الله وعليه',
+  'تم رفض طلبكم للعلاج.',
+  '김민수님께 보험 청구가 거부되었습니다.',
+  'Joann Doe and Annette Doering',
+  '283 24th Street',
 ];
 const PLACEHOLDER_LINES = [
   'Dear {{FIRST_NAME}} {{LAST_NAME}},',
@@ -443,6 +505,8 @@ const PLACEHOLDER_LINES = [
   'Subscriber ID: {{SCSID}}',
   'Group ID: {{GPID}}',
   "{{PATIENT_NAME}}'s claim",
+  'Call {{Your Phone Number}}.',
+  'Sincerely, {{Your Name}}',
 ];
 
 function generator(seed) {
@@ -450,27 +514,40 @@ function generator(seed) {
   const pick = (list) => list[Math.floor(rng() * list.length)];
   const chance = (p) => rng() < p;
 
+  // A value whose first word runs on to the left or whose last word runs on
+  // to the right, as a letter might print it longer.
+  const runOn = (v) =>
+    chance(0.5)
+      ? pick(['Jo', '1', '2', 'Rose', 'x', 'Mc']) + v
+      : v + pick(['reet', 'ette', 'ering', 's', 'x', 'eet', '1']);
+
   const transforms = [
     (v) => v.toUpperCase(),
     (v) => v.toLowerCase(),
     (v) => nativeReplace.call(v, /\S+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()),
-    (v) => nativeReplace.call(v, / /g, () => pick([' ', '  ', '\n', '\t', ' ', ' \n'])),
+    (v) => nativeReplace.call(v, / /g, () => pick([' ', '  ', '\n', '\t', '\u00a0', ' \n'])),
     (v) => nativeReplace.call(v, /['’]/g, (c) => (c === "'" ? '’' : "'")),
     (v) => v + pick(["'s", "'S", '’s', '’S', "'"]),
     (v) => (chance(0.5) ? pick(['Jo', 'x', 'Mc', '1', 'É', 'é']) + v : v + pick(['ette', 's', 'y', '1', 'ing', 'ual', 'é', '́'])),
+    runOn,
     (v) => {
-      const [a, b] = pick([['(', ')'], ['"', '"'], ['“', '”'], ['-', '-'], ['_', '_'], ['<', '>'], ['[', ']'], ['#', ''], ['', ','], ['', '.'], ['', ';'], ['', ':'], ['/', '/']]);
+      const [a, b] = pick([['(', ')'], ['"', '"'], ['“', '”'], ['-', '-'], ['_', '_'], ['<', '>'], ['[', ']'], ['#', ''], ['', ','], ['', '.'], ['', ';'], ['', ':'], ['/', '/'], ['{{', '}}']]);
       return a + v + b;
     },
     (v) => {
-      const [a, b] = pick([['患者', '的申请'], ['我的电子邮箱是', '。'], ['邮编', '号'], ['', '患有2型糖尿病。'], ['김', '님께'], ['เรียนคุณ', ''], ['و', '']]);
+      const [a, b] = pick([
+        ['患者', '的申请'], ['我的电子邮箱是', '。'], ['邮编', '号'], ['', '患有2型糖尿病。'],
+        ['김', '님께'], ['', '님'], ['', '씨'], ['', '의'], ['', '에게'], ['เรียนคุณ', ''],
+        ['و', ''], ['ل', ''], ['ب', ''], ['وال', ''], ['', 'كم'], ['', 'ه'],
+        ['السيد', 'في'], ['بريدي', '،'], ['إلى', ''], ['', 'الذي'],
+      ]);
       return a + v + b;
     },
     (v) => {
       const [a, b] = pick([['first.', ''], ['', '.au'], ['', '.com'], ['', '.'], ['', '@x'], ['mailto:', '']]);
       return a + v + b;
     },
-    (v) => v + pick(['-1234', ' 1234', '  1234', '\t1234', ' 1234', '1234', '\n1234']),
+    (v) => v + pick(['-1234', ' 1234', '  1234', '\t1234', '\u00a01234', '1234', '\n1234']),
     (v) => nativeReplace.call(v, /,/g, () => pick([' ,', ', ', ' , ', ',', '  ,  '])),
     (v) => nativeReplace.call(v, /\./g, () => pick(['.', '', ' .'])),
   ];
@@ -509,11 +586,11 @@ function generator(seed) {
     (t) => pick(['Patient: ', 'Patient ', 'patient: ', 'PATIENT: ']) + t.R('lname') + t.R('fname') + pick(['患有2型糖尿病。', 'has type 2 diabetes.', '']),
     (t) => 'Member: ' + t.R('lname') + pick([', ', ' ']) + t.R('fname'),
     (t) => pick(['Your inpatient ', 'outpatient ', 'endear ', 'subgroup: ', 'impatient ', 'Dearborn ', '_patient: ']) + t.R('fname') + pick([' stay', '', '.']),
-    (t) => t.R('fname') + pick([' ', '\n', '  ', '\t', ' ', '']) + t.R('lname'),
+    (t) => t.R('fname') + pick([' ', '\n', '  ', '\t', '\u00a0', '']) + t.R('lname'),
     (t) => t.R('lname') + pick([', ', ',', ' ', '\n']) + t.R('fname'),
     (t) => t.R('street') + pick(['\n', ', ', ' ', '']) + t.city() + pick([', IL ', ' IL ', '\n', ' ']) + t.R('zip'),
-    (t) => pick(['Write to ', 'Email: ', '我的电子邮箱是', '', '<', 'mailto:']) + t.R('email') + pick(['.', '', '。', '>', '.au', ',']),
-    (t) => pick(['IL ', 'ZIP: ', '邮编', 'Springfield, IL ']) + t.R('zip') + pick(['', '-1234', ' 1234', ' 1234']),
+    (t) => pick(['Write to ', 'Email: ', '我的电子邮箱是', '', '<', 'mailto:', 'بريدي الإلكتروني ', 'بريدي']) + t.R('email') + pick(['.', '', '。', '>', '.au', ',', 'في', '،']),
+    (t) => pick(['IL ', 'ZIP: ', '邮编', 'Springfield, IL ']) + t.R('zip') + pick(['', '-1234', ' 1234', '\u00a01234']),
     () => pick(MEDICAL),
     () => pick(MEDICAL),
     () => pick(PLACEHOLDER_LINES),
@@ -522,7 +599,23 @@ function generator(seed) {
     () => pick(['Subscriber ID: XYZ000000', 'Group number: G12345', 'Group ID: 55555']),
     (t) => t.R(pick(['fname', 'lname', 'email', 'street', 'zip', 'city'])),
     (t) => '患者' + t.R('fname') + pick([' ', '']) + t.R('lname') + '的申请',
-    (t) => t.R('lname') + t.R('fname') + pick(['様', '님께', '的申请', '']),
+    (t) => t.R('lname') + t.R('fname') + pick(['様', '님께', '的申请', '', '님', '씨', '의', '에게']),
+    // A value of more words printed longer at either end.
+    (t) => pick(['', 'I live at ', 'Address: ']) + t.Run('street') + pick(['\n', ', ', '.']) + t.city(),
+    (t) => pick(['', 'Dear ', 'Patient: ']) + (chance(0.5) ? pick(['Jo', 'Rose', 'x']) : '') + t.R('fname') + ' ' + t.R('lname') + (chance(0.5) ? pick(['ering', 's', 'ette']) : ''),
+    (t) => pick(['Write to ', '', 'Email: ']) + t.Run('email') + pick(['.', '', ' or']),
+    (t) => t.Run(pick(['fname', 'lname', 'zip'])),
+    // Text in double braces that is not a placeholder of the site.
+    (t) => '{{' + pick(['', 'Ref ', 'Dear ', 'Patient ']) + t.R('fname') + pick([' ' + t.R('lname'), '', ', ' + t.R('email')]) + '}}',
+    (t) => '{{' + t.R(pick(['email', 'street', 'zip', 'lname'])) + '}}',
+    // A name inside Arabic words, with a prefix joined to it, and a Korean
+    // name with a particle; an initial with its period.
+    (t) => 'السلام ' + t.R('fname') + 'كم، توكلت على الله و' + t.R('fname') + 'ه',
+    (t) => pick(['إلى ', 'شكرا ', '']) + pick(['و', 'ل', 'ب', 'وال']) + t.R(pick(['fname', 'lname'])) + pick(['', ' ', '،']),
+    (t) => t.R(pick(['fname', 'lname'])) + pick(['님께', '님', '씨에게', '의']) + ' 보험 청구가 거부되었습니다.',
+    (t) => 'Part ' + t.R('fname') + ' You have a right to ' + pick(['a', 'A', 'an']) + ' review.',
+    // A Latin name or an email right against Arabic text.
+    (t) => pick(['السيد', 'إلى', 'بريدي', 'المريض']) + t.R(pick(['fname', 'email', 'lname'])) + pick(['في', '،', 'الذي', '']),
   ];
   const separators = ['\n', ' ', '\n\n', '', '. ', '。', '\t', ', '];
 
@@ -530,6 +623,7 @@ function generator(seed) {
     const typed = typedSet();
     const ctx = {
       R: (field) => (typed[field] ? render(typed[field]) : pick(UNTYPED)),
+      Run: (field) => (typed[field] ? runOn(typed[field]) : pick(UNTYPED)),
       city: () => (typed.city ? render(typed.city) : pick(['Springfield', 'Anytown'])),
     };
     const parts = [];
@@ -542,7 +636,7 @@ function generator(seed) {
   };
 }
 
-// The cases Codex found, and the gaps it listed, first.
+// The cases the reviews found, and the gaps they listed, first.
 const HAND_WRITTEN = [
   [{fname: 'Ann', lname: 'Doe'}, '患者Ann Doe的申请'],
   [{email: 'ann@example.com'}, '我的电子邮箱是ann@example.com。'],
@@ -553,7 +647,7 @@ const HAND_WRITTEN = [
   [{fname: '小明', lname: '王'}, 'Patient: 王小明患有2型糖尿病。'],
   [{zip: '62701 1234'}, '62701  1234'],
   [{zip: '62701 1234'}, '62701\t1234'],
-  [{zip: '62701 1234'}, '62701 1234'],
+  [{zip: '62701 1234'}, '62701\u00a01234'],
   [{fname: 'Chris', lname: 'Doe'}, "CHRISTOPHER DOE'S appeal"],
   [{fname: 'Sam', lname: 'Day'}, 'Same day services require prior authorization.'],
   [{fname: 'Joe', lname: 'Name'}, 'Joe Name applied.'],
@@ -564,21 +658,41 @@ const HAND_WRITTEN = [
   [{email: 'ann@example.com'}, 'ann@example.com.au'],
   [{fname: 'Ann', lname: 'Doe'}, 'Ann Doe applied. {{PATIENT_NAME}} and {{FIRST_NAME}} {{LAST_NAME}}'],
   [{fname: 'Ann', lname: 'Doe'}, 'Your inpatient stay; outpatient Ann Doe; _patient: Bob'],
-  [{fname: 'Ann'}, 'Joann Ann ann ANN Anń éAnn Ann_Doe'],
+  [{fname: 'Ann'}, 'Joann Ann ann ANN Ann\u0301 éAnn Ann_Doe'],
   [{street: '123 王府井大街'}, '123 王府井大街123 王府井大街'],
+  // The second review's.
+  [{fname: 'Ann', lname: 'Doe', street: '283 24th St', zip: '94103'}, 'Ann Doe\n283 24th Street\nSan Francisco, CA 94103'],
+  [{street: '283 24th St'}, '283 24th Street'],
+  [{fname: 'A.'}, 'This is a denial of a claim... Part A. You have a right'],
+  [{fname: 'علي'}, 'السلام عليكم، توكلت على الله وعليه'],
+  [{fname: 'Ann', lname: 'Doe'}, 'Ref {{Ann Doe}}'],
+  [{fname: 'Ann', lname: 'Doe'}, 'Joann Doe, Annette Doe, Ann Doering'],
+  [{fname: '민수', lname: '김'}, '김민수님께, 김민수씨'],
+  [{fname: 'علي'}, 'إلى وعلي ولعلي'],
+  [{fname: 'Ann', email: 'ann@example.com'}, 'بريديann@example.comفي السيدAnnالذي'],
+  [{email: 'ann.doe@example.com'}, 'jann.doe@example.com ann.doe@example.comx'],
+  [{lname: 'Smith-Jones'}, 'Smith-Joneses'],
 ];
 
 // ------------------------------------------------------------ one scrubber
 
-// What main's Remove personal details looks for: each store_ box's value,
-// and it run together with every box that has a value (of the typed ones;
-// the tick boxes' are left out), and the email box's value.
+// What Remove personal details looks for: each About you box's value, and
+// it run together with every typed box (the tick boxes' values left out),
+// and the email box's value. Main looked for these too.
 function valuesOnTheForm(typed) {
   const stores = [typed.fname, typed.lname, typed.street, typed.zip].filter((v) => v);
   const all = stores.concat(typed.email ? [typed.email] : []);
   const values = all.slice();
   for (const v of stores) for (const w of all) values.push(v + w);
   return values;
+}
+
+// What the chat looks for.
+function valuesInTheChat(typed) {
+  const values = [typed.email];
+  if (typed.fname && typed.lname) values.push(typed.fname + ' ' + typed.lname);
+  values.push(typed.fname, typed.lname, typed.street, typed.city, typed.zip);
+  return values.filter((v) => v);
 }
 
 function typedSourcesForTheForm(typed) {
@@ -654,7 +768,9 @@ const EXAMPLES = 5;
 const report = {
   cases: 0,
   handWritten: HAND_WRITTEN.length,
+  seeds: spec.seeds,
   kinds: {},
+  kindsBySeed: {},
   form: newCounts(),
   chat: newCounts(),
 };
@@ -665,7 +781,11 @@ function newCounts() {
     mainMatchesInsideAWord: 0,
     mainMatchesFromUntypedBoxes: 0,
     charactersChecked: 0,
-    wordsMainKeptChecked: 0,
+    charactersMainKeptChecked: 0,
+    // Characters main kept that the branch took out as the rest of a word
+    // a value of more words runs on into.
+    runOnCharactersTakenOut: 0,
+    wordsTakenOutByTypedValues: 0,
     // {kind: {count, examples}}
     violations: {},
   };
@@ -677,43 +797,36 @@ function violation(counts, kind, details) {
   if (found.examples.length < EXAMPLES) found.examples.push(details);
 }
 
-// typedValues: every value the scrubber looks for, so its words are the
-// person's (for Remove personal details, each box's value run together with
-// every other's too, as main also looked for them).
+// typedValues: every value the scrubber looks for.
 function compare(counts, which, typed, typedValues, letter, mainRun, branchRun, typedSources) {
   const mainKept = new Uint8Array(letter.length);
   for (const o of mainRun.origin) if (o >= 0) mainKept[o] = 1;
   const branchKept = new Uint8Array(letter.length);
   for (const o of branchRun.origin) if (o >= 0) branchKept[o] = 1;
   const inPlaceholder = placeholderIds(letter);
-  const wordCharacter = new Uint8Array(letter.length);
-  for (const w of wordsOf(letter)) for (let k = w.start; k < w.end; k++) wordCharacter[k] = 1;
+  const map = wordMap(letter);
+  const held = lettersDigitsAndMarks(letter);
   const describe = () => ({scrubber: which, typed, letter, main: mainRun.text, branch: branchRun.text});
 
-  // 1. Nothing main took out is left.
+  // 1. Nothing main took out is left, but for a match strictly inside one
+  // word.
   for (const s of mainRun.steps) {
     const label = MAIN_LABEL_SOURCES.has(s.source);
     const fromTyped = label || typedSources === null || typedSources.has(s.source);
     for (const c of s.changes) {
-      if (c.removed.length === 0) continue;
+      const taken = c.removed.filter((o) => held[o] && !inPlaceholder[o]);
+      if (taken.length === 0) continue;
       counts.mainMatches++;
       if (!fromTyped) {
         counts.mainMatchesFromUntypedBoxes++;
         continue;
       }
-      const insideAWord =
-        (c.firstOrigin >= 0 && inOneWord(letter, c.firstOrigin)) ||
-        (c.lastOrigin >= 0 && inOneWord(letter, c.lastOrigin + 1));
-      if (insideAWord) {
+      if (strictlyInsideOneWord(map, taken)) {
         counts.mainMatchesInsideAWord++;
         continue;
       }
-      const left = [];
-      for (const o of c.removed) {
-        if (!wordCharacter[o] || inPlaceholder[o]) continue;
-        counts.charactersChecked++;
-        if (branchKept[o]) left.push(o);
-      }
+      counts.charactersChecked += taken.length;
+      const left = taken.filter((o) => branchKept[o]);
       if (left.length) {
         violation(counts, 'left what main took out', Object.assign(describe(), {
           mainMatched: c.matched,
@@ -723,83 +836,189 @@ function compare(counts, which, typed, typedValues, letter, mainRun, branchRun, 
     }
   }
 
-  // 2. Nothing main kept is taken out.
-  const typedWords = [];
+  // 2. Nothing main kept is taken out, but the rest of a word a value of
+  // more words runs on into. The values are looked for, the way main looked
+  // for them, in the text they were taken out of: for Remove personal
+  // details, the letter after the label rules, where "Patients" may now be
+  // "Patient:" and a whole word.
+  const typedStep = branchRun.steps.find((s) => !MAIN_LABEL_SOURCES.has(s.source));
+  const searched = typedStep ? typedStep.before : branchRun.text;
+  const searchedOrigin = typedStep ? typedStep.originBefore : branchRun.origin;
+  const searchedMap = wordMap(searched);
+  const searchedHeld = lettersDigitsAndMarks(searched);
+  const inAMatch = new Uint8Array(letter.length);
+  const runOn = new Uint8Array(letter.length);
+  const mark = (flags, from, to) => {
+    for (let k = from; k < to; k++) if (searchedOrigin[k] >= 0) flags[searchedOrigin[k]] = 1;
+  };
   for (const value of typedValues) {
-    if (!value) continue;
-    for (const w of wordsOf(value)) typedWords.push(escapeRegExp(value.slice(w.start, w.end)));
-  }
-  const isTyped = typedWords.length ? new RegExp('^(?:' + typedWords.join('|') + ')$', 'iu') : null;
-  for (const w of wordsOf(letter)) {
-    let keptByMain = true;
-    let keptByBranch = true;
-    let inAPlaceholder = false;
-    for (let k = w.start; k < w.end; k++) {
-      if (!mainKept[k]) keptByMain = false;
-      if (!branchKept[k]) keptByBranch = false;
-      if (inPlaceholder[k]) inAPlaceholder = true;
+    const source = mainPattern(value);
+    if (source === null) continue;
+    const re = new RegExp(source, 'gi');
+    const several = ofSeveralWords(value);
+    let m;
+    while ((m = re.exec(searched)) !== null) {
+      const start = m.index;
+      const end = start + m[0].length;
+      re.lastIndex = start + 1;
+      const letters = [];
+      for (let k = start; k < end; k++) if (searchedHeld[k]) letters.push(k);
+      if (strictlyInsideOneWord(searchedMap, letters)) continue;
+      mark(inAMatch, start, end);
+      if (several && !edgeAt(searchedMap, start)) {
+        mark(runOn, searchedMap.words[searchedMap.index[start]].start, start);
+      }
+      if (several && !edgeAt(searchedMap, end)) {
+        mark(runOn, end, searchedMap.words[searchedMap.index[end]].end);
+      }
     }
-    const text = letter.slice(w.start, w.end);
-    if (!keptByMain || inAPlaceholder || (isTyped !== null && isTyped.test(text))) continue;
-    counts.wordsMainKeptChecked++;
-    if (!keptByBranch) {
-      violation(counts, 'took out a word main kept', Object.assign(describe(), {word: text}));
+  }
+  const tookOut = [];
+  for (let k = 0; k < letter.length; k++) {
+    if (!mainKept[k] || inPlaceholder[k]) continue;
+    counts.charactersMainKeptChecked++;
+    if (branchKept[k] || inAMatch[k]) continue;
+    if (runOn[k]) {
+      counts.runOnCharactersTakenOut++;
+      continue;
+    }
+    tookOut.push(k);
+  }
+  if (tookOut.length) {
+    violation(counts, 'took out text main kept', Object.assign(describe(), {
+      tookOut: tookOut.map((o) => letter[o]).join(''),
+    }));
+  }
+  // Read in the text the typed values were taken out of, which is the
+  // letter after the label rules for Remove personal details.
+  for (const s of branchRun.steps) {
+    if (MAIN_LABEL_SOURCES.has(s.source)) continue;
+    const gone = new Uint8Array(s.before.length);
+    for (const c of s.changes) for (let k = c.at[0]; k < c.at[1]; k++) gone[k] = 1;
+    for (const w of wordMap(s.before).words) {
+      let touched = false;
+      let whole = true;
+      for (let k = w.start; k < w.end; k++) {
+        if (gone[k]) touched = true;
+        else whole = false;
+      }
+      if (!touched) continue;
+      counts.wordsTakenOutByTypedValues++;
+      if (!whole) {
+        violation(counts, 'took out part of a word', Object.assign(describe(), {
+          word: s.before.slice(w.start, w.end),
+        }));
+      }
     }
   }
 
-  // 3. No placeholder is written into.
+  // 3. No placeholder of the site is written into.
   for (const s of branchRun.steps) {
+    const label = MAIN_LABEL_SOURCES.has(s.source);
     for (const c of s.changes) {
       if (c.touches) {
         violation(counts, 'wrote into a placeholder', Object.assign(describe(), {matched: c.matched}));
       }
+      if (!label && !ONLY_SITE_PLACEHOLDERS.test(c.rep)) {
+        violation(counts, 'put in something other than a placeholder', Object.assign(describe(), {put: c.rep}));
+      }
     }
   }
-  const stray = nativeReplace.call(branchRun.text, /\{\{[^{}]*\}\}/g, '');
-  if (stray.indexOf('{{') >= 0 || stray.indexOf('}}') >= 0) {
-    violation(counts, 'left a broken placeholder', describe());
+  const output = branchRun.text;
+  const inOutputPlaceholder = placeholderIds(output);
+  for (let k = 0; k < output.length; k++) {
+    if ((output[k] === '{' || output[k] === '}') && branchRun.origin[k] < 0 && !inOutputPlaceholder[k]) {
+      violation(counts, 'left a broken placeholder', describe());
+      break;
+    }
   }
   const ids = new Set();
   for (let k = 0; k < letter.length; k++) if (inPlaceholder[k] && !branchKept[k]) ids.add(inPlaceholder[k]);
   if (ids.size) violation(counts, 'took out part of a placeholder in the letter', describe());
 }
 
-function note(kind) {
+function note(seed, kind) {
   report.kinds[kind] = (report.kinds[kind] || 0) + 1;
+  const bySeed = (report.kindsBySeed[seed] = report.kindsBySeed[seed] || {});
+  bySeed[kind] = (bySeed[kind] || 0) + 1;
 }
+
+// Whether a value of more words is found, the way main found it, with its
+// first word running on to the left or its last word to the right.
+function runsOnIn(value, letter, map) {
+  if (!value || !ofSeveralWords(value)) return false;
+  const source = mainPattern(value);
+  if (source === null) return false;
+  const re = new RegExp(source, 'gi');
+  let m;
+  while ((m = re.exec(letter)) !== null) {
+    re.lastIndex = m.index + 1;
+    if (!edgeAt(map, m.index) || !edgeAt(map, m.index + m[0].length)) return true;
+  }
+  return false;
+}
+
+const ARABIC_LETTER = '[\\u0620-\\u064a]';
 
 // What kinds of text the corpus has, so a generator that stopped making one
 // shows in the counts.
-function tally(typed, letter) {
+function tally(seed, typed, letter) {
+  const kind = (k) => note(seed, k);
   const has = (re) => re.test(letter);
-  if (has(/[一-鿿]/)) note('chinese or japanese text');
-  if (has(/[가-힯]/)) note('korean text');
-  if (has(/[A-Za-z][一-鿿]|[一-鿿][A-Za-z]/)) note('latin beside cjk');
-  if (has(/[一-鿿][A-Za-z0-9._%+-]+@/)) note('email inside cjk');
-  if (has(/[A-Za-z0-9]\.[A-Za-z0-9._%+-]*@|@[A-Za-z0-9.-]+\.[a-z]+\.[a-z]+/)) note('email with dotted continuation');
-  if (has(/ /)) note('nbsp');
-  if (has(/\t/)) note('tab');
-  if (has(/\{\{[^{}]*\}\}/)) note('existing placeholder');
-  if (has(/['’]s(?![A-Za-z])/)) note('lower case possessive');
-  if (has(/['’]S(?![A-Za-z])/)) note('upper case possessive');
-  if (has(/Dear /)) note('greeting');
-  if (has(/Patient:? *[^\s\x00-\x7f]/)) note('patient label before unspaced prose');
-  if (has(/ , /)) note('standalone comma');
-  if (has(/\d{5}(?:\s{2,}|\t| )\d{4}/)) note('zip+4 with odd spacing');
-  if (has(/[A-Z]{3,}/)) note('upper case');
-  if (typed.fname && /^\S$/u.test(typed.fname.trim())) note('one character first name');
-  if (typed.fname && typed.fname.trim().length >= 8) note('long first name');
-  if (/[À-ÿ]/.test((typed.fname || '') + (typed.lname || ''))) note('accented name');
-  if (/['’]/.test(typed.lname || '')) note('apostrophe surname');
-  if (/-/.test(typed.lname || '')) note('hyphenated surname');
-  if (/ /.test((typed.lname || '').trim())) note('multi-part surname');
-  if (/[一-鿿가-힯]/.test((typed.fname || '') + (typed.lname || ''))) note('cjk name');
-  if (/^\d{5}[-\s]?\d{4}$/.test(typed.zip || '')) note('typed zip+4');
+  const map = wordMap(letter);
+  const names = [typed.fname, typed.lname].filter((v) => v);
+  const lower = letter.toLowerCase();
+  if (has(/[一-鿿]/)) kind('chinese or japanese text');
+  if (has(/[가-힯]/)) kind('korean text');
+  if (has(/[؀-ۿ]/)) kind('arabic text');
+  if (has(/[A-Za-z][一-鿿]|[一-鿿][A-Za-z]/)) kind('latin beside cjk');
+  if (has(/[A-Za-z][؀-ۿ]|[؀-ۿ][A-Za-z]/)) kind('latin beside arabic');
+  if (has(/[一-鿿][A-Za-z0-9._%+-]+@/)) kind('email inside cjk');
+  if (has(/[؀-ۿ][A-Za-z0-9._%+-]+@|@[A-Za-z0-9.-]+[؀-ۿ]/)) kind('email beside arabic');
+  if (has(/[A-Za-z0-9]\.[A-Za-z0-9._%+-]*@|@[A-Za-z0-9.-]+\.[a-z]+\.[a-z]+/)) kind('email with dotted continuation');
+  if (has(/\u00a0/)) kind('nbsp');
+  if (has(/\t/)) kind('tab');
+  if (has(/\{\{[^{}]*\}\}/)) kind('existing placeholder');
+  if (has(/['’]s(?![A-Za-z])/)) kind('lower case possessive');
+  if (has(/['’]S(?![A-Za-z])/)) kind('upper case possessive');
+  if (has(/Dear /)) kind('greeting');
+  if (has(/Patient:? *[^\s\x00-\x7f]/)) kind('patient label before unspaced prose');
+  if (has(/ , /)) kind('standalone comma');
+  if (has(/\d{5}(?:\s{2,}|\t|\u00a0)\d{4}/)) kind('zip+4 with odd spacing');
+  if (has(/[A-Z]{3,}/)) kind('upper case');
+  if (typed.fname && /^\S$/u.test(typed.fname.trim())) kind('one character first name');
+  if (typed.fname && /^\p{L}\.$/u.test(typed.fname)) kind('initial with a period');
+  if (typed.fname && typed.fname.trim().length >= 8) kind('long first name');
+  if (/[À-ÿ]/.test(names.join(''))) kind('accented name');
+  if (/['’]/.test(typed.lname || '')) kind('apostrophe surname');
+  if (/-/.test(typed.lname || '')) kind('hyphenated surname');
+  if (/ /.test((typed.lname || '').trim())) kind('multi-part surname');
+  if (/[一-鿿가-힯]/.test(names.join(''))) kind('cjk name');
+  if (/^\d{5}[-\s]?\d{4}$/.test(typed.zip || '')) kind('typed zip+4');
+  if (/[가-힯]/.test(names.join('')) && has(/[가-힯](?:님|씨|의|에게)/)) kind('korean name with a particle');
+  for (const name of names) {
+    if (!/[؀-ۿ]/.test(name)) continue;
+    if (['و', 'ل', 'ب', 'وال'].some((p) => letter.indexOf(p + name) >= 0)) kind('arabic name with a prefix');
+    if (new RegExp(escapeRegExp(name) + ARABIC_LETTER).test(letter)) kind('arabic name inside an arabic word');
+  }
+  const braces = /\{\{[^{}]*\}\}/g;
+  let b;
+  while ((b = braces.exec(letter)) !== null) {
+    if (new RegExp('^' + SITE_PLACEHOLDER.source + '$').test(b[0])) continue;
+    if (names.some((n) => n.trim() && b[0].toLowerCase().indexOf(n.trim().toLowerCase()) >= 0)) {
+      kind('name in braces that are not a placeholder');
+      break;
+    }
+  }
+  if (runsOnIn(typed.street, letter, map)) kind('street runs on');
+  if (runsOnIn(typed.email, letter, map)) kind('email runs on');
+  if (typed.fname && typed.lname && runsOnIn(typed.fname + ' ' + typed.lname, letter, map)) kind('full name runs on');
+  if (lower.indexOf('283 24th street') >= 0 && typed.street === '283 24th St') kind('the hint street printed long');
 }
 
-function runCase(typed, letter) {
+function runCase(seed, typed, letter) {
   report.cases++;
-  tally(typed, letter);
+  tally(seed, typed, letter);
   const formMain = runForm(main, typed, letter);
   const formBranch = branch === null ? untouched(letter) : runForm(branch, typed, letter);
   const onTheForm = {fname: typed.fname, lname: typed.lname, email: typed.email, street: typed.street, zip: typed.zip};
@@ -815,14 +1034,16 @@ function runCase(typed, letter) {
   );
   const chatMain = runChat(main, typed, letter);
   const chatBranch = branch === null ? untouched(letter) : runChat(branch, typed, letter);
-  compare(report.chat, 'chat', typed, Object.values(typed), letter, chatMain, chatBranch, null);
+  compare(report.chat, 'chat', typed, valuesInTheChat(typed), letter, chatMain, chatBranch, null);
 }
 
-for (const [typed, letter] of HAND_WRITTEN) runCase(typed, letter);
-const next = generator(spec.seed);
-for (let i = 0; i < spec.count; i++) {
-  const {typed, letter} = next();
-  runCase(typed, letter);
+for (const [typed, letter] of HAND_WRITTEN) runCase('hand written', typed, letter);
+for (const seed of spec.seeds) {
+  const next = generator(seed);
+  for (let i = 0; i < spec.count; i++) {
+    const {typed, letter} = next();
+    runCase(seed, typed, letter);
+  }
 }
 
 process.stdout.write(JSON.stringify(report) + '\n');

@@ -8,9 +8,9 @@
 // scrub_scrub.js, shared.js and user_info_storage.js sit beside it. The spec
 // is one of:
 //   {"find": [[value, text], ...]}
-//        each text with every place what was typed is found as whole words
-//        (typedValueRegExp, typedValueMatches) put in [[double brackets]],
-//        overlapping ones as one, or null where the value is not looked for
+//        each text with every place what was typed is taken out (typedValue,
+//        typedValueMatches) put in [[double brackets]], overlapping ones as
+//        one, or null where the value is not looked for
 //   {"remove": {"inputs": [{id, type, value}, ...], "cases": [[typed, letter], ...]}}
 //        each letter after Remove personal details (scrub_scrub.ts clean),
 //        on a page with the intake page's inputs: every one, with the value
@@ -87,7 +87,7 @@ if (spec.lookbehinds) {
 }
 
 if (spec.find) {
-  const {typedValueMatches, typedValueRegExp} = require(path.resolve(modulePath));
+  const {typedValueMatches, typedValue} = require(path.resolve(modulePath));
   const mark = (typed, text) => {
     if (typed === null) return null;
     // Overlapping matches as one run.
@@ -105,7 +105,7 @@ if (spec.find) {
     }
     return out + text.slice(at);
   };
-  const found = spec.find.map(([value, text]) => mark(typedValueRegExp(value), text));
+  const found = spec.find.map(([value, text]) => mark(typedValue(value), text));
   process.stdout.write(JSON.stringify({found, logs}) + '\n');
   process.exit(0);
 }

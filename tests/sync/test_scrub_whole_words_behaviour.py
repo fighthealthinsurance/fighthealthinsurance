@@ -1,5 +1,5 @@
-"""What the person typed is taken out of a letter only where it stands as
-whole words, run rather than read.
+"""What the person typed is taken out of a letter by whole words, run
+rather than read.
 
 Remove personal details on the intake page (scrub_scrub.ts) and the chat's
 scrubPersonalInfo (user_info_storage.ts) look for what the person typed
@@ -7,12 +7,20 @@ through typed_value_pattern.ts. It matched anywhere, so a short first name
 was taken out of the middle of other words: in a live test one turned
 "Example Health Plan" into "Exa {{FIRST_NAME}}ple Health Plan", and an "Ed",
 "Al", "Ann" or "Sam" would turn "denied", "medically", "annual" and "same"
-into placeholders before the letter was drafted from. A value is now left
-only where it sits inside a longer word: a letter or digit of the same word
-right before or after it. Each letter of a script without capitals is a
-word to itself, and a change of script is the edge of a word. Everything
-else matching anywhere took out still comes out, which
-test_scrub_never_leaves_what_main_removed.py checks against main itself.
+into placeholders before the letter was drafted from.
+
+The rule now: a word character is a letter of a script with capitals, a
+digit, or a mark on one of those, and there is a word edge between two
+characters unless both are word characters. A value of one word is taken
+out only where it stands whole. A value of more words is taken out wherever
+matching anywhere found it, and where its first word runs on to the left or
+its last word to the right, the whole printed word comes out with it ("283
+24th Street" for a typed "283 24th St"). Letters of scripts without capitals
+are not word characters, so a value in them is found anywhere, as before.
+Only the site's own placeholders are passed over. That nothing matching
+anywhere took out is left, apart from a one-word value inside a longer
+word, is checked against main itself in
+test_scrub_never_leaves_what_main_removed.py.
 
 These compile the real TypeScript with the repo's own tsc (the same flags as
 test_entity_fetcher_behaviour.py), run it in node through
@@ -179,8 +187,8 @@ def test_a_name_is_found_at_either_end_of_the_text_and_beside_punctuation(
 def test_an_apostrophe_is_not_part_of_a_word(compiled):
     """Matching anywhere took "Brien" out of "O'Brien" and "Don" out of
     "don't", and an apostrophe is not a letter or a digit, so whole words
-    take them out too. A typed straight apostrophe finds a printed curly
-    one, and the other way round."""
+    take them out too. The apostrophe itself is matched as typed, as main
+    matched it."""
     assert_found(
         compiled,
         {
@@ -190,10 +198,9 @@ def test_an_apostrophe_is_not_part_of_a_word(compiled):
             ("Brien", "O'Brien and O’Brien, not Brien"): (
                 "O'[[Brien]] and O’[[Brien]], not [[Brien]]"
             ),
-            ("O'Brien", "Dear O’Brien, O'Brien's file"): (
-                "Dear [[O’Brien]], [[O'Brien]]'s file"
+            ("O'Brien", "Dear O'Brien, O'BRIEN's file"): (
+                "Dear [[O'Brien]], [[O'BRIEN]]'s file"
             ),
-            ("O’Brien", "O'BRIEN"): "[[O'BRIEN]]",
             ("Doe", "DOE'S appeal"): "[[DOE]]'S appeal",
         },
     )
@@ -204,12 +211,40 @@ def test_a_name_of_several_words_is_found_across_line_breaks(compiled):
     assert_found(
         compiled,
         {
-            ("Ann Doe", "Dear Ann\nDoe,\nAnn  Doe\tor Ann Doering"): (
-                "Dear [[Ann\nDoe]],\n[[Ann  Doe]]\tor Ann Doering"
+            ("Ann Doe", "Dear Ann\nDoe,\nAnn  Doe\tor Ann\u00a0Doe."): (
+                "Dear [[Ann\nDoe]],\n[[Ann  Doe]]\tor [[Ann\u00a0Doe]]."
+            ),
+        },
+    )
+
+
+@needs_node
+def test_a_value_of_several_words_takes_the_words_it_runs_on_into(compiled):
+    """Matching anywhere took a typed "283 24th St" (the intake page's own
+    hint) out of "283 24th Street" and left "reet"; leaving the whole street
+    because it does not end where the typed one does would leave what main
+    took out. So the first word may run on to the left and the last to the
+    right, and the whole printed word comes out. The words inside are whole
+    already, and the first word running on to the right ("Annette Doe") is
+    not the typed value, there or on main."""
+    assert_found(
+        compiled,
+        {
+            ("283 24th St", "Ann Doe\n283 24th Street\nSan Francisco, CA 94103"): (
+                "Ann Doe\n[[283 24th Street]]\nSan Francisco, CA 94103"
+            ),
+            ("Ann Doe", "Joann Doe, Ann Doering, Annette Doe, Ann Doe."): (
+                "[[Joann Doe]], [[Ann Doering]], Annette Doe, [[Ann Doe]]."
             ),
             ("Mary Ann", "Rosemary Ann and Mary Annette"): (
-                "Rosemary Ann and Mary Annette"
+                "[[Rosemary Ann]] and [[Mary Annette]]"
             ),
+            ("Smith-Jones", "Smith-Joneses, Smith-Jones's"): (
+                "[[Smith-Joneses]], [[Smith-Jones]]'s"
+            ),
+            # Only to the end of the word: the line break, the comma and
+            # what follows stay.
+            ("283 24th St", "283 24th Street,\nApt 2"): "[[283 24th Street]],\nApt 2",
         },
     )
 
@@ -279,9 +314,11 @@ def test_a_name_in_a_script_without_capitals_is_found_in_running_text(compiled):
             ("สมชาย", "เรียนคุณสมชาย"): "เรียนคุณ[[สมชาย]]",
             ("محمد", "إلى ومحمد"): "إلى و[[محمد]]",
             ("דוד", "שלום לדוד"): "שלום ל[[דוד]]",
-            # A digit before the house number is the same word.
+            ("علي", "السلام عليكم، وعلي"): "السلام [[علي]]كم، و[[علي]]",
+            # A digit before the house number runs on, and the whole printed
+            # number comes out.
             ("123 王府井大街", "1123 王府井大街, 123 王府井大街"): (
-                "1123 王府井大街, [[123 王府井大街]]"
+                "[[1123 王府井大街]], [[123 王府井大街]]"
             ),
         },
     )
@@ -310,12 +347,18 @@ def test_a_lone_initial_is_found_as_a_whole_word(compiled):
     """Matching anywhere took a typed initial out of every word. Whole words
     take it out only where it stands alone, "A Smith" and "a plan" alike: it
     stands as a word there, so leaving it would leave in what matching
-    anywhere took out. A value with no letter or digit is not looked for."""
+    anywhere took out. A typed "A." is looked for as "A.", with its period,
+    as main looked for it: left off, it would match every "a" in the letter.
+    A value with no letter or digit is not looked for."""
     assert_found(
         compiled,
         {
             ("A", "a plan, A Smith"): "[[a]] plan, [[A]] Smith",
-            ("J.", "J. Doe"): "[[J]]. Doe",
+            ("J.", "J. Doe"): "[[J.]] Doe",
+            ("A.", "This is a denial of a claim... Part A. You have a right"): (
+                "This is a denial of a claim... Part [[A.]] You have a right"
+            ),
+            ("A.", "Mesa. A."): "Mesa. [[A.]]",
             ("B", "Medicare Part B"): "Medicare Part [[B]]",
             ("M", "Example Health Plan"): "Example Health Plan",
             ("-", "a - b"): None,
@@ -327,7 +370,7 @@ def test_a_lone_initial_is_found_as_a_whole_word(compiled):
 
 
 @needs_node
-def test_addresses_and_numbers_are_found_only_whole(compiled):
+def test_addresses_and_numbers(compiled):
     assert_found(
         compiled,
         {
@@ -335,17 +378,17 @@ def test_addresses_and_numbers_are_found_only_whole(compiled):
                 "[[123 Sample Street\nApt 4B]]\n"
             ),
             ("123 Sample Street", "1123 Sample Street; 123 Sample Streets"): (
-                "1123 Sample Street; 123 Sample Streets"
+                "[[1123 Sample Street]]; [[123 Sample Streets]]"
             ),
             # A comma typed on its own is a word of the street like any other.
             ("123 Main St , Apt 4B", "123 Main St , Apt 4B"): (
                 "[[123 Main St , Apt 4B]]"
             ),
             ("4B", "Apt 4B, not 14B or 4BX"): "Apt [[4B]], not 14B or 4BX",
-            ("#4B", "Unit #4B"): "Unit #[[4B]]",
-            # Punctuation at the ends of what was typed is left off.
-            ("123 Sample St.", "123 Sample St, Springfield"): (
-                "[[123 Sample St]], Springfield"
+            ("#4B", "Unit #4B, Unit 4B"): "Unit [[#4B]], Unit 4B",
+            # Punctuation at the ends of what was typed is matched as typed.
+            ("123 Sample St.", "123 Sample St, Springfield; 123 Sample St. 2"): (
+                "123 Sample St, Springfield; [[123 Sample St.]] 2"
             ),
             ("62701", "IL 62701-0000, claim 627012, 162701"): (
                 "IL [[62701]]-0000, claim 627012, 162701"
@@ -371,27 +414,29 @@ def test_a_zip_plus_four_is_found_however_it_is_spaced(compiled):
 
 
 @needs_node
-def test_an_email_is_found_after_a_period_but_not_after_a_letter(compiled):
-    """A letter or a digit right against the email is part of a longer one
-    ("jann.doe@example.com"). A period is not a letter: matching anywhere
-    took the typed email out of "first.ann@example.com" and
-    "ann@example.com.au", and so do whole words."""
+def test_an_email_comes_out_with_the_words_it_runs_on_into(compiled):
+    """An email is a value of several words. Matching anywhere took it out of
+    "jann.doe@example.com" and "ann@example.comx" and left the "j" and the
+    "x", so the whole printed word at either end comes out with it. A period
+    is not a letter: "first." and ".au" stay, as on main."""
     assert_found(
         compiled,
         {
             ("ann.doe@example.com", "jann.doe@example.com or ann.doe@example.com."): (
-                "jann.doe@example.com or [[ann.doe@example.com]]."
+                "[[jann.doe@example.com]] or [[ann.doe@example.com]]."
             ),
             ("ann@example.com", "first.ann@example.com, ann@example.com.au"): (
                 "first.[[ann@example.com]], [[ann@example.com]].au"
             ),
-            ("ann@example.com", "ann@example.comx"): "ann@example.comx",
+            ("ann@example.com", "ann@example.comx"): "[[ann@example.comx]]",
         },
     )
 
 
 @needs_node
-def test_a_placeholder_is_never_written_into(compiled):
+def test_a_placeholder_of_the_site_is_never_written_into(compiled):
+    """Only the site's own placeholders are passed over: any other text in
+    double braces is text like the rest, and a name in it comes out."""
     assert_found(
         compiled,
         {
@@ -401,7 +446,13 @@ def test_a_placeholder_is_never_written_into(compiled):
             ("Your Email", "Write to {{Your Email Address}}."): (
                 "Write to {{Your Email Address}}."
             ),
+            ("Phone Number", "Call {{Your Phone Number}}."): (
+                "Call {{Your Phone Number}}."
+            ),
+            ("Name", "Sincerely, {{Your Name}}"): "Sincerely, {{Your Name}}",
             ("Ann", "{{FIRST_NAME}}Ann"): "{{FIRST_NAME}}[[Ann]]",
+            ("Ann Doe", "Ref {{Ann Doe}}"): "Ref {{[[Ann Doe]]}}",
+            ("Ann", "{{ann}} {{Dear Ann}}"): "{{[[ann]]}} {{Dear [[Ann]]}}",
         },
     )
 
@@ -429,16 +480,44 @@ CHAT_SCRUBBED = [
         CHAT_USER,
         "{{PATIENT_NAME}}, {{ADDRESS}}, {{CITY}} AZ {{ZIP_CODE}}-1234",
     ),
+    # An email runs on into a longer one: the whole printed one comes out.
     (
         "Mesalamine was denied. Write to joann@example.com or ann@example.com.",
         CHAT_USER,
-        "Mesalamine was denied. Write to joann@example.com or {{Your Email Address}}.",
+        "Mesalamine was denied. Write to {{Your Email Address}} or "
+        "{{Your Email Address}}.",
     ),
-    # Matched anywhere, the street was found inside a longer number.
+    # So does a street into a longer house number. The ZIP code, one word,
+    # stays inside a longer number.
     (
         "1123 Sample Street Apt 4B, claim 852011",
         CHAT_USER,
-        "1123 Sample Street Apt 4B, claim 852011",
+        "{{ADDRESS}}, claim 852011",
+    ),
+    (
+        "Ann Doe\n283 24th Street\nSan Francisco, CA 94103",
+        dict(CHAT_USER, address="283 24th St", city="San Francisco", zipCode="94103"),
+        "{{PATIENT_NAME}}\n{{ADDRESS}}\n{{CITY}}, CA {{ZIP_CODE}}",
+    ),
+    # An initial is looked for with its period.
+    (
+        "This is a denial of a claim... Part A. You have a right",
+        dict(CHAT_USER, firstName="A."),
+        "This is a denial of a claim... Part {{FIRST_NAME}} You have a right",
+    ),
+    # Text in double braces that is not the site's is scrubbed like any.
+    (
+        "Ref {{Ann Doe}}",
+        CHAT_USER,
+        "Ref {{{{PATIENT_NAME}}}}",
+    ),
+    # Arabic joins prefixes and pronouns to a name, so a name in it is found
+    # anywhere, as Remove personal details found it on main. Main's chat
+    # (\b knew only A to Z) never found it at all, even standing alone.
+    (
+        "أنا علي. السلام عليكم، وعليه",
+        dict(CHAT_USER, firstName="علي"),
+        "أنا {{FIRST_NAME}}. السلام {{FIRST_NAME}}كم، و{{FIRST_NAME}}ه",
     ),
     # \b never matched these at all: the name was sent as typed.
     (
@@ -777,6 +856,36 @@ class RemovePersonalDetailsTest(TestCase):
                     {"store_fname": "Joe", "store_lname": "Name"},
                     "Joe Name applied. {{PATIENT_NAME}}",
                     "{{FIRST_NAME}} {{LAST_NAME}} applied. {{PATIENT_NAME}}",
+                ),
+            ]
+        )
+
+    def test_what_the_second_review_found_comes_out(self):
+        """The street the page's own hint shows, printed longer, came out on
+        main but for "reet" and was left whole; a typed "A." took every
+        standalone "a" out; a name in double braces was left."""
+        self.assert_removed(
+            [
+                (
+                    {
+                        "store_fname": "Ann",
+                        "store_lname": "Doe",
+                        "store_street": "283 24th St",
+                        "store_zip": "94103",
+                    },
+                    "Ann Doe\n283 24th Street\nSan Francisco, CA 94103",
+                    "{{FIRST_NAME}} {{LAST_NAME}}\n{{ADDRESS}}\n"
+                    "San Francisco, CA {{ZIP_CODE}}",
+                ),
+                (
+                    {"store_fname": "A."},
+                    "This is a denial of a claim... Part A. You have a right",
+                    "This is a denial of a claim... Part {{FIRST_NAME}} You have a right",
+                ),
+                (
+                    {"store_fname": "Ann", "store_lname": "Doe"},
+                    "Ref {{Ann Doe}}",
+                    "Ref {{{{FIRST_NAME}} {{LAST_NAME}}}}",
                 ),
             ]
         )

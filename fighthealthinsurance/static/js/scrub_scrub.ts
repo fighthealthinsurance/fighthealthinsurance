@@ -2,7 +2,7 @@ import {
   setLocalStorageItemWithTTL,
   type ScrubberStorageKey,
 } from "./shared";
-import { takeOutTypedValues, typedValueRegExp } from "./typed_value_pattern";
+import { takeOutTypedValues, typedValue, type TypedValue } from "./typed_value_pattern";
 
 // The middle column is the storage key, typed so a new rule cannot store
 // under a key that clearFormData does not clear.
@@ -98,15 +98,16 @@ function removedFromTheLetter(node: HTMLInputElement): boolean {
 }
 
 function scrubText(text: string): string {
-  var reservedTokens: [RegExp, string][] = [];
+  var reservedTokens: [TypedValue, string][] = [];
   var nodes = document.querySelectorAll("input");
   for (let i = 0; i < nodes.length; i++) {
     var node = nodes[i];
-    // What the person typed is found however the letter spaces it, and only
-    // as whole words: a typed "123 Sample Street Apt 4B" matches the street
-    // with "Apt 4B" on the line under it, and a typed "Ann" leaves "annual"
-    // alone (typed_value_pattern.ts).
-    const typed = removedFromTheLetter(node) ? typedValueRegExp(node.value) : null;
+    // What the person typed is found however the letter spaces it, and a
+    // value of one word only where it stands whole: a typed "123 Sample
+    // Street Apt 4B" matches the street with "Apt 4B" on the line under it,
+    // a typed "283 24th St" takes out all of "283 24th Street", and a typed
+    // "Ann" leaves "annual" alone (typed_value_pattern.ts).
+    const typed = removedFromTheLetter(node) ? typedValue(node.value) : null;
     if (typed !== null) {
       const placeholder = storeIdToPlaceholder[node.id] || `{{${node.id}}}`;
       reservedTokens.push([typed, placeholder]);
@@ -118,7 +119,7 @@ function scrubText(text: string): string {
       }
       for (let j = 0; j < nodes.length; j++) {
         var secondNode = nodes[j];
-        const together = typedIn(secondNode) ? typedValueRegExp(node.value + secondNode.value) : null;
+        const together = typedIn(secondNode) ? typedValue(node.value + secondNode.value) : null;
         if (together !== null) {
           const secondPlaceholder = storeIdToPlaceholder[secondNode.id] || `{{${secondNode.id}}}`;
           reservedTokens.push([together, placeholder + " " + secondPlaceholder]);
@@ -150,8 +151,8 @@ function scrubText(text: string): string {
     text = text.replace(scrubRegex[i][0], scrubRegex[i][2]);
   }
   // Each value is looked for in the letter as the labels left it, and a
-  // match is whole words, so a placeholder no longer needs a space in front
-  // of it to keep it off the rest of a word it was cut out of.
+  // match never ends inside a word, so a placeholder no longer needs a space
+  // in front of it to keep it off the rest of a word it was cut out of.
   text = takeOutTypedValues(text, reservedTokens);
   return text;
 }
