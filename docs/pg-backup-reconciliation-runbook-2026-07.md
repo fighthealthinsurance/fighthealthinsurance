@@ -488,6 +488,8 @@ proceeding.
 Run in one Bash session. The 26h freshness limit matches `FhiPg9BackupTooOld`.
 If selection fails or the backup is stale, stop and use Phases 3/3a to repair
 backups before retrying.
+For a migration comparison, set `DRILL_BACKUP_NAME` to the fresh backup created
+in Phase 11e. Otherwise, leave it unset to select the newest completed backup.
 
 ```bash
 set -euo pipefail
@@ -496,11 +498,12 @@ DRILL_DIR=$(mktemp -d)
 DRILL_NAME="fhi-pg9-drill-$(date -u +%Y%m%d%H%M%S)"
 kubectl -n totallylegitco get backup -o json > "$DRILL_DIR/backups.json"
 read -r BACKUP_NAME BACKUP_ID BACKUP_STOP < <(
-  jq -er '[.items[] | select(
+  jq -er --arg name "${DRILL_BACKUP_NAME:-}" '[.items[] | select(
     .spec.cluster.name == "fhi-pg-main-9" and .spec.method == "plugin" and
     .spec.pluginConfiguration.name == "barman-cloud.cloudnative-pg.io" and
     .status.phase == "completed" and (.status.backupId // "") != "" and
-    (.status.stoppedAt // "") != ""
+    (.status.stoppedAt // "") != "" and
+    ($name == "" or .metadata.name == $name)
   )] | sort_by(.status.stoppedAt) | last | select(. != null) |
     [.metadata.name, .status.backupId, .status.stoppedAt] | @tsv' "$DRILL_DIR/backups.json"
 )

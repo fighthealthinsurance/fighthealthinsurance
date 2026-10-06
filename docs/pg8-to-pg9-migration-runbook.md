@@ -672,14 +672,42 @@ failure for months.
 
 ### 11e. Restore drill — the only real proof of a backup
 
-Follow the [Phase 6 restore check](pg-backup-reconciliation-runbook-2026-07.md#restore-check--read-only-archive-disposable-cluster)
-to restore the newest completed `-9` backup through a separate read-only
-ObjectStore. Run its data checks, then pause **before cleanup** for the migration
-comparison below. Phase 6 is the standing procedure for later restore checks.
+Quiesce all `-9` writers first: web, Ray, scheduled jobs, and any other clients.
+Confirm no application sessions remain and keep writes paused through the
+comparison. Create a fresh backup after quiescing; a backup from before the
+pause cannot provide an exact comparison with live `-9`.
 
-**VALIDATION — migration comparison:** take the backup with source writes
-quiesced and keep them quiesced for an exact comparison; writes after the backup
-can legitimately change live counts. `DRILL_NAME` comes from the Phase 6 steps.
+Run in the same Bash session as the restore steps:
+
+```bash
+set -euo pipefail
+DRILL_BACKUP_NAME=$(kubectl create -f - -o jsonpath='{.metadata.name}' <<'YAML'
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  generateName: fhi-pg-main-9-comparison-
+  namespace: totallylegitco
+spec:
+  cluster:
+    name: fhi-pg-main-9
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+YAML
+)
+kubectl -n totallylegitco wait --for=jsonpath='{.status.phase}'=completed \
+  "backup/$DRILL_BACKUP_NAME" --timeout=7200s
+export DRILL_BACKUP_NAME
+```
+
+Follow the [Phase 6 restore check](pg-backup-reconciliation-runbook-2026-07.md#restore-check--read-only-archive-disposable-cluster)
+to restore this named backup through the separate read-only ObjectStore. Run its
+data checks, then pause **before cleanup** for the migration comparison below.
+Phase 6 remains the standing procedure for later restore checks.
+
+**VALIDATION — migration comparison:** keep source writes quiesced; writes after
+the backup can legitimately change live counts. `DRILL_NAME` comes from the
+Phase 6 steps.
 
 ```bash
 CRITICAL_TABLES="django_migrations auth_user <add-your-critical-tables>" \
