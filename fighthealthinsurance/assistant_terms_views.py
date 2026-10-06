@@ -169,8 +169,10 @@ class AssistantAgreeView(View):
             return self._to_site(request, token, binder, content, letter)
         form = core_forms.AssistantTermsForm(request.POST)
         if not form.is_valid():
-            if "captcha" in form.errors:
-                # A failed bot check is a refusal like the others.
+            codes = {e.code for e in form.errors.as_data().get("captcha", [])}
+            if codes and codes != {"required"}:
+                # A token Google rejected is a refusal like the others; an
+                # unticked or expired box just asks again.
                 return self._to_site(request, token, binder, content, letter, form)
             return render_terms(request, token, letter, form)
         draft = assistant_drafts.waiting_draft(content.draft)
