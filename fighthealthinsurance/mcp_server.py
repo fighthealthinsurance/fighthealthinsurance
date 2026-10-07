@@ -1709,8 +1709,10 @@ ANSWER_APPEAL_QUESTIONS_DESCRIPTION = (
     "Use this after get_appeal_drafts returns next ask_questions. Ask the "
     "person each question first and send only what they said, under each "
     "question's name: yes, no or skip for a yes_no question, one of the "
-    "choices or skip for a choice question, and up to 1,000 characters for a "
-    "text question. Never answer for them or guess; a question they skip can "
+    "choices or skip for a choice question, and up to "
+    f"{assistant_drafts.ANSWER_MAX_CHARS:,} characters for a text question "
+    "(a longer answer is refused, so shorten it with the person first). Never "
+    "answer for them or guess; a question they skip can "
     "be left out. The answers are kept with their appeal, as answers given "
     "on the site are. Send them once: calling again returns the status. If "
     "it fails, call it again with the same answers. Then "
@@ -1765,9 +1767,11 @@ class AppealAnswer(BaseModel):
     value: Annotated[
         str,
         Field(
-            max_length=2000,
-            description="yes, no or skip; one of the choices; or up to 1,000 "
-            "characters of text.",
+            # Filing only takes characters out, so what passes here is
+            # filed whole.
+            max_length=assistant_drafts.ANSWER_MAX_CHARS,
+            description="yes, no or skip; one of the choices; or up to "
+            f"{assistant_drafts.ANSWER_MAX_CHARS:,} characters of text.",
         ),
     ]
 
@@ -1890,9 +1894,16 @@ def _input_error_message(tool: str, error: ValidationError) -> str:
         elif field == "topic" and kind == "string_pattern_mismatch":
             messages.append(TOPIC_HELP)
         elif kind == "string_too_long":
+            # Every other field wants a few words; an answer is the
+            # person's own text, to shorten with them.
+            hint = (
+                "; shorten it with the person"
+                if field.startswith("answers.")
+                else ", a few words"
+            )
             messages.append(
                 f"{field} is too long: at most {limits.get('max_length')} "
-                "characters, a few words."
+                f"characters{hint}."
             )
         elif kind == "string_too_short":
             messages.append(

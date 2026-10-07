@@ -69,6 +69,14 @@ _URL = re.compile(r"https?://|www\.", re.IGNORECASE)
 _PLACEHOLDER = re.compile(
     r"\{\{?[A-Za-z_][A-Za-z0-9_ ]*\}\}?|\[[A-Z][^\]\n]{2,40}\]|\$[a-z][a-z_]{2,}\b"
 )
+# A long bracket that tells the reader what to put there ([Insert Reference
+# Number from Denial Letter]) is a fill-in, past _PLACEHOLDER's 41
+# characters too: the words are the instruction words of the site's own
+# check (letter_placeholders.json), which blocks such a letter at fax time.
+_LONG_INSTRUCTION = re.compile(
+    r"\[(?=[^\[\]\n]{42,200}\])(?:Insert|Enter|Add|Fill in|Your|Attach|Include"
+    r"|Specify|Describe|Explain|Provide|Quote|Mention|List)\b[^\[\]\n]*\]"
+)
 # What a quotation's note says was left out: [Internal citations omitted].
 _OMITTED = r"(?:internal )?(?:citations?|quotation marks|quotations?|footnotes?)"
 # The note a quotation carries, any case: [Emphasis added], [Sic].
@@ -476,7 +484,9 @@ def placeholders_in(text: str) -> list[str]:
     nor is a bracket opened inside one: a bracket runs to the first "]", so
     "Ref [Dear [Your Name] Sir]" lists "[Dear [Your Name]" and not "[Your
     Name]" as well. Never listed, as on main: [It], [doctor name], [1], [3,
-    4], [42 CFR 438.210], or a bracket with over 41 characters inside.
+    4], [42 CFR 438.210], or a bracket with over 41 characters inside
+    unless it starts with an instruction ([Insert Reference Number from
+    Denial Letter]), as the site's own fill-in check lists it.
 
     Left out, only when the whole bracket is one: a regulation or statute
     ([See 42 CFR 438.210], [CMS NCD 220.2], [Medicare LCD L33822], [Pub. L.
@@ -494,11 +504,12 @@ def placeholders_in(text: str) -> list[str]:
     a question; leaving out one still to be named leaves a blank in the
     letter.
     """
-    return sorted(
+    listed = {
         found
-        for found in set(_PLACEHOLDER.findall(text))
+        for found in _PLACEHOLDER.findall(text)
         if not (found.startswith("[") and _is_citation(found))
-    )
+    }
+    return sorted(listed | set(_LONG_INSTRUCTION.findall(text)))
 
 
 def collect_letters(denial: Denial) -> list[dict[str, Any]]:

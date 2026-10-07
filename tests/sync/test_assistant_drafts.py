@@ -605,6 +605,16 @@ class LettersTest(TestCase):
         )
         self.assertEqual(len(drafts.collect_letters(denial)), 1)
 
+    def test_a_long_bracket_that_says_what_to_put_there_is_listed(self):
+        letter = (
+            "Claim/Reference Number: [Insert Reference Number from Denial Letter]. "
+            "As shown in [Shi et al., Nighttime Respiratory Disturbance in Children]."
+        )
+        self.assertEqual(
+            drafts.placeholders_in(letter),
+            ["[Insert Reference Number from Denial Letter]"],
+        )
+
     def test_dollar_placeholders_are_listed(self):
         denial = a_denial()
         self._row(denial, LETTER + " Signed, $your_name_here. It cost $500.")
