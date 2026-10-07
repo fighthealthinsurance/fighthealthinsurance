@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load compress %}
+{% load bundles %}
 {% load static %}
 
 {% block content %}
@@ -201,5 +202,5 @@
 
 {% block scriptmagic %}
 <script src="{% static 'js/pwyw.js' %}"></script>
-<script src="{% static 'js/dist/model_status.bundle.js' %}"></script>
+<script src="{% bundle 'model_status' %}"></script>
 {% endblock scriptmagic %}

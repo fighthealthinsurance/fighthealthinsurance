@@ -4,11 +4,12 @@ Thank you!
 {% endblock title %}
 
 {% load compress %}
+{% load bundles %}
 {% load static %}
 
 {% block scriptmagic %}
 <script type="module">
-  import * as main from '{% static "js/dist/scrub.bundle.js" %}';
+  import * as main from '{% bundle "scrub" %}';
 </script>
 {% endblock scriptmagic %}
 {% block content %}

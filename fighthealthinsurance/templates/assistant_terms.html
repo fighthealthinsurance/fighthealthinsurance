@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load consent %}
+{% load bundles %}
 {% load static %}
 {% comment %}
 The terms page an assistant's chat link opens (assistant_terms_views.py). The
@@ -14,7 +15,7 @@ here unchanged.
 
 {% block scriptmagic %}
 <script type="module">
-  import * as main from '{% static "js/dist/scrub.bundle.js" %}';
+  import * as main from '{% bundle "scrub" %}';
 </script>
 <script>
   // "Finish on this site instead" takes the letter, email, ZIP and the

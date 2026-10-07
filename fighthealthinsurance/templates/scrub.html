@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load consent %}
+{% load bundles %}
 {% block title %}
 {% if form.errors %}Error: {% endif %}Upload your Health Insurance Denial
 {% endblock title %}
@@ -9,7 +10,7 @@
 
 {% block scriptmagic %}
 <script type="module">
-  import * as main from '{% static "js/dist/scrub.bundle.js" %}';
+  import * as main from '{% bundle "scrub" %}';
 </script>
 <script>
   // Track denial appeal start when form is submitted

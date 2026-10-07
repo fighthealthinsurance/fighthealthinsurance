@@ -1,11 +1,12 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 {% block title %}
 Fight Your Health Insurance Denial: Choose an Appeal
 {% endblock title %}
 
 {% block pre-roll %}
-<script src='{% static "js/dist/appeal_fetcher.bundle.js" %}' defer></script>
+<script src='{% bundle "appeal_fetcher" %}' defer></script>
 {% endblock pre-roll %}
 
 {% block content %}

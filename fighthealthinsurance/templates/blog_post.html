@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 {% block title %}
 {{ post_title|default:"Blog Post" }} - Fight Health Insurance
 {% endblock title %}
@@ -9,5 +10,5 @@
     <!-- React component will be mounted here -->
 </div>
 
-<script src="{% static 'js/dist/blog_post.bundle.js' %}"></script>
+<script src="{% bundle 'blog_post' %}"></script>
 {% endblock content %}
