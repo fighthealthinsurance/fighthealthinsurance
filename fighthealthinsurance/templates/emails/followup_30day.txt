@@ -1,6 +1,6 @@
 {% autoescape off %}Hi,
 
-It's been about 30 days since you generated your appeal with Fight Health Insurance. We're checking in to see how things are going.
+It's been about 30 days since you used Fight Health Insurance. We're checking in to see how things are going.
 
 {% if selected_appeal %}Have you heard back from your insurance company? Many insurers are required to respond within 30 to 60 days for standard appeals. Here are some tips:
 

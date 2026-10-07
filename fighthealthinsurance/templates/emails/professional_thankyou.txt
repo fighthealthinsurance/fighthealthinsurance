@@ -4,4 +4,4 @@ Thank you for your interest in the professional version of Fight Health Insuranc
 
 We're reviewing your information and will be in touch shortly.
 
-The team at Fight Health Insurance and Timbit{% endautoescape %}
+The Fight Health Insurance team{% endautoescape %}

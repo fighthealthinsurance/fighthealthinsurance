@@ -1,6 +1,6 @@
 {% autoescape off %}Hi,
 
-It's been about 90 days since you generated your appeal with Fight Health Insurance. We wanted to do a final check-in and see how everything turned out.
+It's been about 90 days since you used Fight Health Insurance. We wanted to do a final check-in and see how everything turned out.
 
 {% if selected_appeal %}What was the outcome of your appeal? Whether it was successful or not, we'd appreciate hearing from you:
 

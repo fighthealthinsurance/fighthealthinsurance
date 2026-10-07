@@ -3,11 +3,9 @@
 {% block content %}
 <p>Hello,</p>
 <p>
-You have been invited to join your healthcare professional in appealing another health insurance denial you received.
+Your healthcare provider has started a draft appeal for a health insurance denial you received. They've invited you to review it with them on Fight Paperwork.
 </p>
-<p>
-To make sure you're in the same group when you sign up, use the practice phone number {{ practice_number }}.
-</p>
+{% include "emails/partials/button.html" with href="https://www.fightpaperwork.com/" label="Open Fight Paperwork" fill="#c2410c" %}
 <p>
 If you have any questions, email us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
 </p>

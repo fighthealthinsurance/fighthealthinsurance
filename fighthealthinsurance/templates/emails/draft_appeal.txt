@@ -1,8 +1,9 @@
 {% autoescape off %}Hello,
 
-You have been invited to join your healthcare professional in appealing another health insurance denial you received.
+Your healthcare provider has started a draft appeal for a health insurance denial you received. They've invited you to review it with them on Fight Paperwork.
 
-To make sure you're in the same group when you sign up, use the practice phone number {{ practice_number }}.
+Open Fight Paperwork:
+https://www.fightpaperwork.com/
 
 If you have any questions, email us at support42@fighthealthinsurance.com.
 

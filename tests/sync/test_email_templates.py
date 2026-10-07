@@ -26,10 +26,13 @@ from fighthealthinsurance.common_view_logic import (
     ProfessionalNotificationHelper,
 )
 from fighthealthinsurance.fax_send_core import fax_followup_subject
+from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.mailing_list_actor import MailingListActor
+from fighthealthinsurance.models import InterestedProfessional
 
 FHI = "The team at Fight Health Insurance and Timbit"
 FPW = "The Fight Paperwork team"
+FHI_PRO = "The Fight Health Insurance team"
 FPW_LOGO = 'alt="Fight Paperwork"'
 FOLLOWUP_LINK = "https://www.fighthealthinsurance.com/v0/followup/u/h/s"
 FAX_LINK = "https://www.fighthealthinsurance.com/v0/fax-followup/h/u"
@@ -84,8 +87,8 @@ CASES = [
     *_followups("followup_7day"),
     *_followups("followup_30day"),
     *_followups("followup_90day"),
-    ("professional_thankyou", {"name": "Dr. Q"}, FHI, None),
-    ("professional_thankyou", {"name": ""}, FHI, None),
+    ("professional_thankyou", {"name": "Dr. Q"}, FHI_PRO, None),
+    ("professional_thankyou", {"name": ""}, FHI_PRO, None),
     (
         "checkout_session_expired",
         {"link": "https://www.fighthealthinsurance.com/stripe/finish?token=t", "professional": False},
@@ -99,7 +102,7 @@ CASES = [
         "https://www.fightpaperwork.com/stripe/finish-checkout?domain_id=1&professional_id=2",
     ),
     ("new_patient", {"practice_number": "555-0100"}, FPW, "https://www.fightpaperwork.com/"),
-    ("draft_appeal", {"practice_number": "555-0100"}, FPW, None),
+    ("draft_appeal", {"practice_number": "555-0100"}, FPW, "https://www.fightpaperwork.com/"),
     (
         "invite_professional",
         {"professional_name": "New Pro", "inviter_name": "Admin User", "practice_name": "testdomain", "practice_number": "555-0100"},
@@ -197,6 +200,91 @@ def test_the_fax_follow_up_subject_says_how_the_fax_went():
     )
 
 
+def test_the_fax_sent_email_says_why_to_call_the_insurer():
+    text, html = _render(
+        "fax_followup",
+        dict(name="Ann", success=True, missing_destination=False, fax_redo_link=FAX_LINK),
+    )
+    why = (
+        "You should still call your insurance company to confirm they received it "
+        "and ask for a reference number. Insurers sometimes say they never got an appeal."
+    )
+    assert why in text
+    assert why in html
+
+
+def test_the_draft_appeal_email_does_not_ask_a_signed_up_patient_to_sign_up():
+    # notify_of_draft_appeal only goes to a patient whose account is already
+    # active; the sign-up case gets new_patient.
+    text, html = _render("draft_appeal", {"practice_number": "555-0100"})
+    for part in (text, html):
+        assert "sign up" not in part
+        assert "555-0100" not in part
+        assert "started a draft appeal" in part
+
+
+@pytest.mark.parametrize("template", ["followup_7day", "followup_30day", "followup_90day"])
+def test_a_check_in_does_not_assume_an_appeal_was_made(template):
+    text, html = _render(
+        template,
+        dict(selected_appeal=None, generated_proposals=False, followup_link=FOLLOWUP_LINK),
+    )
+    for part in (text, html):
+        assert "since you used Fight Health Insurance" in part
+        assert "generated your appeal" not in part
+
+
+@pytest.mark.parametrize("generated_proposals", [True, False])
+def test_the_generic_follow_up_thanks_once_before_the_help_section(generated_proposals):
+    text, _ = _render(
+        "followup",
+        dict(selected_appeal=None, generated_proposals=generated_proposals, followup_link=FOLLOWUP_LINK),
+    )
+    body = text.split("Thank you for being part of our community")[0]
+    assert body.count("Thank you") == 1
+    assert "Fight Health Insurance to generate an appeal" not in body
+
+
+def test_the_password_reset_says_when_the_link_expires_and_what_to_do_if_unasked():
+    text, html = _render(
+        "password_reset",
+        {"reset_link": "https://www.fightpaperwork.com/auth/reset-password/new-password?token=t"},
+    )
+    for part in (text, html):
+        assert "This link expires in 24 hours." in part
+        assert "If you didn't ask to reset your password, you can ignore this email." in part
+
+
+def test_the_activation_email_says_when_the_link_expires():
+    text, html = _render(
+        "acc_active_email",
+        {"user": SimpleNamespace(first_name="Ann"), "domain": "testserver", "activation_link": "https://www.fightpaperwork.com/activate-account/?token=t&uid=1"},
+    )
+    assert "This link expires in 24 hours." in text
+    assert "This link expires in 24 hours." in html
+
+
+def test_the_intake_reminder_introduces_its_link_once():
+    text, _ = _render(
+        "intake_nudge",
+        {"url": "https://www.fighthealthinsurance.com/v0/resume/tok", "days": 3},
+    )
+    before_link = text.split("https://www.fighthealthinsurance.com/v0/resume/tok")[0]
+    assert before_link.rstrip().endswith("Continue my appeal:")
+    assert before_link.count(":\n") == 1
+
+
+@pytest.mark.parametrize("fill", ["#566b07", "#c2410c"])
+def test_the_button_cell_keeps_its_fill_and_padding_in_outlook(fill):
+    with override_settings(TEMPLATES=_strict_templates()):
+        html = render_to_string(
+            "emails/partials/button.html",
+            {"href": "https://www.fighthealthinsurance.com/x", "label": "Go", "fill": fill},
+        )
+    assert f'bgcolor="{fill}"' in html
+    assert "mso-padding-alt: 12px 24px;" in html
+
+
 def test_the_unsubscribe_footer_names_what_the_link_does():
     actor = MailingListActor.__ray_actor_class__
     html = actor._append_unsubscribe_html(None, "<p>News</p>", "https://u/tok")
@@ -225,6 +313,16 @@ class SenderFixesTest(TestCase):
                 "Draft Appeal on Fight Paperwork from Dr. Q",
             ],
         )
+
+    def test_the_professional_thank_you_subject_is_plain(self):
+        pro = InterestedProfessional.objects.create(name="Dr. Q", email="pro@test-fhi.com")
+        self.assertTrue(ThankyouEmailSender().dosend(interested_pro=pro))
+        sent = [m for m in mail.outbox if m.to == ["pro@test-fhi.com"]]
+        self.assertEqual(
+            [m.subject for m in sent],
+            ["Thanks for your interest in our professional version"],
+        )
+        self.assertIn(FHI_PRO, sent[0].body)
 
     def test_a_coworker_invite_greets_the_invitee_not_the_inviter(self):
         ProfessionalNotificationHelper.send_signup_invitation(

@@ -1,6 +1,6 @@
 {% autoescape off %}Hi,
 
-You started putting together an appeal on Fight Health Insurance and didn't get to finish. If you'd like to keep going, this link takes you back to where you left off:
+You started putting together an appeal on Fight Health Insurance and didn't get to finish. If you'd like to keep going, you can pick up where you left off.
 
 Continue my appeal:
 {{ url }}

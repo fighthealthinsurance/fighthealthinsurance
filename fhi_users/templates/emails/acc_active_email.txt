@@ -5,6 +5,8 @@ Please activate your Fight Paperwork account using the link below.
 Activate your account:
 {{ activation_link }}
 
+This link expires in 24 hours.
+
 Best regards,
 
 The Fight Paperwork team{% endautoescape %}
