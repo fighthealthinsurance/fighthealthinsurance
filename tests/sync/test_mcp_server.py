@@ -306,7 +306,7 @@ class StartAppealTest(TestCase):
         self.assertIn("If you join the mailing list, we keep your name and", page)
         # The state comes from the whole ZIP code, then only ZIP3 is stored.
         intake = (TEMPLATES.parent / "common_view_logic.py").read_text()
-        self.assertIn("cls.zip_engine.by_zipcode(zip).state", intake)
+        self.assertIn("cls._zip_engine().by_zipcode(zip).state", intake)
         self.assertIn("denial.service_zip = zip[:3]", intake)
 
     async def medicare_chat_start(self):

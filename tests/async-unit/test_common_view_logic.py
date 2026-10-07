@@ -2650,6 +2650,20 @@ class _FixedZipEngine:
         return SimpleNamespace(state=self.mapping[zip_code])
 
 
+class ZipEngineIsBuiltOnFirstUseTest(TestCase):
+    """Creating a uszipcode SearchEngine makes its data folder, so it must not
+    happen on import: a class-level one crashed every management command
+    that loads the URLs on a read-only filesystem (the prefetch Job)."""
+
+    def test_the_engine_is_made_once_on_first_use(self):
+        with patch.object(DenialCreatorHelper, "zip_engine", None), patch(
+            "fighthealthinsurance.common_view_logic.uszipcode.search.SearchEngine"
+        ) as engine:
+            DenialCreatorHelper._zip_engine()
+            DenialCreatorHelper._zip_engine()
+        engine.assert_called_once_with()
+
+
 class _BrokenZipEngine:
     """A lookup that fails the way an unknown zip or a missing DB file does."""
 
