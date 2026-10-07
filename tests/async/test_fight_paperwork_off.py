@@ -299,3 +299,18 @@ class FightPaperworkStripeOffTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json(), {"error": UNAVAILABLE_MESSAGE})
         mock_create.assert_not_called()
+
+    @patch("stripe.checkout.Session.create")
+    def test_professional_recovery_link_answers_json_404(self, mock_create) -> None:
+        lost = LostStripeSession.objects.create(
+            session_id="cs_lost_browser",
+            payment_type="professional_domain_subscription",
+            email="buyer@test-fhi.com",
+            metadata={"recovery_info_id": "1"},
+        )
+        response = self.client.get(
+            f"{reverse('complete_payment')}?token={lost.secure_token}"
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"error": UNAVAILABLE_MESSAGE})
+        mock_create.assert_not_called()

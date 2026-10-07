@@ -74,6 +74,7 @@ from fhi_users.fight_paperwork import (
     UNAVAILABLE_MESSAGE,
     fight_paperwork_enabled,
     stripe_event_payment_type,
+    unavailable_response,
 )
 from fighthealthinsurance.log_redaction import session_key_prefix_for_log
 from fighthealthinsurance.ml import denial_triage
@@ -3084,6 +3085,10 @@ class StripeWebhookView(View):
         return HttpResponse(status=200)
 
 
+# A paused Fight Paperwork checkout; matched by identity in CompletePaymentView.
+_FIGHT_PAPERWORK_OFF = (UNAVAILABLE_MESSAGE, 404)
+
+
 class CompletePaymentView(View):
     """View for completing payment after a Stripe checkout redirect.
 
@@ -3111,6 +3116,9 @@ class CompletePaymentView(View):
                 "session_id": request.GET.get("session_id"),
             }
             next_url, error = self._resolve_next_url(data)
+            if error is _FIGHT_PAPERWORK_OFF:
+                # Not the HTML page: it suggests starting a new checkout.
+                return unavailable_response()
             if error is not None or next_url is None:
                 message, status_code = error or ("An internal error occurred", 500)
                 if wants_json:
@@ -3218,7 +3226,7 @@ class CompletePaymentView(View):
                 payment_type == PROFESSIONAL_SUBSCRIPTION_PAYMENT_TYPE
                 and not fight_paperwork_enabled()
             ):
-                return None, (UNAVAILABLE_MESSAGE, 404)
+                return None, _FIGHT_PAPERWORK_OFF
             metadata: dict[str, str] = lost_session.metadata  # type: ignore
             recovery_info_id = metadata.get("recovery_info_id")
             line_items = []
