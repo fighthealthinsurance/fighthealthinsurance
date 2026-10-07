@@ -2227,12 +2227,22 @@ _NOT_ANSWERS = frozenset(
 
 class DenialCreatorHelper:
     regex_denial_processor = ProcessDenialRegex()
-    zip_engine = uszipcode.search.SearchEngine()
+    # Built on first use (_zip_engine). Creating a SearchEngine makes its data
+    # folder (~/.uszipcode), and a class-level one did that on import, so any
+    # management command that loads the URLs crashed on a read-only
+    # filesystem: the deploy-time prefetch Job never ran.
+    zip_engine: Any = None
     # Lazy load to avoid bootstrap problem w/new project
     _codes_denial_processor = None
     _regex_src = None
     _codes_src = None
     _all_denial_types = None
+
+    @classmethod
+    def _zip_engine(cls) -> Any:
+        if cls.zip_engine is None:
+            cls.zip_engine = uszipcode.search.SearchEngine()
+        return cls.zip_engine
 
     @classmethod
     def codes_denial_processor(cls):
@@ -2776,7 +2786,7 @@ class DenialCreatorHelper:
             else:
                 inferred_state = None
                 try:
-                    inferred_state = cls.zip_engine.by_zipcode(zip).state
+                    inferred_state = cls._zip_engine().by_zipcode(zip).state
                 except Exception as e:
                     logger.debug(f"Zip code lookup failed for {zip}: {e}")
                 if inferred_state:

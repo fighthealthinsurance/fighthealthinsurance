@@ -74,7 +74,9 @@ metadata:
   name: web-extralink-prefetch
   namespace: totallylegitco
 spec:
-  ttlSecondsAfterFinished: 120
+  # An hour, so its log can still be read after a deploy: at 120 s its
+  # failure went unseen for months.
+  ttlSecondsAfterFinished: 3600
   activeDeadlineSeconds: 900
   template:
     metadata:
