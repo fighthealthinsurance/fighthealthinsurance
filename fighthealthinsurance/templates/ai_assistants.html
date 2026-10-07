@@ -20,7 +20,7 @@
   /* The address and the commands are single runs no browser breaks on its
      own, wider than a list item on a 390px phone. */
   #other-assistants code { overflow-wrap: anywhere; }
-  .ai-tagline { font-weight: 600; color: var(--fhi-green-ink); margin-bottom: var(--fhi-space-2); }
+  .fhi-page-eyebrow { font-weight: 600; color: var(--fhi-green-ink); margin-bottom: var(--fhi-space-2); }
   .ai-buttons { display: flex; flex-wrap: wrap; gap: var(--fhi-space-3); }
   .ai-checks { list-style: none; padding-left: 0; }
   .ai-checks > li { padding-left: 1.75rem; position: relative; }
@@ -32,11 +32,11 @@
 
 {% block content %}
 <div class="fhi-page-wide">
-    <header class="fhi-page-title">
-        <p class="ai-tagline">Insurers are betting you won't appeal. We keep making it easier to prove them wrong.</p>
-        <h1>Now Your AI Can Work With Ours</h1>
-        <p class="fhi-page-lede">Already asking Claude, ChatGPT or another assistant about a denial? Connect it to us once, and it can answer from our appeal information and {% if prepare_appeal_on %}help you start an appeal from your chat{% else %}give you the link to start an appeal here{% endif %}. Free, no sign-in.</p>
-    </header>
+    {% if prepare_appeal_on %}
+    {% include "partials/page_title.html" with eyebrow="Insurers are betting you won't appeal. We keep making it easier to prove them wrong." title="Now Your AI Can Work With Ours" lede="Already asking Claude, ChatGPT or another assistant about a denial? Connect it to us once, and it can answer from our appeal information and help you start an appeal from your chat. Free, no sign-in." %}
+    {% else %}
+    {% include "partials/page_title.html" with eyebrow="Insurers are betting you won't appeal. We keep making it easier to prove them wrong." title="Now Your AI Can Work With Ours" lede="Already asking Claude, ChatGPT or another assistant about a denial? Connect it to us once, and it can answer from our appeal information and give you the link to start an appeal here. Free, no sign-in." %}
+    {% endif %}
 
     <div class="fhi-stack fhi-stack-loose">
         <section class="fhi-stack" id="in-short">
