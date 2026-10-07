@@ -1,4 +1,4 @@
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 from fighthealthinsurance.models import *
@@ -6,6 +6,7 @@ from django.urls import reverse
 import json
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class AppealAttachmentTests(TestCase):
     def setUp(self):
         self.client = APIClient()

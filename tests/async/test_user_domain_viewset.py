@@ -1,4 +1,4 @@
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
@@ -14,6 +14,7 @@ from fhi_users.models import (
 User = get_user_model()
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class UserDomainViewSetTests(TestCase):
     def setUp(self) -> None:
         self.client = APIClient()
@@ -159,6 +160,7 @@ class UserDomainViewSetTests(TestCase):
         self.assertEqual(self.domain.city, "New City")
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class ProfessionalUserUpdateViewSetTests(TestCase):
     def setUp(self) -> None:
         self.client = APIClient()
@@ -223,6 +225,7 @@ class ProfessionalUserUpdateViewSetTests(TestCase):
         self.assertEqual(self.professional.display_name, "Dr. Test User")
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class PasswordViewSetTests(TestCase):
     def setUp(self) -> None:
         self.client = APIClient()

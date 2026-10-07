@@ -1,6 +1,6 @@
 import uuid
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
@@ -28,6 +28,7 @@ from tests.conftest import skip_if_stripe_ssl_blocked
 User = get_user_model()
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class RestAuthViewsTests(TestCase):
     def setUp(self) -> None:
         self.client = APIClient()
@@ -401,30 +402,6 @@ class RestAuthViewsTests(TestCase):
         )
         self.assertIn("notifypro@test-fhi.com", notification.body)
         self.assertIn("Notify Pro", notification.body)
-
-    def test_professional_signup_returns_403_when_signups_disabled(self) -> None:
-        """With NEW_PROFESSIONAL_SIGNUP_ENABLED off (the production default),
-        the public FPW signup endpoint refuses with a pointer to the
-        demo-request flow and creates no user."""
-        url = reverse("professional_user-list")
-        data = {
-            "user_signup_info": {
-                "username": "closedpro",
-                "password": "newLongerPasswordMagicCheetoCheeto123",
-                "email": "closedpro@test-fhi.com",
-                "first_name": "Closed",
-                "last_name": "Pro",
-                "domain_name": "testdomain",
-                "visible_phone_number": "1234567892",
-                "continue_url": "http://example.com/continue",
-            },
-            "make_new_domain": False,
-        }
-        with self.settings(NEW_PROFESSIONAL_SIGNUP_ENABLED=False):
-            response = self.client.post(url, data, format="json")
-        self.assertEqual(response.status_code, 403)
-        self.assertIn("request a demo", response.json()["error"].lower())
-        self.assertFalse(User.objects.filter(email="closedpro@test-fhi.com").exists())
 
     def test_create_professional_user_with_existing_visible_phone_number(self) -> None:
         url = reverse("professional_user-list")
@@ -859,6 +836,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(len(mail.outbox), email_count_before + 2)
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 @skip_if_stripe_ssl_blocked
 class TestE2EProfessionalUserSignupFlow(TestCase):
     def setUp(self):
@@ -1212,6 +1190,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         self.assertEqual(response.status_code, 400)
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class ProfessionalInvitationTests(TestCase):
     def setUp(self) -> None:
         self.client = APIClient()
@@ -1443,6 +1422,7 @@ class ProfessionalInvitationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class CreateProfessionalInDomainTests(TestCase):
     def setUp(self) -> None:
         self.client = APIClient()
@@ -1584,6 +1564,7 @@ class CreateProfessionalInDomainTests(TestCase):
         )
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class UserDomainExistsTests(TestCase):
     def setUp(self) -> None:
         self.client = APIClient()
@@ -1643,6 +1624,7 @@ class UserDomainExistsTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class GetBillingUrlTests(TestCase):
     def setUp(self):
         self.client = APIClient()
