@@ -200,7 +200,7 @@ class AgreeTest(TermsTestBase):
         code, _, _ = self.open_terms()
         self.client.post(AGREE, terms_form(code))
         message = mail.outbox[0]
-        self.assertEqual(message.subject, "Your appeal letters are ready")
+        self.assertEqual(message.subject, "Your appeal letters on Fight Health Insurance")
         self.assertIn("Fight Health Insurance Support", message.from_email)
         # No staff copy: it would hold the link beside the address it asks for.
         self.assertEqual((message.cc, message.bcc), ([], []))

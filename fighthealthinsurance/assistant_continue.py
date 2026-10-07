@@ -39,7 +39,7 @@ OPENED = "opened"
 WRONG_EMAIL = "wrong_email"
 DEAD = "dead"
 
-SUBJECT = "Your appeal letters are ready"
+SUBJECT = "Your appeal letters on Fight Health Insurance"
 # emails/assistant_continue.txt and .html hold the words.
 TEMPLATE = "assistant_continue"
 

@@ -1,6 +1,6 @@
 {% autoescape off %}Hi,
 
-You agreed to our terms so your AI assistant could bring your appeal letters back to your chat. If you'd rather finish on our site, the same letters are here:
+You agreed to our terms so your AI assistant could bring your appeal letters back to your chat. If you'd rather finish on our site, the same letters will be there as soon as they're written:
 
 Open my appeal letters:
 {{ url }}
