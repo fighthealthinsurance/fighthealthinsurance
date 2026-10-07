@@ -310,6 +310,7 @@ class StripeWebhookHelper:
                     email=email,
                     item=item,
                     link=finish_link,
+                    payment_type=payment_type,
                 )
             else:
                 logger.debug(f"Could not create finish link for {payment_type}")

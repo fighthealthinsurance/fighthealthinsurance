@@ -1,7 +1,7 @@
 {% extends "./fhi_base_email.html" %}
 {% block title %}Your appeal fax{% endblock %}
 {% block content %}
-<p>{% if name %}Hi {{ name }},{% else %}Hi,{% endif %}</p>
+<p>Hi,</p>
 <p>
 Thank you for using Fight Health Insurance to generate your appeal and for choosing our fax service.
 </p>
@@ -15,7 +15,7 @@ If you'd like to re-send the fax, or send it to another number, use the button b
 {% include "emails/partials/button.html" with href=fax_redo_link label="Re-send the fax" %}
 {% elif missing_destination %}
 <p>
-It looks like we don't have a fax number on file for your appeal. This can happen if there was an error in our system or if the fax number wasn't entered during checkout. You can enter the fax number now and we'll send your appeal right away.
+It looks like we don't have a fax number on file for your appeal. That's an error on our side. You can enter the fax number now and we'll send your appeal right away.
 </p>
 {% include "emails/partials/button.html" with href=fax_redo_link label="Enter the fax number" %}
 {% else %}

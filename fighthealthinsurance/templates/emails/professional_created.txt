@@ -2,7 +2,7 @@
 
 {{ inviter_name }} has created a Fight Health Insurance account for you to help manage insurance denial appeals for {{ practice_name }}.
 
-Fight Health Insurance helps healthcare providers successfully appeal insurance denials and reduce administrative burden. Studies show that when providers appeal denials, they have a high success rate of overturning the initial decision.
+Fight Health Insurance helps healthcare providers successfully appeal insurance denials and reduce administrative burden. When prior authorization denials are appealed, many are overturned: in 2025, large insurers reversed about 2 in 3 appealed standard requests in Medicare Advantage and more than 4 in 10 in Medicaid managed care and HealthCare.gov plans (KFF: https://www.kff.org/patient-consumer-protections/prior-authorization-metrics-provide-new-insights-into-insurer-practices-but-gaps-remain/).
 
 To get into your account, reset your password. You'll need:
 - Email: {{ email }}

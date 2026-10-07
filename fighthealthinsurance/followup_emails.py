@@ -290,15 +290,14 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         email = follow_up_sched.email
         denial = follow_up_sched.denial_id
         selected_appeal = denial.chose_appeal()
-        # Speculative rows COUNT here, unlike in the analytics/attribution
-        # queries. Those ask "what was shown to the user", where a held-back row
-        # would skew win rates. This asks "did we generate anything for this
-        # denial", and the reserve is real generated output that the end-of-flow
-        # reconciliation serves when the live run underdelivers. Excluding it
-        # would send the "we didn't manage to generate a proposal this time"
-        # branch to someone we do in fact have drafts for.
+        # Only letters the person could have seen: the email asks whether one
+        # of them worked. A speculative row is written in the background as
+        # soon as a denial is filed, so someone who stopped before the letters
+        # has some; serving one clears the flag. With none, the email says
+        # they didn't end up with a letter, which is true for them.
         generated_proposals = (
-            denial.proposedappeal_set.exclude(appeal_text__isnull=True)
+            denial.proposedappeal_set.filter(speculative=False)
+            .exclude(appeal_text__isnull=True)
             .exclude(appeal_text="")
             .exists()
         )

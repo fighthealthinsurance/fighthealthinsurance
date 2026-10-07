@@ -17,9 +17,13 @@ It's been about a week since you used Fight Health Insurance, so we wanted to ch
 <p>
 If you've already sent it, we recommend <strong>calling your insurance company to confirm they received it</strong> and asking for a reference number or confirmation. This helps make sure your appeal doesn't get lost.
 </p>
+{% elif generated_proposals %}
+<p>
+Did one of the appeal letters work for you? If so, now is a good time to send it to your insurance company, by fax, certified mail or their member portal. If none of them worked, we'd love to know what we could do better.
+</p>
 {% else %}
 <p>
-It looks like we may not have generated an appeal that worked for you. We'd love to know what we can do better. Your feedback helps us improve for everyone.
+It looks like you didn't end up with an appeal letter. If something got in the way, we'd love to hear what. Your feedback helps us improve for everyone.
 </p>
 {% endif %}
 <p>
@@ -28,7 +32,7 @@ Please let us know how things are going. It only takes a minute and helps us imp
 {% include "emails/partials/button.html" with href=followup_link label="Tell us how it's going" %}
 {% include "emails/partials/how_to_help.html" %}
 <p>
-Wishing you the best of luck with your appeal,
+Wishing you the best of luck with your fight with insurance,
 </p>
 <p>
 The team at Fight Health Insurance and Timbit

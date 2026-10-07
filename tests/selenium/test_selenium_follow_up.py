@@ -50,6 +50,7 @@ def _restore_follow_up_types():
     for module, function in (
         ("0155_populate_followup_types", "create_followup_types"),
         ("0176_add_1day_followup_type", "create_1day_followup_type"),
+        ("0232_followup_subjects_plain", "plain_subjects"),
     ):
         migration = importlib.import_module(f"fighthealthinsurance.migrations.{module}")
         getattr(migration, function)(django_apps, None)

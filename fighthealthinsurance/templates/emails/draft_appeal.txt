@@ -7,6 +7,4 @@ https://www.fighthealthinsurance.com/
 
 If you have any questions, email us at support42@fighthealthinsurance.com.
 
-A huge thank you,
-
-The Fight Health Insurance team, our dogs, and our cats.{% endautoescape %}
+The team at Fight Health Insurance and Timbit{% endautoescape %}

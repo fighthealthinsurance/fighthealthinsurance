@@ -8,9 +8,9 @@ It's been about 30 days since you used Fight Health Insurance. We're checking in
 - If your appeal was approved, congratulations. We'd love to hear about it.
 - If your appeal was denied again, you may have the right to file an external review with an independent third party. Don't give up.
 
-Insurance companies count on people giving up. Persistence matters, and the data shows that many appeals are ultimately successful.{% else %}It looks like we may not have generated an appeal that worked for you last time. If your situation has changed or you'd like to try again, we're here to help.{% endif %}
+Insurance companies count on people giving up. Persistence matters: many appeals do succeed.{% elif generated_proposals %}If you sent one of the appeal letters, have you heard back from your insurance company? If none of them worked for you, or your situation has changed, we're here to help.{% else %}If you still need help with your denial, or your situation has changed, we're here to help.{% endif %}
 
-Please update us on your appeal status. Your feedback helps us track outcomes and improve our service for everyone.
+Please tell us how things are going. Your feedback helps us track outcomes and improve our service for everyone.
 
 Share an update:
 {{ followup_link }}

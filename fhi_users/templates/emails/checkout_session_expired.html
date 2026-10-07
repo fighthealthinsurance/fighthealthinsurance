@@ -1,13 +1,20 @@
 {% extends "emails/fhi_base_email.html" %}
-{% block title %}Your checkout expired{% endblock %}
+{% block title %}{% if fax %}Paying for your appeal fax is optional{% else %}Your checkout didn't finish{% endif %}{% endblock %}
 {% block content %}
 <p>
 Hi,
 </p>
+{% if fax %}
 <p>
-Your checkout session expired before you finished. You can still finish it using the button below.
+We started sending your appeal fax when you pressed Fax My Appeal, so it goes out whether or not you pay. Your checkout for the amount you chose ran out before you finished. If you'd still like to pay it, you can use the button below.
+</p>
+{% include "emails/partials/button.html" with href=link label="Pay for my fax" %}
+{% else %}
+<p>
+Your checkout ran out before you finished. You can still finish it using the button below.
 </p>
 {% include "emails/partials/button.html" with href=link label="Finish checkout" %}
+{% endif %}
 <p>
 If you have any questions, email our support team at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
 </p>

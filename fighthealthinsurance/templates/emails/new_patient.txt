@@ -7,10 +7,8 @@ To make sure you're in the right group when you sign up, use the practice phone 
 Sign up for Fight Health Insurance:
 https://www.fighthealthinsurance.com/
 
-According to some studies, when patients are involved, appeals have nearly a 90% success rate.
+Very few denials are ever appealed, but many appeals win.
 
 If you have any questions, email us at support42@fighthealthinsurance.com.
 
-A huge thank you,
-
-The Fight Health Insurance team, our dogs, and our cats.{% endautoescape %}
+The team at Fight Health Insurance and Timbit{% endautoescape %}

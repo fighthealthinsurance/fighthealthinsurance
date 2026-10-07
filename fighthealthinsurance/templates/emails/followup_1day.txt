@@ -2,7 +2,7 @@
 
 Thanks again for trying Fight Health Insurance.
 
-{% if selected_appeal %}Quick check-in: were you able to submit your appeal yet?{% elif generated_proposals %}Quick check-in: we generated draft appeals, but it looks like none were selected. We'd love your feedback on what we could do better.{% else %}Quick check-in: it looks like we weren't able to generate a usable appeal this time. We'd love your feedback so we can improve.{% endif %}
+{% if selected_appeal %}Quick check-in: were you able to submit your appeal yet?{% elif generated_proposals %}Quick check-in: did one of the appeal letters work for you? We'd love to hear either way, and if none did, what we could do better.{% else %}Quick check-in: it looks like you didn't end up with an appeal letter this time. If something got in the way, we'd love to hear what.{% endif %}
 
 If you have a minute, please fill out the follow-up form:
 {{ followup_link }}

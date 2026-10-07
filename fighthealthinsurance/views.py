@@ -82,12 +82,14 @@ from fighthealthinsurance.models import (
     StripeRecoveryInfo,
 )
 from fighthealthinsurance.type_utils import User
+from fighthealthinsurance.email_utils import is_blocked_email
 from fighthealthinsurance.utils import (
     is_valid_denial_id,
     ai_assistants_page_enabled,
     medicaid_eligibility_page_enabled,
     notify_interested_professional,
-    send_fallback_email,
+    build_fallback_email,
+    mask_email_for_logging,
     should_notify_returning_lead,
 )
 
@@ -1002,12 +1004,20 @@ def send_delete_confirmation_email(email: str, token: str) -> None:
     confirmation_link = (
         f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}/confirm-delete?{params}"
     )
-    send_fallback_email(
+    if is_blocked_email(email):
+        logger.info(
+            f"Skipping delete confirmation to blocked address: "
+            f"{mask_email_for_logging(email)}"
+        )
+        return
+    # To the person alone, with no staff copy: the link carries the token and
+    # the address that confirm the deletion.
+    build_fallback_email(
         DELETE_CONFIRMATION_SUBJECT,
         "delete_data_confirmation",
         {"confirmation_link": confirmation_link, "email": email},
         email,
-    )
+    ).send()
 
 
 def request_data_deletion(email: str) -> None:

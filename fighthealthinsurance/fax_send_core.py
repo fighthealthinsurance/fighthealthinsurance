@@ -336,7 +336,6 @@ def finalize_fax(
             },
         )
         context = {
-            "name": fax.name,
             "success": fax_success,
             "fax_redo_link": fax_redo_link,
             "missing_destination": missing_destination,

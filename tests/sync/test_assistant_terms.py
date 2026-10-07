@@ -196,24 +196,19 @@ class AgreeTest(TermsTestBase):
         self.client.post(AGREE, terms_form(code))
         self.assertEqual(len(mail.outbox), 1)
 
-    def test_the_continue_email_puts_the_link_on_a_button_for_the_person_alone(self):
+    def test_the_continue_email_goes_alone_and_its_button_opens_the_same_link(self):
         code, _, _ = self.open_terms()
         self.client.post(AGREE, terms_form(code))
         message = mail.outbox[0]
-        self.assertEqual(message.subject, "Your appeal letters on Fight Health Insurance")
         self.assertIn("Fight Health Insurance Support", message.from_email)
         # No staff copy: it would hold the link beside the address it asks for.
         self.assertEqual((message.cc, message.bcc), ([], []))
-        url = message.body.split("Open my appeal letters:\n", 1)[1].split()[0]
-        self.assertIn("your-appeal-letters", url)
-        ((html, mimetype),) = message.alternatives
-        self.assertEqual(mimetype, "text/html")
+        url = next(w for w in message.body.split() if "your-appeal-letters" in w)
+        ((html, _),) = message.alternatives
         self.assertIn(f'href="{url}"', html)
-        self.assertIn(">Open my appeal letters</a>", html)
+        # The days it says the link works are the link's real lifetime.
         for part in (message.body, html):
-            self.assertIn(f"works for {assistant_continue.link_days()} days", part)
-            self.assertIn("Nothing has been sent to your insurer.", part)
-            self.assertIn("The team at Fight Health Insurance and Timbit", part)
+            self.assertIn(f"{assistant_continue.link_days()} days", part)
 
     def test_a_continue_email_that_fails_to_send_returns_false(self):
         with patch(

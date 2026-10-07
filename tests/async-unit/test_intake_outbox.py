@@ -595,8 +595,11 @@ class TestNudge(TransactionTestCase):
         prefix = reverse("intake_resume_link", args=["TOKEN"]).replace("TOKEN", "")
         token = body.split(prefix, 1)[1].split()[0]
         assert hashlib.sha256(token.encode("utf-8")).hexdigest() == point.token_digest
-        # The HTML button opens the same link.
-        assert f'href="{body.split("Continue my appeal:", 1)[1].split()[0]}"' in html
+        # The HTML button opens the same link, for the person alone: the
+        # link opens the case with the address beside it.
+        assert f'{prefix}{token}"' in html
+        assert message.to == [_EMAIL]
+        assert not message.cc and not message.bcc
         for detail in (
             denial.hashed_email,
             str(denial.uuid),
@@ -606,21 +609,30 @@ class TestNudge(TransactionTestCase):
             assert detail not in body, detail
             assert detail not in html, detail
 
-    def test_the_nudge_goes_to_the_person_alone(self):
-        """The link opens the case with the address beside it, so no staff
-        copy or CC goes out with it."""
+    def test_a_nudge_that_cannot_be_built_says_so_and_sends_nothing(self):
         from fighthealthinsurance import intake_journey_core
 
+        from asgiref.sync import async_to_sync
+
         denial = _make_denial(8160)
-        sent, send = self._send(denial)
-        assert sent is True
-        message = send.call_args.args[0]
-        assert message.to == [_EMAIL]
-        assert not message.cc and not message.bcc
-        assert message.subject == intake_journey_core.NUDGE_SUBJECT
-        assert message.body.rstrip().endswith(
-            "The team at Fight Health Insurance and Timbit"
-        )
+        with patch.object(
+            intake_journey_core,
+            "build_fallback_email",
+            side_effect=RuntimeError("template"),
+        ), patch.object(
+            intake_journey_core, "_asend_message", new_callable=AsyncMock
+        ) as send:
+            with pytest.raises(RuntimeError):
+                async_to_sync(intake_journey_core.send_abandonment_nudge)(
+                    denial.hashed_email, str(denial.uuid)
+                )
+        send.assert_not_awaited()
+        claim = self._claim(denial)
+        assert claim.outcome == intake_outbox.OUTCOME_NOT_BUILT
+        assert claim.sent_at is None
+        # Single-shot: the claim stays, so a later run sends nothing either.
+        again, send_again = self._send(denial)
+        assert again is False and send_again.await_count == 0
 
     def test_no_link_is_minted_or_sent_while_the_intake_journey_is_off(self):
         from fighthealthinsurance.models import IntakeResumePoint
