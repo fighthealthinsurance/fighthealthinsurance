@@ -583,7 +583,8 @@ def build_fallback_email(
         # and Gmail drops data: URIs.
         image = MIMEImage(logo, _subtype="png")
         image.add_header("Content-ID", f"<{FHI_LOGO_CID}>")
-        image.add_header("Content-Disposition", "inline", filename="fhi-logo.png")
+        # No filename: some clients list a named inline image as an attachment.
+        image.add_header("Content-Disposition", "inline")
         msg.attach(image)
     return msg
 
