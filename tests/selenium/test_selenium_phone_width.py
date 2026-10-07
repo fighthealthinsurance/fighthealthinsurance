@@ -21,6 +21,7 @@ iPhone 14, and fails if the document is wider than the window.
 """
 
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
+from django.test import override_settings
 from seleniumbase import BaseCase
 
 from .fhi_selenium_base import FHISeleniumBase
@@ -42,6 +43,24 @@ PUBLIC_PAGES = (
     # A Bootstrap row outside any container made this page 12px wider than
     # the phone until it moved onto the page column.
     ("share your denial", "share_denial"),
+)
+
+# Pages that serve only while the MCP server is on, checked in the state with
+# the most on them: both appeal tools and the chat path. The AI assistants
+# page lists the server's address and the setup commands, single runs no
+# browser breaks on its own.
+MCP_PAGES = (
+    ("the home page with its AI assistants section", ""),
+    ("the AI assistants page", "ai-assistants"),
+)
+MCP_ON = dict(
+    MCP_SERVER_ENABLED=True,
+    MCP_PREPARE_APPEAL_ENABLED=True,
+    MCP_DRAFT_IN_CHAT_ENABLED=True,
+    MCP_HANDOFF_V2_ENABLED=True,
+    TEMPORAL_ENABLED=True,
+    TEMPORAL_APPEAL_JOURNEY_ENABLED=True,
+    TEMPORAL_PAYLOAD_KEY="test-key",
 )
 
 
@@ -84,9 +103,9 @@ class SeleniumTestPhoneWidth(FHISeleniumBase, StaticLiveServerTestCase):
             """
         )
 
-    def test_no_public_page_scrolls_sideways_on_a_phone(self):
+    def _assert_no_page_scrolls_sideways(self, pages):
         self.set_window_size(*PHONE)
-        for name, path in PUBLIC_PAGES:
+        for name, path in pages:
             with self.subTest(page=name):
                 self.open(f"{self.live_server_url}/{path}")
                 self.wait_for_page_ready()
@@ -98,6 +117,13 @@ class SeleniumTestPhoneWidth(FHISeleniumBase, StaticLiveServerTestCase):
                     "on a phone. The innermost things sticking out:\n  %s"
                     % (name, document, window, "\n  ".join(self._widest_things())),
                 )
+
+    def test_no_public_page_scrolls_sideways_on_a_phone(self):
+        self._assert_no_page_scrolls_sideways(PUBLIC_PAGES)
+
+    def test_no_ai_assistants_page_scrolls_sideways_on_a_phone(self):
+        with override_settings(**MCP_ON):
+            self._assert_no_page_scrolls_sideways(MCP_PAGES)
 
     def test_a_table_too_wide_for_the_phone_scrolls_itself(self):
         """The wide table is reachable, rather than hidden or page-widening.
