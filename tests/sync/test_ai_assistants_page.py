@@ -80,7 +80,7 @@ WITH_EITHER_APPEAL_TOOL = (
     "help you start an appeal from your chat",
     "and Claude and ChatGPT ask your permission first",
     "the tools that send us something",
-    "It opens once.",
+    "opens once.",
     "It lasts two hours.",
     "Finish on our site",
     "Needs approval",
@@ -165,7 +165,7 @@ class PageOnTest(EveryStateChecks, TestCase):
 
     def test_the_handoff_section_waits_for_its_flag(self):
         self.assertIn("The assistant never takes the letter.", self.page)
-        self.assertNotIn("It opens once.", self.page)
+        self.assertNotIn("opens once.", self.page)
         self.assertNotIn("bring them back to the chat", self.page)
 
     def test_with_both_appeal_tools_off_it_offers_only_the_link(self):
@@ -189,7 +189,9 @@ class PageOnTest(EveryStateChecks, TestCase):
     def test_the_footer_and_resources_link_to_it(self):
         link = f"a[href='{reverse('ai-assistants')}']"
         home = BeautifulSoup(self.client.get("/").content.decode(), "html.parser")
-        self.assertIsNotNone(home.select_one(f"footer {link}"))
+        footer_link = home.select_one(f"footer {link}")
+        self.assertIsNotNone(footer_link)
+        self.assertEqual(footer_link.get_text(strip=True), "Your AI Assistant")
         resources = BeautifulSoup(
             self.client.get("/other-resources").content.decode(), "html.parser"
         )
@@ -265,7 +267,7 @@ class ChatPathTest(EveryStateChecks, TestCase):
 
     def test_the_chat_path_is_explained_when_it_is_on(self):
         self.assertIn("bring them back to the chat", self.page)
-        self.assertIn("It opens once.", self.page)
+        self.assertIn("opens again in that browser until you press", self.page)
         self.assertIn("There are three ways.", self.page)
         self.assertIn("Get letters back in your chat", self.page)
 
@@ -282,6 +284,20 @@ class ChatPathTest(EveryStateChecks, TestCase):
             "Send the person's answers and start the letters",
         ):
             self.assertIn(tool, self.page)
+
+    def test_it_does_not_promise_a_record_of_which_assistant_sent_it(self):
+        # The MCP server is stateless, so a tool call never sees the name
+        # the app gives itself at initialize, and the record stores none.
+        self.assertNotIn("which assistant sent the letter", self.page)
+
+    def test_it_says_what_the_assistant_sent_besides_the_letter_is_kept(self):
+        self.assertIn(
+            "we also keep the few words your assistant sent on what was denied",
+            self.page,
+        )
+
+    def test_send_me_news_keeps_the_name_too(self):
+        self.assertIn("we keep your name and email for our mailing list", self.page)
 
     def test_the_terms_page_screenshot_has_a_narrow_version(self):
         self.assertIn("images/ai-assistants/terms-page.webp", self.page)

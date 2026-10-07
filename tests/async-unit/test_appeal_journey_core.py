@@ -1206,10 +1206,9 @@ def test_temporal_workers_get_enough_memory_for_this_image():
 
 
 def test_backfill_job_has_a_writable_home():
-    """readOnlyRootFilesystem + runAsUser 1000 leaves HOME="/" . Importing the
-    app pulls fighthealthinsurance.urls -> fax_views -> common_view_logic,
-    whose DenialCreatorHelper constructs a uszipcode SearchEngine at CLASS-BODY
-    scope; that constructor mkdir's ~/.uszipcode. With HOME unset the Job
+    """readOnlyRootFilesystem + runAsUser 1000 leaves HOME="/". The uszipcode
+    SearchEngine (built on first use by DenialCreatorHelper._zip_engine, and on
+    import before #1170) mkdir's ~/.uszipcode. With HOME unset the Job
     crash-looped on `OSError: [Errno 30] Read-only file system: '/.uszipcode'`
     before running a single query, and the deploy sat on the backfill gate
     until it timed out. HOME must point at the writable /tmp emptyDir."""

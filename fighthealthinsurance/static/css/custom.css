@@ -556,6 +556,14 @@ textarea.fhi-field {
     margin: 0;
 }
 
+/* The eyebrow: one short line above the h1, for a page that opens on a
+   reason before its name (the AI assistants page). */
+.fhi-page-eyebrow {
+    font-weight: 600;
+    color: var(--fhi-green-ink);
+    margin: 0 0 var(--fhi-space-2);
+}
+
 .fhi-page-lede {
     font-size: var(--fhi-text-lead);
     line-height: var(--fhi-line-body);
