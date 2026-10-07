@@ -1,15 +1,137 @@
-"""The Claude/ChatGPT setup page serves only while the MCP server is on."""
+"""The AI assistants page serves only while the MCP server is on, and says
+only what the appeal flags that are on make true."""
 
+from bs4 import BeautifulSoup
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
 PAGE = "/ai-assistants"
 ADDRESS = "https://www.fighthealthinsurance.com/mcp"
 INSTALL_LINK = "claude.ai/customize/connectors?modal=add-custom-connector"
+TITLE = "Use Fight Health Insurance with your AI assistant"
+HOME_HEADING = "Now you can get your AI to talk with us too"
+# Links to these sections are out in the world; a rewrite keeps them landing.
+OLD_ANCHORS = (
+    "address",
+    "claude",
+    "chatgpt",
+    "what-it-does",
+    "keep-out",
+    "start-an-appeal",
+    "other-assistants",
+)
+EM_DASHES = ("\u2014", "&mdash;", "&#8212;", "&#x2014;")
+
+# One marker for each flag branch of the template, so a branch that renders in
+# the wrong state, or two branches that both render, fails a test. Each is
+# checked against the page's text (tags stripped, spaces collapsed) and its
+# HTML, so image files and the meta description count too.
+ONLY_WITH_BOTH_OFF = (
+    "get the link to start a free appeal.",
+    "give you the link to start an appeal here",
+    "When you're ready, it gives you the link to start an appeal here.",
+    "ChatGPT runs the look-up tools without asking.",
+    "The assistant never takes the letter.",
+    "It lists the look-up tools described below.",
+    "images/ai-assistants/claude-3-tool-permissions.webp",
+    "images/ai-assistants/chatgpt-3-answer.webp",
+    "your denial letter, your name, member ID",
+)
+ONLY_WITH_PREPARE_ONLY = (
+    "fill in our appeal form with your letter for you to check and submit here",
+    "There are two ways.",
+    "Or share your denial letter with your assistant and ask it to fill in our form",
+    "Open it in the browser you'll finish in.",
+    "It lists 11 tools.",
+    "The only tool that takes your denial letter is the one that fills in our form.",
+    "We delete it when you press Open my appeal form, or soon after",
+    "When you submit our form, the letter",
+)
+ONLY_WITH_CHAT = (
+    "bring up to three draft appeal letters back to your chat",
+    "To get letters back in your chat, we ask for your email address.",
+    "There are three ways.",
+    "For the other two, share your denial letter",
+    "It works only in the browser where you first open it",
+    "bring them back to the chat",
+    "images/ai-assistants/terms-page.webp",
+    "when we've reached our daily limit",
+    "It lists 14 tools.",
+    ", or get draft letters back in the chat",
+    "The only tools that take your denial letter are the ones that start an appeal.",
+    "(for letters in your chat)",
+    "When you agree on our page, or submit our form,",
+    "When letters are drafted for your chat, that record also says",
+    "so the emailed link can check it's you",
+    "The letters are drafts for you to read",
+    "The letters are written as the patient",
+    "There's a daily limit on letters drafted for chats.",
+)
+WITH_EITHER_APPEAL_TOOL = (
+    "start a free appeal from your chat. No sign-in.",
+    "help you start an appeal from your chat",
+    "and Claude and ChatGPT ask your permission first",
+    "the tools that send us something",
+    "It opens once.",
+    "It lasts two hours.",
+    "Finish on our site",
+    "Needs approval",
+    "Here's my denial letter.",
+    "Start an appeal</h3>",
+    "Keep everything else personal out of these tools: your name, member ID and",
+    "We keep what your assistant sent encrypted",
+)
+
+
+class EveryStateChecks:
+    """Held true whichever appeal flags are on; mixed into each state below."""
+
+    page: str
+    shows: tuple[str, ...]
+    hides: tuple[str, ...]
+
+    def test_each_branch_shows_only_in_its_own_state(self):
+        text = " ".join(BeautifulSoup(self.page, "html.parser").get_text().split())
+        on_page = [m for m in self.shows + self.hides if m in self.page or m in text]
+        self.assertEqual([m for m in self.shows if m not in on_page], [], "missing")
+        self.assertEqual([m for m in self.hides if m in on_page], [], "from another state")
+
+    def test_the_top_says_what_it_is_and_how_to_set_it_up(self):
+        for text in (
+            TITLE,
+            HOME_HEADING,
+            "In short",
+            "What it is",
+            "Why it helps",
+            "Set it up once",
+            ADDRESS,
+            INSTALL_LINK,
+        ):
+            self.assertIn(text, self.page)
+
+    def test_old_links_into_the_page_still_land(self):
+        ids = {tag["id"] for tag in BeautifulSoup(self.page, "html.parser").select("[id]")}
+        for anchor in OLD_ANCHORS:
+            self.assertIn(anchor, ids)
+
+    def test_every_jump_link_has_a_section_to_land_on(self):
+        soup = BeautifulSoup(self.page, "html.parser")
+        ids = {tag["id"] for tag in soup.select("[id]")}
+        jumps = [a["href"][1:] for a in soup.select("main a[href^='#']")]
+        self.assertTrue(jumps)
+        for target in jumps:
+            self.assertIn(target, ids)
+
+    def test_there_is_no_em_dash_on_the_page(self):
+        for dash in EM_DASHES:
+            self.assertNotIn(dash, self.page)
 
 
 @override_settings(MCP_SERVER_ENABLED=True, MCP_PREPARE_APPEAL_ENABLED=False)
-class PageOnTest(TestCase):
+class PageOnTest(EveryStateChecks, TestCase):
+    shows = ONLY_WITH_BOTH_OFF
+    hides = ONLY_WITH_PREPARE_ONLY + ONLY_WITH_CHAT + WITH_EITHER_APPEAL_TOOL
+
     def setUp(self):
         self.page = self.client.get(PAGE).content.decode()
 
@@ -36,11 +158,37 @@ class PageOnTest(TestCase):
         self.assertNotIn("It opens once.", self.page)
         self.assertNotIn("bring them back to the chat", self.page)
 
-    def test_the_footer_and_resources_link_to_it(self):
-        self.assertIn(reverse("ai-assistants"), self.client.get("/").content.decode())
-        self.assertIn(
-            reverse("ai-assistants"), self.client.get("/other-resources").content.decode()
+    def test_with_both_appeal_tools_off_it_offers_only_the_link(self):
+        self.assertIn("give you the link to start an appeal here", self.page)
+        self.assertIn("your denial letter, your name, member ID", self.page)
+        self.assertIn("It lists the look-up tools described below.", self.page)
+        for text in (
+            "help you start an appeal from your chat",
+            "Here's my denial letter.",
+            "Start an appeal</h3>",
+            "Needs approval",
+            "We keep what your assistant sent encrypted",
+        ):
+            self.assertNotIn(text, self.page)
+
+    def test_chatgpt_is_not_said_to_ask_before_tools_that_are_not_there(self):
+        self.assertEqual(
+            self.page.count("ChatGPT runs the look-up tools without asking."), 2
         )
+
+    def test_the_footer_and_resources_link_to_it(self):
+        link = f"a[href='{reverse('ai-assistants')}']"
+        home = BeautifulSoup(self.client.get("/").content.decode(), "html.parser")
+        self.assertIsNotNone(home.select_one(f"footer {link}"))
+        resources = BeautifulSoup(
+            self.client.get("/other-resources").content.decode(), "html.parser"
+        )
+        self.assertIsNotNone(resources.select_one(f"main {link}"))
+
+    def test_resources_offers_only_the_link_too(self):
+        resources = self.client.get("/other-resources").content.decode()
+        self.assertIn("give you the link to start a free appeal here", resources)
+        self.assertNotIn("help you start a free appeal from your chat", resources)
 
     def test_the_sitemap_and_llms_txt_list_it(self):
         self.assertIn(PAGE, self.client.get("/sitemap.xml").content.decode())
@@ -48,11 +196,41 @@ class PageOnTest(TestCase):
 
 
 @override_settings(MCP_SERVER_ENABLED=True, MCP_PREPARE_APPEAL_ENABLED=True)
-class HandoffOnTest(TestCase):
+class HandoffOnTest(EveryStateChecks, TestCase):
+    shows = ONLY_WITH_PREPARE_ONLY + WITH_EITHER_APPEAL_TOOL
+    hides = ONLY_WITH_BOTH_OFF + ONLY_WITH_CHAT
+
+    def setUp(self):
+        self.page = self.client.get(PAGE).content.decode()
+
     def test_the_handoff_section_explains_the_link(self):
-        page = self.client.get(PAGE).content.decode()
-        self.assertIn("It opens once.", page)
-        self.assertIn("It lasts two hours.", page)
+        self.assertIn("It opens once.", self.page)
+        self.assertIn("It lasts two hours.", self.page)
+
+    def test_it_offers_two_ways_and_the_form_but_not_the_chat(self):
+        self.assertIn("help you start an appeal from your chat", self.page)
+        self.assertIn("There are two ways.", self.page)
+        self.assertIn("ask it to fill in our form for you", self.page)
+        self.assertIn("Finish on our site", self.page)
+        self.assertNotIn("bring them back to the chat", self.page)
+        self.assertNotIn("terms-page", self.page)
+
+    def test_it_only_promises_a_browser_the_link_is_not_tied_to(self):
+        self.assertIn("Open it in the browser you'll finish in.", self.page)
+        self.assertNotIn("It works only in the browser where you first open it", self.page)
+
+    def test_claude_lists_the_one_tool_that_takes_the_letter(self):
+        self.assertIn("It lists 11 tools.", self.page)
+        self.assertIn("The only tool that takes your denial letter", self.page)
+        self.assertNotIn("It lists 14 tools.", self.page)
+
+    def test_the_letter_example_and_start_an_appeal_card_appear(self):
+        self.assertIn("Here's my denial letter.", self.page)
+        self.assertIn("Start an appeal</h3>", self.page)
+
+    def test_resources_says_it_can_help_start_an_appeal(self):
+        resources = self.client.get("/other-resources").content.decode()
+        self.assertIn("help you start a free appeal from your chat", resources)
 
 
 CHAT_ON = dict(
@@ -66,20 +244,80 @@ CHAT_ON = dict(
 )
 
 
-class ChatPathTest(TestCase):
+class ChatPathTest(EveryStateChecks, TestCase):
+    shows = ONLY_WITH_CHAT + WITH_EITHER_APPEAL_TOOL
+    hides = ONLY_WITH_BOTH_OFF + ONLY_WITH_PREPARE_ONLY
+
     def setUp(self):
         # After the conftest fixture that turns Temporal off.
         self.enterContext(override_settings(**CHAT_ON))
+        self.page = self.client.get(PAGE).content.decode()
 
     def test_the_chat_path_is_explained_when_it_is_on(self):
-        page = self.client.get(PAGE).content.decode()
-        self.assertIn("bring them back to the chat", page)
-        self.assertIn("It opens once.", page)
+        self.assertIn("bring them back to the chat", self.page)
+        self.assertIn("It opens once.", self.page)
+        self.assertIn("There are three ways.", self.page)
+        self.assertIn("Get letters back in your chat", self.page)
 
-    def test_it_waits_for_the_newer_links(self):
-        with override_settings(MCP_HANDOFF_V2_ENABLED=False):
-            page = self.client.get(PAGE).content.decode()
-        self.assertNotIn("bring them back to the chat", page)
+    def test_it_says_the_link_is_tied_to_the_first_browser(self):
+        self.assertIn(
+            "It works only in the browser where you first open it", self.page
+        )
+
+    def test_claude_lists_the_three_tools_that_send_something(self):
+        self.assertIn("It lists 14 tools.", self.page)
+        for tool in (
+            "Fill in an appeal form for the person to check",
+            "Draft appeal letters to bring back to this chat",
+            "Send the person's answers and start the letters",
+        ):
+            self.assertIn(tool, self.page)
+
+    def test_the_terms_page_screenshot_has_a_narrow_version(self):
+        self.assertIn("images/ai-assistants/terms-page.webp", self.page)
+        self.assertIn("images/ai-assistants/terms-page-narrow.webp", self.page)
+
+
+class DraftWithoutNewerLinksTest(EveryStateChecks, TestCase):
+    """Drafting in the chat on, but the links that tie to one browser off:
+    the page waits for them and reads as prepare only."""
+
+    shows = ONLY_WITH_PREPARE_ONLY + WITH_EITHER_APPEAL_TOOL
+    hides = ONLY_WITH_BOTH_OFF + ONLY_WITH_CHAT
+
+    def setUp(self):
+        self.enterContext(
+            override_settings(**{**CHAT_ON, "MCP_HANDOFF_V2_ENABLED": False})
+        )
+        self.page = self.client.get(PAGE).content.decode()
+
+
+class HomeSectionTest(TestCase):
+    def _home_section(self):
+        soup = BeautifulSoup(self.client.get("/").content.decode(), "html.parser")
+        return soup.find(id="ai-assistants-home")
+
+    @override_settings(MCP_SERVER_ENABLED=True, MCP_PREPARE_APPEAL_ENABLED=True)
+    def test_home_announces_the_page_while_the_server_is_on(self):
+        section = self._home_section()
+        self.assertIsNotNone(section)
+        self.assertEqual(section.find("h2").get_text(strip=True), HOME_HEADING)
+        link = section.find("a", href=reverse("ai-assistants"))
+        self.assertEqual(link.get_text(strip=True), "Set up your AI assistant")
+        for dash in EM_DASHES:
+            self.assertNotIn(dash, str(section))
+        self.assertIn("help you start a free appeal from your chat", str(section))
+
+    @override_settings(MCP_SERVER_ENABLED=True, MCP_PREPARE_APPEAL_ENABLED=False)
+    def test_home_offers_only_the_link_while_both_appeal_tools_are_off(self):
+        section = str(self._home_section())
+        self.assertIn("give you the link to start a free appeal here", section)
+        self.assertNotIn("from your chat", section)
+
+    @override_settings(MCP_SERVER_ENABLED=False)
+    def test_home_says_nothing_while_the_server_is_off(self):
+        self.assertIsNone(self._home_section())
+        self.assertNotIn(HOME_HEADING, self.client.get("/").content.decode())
 
 
 @override_settings(MCP_SERVER_ENABLED=False)

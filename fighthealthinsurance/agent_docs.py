@@ -65,8 +65,9 @@ PAGE_NOTES: dict[str, tuple[str, str]] = {
     "about-ai": ("About our AI", "how the models are used and what they cannot do"),
     "how-to-help": ("How to help", "ways to support the project"),
     "ai-assistants": (
-        "Use it in Claude or ChatGPT",
-        "how to connect an AI assistant to the MCP server, and what to keep out",
+        "Use it with your AI assistant",
+        "how to connect an AI assistant to the MCP server, what it can look up, "
+        "how it can help start an appeal from the chat, and what to keep out",
     ),
     "faq": ("FAQ", "common questions about appeals and about using the tool"),
     "medicaid-faq": ("Medicaid work requirements FAQ", ""),
