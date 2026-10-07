@@ -439,7 +439,7 @@ class FaxCounterTest(TestCase):
         return fax
 
     @mock.patch("fighthealthinsurance.fax_send_core.send_fax_status_notification")
-    @mock.patch("fighthealthinsurance.fax_send_core.EmailMultiAlternatives")
+    @mock.patch("fighthealthinsurance.fax_send_core.build_fallback_email")
     @mock.patch("fighthealthinsurance.helpers.fax_helpers._dispatch_or_ray_fax")
     def test_real_resend_after_failure_does_not_count_sent_twice(self, *_):
         """SendFaxHelper.resend resets sent=False on the row; the lifetime
@@ -456,7 +456,7 @@ class FaxCounterTest(TestCase):
         self.assertEqual(_counters()[2:], (1, 1))
 
     @mock.patch("fighthealthinsurance.fax_send_core.send_fax_status_notification")
-    @mock.patch("fighthealthinsurance.fax_send_core.EmailMultiAlternatives")
+    @mock.patch("fighthealthinsurance.fax_send_core.build_fallback_email")
     def test_stale_full_save_keeps_the_markers(self, *_):
         """resend/precheck/remote_send_fax load the row, then save() it in
         full. If that save interleaves with a finalize on another worker
@@ -492,7 +492,7 @@ class FaxCounterTest(TestCase):
         self.assertNotIn("person_counted", denial_form.base_fields)
 
     @mock.patch("fighthealthinsurance.fax_send_core.send_fax_status_notification")
-    @mock.patch("fighthealthinsurance.fax_send_core.EmailMultiAlternatives")
+    @mock.patch("fighthealthinsurance.fax_send_core.build_fallback_email")
     def test_failure_after_delivery_cannot_count_delivery_again(self, *_):
         fax = self._finalize(self._fax(), True)
         self.assertEqual(_counters()[2:], (1, 1))
@@ -503,7 +503,7 @@ class FaxCounterTest(TestCase):
         self.assertEqual(_counters()[2:], (1, 1))
 
     @mock.patch("fighthealthinsurance.fax_send_core.send_fax_status_notification")
-    @mock.patch("fighthealthinsurance.fax_send_core.EmailMultiAlternatives")
+    @mock.patch("fighthealthinsurance.fax_send_core.build_fallback_email")
     def test_delivered_fax_counts_once_and_failed_send_does_not(self, *_):
         fax = self._fax()
         fax_send_core.finalize_fax(fax, True, False)
@@ -521,7 +521,7 @@ class FaxCounterTest(TestCase):
         self.assertEqual(_counters()[2:], (2, 2))
 
     @mock.patch("fighthealthinsurance.fax_send_core.send_fax_status_notification")
-    @mock.patch("fighthealthinsurance.fax_send_core.EmailMultiAlternatives")
+    @mock.patch("fighthealthinsurance.fax_send_core.build_fallback_email")
     def test_gone_row_does_not_count(self, *_):
         fax = self._fax()
         FaxesToSend.objects.filter(pk=fax.pk).delete()
@@ -529,7 +529,7 @@ class FaxCounterTest(TestCase):
         self.assertEqual(_counters()[2:], (0, 0))
 
     @mock.patch("fighthealthinsurance.fax_send_core.send_fax_status_notification")
-    @mock.patch("fighthealthinsurance.fax_send_core.EmailMultiAlternatives")
+    @mock.patch("fighthealthinsurance.fax_send_core.build_fallback_email")
     def test_counter_failure_never_blocks_finalize(self, *_):
         fax = self._fax()
         with mock.patch.object(
@@ -669,6 +669,6 @@ class SeedTest(TestCase):
         self.assertTrue(seeded.attempt_counted and seeded.delivery_counted)
         with mock.patch(
             "fighthealthinsurance.fax_send_core.send_fax_status_notification"
-        ), mock.patch("fighthealthinsurance.fax_send_core.EmailMultiAlternatives"):
+        ), mock.patch("fighthealthinsurance.fax_send_core.build_fallback_email"):
             fax_send_core.finalize_fax(seeded, True, False)
         self.assertEqual(_counters(), (2, 1, 1, 1))

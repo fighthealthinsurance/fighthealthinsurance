@@ -1,30 +1,19 @@
-Hello {{name}},
+{% autoescape off %}{% if name %}Hi {{ name }},{% else %}Hi,{% endif %}
 
-First off, thank you for using Fight Health Insurance to generate an appeal and choosing to use our fax service!
+Thank you for using Fight Health Insurance to generate your appeal and for choosing our fax service.
 
-{% if success %}
-Our records indicate the fax was sent successfully. You should still call your insurance company to confirm receipt as they love to try and weasel out of it.
-{% elif missing_destination %}
-It looks like we don't have a fax number on file for your appeal. This can happen if there was an issue in out system or the fax number wasn't entered during checkout. Don't worry - you can enter the fax number now and we'll send your appeal right away!
+{% if success %}Our records show the fax was sent successfully. You should still call your insurance company to confirm they received it. Insurers sometimes look for a way out of responding to an appeal.
 
-ENTER YOUR FAX NUMBER HERE: {{fax_redo_link}}
-{% else %}
-It seems like there may have been a problem sending the fax. This is fairly common, but you can try to re-send the fax for free.
-{% endif %}
+If you'd like to re-send the fax, or send it to another number:
+{{ fax_redo_link }}{% elif missing_destination %}It looks like we don't have a fax number on file for your appeal. This can happen if there was an error in our system or if the fax number wasn't entered during checkout. You can enter the fax number now and we'll send your appeal right away.
 
-{% if not missing_destination %}
-If you would like to re-send the fax, or send it to another number, go to {{fax_redo_link}}
-{% endif %}
+Enter the fax number:
+{{ fax_redo_link }}{% else %}There may have been a problem sending the fax. This is fairly common, and you can re-send the fax for free.
 
-Thank you for being part of our community! If you found Fight Health Insurance helpful, there are many ways you can help us and others fighting unfair denials:
-- Share your experience with friends and family who might need help
-- Follow us on social media to help spread awareness
-- Learn more at: https://www.fighthealthinsurance.com/how-to-help
+To re-send the fax, or send it to another number:
+{{ fax_redo_link }}{% endif %}
 
-Wishing you the best of luck with your fight with insurance,
+{% include "emails/partials/how_to_help.txt" %}
+Wishing you the best of luck with your appeal,
 
-
-Holden :)
-
----
-https://www.fighthealthinsurance.com
+The team at Fight Health Insurance and Timbit{% endautoescape %}

@@ -1,9 +1,7 @@
-Dear {{name}},
+{% autoescape off %}{% if name %}Hi {{ name }},{% else %}Hi,{% endif %}
 
-Thank you for your interest in the new updated professional version of Fight Health Insurance!
+Thank you for your interest in the professional version of Fight Health Insurance.
 
-We are reviewing your information and will be in touch shortly.
+We're reviewing your information and will be in touch shortly.
 
-A huge thank you,
-
-FHI Team
+The team at Fight Health Insurance and Timbit{% endautoescape %}

@@ -1,16 +1,14 @@
-{% extends './base_email.html' %}
+{% extends "./fhi_base_email.html" %}
+{% block title %}Thanks for your interest{% endblock %}
 {% block content %}
-Dear {{ name }},
+<p>{% if name %}Hi {{ name }},{% else %}Hi,{% endif %}</p>
 <p>
-Thank you for your interest in the new updated professional version of Fight Health Insurance!
+Thank you for your interest in the professional version of Fight Health Insurance.
 </p>
 <p>
-We are reviewing your information and will be in touch shortly.
+We're reviewing your information and will be in touch shortly.
 </p>
 <p>
-A huge thank you,
-</p>
-<p>
-FHI Team
+The team at Fight Health Insurance and Timbit
 </p>
 {% endblock %}

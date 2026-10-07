@@ -18,8 +18,7 @@ from typing import TYPE_CHECKING, Optional, Union
 from uuid import UUID
 
 from django.conf import settings
-from django.core.mail import EmailMultiAlternatives, send_mail
-from django.template.loader import render_to_string
+from django.core.mail import send_mail
 from django.urls import reverse
 from django.utils import timezone
 
@@ -33,10 +32,20 @@ from fighthealthinsurance.fax_status import (
     STATUS_OK,
 )
 from fighthealthinsurance.fax_utils import flexible_fax_magic
-from fighthealthinsurance.utils import get_env_variable
+from fighthealthinsurance.utils import build_fallback_email, get_env_variable
 
 if TYPE_CHECKING:
     from fighthealthinsurance.models import FaxesToSend
+
+
+def fax_followup_subject(fax_success: bool, missing_destination: bool) -> str:
+    """The patient's follow-up subject says how the fax went, as its body
+    does (emails/fax_followup.txt)."""
+    if fax_success:
+        return "Your appeal fax was sent"
+    if missing_destination:
+        return "We need a fax number to send your appeal"
+    return "There may have been a problem sending your appeal fax"
 
 
 def send_fax_status_notification(
@@ -332,26 +341,12 @@ def finalize_fax(
             "fax_redo_link": fax_redo_link,
             "missing_destination": missing_destination,
         }
-        # First, render the plain text content.
-        text_content = render_to_string(
-            "emails/fax_followup.txt",
-            context=context,
-        )
-
-        # Secondly, render the HTML content.
-        html_content = render_to_string(
-            "emails/fax_followup.html",
-            context=context,
-        )
-        # Then, create a multipart email instance.
-        msg = EmailMultiAlternatives(
-            "Following up from Fight Health Insurance Fax Service",
-            text_content,
-            "support42@fighthealthinsurance.com",
-            [email],
-        )
-        msg.attach_alternative(html_content, "text/html")
-        msg.send()
+        build_fallback_email(
+            fax_followup_subject(fax_success, missing_destination),
+            "fax_followup",
+            context,
+            email,
+        ).send()
         logger.info("Fax follow-up email sent")
     except Exception:
         logger.opt(exception=True).error("Error sending fax follow-up email")

@@ -1,0 +1,12 @@
+{% autoescape off %}Hi,
+
+You started putting together an appeal on Fight Health Insurance and didn't get to finish. If you'd like to keep going, this link takes you back to where you left off:
+
+Continue my appeal:
+{{ url }}
+
+The link works for the next {{ days }} days. To keep your case private, it will ask for the email address you used.
+
+If you'd rather not continue, you can ignore this email. We won't send another reminder.
+
+The team at Fight Health Insurance and Timbit{% endautoescape %}

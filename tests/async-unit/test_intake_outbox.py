@@ -531,7 +531,7 @@ class TestNudge(TransactionTestCase):
 
         with patch.object(
             intake_journey_core,
-            "_asend_mail",
+            "_asend_message",
             new_callable=AsyncMock,
             side_effect=side_effect,
         ) as send:
@@ -588,11 +588,15 @@ class TestNudge(TransactionTestCase):
         denial = _make_denial(8150)
         sent, send = self._send(denial)
         assert sent is True
-        body = send.call_args.args[1]
+        message = send.call_args.args[0]
+        body = message.body
+        (html, _), = message.alternatives
         point = IntakeResumePoint.objects.get(denial=denial)
         prefix = reverse("intake_resume_link", args=["TOKEN"]).replace("TOKEN", "")
         token = body.split(prefix, 1)[1].split()[0]
         assert hashlib.sha256(token.encode("utf-8")).hexdigest() == point.token_digest
+        # The HTML button opens the same link.
+        assert f'href="{body.split("Continue my appeal:", 1)[1].split()[0]}"' in html
         for detail in (
             denial.hashed_email,
             str(denial.uuid),
@@ -600,6 +604,23 @@ class TestNudge(TransactionTestCase):
             "fighthealthinsurance.com\n",
         ):
             assert detail not in body, detail
+            assert detail not in html, detail
+
+    def test_the_nudge_goes_to_the_person_alone(self):
+        """The link opens the case with the address beside it, so no staff
+        copy or CC goes out with it."""
+        from fighthealthinsurance import intake_journey_core
+
+        denial = _make_denial(8160)
+        sent, send = self._send(denial)
+        assert sent is True
+        message = send.call_args.args[0]
+        assert message.to == [_EMAIL]
+        assert not message.cc and not message.bcc
+        assert message.subject == intake_journey_core.NUDGE_SUBJECT
+        assert message.body.rstrip().endswith(
+            "The team at Fight Health Insurance and Timbit"
+        )
 
     def test_no_link_is_minted_or_sent_while_the_intake_journey_is_off(self):
         from fighthealthinsurance.models import IntakeResumePoint

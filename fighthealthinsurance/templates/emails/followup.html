@@ -1,34 +1,31 @@
-Hello,<br>
+{% extends "./fhi_base_email.html" %}
+{% block title %}Following up from Fight Health Insurance{% endblock %}
+{% block content %}
+<p>Hi,</p>
 <p>
-First off, thank you for using Fight Health Insurance to generate an appeal and choosing the follow-up option.
+Thank you for using Fight Health Insurance to generate an appeal and for choosing to hear from us afterward.
 </p>
 <p>
 {% if selected_appeal %}
-I'm checking in to see if you were able to submit your appeal and if so if the insurance company has responded. Any additional feedback on how we can improve the process would be appreciated.
+We're checking in to see if you were able to submit your appeal and, if so, whether your insurance company has responded. Any feedback on how we can improve the process is welcome.
 {% elif generated_proposals %}
-It looks like we generated draft proposals, but you may not have found one that felt right. Thank you for trying Fight Health Insurance — we'd really value your feedback on how we can do better.
+It looks like we generated draft appeals, but you may not have found one that felt right. Thank you for trying Fight Health Insurance. We'd value your feedback on how we can do better.
 {% else %}
-It looks like we didn't manage to generate a proposal this time. Thank you for giving Fight Health Insurance a try — we'd really value your feedback on how we can improve.
+It looks like we weren't able to generate an appeal this time. Thank you for giving Fight Health Insurance a try. We'd value your feedback on how we can improve.
 {% endif %}
 </p>
-
 <p>
-  If you can fill-out <a href="{{ followup_link }}">the follow up form that would be greatly appreciated</a> (alternatively, you can also respond to this e-mail and I'll take a look at your response :))
+If you have a minute, please fill out the follow-up form.
+</p>
+{% include "emails/partials/button.html" with href=followup_link label="Fill out the follow-up form" %}
+<p>
+You can also reply to this email, and we'll take a look.
+</p>
+{% include "emails/partials/how_to_help.html" %}
+<p>
+Wishing you the best of luck in your fight with your insurance company,
 </p>
 <p>
-  Thank you for being part of our community! If you found Fight Health Insurance helpful, there are many ways you can help us and others fighting unfair denials:
+The team at Fight Health Insurance and Timbit
 </p>
-<ul>
-  <li>Share your experience with friends and family who might need help</li>
-  <li>Follow us on social media to help spread awareness</li>
-  <li>Learn more at: <a href="https://www.fighthealthinsurance.com/how-to-help">fighthealthinsurance.com/how-to-help</a></li>
-</ul>
-
-<p>
-  Wishing you the best of luck with your fight with insurance,
-</p>
-<br>
-The Fight Health Insurance team<br/>
-<br>
----<br>
-<a href="https://www.fighthealthinsurance.com">https://www.fighthealthinsurance.com</a>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "./fhi_base_email.html" %}
+{% block title %}Your appeal is waiting{% endblock %}
+{% block content %}
+<p>Hi,</p>
+<p>
+You started putting together an appeal on Fight Health Insurance and didn't get to finish. If you'd like to keep going, this link takes you back to where you left off:
+</p>
+{% include "emails/partials/button.html" with href=url label="Continue my appeal" %}
+<p>
+The link works for the next {{ days }} days. To keep your case private, it will ask for the email address you used.
+</p>
+<p>
+If you'd rather not continue, you can ignore this email. We won't send another reminder.
+</p>
+<p>
+The team at Fight Health Insurance and Timbit
+</p>
+{% endblock %}

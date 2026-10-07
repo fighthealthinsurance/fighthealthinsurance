@@ -1,39 +1,37 @@
-Hello {{name}},<br>
+{% extends "./fhi_base_email.html" %}
+{% block title %}Your appeal fax{% endblock %}
+{% block content %}
+<p>{% if name %}Hi {{ name }},{% else %}Hi,{% endif %}</p>
 <p>
-First off, thank you for using Fight Health Insurance to generate an appeal and choosing to use our fax service!
+Thank you for using Fight Health Insurance to generate your appeal and for choosing our fax service.
 </p>
-<p>
 {% if success %}
-Our records indicate the fax was sent successfully. You should still call your insurance company to confirm receipt as they love to try and weasel out of it.
+<p>
+Our records show the fax was sent successfully. You should still call your insurance company to confirm they received it. Insurers sometimes look for a way out of responding to an appeal.
+</p>
+<p>
+If you'd like to re-send the fax, or send it to another number, use the button below.
+</p>
+{% include "emails/partials/button.html" with href=fax_redo_link label="Re-send the fax" %}
 {% elif missing_destination %}
-It looks like we don't have a fax number on file for your appeal. This can happen if there was an error in our system or if the fax number wasn't entered during checkout. Don't worry - you can enter the fax number now and we'll send your appeal right away!
+<p>
+It looks like we don't have a fax number on file for your appeal. This can happen if there was an error in our system or if the fax number wasn't entered during checkout. You can enter the fax number now and we'll send your appeal right away.
+</p>
+{% include "emails/partials/button.html" with href=fax_redo_link label="Enter the fax number" %}
 {% else %}
-It seems like there may have been a problem sending the fax. This is fairly common, but you can try to re-send the fax for free.
+<p>
+There may have been a problem sending the fax. This is fairly common, and you can re-send the fax for free.
+</p>
+<p>
+To re-send the fax, or send it to another number, use the button below.
+</p>
+{% include "emails/partials/button.html" with href=fax_redo_link label="Re-send the fax" %}
 {% endif %}
-</p>
-
+{% include "emails/partials/how_to_help.html" %}
 <p>
-{% if missing_destination %}
-<strong><a href="{{fax_redo_link}}">Click here to enter your insurance company's fax number and send your appeal</a></strong>
-{% else %}
-If you would like to re-send the fax, or send it to another number, <a href="{{fax_redo_link}}">click here</a>.
-{% endif %}
+Wishing you the best of luck with your appeal,
 </p>
-
 <p>
-  Thank you for being part of our community! If you found Fight Health Insurance helpful, there are many ways you can help us and others fighting unfair denials:
+The team at Fight Health Insurance and Timbit
 </p>
-<ul>
-  <li>Share your experience with friends and family who might need help</li>
-  <li>Follow us on social media to help spread awareness</li>
-  <li>Learn more at: <a href="https://www.fighthealthinsurance.com/how-to-help">fighthealthinsurance.com/how-to-help</a></li>
-</ul>
-
-<p>
-  Wishing you the best of luck with your fight with insurance,
-</p>
-<br>
-Holden :)<br/>
-<br>
----<br>
-<a href="https://www.fighthealthinsurance.com">https://www.fighthealthinsurance.com</a>
+{% endblock %}

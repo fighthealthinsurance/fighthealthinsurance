@@ -544,7 +544,7 @@ class TestFollowUpEmailTemplates:
         }
         html_content = render_to_string("emails/followup.html", context)
 
-        assert "generated draft proposals" in html_content
+        assert "generated draft appeals" in html_content
         assert "Thank you for trying Fight Health Insurance" in html_content
 
     def test_followup_html_shows_correct_message_for_no_proposals(self):
@@ -556,7 +556,7 @@ class TestFollowUpEmailTemplates:
         }
         html_content = render_to_string("emails/followup.html", context)
 
-        assert "didn't manage to generate a proposal" in html_content
+        assert "weren't able to generate an appeal" in html_content
         assert "feedback on how we can improve" in html_content
 
     def test_fax_followup_success_message(self):
