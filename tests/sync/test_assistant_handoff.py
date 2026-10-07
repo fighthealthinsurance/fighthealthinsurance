@@ -922,6 +922,11 @@ class HandoffV2Test(TestCase):
         self.assertEqual(len(assistant_handoff.client_label("x" * 100)), 40)
         self.assertEqual(assistant_handoff.client_label(None), "")
         self.assertEqual(assistant_handoff.client_label("a\nb\tc"), "abc")
+        self.assertEqual(
+            assistant_handoff.client_label("openai-mcp/1.0.0 (Codex)"),
+            "openai-mcp/1.0.0 (Codex)",
+        )
+        self.assertEqual(assistant_handoff.client_label("x<script>"), "xscript")
 
     def test_a_link_made_before_v2_still_opens(self):
         with override_settings(MCP_HANDOFF_V2_ENABLED=False):

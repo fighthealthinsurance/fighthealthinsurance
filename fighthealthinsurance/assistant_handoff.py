@@ -70,7 +70,9 @@ ACCEPTED_PAYLOAD_VERSIONS = (PAYLOAD_VERSION_V1, PAYLOAD_VERSION_V2)
 KINDS = ("site", "chat")
 BINDER_BYTES = 32
 CLIENT_LABEL_MAX = 40
-_CLIENT_LABEL_OK = re.compile(r"[^A-Za-z0-9 ._-]")
+# Letters, digits and the punctuation a product name and version use, so a
+# User-Agent like "openai-mcp/1.0.0 (Codex)" keeps its shape.
+_CLIENT_LABEL_OK = re.compile(r"[^A-Za-z0-9 ._()/-]")
 # Rows made in this window and still in the table count toward
 # MCP_PREPARE_APPEAL_MAX_PER_MINUTE. Opening a link deletes its row, so this
 # caps links made and not yet opened in the last minute, not every link made:

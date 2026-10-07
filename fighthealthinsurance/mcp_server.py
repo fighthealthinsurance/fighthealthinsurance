@@ -1569,12 +1569,26 @@ def _create_handoff(
 
 
 def _client_name(ctx: Context) -> str:
-    """The connecting client's self-reported name, when the session has one."""
+    """The connecting client's name: what it called itself at initialize if
+    this session saw that, else the User-Agent of the request carrying the
+    tool call. The server is stateless (stateless_http=True), so a tool call
+    arrives on a fresh session that never saw initialize, and the User-Agent
+    is the only name it carries: Claude.ai sends "Claude-User" and Codex
+    "openai-mcp/1.0.0 (Codex)". client_label cuts either down before it is
+    kept."""
     try:
         params = ctx.session.client_params
-        return params.clientInfo.name if params is not None else ""
+        if params is not None and params.clientInfo.name:
+            return str(params.clientInfo.name)
     except Exception:
-        return ""
+        pass
+    try:
+        request = ctx.request_context.request
+        if request is not None:
+            return str(request.headers.get("user-agent", ""))
+    except Exception:
+        pass
+    return ""
 
 
 def _utc_stamp(when: datetime) -> str:
