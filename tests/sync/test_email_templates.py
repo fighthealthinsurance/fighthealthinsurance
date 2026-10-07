@@ -279,6 +279,30 @@ class InlineLogoTest(TestCase):
         # The cache sits on the read that raises, so a failed read is
         # tried again; on the wrapper it would keep the None.
         _read_fhi_logo.cache_clear()
-        with patch("fighthealthinsurance.utils._FHI_LOGO_PATH", "/nonexistent/logo.png"):
+        with patch(
+            "fighthealthinsurance.utils._fhi_logo_paths",
+            return_value=["/nonexistent/logo.png"],
+        ):
             self.assertIsNone(_fhi_logo_png())
         self.assertIsNotNone(_fhi_logo_png())
+
+    def test_the_image_finds_the_logo_in_the_collected_static_files(self):
+        # The image ships STATIC_ROOT, not the app's static folder.
+        import os
+        import shutil
+        import tempfile
+
+        from fighthealthinsurance import utils
+
+        app_copy = utils._fhi_logo_paths()[0]
+        with tempfile.TemporaryDirectory() as collected:
+            os.makedirs(os.path.join(collected, "images"))
+            shutil.copy(app_copy, os.path.join(collected, "images"))
+            with override_settings(STATIC_ROOT=collected), patch(
+                "fighthealthinsurance.utils._APP_STATIC", "/no/app/static"
+            ):
+                _read_fhi_logo.cache_clear()
+                try:
+                    self.assertIsNotNone(_fhi_logo_png())
+                finally:
+                    _read_fhi_logo.cache_clear()

@@ -482,16 +482,29 @@ def mask_email_for_logging(email: Optional[str]) -> str:
 # The llama at the top of Fight Health Insurance emails (fhi_base_email.html).
 FHI_LOGO_CID = "fhi-logo@fighthealthinsurance.com"
 FHI_LOGO_CID_SRC = f"cid:{FHI_LOGO_CID}"
-_FHI_LOGO_PATH = os.path.join(
-    os.path.dirname(__file__), "static", "images", "better-logo-150.png"
-)
+_FHI_LOGO = os.path.join("images", "better-logo-150.png")
+_APP_STATIC = os.path.join(os.path.dirname(__file__), "static")
+
+
+def _fhi_logo_paths() -> list[str]:
+    """Where the logo is: the app's static folder in a checkout, and the
+    collected copy (STATIC_ROOT) in the image, which leaves the app's static
+    folder out (.dockerignore)."""
+    roots = [_APP_STATIC]
+    static_root = getattr(settings, "STATIC_ROOT", None)
+    if static_root:
+        roots.append(str(static_root))
+    return [os.path.join(root, _FHI_LOGO) for root in roots]
 
 
 @functools.lru_cache(maxsize=1)
 def _read_fhi_logo() -> bytes:
     # Only a successful read is cached: lru_cache doesn't keep exceptions.
-    with open(_FHI_LOGO_PATH, "rb") as f:
-        return f.read()
+    for path in _fhi_logo_paths():
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                return f.read()
+    raise FileNotFoundError(_FHI_LOGO)
 
 
 def _fhi_logo_png() -> Optional[bytes]:
