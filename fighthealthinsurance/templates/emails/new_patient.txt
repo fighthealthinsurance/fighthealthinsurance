@@ -11,8 +11,6 @@ According to some studies, when patients are involved, appeals have nearly a 90%
 
 If you have any questions, email us at support42@fighthealthinsurance.com.
 
-We are also planning to conduct user studies at the end of this month. If you're willing to share feedback with us on the new workflow before we release it, email us at support42@fighthealthinsurance.com.
-
 A huge thank you,
 
 The Fight Paperwork team, our dogs, and our cats.{% endautoescape %}

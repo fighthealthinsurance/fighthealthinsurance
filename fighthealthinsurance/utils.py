@@ -1,6 +1,7 @@
 import asyncio
 import concurrent
 import contextvars
+import functools
 import hashlib
 import os
 import random
@@ -37,6 +38,7 @@ from typing import (
     Union,
     cast,
 )
+from email.mime.image import MIMEImage
 from email.utils import formataddr
 from uuid import UUID
 
@@ -477,6 +479,24 @@ def mask_email_for_logging(email: Optional[str]) -> str:
     return f"{masked_local}@{domain}"
 
 
+# The llama at the top of Fight Health Insurance emails (fhi_base_email.html).
+FHI_LOGO_CID = "fhi-logo"
+FHI_LOGO_CID_SRC = f"cid:{FHI_LOGO_CID}"
+_FHI_LOGO_PATH = os.path.join(
+    os.path.dirname(__file__), "static", "images", "better-logo-150.png"
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _fhi_logo_png() -> Optional[bytes]:
+    try:
+        with open(_FHI_LOGO_PATH, "rb") as f:
+            return f.read()
+    except OSError:
+        logger.warning("Email logo missing; sending without it")
+        return None
+
+
 def build_fallback_email(
     subject: str,
     template_name: str,
@@ -500,10 +520,18 @@ def build_fallback_email(
         f"emails/{template_name}.txt",
         context=context,
     )
-    html_content = render_to_string(
+    html_content: str = render_to_string(
         f"emails/{template_name}.html",
         context=context,
     )
+    # Fight Health Insurance emails (fhi_base_email.html) show the logo; it
+    # travels with the message.
+    logo = _fhi_logo_png() if FHI_LOGO_CID_SRC in html_content else None
+    if FHI_LOGO_CID_SRC in html_content and logo is None:
+        # No image to send: drop the reference rather than show a broken one.
+        html_content = re.sub(
+            r"<img[^>]*" + re.escape(FHI_LOGO_CID_SRC) + r"[^>]*>\s*", "", html_content
+        )
     # Build a From: with a display name so mailbox providers show a recognizable
     # sender (e.g. "Fight Health Insurance Support") instead of a bare address,
     # which both helps users find/trust the mail and is one of several signals
@@ -530,6 +558,14 @@ def build_fallback_email(
         headers=headers,
     )
     msg.attach_alternative(html_content, "text/html")
+    if logo is not None:
+        # Inline, by Content-ID: a linked image waits behind "load images",
+        # and Gmail drops data: URIs.
+        msg.mixed_subtype = "related"  # type: ignore[attr-defined]
+        image = MIMEImage(logo, _subtype="png")
+        image.add_header("Content-ID", f"<{FHI_LOGO_CID}>")
+        image.add_header("Content-Disposition", "inline", filename="fhi-logo.png")
+        msg.attach(image)
     return msg
 
 
@@ -582,6 +618,10 @@ def send_fallback_email(
         )
         for content, mimetype in msg.alternatives:
             second_msg.attach_alternative(content, mimetype)
+        # The inline logo, so the copy's HTML doesn't show a broken image.
+        second_msg.mixed_subtype = msg.mixed_subtype  # type: ignore[attr-defined]
+        for attachment in msg.attachments:
+            second_msg.attach(attachment)
         second_msg.send()
     except Exception as e:
         logger.error(f"Error sending email to BCC: {e}")

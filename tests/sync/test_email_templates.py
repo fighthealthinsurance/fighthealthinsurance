@@ -15,6 +15,7 @@ from django.conf import settings
 from django.core import mail
 from django.template.loader import render_to_string
 from django.test import TestCase, override_settings
+from unittest.mock import patch
 
 from fhi_users.emails import (
     send_checkout_session_expired,
@@ -29,11 +30,13 @@ from fighthealthinsurance.fax_send_core import fax_followup_subject
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.mailing_list_actor import MailingListActor
 from fighthealthinsurance.models import InterestedProfessional
+from fighthealthinsurance.utils import build_fallback_email
 
 FHI = "The team at Fight Health Insurance and Timbit"
 FPW = "The Fight Paperwork team"
 FHI_PRO = "The Fight Health Insurance team"
 FPW_LOGO = 'alt="Fight Paperwork"'
+FHI_LOGO = 'src="cid:fhi-logo"'
 FOLLOWUP_LINK = "https://www.fighthealthinsurance.com/v0/followup/u/h/s"
 FAX_LINK = "https://www.fighthealthinsurance.com/v0/fax-followup/h/u"
 
@@ -171,7 +174,9 @@ def test_every_email_renders_with_what_its_sender_passes(
     assert html.lstrip().startswith("<!DOCTYPE html>")
     if sign_off == FPW:
         assert FPW_LOGO in html
+        assert FHI_LOGO not in html
     else:
+        assert FHI_LOGO in html
         # A Fight Health Insurance email carries no Fight Paperwork mark.
         assert "fightpaperwork.com/favicon" not in html
         assert "fpw-optimized" not in html
@@ -393,3 +398,46 @@ class SenderFixesTest(TestCase):
         )
         self.assertIn(FHI, patient.body)
         self.assertNotIn(FPW_LOGO, patient.alternatives[0][0])
+
+
+class InlineLogoTest(TestCase):
+    """The llama travels inside each Fight Health Insurance email, by
+    Content-ID, so it shows without "load images"."""
+
+    def _checkout(self, professional):
+        return build_fallback_email(
+            "Checkout expired",
+            "checkout_session_expired",
+            {"link": "https://www.fighthealthinsurance.com/stripe/finish?token=t", "professional": professional},
+            "someone@test-fhi.com",
+        )
+
+    def test_a_fight_health_insurance_email_carries_the_logo_it_shows(self):
+        msg = self._checkout(professional=False)
+        self.assertIn(FHI_LOGO, msg.alternatives[0][0])
+        raw = msg.message().as_string()
+        self.assertIn("multipart/related", raw)
+        self.assertIn("Content-ID: <fhi-logo>", raw)
+        self.assertIn("Content-Disposition: inline", raw)
+
+    def test_a_fight_paperwork_email_carries_no_logo_attachment(self):
+        msg = self._checkout(professional=True)
+        self.assertNotIn("cid:", msg.alternatives[0][0])
+        self.assertEqual(msg.attachments, [])
+
+    def test_without_the_image_file_the_email_drops_the_reference(self):
+        with patch("fighthealthinsurance.utils._fhi_logo_png", return_value=None):
+            msg = self._checkout(professional=False)
+        self.assertNotIn("cid:", msg.alternatives[0][0])
+        self.assertEqual(msg.attachments, [])
+
+    def test_the_staff_copy_carries_the_logo_too(self):
+        send_checkout_session_expired(
+            None,
+            email="patient@test-fhi.com",
+            link="https://www.fighthealthinsurance.com/stripe/finish?token=t",
+            item=None,
+        )
+        copies = [m for m in mail.outbox if " -- " in m.subject]
+        self.assertEqual(len(copies), 1)
+        self.assertIn("Content-ID: <fhi-logo>", copies[0].message().as_string())
