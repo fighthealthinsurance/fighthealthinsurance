@@ -1393,7 +1393,7 @@ class InviteProviderTest(APITestCase):
         inviter = self.primary_professional.get_display_name()
         self.assertTrue(message.body.startswith("Hello,\n"))
         self.assertIn(
-            f"{inviter} has invited you to join testdomain on Fight Paperwork.",
+            f"{inviter} has invited you to join testdomain on Fight Health Insurance.",
             message.body,
         )
 

@@ -480,7 +480,7 @@ def mask_email_for_logging(email: Optional[str]) -> str:
 
 
 # The llama at the top of Fight Health Insurance emails (fhi_base_email.html).
-FHI_LOGO_CID = "fhi-logo"
+FHI_LOGO_CID = "fhi-logo@fighthealthinsurance.com"
 FHI_LOGO_CID_SRC = f"cid:{FHI_LOGO_CID}"
 _FHI_LOGO_PATH = os.path.join(
     os.path.dirname(__file__), "static", "images", "better-logo-150.png"
@@ -488,13 +488,32 @@ _FHI_LOGO_PATH = os.path.join(
 
 
 @functools.lru_cache(maxsize=1)
+def _read_fhi_logo() -> bytes:
+    # Only a successful read is cached: lru_cache doesn't keep exceptions.
+    with open(_FHI_LOGO_PATH, "rb") as f:
+        return f.read()
+
+
 def _fhi_logo_png() -> Optional[bytes]:
     try:
-        with open(_FHI_LOGO_PATH, "rb") as f:
-            return f.read()
+        return _read_fhi_logo()
     except OSError:
         logger.warning("Email logo missing; sending without it")
         return None
+
+
+class InlineImageEmail(EmailMultiAlternatives):
+    """The text and HTML inside multipart/related, beside the images the HTML
+    shows by Content-ID."""
+
+    mixed_subtype = "related"
+
+    def message(self, *args: Any, **kwargs: Any):
+        msg = super().message(*args, **kwargs)
+        if msg.get_content_subtype() == "related":
+            # RFC 2387: related names the type of its first part.
+            msg.set_param("type", "multipart/alternative")
+        return msg
 
 
 def build_fallback_email(
@@ -548,7 +567,8 @@ def build_fallback_email(
         headers.update(extra_headers)
     headers["Auto-Submitted"] = "auto-generated"
     headers["X-Auto-Response-Suppress"] = "All"
-    msg = EmailMultiAlternatives(
+    email_class = EmailMultiAlternatives if logo is None else InlineImageEmail
+    msg = email_class(
         subject,
         text_content,
         from_address,
@@ -561,7 +581,6 @@ def build_fallback_email(
     if logo is not None:
         # Inline, by Content-ID: a linked image waits behind "load images",
         # and Gmail drops data: URIs.
-        msg.mixed_subtype = "related"  # type: ignore[attr-defined]
         image = MIMEImage(logo, _subtype="png")
         image.add_header("Content-ID", f"<{FHI_LOGO_CID}>")
         image.add_header("Content-Disposition", "inline", filename="fhi-logo.png")
@@ -608,7 +627,8 @@ def send_fallback_email(
     )
     msg.send()
     try:
-        second_msg = EmailMultiAlternatives(
+        # The same class, so the copy carries the inline logo the same way.
+        second_msg = type(msg)(
             subject + " -- " + to_email,
             msg.body,
             msg.from_email,
@@ -618,8 +638,6 @@ def send_fallback_email(
         )
         for content, mimetype in msg.alternatives:
             second_msg.attach_alternative(content, mimetype)
-        # The inline logo, so the copy's HTML doesn't show a broken image.
-        second_msg.mixed_subtype = msg.mixed_subtype  # type: ignore[attr-defined]
         for attachment in msg.attachments:
             second_msg.attach(attachment)
         second_msg.send()

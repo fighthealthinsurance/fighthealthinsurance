@@ -1,14 +1,14 @@
-{% extends './base_email.html' %}
-{% block title %}Your Fight Paperwork account{% endblock %}
+{% extends "emails/fhi_base_email.html" %}
+{% block title %}Your Fight Health Insurance account{% endblock %}
 {% block content %}
 <p>
 {% if professional_name %}Hello {{ professional_name }},{% else %}Hello,{% endif %}
 </p>
 <p>
-{{ inviter_name }} has created a Fight Paperwork account for you to help manage insurance denial appeals for {{ practice_name }}.
+{{ inviter_name }} has created a Fight Health Insurance account for you to help manage insurance denial appeals for {{ practice_name }}.
 </p>
 <p>
-Fight Paperwork helps healthcare providers successfully appeal insurance denials and reduce administrative burden. Studies show that when providers appeal denials, they have a high success rate of overturning the initial decision.
+Fight Health Insurance helps healthcare providers successfully appeal insurance denials and reduce administrative burden. Studies show that when providers appeal denials, they have a high success rate of overturning the initial decision.
 </p>
 <p>
 To get into your account, reset your password. You'll need:
@@ -18,7 +18,7 @@ To get into your account, reset your password. You'll need:
     <li>Practice name: {{ practice_name }}</li>
     <li>Practice phone: {{ practice_phone }}</li>
 </ul>
-{% include "emails/partials/button.html" with href="https://www.fightpaperwork.com/auth/reset-password" label="Reset your password" fill="#c2410c" %}
+{% include "emails/partials/button.html" with href="https://www.fightpaperwork.com/auth/reset-password" label="Reset your password" %}
 <p>
 After setting your password, you can log in with your email and the practice information above.
 </p>
@@ -29,6 +29,6 @@ If you have any questions, email us at <a href="mailto:support42@fighthealthinsu
 Thank you,
 </p>
 <p>
-The Fight Paperwork team
+The Fight Health Insurance team
 </p>
 {% endblock %}

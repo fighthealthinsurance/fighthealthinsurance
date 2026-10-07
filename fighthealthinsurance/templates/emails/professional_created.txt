@@ -1,8 +1,8 @@
 {% autoescape off %}{% if professional_name %}Hello {{ professional_name }},{% else %}Hello,{% endif %}
 
-{{ inviter_name }} has created a Fight Paperwork account for you to help manage insurance denial appeals for {{ practice_name }}.
+{{ inviter_name }} has created a Fight Health Insurance account for you to help manage insurance denial appeals for {{ practice_name }}.
 
-Fight Paperwork helps healthcare providers successfully appeal insurance denials and reduce administrative burden. Studies show that when providers appeal denials, they have a high success rate of overturning the initial decision.
+Fight Health Insurance helps healthcare providers successfully appeal insurance denials and reduce administrative burden. Studies show that when providers appeal denials, they have a high success rate of overturning the initial decision.
 
 To get into your account, reset your password. You'll need:
 - Email: {{ email }}
@@ -18,4 +18,4 @@ If you have any questions, email us at support42@fighthealthinsurance.com.
 
 Thank you,
 
-The Fight Paperwork team{% endautoescape %}
+The Fight Health Insurance team{% endautoescape %}

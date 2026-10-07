@@ -1,6 +1,6 @@
 {% autoescape off %}{% if user.first_name %}Hello {{ user.first_name }},{% else %}Hello,{% endif %}
 
-Please activate your Fight Paperwork account using the link below.
+Please activate your Fight Health Insurance account using the link below.
 
 Activate your account:
 {{ activation_link }}
@@ -9,4 +9,4 @@ This link expires in 24 hours.
 
 Best regards,
 
-The Fight Paperwork team{% endautoescape %}
+The Fight Health Insurance team{% endautoescape %}

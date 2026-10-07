@@ -1,14 +1,13 @@
 {% comment %}
-The one call to action in an email, drawn as a button. Takes href, label and
-an optional fill (the Fight Health Insurance green unless a Fight Paperwork
-email passes its orange). Both fills carry white text above 4.5:1. A table
+The one call to action in an email, drawn as a button. Takes href and label;
+the Fight Health Insurance green carries white text above 4.5:1. A table
 cell holds the fill because some mail clients drop padding and background on
 a bare link; Outlook for Windows also drops the link's padding, so the cell
 carries it there (mso-padding-alt, which other clients ignore). The plain-text version of each email gives the label and then the
 link on its own line instead.
 {% endcomment %}<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 24px 0;">
   <tr>
-    <td bgcolor="{% firstof fill '#566b07' %}" style="border-radius: 6px; background-color: {% firstof fill '#566b07' %}; mso-padding-alt: 12px 24px;">
+    <td bgcolor="#566b07" style="border-radius: 6px; background-color: #566b07; mso-padding-alt: 12px 24px;">
       <a href="{{ href }}" style="display: inline-block; padding: 12px 24px; border-radius: 6px; font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: bold; line-height: 1.25; color: #ffffff; text-decoration: none;">{{ label }}</a>
     </td>
   </tr>

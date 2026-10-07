@@ -1,4 +1,4 @@
-{% extends professional|yesno:"emails/base_email.html,emails/fhi_base_email.html" %}
+{% extends "emails/fhi_base_email.html" %}
 {% block title %}Your checkout expired{% endblock %}
 {% block content %}
 <p>
@@ -7,24 +7,11 @@ Hi,
 <p>
 Your checkout session expired before you finished. You can still finish it using the button below.
 </p>
-{% if professional %}
-{% include "emails/partials/button.html" with href=link label="Finish checkout" fill="#c2410c" %}
-{% else %}
 {% include "emails/partials/button.html" with href=link label="Finish checkout" %}
-{% endif %}
 <p>
 If you have any questions, email our support team at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
 </p>
-{% if professional %}
-<p>
-Best regards,
-</p>
-<p>
-The Fight Paperwork team
-</p>
-{% else %}
 <p>
 The team at Fight Health Insurance and Timbit
 </p>
-{% endif %}
 {% endblock %}

@@ -1,13 +1,13 @@
-{% extends "./base_email.html" %}
+{% extends "emails/fhi_base_email.html" %}
 {% block title %}Activate your account{% endblock %}
 {% block content %}
 <p>
 {% if user.first_name %}Hello {{ user.first_name }},{% else %}Hello,{% endif %}
 </p>
 <p>
-Please activate your Fight Paperwork account using the button below.
+Please activate your Fight Health Insurance account using the button below.
 </p>
-{% include "emails/partials/button.html" with href=activation_link label="Activate your account" fill="#c2410c" %}
+{% include "emails/partials/button.html" with href=activation_link label="Activate your account" %}
 <p>
 This link expires in 24 hours.
 </p>
@@ -15,6 +15,6 @@ This link expires in 24 hours.
 Best regards,
 </p>
 <p>
-The Fight Paperwork team
+The Fight Health Insurance team
 </p>
 {% endblock %}

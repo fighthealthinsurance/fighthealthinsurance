@@ -1,11 +1,11 @@
-{% extends './base_email.html' %}
-{% block title %}Draft appeal on Fight Paperwork{% endblock %}
+{% extends "emails/fhi_base_email.html" %}
+{% block title %}Draft appeal on Fight Health Insurance{% endblock %}
 {% block content %}
 <p>Hello,</p>
 <p>
-Your healthcare provider has started a draft appeal for a health insurance denial you received. They've invited you to review it with them on Fight Paperwork.
+Your healthcare provider has started a draft appeal for a health insurance denial you received. They've invited you to review it with them on Fight Health Insurance.
 </p>
-{% include "emails/partials/button.html" with href="https://www.fightpaperwork.com/" label="Open Fight Paperwork" fill="#c2410c" %}
+{% include "emails/partials/button.html" with href="https://www.fighthealthinsurance.com/" label="Open Fight Health Insurance" %}
 <p>
 If you have any questions, email us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
 </p>
@@ -13,6 +13,6 @@ If you have any questions, email us at <a href="mailto:support42@fighthealthinsu
 A huge thank you,
 </p>
 <p>
-The Fight Paperwork team, our dogs, and our cats.
+The Fight Health Insurance team, our dogs, and our cats.
 </p>
 {% endblock %}

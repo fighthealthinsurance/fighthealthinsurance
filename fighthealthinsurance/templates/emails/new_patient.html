@@ -1,14 +1,14 @@
-{% extends './base_email.html' %}
-{% block title %}Welcome to Fight Paperwork{% endblock %}
+{% extends "emails/fhi_base_email.html" %}
+{% block title %}Welcome to Fight Health Insurance{% endblock %}
 {% block content %}
 <p>Hello,</p>
 <p>
-You have been invited to join your healthcare professional in appealing the health insurance denial you received. You can sign up for Fight Paperwork and help your professional appeal this denial.
+You have been invited to join your healthcare professional in appealing the health insurance denial you received. You can sign up for Fight Health Insurance and help your professional appeal this denial.
 </p>
 <p>
 To make sure you're in the right group when you sign up, use the practice phone number {{ practice_number }}.
 </p>
-{% include "emails/partials/button.html" with href="https://www.fightpaperwork.com/" label="Sign up for Fight Paperwork" fill="#c2410c" %}
+{% include "emails/partials/button.html" with href="https://www.fighthealthinsurance.com/" label="Sign up for Fight Health Insurance" %}
 <p>
 According to some studies, when patients are involved, appeals have nearly a 90% success rate.
 </p>
@@ -19,6 +19,6 @@ If you have any questions, email us at <a href="mailto:support42@fighthealthinsu
 A huge thank you,
 </p>
 <p>
-The Fight Paperwork team, our dogs, and our cats.
+The Fight Health Insurance team, our dogs, and our cats.
 </p>
 {% endblock %}

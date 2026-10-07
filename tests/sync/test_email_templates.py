@@ -30,13 +30,15 @@ from fighthealthinsurance.fax_send_core import fax_followup_subject
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.mailing_list_actor import MailingListActor
 from fighthealthinsurance.models import InterestedProfessional
-from fighthealthinsurance.utils import build_fallback_email
+from fighthealthinsurance.utils import (
+    _fhi_logo_png,
+    _read_fhi_logo,
+    build_fallback_email,
+)
 
 FHI = "The team at Fight Health Insurance and Timbit"
-FPW = "The Fight Paperwork team"
 FHI_PRO = "The Fight Health Insurance team"
-FPW_LOGO = 'alt="Fight Paperwork"'
-FHI_LOGO = 'src="cid:fhi-logo"'
+FHI_LOGO = 'src="cid:fhi-logo@fighthealthinsurance.com"'
 FOLLOWUP_LINK = "https://www.fighthealthinsurance.com/v0/followup/u/h/s"
 FAX_LINK = "https://www.fighthealthinsurance.com/v0/fax-followup/h/u"
 
@@ -94,52 +96,52 @@ CASES = [
     ("professional_thankyou", {"name": ""}, FHI_PRO, None),
     (
         "checkout_session_expired",
-        {"link": "https://www.fighthealthinsurance.com/stripe/finish?token=t", "professional": False},
+        {"link": "https://www.fighthealthinsurance.com/stripe/finish?token=t"},
         FHI,
         "https://www.fighthealthinsurance.com/stripe/finish?token=t",
     ),
     (
         "checkout_session_expired",
-        {"link": "https://www.fightpaperwork.com/stripe/finish-checkout?domain_id=1&professional_id=2", "professional": True},
-        FPW,
+        {"link": "https://www.fightpaperwork.com/stripe/finish-checkout?domain_id=1&professional_id=2"},
+        FHI,
         "https://www.fightpaperwork.com/stripe/finish-checkout?domain_id=1&professional_id=2",
     ),
-    ("new_patient", {"practice_number": "555-0100"}, FPW, "https://www.fightpaperwork.com/"),
-    ("draft_appeal", {"practice_number": "555-0100"}, FPW, "https://www.fightpaperwork.com/"),
+    ("new_patient", {"practice_number": "555-0100"}, FHI_PRO, "https://www.fighthealthinsurance.com/"),
+    ("draft_appeal", {"practice_number": "555-0100"}, FHI_PRO, "https://www.fighthealthinsurance.com/"),
     (
         "invite_professional",
         {"professional_name": "New Pro", "inviter_name": "Admin User", "practice_name": "testdomain", "practice_number": "555-0100"},
-        FPW,
+        FHI_PRO,
         None,
     ),
     (
         "invite_professional",
         {"inviter_name": "Dr. Coworker", "practice_name": "Clinic", "practice_number": "555-0100"},
-        FPW,
+        FHI_PRO,
         None,
     ),
     (
         "professional_created",
         {"professional_name": "New Pro", "inviter_name": "Admin User", "practice_name": "testdomain", "practice_phone": "555-0100", "email": "new@test-fhi.com"},
-        FPW,
+        FHI_PRO,
         "https://www.fightpaperwork.com/auth/reset-password",
     ),
     (
         "acc_active_email",
         {"user": SimpleNamespace(first_name="Ana"), "domain": "testserver", "activation_link": "https://www.fightpaperwork.com/activate-account/?token=t&uid=1"},
-        FPW,
+        FHI_PRO,
         "https://www.fightpaperwork.com/activate-account/?token=t&uid=1",
     ),
     (
         "acc_active_email",
         {"user": SimpleNamespace(first_name=""), "domain": "testserver", "activation_link": "https://www.fightpaperwork.com/activate-account/?token=t&uid=1"},
-        FPW,
+        FHI_PRO,
         "https://www.fightpaperwork.com/activate-account/?token=t&uid=1",
     ),
     (
         "password_reset",
         {"reset_link": "https://www.fightpaperwork.com/auth/reset-password/new-password?token=t"},
-        FPW,
+        FHI_PRO,
         "https://www.fightpaperwork.com/auth/reset-password/new-password?token=t",
     ),
     ("proconnector_intro", {"body": "Hi Dr. Q,\n\nA staff-written intro.", "name": "Dr. Q"}, None, None),
@@ -172,14 +174,10 @@ def test_every_email_renders_with_what_its_sender_passes(
         if sign_off:
             assert sign_off in part
     assert html.lstrip().startswith("<!DOCTYPE html>")
-    if sign_off == FPW:
-        assert FPW_LOGO in html
-        assert FHI_LOGO not in html
-    else:
-        assert FHI_LOGO in html
-        # A Fight Health Insurance email carries no Fight Paperwork mark.
-        assert "fightpaperwork.com/favicon" not in html
-        assert "fpw-optimized" not in html
+    # Every email is a Fight Health Insurance one: its logo, its name.
+    assert FHI_LOGO in html
+    assert "fpw-optimized" not in html
+    assert "Fight Paperwork" not in text + html
     if link:
         # The plain-text version gives the link a line of its own, and the
         # HTML version puts it on a button.
@@ -279,14 +277,13 @@ def test_the_intake_reminder_introduces_its_link_once():
     assert before_link.count(":\n") == 1
 
 
-@pytest.mark.parametrize("fill", ["#566b07", "#c2410c"])
-def test_the_button_cell_keeps_its_fill_and_padding_in_outlook(fill):
+def test_the_button_cell_keeps_its_fill_and_padding_in_outlook():
     with override_settings(TEMPLATES=_strict_templates()):
         html = render_to_string(
             "emails/partials/button.html",
-            {"href": "https://www.fighthealthinsurance.com/x", "label": "Go", "fill": fill},
+            {"href": "https://www.fighthealthinsurance.com/x", "label": "Go"},
         )
-    assert f'bgcolor="{fill}"' in html
+    assert 'bgcolor="#566b07"' in html
     assert "mso-padding-alt: 12px 24px;" in html
 
 
@@ -314,8 +311,8 @@ class SenderFixesTest(TestCase):
         self.assertEqual(
             subjects,
             [
-                "Welcome to Fight Paperwork from Dr. Q",
-                "Draft Appeal on Fight Paperwork from Dr. Q",
+                "Welcome to Fight Health Insurance from Dr. Q",
+                "Draft Appeal on Fight Health Insurance from Dr. Q",
             ],
         )
 
@@ -338,7 +335,7 @@ class SenderFixesTest(TestCase):
         )
         body = mail.outbox[0].body
         self.assertTrue(body.startswith("Hello,\n"))
-        self.assertIn("Dr. Inviter has invited you to join Clinic on Fight Paperwork.", body)
+        self.assertIn("Dr. Inviter has invited you to join Clinic on Fight Health Insurance.", body)
         self.assertIn("ask Dr. Inviter (or another practice administrator)", body)
 
     def test_a_coworker_invite_without_a_practice_name_still_reads(self):
@@ -348,7 +345,7 @@ class SenderFixesTest(TestCase):
             practice_number="555-0100",
         )
         self.assertIn(
-            "Dr. Inviter has invited you to join their practice on Fight Paperwork.",
+            "Dr. Inviter has invited you to join their practice on Fight Health Insurance.",
             mail.outbox[0].body,
         )
 
@@ -365,21 +362,19 @@ class SenderFixesTest(TestCase):
         )
         self.assertTrue(mail.outbox[0].body.startswith("Hello New Pro,\n"))
 
-    def test_a_password_reset_signs_off_as_fight_paperwork(self):
+    def test_a_password_reset_signs_off_as_fight_health_insurance(self):
         send_password_reset_email("user@test-fhi.com", "a-token")
         body = mail.outbox[0].body
         self.assertTrue(body.startswith("Hello,\n"))
         self.assertIn("token=a-token", body)
-        self.assertIn(FPW, body)
-        self.assertNotIn("Fight Health Insurance Team", body)
+        self.assertIn(FHI_PRO, body)
 
-    def test_an_expired_checkout_takes_the_brand_of_what_was_bought(self):
+    def test_an_expired_checkout_names_what_was_bought(self):
         send_checkout_session_expired(
             None,
             email="pro@test-fhi.com",
             link="https://www.fightpaperwork.com/stripe/finish-checkout?domain_id=1",
-            item="Fight Paperwork Professional Domain Subscription",
-            professional=True,
+            item="Fight Health Insurance Professional Domain Subscription",
         )
         send_checkout_session_expired(
             None,
@@ -390,46 +385,46 @@ class SenderFixesTest(TestCase):
         pro, patient = [m for m in mail.outbox if " -- " not in m.subject]
         self.assertEqual(
             pro.subject,
-            "Fight Paperwork Professional Domain Subscription Checkout Session Expired",
+            "Fight Health Insurance Professional Domain Subscription Checkout Session Expired",
         )
-        self.assertIn(FPW, pro.body)
         self.assertEqual(
             patient.subject, "Fight Health Insurance Checkout Session Expired"
         )
-        self.assertIn(FHI, patient.body)
-        self.assertNotIn(FPW_LOGO, patient.alternatives[0][0])
+        for sent in (pro, patient):
+            self.assertIn(FHI, sent.body)
 
 
 class InlineLogoTest(TestCase):
     """The llama travels inside each Fight Health Insurance email, by
     Content-ID, so it shows without "load images"."""
 
-    def _checkout(self, professional):
+    def _checkout(self):
         return build_fallback_email(
             "Checkout expired",
             "checkout_session_expired",
-            {"link": "https://www.fighthealthinsurance.com/stripe/finish?token=t", "professional": professional},
+            {"link": "https://www.fighthealthinsurance.com/stripe/finish?token=t"},
             "someone@test-fhi.com",
         )
 
     def test_a_fight_health_insurance_email_carries_the_logo_it_shows(self):
-        msg = self._checkout(professional=False)
+        msg = self._checkout()
         self.assertIn(FHI_LOGO, msg.alternatives[0][0])
         raw = msg.message().as_string()
-        self.assertIn("multipart/related", raw)
-        self.assertIn("Content-ID: <fhi-logo>", raw)
+        self.assertIn('multipart/related; type="multipart/alternative"', raw.replace("\n\t", " ").replace("\n ", " "))
+        self.assertIn("Content-ID: <fhi-logo@fighthealthinsurance.com>", raw)
         self.assertIn("Content-Disposition: inline", raw)
-
-    def test_a_fight_paperwork_email_carries_no_logo_attachment(self):
-        msg = self._checkout(professional=True)
-        self.assertNotIn("cid:", msg.alternatives[0][0])
-        self.assertEqual(msg.attachments, [])
 
     def test_without_the_image_file_the_email_drops_the_reference(self):
         with patch("fighthealthinsurance.utils._fhi_logo_png", return_value=None):
-            msg = self._checkout(professional=False)
+            msg = self._checkout()
         self.assertNotIn("cid:", msg.alternatives[0][0])
         self.assertEqual(msg.attachments, [])
+
+    def test_a_missing_logo_file_is_not_remembered_once_it_is_back(self):
+        _read_fhi_logo.cache_clear()
+        with patch("fighthealthinsurance.utils._FHI_LOGO_PATH", "/nonexistent/logo.png"):
+            self.assertIsNone(_fhi_logo_png())
+        self.assertIsNotNone(_fhi_logo_png())
 
     def test_the_staff_copy_carries_the_logo_too(self):
         send_checkout_session_expired(
@@ -440,4 +435,4 @@ class InlineLogoTest(TestCase):
         )
         copies = [m for m in mail.outbox if " -- " in m.subject]
         self.assertEqual(len(copies), 1)
-        self.assertIn("Content-ID: <fhi-logo>", copies[0].message().as_string())
+        self.assertIn("Content-ID: <fhi-logo@fighthealthinsurance.com>", copies[0].message().as_string())

@@ -196,7 +196,7 @@ class StripeWebhookHelper:
             if payment_type == "fax":
                 item = "Fight Health Insurance Fax"
             elif payment_type == "professional_domain_subscription":
-                item = "Fight Paperwork Professional Domain Subscription"
+                item = "Fight Health Insurance Professional Domain Subscription"
                 # Check if the domain is already active (due to another checkout session)
                 domain_id = metadata.get("domain_id")
                 if domain_id:
@@ -310,7 +310,6 @@ class StripeWebhookHelper:
                     email=email,
                     item=item,
                     link=finish_link,
-                    professional=payment_type == "professional_domain_subscription",
                 )
             else:
                 logger.debug(f"Could not create finish link for {payment_type}")

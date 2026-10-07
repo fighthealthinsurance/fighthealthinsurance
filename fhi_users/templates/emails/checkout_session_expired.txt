@@ -7,6 +7,4 @@ Finish checkout:
 
 If you have any questions, email our support team at support42@fighthealthinsurance.com.
 
-{% if professional %}Best regards,
-
-The Fight Paperwork team{% else %}The team at Fight Health Insurance and Timbit{% endif %}{% endautoescape %}
+The team at Fight Health Insurance and Timbit{% endautoescape %}

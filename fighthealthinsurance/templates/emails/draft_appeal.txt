@@ -1,12 +1,12 @@
 {% autoescape off %}Hello,
 
-Your healthcare provider has started a draft appeal for a health insurance denial you received. They've invited you to review it with them on Fight Paperwork.
+Your healthcare provider has started a draft appeal for a health insurance denial you received. They've invited you to review it with them on Fight Health Insurance.
 
-Open Fight Paperwork:
-https://www.fightpaperwork.com/
+Open Fight Health Insurance:
+https://www.fighthealthinsurance.com/
 
 If you have any questions, email us at support42@fighthealthinsurance.com.
 
 A huge thank you,
 
-The Fight Paperwork team, our dogs, and our cats.{% endautoescape %}
+The Fight Health Insurance team, our dogs, and our cats.{% endautoescape %}

@@ -1950,7 +1950,7 @@ class PatientNotificationHelper:
     def send_signup_invitation(
         cls, email: str, professional_name: Optional[str], practice_number: str
     ):
-        subject = "Welcome to Fight Paperwork"
+        subject = "Welcome to Fight Health Insurance"
         if professional_name:
             subject += f" from {professional_name}"
         return send_fallback_email(
@@ -1964,7 +1964,7 @@ class PatientNotificationHelper:
     def notify_of_draft_appeal(
         cls, email: str, professional_name: Optional[str], practice_number: str
     ):
-        subject = "Draft Appeal on Fight Paperwork"
+        subject = "Draft Appeal on Fight Health Insurance"
         if professional_name:
             subject += f" from {professional_name}"
         return send_fallback_email(
@@ -1988,7 +1988,7 @@ class ProfessionalNotificationHelper:
         the inviting professional; the invitee's name isn't known, so the
         email greets them without one."""
         return send_fallback_email(
-            subject="You are invited to join your coworker on Fight Paperwork",
+            subject="You are invited to join your coworker on Fight Health Insurance",
             template_name="invite_professional",
             context={
                 "inviter_name": professional_name,

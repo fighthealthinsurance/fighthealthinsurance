@@ -14,6 +14,6 @@ To re-send the fax, or send it to another number:
 {{ fax_redo_link }}{% endif %}
 
 {% include "emails/partials/how_to_help.txt" %}
-Wishing you the best of luck with your appeal,
+Wishing you the best of luck with your fight with insurance,
 
 The team at Fight Health Insurance and Timbit{% endautoescape %}
