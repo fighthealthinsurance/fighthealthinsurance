@@ -1,6 +1,6 @@
 import uuid
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
@@ -24,6 +24,7 @@ from tests.conftest import skip_if_stripe_ssl_blocked
 User = get_user_model()
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 @skip_if_stripe_ssl_blocked
 class PaymentViewsTests(TestCase):
     def setUp(self) -> None:

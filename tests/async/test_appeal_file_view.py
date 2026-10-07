@@ -1,4 +1,4 @@
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 from django.urls import reverse
 from django.contrib.auth.models import User
@@ -12,6 +12,7 @@ from fhi_users.models import (
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class AppealFileViewTest(TestCase):
     def setUp(self):
         # Note: we need to use APIClient here not just regular client since we use the rest APIs

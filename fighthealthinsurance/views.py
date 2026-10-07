@@ -69,6 +69,12 @@ from fighthealthinsurance.denial_context import (
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
+from fhi_users.fight_paperwork import (
+    PROFESSIONAL_SUBSCRIPTION_PAYMENT_TYPE,
+    UNAVAILABLE_MESSAGE,
+    fight_paperwork_enabled,
+    stripe_event_payment_type,
+)
 from fighthealthinsurance.log_redaction import session_key_prefix_for_log
 from fighthealthinsurance.ml import denial_triage
 from fighthealthinsurance.media_references import (
@@ -3065,6 +3071,15 @@ class StripeWebhookView(View):
             logger.error(f"Invalid signature: {e}")
             return HttpResponse(status=403)
 
+        if (
+            stripe_event_payment_type(event) == PROFESSIONAL_SUBSCRIPTION_PAYMENT_TYPE
+            and not fight_paperwork_enabled()
+        ):
+            # 200 so Stripe stops retrying; nothing is activated or emailed.
+            logger.warning(
+                f"Ignored Fight Paperwork subscription event {event.id} ({event.type})"
+            )
+            return HttpResponse(status=200)
         StripeWebhookHelper.handle_stripe_webhook(request, event)
         return HttpResponse(status=200)
 
@@ -3199,6 +3214,11 @@ class CompletePaymentView(View):
             continue_url = lost_session.success_url
             cancel_url = lost_session.cancel_url
             payment_type = lost_session.payment_type
+            if (
+                payment_type == PROFESSIONAL_SUBSCRIPTION_PAYMENT_TYPE
+                and not fight_paperwork_enabled()
+            ):
+                return None, (UNAVAILABLE_MESSAGE, 404)
             metadata: dict[str, str] = lost_session.metadata  # type: ignore
             recovery_info_id = metadata.get("recovery_info_id")
             line_items = []

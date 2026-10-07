@@ -1,4 +1,4 @@
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 
@@ -15,6 +15,7 @@ from fhi_users.models import (
 User = get_user_model()
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class ProfessionalUserManagementTests(TestCase):
     def setUp(self) -> None:
         """

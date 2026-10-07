@@ -334,7 +334,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     # Experimental page: always routed so reverse() works everywhere, but the
     # view serves 404 unless MEDICAID_ELIGIBILITY_PAGE_ENABLED is on (checked
-    # per-request, like NEW_PROFESSIONAL_SIGNUP_ENABLED).
+    # per-request, like FIGHT_PAPERWORK_ENABLED).
     path(
         "medicaid-eligibility",
         views.MedicaidEligibilityView.as_view(),

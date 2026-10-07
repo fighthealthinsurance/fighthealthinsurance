@@ -1,4 +1,4 @@
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.contrib.auth import get_user_model, authenticate
 from rest_framework.test import APIClient
@@ -16,6 +16,7 @@ from fhi_users.models import (
 User = get_user_model()
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class UserDomainManagementTests(TestCase):
     """Additional tests for UserDomainViewSet functionality."""
 
@@ -149,6 +150,7 @@ class UserDomainManagementTests(TestCase):
             self.assertIn(field, data)
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class ProfessionalProfileManagementTests(TestCase):
     """Tests for ProfessionalUserUpdateViewSet functionality."""
 
@@ -274,6 +276,7 @@ class ProfessionalProfileManagementTests(TestCase):
         self.assertEqual(self.professional.npi_number, "7778889999")
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class PasswordManagementTests(TestCase):
     """Additional tests for password management functionality."""
 
