@@ -1,19 +1,25 @@
 {% extends './base_email.html' %}
+{% block title %}Welcome to Fight Paperwork{% endblock %}
 {% block content %}
+<p>Hello,</p>
 <p>
-You have been invited to join your healthcare professional in appealing health insurance denial you have received. You can <a href="https://www.fightpaperwork.com/">signup for Fight Paperwork and help your professional appeal this denial at https://www.fightpaperwork.com/</a>.
+You have been invited to join your healthcare professional in appealing the health insurance denial you received. You can sign up for Fight Paperwork and help your professional appeal this denial.
 </p>
 <p>
-    According to some studies, when patients are involved, appeals have nearly a 90% success rate.
+To make sure you're in the right group when you sign up, use the practice phone number {{ practice_number }}.
+</p>
+{% include "emails/partials/button.html" with href="https://www.fightpaperwork.com/" label="Sign up for Fight Paperwork" fill="#c2410c" %}
+<p>
+According to some studies, when patients are involved, appeals have nearly a 90% success rate.
 </p>
 <p>
-    To make sure your in the right group when you signup make sure to use the practice phone number {{ practice_number }}.
+If you have any questions, email us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
 </p>
 <p>
-    If you’ve got any questions, please feel free to reach out to us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> :) We are also planning on conducting some user studies the end of this month if your willing to share feedback with us on the new workflow before we release it drop us an e-mail at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> :)
+We are also planning to conduct user studies at the end of this month. If you're willing to share feedback with us on the new workflow before we release it, email us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
 </p>
 <p>
-  A huge thank you,
+A huge thank you,
 </p>
 <p>
 The Fight Paperwork team, our dogs, and our cats.

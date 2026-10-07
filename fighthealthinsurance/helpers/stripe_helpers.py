@@ -191,7 +191,7 @@ class StripeWebhookHelper:
             except (AttributeError, TypeError):
                 metadata = session["metadata"]
             payment_type = metadata.get("payment_type")
-            item = "Fight Health Insurance / Fight paperwork"
+            item = "Fight Health Insurance"
 
             if payment_type == "fax":
                 item = "Fight Health Insurance Fax"
@@ -310,6 +310,7 @@ class StripeWebhookHelper:
                     email=email,
                     item=item,
                     link=finish_link,
+                    professional=payment_type == "professional_domain_subscription",
                 )
             else:
                 logger.debug(f"Could not create finish link for {payment_type}")

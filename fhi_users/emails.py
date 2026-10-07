@@ -99,16 +99,25 @@ def send_verification_email(request, user: "User", first_only: bool = False) -> 
 
 
 def send_checkout_session_expired(
-    request, email: str, link: str, item: Optional[str]
+    request,
+    email: str,
+    link: str,
+    item: Optional[str],
+    professional: bool = False,
 ) -> None:
-    """Send checkout session expired email."""
-    default_item = "Fight Health Insurance / Fight Paperwork"
+    """Send checkout session expired email.
+
+    ``professional`` is a Fight Paperwork subscription checkout, which gets
+    that brand's look and sign-off; every other checkout is completed on the
+    Fight Health Insurance site and gets that brand's."""
+    default_item = "Fight Health Insurance"
     item = item if item else default_item
     send_fallback_email(
         f"{item} Checkout Session Expired",
         "checkout_session_expired",
         {
             "link": link,
+            "professional": professional,
         },
         email,
     )

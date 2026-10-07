@@ -1403,12 +1403,14 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                 )
             except ProfessionalUser.DoesNotExist:
                 inviting_professional = ProfessionalUser.objects.get(user=current_user)
+                domain = UserDomain.objects.get(
+                    id=auth_utils.get_domain_id_from_request(request)
+                )
                 common_view_logic.ProfessionalNotificationHelper.send_signup_invitation(
                     email=email,
                     professional_name=inviting_professional.get_display_name(),
-                    practice_number=UserDomain.objects.get(
-                        id=auth_utils.get_domain_id_from_request(request)
-                    ).visible_phone_number,
+                    practice_number=domain.visible_phone_number,
+                    practice_name=domain.name,
                 )
 
         return Response(

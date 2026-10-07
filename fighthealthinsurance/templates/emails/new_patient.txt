@@ -1,14 +1,18 @@
+{% autoescape off %}Hello,
 
-You have been invited to join your healthcare professional in appealing the health insurance denial you have received. You can signup for Fight Paperwork and help your professional appeal this denial at https://www.fightpaperwork.com/ .
+You have been invited to join your healthcare professional in appealing the health insurance denial you received. You can sign up for Fight Paperwork and help your professional appeal this denial.
+
+To make sure you're in the right group when you sign up, use the practice phone number {{ practice_number }}.
+
+Sign up for Fight Paperwork:
+https://www.fightpaperwork.com/
 
 According to some studies, when patients are involved, appeals have nearly a 90% success rate.
 
-To make sure you're in the right group when you sign up, make sure to use the practice phone number {{ practice_number }}.
+If you have any questions, email us at support42@fighthealthinsurance.com.
 
-If you've got any questions, please feel free to reach out to us at support42@fighthealthinsurance.com :)
-
-We are also planning to conduct user studies at the end of this month. If you're willing to share feedback with us on the new workflow before we release it, please email us at support42@fighthealthinsurance.com :)
+We are also planning to conduct user studies at the end of this month. If you're willing to share feedback with us on the new workflow before we release it, email us at support42@fighthealthinsurance.com.
 
 A huge thank you,
 
-The Fight Paperwork team, our dogs, and our cats.
+The Fight Paperwork team, our dogs, and our cats.{% endautoescape %}

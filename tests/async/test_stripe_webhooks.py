@@ -280,6 +280,8 @@ class StripeWebhookTests(TestCase):
         self.assertIn("/stripe/finish-checkout?", link)
         self.assertIn("domain_id=123", link)
         self.assertIn("professional_id=456", link)
+        # A Fight Paperwork checkout gets that brand's email.
+        self.assertTrue(mock_send_email.call_args.kwargs["professional"])
 
     @patch(
         "fighthealthinsurance.helpers.stripe_helpers.fhi_emails.send_checkout_session_expired"
@@ -340,6 +342,12 @@ class StripeWebhookTests(TestCase):
         self.assertIn("/stripe/finish?", link)
         lost_session = LostStripeSession.objects.get(session_id=mock_session.id)
         self.assertIn(f"token={lost_session.secure_token}", link)
+        # A donation is made on the Fight Health Insurance site and its email
+        # says so, in the subject and the sign-off.
+        self.assertEqual(
+            mock_send_email.call_args.kwargs["item"], "Fight Health Insurance"
+        )
+        self.assertFalse(mock_send_email.call_args.kwargs["professional"])
 
     @patch(
         "fighthealthinsurance.helpers.stripe_helpers.fhi_emails.send_checkout_session_expired"

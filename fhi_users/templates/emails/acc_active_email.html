@@ -2,15 +2,16 @@
 {% block title %}Activate your account{% endblock %}
 {% block content %}
 <p>
-Dear {{ user.first_name }},
+{% if user.first_name %}Hello {{ user.first_name }},{% else %}Hello,{% endif %}
 </p>
 <p>
-Please activate your account by <a href="{{ activation_link }}">clicking the link below:
+Please activate your Fight Paperwork account using the button below.
+</p>
+{% include "emails/partials/button.html" with href=activation_link label="Activate your account" fill="#c2410c" %}
+<p>
+Best regards,
 </p>
 <p>
-{{ activation_link }}
+The Fight Paperwork team
 </p>
-</a>
-Best regards,<br/>
-Fight Health Insurance Team<br/>
 {% endblock %}

@@ -1379,6 +1379,24 @@ class InviteProviderTest(APITestCase):
         ).exists()
         self.assertFalse(relation)
 
+    def test_new_provider_invite_names_the_inviter_and_the_practice(self):
+        """The invitee's name isn't known: the email greets them plainly and
+        says who invited them to which practice."""
+        response = self.client.post(
+            reverse("appeals-invite-provider"),
+            json.dumps({"email": "new_provider@test-fhi.com", "appeal_id": self.appeal.id}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        message = mail.outbox[0]
+        self.assertEqual(message.to, ["new_provider@test-fhi.com"])
+        inviter = self.primary_professional.get_display_name()
+        self.assertTrue(message.body.startswith("Hello,\n"))
+        self.assertIn(
+            f"{inviter} has invited you to join testdomain on Fight Paperwork.",
+            message.body,
+        )
+
 
 class StatisticsTest(APITestCase):
     """Test the statistics API endpoints."""
