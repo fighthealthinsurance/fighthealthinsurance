@@ -1,8 +1,9 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 {% block scriptmagic %}
 <script type="module">
-  import * as main from '{% static "js/dist/escalation_packet_review.bundle.js" %}';
+  import * as main from '{% bundle "escalation_packet_review" %}';
 </script>
 {% endblock scriptmagic %}
 {% block title %}

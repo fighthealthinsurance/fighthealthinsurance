@@ -802,6 +802,6 @@ def test_the_fake_page_uses_the_real_ids():
     appeal = (TEMPLATES / "appeal.html").read_text()
     assert 'id="id_completed_appeal_text"' in review
     assert 'id="print_appeal"' in review
-    assert "js/dist/escalation_packet_review.bundle.js" in review
+    assert '{% bundle "escalation_packet_review" %}' in review
     assert 'id="print_appeal"' in appeal
     assert 'id="fax_appeal"' in appeal

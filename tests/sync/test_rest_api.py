@@ -13,6 +13,7 @@ import typing
 import hashlib
 import json
 
+from django.test import override_settings
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 from django.core import mail
@@ -962,6 +963,7 @@ class GenerateAppealUseExternalContextTest(APITestCase):
         self.assertNotContains(response, "external-models-prompt")
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class NotifyPatientTest(APITestCase):
     """Test the notify_patient API endpoint."""
 
@@ -1074,6 +1076,19 @@ class NotifyPatientTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("message", response.json())
         self.assertEqual(response.json()["message"], "Notification sent")
+
+    def test_notify_patient_refused_when_fight_paperwork_is_off(self):
+        self.patient_user.is_active = False
+        self.patient_user.save()
+        with self.settings(FIGHT_PAPERWORK_ENABLED=False):
+            response = self.client.post(
+                reverse("appeals-notify-patient"),
+                json.dumps({"id": self.appeal.id, "include_professional": True}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn("error", response.json())
+        self.assertEqual(len(mail.outbox), 0)
 
 
 class SendFaxTest(APITestCase):
@@ -1226,6 +1241,7 @@ class SendFaxTest(APITestCase):
         self.assertEqual(self.appeal.pending, False)
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class InviteProviderTest(APITestCase):
     """Test the invite_provider API endpoint."""
 
@@ -1394,6 +1410,19 @@ class InviteProviderTest(APITestCase):
         self.assertTrue(message.body.startswith("Hello,\n"))
         self.assertIn(inviter, message.body)
         self.assertIn("testdomain", message.body)
+
+    def test_invite_provider_refused_when_fight_paperwork_is_off(self):
+        with self.settings(FIGHT_PAPERWORK_ENABLED=False):
+            response = self.client.post(
+                reverse("appeals-invite-provider"),
+                json.dumps(
+                    {"email": "new_provider@example.com", "appeal_id": self.appeal.id}
+                ),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn("error", response.json())
+        self.assertEqual(len(mail.outbox), 0)
 
 
 class StatisticsTest(APITestCase):
@@ -1920,6 +1949,7 @@ class DenialCreateWithExistingId(APITestCase):
         self.assertEqual(parsed["denial_id"], denial_id)
 
 
+@override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class DuplicateUserDomainTest(APITestCase):
     """Test that a duplicate UserDomain request returns a non-200 response."""
 

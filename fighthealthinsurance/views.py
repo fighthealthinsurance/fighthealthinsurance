@@ -69,6 +69,13 @@ from fighthealthinsurance.denial_context import (
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
+from fhi_users.fight_paperwork import (
+    PROFESSIONAL_SUBSCRIPTION_PAYMENT_TYPE,
+    UNAVAILABLE_MESSAGE,
+    fight_paperwork_enabled,
+    stripe_event_payment_type,
+    unavailable_response,
+)
 from fighthealthinsurance.log_redaction import session_key_prefix_for_log
 from fighthealthinsurance.ml import denial_triage
 from fighthealthinsurance.media_references import (
@@ -3075,8 +3082,21 @@ class StripeWebhookView(View):
             logger.error(f"Invalid signature: {e}")
             return HttpResponse(status=403)
 
+        if (
+            stripe_event_payment_type(event) == PROFESSIONAL_SUBSCRIPTION_PAYMENT_TYPE
+            and not fight_paperwork_enabled()
+        ):
+            # 200 so Stripe stops retrying; nothing is activated or emailed.
+            logger.warning(
+                f"Ignored Fight Paperwork subscription event {event.id} ({event.type})"
+            )
+            return HttpResponse(status=200)
         StripeWebhookHelper.handle_stripe_webhook(request, event)
         return HttpResponse(status=200)
+
+
+# A paused Fight Paperwork checkout; matched by identity in CompletePaymentView.
+_FIGHT_PAPERWORK_OFF = (UNAVAILABLE_MESSAGE, 404)
 
 
 class CompletePaymentView(View):
@@ -3106,6 +3126,9 @@ class CompletePaymentView(View):
                 "session_id": request.GET.get("session_id"),
             }
             next_url, error = self._resolve_next_url(data)
+            if error is _FIGHT_PAPERWORK_OFF:
+                # Not the HTML page: it suggests starting a new checkout.
+                return unavailable_response()
             if error is not None or next_url is None:
                 message, status_code = error or ("An internal error occurred", 500)
                 if wants_json:
@@ -3209,6 +3232,11 @@ class CompletePaymentView(View):
             continue_url = lost_session.success_url
             cancel_url = lost_session.cancel_url
             payment_type = lost_session.payment_type
+            if (
+                payment_type == PROFESSIONAL_SUBSCRIPTION_PAYMENT_TYPE
+                and not fight_paperwork_enabled()
+            ):
+                return None, _FIGHT_PAPERWORK_OFF
             metadata: dict[str, str] = lost_session.metadata  # type: ignore
             recovery_info_id = metadata.get("recovery_info_id")
             line_items = []

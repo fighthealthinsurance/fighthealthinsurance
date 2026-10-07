@@ -19,9 +19,9 @@ explore [patient and market access partnerships](https://www.fighthealthinsuranc
 and reach us for more information from the
 [partner section of the Join the Fight page](https://www.fighthealthinsurance.com/how-to-help#providers).
 
-For development: new self-serve professional signups are off in production and
-on under the `Dev` and test settings, so the signup flow works locally
-(`NEW_PROFESSIONAL_SIGNUP_ENABLED` in `fighthealthinsurance/settings.py`).
+For development: the professional account endpoints are off in every
+configuration, `Dev` included. Set `FIGHT_PAPERWORK_ENABLED=1` to turn them on
+locally (`FIGHT_PAPERWORK_ENABLED` in `fighthealthinsurance/settings.py`).
 
 ## For AI agents and new contributors
 

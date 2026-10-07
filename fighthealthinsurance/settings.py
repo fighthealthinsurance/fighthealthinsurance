@@ -153,13 +153,10 @@ class Base(Configuration):
     PRO_VERSION_AVAILABLE = (
         os.getenv("PRO_VERSION_AVAILABLE", "false").lower() == "true"
     )
-    # New self-serve Fight Paperwork professional signups are closed (connector
-    # agreement in place); professionals request a demo instead and the team
-    # onboards them. Off by default; Dev/Test enable it so the signup flow and
-    # its tests stay exercised.
-    NEW_PROFESSIONAL_SIGNUP_ENABLED = (
-        os.getenv("NEW_PROFESSIONAL_SIGNUP_ENABLED", "false").lower() == "true"
-    )
+    # Fight Paperwork's account endpoints (sign-up, login, invites, password
+    # reset, patient notices, the professional checkout) and so their emails.
+    # Off in every configuration, Dev included; tests turn it on per test.
+    FIGHT_PAPERWORK_ENABLED = _env_flag("FIGHT_PAPERWORK_ENABLED")
     # Experimental Medicaid eligibility landing page. Off by default: while
     # the page is still cooking it serves 404 (and stays out of the sitemap),
     # so the URL is invisible in production. Dev/Test enable it so the page
@@ -973,9 +970,6 @@ class Base(Configuration):
 
 
 class Dev(Base):
-    # Keep the (production-closed) professional signup flow testable locally
-    # and in the Test* configurations that subclass Dev.
-    NEW_PROFESSIONAL_SIGNUP_ENABLED = True
     # Keep the (production-hidden) experimental Medicaid eligibility landing
     # page routable locally and in the Test* configurations.
     MEDICAID_ELIGIBILITY_PAGE_ENABLED = True
