@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Letter review</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px 16px;
+      background-color: #f5f5f5;
+      color: #222;
+      line-height: 1.5;
+    }
+    h1 {
+      color: #222;
+      border-bottom: 2px solid #0b5394;
+      padding-bottom: 10px;
+    }
+    h2 { color: #333; margin-top: 28px; }
+    .lr-intro { color: #333; }
+    .lr-list { list-style: none; padding: 0; margin: 0; }
+    .lr-packet {
+      background: #ffffff;
+      color: #222;
+      border: 1px solid #d5d9de;
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin-bottom: 12px;
+    }
+    .lr-name { font-weight: bold; font-size: 1.05em; overflow-wrap: anywhere; }
+    .lr-meta { color: #444; margin: 4px 0 10px; }
+    .lr-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    a.lr-go {
+      display: inline-block;
+      padding: 9px 16px;
+      border-radius: 4px;
+      background-color: #0b5394;
+      color: #ffffff;
+      text-decoration: none;
+    }
+    a.lr-go:hover, a.lr-go:focus { background-color: #083b6a; color: #ffffff; }
+    a.lr-plain { color: #0b5394; padding: 9px 4px; }
+    .lr-empty { color: #444; }
+    .lr-back { display: inline-block; margin-top: 24px; color: #0b5394; }
+    .lr-export { margin-top: 14px; padding-top: 10px; border-top: 1px solid #e3e6ea; }
+    .lr-note { color: #444; font-size: 0.95rem; margin: 12px 0 0; }
+  </style>
+</head>
+<body>
+  <h1>Letter review</h1>
+  <p class="lr-intro">
+    Read each letter against the input its writer saw and mark it
+    Fabricates, Flag or Clean under the packet's rule. Your labels are
+    yours alone: nobody else's show here, and no model or score is ever shown.
+  </p>
+
+  <h2>Your packets</h2>
+  {% if reading %}
+    <ul class="lr-list">
+      {% for row in reading %}
+        <li class="lr-packet">
+          <div class="lr-name">{{ row.packet.name }}</div>
+          <div class="lr-meta">
+            Rule {{ row.packet.rule_version }} &middot;
+            {{ row.labeled }} of {{ row.assigned }} labeled
+          </div>
+          <div class="lr-actions">
+            {% if row.assigned %}
+              <a class="lr-go" href="{% url 'letter_review_next' row.packet.pk %}">{% if row.finished %}See where you finished{% elif row.started %}Continue labeling{% else %}Start labeling{% endif %}</a>
+              <a class="lr-plain" href="{% url 'letter_review_mine' row.packet.pk %}">My letters and marks</a>
+            {% else %}
+              <span class="lr-empty">No letters are assigned to you in this packet.</span>
+            {% endif %}
+          </div>
+          {% if row.can_export %}
+            <div class="lr-export">
+              <a class="lr-plain" href="{% url 'letter_review_export' row.packet.pk %}">Download every reader's labels (JSON)</a>
+            </div>
+          {% elif superuser %}
+            <p class="lr-note">Every reader's labels can be downloaded here once all readers have finished.</p>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="lr-empty">You are not a reader on any packet.</p>
+  {% endif %}
+
+  {% if others %}
+    <h2>Other packets</h2>
+    <ul class="lr-list">
+      {% for row in others %}
+        <li class="lr-packet">
+          <div class="lr-name">{{ row.packet.name }}</div>
+          <div class="lr-meta">{{ row.total }} letter{{ row.total|pluralize }}. You are not a reader on this packet.</div>
+          {% if superuser %}
+            <div class="lr-actions">
+              <a class="lr-plain" href="{% url 'letter_review_export' row.packet.pk %}">Download every reader's labels (JSON)</a>
+            </div>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if not reading and not others %}
+    <p class="lr-empty">No packets are loaded. A packet arrives through <code>manage.py letter_review_import</code>.</p>
+  {% endif %}
+
+  <a class="lr-back" href="{% url 'staff_dashboard' %}">&larr; Back to staff dashboard</a>
+</body>
+</html>
