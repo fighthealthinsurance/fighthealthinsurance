@@ -286,8 +286,9 @@ class ChatPathTest(EveryStateChecks, TestCase):
             self.assertIn(tool, self.page)
 
     def test_it_does_not_promise_a_record_of_which_assistant_sent_it(self):
-        # The MCP server is stateless, so a tool call never sees the name
-        # the app gives itself at initialize, and the record stores none.
+        # Left off the page for now. The MCP server is stateless, so the
+        # name has to come from the tool call's own request; when that is
+        # stored, this sentence can come back, worded for where it comes from.
         self.assertNotIn("which assistant sent the letter", self.page)
 
     def test_it_says_what_the_assistant_sent_besides_the_letter_is_kept(self):
