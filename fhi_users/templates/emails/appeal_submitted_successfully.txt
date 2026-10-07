@@ -1,6 +1,0 @@
-Dear {{ user.first_name }},
-
-Your appeal has been submitted successfully.
-
-Best regards,
-Fight Health Insurance Team

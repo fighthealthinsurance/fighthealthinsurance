@@ -5,25 +5,20 @@ identifiers in, all real data loaded from Django at execution time.
 """
 
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
 from django.urls import reverse
 
 from loguru import logger
 
 from fighthealthinsurance import intake_resume
 from fighthealthinsurance.appeal_journey_core import aload_denial
+from fighthealthinsurance.utils import build_fallback_email
 
 NUDGE_SUBJECT = "Your appeal on Fight Health Insurance is waiting"
-# The link reopens the case at the step it reached, after the person types
-# the email address they used (intake_resume has the design).
-NUDGE_BODY = (
-    "You started putting together an appeal on Fight Health Insurance and "
-    "didn't get to finish. If you'd like to keep going, this link takes you "
-    "back to where you left off. To keep your case private, it asks for the "
-    "email address you used, and it works for the next {days} days:"
-    "\n\n{url}\n\nIf you'd rather not continue, you can ignore this email; "
-    "we won't send another reminder."
-)
+# emails/intake_nudge.txt and .html hold the words. The link reopens the case
+# at the step it reached, after the person types the email address they used
+# (intake_resume has the design).
+NUDGE_TEMPLATE = "intake_nudge"
 
 
 async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
@@ -87,12 +82,25 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
     # nothing about the person or the case; only its digest is stored.
     token = await intake_resume.amint_link(denial)
     url = base.rstrip("/") + reverse("intake_resume_link", args=[token])
+    # Sent to the person alone, with no staff copy: the copy would carry the
+    # link next to the address that opens it. Built apart from the send, so a
+    # template error is recorded as what it is: nothing was sent. The claim
+    # stays, as the nudge is single-shot and its activity runs once; a broken
+    # template is a deploy bug the render tests catch.
     try:
-        await _asend_mail(
+        message = build_fallback_email(
             NUDGE_SUBJECT,
-            NUDGE_BODY.format(url=url, days=intake_resume.link_days()),
+            NUDGE_TEMPLATE,
+            {"url": url, "days": intake_resume.link_days()},
             denial.raw_email,
         )
+    except Exception:
+        await intake_outbox.arecord_nudge_outcome(
+            claim, intake_outbox.OUTCOME_NOT_BUILT
+        )
+        raise
+    try:
+        await _asend_message(message)
     except Exception:
         # Ambiguous: the provider may or may not have accepted. Record it,
         # keep the claim, re-raise so the activity reports the failure
@@ -108,17 +116,11 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
     return True
 
 
-async def _asend_mail(subject: str, body: str, to: str) -> None:
-    # send_mail is sync network I/O with no ORM: plain asgiref bridge.
+async def _asend_message(message: EmailMultiAlternatives) -> None:
+    # Sending is sync network I/O with no ORM: plain asgiref bridge.
     from asgiref.sync import sync_to_async
 
-    await sync_to_async(send_mail, thread_sensitive=False)(
-        subject,
-        body,
-        getattr(settings, "DEFAULT_FROM_EMAIL", None),
-        [to],
-        fail_silently=False,
-    )
+    await sync_to_async(message.send, thread_sensitive=False)()
 
 
 async def close_incomplete_journey(hashed_email: str, denial_uuid: str) -> bool:

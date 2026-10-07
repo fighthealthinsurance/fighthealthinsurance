@@ -3039,11 +3039,13 @@ class IntakeJourneyEvent(models.Model):
     OUTCOME_SKIPPED_COMPLETED = "skipped_completed"
     OUTCOME_SENT = "sent"
     OUTCOME_SMTP_FAILED = "smtp_failed"
+    OUTCOME_NOT_BUILT = "not_built"
     OUTCOME_CHOICES = [
         (OUTCOME_CLAIMED, "Claimed"),
         (OUTCOME_SKIPPED_COMPLETED, "Skipped: form completed"),
         (OUTCOME_SENT, "Sent"),
         (OUTCOME_SMTP_FAILED, "SMTP failed"),
+        (OUTCOME_NOT_BUILT, "Not sent: the email could not be built"),
     ]
 
     denial = models.ForeignKey(

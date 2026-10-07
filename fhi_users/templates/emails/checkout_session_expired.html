@@ -1,13 +1,24 @@
-{% extends "./base_email.html" %}
-
+{% extends "emails/fhi_base_email.html" %}
+{% block title %}{% if fax %}Paying for your appeal fax is optional{% else %}Your checkout didn't finish{% endif %}{% endblock %}
 {% block content %}
-While you were checking out your session expired. Don't worry you can still finish it at:
-
-
-{{ link }}
-
-If you have any questions, feel free to reach out to our support team at support42@fighthealthinsurance.com
-
-Best regards,
-Fight Paperwork & Fight Health Insurance Team
+<p>
+Hi,
+</p>
+{% if fax %}
+<p>
+We started sending your appeal fax when you pressed Fax My Appeal, so it goes out whether or not you pay. Your checkout for the amount you chose ran out before you finished. If you'd still like to pay it, you can use the button below.
+</p>
+{% include "emails/partials/button.html" with href=link label="Pay for my fax" %}
+{% else %}
+<p>
+Your checkout ran out before you finished. You can still finish it using the button below.
+</p>
+{% include "emails/partials/button.html" with href=link label="Finish checkout" %}
+{% endif %}
+<p>
+If you have any questions, email our support team at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
+</p>
+<p>
+The team at Fight Health Insurance and Timbit
+</p>
 {% endblock %}

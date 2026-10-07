@@ -158,6 +158,10 @@ class StripeWebhookTests(TestCase):
         )
         self.assertIn("/stripe/finish?", link)
         self.assertIn(f"token={lost_session.secure_token}", link)
+        # The email words a fax checkout differently, so it gets the type.
+        self.assertEqual(
+            mock_send_email.call_args.kwargs["payment_type"], "non_professional_item"
+        )
         self.assertNotIn(f"session_id={lost_session.id}", link)
         self.assertNotIn(f"session_id={lost_session.pk}", link)
 
@@ -340,6 +344,9 @@ class StripeWebhookTests(TestCase):
         self.assertIn("/stripe/finish?", link)
         lost_session = LostStripeSession.objects.get(session_id=mock_session.id)
         self.assertIn(f"token={lost_session.secure_token}", link)
+        self.assertEqual(
+            mock_send_email.call_args.kwargs["item"], "Fight Health Insurance"
+        )
 
     @patch(
         "fighthealthinsurance.helpers.stripe_helpers.fhi_emails.send_checkout_session_expired"

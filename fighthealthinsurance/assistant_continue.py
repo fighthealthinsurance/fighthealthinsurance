@@ -21,12 +21,13 @@ import secrets
 from typing import Any, Optional, Tuple
 
 from django.conf import settings
-from django.core.mail import send_mail
 from django.db import transaction
 from django.db.models import F
 from django.urls import reverse
 from django.utils import timezone
 from loguru import logger
+
+from fighthealthinsurance.utils import build_fallback_email
 
 LINK_TTL = datetime.timedelta(days=30)
 MAX_WRONG_EMAILS = 5
@@ -39,14 +40,8 @@ WRONG_EMAIL = "wrong_email"
 DEAD = "dead"
 
 SUBJECT = "Your appeal letters on Fight Health Insurance"
-BODY = (
-    "You agreed to Fight Health Insurance's terms so your AI assistant "
-    "could bring appeal letters back to your chat. If you'd rather finish "
-    "on our site, this link opens the letters we drafted. To keep your case "
-    "private, it asks for this email address, and it works for {days} days:"
-    "\n\n{url}\n\nNothing has been sent to your insurer. If you didn't ask "
-    "for this, you can ignore this email."
-)
+# emails/assistant_continue.txt and .html hold the words.
+TEMPLATE = "assistant_continue"
 
 
 def link_days() -> int:
@@ -86,15 +81,17 @@ def url_for(token: str) -> str:
 
 
 def send(email: str, token: str) -> bool:
-    """Email the link. Best effort: the letters are still drafted without it."""
+    """Email the link. Best effort: the letters are still drafted without it.
+
+    Sent to the person alone, with no staff copy: the copy would carry the
+    link next to the address that opens it."""
     try:
-        send_mail(
+        build_fallback_email(
             SUBJECT,
-            BODY.format(url=url_for(token), days=link_days()),
-            getattr(settings, "DEFAULT_FROM_EMAIL", None),
-            [email],
-            fail_silently=False,
-        )
+            TEMPLATE,
+            {"url": url_for(token), "days": link_days()},
+            email,
+        ).send()
         return True
     except Exception as e:
         logger.warning(f"assistant continue email failed: {type(e).__name__}")

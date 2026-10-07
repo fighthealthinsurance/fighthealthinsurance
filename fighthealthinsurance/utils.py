@@ -1,6 +1,7 @@
 import asyncio
 import concurrent
 import contextvars
+import functools
 import hashlib
 import os
 import random
@@ -37,6 +38,7 @@ from typing import (
     Union,
     cast,
 )
+from email.mime.image import MIMEImage
 from email.utils import formataddr
 from uuid import UUID
 
@@ -477,6 +479,116 @@ def mask_email_for_logging(email: Optional[str]) -> str:
     return f"{masked_local}@{domain}"
 
 
+# The llama at the top of Fight Health Insurance emails (fhi_base_email.html).
+FHI_LOGO_CID = "fhi-logo@fighthealthinsurance.com"
+FHI_LOGO_CID_SRC = f"cid:{FHI_LOGO_CID}"
+_FHI_LOGO_PATH = os.path.join(
+    os.path.dirname(__file__), "static", "images", "better-logo-150.png"
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _read_fhi_logo() -> bytes:
+    # Only a successful read is cached: lru_cache doesn't keep exceptions.
+    with open(_FHI_LOGO_PATH, "rb") as f:
+        return f.read()
+
+
+def _fhi_logo_png() -> Optional[bytes]:
+    try:
+        return _read_fhi_logo()
+    except OSError:
+        logger.warning("Email logo missing; sending without it")
+        return None
+
+
+class InlineImageEmail(EmailMultiAlternatives):
+    """The text and HTML inside multipart/related, beside the images the HTML
+    shows by Content-ID."""
+
+    mixed_subtype = "related"
+
+    def message(self, *args: Any, **kwargs: Any):
+        msg = super().message(*args, **kwargs)
+        if msg.get_content_subtype() == "related":
+            # RFC 2387: related names the type of its first part.
+            msg.set_param("type", "multipart/alternative")
+        return msg
+
+
+def build_fallback_email(
+    subject: str,
+    template_name: str,
+    context,
+    to_email: str,
+    from_name: Optional[str] = None,
+    reply_to: Optional[str] = None,
+    extra_headers: Optional[Dict[str, str]] = None,
+    cc: Optional[List[str]] = None,
+) -> EmailMultiAlternatives:
+    """Build, without sending, the message send_fallback_email sends.
+
+    Renders emails/<template_name>.txt as the body and .html as its
+    alternative, under our From, Reply-To and auto-generated headers. A
+    caller that sends it directly sends to the recipient alone, with no staff
+    copy and no blocked-address check: the emails carrying a private link
+    (a staff copy would hold the link beside the address that opens it), and
+    the fax follow-up, which checks the address itself.
+    """
+    text_content = render_to_string(
+        f"emails/{template_name}.txt",
+        context=context,
+    )
+    html_content: str = render_to_string(
+        f"emails/{template_name}.html",
+        context=context,
+    )
+    # Fight Health Insurance emails (fhi_base_email.html) show the logo; it
+    # travels with the message.
+    logo = _fhi_logo_png() if FHI_LOGO_CID_SRC in html_content else None
+    if FHI_LOGO_CID_SRC in html_content and logo is None:
+        # No image to send: drop the reference rather than show a broken one.
+        html_content = re.sub(
+            r"<img[^>]*" + re.escape(FHI_LOGO_CID_SRC) + r"[^>]*>\s*", "", html_content
+        )
+    # Build a From: with a display name so mailbox providers show a recognizable
+    # sender (e.g. "Fight Health Insurance Support") instead of a bare address,
+    # which both helps users find/trust the mail and is one of several signals
+    # spam filters look at.
+    display_name = from_name or "Fight Health Insurance Support"
+    from_address = formataddr((display_name, settings.DEFAULT_FROM_EMAIL))
+    reply_to_address = reply_to or settings.DEFAULT_FROM_EMAIL
+    # Mark these as transactional auto-generated mail per RFC 3834 so providers
+    # don't treat them as bulk and don't generate auto-replies back to us.
+    # These are set after extra_headers so callers can't accidentally clobber
+    # them.
+    headers: Dict[str, str] = {}
+    if extra_headers:
+        headers.update(extra_headers)
+    headers["Auto-Submitted"] = "auto-generated"
+    headers["X-Auto-Response-Suppress"] = "All"
+    email_class = EmailMultiAlternatives if logo is None else InlineImageEmail
+    msg = email_class(
+        subject,
+        text_content,
+        from_address,
+        to=[to_email],
+        cc=cc or None,
+        reply_to=[reply_to_address],
+        headers=headers,
+    )
+    msg.attach_alternative(html_content, "text/html")
+    if logo is not None:
+        # Inline, by Content-ID: a linked image waits behind "load images",
+        # and Gmail drops data: URIs.
+        image = MIMEImage(logo, _subtype="png")
+        image.add_header("Content-ID", f"<{FHI_LOGO_CID}>")
+        # No filename: some clients list a named inline image as an attachment.
+        image.add_header("Content-Disposition", "inline")
+        msg.attach(image)
+    return msg
+
+
 def send_fallback_email(
     subject: str,
     template_name: str,
@@ -501,59 +613,34 @@ def send_fallback_email(
                 f"Dropping blocked CC address: {mask_email_for_logging(dropped)}"
             )
         cc = kept_cc
-    # First, render the plain text content if present
-    text_content = render_to_string(
-        f"emails/{template_name}.txt",
-        context=context,
-    )
-
-    # Secondly, render the HTML content if present
-    html_content = render_to_string(
-        f"emails/{template_name}.html",
-        context=context,
-    )
-    # Build a From: with a display name so mailbox providers show a recognizable
-    # sender (e.g. "Fight Health Insurance Support") instead of a bare address,
-    # which both helps users find/trust the mail and is one of several signals
-    # spam filters look at.
-    display_name = from_name or "Fight Health Insurance Support"
-    from_address = formataddr((display_name, settings.DEFAULT_FROM_EMAIL))
-    reply_to_address = reply_to or settings.DEFAULT_FROM_EMAIL
-    # Mark these as transactional auto-generated mail per RFC 3834 so providers
-    # don't treat them as bulk and don't generate auto-replies back to us.
-    # These are set after extra_headers so callers can't accidentally clobber
-    # them.
-    headers: Dict[str, str] = {}
-    if extra_headers:
-        headers.update(extra_headers)
-    headers["Auto-Submitted"] = "auto-generated"
-    headers["X-Auto-Response-Suppress"] = "All"
-    msg = EmailMultiAlternatives(
+    msg = build_fallback_email(
         subject,
-        text_content,
-        from_address,
-        to=[to_email],
-        cc=cc or None,
-        reply_to=[reply_to_address],
-        headers=headers,
+        template_name,
+        context,
+        to_email,
+        from_name=from_name,
+        reply_to=reply_to,
+        extra_headers=extra_headers,
+        cc=cc,
     )
     logger.debug(
         f"Sending email to {mask_email_for_logging(to_email)} with subject {subject}"
     )
-
-    # Lastly, attach the HTML content to the email instance and send.
-    msg.attach_alternative(html_content, "text/html")
     msg.send()
     try:
-        second_msg = EmailMultiAlternatives(
+        # The same class, so the copy carries the inline logo the same way.
+        second_msg = type(msg)(
             subject + " -- " + to_email,
-            text_content,
-            from_address,
+            msg.body,
+            msg.from_email,
             to=settings.BCC_EMAILS,
-            reply_to=[reply_to_address],
-            headers=headers,
+            reply_to=msg.reply_to,
+            headers=msg.extra_headers,
         )
-        second_msg.attach_alternative(html_content, "text/html")
+        for content, mimetype in msg.alternatives:
+            second_msg.attach_alternative(content, mimetype)
+        for attachment in msg.attachments:
+            second_msg.attach(attachment)
         second_msg.send()
     except Exception as e:
         logger.error(f"Error sending email to BCC: {e}")

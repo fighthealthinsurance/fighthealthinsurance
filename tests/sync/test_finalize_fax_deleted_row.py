@@ -21,7 +21,7 @@ class FinalizeFaxDeletedRowTest(TestCase):
         )
 
     @mock.patch("fighthealthinsurance.fax_send_core.send_fax_status_notification")
-    @mock.patch("fighthealthinsurance.fax_send_core.EmailMultiAlternatives")
+    @mock.patch("fighthealthinsurance.fax_send_core.build_fallback_email")
     def test_deleted_row_is_not_resurrected_and_nobody_is_notified(
         self, mock_email, mock_notify
     ):
@@ -36,7 +36,7 @@ class FinalizeFaxDeletedRowTest(TestCase):
         mock_email.assert_not_called()
 
     @mock.patch("fighthealthinsurance.fax_send_core.send_fax_status_notification")
-    @mock.patch("fighthealthinsurance.fax_send_core.EmailMultiAlternatives")
+    @mock.patch("fighthealthinsurance.fax_send_core.build_fallback_email")
     def test_present_row_is_marked_sent(self, mock_email, mock_notify):
         fax = self._fax()
         fax_send_core.finalize_fax(fax, True, False)

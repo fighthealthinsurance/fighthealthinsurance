@@ -1,28 +1,21 @@
-Hello,
+{% autoescape off %}Hi,
 
-It's been about a week since you generated your appeal with Fight Health Insurance, and we wanted to check in.
+It's been about a week since you used Fight Health Insurance, so we wanted to check in.
 
-{% if selected_appeal %}
-Have you sent your appeal to your insurance company yet? If not, now is a great time to do so. You can submit your appeal by:
+{% if selected_appeal %}Have you sent your appeal to your insurance company yet? If not, now is a good time. You can send it by:
 
-- Fax: This is often the fastest method. Check your denial letter for the fax number.
-- Mail: Send it via certified mail so you have proof of delivery.
-- Online portal: Some insurers allow you to upload appeals through their member portal.
+- Fax: often the fastest way. Check your denial letter for the fax number.
+- Mail: send it by certified mail so you have proof of delivery.
+- Online portal: some insurers let you upload appeals through their member portal.
 
-If you've already sent it, great! We recommend calling your insurance company to confirm they received it and asking for a reference number or confirmation. This helps ensure your appeal doesn't get lost.
-{% else %}
-It looks like we may not have generated an appeal that worked for you. We'd love to know what we can do better — your feedback helps us improve for everyone.
-{% endif %}
+If you've already sent it, we recommend calling your insurance company to confirm they received it and asking for a reference number or confirmation. This helps make sure your appeal doesn't get lost.{% elif generated_proposals %}Did one of the appeal letters work for you? If so, now is a good time to send it to your insurance company, by fax, certified mail or their member portal. If none of them worked, we'd love to know what we could do better.{% else %}It looks like you didn't end up with an appeal letter. If something got in the way, we'd love to hear what. Your feedback helps us improve for everyone.{% endif %}
 
-Please let us know how things are going at {{ followup_link }} — it only takes a minute and helps us improve our service.
+Please let us know how things are going. It only takes a minute and helps us improve our service.
 
-Thank you for being part of our community! If you found Fight Health Insurance helpful, there are many ways you can help us and others fighting unfair denials:
-- Share your experience with friends and family who might need help
-- Follow us on social media to help spread awareness
-- Learn more at: https://www.fighthealthinsurance.com/how-to-help
+Tell us how it's going:
+{{ followup_link }}
 
-Wishing you the best of luck with your appeal,
+{% include "emails/partials/how_to_help.txt" %}
+Wishing you the best of luck with your fight with insurance,
 
-The Fight Health Insurance team
-
-https://www.fighthealthinsurance.com
+The team at Fight Health Insurance and Timbit{% endautoescape %}

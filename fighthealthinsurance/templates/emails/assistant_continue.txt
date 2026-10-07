@@ -1,0 +1,14 @@
+{% autoescape off %}Hi,
+
+You agreed to our terms so your AI assistant could bring your appeal letters back to your chat. If you'd rather finish on our site, the same letters will be there as soon as they're written.
+
+Open my appeal letters:
+{{ url }}
+
+The link works for {{ days }} days. To keep your case private, it will ask for this email address.
+
+Nothing has been sent to your insurer. You pick a letter, edit it, and send it yourself.
+
+If you didn't ask for this, you can ignore this email.
+
+The team at Fight Health Insurance and Timbit{% endautoescape %}

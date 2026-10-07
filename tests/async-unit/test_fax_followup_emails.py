@@ -308,7 +308,6 @@ class TestFaxActorEmailSending:
         """Test that the context dict has all required keys for the template."""
         # The template requires these keys
         required_context_keys = [
-            "name",
             "success",
             "fax_redo_link",
             "missing_destination",

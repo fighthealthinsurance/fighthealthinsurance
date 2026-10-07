@@ -1,43 +1,40 @@
-Hello,<br>
+{% extends "./fhi_base_email.html" %}
+{% block title %}Checking in on your appeal{% endblock %}
+{% block content %}
+<p>Hi,</p>
 <p>
-It's been about a week since you generated your appeal with Fight Health Insurance, and we wanted to check in.
+It's been about a week since you used Fight Health Insurance, so we wanted to check in.
 </p>
-
 {% if selected_appeal %}
 <p>
-<strong>Have you sent your appeal to your insurance company yet?</strong> If not, now is a great time to do so. You can submit your appeal by:
+<strong>Have you sent your appeal to your insurance company yet?</strong> If not, now is a good time. You can send it by:
 </p>
 <ul>
-  <li><strong>Fax:</strong> This is often the fastest method. Check your denial letter for the fax number.</li>
-  <li><strong>Mail:</strong> Send it via certified mail so you have proof of delivery.</li>
-  <li><strong>Online portal:</strong> Some insurers allow you to upload appeals through their member portal.</li>
+  <li><strong>Fax:</strong> often the fastest way. Check your denial letter for the fax number.</li>
+  <li><strong>Mail:</strong> send it by certified mail so you have proof of delivery.</li>
+  <li><strong>Online portal:</strong> some insurers let you upload appeals through their member portal.</li>
 </ul>
 <p>
-If you've already sent it, great! We recommend <strong>calling your insurance company to confirm they received it</strong> and asking for a reference number or confirmation. This helps ensure your appeal doesn't get lost.
+If you've already sent it, we recommend <strong>calling your insurance company to confirm they received it</strong> and asking for a reference number or confirmation. This helps make sure your appeal doesn't get lost.
+</p>
+{% elif generated_proposals %}
+<p>
+Did one of the appeal letters work for you? If so, now is a good time to send it to your insurance company, by fax, certified mail or their member portal. If none of them worked, we'd love to know what we could do better.
 </p>
 {% else %}
 <p>
-It looks like we may not have generated an appeal that worked for you. We'd love to know what we can do better — your feedback helps us improve for everyone.
+It looks like you didn't end up with an appeal letter. If something got in the way, we'd love to hear what. Your feedback helps us improve for everyone.
 </p>
 {% endif %}
-
 <p>
-  Please <a href="{{ followup_link }}">let us know how things are going</a> — it only takes a minute and helps us improve our service.
+Please let us know how things are going. It only takes a minute and helps us improve our service.
+</p>
+{% include "emails/partials/button.html" with href=followup_link label="Tell us how it's going" %}
+{% include "emails/partials/how_to_help.html" %}
+<p>
+Wishing you the best of luck with your fight with insurance,
 </p>
 <p>
-  Thank you for being part of our community! If you found Fight Health Insurance helpful, there are many ways you can help us and others fighting unfair denials:
+The team at Fight Health Insurance and Timbit
 </p>
-<ul>
-  <li>Share your experience with friends and family who might need help</li>
-  <li>Follow us on social media to help spread awareness</li>
-  <li>Learn more at: <a href="https://www.fighthealthinsurance.com/how-to-help">fighthealthinsurance.com/how-to-help</a></li>
-</ul>
-
-<p>
-  Wishing you the best of luck with your appeal,
-</p>
-<br>
-The Fight Health Insurance team<br/>
-<br>
----<br>
-<a href="https://www.fighthealthinsurance.com">https://www.fighthealthinsurance.com</a>
+{% endblock %}

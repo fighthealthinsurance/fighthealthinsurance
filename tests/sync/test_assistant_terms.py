@@ -197,6 +197,28 @@ class AgreeTest(TermsTestBase):
         self.client.post(AGREE, terms_form(code))
         self.assertEqual(len(mail.outbox), 1)
 
+    def test_the_continue_email_goes_alone_and_its_button_opens_the_same_link(self):
+        code, _, _ = self.open_terms()
+        self.client.post(AGREE, terms_form(code))
+        message = mail.outbox[0]
+        self.assertIn("Fight Health Insurance Support", message.from_email)
+        # No staff copy: it would hold the link beside the address it asks for.
+        self.assertEqual((message.cc, message.bcc), ([], []))
+        url = next(w for w in message.body.split() if "your-appeal-letters" in w)
+        ((html, _),) = message.alternatives
+        self.assertIn(f'href="{url}"', html)
+        # The days it says the link works are the link's real lifetime.
+        for part in (message.body, html):
+            self.assertIn(f"{assistant_continue.link_days()} days", part)
+
+    def test_a_continue_email_that_fails_to_send_returns_false(self):
+        with patch(
+            "django.core.mail.EmailMultiAlternatives.send",
+            side_effect=OSError("smtp down"),
+        ):
+            self.assertFalse(assistant_continue.send(EMAIL, "a-token"))
+        self.assertEqual(len(mail.outbox), 0)
+
     def test_a_second_press_after_agreeing_shows_the_agreed_page_again(self):
         code, _, _ = self.open_terms()
         self.client.post(AGREE, terms_form(code))

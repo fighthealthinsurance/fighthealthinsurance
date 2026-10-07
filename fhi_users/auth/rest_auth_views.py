@@ -383,7 +383,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 context = {
                     "practice_name": user_domain.name or "our practice",
                     "inviter_name": f"{current_user.first_name} {current_user.last_name}",
-                    "professional_name": f"{first_name} {last_name}",
+                    "professional_name": f"{first_name} {last_name}".strip(),
                     "practice_phone": user_domain.visible_phone_number,
                     "email": email,
                 }
