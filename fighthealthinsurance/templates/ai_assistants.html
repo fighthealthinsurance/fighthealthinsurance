@@ -20,125 +20,96 @@
   /* The address and the commands are single runs no browser breaks on its
      own, wider than a list item on a 390px phone. */
   #other-assistants code { overflow-wrap: anywhere; }
+  .ai-tagline { font-weight: 600; color: var(--fhi-green-ink); margin-bottom: var(--fhi-space-2); }
+  .ai-buttons { display: flex; flex-wrap: wrap; gap: var(--fhi-space-3); }
+  .ai-checks { list-style: none; padding-left: 0; }
+  .ai-checks > li { padding-left: 1.75rem; position: relative; }
+  .ai-checks > li + li { margin-top: var(--fhi-space-2); }
+  .ai-checks > li::before { content: "\2713"; position: absolute; left: 0; color: var(--fhi-green-ink); font-weight: 700; }
+  .ai-figure-row { display: grid; gap: var(--fhi-space-4); grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); align-items: start; }
 </style>
 {% endblock extra_style %}
 
 {% block content %}
 <div class="fhi-page-wide">
-    {% if prepare_appeal_on %}
-    {% include "partials/page_title.html" with title="Use Fight Health Insurance with your AI assistant" lede="Now you can get your AI to talk with us too. Connect Claude, ChatGPT or another AI assistant to Fight Health Insurance, and it can answer from our appeal information and help you start an appeal from your chat. It is free, and there is no sign-in." %}
-    {% else %}
-    {% include "partials/page_title.html" with title="Use Fight Health Insurance with your AI assistant" lede="Now you can get your AI to talk with us too. Connect Claude, ChatGPT or another AI assistant to Fight Health Insurance, and it can answer from our appeal information and give you the link to start an appeal here. It is free, and there is no sign-in." %}
-    {% endif %}
+    <header class="fhi-page-title">
+        <p class="ai-tagline">Insurers are betting you won't appeal. We keep making it easier to prove them wrong.</p>
+        <h1>Now Your AI Can Work With Ours</h1>
+        <p class="fhi-page-lede">Already asking Claude, ChatGPT or another assistant about a denial? Connect it to us once, and it can answer from our appeal information and {% if prepare_appeal_on %}help you start an appeal from your chat{% else %}give you the link to start an appeal here{% endif %}. Free, no sign-in.</p>
+    </header>
 
     <div class="fhi-stack fhi-stack-loose">
         <section class="fhi-stack" id="in-short">
-            <h2>In short</h2>
-            <div class="fhi-cards fhi-cards-roomy">
-                <div class="fhi-card">
-                    <h3 class="fhi-card-title">What it is</h3>
-                    <p>A connection between your AI assistant and this site. It uses MCP (Model Context Protocol), an open standard that lets an assistant use tools from other sites. You add our address to your assistant once. Then, in a chat, turn it on (Claude) or pick it with @ (ChatGPT), and when you ask about a denial, it can check with us instead of answering only from what it already knows.</p>
-                </div>
-                <div class="fhi-card">
-                    <h3 class="fhi-card-title">Why it helps</h3>
-                    <p>If you already ask your assistant about a denial, now it can ask us too.</p>
-                    <ul>
-                        <li>Its answers can draw on our guides, state pages and insurer appeal contacts, with links back here so you can check them.</li>
-                        {% if chat_path_on %}
-                        <li>When you're ready, it can help you start an appeal: fill in our form for you to finish here, or send us your letter and bring up to three draft appeal letters back to your chat.</li>
-                        {% elif prepare_appeal_on %}
-                        <li>When you're ready, it can fill in our appeal form with your letter for you to check and submit here.</li>
-                        {% else %}
-                        <li>When you're ready, it gives you the link to start an appeal here.</li>
-                        {% endif %}
-                        {% if prepare_appeal_on %}
-                        <li>We ask your assistant to check with you before it sends us your letter, and Claude and ChatGPT ask your permission first unless you've set them to always allow it.</li>
-                        {% endif %}
-                        <li>Nothing goes to your insurer. You edit and send the letter yourself.</li>
-                        <li>Free, with no account, key or password.{% if chat_path_on %} To get letters back in your chat, we ask for your email address.{% endif %}</li>
-                    </ul>
-                </div>
-                {# id="address" keeps links to the old "The address" section working. #}
-                <div class="fhi-card" id="address">
-                    <h3 class="fhi-card-title">Set it up once</h3>
-                    <p>Add this address to your assistant as a custom connector:</p>
-                    <p class="ai-address"><code>https://www.fighthealthinsurance.com/mcp</code></p>
-                    <a class="fhi-button fhi-button-primary" href="https://claude.ai/customize/connectors?modal=add-custom-connector&amp;connectorName=Fight%20Health%20Insurance&amp;connectorUrl=https%3A%2F%2Fwww.fighthealthinsurance.com%2Fmcp">Add to Claude</a>
-                    <p><a class="link" href="#chatgpt">Steps for ChatGPT</a> &middot; <a class="link" href="#other-assistants">Other apps</a></p>
-                </div>
-            </div>
+            <p>Rather not use an AI assistant? That's fine too. <a class="link" href="{% url 'scan' %}">Start an appeal right here</a>, like always.</p>
+            <p class="ai-buttons">
+                <a class="fhi-button fhi-button-primary" href="https://claude.ai/customize/connectors?modal=add-custom-connector&amp;connectorName=Fight%20Health%20Insurance&amp;connectorUrl=https%3A%2F%2Fwww.fighthealthinsurance.com%2Fmcp">Add to Claude</a>
+                <a class="fhi-button fhi-button-secondary" href="#chatgpt">Steps for ChatGPT</a>
+            </p>
         </section>
 
         <nav class="fhi-jump-links" aria-label="On this page">
-            <a href="#how-it-works">How it works</a>
+            <a href="#mcp">What MCP is</a>
+            <a href="#how-it-works">Ways it works</a>
             <a href="#claude">Set it up in Claude</a>
             <a href="#chatgpt">Set it up in ChatGPT</a>
             <a href="#other-assistants">Other apps</a>
-            <a href="#what-it-does">What it can do</a>
+            <a href="#start-an-appeal">Start an appeal</a>
             <a href="#privacy">Privacy and limits</a>
         </nav>
 
-        <section class="fhi-stack" id="how-it-works">
-            <h2>How it works</h2>
-            <p>You ask your question the way you normally would. When it's about a denial or an appeal, your assistant can send our tools a few words, like "MRI" or your state, and we send back what this site says, with links. Your assistant uses that in its answer, so you can follow the links and check the source yourself.</p>
-            <ol class="ai-steps">
-                <li>Add Fight Health Insurance to your assistant (steps below).</li>
-                <li>Ask your question, for example: "I got a denial for an MRI, where do I start?"</li>
-                <li>Your assistant can check our site, and its answer should link to the pages it used.</li>
-                <li>When you're ready to appeal, it can help you start one.</li>
-            </ol>
-            <p>Claude asks before it uses a tool, unless you've set that tool to <b>Always allow</b>. {% if prepare_appeal_on %}ChatGPT asks before it uses one of the tools that send us something; the look-up tools run on their own.{% else %}ChatGPT runs the look-up tools without asking.{% endif %}</p>
+        <section class="fhi-stack" id="mcp">
+            <h2>Plug Us In With MCP</h2>
+            <p>MCP (Model Context Protocol) is an open standard that lets AI assistants use tools from other sites. Think of it as a plug: add our address once, and when you ask about a denial, your assistant can check with us instead of answering only from what it already knows.</p>
+            <ul class="ai-checks">
+                <li><strong>Answers you can check.</strong> Its answers can link back to our pages, so you can see the source.</li>
+                {% if prepare_appeal_on %}
+                <li><strong>With your OK.</strong> We ask your assistant to check with you before it sends us your letter, and Claude and ChatGPT ask your permission first unless you've set them to always allow it.</li>
+                {% endif %}
+                <li><strong>You send it.</strong> Nothing goes to your insurer until you edit and send the letter yourself.</li>
+                <li><strong>Free.</strong> No account, key or password.{% if chat_path_on %} To get letters back in your chat, we ask for your email address.{% endif %}</li>
+            </ul>
         </section>
 
-        <section class="fhi-stack" id="start-an-appeal">
-            <h2>Starting an appeal from your chat</h2>
-            {% if prepare_appeal_on %}
-            <p>There are {% if chat_path_on %}three{% else %}two{% endif %} ways. Pick the one you're comfortable with.</p>
-            <p>The simplest: ask your assistant for the link to start an appeal here, then upload or paste your letter on our site yourself. Your assistant doesn't send us your letter.</p>
-            <p>{% if chat_path_on %}For the other two, share your denial letter with your assistant and ask it to help you appeal.{% else %}Or share your denial letter with your assistant and ask it to fill in our form for you.{% endif %} Anything you share in the chat, including your letter, also goes to the company that makes your assistant, under its own privacy policy. We ask your assistant to check with you before it sends us your letter. We also ask it to offer to swap your name, member ID and group number for placeholders and to leave out your address, phone number and date of birth. Say yes to that. If you agree, it sends us the letter, plus a few words on what was denied and the condition if it has them, and gives you a link. We ask it to tell you what it sent, too.</p>
-            <p>That link opens our page. It opens once. {% if chat_path_on %}It works only in the browser where you first open it, so open it in the browser you'll finish in.{% else %}Open it in the browser you'll finish in.{% endif %} It lasts two hours. The two hours start when your assistant makes the link, not when you open it.</p>
-            {% if chat_path_on %}
-            {# SCREENSHOT TODO: assistant-1-ask.webp - Claude asking permission to use Draft appeal letters to bring back to this chat, with the made-up sample letter showing the FIRST_NAME, LAST_NAME and SCSID placeholders in place of the name and member ID. Alt: Claude asking permission to use Draft appeal letters to bring back to this chat from Fight Health Insurance, with a made-up denial letter in which the name and member ID are placeholders. Caption: Your assistant asks before it sends us the letter. #}
-
-            <h3 id="letters-in-chat">Get letters back in your chat</h3>
-            <p>We draft appeal letters, and your assistant can bring them back to the chat.</p>
+        {# id="how-it-works" keeps links to the old "How it works" section landing. #}
+        <section class="fhi-stack" id="how-it-works">
+            <h2>{% if chat_path_on %}Three{% else %}Two{% endif %} Ways It Works With Us</h2>
+            <p class="fhi-hint">Pick what you're comfortable with.</p>
             <ol class="ai-steps">
-                <li>Open the link and press <b>Open my appeal form</b>. Our page shows the letter your assistant sent.</li>
-                <li>Check the letter. Under <b>About you</b>, fill in your name, email address, street address and ZIP code, then press <b>Remove personal details</b>. We try to keep your name and street address in your browser. Read the letter again and take out anything it missed, such as your member ID.</li>
-                <li>Say who the appeal is for: you, or someone you're helping who asked you to and is fine with us keeping it as our privacy policy says.</li>
-                <li>Tick the four boxes, which say: you've taken your personal details out of the letter, you've read our privacy policy, you agree to our terms, and the appeal is your own or for someone who asked you to. Then tick "I'm not a robot" if it shows.</li>
-                <li>Under <b>Optional choices</b>, "Use outside AI services to get more appeal drafts" is ticked by default. While it's ticked, your letter is also shared with those services, under their own terms. You can untick it.</li>
-                <li>Press <b>Agree and go back to my chat</b>. Then tell your assistant you're done.</li>
-                <li>We read the letter and may have a few questions. Your assistant is asked to put them to you and send only what you say. You can skip any.</li>
-                <li>Up to three draft letters come back to the chat, usually in a few minutes. Where a letter needs your name or member ID, it should have a placeholder. Your assistant is asked to fill those in from your chat, or ask you, and not to send them to us.</li>
-                <li>Nothing is sent to your insurer. Read the letters, check the details, pick one, edit it and send it yourself.</li>
+                <li><strong>Look things up.</strong> Ask about a denial, and your assistant can check our guides, state pages and insurer appeal contacts.</li>
+                {% if chat_path_on %}
+                <li><strong>Start on our site.</strong> Your assistant gives you the link, and you upload or paste your letter yourself. Or, with your OK, it fills in our form with your letter for you to check and finish here.</li>
+                <li><strong>Get letters back in your chat.</strong> With your OK, it sends us your letter. Once you agree on our page, it can bring up to three draft appeal letters back to your chat.</li>
+                {% elif prepare_appeal_on %}
+                <li><strong>Start on our site.</strong> Your assistant gives you the link, and you upload or paste your letter yourself. Or, with your OK, it can fill in our appeal form with your letter for you to check and submit here.</li>
+                {% else %}
+                <li><strong>Start on our site.</strong> When you're ready, it gives you the link to start an appeal here. You upload or paste your letter yourself.</li>
+                {% endif %}
             </ol>
-            <p>Your assistant can collect the letters for a day after you agree. We also email you a link to finish on our site instead. It asks for your email address and works for 30 days.</p>
-            <p>Changed your mind on our page? <b>Finish on this site instead</b> opens our usual appeal form with your letter in it.</p>
+            {% if chat_path_on %}
             <figure class="ai-figure">
-                <picture>
-                    <source media="(max-width: 40rem)" srcset="{% static 'images/ai-assistants/terms-page-narrow.webp' %}" width="400" height="2080">
-                    <img src="{% static 'images/ai-assistants/terms-page.webp' %}" alt="Fight Health Insurance's Agree to get your appeal letters page, with a made-up denial letter in the box, the About you fields, and the Remove personal details button." width="1280" height="1585" loading="lazy">
-                </picture>
-                <figcaption>On our page you check the letter, remove personal details and agree.</figcaption>
+                <img src="{% static 'images/ai-assistants/assistant-choices.webp' %}" alt="Claude laying out ways to use Fight Health Insurance: get the drafts here in chat, finish on their site, or do it yourself on their site." width="1200" height="398" loading="lazy">
+                <figcaption>Claude laying out the ways, in its own words.</figcaption>
             </figure>
-            {# SCREENSHOT TODO: assistant-3-letters.webp - the chat after the drafts arrive: the assistant's introduction, the number of letters, the first line or two of each, and the line saying nothing goes to the insurer. Alt: Claude showing three draft appeal letters from Fight Health Insurance, cropped to the introduction and the first lines of each letter, with a note that the person sends the letter themselves. Caption: The drafts come back to your chat to read, edit and send yourself. #}
-            {% else %}
-            {# SCREENSHOT TODO (optional): a shot of Claude's permission prompt for Fill in an appeal form for the person to check, with the same sample letter, for this state. Alt: Claude asking permission to use Fill in an appeal form for the person to check from Fight Health Insurance, with a made-up denial letter in which the name and member ID are placeholders. Caption: Your assistant asks before it sends us the letter. #}
             {% endif %}
+            <div class="ai-figure-row">
+                <figure class="ai-figure">
+                    <img src="{% static 'images/ai-assistants/claude-4-answer.webp' %}" alt="Claude's answer to &quot;I got a denial for an MRI, where do I start?&quot;, marked Used Fight Health Insurance, with a first step, Pull the key details from your letter, and a link to Fight Health Insurance's MRI denial guide." width="1200" height="821" loading="lazy">
+                    <figcaption>An answer that used our tools, with a link back here. Answers vary by assistant and by question.</figcaption>
+                </figure>
+                {% if chat_path_on %}
+                <figure class="ai-figure">
+                    <img src="{% static 'images/ai-assistants/assistant-1-ask.webp' %}" alt="Claude asking to use Draft appeal letters to bring back to this chat from Fight Health Insurance, on a made-up denial letter with placeholders for the name, member ID and group number." width="1200" height="485" loading="lazy">
+                    <figcaption>Your assistant asks before it sends us the letter, with your name and IDs swapped for placeholders.</figcaption>
+                </figure>
+                {% endif %}
+            </div>
+        </section>
 
-            <h3 id="finish-on-site">Finish on our site</h3>
-            <ol class="ai-steps">
-                <li>Open the link and press <b>Open my appeal form</b>. Your letter is already in the box.</li>
-                <li>Check it, remove personal details and go through the usual steps here. "Use outside AI services to get more appeal drafts" is ticked by default here too, and you can untick it.</li>
-                <li>Nothing is saved as an appeal until you submit the form yourself.</li>
-            </ol>
-            {% if chat_path_on %}
-            <p>Sometimes we can't draft letters for a chat, for example when we've reached our daily limit. When that happens, the link opens our appeal form with your letter in it instead, so you can finish here.</p>
-            {% endif %}
-            {% else %}
-            <p>When you're ready to appeal, the assistant gives you a link to start here, where you upload or paste the letter yourself. The assistant never takes the letter.</p>
-            {% endif %}
+        <section class="fhi-stack" id="address">
+            <h2>Set It Up Once</h2>
+            <p>Add this address to your assistant as a custom connector:</p>
+            <p class="ai-address"><code>https://www.fighthealthinsurance.com/mcp</code></p>
+            <p>Step by step: <a class="link" href="#claude">Claude</a> &middot; <a class="link" href="#chatgpt">ChatGPT</a> &middot; <a class="link" href="#other-assistants">Other apps</a></p>
         </section>
 
         <section class="fhi-stack" id="claude">
@@ -158,17 +129,19 @@
                 </li>
                 <li>
                     Name it <b>Fight Health Insurance</b>, paste the address above as the MCP server URL and press <b>Continue</b>. If Claude shows more screens about authentication, press <b>Continue</b>, choose <b>No sign in</b> under <b>Authentication</b> and press <b>Add</b>. There is nothing to sign in to.
-                    {# SCREENSHOT TODO: claude-2-add-dialog.webp is due a retake from the Add to Claude link on a fresh account (prefilled name and address, and Claude's notice that they came from a link). The current file shows the dialog with the name and address filled in, which the alt below describes. #}
                     <figure>
-                        <img src="{% static 'images/ai-assistants/claude-2-add-dialog.webp' %}" alt="The Add custom connector dialog with the name Fight Health Insurance and the MCP server URL filled in." width="1200" height="1005" loading="lazy">
-                        <figcaption>The name and the address, nothing else.</figcaption>
+                        <img src="{% static 'images/ai-assistants/claude-2-add-dialog.webp' %}" alt="Claude's Add custom connector dialog with Fight Health Insurance and https://www.fighthealthinsurance.com/mcp filled in, under a notice that an external link suggested the connector." width="1072" height="1008" loading="lazy">
+                        <figcaption>Claude notes that a link filled these in. The name and the address, nothing else.</figcaption>
                     </figure>
                     {# SCREENSHOT TODO (only if the retake shows more screens): claude-2b-no-sign-in.webp - Claude's Authentication choice with No sign in selected and the Add button. Alt: Claude's Authentication choice for the new connector, with No sign in selected and the Add button. Caption: Choose No sign in, then Add. #}
                 </li>
                 <li>
                     {% if chat_path_on %}
                     Open the connector's page and check <b>Tool permissions</b>. It lists 14 tools. Eleven are read-only: they look things up, give you a link, or check on letters being drafted. Three send something to us when you start an appeal: <b>Fill in an appeal form for the person to check</b>, <b>Draft appeal letters to bring back to this chat</b>, and <b>Send the person's answers and start the letters</b>. If you want Claude to ask you every time before it uses those three, leave them on <b>Needs approval</b>.
-                    {# SCREENSHOT TODO: claude-3-tool-permissions.webp needs a retake showing all 14 tools in both groups, with the three that send something readable by name and the group's setting on Needs approval. The current file is the older shot of 10 read-only tools, true only of the both-off state, so it shows there until the retake replaces it here. Alt for the retake: The connector's page in Claude listing Fight Health Insurance's 14 tools under Tool permissions: 11 read-only tools and 3 that send something to Fight Health Insurance. Caption: Tool permissions lists the 14 tools. #}
+                    <figure>
+                        <img src="{% static 'images/ai-assistants/claude-3-tool-permissions-14.webp' %}" alt="Fight Health Insurance's Tool permissions in Claude: 11 read-only tools, and 3 write/delete tools on Needs approval, named Send the person's answers and start the letters, Draft appeal letters to bring back to this chat, and Fill in an appeal form for the person to check." width="1200" height="539" loading="lazy">
+                        <figcaption>The three that send us something, on Needs approval.</figcaption>
+                    </figure>
                     {% elif prepare_appeal_on %}
                     Open the connector's page and check <b>Tool permissions</b>. It lists 11 tools. Ten are read-only. One sends us your letter when you ask it to fill in our form: <b>Fill in an appeal form for the person to check</b>. If you want Claude to ask you every time before it uses that one, leave it on <b>Needs approval</b>.
                     {# SCREENSHOT TODO (optional): a Tool permissions shot taken in this state. Alt: The connector's page in Claude listing Fight Health Insurance's 11 tools under Tool permissions: 10 read-only tools and 1 that sends something to Fight Health Insurance. Caption: Tool permissions lists the 11 tools. #}
@@ -183,13 +156,8 @@
                 <li>
                     In a chat, open the <b>+</b> menu, choose <b>Connectors</b> and turn Fight Health Insurance on. Then ask your question. Claude asks before each tool it uses; <b>Always allow</b> stops the asking for that tool.
                     <figure>
-                        <img src="{% static 'images/ai-assistants/claude-tool-approval.webp' %}" alt="Claude asking to use Find a treatment guide from Fight Health Insurance, with Allow once and Always allow buttons." width="1200" height="197" loading="lazy">
-                        <figcaption>Claude asks before it uses a tool.</figcaption>
-                    </figure>
-                    {# SCREENSHOT TODO: claude-4-answer.webp is due a retake or crop (start at Used Fight Health Insurance, end at the sources, and drop the line promising a good shot at overturning the denial). The alt below is true of the current file. #}
-                    <figure>
-                        <img src="{% static 'images/ai-assistants/claude-4-answer.webp' %}" alt="Claude's answer to an MRI denial question, marked Used Fight Health Insurance, with a link to start an MRI appeal and sources from the site." width="1200" height="918" loading="lazy">
-                        <figcaption>An answer that used the tools, with links back to this site. Answers vary by assistant and by question.</figcaption>
+                        <img src="{% static 'images/ai-assistants/claude-tool-approval.webp' %}" alt="Claude asking to use Find a treatment guide from Fight Health Insurance, with the query MRI, and Decline, Always allow and Allow once." width="1200" height="199" loading="lazy">
+                        <figcaption>Claude asks before it uses a tool. A look-up needs only a few words, like "MRI".</figcaption>
                     </figure>
                 </li>
             </ol>
@@ -250,6 +218,64 @@
             </ul>
             <p>Apps that run open-weight models on your own machine take MCP servers too. Each app's guide shows where to paste the address: <a class="link" href="https://lmstudio.ai/docs/app/mcp">LM Studio</a>, <a class="link" href="https://docs.openwebui.com/features/extensibility/mcp">Open WebUI</a>, <a class="link" href="https://jan.ai/docs/desktop/mcp">Jan</a> and <a class="link" href="https://www.librechat.ai/docs/features/mcp">LibreChat</a>. Ollama on its own has no MCP support; Ollama users can connect through a front end such as Open WebUI. Two things to know: the model has to support tool calling, and small local models sometimes skip the tools or misread what they return, so check the links in the answer against this site.</p>
             <p>If an answer doesn't link back to this site, try naming us: "Using Fight Health Insurance, what does 'not medically necessary' mean?"</p>
+        </section>
+
+        <section class="fhi-stack" id="start-an-appeal">
+            <h2>Starting an appeal from your chat</h2>
+            {% if prepare_appeal_on %}
+            <p>There are {% if chat_path_on %}three{% else %}two{% endif %} ways. Pick the one you're comfortable with.</p>
+            <p>The simplest: ask your assistant for the link to start an appeal here, then upload or paste your letter on our site yourself. Your assistant doesn't send us your letter.</p>
+            <p>{% if chat_path_on %}For the other two, share your denial letter with your assistant and ask it to help you appeal.{% else %}Or share your denial letter with your assistant and ask it to fill in our form for you.{% endif %} Anything you share in the chat, including your letter, also goes to the company that makes your assistant, under its own privacy policy. We ask your assistant to check with you before it sends us your letter. We also ask it to offer to swap your name, member ID and group number for placeholders and to leave out your address, phone number and date of birth. Say yes to that. If you agree, it sends us the letter, plus a few words on what was denied and the condition if it has them, and gives you a link. We ask it to tell you what it sent, too.</p>
+            <p>That link opens our page. It opens once. {% if chat_path_on %}It works only in the browser where you first open it, so open it in the browser you'll finish in.{% else %}Open it in the browser you'll finish in.{% endif %} It lasts two hours. The two hours start when your assistant makes the link, not when you open it.</p>
+            {% if chat_path_on %}
+            <h3 id="letters-in-chat">Get letters back in your chat</h3>
+            <p>We draft appeal letters, and your assistant can bring them back to the chat.</p>
+            <ol class="ai-steps">
+                <li>Open the link and press <b>Open my appeal form</b>. Our page shows the letter your assistant sent.</li>
+                <li>Check the letter. Under <b>About you</b>, fill in your name, email address, street address and ZIP code, then press <b>Remove personal details</b>. We try to keep your name and street address in your browser. Read the letter again and take out anything it missed, such as your member ID.</li>
+                <li>Say who the appeal is for: you, or someone you're helping who asked you to and is fine with us keeping it as our privacy policy says.</li>
+                <li>Tick the four boxes, which say: you've taken your personal details out of the letter, you've read our privacy policy, you agree to our terms, and the appeal is your own or for someone who asked you to. Then tick "I'm not a robot" if it shows.</li>
+                <li>Under <b>Optional choices</b>, "Use outside AI services to get more appeal drafts" is ticked by default. While it's ticked, your letter is also shared with those services, under their own terms. You can untick it.</li>
+                <li>Press <b>Agree and go back to my chat</b>. Then tell your assistant you're done.</li>
+                <li>We read the letter and may have a few questions. Your assistant is asked to put them to you and send only what you say. You can skip any.</li>
+                <li>Up to three draft letters come back to the chat, usually in a few minutes. Where a letter needs your name or member ID, it should have a placeholder. Your assistant is asked to fill those in from your chat, or ask you, and not to send them to us.</li>
+                <li>Nothing is sent to your insurer. Read the letters, check the details, pick one, edit it and send it yourself.</li>
+            </ol>
+            <p>Your assistant can collect the letters for a day after you agree. We also email you a link to finish on our site instead. It asks for your email address and works for 30 days.</p>
+            <p>Changed your mind on our page? <b>Finish on this site instead</b> opens our usual appeal form with your letter in it.</p>
+            <figure class="ai-figure">
+                <picture>
+                    <source media="(max-width: 40rem)" srcset="{% static 'images/ai-assistants/terms-page-narrow.webp' %}" width="400" height="2080">
+                    <img src="{% static 'images/ai-assistants/terms-page.webp' %}" alt="Fight Health Insurance's Agree to get your appeal letters page, with a made-up denial letter in the box, the About you fields, and the Remove personal details button." width="1280" height="1585" loading="lazy">
+                </picture>
+                <figcaption>On our page you check the letter, remove personal details and agree.</figcaption>
+            </figure>
+            <div class="ai-figure-row">
+                <figure class="ai-figure">
+                    <img src="{% static 'images/ai-assistants/assistant-3-questions.webp' %}" alt="Claude passing on Fight Health Insurance's three questions, about physical therapy, other treatment and leg numbness, followed by made-up answers." width="1200" height="685" loading="lazy">
+                    <figcaption>Our questions come through your assistant. You can skip any.</figcaption>
+                </figure>
+                <figure class="ai-figure">
+                    <img src="{% static 'images/ai-assistants/assistant-4-letters.webp' %}" alt="The start of a draft appeal letter in Claude for a made-up patient, Rebecca Lee Crumpler, appealing an MRI denial from Example Health." width="1200" height="892" loading="lazy">
+                    <figcaption>A draft back in the chat, for you to edit and send. Our sample patient is named for Rebecca Lee Crumpler, the first Black woman to earn a US medical degree.</figcaption>
+                </figure>
+            </div>
+            {% else %}
+            {# SCREENSHOT TODO (optional): a shot of Claude's permission prompt for Fill in an appeal form for the person to check, with the same sample letter, for this state. Alt: Claude asking permission to use Fill in an appeal form for the person to check from Fight Health Insurance, with a made-up denial letter in which the name and member ID are placeholders. Caption: Your assistant asks before it sends us the letter. #}
+            {% endif %}
+
+            <h3 id="finish-on-site">Finish on our site</h3>
+            <ol class="ai-steps">
+                <li>Open the link and press <b>Open my appeal form</b>. Your letter is already in the box.</li>
+                <li>Check it, remove personal details and go through the usual steps here. "Use outside AI services to get more appeal drafts" is ticked by default here too, and you can untick it.</li>
+                <li>Nothing is saved as an appeal until you submit the form yourself.</li>
+            </ol>
+            {% if chat_path_on %}
+            <p>Sometimes we can't draft letters for a chat, for example when we've reached our daily limit. When that happens, the link opens our appeal form with your letter in it instead, so you can finish here.</p>
+            {% endif %}
+            {% else %}
+            <p>When you're ready to appeal, the assistant gives you a link to start here, where you upload or paste the letter yourself. The assistant never takes the letter.</p>
+            {% endif %}
         </section>
 
         <section class="fhi-stack" id="what-it-does">
@@ -343,8 +369,7 @@
                     {% endif %}
                     <li>What your assistant finds here is general information, not legal or medical advice.</li>
                     <li>It's for your own appeal, or for someone you're helping who asked you to. Doctors, therapists and offices have our <a class="link" href="{% url 'pro_version' %}">professional version</a>.</li>
-                    {# DATE TODO: once the retakes are in, change "in October 2026" to "on [day] October 2026" with the day they were checked. #}
-                    <li>Apps rename and move their menus often. Steps and screenshots last checked in October 2026.</li>
+                    <li>Apps rename and move their menus often. Steps and screenshots last checked on October 7, 2026.</li>
                 </ul>
                 <p>Something look different? <a class="link" href="{% url 'contact' %}">Let us know</a>, and we'll update this page.</p>
             </div>

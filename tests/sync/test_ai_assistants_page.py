@@ -9,7 +9,8 @@ PAGE = "/ai-assistants"
 ADDRESS = "https://www.fighthealthinsurance.com/mcp"
 INSTALL_LINK = "claude.ai/customize/connectors?modal=add-custom-connector"
 TITLE = "Use Fight Health Insurance with your AI assistant"
-HOME_HEADING = "Now you can get your AI to talk with us too"
+HOME_HEADING = "Lowering the appeal bar even more"
+HEADLINE = "Now Your AI Can Work With Ours"
 # Links to these sections are out in the world; a rewrite keeps them landing.
 OLD_ANCHORS = (
     "address",
@@ -19,6 +20,7 @@ OLD_ANCHORS = (
     "keep-out",
     "start-an-appeal",
     "other-assistants",
+    "how-it-works",
 )
 EM_DASHES = ("\u2014", "&mdash;", "&#8212;", "&#x2014;")
 
@@ -66,6 +68,12 @@ ONLY_WITH_CHAT = (
     "The letters are drafts for you to read",
     "The letters are written as the patient",
     "There's a daily limit on letters drafted for chats.",
+    "Three Ways It Works With Us",
+    "images/ai-assistants/assistant-choices.webp",
+    "images/ai-assistants/assistant-1-ask.webp",
+    "images/ai-assistants/claude-3-tool-permissions-14.webp",
+    "images/ai-assistants/assistant-3-questions.webp",
+    "images/ai-assistants/assistant-4-letters.webp",
 )
 WITH_EITHER_APPEAL_TOOL = (
     "start a free appeal from your chat. No sign-in.",
@@ -99,11 +107,13 @@ class EveryStateChecks:
     def test_the_top_says_what_it_is_and_how_to_set_it_up(self):
         for text in (
             TITLE,
-            HOME_HEADING,
-            "In short",
-            "What it is",
-            "Why it helps",
-            "Set it up once",
+            HEADLINE,
+            "Insurers are betting you won't appeal.",
+            "Rather not use an AI assistant? That's fine too.",
+            "Plug Us In With MCP",
+            "MCP (Model Context Protocol) is an open standard",
+            "Ways It Works With Us",
+            "Set It Up Once",
             ADDRESS,
             INSTALL_LINK,
         ):
@@ -173,7 +183,7 @@ class PageOnTest(EveryStateChecks, TestCase):
 
     def test_chatgpt_is_not_said_to_ask_before_tools_that_are_not_there(self):
         self.assertEqual(
-            self.page.count("ChatGPT runs the look-up tools without asking."), 2
+            self.page.count("ChatGPT runs the look-up tools without asking."), 1
         )
 
     def test_the_footer_and_resources_link_to_it(self):
@@ -302,6 +312,8 @@ class HomeSectionTest(TestCase):
         section = self._home_section()
         self.assertIsNotNone(section)
         self.assertEqual(section.find("h2").get_text(strip=True), HOME_HEADING)
+        self.assertIn("Now your AI can talk to our AI.", str(section))
+        self.assertIn("images/ai-assistants/fhi-connector-icon.webp", str(section))
         link = section.find("a", href=reverse("ai-assistants"))
         self.assertEqual(link.get_text(strip=True), "Set up your AI assistant")
         for dash in EM_DASHES:

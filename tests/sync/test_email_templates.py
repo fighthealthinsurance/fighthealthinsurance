@@ -192,6 +192,13 @@ def test_every_email_renders_with_what_its_sender_passes(
         assert '<table role="presentation"' in html
 
 
+def test_the_continue_email_says_nothing_went_to_the_insurer():
+    text, html = _render("assistant_continue", CASES[0][1])
+    for part in (text, html):
+        assert "Nothing has been sent to your insurer." in part
+        assert "If you didn't ask for this, you can ignore this email." in part
+
+
 def test_only_the_sent_fax_subject_says_it_was_sent():
     assert "was sent" in fax_followup_subject(True, False)
     assert "was sent" not in fax_followup_subject(False, True)
