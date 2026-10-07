@@ -82,15 +82,16 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
     # nothing about the person or the case; only its digest is stored.
     token = await intake_resume.amint_link(denial)
     url = base.rstrip("/") + reverse("intake_resume_link", args=[token])
+    # Sent to the person alone, with no staff copy: the copy would carry the
+    # link next to the address that opens it. Built before the send's try, so
+    # a template error is a plain failure, not an ambiguous SMTP one.
+    message = build_fallback_email(
+        NUDGE_SUBJECT,
+        NUDGE_TEMPLATE,
+        {"url": url, "days": intake_resume.link_days()},
+        denial.raw_email,
+    )
     try:
-        # Sent to the person alone, with no staff copy: the copy would carry
-        # the link next to the address that opens it.
-        message = build_fallback_email(
-            NUDGE_SUBJECT,
-            NUDGE_TEMPLATE,
-            {"url": url, "days": intake_resume.link_days()},
-            denial.raw_email,
-        )
         await _asend_message(message)
     except Exception:
         # Ambiguous: the provider may or may not have accepted. Record it,
