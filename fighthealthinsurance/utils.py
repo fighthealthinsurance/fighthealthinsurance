@@ -477,7 +477,7 @@ def mask_email_for_logging(email: Optional[str]) -> str:
     return f"{masked_local}@{domain}"
 
 
-def send_fallback_email(
+def build_fallback_email(
     subject: str,
     template_name: str,
     context,
@@ -486,28 +486,20 @@ def send_fallback_email(
     reply_to: Optional[str] = None,
     extra_headers: Optional[Dict[str, str]] = None,
     cc: Optional[List[str]] = None,
-):
-    if is_blocked_email(to_email):
-        logger.info(
-            f"Skipping email to blocked address: {mask_email_for_logging(to_email)}"
-        )
-        return
-    # Blocked addresses are filtered from CC too (same invariant as To:); log so
-    # a misconfigured CC setting doesn't silently vanish.
-    if cc:
-        kept_cc = [a for a in cc if not is_blocked_email(a)]
-        for dropped in set(cc) - set(kept_cc):
-            logger.info(
-                f"Dropping blocked CC address: {mask_email_for_logging(dropped)}"
-            )
-        cc = kept_cc
-    # First, render the plain text content if present
+) -> EmailMultiAlternatives:
+    """Build, without sending, the message send_fallback_email sends.
+
+    Renders emails/<template_name>.txt as the body and .html as its
+    alternative, under our From, Reply-To and auto-generated headers. A
+    caller that sends it directly sends to the recipient alone, with no staff
+    copy and no blocked-address check: the emails carrying a private link
+    (a staff copy would hold the link beside the address that opens it), and
+    the fax follow-up, which checks the address itself.
+    """
     text_content = render_to_string(
         f"emails/{template_name}.txt",
         context=context,
     )
-
-    # Secondly, render the HTML content if present
     html_content = render_to_string(
         f"emails/{template_name}.html",
         context=context,
@@ -537,23 +529,59 @@ def send_fallback_email(
         reply_to=[reply_to_address],
         headers=headers,
     )
+    msg.attach_alternative(html_content, "text/html")
+    return msg
+
+
+def send_fallback_email(
+    subject: str,
+    template_name: str,
+    context,
+    to_email: str,
+    from_name: Optional[str] = None,
+    reply_to: Optional[str] = None,
+    extra_headers: Optional[Dict[str, str]] = None,
+    cc: Optional[List[str]] = None,
+):
+    if is_blocked_email(to_email):
+        logger.info(
+            f"Skipping email to blocked address: {mask_email_for_logging(to_email)}"
+        )
+        return
+    # Blocked addresses are filtered from CC too (same invariant as To:); log so
+    # a misconfigured CC setting doesn't silently vanish.
+    if cc:
+        kept_cc = [a for a in cc if not is_blocked_email(a)]
+        for dropped in set(cc) - set(kept_cc):
+            logger.info(
+                f"Dropping blocked CC address: {mask_email_for_logging(dropped)}"
+            )
+        cc = kept_cc
+    msg = build_fallback_email(
+        subject,
+        template_name,
+        context,
+        to_email,
+        from_name=from_name,
+        reply_to=reply_to,
+        extra_headers=extra_headers,
+        cc=cc,
+    )
     logger.debug(
         f"Sending email to {mask_email_for_logging(to_email)} with subject {subject}"
     )
-
-    # Lastly, attach the HTML content to the email instance and send.
-    msg.attach_alternative(html_content, "text/html")
     msg.send()
     try:
         second_msg = EmailMultiAlternatives(
             subject + " -- " + to_email,
-            text_content,
-            from_address,
+            msg.body,
+            msg.from_email,
             to=settings.BCC_EMAILS,
-            reply_to=[reply_to_address],
-            headers=headers,
+            reply_to=msg.reply_to,
+            headers=msg.extra_headers,
         )
-        second_msg.attach_alternative(html_content, "text/html")
+        for content, mimetype in msg.alternatives:
+            second_msg.attach_alternative(content, mimetype)
         second_msg.send()
     except Exception as e:
         logger.error(f"Error sending email to BCC: {e}")
