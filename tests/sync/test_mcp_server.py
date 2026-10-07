@@ -1513,6 +1513,16 @@ class PrepareAppealTest(TestCase):
         self.assertEqual(opened.status_code, 200)
         self.assertContains(opened, LETTER)
 
+    def test_the_answer_limit_the_tool_states_is_the_one_kept(self):
+        # Codex found the description saying 1,000 while the schema took
+        # 2,000 and the filing kept 1,000 without saying so: one number.
+        kept = f"{mcp_server.assistant_drafts.ANSWER_MAX_CHARS:,} characters"
+        self.assertIn(kept, mcp_server.ANSWER_APPEAL_QUESTIONS_DESCRIPTION)
+        value = mcp_server.AppealAnswer.model_fields["value"]
+        self.assertIn(kept, value.description)
+        schema = mcp_server.AppealAnswer.model_json_schema()["properties"]["value"]
+        self.assertEqual(schema["maxLength"], mcp_server.assistant_drafts.ANSWER_MAX_CHARS)
+
     async def test_each_refusal_is_short_and_never_repeats_the_input(self):
         cases = {
             "short": ({"letter_text": "Acme denied it."}, "too short"),

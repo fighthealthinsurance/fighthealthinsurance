@@ -110,7 +110,11 @@ class _NoLocalVariables(SafeExceptionReporterFilter):
         return []
 
 
-def render_landing(request: HttpRequest, dead: bool) -> HttpResponse:
+def render_landing(
+    request: HttpRequest, dead: bool, after_a_press: bool = False
+) -> HttpResponse:
+    """The landing page; after_a_press is the terms page's buttons finding
+    the link already used."""
     return _private(
         render(
             request,
@@ -118,6 +122,7 @@ def render_landing(request: HttpRequest, dead: bool) -> HttpResponse:
             {
                 "no_third_party_scripts": True,
                 "dead": dead,
+                "after_a_press": after_a_press,
                 "assistant_stop_line": v2_enabled(),
             },
             status=404 if dead else 200,
