@@ -18,6 +18,7 @@ link opens the site form as before.
 Nothing here logs the letter, the email or a token.
 """
 
+import hashlib
 from typing import Any, Optional
 from urllib.parse import urlencode
 
@@ -69,6 +70,18 @@ _FIELD_IDS = {
     "personalonly": "personalonly",
     "captcha": "",
 }
+# Bot-check errors that ask the person to tick the box again: unticked, a
+# tick that ran out or was sent twice, or Google out of reach (which says
+# nothing about the person). Anything else is a refusal.
+_ASK_AGAIN = frozenset(("required", core_forms.CAPTCHA_EXPIRED, "captcha_error"))
+# What this browser's session remembers after agreeing: a digest of the link
+# it used up (never the link) and what the agreed page said, so pressing
+# Agree again later (after Back, say) shows that page again instead of a
+# dead link. It can't help a second press sent while the first is still
+# running: that request reads the session before the first one writes it,
+# and when the browser drops the first request its session is never saved.
+# The page's own one-press guard is what stops a double tap.
+AGREED_KEY = "assistant_agreed"
 _FIELDS_WITH_A_MESSAGE = frozenset(
     ("denial_text", "email", "on_behalf", "pii", "privacy", "tos", "personalonly")
 )
@@ -119,7 +132,11 @@ def _site_form_filled(request: HttpRequest) -> Any:
 
 
 def render_terms(
-    request: HttpRequest, token: str, letter: str, form: Any = None
+    request: HttpRequest,
+    token: str,
+    letter: str,
+    form: Any = None,
+    maybe_twice: bool = False,
 ) -> HttpResponse:
     if form is None:
         form = core_forms.AssistantTermsForm()
@@ -135,6 +152,39 @@ def render_terms(
                 "on_behalf_choices": core_forms.AssistantTermsForm.ON_BEHALF_CHOICES,
                 "error_summary": _error_summary(form),
                 "captcha_enabled": form._is_recaptcha_enabled(),
+                "maybe_twice": maybe_twice,
+            },
+        )
+    )
+
+
+def _code_digest(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _agreed_here(request: HttpRequest, token: str) -> Optional[dict[str, bool]]:
+    """What the agreed page said, if this browser agreed with this link."""
+    agreed = request.session.get(AGREED_KEY)
+    if not token or not isinstance(agreed, dict):
+        return None
+    if agreed.get("code") != _code_digest(token):
+        return None
+    return {
+        "started": bool(agreed.get("started")),
+        "emailed": bool(agreed.get("emailed")),
+    }
+
+
+def render_agreed(request: HttpRequest, started: bool, emailed: bool) -> HttpResponse:
+    return _private(
+        render(
+            request,
+            AGREED_TEMPLATE,
+            {
+                "no_third_party_scripts": True,
+                "started": started,
+                "emailed": emailed,
+                "link_days": assistant_continue.link_days(),
             },
         )
     )
@@ -160,21 +210,29 @@ class AssistantAgreeView(View):
 
     def post(self, request: HttpRequest) -> HttpResponse:
         token = request.POST.get("token", "")
+        agreed = _agreed_here(request, token)
+        if agreed is not None:
+            return render_agreed(request, **agreed)
         binder = request_binder(request)
         content = claim_handoff(token, binder=binder, consume=False) if binder else None
         if content is None:
-            return render_landing(request, dead=True)
+            return self._used(request, token)
         letter = request.POST.get("denial_text", "") or content.letter
         if request.POST.get("finish") == "site" or not opens_terms_page(content):
             return self._to_site(request, token, binder, content, letter)
         form = core_forms.AssistantTermsForm(request.POST)
         if not form.is_valid():
             codes = {e.code for e in form.errors.as_data().get("captcha", [])}
-            if codes and codes != {"required"}:
+            if not codes <= _ASK_AGAIN:
                 # A token Google rejected is a refusal like the others; an
-                # unticked or expired box just asks again.
+                # unticked, expired or twice-sent tick just asks again.
                 return self._to_site(request, token, binder, content, letter, form)
-            return render_terms(request, token, letter, form)
+            twice = core_forms.CAPTCHA_EXPIRED in codes
+            if twice and claim_handoff(token, binder=binder, consume=False) is None:
+                # The same tick sent twice: the other press used the link.
+                return self._used(request, token)
+            # The other press may still be on its way to using it.
+            return render_terms(request, token, letter, form, maybe_twice=twice)
         draft = assistant_drafts.waiting_draft(content.draft)
         if draft is None:
             # Nothing the assistant could collect letters from.
@@ -190,14 +248,16 @@ class AssistantAgreeView(View):
             # Another request used the link first.
             assistant_ip_limit.give_back(taken)
             spend.release_generation(reservation)
-            return render_landing(request, dead=True)
+            return self._used(request, token)
         try:
             denial = self._create_denial(request, form)
         except Exception:
             assistant_ip_limit.give_back(taken)
             spend.release_generation(reservation)
             raise
-        return self._agreed(request, form, content, draft, denial, reservation, taken)
+        return self._agreed(
+            request, token, form, content, draft, denial, reservation, taken
+        )
 
     def _to_site(
         self,
@@ -210,9 +270,16 @@ class AssistantAgreeView(View):
     ) -> HttpResponse:
         """The site's own form, filled in; the assistant sees on_site."""
         if claim_handoff(token, binder=binder) is None:
-            return render_landing(request, dead=True)
+            return self._used(request, token)
         assistant_drafts.finish_on_site(assistant_drafts.waiting_draft(content.draft))
         return render_site_form(request, content, letter, _site_form_filled(request))
+
+    @staticmethod
+    def _used(request: HttpRequest, token: str) -> HttpResponse:
+        """A press found the link used or run out. If the browser sent two
+        presses at once, the first may have agreed while this one is the
+        answer it shows, so the page says to look for the email first."""
+        return render_landing(request, dead=True, after_a_press=True)
 
     def _create_denial(self, request: HttpRequest, form: Any) -> Any:
         from fhi_users.audit import extract_tracking_info
@@ -245,6 +312,7 @@ class AssistantAgreeView(View):
     def _agreed(
         self,
         request: HttpRequest,
+        token: str,
         form: Any,
         content: HandoffContent,
         draft: Any,
@@ -272,26 +340,20 @@ class AssistantAgreeView(View):
                 assistant_drafts.set_status(draft, assistant_drafts.STOPPED)
 
         try:
-            token = assistant_continue.mint(denial)
-            emailed = assistant_continue.send(data["email"], token)
+            continue_token = assistant_continue.mint(denial)
+            emailed = assistant_continue.send(data["email"], continue_token)
         except Exception:
             give_back()
             raise
         started = linked and self._start(denial)
         if not started:
             give_back()
-        return _private(
-            render(
-                request,
-                AGREED_TEMPLATE,
-                {
-                    "no_third_party_scripts": True,
-                    "started": started,
-                    "emailed": emailed,
-                    "link_days": assistant_continue.link_days(),
-                },
-            )
-        )
+        request.session[AGREED_KEY] = {
+            "code": _code_digest(token),
+            "started": bool(started),
+            "emailed": bool(emailed),
+        }
+        return render_agreed(request, started=bool(started), emailed=bool(emailed))
 
     @staticmethod
     def _start(denial: Any) -> bool:

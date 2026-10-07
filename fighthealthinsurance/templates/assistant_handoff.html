@@ -5,7 +5,7 @@ The view renders this with no_third_party_scripts, so base.html leaves out the
 analytics tags, and the script below is the first on the page.
 {% endcomment %}
 {% block title %}
-{% if dead %}This link doesn't open a form any more{% else %}Your appeal form is ready to check{% endif %}
+{% if after_a_press %}This link has been used or has run out{% elif dead %}This link doesn't open a form any more{% else %}Your appeal form is ready to check{% endif %}
 {% endblock title %}
 
 {% block scriptmagic %}
@@ -128,6 +128,22 @@ analytics tags, and the script below is the first on the page.
         </noscript>
     </div>
     {% endif %}
+    {% if after_a_press %}
+    <div id="handoff-dead" class="fhi-stack fhi-stack-centred">
+        {% include "partials/page_title.html" with title="This link has been used or has run out" %}
+        <p>
+            If you just pressed Agree, it may have gone through: check your
+            email for a link to your appeal letters, and ask your assistant
+            how they're coming along.
+        </p>
+        <p>
+            If no email comes in a few minutes, or you pressed Finish on this
+            site instead, ask your assistant for a new link, or paste your
+            letter on our <a href="{% url 'scan' %}">appeal page</a>. What you
+            typed may still be there in this browser.
+        </p>
+    </div>
+    {% else %}
     <div id="handoff-dead" class="fhi-stack fhi-stack-centred"{% if not dead %} hidden{% endif %}>
         {% include "partials/page_title.html" with title="This link doesn't open a form any more" %}
         <p>
@@ -141,5 +157,6 @@ analytics tags, and the script below is the first on the page.
             still be on our appeal page.
         </p>
     </div>
+    {% endif %}
 </div>
 {% endblock content %}

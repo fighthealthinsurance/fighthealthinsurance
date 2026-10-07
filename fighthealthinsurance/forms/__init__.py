@@ -7,7 +7,11 @@ from django import forms
 from django.conf import settings
 from django.forms import CheckboxInput, ModelForm, Textarea
 
+from django.core.exceptions import ValidationError
+from loguru import logger
+from django_recaptcha import client as recaptcha_client
 from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox
+import http.client
 
 if TYPE_CHECKING:
     # Typing-only base so mypy knows ``self.fields`` exists. At runtime the
@@ -46,6 +50,57 @@ REFERRAL_SOURCE_CHOICES = [
 ]
 
 
+# The error code a captcha tick Google calls "timeout-or-duplicate" gets: a
+# tick older than two minutes (say the person went back to their chat app and
+# returned), or the same tick sent twice by a double press. Neither says the
+# person is a bot, so a page can ask them to tick the box again.
+CAPTCHA_EXPIRED = "captcha_expired"
+
+
+class CheckboxReCaptchaField(ReCaptchaField):
+    """The "I'm not a robot" checkbox, with an expired or reused tick told
+    apart from a rejected one.
+
+    django-recaptcha raises captcha_invalid for every answer Google refuses
+    and only logs the reason, so this is its checkbox check with the reason
+    kept: an unticked box is "required", an expired or reused tick is
+    CAPTCHA_EXPIRED, Google out of reach is "captcha_error", and anything
+    else Google refuses is "captcha_invalid".
+    """
+
+    default_error_messages = {
+        CAPTCHA_EXPIRED: 'Your "I\'m not a robot" tick ran out or was already '
+        "used. Tick it again, then press the button.",
+    }
+
+    def validate(self, value):
+        forms.CharField.validate(self, value)
+        try:
+            check = recaptcha_client.submit(
+                recaptcha_response=value,
+                private_key=self.private_key,
+                remoteip=self.get_remote_ip(),
+            )
+        except (OSError, http.client.HTTPException, ValueError):
+            # Google unreachable, slow, erroring or answering nonsense: OSError
+            # covers URLError, HTTPError, timeouts, resets and SSL errors, and
+            # ValueError a reply that isn't JSON. django-recaptcha caught
+            # HTTPError only.
+            raise ValidationError(
+                self.error_messages["captcha_error"], code="captcha_error"
+            )
+        if not check.is_valid:
+            # As django-recaptcha logs it: Google's reason codes only.
+            logger.warning(f"ReCAPTCHA validation failed due to: {check.error_codes}")
+            if "timeout-or-duplicate" in (check.error_codes or []):
+                raise ValidationError(
+                    self.error_messages[CAPTCHA_EXPIRED], code=CAPTCHA_EXPIRED
+                )
+            raise ValidationError(
+                self.error_messages["captcha_invalid"], code="captcha_invalid"
+            )
+
+
 class ReCaptchaOptionalMixin(_ReCaptchaMixinBase):
     """Adds an optionally-enforced reCAPTCHA field to a form.
 
@@ -73,7 +128,9 @@ class ReCaptchaOptionalMixin(_ReCaptchaMixinBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self._is_recaptcha_enabled():
-            self.fields["captcha"] = ReCaptchaField(widget=ReCaptchaV2Checkbox())
+            self.fields["captcha"] = CheckboxReCaptchaField(
+                widget=ReCaptchaV2Checkbox()
+            )
 
     @staticmethod
     def _is_recaptcha_enabled() -> bool:

@@ -18,6 +18,63 @@ here unchanged.
   import * as main from '{% bundle "scrub" %}';
 </script>
 <script>
+  // One request per press. Agreeing takes a few seconds, and a second tap
+  // in that time sends the form again: the first request may agree while
+  // the browser shows the second one's answer. Listening on the document
+  // works from the first moment the page shows, and runs after the forms'
+  // own submit listeners (the intake checks in scrub.ts, the carry-over
+  // below), so a form those stopped is not counted. Coming back with the
+  // back button, or 30 seconds with no new page, makes the buttons work
+  // again; the server answers a second press of a used link sensibly.
+  (function () {
+    var guarded = { "fuck_health_insurance_form": true, "assistant-finish-on-site": true };
+    var sending = false;
+    var timer = null;
+    var buttons = function () {
+      return document.querySelectorAll(
+        "#fuck_health_insurance_form button[type=submit], #assistant-finish-on-site button[type=submit]"
+      );
+    };
+    var say = function (text) {
+      var line = document.getElementById("assistant-sending");
+      if (line) {
+        line.textContent = text;
+        line.hidden = !text;
+      }
+    };
+    var ready = function () {
+      sending = false;
+      if (timer) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+      buttons().forEach(function (button) {
+        button.disabled = false;
+      });
+      say("");
+    };
+    document.addEventListener("submit", function (event) {
+      var form = event.target;
+      if (!form || !guarded[form.id] || event.defaultPrevented) {
+        return;
+      }
+      if (sending) {
+        event.preventDefault();
+        return;
+      }
+      sending = true;
+      buttons().forEach(function (button) {
+        button.disabled = true;
+      });
+      say("Sending. This can take a few seconds.");
+      timer = window.setTimeout(ready, 30000);
+    });
+    window.addEventListener("pageshow", function (event) {
+      if (event.persisted) {
+        ready();
+      }
+    });
+  })();
   // "Finish on this site instead" takes the letter, email, ZIP and the
   // optional choices as they are now on the page.
   document.addEventListener("DOMContentLoaded", function () {
@@ -234,9 +291,13 @@ here unchanged.
 	    <p class="fhi-hint">Tick "I'm not a robot" first, then press the button.</p>
 	    {{ form.captcha }}
 	    {{ form.captcha.errors }}
+	    {% if maybe_twice %}
+	    <p class="fhi-hint">If you pressed Agree twice, your first press may still be going through: check your email before you tick the box again.</p>
+	    {% endif %}
 	</div>
 	{% endif %}
 	<button type="submit" class="fhi-button fhi-button-primary fhi-button-large" id="submit">Agree and go back to my chat</button>
+	<p id="assistant-sending" class="fhi-hint" role="status" hidden></p>
 	</form>
 	<form method="post" action="{% url 'assistant_agree' %}" id="assistant-finish-on-site">
 		{% csrf_token %}

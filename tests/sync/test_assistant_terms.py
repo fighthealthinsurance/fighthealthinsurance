@@ -20,6 +20,7 @@ from fighthealthinsurance import (
     assistant_handoff,
     assistant_ip_limit,
 )
+from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.assistant_handoff import claim_handoff, create_handoff
 from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 from fighthealthinsurance.ml import spend
@@ -218,6 +219,25 @@ class AgreeTest(TermsTestBase):
             self.assertFalse(assistant_continue.send(EMAIL, "a-token"))
         self.assertEqual(len(mail.outbox), 0)
 
+    def test_a_second_press_after_agreeing_shows_the_agreed_page_again(self):
+        code, _, _ = self.open_terms()
+        self.client.post(AGREE, terms_form(code))
+        again = self.client.post(AGREE, terms_form(code))
+        self.assertEqual(again.status_code, 200)
+        self.assertTemplateUsed(again, "assistant_agreed.html")
+        self.assertTrue(again.context["started"])
+        self.assertEqual(Denial.objects.count(), 1)
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_a_press_on_a_link_used_elsewhere_says_where_to_look(self):
+        code, _, _ = self.open_terms()
+        binder = self.client.cookies["fhi_handoff_binder"].value
+        self.assertIsNotNone(claim_handoff(code, binder=binder))
+        response = self.client.post(AGREE, terms_form(code))
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(response.context["after_a_press"])
+        self.assertContains(response, "it may have gone through", status_code=404)
+
     def test_a_missing_box_shows_the_page_again_and_counts_nothing(self):
         code, _, _ = self.open_terms()
         response = self.client.post(AGREE, terms_form(code, tos=""))
@@ -353,6 +373,94 @@ class AgreeRefusalTest(TermsTestBase):
         self.assertFalse(AssistantAgreementCount.objects.exists())
         draft.refresh_from_db()
         self.assertEqual(draft.status, assistant_drafts.WAITING)
+
+    def test_a_tick_that_ran_out_or_was_sent_twice_asks_again(self):
+        from django_recaptcha.client import RecaptchaResponse
+
+        code, draft, _ = self.open_terms()
+        with patch(
+            "fighthealthinsurance.forms.ReCaptchaOptionalMixin._is_recaptcha_enabled",
+            return_value=True,
+        ), patch(
+            "django_recaptcha.fields.client.submit",
+            return_value=RecaptchaResponse(
+                is_valid=False, error_codes=["timeout-or-duplicate"]
+            ),
+        ), patch(
+            "fighthealthinsurance.assistant_terms_views.render_terms",
+            return_value=HttpResponse("terms"),
+        ) as render:
+            self.client.post(
+                AGREE, {**terms_form(code), "g-recaptcha-response": "stale"}
+            )
+        form = render.call_args.args[3]
+        self.assertEqual(
+            [e.code for e in form.errors.as_data()["captcha"]],
+            [core_forms.CAPTCHA_EXPIRED],
+        )
+        self.assertFalse(Denial.objects.exists())
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, assistant_drafts.WAITING)
+
+    def test_a_ticked_box_agrees(self):
+        from django_recaptcha.client import RecaptchaResponse
+
+        code, _, _ = self.open_terms()
+        with patch(
+            "fighthealthinsurance.forms.ReCaptchaOptionalMixin._is_recaptcha_enabled",
+            return_value=True,
+        ), patch(
+            "django_recaptcha.fields.client.submit",
+            return_value=RecaptchaResponse(is_valid=True),
+        ):
+            response = self.client.post(
+                AGREE, {**terms_form(code), "g-recaptcha-response": "ok"}
+            )
+        self.assertTemplateUsed(response, "assistant_agreed.html")
+        self.assertTrue(Denial.objects.exists())
+
+    def test_google_out_of_reach_asks_again(self):
+        from urllib.error import URLError
+
+        code, draft, _ = self.open_terms()
+        with patch(
+            "fighthealthinsurance.forms.ReCaptchaOptionalMixin._is_recaptcha_enabled",
+            return_value=True,
+        ), patch(
+            "django_recaptcha.fields.client.submit",
+            side_effect=URLError("timed out"),
+        ), patch(
+            "fighthealthinsurance.assistant_terms_views.render_terms",
+            return_value=HttpResponse("terms"),
+        ) as render:
+            self.client.post(AGREE, {**terms_form(code), "g-recaptcha-response": "t"})
+        form = render.call_args.args[3]
+        self.assertEqual(
+            [e.code for e in form.errors.as_data()["captcha"]], ["captcha_error"]
+        )
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, assistant_drafts.WAITING)
+
+    def test_a_tick_sent_twice_after_the_link_was_used_says_where_to_look(self):
+        from django_recaptcha.client import RecaptchaResponse
+
+        code, _, _ = self.open_terms()
+        binder = self.client.cookies["fhi_handoff_binder"].value
+        claim_handoff(code, binder=binder)
+        with patch(
+            "fighthealthinsurance.forms.ReCaptchaOptionalMixin._is_recaptcha_enabled",
+            return_value=True,
+        ), patch(
+            "django_recaptcha.fields.client.submit",
+            return_value=RecaptchaResponse(
+                is_valid=False, error_codes=["timeout-or-duplicate"]
+            ),
+        ):
+            response = self.client.post(
+                AGREE, {**terms_form(code), "g-recaptcha-response": "twice"}
+            )
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(response.context["after_a_press"])
 
     def test_a_failed_bot_check_opens_the_site_form(self):
         from django_recaptcha.client import RecaptchaResponse
