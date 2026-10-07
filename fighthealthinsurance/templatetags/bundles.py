@@ -29,8 +29,11 @@ def _version(name: str) -> Optional[str]:
     found = finders.find(_path(name))
     if not found or not isinstance(found, str):
         return None
-    with open(found, "rb") as bundle:
-        return hashlib.sha256(bundle.read()).hexdigest()[:12]
+    try:
+        with open(found, "rb") as bundle:
+            return hashlib.sha256(bundle.read()).hexdigest()[:12]
+    except OSError:
+        return None
 
 
 @register.simple_tag

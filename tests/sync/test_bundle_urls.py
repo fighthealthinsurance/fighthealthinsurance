@@ -50,6 +50,12 @@ class BundleTagTest(SimpleTestCase):
                 second = self.render("scrub")
         self.assertNotEqual(first, second)
 
+    def test_a_bundle_gone_after_lookup_falls_back_to_the_plain_url(self):
+        with mock.patch.object(
+            bundles.finders, "find", return_value="/nonexistent/scrub.bundle.js"
+        ):
+            self.assertEqual(self.render("scrub"), "/static/js/dist/scrub.bundle.js")
+
     def test_a_missing_bundle_falls_back_to_the_plain_url(self):
         with mock.patch.object(bundles.finders, "find", return_value=None):
             self.assertEqual(
