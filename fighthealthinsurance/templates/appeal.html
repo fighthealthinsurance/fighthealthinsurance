@@ -1,8 +1,9 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 {% block scriptmagic %}
 <script type="module">
-  import * as main from '{% static "js/dist/appeal.bundle.js" %}';
+  import * as main from '{% bundle "appeal" %}';
 </script>
 <script src="{% static 'js/pwyw.js' %}"></script>
 {# UET tracking for Stripe links handled by base.html #}

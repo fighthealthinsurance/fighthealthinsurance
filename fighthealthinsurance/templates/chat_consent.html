@@ -4,9 +4,10 @@ Terms of Service & Setup - FightHealthInsurance Chat Assistant (Alpha)
 {% endblock title %}
 
 {% load static %}
+{% load bundles %}
 
 {% block scriptmagic %}
-<script src="{% static 'js/dist/user_info_storage.bundle.js' %}"></script>
+<script src="{% bundle 'user_info_storage' %}"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     if (window.userInfoStorage) {

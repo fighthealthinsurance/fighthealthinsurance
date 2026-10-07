@@ -4,6 +4,7 @@ Optional: Health History
 {% endblock title %}
 
 {% load compress %}
+{% load bundles %}
 {% load static %}
 
 {% block page_heading %}
@@ -43,5 +44,5 @@ Optional: Health History
       appeal but is left out of the letter and out of what the AI is shown.
     </p>
 </div>
-<script src="{% static 'js/dist/formPersistence.bundle.js' %}"></script>
+<script src="{% bundle 'formPersistence' %}"></script>
 {% endblock formelm %}
