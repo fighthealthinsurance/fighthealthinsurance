@@ -1,14 +1,13 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  # Assistant drafts sweep: hourly, delete AssistantDraft rows past their
-  # expiry (assistant_drafts.py: 2 hours unagreed, a day once agreed).
-  # Applied by scripts/build.sh. Suspended until MCP_DRAFT_IN_CHAT_ENABLED
-  # turns on; set suspend: false in the same change.
+  # Assistant drafts sweep: hourly, delete expired AssistantDraft rows
+  # (2 hours unagreed, a day once agreed), past per-address counts and
+  # expired continue links. Applied by scripts/build.sh.
   name: fhi-assistant-drafts-sweep
   namespace: totallylegitco
 spec:
-  suspend: true
+  suspend: false
   schedule: "17 * * * *"
   # Never overlap two sweeps; a missed run is simply skipped.
   concurrencyPolicy: Forbid
@@ -26,6 +25,13 @@ spec:
           labels:
             group: fight-health-insurance-prod-webbackend-batch
         spec:
+          # Non-root, as the fingerprint backfill Job runs the same image:
+          # the sweep only talks to Postgres and stdout.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
           containers:
             - image: ${FHI_BASE}:${FHI_VERSION}
               name: totallylegitco

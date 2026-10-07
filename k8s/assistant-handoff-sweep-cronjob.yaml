@@ -29,6 +29,13 @@ spec:
           labels:
             group: fight-health-insurance-prod-webbackend-batch
         spec:
+          # Non-root, as the fingerprint backfill Job runs the same image:
+          # the sweep only talks to Postgres and stdout.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
           containers:
             - image: ${FHI_BASE}:${FHI_VERSION}
               name: totallylegitco
