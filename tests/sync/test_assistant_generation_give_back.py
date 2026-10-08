@@ -15,6 +15,7 @@ from fighthealthinsurance.ml import spend
 from fighthealthinsurance.models import (
     AssistantDraft,
     Denial,
+    ProposedAppeal,
     SpendCounter,
     SpendReservation,
 )
@@ -30,6 +31,12 @@ ALL_ON = dict(
     FHI_SPEND_BACKGROUND=False,
 )
 TAKEN = "fhi:assistant"
+LETTER = (
+    "Dear Example Health, I am writing to appeal the denial of my MRI. "
+    "The scan is medically necessary for my condition and the treatment "
+    "plan my doctor set out. Please reverse the decision. Sincerely, "
+    "Rebecca Lee Crumpler"
+)
 
 
 def a_denial():
@@ -50,9 +57,7 @@ def agreed_draft(reserve=True):
     denial = a_denial()
     draft = drafts.create_draft(None).draft
     reservation = spend.reserve_generation() if reserve else None
-    drafts.agree(
-        draft, denial, reservation_id=reservation.id if reservation else None
-    )
+    drafts.agree(draft, denial, reservation_id=reservation.id if reservation else None)
     return denial, draft
 
 
@@ -102,6 +107,24 @@ class FinishDraftsTest(GiveBackTestBase):
         self.assertFalse(self.released(draft))
         self.assertEqual(taken_today(), 2)
 
+    def test_a_run_whose_only_letter_is_chosen_keeps_its_generation(self):
+        denial, draft = agreed_draft()
+        ProposedAppeal.objects.create(
+            for_denial=denial, appeal_text=LETTER, chosen=True
+        )
+        self.finish(denial)
+        self.assertFalse(self.released(draft))
+        self.assertEqual(taken_today(), 2)
+
+    def test_a_chosen_row_that_is_not_a_letter_still_gives_back(self):
+        denial, draft = agreed_draft()
+        ProposedAppeal.objects.create(
+            for_denial=denial, appeal_text="Too short.", chosen=True
+        )
+        self.assertEqual(self.finish(denial), drafts.STOPPED)
+        self.assertTrue(self.released(draft))
+        self.assertEqual(taken_today(), 1)
+
     def test_a_retried_finish_gives_back_once(self):
         denial, draft = agreed_draft()
         self.finish(denial)
@@ -145,6 +168,15 @@ class MarkDraftStatusTest(GiveBackTestBase):
         denial, draft = agreed_draft()
         with patch.object(drafts, "collect_letters", return_value=[{"text": "x"}]):
             self.mark(denial, drafts.STOPPED)
+        self.assertFalse(self.released(draft))
+        self.assertEqual(taken_today(), 2)
+
+    def test_expired_with_only_a_chosen_letter_keeps_the_generation(self):
+        denial, draft = agreed_draft()
+        ProposedAppeal.objects.create(
+            for_denial=denial, appeal_text=LETTER, chosen=True
+        )
+        self.mark(denial, drafts.EXPIRED)
         self.assertFalse(self.released(draft))
         self.assertEqual(taken_today(), 2)
 

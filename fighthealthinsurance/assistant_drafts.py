@@ -301,10 +301,29 @@ class ReleaseFailed(RuntimeError):
 
 def generation_delivered(denial: Optional[Denial]) -> bool:
     """Whether this denial got a generation that counts: the site's page
-    took one (from the continue link, say), or letters are stored."""
+    took one (from the continue link, say), or letters are stored, a
+    chosen copy included."""
     if denial is None:
         return False
-    return site_took_generation(denial) or bool(collect_letters(denial))
+    return (
+        site_took_generation(denial)
+        or bool(collect_letters(denial))
+        or _chosen_letter_stored(denial)
+    )
+
+
+def _chosen_letter_stored(denial: Denial) -> bool:
+    """Whether a real chosen letter is stored; collect_letters leaves these
+    out because they copy a letter already shown."""
+    from fighthealthinsurance.common_view_logic import (
+        appeal_replay_queryset,
+        deliverable_candidates,
+    )
+
+    rows = deliverable_candidates(appeal_replay_queryset(denial).filter(chosen=True))
+    return any(
+        is_real_appeal(text) for text in rows.values_list("appeal_text", flat=True)
+    )
 
 
 def give_back_generation(draft: AssistantDraft) -> bool:
