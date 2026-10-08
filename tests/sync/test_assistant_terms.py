@@ -21,13 +21,14 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from fighthealthinsurance import (
     assistant_continue,
+    assistant_draft_tools,
     assistant_drafts,
     assistant_handoff,
     assistant_ip_limit,
 )
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.assistant_handoff import claim_handoff, create_handoff
-from fighthealthinsurance.assistant_terms_views import short_field
+from fighthealthinsurance.assistant_terms_views import AssistantAgreeView, short_field
 from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 from fighthealthinsurance.ml import spend
 from fighthealthinsurance.models import (
@@ -413,6 +414,36 @@ class AgreeTest(TermsTestBase):
         self.assertEqual(SpendCounter.objects.get(name="fhi:assistant").amount, 1)
         draft.refresh_from_db()
         self.assertEqual(draft.status, assistant_drafts.READING)
+
+    def test_a_case_that_fails_to_save_tells_the_assistant_to_finish_on_the_site(
+        self,
+    ):
+        code, draft, _ = self.open_terms()
+        with patch.object(
+            AssistantAgreeView, "_create_denial", side_effect=RuntimeError("no case")
+        ):
+            with self.assertRaises(RuntimeError):
+                self.client.post(AGREE, terms_form(code))
+        self.assertEqual(AssistantHandoff.objects.count(), 0)
+        self.assertEqual(SpendCounter.objects.get(name="fhi:assistant").amount, 0)
+        self.assertEqual(AssistantAgreementCount.objects.get().count, 0)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, assistant_drafts.STOPPED)
+        self.assertEqual(
+            assistant_draft_tools.view(draft)["next"],
+            assistant_draft_tools.FINISH_ON_SITE,
+        )
+        self.start.assert_not_called()
+
+    def test_a_case_that_fails_to_save_still_shows_its_own_error(self):
+        code, _, _ = self.open_terms()
+        with patch.object(
+            AssistantAgreeView, "_create_denial", side_effect=RuntimeError("no case")
+        ), patch.object(
+            assistant_drafts, "set_status", side_effect=DatabaseError("away")
+        ):
+            with self.assertRaisesMessage(RuntimeError, "no case"):
+                self.client.post(AGREE, terms_form(code))
 
     def test_a_continue_link_that_fails_gives_everything_back(self):
         code, draft, _ = self.open_terms()

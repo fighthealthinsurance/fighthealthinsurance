@@ -220,6 +220,15 @@ def _agreed_here(request: HttpRequest, token: str) -> Optional[dict[str, bool]]:
     }
 
 
+def _stop_quietly(draft: Any) -> None:
+    """Mark a draft stopped, so the assistant tells the person to finish on
+    the site, without hiding the error that stopped it."""
+    try:
+        assistant_drafts.set_status(draft, assistant_drafts.STOPPED)
+    except Exception as e:
+        logger.warning(f"assistant terms: draft not marked stopped: {type(e).__name__}")
+
+
 def render_agreed(request: HttpRequest, started: bool, emailed: bool) -> HttpResponse:
     return _private(
         render(
@@ -318,6 +327,8 @@ class AssistantAgreeView(View):
         except Exception:
             assistant_ip_limit.give_back(taken)
             spend.release_generation(reservation)
+            # The link is used up, so nobody can agree to this draft now.
+            _stop_quietly(draft)
             raise
         return self._agreed(
             request, token, form, content, draft, denial, reservation, taken
