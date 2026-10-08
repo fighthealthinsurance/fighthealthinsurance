@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import html
 import json
 import os
 import re
@@ -148,6 +149,7 @@ from .nice_tools import NICETools
 from .email_utils import is_sendable_email
 from .utils import (
     _try_pandoc_engines,
+    pandoc_convert_command,
     check_call,
     execute_critical_optional_fireandforget,
     fire_and_forget_in_new_threadpool,
@@ -268,12 +270,7 @@ class AppealAssemblyHelper:
             return input_path
         else:
             await asyncio.sleep(0)
-            base_convert_command = [
-                "pandoc",
-                "--wrap=auto",
-                input_path,
-                f"-o{input_path}.pdf",
-            ]
+            base_convert_command = pandoc_convert_command(input_path)
             try:
                 await _try_pandoc_engines(base_convert_command)
                 return f"{input_path}.pdf"
@@ -507,8 +504,13 @@ class AppealAssemblyHelper:
             cover_content: str = ""
             # Render the cover content
             if cover_template_string and len(cover_template_string) > 1:
+                # string.Template does no escaping, so HTML-escape the values
+                # the way Django's autoescape does in the branch below.
                 cover_content = Template(cover_template_string).substitute(
-                    cover_context
+                    {
+                        key: html.escape(value) if isinstance(value, str) else value
+                        for key, value in cover_context.items()
+                    }
                 )
                 logger.debug(
                     f"Rendered cover letter from string ({len(cover_content)} chars)"

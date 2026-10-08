@@ -17,7 +17,7 @@ from tests.pdf_fixtures import make_pdf_bytes
 
 async def _render_header_with_pymupdf(command: list[str]) -> None:
     """Stand in for pandoc: write the input text file out as a one-page PDF."""
-    input_path = command[1]
+    input_path = next(arg for arg in command[1:] if not arg.startswith("-"))
     output_path = next(arg[2:] for arg in command if arg.startswith("-o"))
     with open(input_path) as f:
         text = f.read()

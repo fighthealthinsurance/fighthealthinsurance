@@ -15,7 +15,7 @@ from requests import Session
 from stopit import ThreadingTimeout as Timeout
 from loguru import logger
 
-from .utils import _try_pandoc_engines
+from .utils import _try_pandoc_engines, pandoc_convert_command
 
 FROM_FAX = os.getenv("FROM_FAX", "4158407591")
 FROM_VOICE = os.getenv("FROM_VOICE", "2029383266")
@@ -598,12 +598,7 @@ class FlexibleFaxMagic(object):
                     pages = len(reader.pages)
                     return (input_path, pages)
                 else:
-                    command = [
-                        "pandoc",
-                        "--wrap=auto",
-                        input_path,
-                        f"-o{input_path}.pdf",
-                    ]
+                    command = pandoc_convert_command(input_path)
                     await _try_pandoc_engines(command)
                     reader = PdfReader(f"{input_path}.pdf")
                     pages = len(reader.pages)
@@ -642,7 +637,7 @@ class FlexibleFaxMagic(object):
                 header = f"""This part of transmission {user_header} which is transmission {i} of {number_of_transmissions} with {x_pages}  pages in this transmission in addition to the cover page [this page]. {extra}"""
                 t.write(header)
                 t.flush()
-                command = ["pandoc", t.name, f"-o{t.name}.pdf"]
+                command = pandoc_convert_command(t.name)
                 await _try_pandoc_engines(command)
                 header_path = f"{t.name}.pdf"
             with tempfile.NamedTemporaryFile(
