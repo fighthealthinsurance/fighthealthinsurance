@@ -214,11 +214,11 @@
       "url": "https://insurance.arkansas.gov/",
       "phone": "501-371-2600",
       "consumer_line": "800-282-9134",
-      "complaint_url": "https://insurance.arkansas.gov/pages/for-consumers/file-a-complaint/"
+      "complaint_url": "https://insurance.arkansas.gov/consumer-assistance/consumer-services/file-a-complaint/"
     },
     "consumer_assistance": {
       "cap_name": "Arkansas Insurance Department Consumer Services",
-      "cap_url": "https://insurance.arkansas.gov/pages/for-consumers/",
+      "cap_url": "https://insurance.arkansas.gov/consumer-assistance/",
       "cap_phone": "800-282-9134",
       "ship_name": "Arkansas Senior Health Insurance Information Program",
       "ship_url": "https://insurance.arkansas.gov/consumer-services/senior-health/",
@@ -232,12 +232,12 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://insurance.arkansas.gov/pages/for-consumers/health-insurance/external-review/"
+      "info_url": "https://insurance.arkansas.gov/consumer-assistance/consumer-services/external-review/"
     },
     "additional_resources": [
       {
-        "name": "Center for Arkansas Legal Services",
-        "url": "https://www.arkansaslegal.org/",
+        "name": "Legal Aid of Arkansas",
+        "url": "https://arlegalaid.org/",
         "description": "Free legal help for eligible Arkansans"
       }
     ]
@@ -319,7 +319,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://doi.colorado.gov/for-consumers/health-insurance/external-review"
+      "info_url": "https://doi.colorado.gov/sites/doi/files/documents/When%20Your%20Health%20Insurance%20Company%20Says%20_No_.pdf"
     },
     "additional_resources": [
       {
@@ -375,7 +375,7 @@
       "url": "https://insurance.delaware.gov/",
       "phone": "302-674-7300",
       "consumer_line": "800-282-8611",
-      "complaint_url": "https://insurance.delaware.gov/consumers/filingacomplaint/"
+      "complaint_url": "https://insurance.delaware.gov/services/filecomplaint/"
     },
     "consumer_assistance": {
       "cap_name": "Delaware Department of Insurance Consumer Services",
@@ -393,7 +393,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://insurance.delaware.gov/consumers/healthinsurance/"
+      "info_url": "https://insurance.delaware.gov/divisions/consumerhp/ihcap/"
     },
     "additional_resources": [
       {
@@ -412,7 +412,7 @@
       "url": "https://disb.dc.gov/",
       "phone": "202-727-8000",
       "consumer_line": "202-727-8000",
-      "complaint_url": "https://disb.dc.gov/service/file-complaint-background"
+      "complaint_url": "https://disb.dc.gov/complaints"
     },
     "consumer_assistance": {
       "cap_name": "DC Health Link Consumer Assistance",
@@ -434,7 +434,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://disb.dc.gov/service/request-external-review"
+      "info_url": "https://disb.dc.gov/"
     },
     "additional_resources": [
       {
@@ -470,7 +470,7 @@
       "managed_care_ombudsman": {
         "name": "Florida Medicaid Ombudsman Program",
         "phone": "877-254-1055",
-        "url": "https://ahca.myflorida.com/medicaid/florida-medicaid-complaints"
+        "url": "https://ahca.myflorida.com/medicaid/florida-medicaid-complaints.html"
       }
     },
     "external_review": {
@@ -494,11 +494,11 @@
       "url": "https://oci.georgia.gov/",
       "phone": "404-656-2070",
       "consumer_line": "800-656-2298",
-      "complaint_url": "https://oci.georgia.gov/file-consumer-complaint"
+      "complaint_url": "https://oci.georgia.gov/file-consumer-insurance-complaint"
     },
     "consumer_assistance": {
       "cap_name": "Georgia Department of Insurance Consumer Services",
-      "cap_url": "https://oci.georgia.gov/consumer-services",
+      "cap_url": "https://oci.georgia.gov/insurance-resources/complaints-fraud",
       "cap_phone": "800-656-2298",
       "ship_name": "GeorgiaCares",
       "ship_url": "https://mygeorgiacares.org/",
@@ -511,12 +511,12 @@
       "managed_care_ombudsman": {
         "name": "Georgia Medicaid Member Ombudsman",
         "phone": "866-322-4260",
-        "url": "https://medicaid.georgia.gov/contact-us"
+        "url": "https://medicaid.georgia.gov/contact-georgia-medicaid"
       }
     },
     "external_review": {
       "available": true,
-      "info_url": "https://oci.georgia.gov/external-review"
+      "info_url": "https://oci.georgia.gov/insurance-resources/health"
     },
     "additional_resources": [
       {
@@ -540,7 +540,7 @@
       "url": "https://cca.hawaii.gov/ins/",
       "phone": "808-586-2790",
       "consumer_line": "808-586-2790",
-      "complaint_url": "https://cca.hawaii.gov/ins/complaints/"
+      "complaint_url": "https://cca.hawaii.gov/ins/complaint/"
     },
     "consumer_assistance": {
       "cap_name": "Hawaii Insurance Division Consumer Services",
@@ -558,7 +558,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://cca.hawaii.gov/ins/consumer/external-review/"
+      "info_url": "https://cca.hawaii.gov/ins/faqs/"
     },
     "additional_resources": [
       {
@@ -581,7 +581,7 @@
     },
     "consumer_assistance": {
       "cap_name": "Idaho Department of Insurance Consumer Assistance",
-      "cap_url": "https://doi.idaho.gov/consumer-resources/",
+      "cap_url": "https://doi.idaho.gov/consumers/",
       "cap_phone": "800-721-3272",
       "ship_name": "Idaho Senior Health Insurance Benefits Advisors (SHIBA)",
       "ship_url": "https://doi.idaho.gov/shiba/",
@@ -660,7 +660,7 @@
       "url": "https://www.in.gov/idoi/",
       "phone": "317-232-2385",
       "consumer_line": "800-622-4461",
-      "complaint_url": "https://www.in.gov/idoi/file-a-complaint/"
+      "complaint_url": "https://www.in.gov/idoi/consumer-services/file-an-insurance-company-complaint"
     },
     "consumer_assistance": {
       "cap_name": "Indiana Department of Insurance Consumer Services",
@@ -677,7 +677,7 @@
       "managed_care_ombudsman": {
         "name": "Indiana Medicaid Ombudsman",
         "phone": "800-403-0864",
-        "url": "https://www.in.gov/fssa/ompp/member-resources/"
+        "url": "https://www.in.gov/medicaid/members/member-resources/"
       }
     },
     "external_review": {
@@ -701,7 +701,7 @@
       "url": "https://iid.iowa.gov/",
       "phone": "515-281-5705",
       "consumer_line": "877-955-1212",
-      "complaint_url": "https://iid.iowa.gov/file-a-complaint"
+      "complaint_url": "https://iid.iowa.gov/consumers/filing-complaints"
     },
     "consumer_assistance": {
       "cap_name": "Iowa Insurance Division Consumer Assistance",
@@ -800,12 +800,12 @@
       "managed_care_ombudsman": {
         "name": "Kentucky Medicaid Ombudsman",
         "phone": "800-635-2570",
-        "url": "https://chfs.ky.gov/agencies/dms/member/Pages/ombudsman.aspx"
+        "url": "https://www.chfs.ky.gov/agencies/os/chfslistens/Pages/default.aspx"
       }
     },
     "external_review": {
       "available": true,
-      "info_url": "https://insurance.ky.gov/healthreform/default.aspx"
+      "info_url": "https://insurance.ky.gov/"
     },
     "additional_resources": [
       {
@@ -861,7 +861,7 @@
       "url": "https://www.maine.gov/pfr/insurance/",
       "phone": "207-624-8475",
       "consumer_line": "800-300-5000",
-      "complaint_url": "https://www.maine.gov/pfr/insurance/consumer/file_complaint.html"
+      "complaint_url": "https://www.maine.gov/pfr/insurance/consumers/file-a-complaint-dispute"
     },
     "consumer_assistance": {
       "cap_name": "Consumers for Affordable Health Care",
@@ -879,7 +879,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.maine.gov/pfr/insurance/consumer/external_review.html"
+      "info_url": "https://www.maine.gov/pfr/insurance/consumers/health-insurance-for-individuals-and-families/complaints-appeals-external-reviews"
     },
     "additional_resources": [
       {
@@ -920,7 +920,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://insurance.maryland.gov/Consumer/Pages/ExternalReview.aspx"
+      "info_url": "https://insurance.maryland.gov/Consumer/Pages/AppealsAndGrievances.aspx"
     },
     "additional_resources": [
       {
@@ -985,7 +985,7 @@
       "url": "https://www.michigan.gov/difs",
       "phone": "517-284-8800",
       "consumer_line": "877-999-6442",
-      "complaint_url": "https://www.michigan.gov/difs/consumers/file-complaint"
+      "complaint_url": "https://www.michigan.gov/difs/consumers/complaint"
     },
     "consumer_assistance": {
       "cap_name": "Michigan Department of Insurance Consumer Services",
@@ -1007,7 +1007,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.michigan.gov/difs/consumers/health/external-review"
+      "info_url": "https://www.michigan.gov/difs/consumers/insurance/health-insurance/individual/appealing"
     },
     "additional_resources": [
       {
@@ -1072,7 +1072,7 @@
       "url": "https://www.mid.ms.gov/",
       "phone": "601-359-3569",
       "consumer_line": "800-562-2957",
-      "complaint_url": "https://www.mid.ms.gov/consumers/complaint.html"
+      "complaint_url": "https://www.mid.ms.gov/mississippi-insurance-department/consumers/file-a-complaint/"
     },
     "consumer_assistance": {
       "cap_name": "Mississippi Insurance Department Consumer Services",
@@ -1090,7 +1090,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.mid.ms.gov/consumers/external-review.html"
+      "info_url": "https://www.mid.ms.gov/mississippi-insurance-department/healthcare/health-care-external-review/"
     },
     "additional_resources": [
       {
@@ -1109,7 +1109,7 @@
       "url": "https://insurance.mo.gov/",
       "phone": "573-751-4126",
       "consumer_line": "800-726-7390",
-      "complaint_url": "https://insurance.mo.gov/consumers/complaints/"
+      "complaint_url": "https://insurance.mo.gov/consumer-complaints/insurance-complaints"
     },
     "consumer_assistance": {
       "cap_name": "Missouri Department of Insurance Consumer Services",
@@ -1126,12 +1126,12 @@
       "managed_care_ombudsman": {
         "name": "MO HealthNet Managed Care Helpline",
         "phone": "800-392-2161",
-        "url": "https://dss.mo.gov/mhd/participants/"
+        "url": "https://dss.mo.gov/managed-care-participants-faq"
       }
     },
     "external_review": {
       "available": true,
-      "info_url": "https://insurance.mo.gov/consumers/health/external-review.php"
+      "info_url": "https://insurance.mo.gov/health-insurance/external-review-process"
     },
     "additional_resources": [
       {
@@ -1154,7 +1154,7 @@
     },
     "consumer_assistance": {
       "cap_name": "Montana Commissioner of Insurance Consumer Services",
-      "cap_url": "https://csimt.gov/insurance/consumers/",
+      "cap_url": "https://csimt.gov/insurance-complaints-fraud/",
       "cap_phone": "800-332-6148",
       "ship_name": "Montana State Health Insurance Assistance Program (SHIP)",
       "ship_url": "https://dphhs.mt.gov/sltc/aging/ship",
@@ -1168,7 +1168,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://csimt.gov/insurance/consumers/health-insurance-information/"
+      "info_url": "https://csimt.gov/insurance-complaints-fraud/"
     },
     "additional_resources": [
       {
@@ -1191,7 +1191,7 @@
     },
     "consumer_assistance": {
       "cap_name": "Nebraska Department of Insurance Consumer Affairs",
-      "cap_url": "https://doi.nebraska.gov/consumer",
+      "cap_url": "https://doi.nebraska.gov/consumer/file-complaint",
       "cap_phone": "877-564-7323",
       "ship_name": "Nebraska State Health Insurance Assistance Program (SHIIP)",
       "ship_url": "https://doi.nebraska.gov/consumer/senior-health",
@@ -1209,7 +1209,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://doi.nebraska.gov/consumer/health-insurance"
+      "info_url": "https://doi.nebraska.gov/consumer/appealing-denied-health-claim"
     },
     "additional_resources": [
       {
@@ -1228,7 +1228,7 @@
       "url": "https://doi.nv.gov/",
       "phone": "775-687-0700",
       "consumer_line": "888-872-3234",
-      "complaint_url": "https://doi.nv.gov/Consumers/File_Complaint/"
+      "complaint_url": "https://doi.nv.gov/Consumers/File-A-Complaint/"
     },
     "consumer_assistance": {
       "cap_name": "Nevada Division of Insurance Consumer Services",
@@ -1246,7 +1246,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://doi.nv.gov/Consumers/Health_Insurance/"
+      "info_url": "https://doi.nv.gov/Consumers/Health-Accident-Insurance/"
     },
     "additional_resources": [
       {
@@ -1324,7 +1324,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.nj.gov/dobi/division_insurance/ihcseh/externalreview.htm"
+      "info_url": "https://www.nj.gov/dobi/division_insurance/managedcare/ihcap.htm"
     },
     "additional_resources": [
       {
@@ -1435,7 +1435,7 @@
       "url": "https://www.ncdoi.gov/",
       "phone": "919-814-6300",
       "consumer_line": "855-408-1212",
-      "complaint_url": "https://www.ncdoi.gov/consumers/file-complaint"
+      "complaint_url": "https://www.ncdoi.gov/assistance-or-file-complaint"
     },
     "consumer_assistance": {
       "cap_name": "North Carolina Department of Insurance Consumer Services",
@@ -1476,7 +1476,7 @@
       "url": "https://www.insurance.nd.gov/",
       "phone": "701-328-2440",
       "consumer_line": "800-247-0560",
-      "complaint_url": "https://www.insurance.nd.gov/consumers/file-a-complaint"
+      "complaint_url": "https://www.insurance.nd.gov/consumers/complaints"
     },
     "consumer_assistance": {
       "cap_name": "North Dakota Insurance Department Consumer Assistance",
@@ -1494,7 +1494,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.insurance.nd.gov/consumers/health-insurance/external-review"
+      "info_url": "https://www.insurance.nd.gov/consumers/insurance/health"
     },
     "additional_resources": [
       {
@@ -1513,11 +1513,11 @@
       "url": "https://insurance.ohio.gov/",
       "phone": "614-644-2658",
       "consumer_line": "800-686-1526",
-      "complaint_url": "https://insurance.ohio.gov/wps/portal/consumer/complaint"
+      "complaint_url": "https://insurance.ohio.gov/about-us/complaint-center/submit-insurance-complaint"
     },
     "consumer_assistance": {
       "cap_name": "Ohio Department of Insurance Consumer Services",
-      "cap_url": "https://insurance.ohio.gov/wps/portal/consumer",
+      "cap_url": "https://insurance.ohio.gov/consumers",
       "cap_phone": "800-686-1526",
       "ship_name": "Ohio Senior Health Insurance Information Program (OSHIIP)",
       "ship_url": "https://insurance.ohio.gov/about-us/divisions/oshiip",
@@ -1535,7 +1535,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://insurance.ohio.gov/wps/portal/consumer/consumer/health-insurance/external-review"
+      "info_url": "https://insurance.ohio.gov/about-us/complaint-center/health-coverage-external-review-process"
     },
     "additional_resources": [
       {
@@ -1564,7 +1564,7 @@
       "url": "https://www.oid.ok.gov/",
       "phone": "405-521-2828",
       "consumer_line": "800-522-0071",
-      "complaint_url": "https://www.oid.ok.gov/consumers/file-a-complaint/"
+      "complaint_url": "https://www.oid.ok.gov/consumers/file-an-online-complaint/"
     },
     "consumer_assistance": {
       "cap_name": "Oklahoma Insurance Department Consumer Assistance",
@@ -1601,11 +1601,11 @@
       "url": "https://dfr.oregon.gov/",
       "phone": "503-378-4140",
       "consumer_line": "888-877-4894",
-      "complaint_url": "https://dfr.oregon.gov/help/complaints-background"
+      "complaint_url": "https://dfr.oregon.gov/help/complaints-licenses/Pages/file-complaint.aspx"
     },
     "consumer_assistance": {
       "cap_name": "Oregon Division of Financial Regulation Consumer Services",
-      "cap_url": "https://dfr.oregon.gov/consumers",
+      "cap_url": "https://dfr.oregon.gov/help/Pages/index.aspx",
       "cap_phone": "888-877-4894",
       "ship_name": "Oregon Senior Health Insurance Benefits Assistance (SHIBA)",
       "ship_url": "https://shiba.oregon.gov/",
@@ -1623,7 +1623,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://dfr.oregon.gov/help/complaint-details"
+      "info_url": "https://dfr.oregon.gov/insure/health/understand/coverage/Pages/if-your-claim-was-denied.aspx"
     },
     "additional_resources": [
       {
@@ -1739,7 +1739,7 @@
       "url": "https://www.doi.sc.gov/",
       "phone": "803-737-6160",
       "consumer_line": "800-768-3467",
-      "complaint_url": "https://www.doi.sc.gov/consumers/file-complaint"
+      "complaint_url": "https://www.doi.sc.gov/8/Consumers"
     },
     "consumer_assistance": {
       "cap_name": "South Carolina Department of Insurance Consumer Services",
@@ -1757,7 +1757,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.doi.sc.gov/consumers/health-insurance/external-review"
+      "info_url": "https://www.doi.sc.gov/638/Health-Insurance"
     },
     "additional_resources": [
       {
@@ -1830,12 +1830,12 @@
       "managed_care_ombudsman": {
         "name": "TennCare Member Services",
         "phone": "800-342-3145",
-        "url": "https://www.tn.gov/tenncare/members.html"
+        "url": "https://www.tn.gov/tenncare/members-applicants.html"
       }
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.tn.gov/commerce/insurance/consumer-resources/external-review.html"
+      "info_url": "https://www.tn.gov/commerce/insurance/consumer-resources.html"
     },
     "additional_resources": [
       {
@@ -1881,7 +1881,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.tdi.texas.gov/health/irhealthreq.html"
+      "info_url": "https://www.tdi.texas.gov/hmo/fileiroreq.html"
     },
     "additional_resources": [
       {
@@ -1910,7 +1910,7 @@
       "url": "https://insurance.utah.gov/",
       "phone": "801-538-3800",
       "consumer_line": "800-439-3805",
-      "complaint_url": "https://insurance.utah.gov/consumer/file-complaint"
+      "complaint_url": "https://insurance.utah.gov/complaints/"
     },
     "consumer_assistance": {
       "cap_name": "Utah Insurance Department Consumer Services",
@@ -1928,7 +1928,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://insurance.utah.gov/consumer/health-insurance/external-review"
+      "info_url": "https://insurance.utah.gov/consumers/health-insurance/independent-review/"
     },
     "additional_resources": [
       {
@@ -1947,7 +1947,7 @@
       "url": "https://dfr.vermont.gov/insurance",
       "phone": "802-828-3301",
       "consumer_line": "800-964-1784",
-      "complaint_url": "https://dfr.vermont.gov/insurance/consumers/file-complaint"
+      "complaint_url": "https://dfr.vermont.gov/consumers/file-complaint/insurance/insurance-complaints"
     },
     "consumer_assistance": {
       "cap_name": "Vermont Health Care Advocate",
@@ -1965,7 +1965,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://dfr.vermont.gov/insurance/consumers/health-insurance/external-appeal"
+      "info_url": "https://dfr.vermont.gov/consumers/file-complaint/insurance/healthcare-external-appeal"
     },
     "additional_resources": [
       {
@@ -1989,7 +1989,7 @@
       "url": "https://www.scc.virginia.gov/pages/Bureau-of-Insurance",
       "phone": "804-371-9741",
       "consumer_line": "877-310-6560",
-      "complaint_url": "https://www.scc.virginia.gov/pages/File-a-Complaint-About-Insurance"
+      "complaint_url": "https://www.scc.virginia.gov/consumers/insurance/file-an-insurance-complaint/"
     },
     "consumer_assistance": {
       "cap_name": "Virginia Bureau of Insurance Consumer Services",
@@ -2039,7 +2039,7 @@
     },
     "consumer_assistance": {
       "cap_name": "Washington Statewide Health Insurance Benefits Advisors (SHIBA)",
-      "cap_url": "https://www.insurance.wa.gov/about-shiba",
+      "cap_url": "https://www.insurance.wa.gov/insurance-resources/medicare/get-free-medicare-help-shiba",
       "cap_phone": "800-562-6900",
       "ship_name": "Statewide Health Insurance Benefits Advisors (SHIBA)",
       "ship_url": "https://www.insurance.wa.gov/get-help-medicare",
@@ -2057,7 +2057,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.insurance.wa.gov/independent-review-organizations-iros"
+      "info_url": "https://www.insurance.wa.gov/insurance-resources/health-insurance/appealing-health-insurance-denial/how-appeal-health-insurance-denial"
     },
     "additional_resources": [
       {
@@ -2081,7 +2081,7 @@
       "url": "https://www.wvinsurance.gov/",
       "phone": "304-558-3386",
       "consumer_line": "888-879-9842",
-      "complaint_url": "https://www.wvinsurance.gov/Consumers/File-A-Complaint"
+      "complaint_url": "https://www.wvinsurance.gov/Consumer_Services"
     },
     "consumer_assistance": {
       "cap_name": "West Virginia Insurance Commission Consumer Services",
@@ -2099,7 +2099,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.wvinsurance.gov/Consumers/External-Review"
+      "info_url": "https://www.wvinsurance.gov/Consumer_Services"
     },
     "additional_resources": [
       {
@@ -2140,7 +2140,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://oci.wi.gov/Pages/Consumers/IndependentReview.aspx"
+      "info_url": "https://oci.wi.gov/Pages/Consumers/PI-203.aspx"
     },
     "additional_resources": [
       {
@@ -2164,7 +2164,7 @@
       "url": "https://doi.wyo.gov/",
       "phone": "307-777-7401",
       "consumer_line": "800-438-5768",
-      "complaint_url": "https://doi.wyo.gov/consumers/file-a-complaint"
+      "complaint_url": "https://doi.wyo.gov/consumers/consumer-affairs-contact"
     },
     "consumer_assistance": {
       "cap_name": "Wyoming Department of Insurance Consumer Assistance",
@@ -2182,7 +2182,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://doi.wyo.gov/consumers/health-insurance"
+      "info_url": "https://doi.wyo.gov/consumers/iro"
     },
     "additional_resources": [
       {
