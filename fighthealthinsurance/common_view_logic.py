@@ -93,6 +93,13 @@ from fighthealthinsurance.denials.algorithmic_review_detector import (
     render_template_blocks,
 )
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
+from fighthealthinsurance.letter_dates import (
+    date_the_letter,
+    format_letter_date,
+    letter_date,
+    letter_zone,
+    todays_letter_date,
+)
 from fighthealthinsurance.medical_code_extractor import (
     extract_icd10_codes,
     extract_procedure_codes,
@@ -616,10 +623,23 @@ async def _record_synthesis_attempt(
         logger.opt(exception=True).debug("Could not record the synthesis attempt")
 
 
-def substitute_appeal_fields(denial: Denial, content: str) -> str:
+def substitute_appeal_fields(
+    denial: Denial, content: str, set_date_line: bool = True
+) -> str:
     """Substitute the denial's own values (insurance company, claim id,
-    diagnosis, procedure, the patient's and professional's names, dates ...)
-    for the placeholders a draft carries.
+    diagnosis, procedure, the patient's and professional's names, the denial
+    date) for the placeholders a draft carries, and set the letter's own date
+    line to today's date where the case is (letter_dates.date_the_letter,
+    by the denial's state). ``set_date_line`` False leaves the date line as
+    it is.
+
+    Today's date goes on the date line and nowhere else: a date placeholder
+    there ("[Insert Date]", "[Date]", "[Today's Date]") is filled with it,
+    and one in the body is left for the person to fill, which the print and
+    fax check flags (letter_placeholders.json). "$DATE" is the date the plan
+    denied the claim (Denial.denial_date), and stays as it is when that is
+    not known: the one template that uses it writes "denied by
+    $insurance_company on $DATE".
 
     Every frame the browser receives goes through this while the stored draft
     keeps its placeholders, so text that comes back from the browser is
@@ -669,8 +689,6 @@ def substitute_appeal_fields(denial: Denial, content: str) -> str:
         "Dear Insurance Company": f"Dear {insurance_company}",
         "Dear Health Plan": f"Dear {insurance_company}",
         "Dear Sir/Madam": f"Dear {insurance_company}",
-        # Date
-        "[Insert Date]": denial.date or "{{date}}",
         # Claim/Case ID
         "{{CASEID}}": claim_id,
         "[Reference Number from Denial Letter]": claim_id,
@@ -686,12 +704,13 @@ def substitute_appeal_fields(denial: Denial, content: str) -> str:
         "{procedure}": procedure,
         # Legacy $-prefixed keys (used in fixture templates)
         "$insurance_company": insurance_company,
-        "$DATE": denial.date or "{{date}}",
         "$diagnosis": diagnosis,
         "$procedure": procedure,
         "$claim_id": claim_id,
         "$CASEID": claim_id,
     }
+    if isinstance(denial.denial_date, datetime.date):
+        subs["$DATE"] = format_letter_date(denial.denial_date)
     # Each lookup individually guarded: one failing relation (e.g. a
     # deleted professional profile) must not abort the LATER
     # substitutions too, leaving [Patient Name]-style placeholders in
@@ -761,11 +780,6 @@ def substitute_appeal_fields(denial: Denial, content: str) -> str:
             r"\[Health\s+Plan\s*(?:Name\s*)?(?:Placeholder)?\]",
             insurance_company,
         ),
-        # Date variants
-        (
-            r"\[(?:Insert\s+)?(?:Current\s+)?Date\s*(?:Placeholder)?\]",
-            denial.date or "{{date}}",
-        ),
         # Patient name variants
         (
             r"\[Patient(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
@@ -788,7 +802,41 @@ def substitute_appeal_fields(denial: Denial, content: str) -> str:
         str_value = str(value)
         escaped = str_value.replace("\\", r"\\")
         content = re.sub(pattern, escaped, content, flags=re.IGNORECASE)
-    return content
+    if not set_date_line:
+        return content
+    return date_the_letter(
+        content, todays_letter_date(denial.your_state or denial.state)
+    )
+
+
+def _same_but_the_date_line(text: str, other: str) -> bool:
+    """Whether two letters read the same once their date lines are blanked."""
+    undated = ProposedAppeal.fingerprint(date_the_letter(text, ""))
+    return undated is not None and undated == ProposedAppeal.fingerprint(
+        date_the_letter(other, "")
+    )
+
+
+def _dated_by_the_site(text: str, denial: Denial, original: ProposedAppeal) -> bool:
+    """Whether the letter's date line holds a date the site could have shown
+    it with: one from the day its draft was made (a day early, for the zone)
+    to today. Any other date there is the person's own edit."""
+    written = letter_date(text)
+    if written is None:
+        return True
+    zone = letter_zone(denial.your_state or denial.state)
+    today = timezone.localdate(timezone=zone)
+    made = original.created_at
+    first = (
+        timezone.localdate(made, timezone=zone)
+        if made is not None
+        else today - datetime.timedelta(days=30)
+    )
+    days = max((today - first).days, 0) + 1
+    return written in {
+        format_letter_date(today - datetime.timedelta(days=back))
+        for back in range(days + 1)
+    }
 
 
 def mark_proposal_chosen(
@@ -915,15 +963,20 @@ def mark_proposal_chosen(
         # denial's values substituted for the draft's placeholders -- so the
         # draft is compared after the same substitution. A matched chosen
         # copy (a re-pick) keeps its own answer when the text is unchanged.
+        # The draft's date line is set to the day the letter was shown, which
+        # need not be the day it is picked, so the two are also compared with
+        # their date lines blanked.
         if original is None:
             editted = True
         else:
+            substituted = substitute_appeal_fields(denial, original.appeal_text or "")
             unchanged = ProposedAppeal.fingerprint(appeal_text) in {
                 ProposedAppeal.fingerprint(original.appeal_text),
-                ProposedAppeal.fingerprint(
-                    substitute_appeal_fields(denial, original.appeal_text or "")
-                ),
-            }
+                ProposedAppeal.fingerprint(substituted),
+            } or (
+                _same_but_the_date_line(appeal_text, substituted)
+                and _dated_by_the_site(appeal_text, denial, original)
+            )
             if not unchanged:
                 editted = True
             else:
@@ -5213,14 +5266,18 @@ class AppealsBackendHelper:
             """
             return json.dumps(response) + "\n"
 
-        async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:
+        async def sub_in_appeals(
+            appeal: dict[str, str], set_date_line: bool = True
+        ) -> dict[str, str]:
             """
             Performs dynamic substitution of denial and appeal-related fields into an appeal template.
 
-            Replaces placeholders in the appeal's content with actual values from the associated denial, such as insurance company, claim ID, diagnosis, procedure, patient and professional names, and other context-specific information. Returns the appeal dictionary with the substituted content.
+            Replaces placeholders in the appeal's content with actual values from the associated denial, such as insurance company, claim ID, diagnosis, procedure, patient and professional names, and other context-specific information, and sets its date line to today's date unless ``set_date_line`` is False. Returns the appeal dictionary with the substituted content.
             """
             await asyncio.sleep(0)
-            appeal["content"] = substitute_appeal_fields(denial, appeal["content"])
+            appeal["content"] = substitute_appeal_fields(
+                denial, appeal["content"], set_date_line
+            )
             return appeal
 
         # If we've had a timeout on the initial call and we're on round 2
@@ -5419,7 +5476,11 @@ class AppealsBackendHelper:
                 existing_appeal_dict = await sub_in_appeals(
                     letter_quality.with_score_fields(
                         {"id": str(appeal.id), "content": appeal.appeal_text}, appeal
-                    )
+                    ),
+                    # A letter the person picked after editing it is theirs,
+                    # date line and all; an unedited pick is dated as its
+                    # draft is.
+                    set_date_line=not (appeal.chosen and appeal.editted),
                 )
                 yield await format_response(existing_appeal_dict)
             elif appeal.appeal_text is not None and str(appeal.appeal_text).strip():

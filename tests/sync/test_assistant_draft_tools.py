@@ -2,7 +2,8 @@
 they never return."""
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
+from datetime import timezone as dt_timezone
 from unittest.mock import patch
 
 from django.test import TestCase, override_settings
@@ -336,6 +337,59 @@ class ViewTest(TestCase):
             )
         self.assertTrue(
             tools.view(draft)["tell_the_person"].endswith(tools.FOR_THE_PATIENT_LETTERS)
+        )
+
+
+# 6pm UTC on November 3, 2026: a day that is not the machine's own.
+FROZEN_NOW = datetime(2026, 11, 3, 18, 0, tzinfo=dt_timezone.utc)
+
+
+def dated_letter(date_line, company="{insurance_company}", closing=""):
+    return (
+        f"Jane Doe\n123 Main Street\nSpringfield, IL 62704\n\n{date_line}\n\n"
+        "Re: Appeal of the denial of my MRI, claim 12345\n\n"
+        f"Dear {company},\n\n"
+        "I am appealing your decision of March 3, 2026, which denied the MRI "
+        f"my doctor ordered. Your letter gives me until August 30, 2026.{closing}"
+        "\n\nSincerely,\nJane Doe\n"
+    )
+
+
+class LetterDateTest(TestCase):
+    """The letters draft_appeal_in_chat brings back to the chat carry today's
+    date on their date line, whatever date the stored draft wrote there."""
+
+    def test_each_letter_back_in_the_chat_is_dated_today(self):
+        denial = a_denial()
+        date_lines = ("October 25, 2026", "Later this month", "[Insert Date]")
+        for i, date_line in enumerate(date_lines):
+            ProposedAppeal.objects.create(
+                for_denial=denial,
+                appeal_text=dated_letter(date_line, closing=f" Letter {i}."),
+            )
+        _, draft = a_draft(drafts.READY, denial=denial)
+        with patch("django.utils.timezone.now", return_value=FROZEN_NOW):
+            result = tools.view(draft)
+        self.assertEqual(
+            [letter["text"] for letter in result["letters"]],
+            [
+                dated_letter("November 3, 2026", "Example Health", f" Letter {i}.")
+                for i in (2, 1, 0)
+            ],
+        )
+
+    def test_drafts_that_differ_only_in_their_date_line_are_one_letter(self):
+        denial = a_denial()
+        for date_line in ("October 25, 2026", "Later this month", "[Insert Date]"):
+            ProposedAppeal.objects.create(
+                for_denial=denial, appeal_text=dated_letter(date_line)
+            )
+        _, draft = a_draft(drafts.READY, denial=denial)
+        with patch("django.utils.timezone.now", return_value=FROZEN_NOW):
+            result = tools.view(draft)
+        self.assertEqual(
+            [letter["text"] for letter in result["letters"]],
+            [dated_letter("November 3, 2026", "Example Health")],
         )
 
 
