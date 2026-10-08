@@ -443,28 +443,18 @@ class TestFaxResendForm(TestCase):
 
     def test_valid_form(self):
         """Valid data should pass."""
-        import uuid
-
         form = FaxResendForm(
-            data={
-                "fax_phone": "1-800-555-9999",
-                "uuid": str(uuid.uuid4()),
-                "hashed_email": "abc123hashed",
-            }
+            data={"fax_phone": "1-800-555-9999", "fax_ref": "a-session-ref"}
         )
         self.assertTrue(form.is_valid())
 
-    def test_invalid_uuid(self):
-        """Invalid UUID should fail."""
-        form = FaxResendForm(
-            data={
-                "fax_phone": "1-800-555-9999",
-                "uuid": "not-a-valid-uuid",
-                "hashed_email": "abc123hashed",
-            }
-        )
-        self.assertFalse(form.is_valid())
-        self.assertIn("uuid", form.errors)
+    def test_the_form_names_no_fax(self):
+        """The fax comes from the page's session, by a ref only that session
+        holds, so the form has no fields for its uuid or hashed email."""
+        self.assertEqual(list(FaxResendForm().fields), ["fax_phone", "fax_ref"])
+
+    def test_the_fax_ref_is_hidden(self):
+        self.assertTrue(FaxResendForm()["fax_ref"].is_hidden)
 
 
 class TestFollowUpForm(TestCase):

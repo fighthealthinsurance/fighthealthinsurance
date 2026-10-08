@@ -14,13 +14,18 @@ integration:
 """
 
 import pytest
+from datetime import timedelta
 from unittest.mock import MagicMock, Mock, patch
 
 from django.test import override_settings
+from django.utils import timezone
 
 from fighthealthinsurance import fax_send_core
 from fighthealthinsurance.fax_status import STATUS_ALREADY_SENT, STATUS_OK
 from fighthealthinsurance.helpers.fax_helpers import (
+    FAX_RESEND_WINDOW,
+    RESEND_DELIVERED,
+    RESEND_EXPIRED,
     SendFaxHelper,
     _dispatch_or_ray_fax,
 )
@@ -58,7 +63,7 @@ class TestResendClearsIdempotencyMarker:
     def test_resend_clears_vendor_send_completed(self, test_denial):
         """resend() to a new number must allow the vendor step to re-transmit."""
         fax = _make_fax(
-            test_denial, sent=True, fax_success=True, vendor_send_completed=True
+            test_denial, sent=True, fax_success=False, vendor_send_completed=True
         )
         with patch(
             "fighthealthinsurance.helpers.fax_helpers._dispatch_or_ray_fax"
@@ -78,7 +83,7 @@ class TestResendClearsIdempotencyMarker:
         """A resend must supersede any in-flight run so the corrected number
         isn't dropped by a run already past its send step."""
         fax = _make_fax(
-            test_denial, sent=True, fax_success=True, vendor_send_completed=True
+            test_denial, sent=True, fax_success=False, vendor_send_completed=True
         )
         with patch(
             "fighthealthinsurance.helpers.fax_helpers._dispatch_or_ray_fax"
@@ -89,6 +94,66 @@ class TestResendClearsIdempotencyMarker:
                 hashed_email=fax.hashed_email,
             )
         assert dispatch.call_args.kwargs.get("force_restart") is True
+
+
+@pytest.mark.django_db
+class TestResendRefusals:
+    """The follow-up link re-sends a failed fax, or one with no number, for
+    FAX_RESEND_WINDOW after it was staged. A delivered fax stays sent."""
+
+    def _resend(self, fax):
+        with patch(
+            "fighthealthinsurance.helpers.fax_helpers._dispatch_or_ray_fax"
+        ) as dispatch:
+            result = SendFaxHelper.resend(
+                fax_phone="8005559999",
+                uuid=str(fax.uuid),
+                hashed_email=fax.hashed_email,
+            )
+        return result, dispatch
+
+    def _staged_ago(self, fax, age):
+        FaxesToSend.objects.filter(pk=fax.pk).update(date=timezone.now() - age)
+        fax.refresh_from_db()
+
+    def test_a_delivered_fax_is_not_resent(self, test_denial):
+        fax = _make_fax(
+            test_denial, sent=True, fax_success=True, vendor_send_completed=True
+        )
+        result, dispatch = self._resend(fax)
+        assert result is False
+        dispatch.assert_not_called()
+        fax.refresh_from_db()
+        assert fax.destination == "4255551234"
+        assert fax.sent is True and fax.fax_success is True
+        assert fax.vendor_send_completed is True
+
+    def test_a_fax_past_the_window_is_not_resent(self, test_denial):
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        self._staged_ago(fax, FAX_RESEND_WINDOW + timedelta(minutes=1))
+        result, dispatch = self._resend(fax)
+        assert result is False
+        dispatch.assert_not_called()
+        fax.refresh_from_db()
+        assert fax.destination == "4255551234"
+
+    def test_a_failed_fax_inside_the_window_is_resent(self, test_denial):
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        self._staged_ago(fax, FAX_RESEND_WINDOW - timedelta(minutes=1))
+        result, dispatch = self._resend(fax)
+        assert result is True
+        dispatch.assert_called_once()
+
+    def test_refusal_reasons(self, test_denial):
+        delivered = _make_fax(test_denial, sent=True, fax_success=True)
+        old = _make_fax(test_denial, sent=True, fax_success=False)
+        self._staged_ago(old, FAX_RESEND_WINDOW + timedelta(days=1))
+        failed = _make_fax(test_denial, sent=True, fax_success=False)
+        no_number = _make_fax(test_denial, destination=None)
+        assert SendFaxHelper.resend_refusal(delivered) == RESEND_DELIVERED
+        assert SendFaxHelper.resend_refusal(old) == RESEND_EXPIRED
+        assert SendFaxHelper.resend_refusal(failed) is None
+        assert SendFaxHelper.resend_refusal(no_number) is None
 
 
 @pytest.mark.django_db

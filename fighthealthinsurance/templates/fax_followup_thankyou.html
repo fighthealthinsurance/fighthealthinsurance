@@ -16,6 +16,9 @@ Thank you!
 <div class="fhi-page">
 {% include "partials/page_title.html" with title="Thank you for using our fax machine" %}
 <div class="fhi-stack">
+{% if fax_date %}
+<p>We're sending your fax from {{ fax_date|date:"F j" }} again, to {{ fax_number }}.</p>
+{% endif %}
 <p>
   The 90s thanks you.
 </p>

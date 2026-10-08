@@ -4,8 +4,7 @@ Thank you for using Fight Health Insurance to generate your appeal and for choos
 
 {% if success %}Our records show the fax was sent successfully. You should still call your insurance company to confirm they received it and ask for a reference number. Insurers sometimes say they never got an appeal.
 
-If you'd like to re-send the fax, or send it to another number:
-{{ fax_redo_link }}{% elif missing_destination %}It looks like we don't have a fax number on file for your appeal. That's an error on our side. You can enter the fax number now and we'll send your appeal right away.
+If they say it didn't arrive, or it needs to go to a different number, email us at support42@fighthealthinsurance.com and we'll help.{% elif missing_destination %}It looks like we don't have a fax number on file for your appeal. That's an error on our side. You can enter the fax number now and we'll send your appeal right away.
 
 Enter the fax number:
 {{ fax_redo_link }}{% else %}There may have been a problem sending the fax. This is fairly common, and you can re-send the fax for free.
