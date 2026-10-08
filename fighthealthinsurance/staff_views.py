@@ -2394,13 +2394,14 @@ class ModelUsageDashboardView(generic.TemplateView):
 
     @staticmethod
     def _split_started(rows: List[Any]) -> Optional[datetime.datetime]:
-        """When the newest unbroken run of half-and-half rows began, or None
-        when the newest row is not half and half. ``rows`` is newest first."""
-        from fighthealthinsurance.ml.appeal_prompt_versions import MODE_SPLIT
+        """When the newest unbroken run of random-draw rows (half and half or
+        thirds) began, or None when the newest row draws no version at
+        random. ``rows`` is newest first."""
+        from fighthealthinsurance.ml.appeal_prompt_versions import RANDOM_MODES
 
         started = None
         for row in rows:
-            if row.mode != MODE_SPLIT:
+            if row.mode not in RANDOM_MODES:
                 break
             started = row.created_at
         return started
@@ -2408,7 +2409,7 @@ class ModelUsageDashboardView(generic.TemplateView):
     @classmethod
     def _letter_prompts_panel(cls) -> Dict[str, Any]:
         """The appeal prompt switch, its history, and the head-to-head of
-        the current half-and-half run (ml/appeal_prompt_stats.py)."""
+        the current random-draw run (ml/appeal_prompt_stats.py)."""
         from fighthealthinsurance.ml.appeal_prompt_stats import (
             MIN_MIXED_PICKS,
             head_to_head,
@@ -2416,20 +2417,33 @@ class ModelUsageDashboardView(generic.TemplateView):
         from fighthealthinsurance.ml.appeal_prompt_versions import (
             MODE_CHOICES,
             MODE_ORIGINAL,
+            MODE_VERSIONS,
             OUTPUT_CONTRACT,
             current_letter_prompt_mode,
         )
         from fighthealthinsurance.models import LetterPromptMode
 
         history = list(LetterPromptMode.objects.order_by("-created_at", "-id")[:200])
+        saved_mode = history[0].mode if history else MODE_ORIGINAL
         split_started = cls._split_started(history)
+        pairs = None
+        if split_started:
+            # The pairs the current mode draws, waiting for picks or not, and
+            # any other pair the run has picks for (from an earlier mode in
+            # the same run).
+            drawn = MODE_VERSIONS.get(saved_mode, ())
+            pairs = [
+                h2h
+                for h2h in head_to_head(split_started)
+                if h2h.picks or (h2h.first in drawn and h2h.second in drawn)
+            ]
         return {
             "mode_choices": MODE_CHOICES,
-            "saved_mode": history[0].mode if history else MODE_ORIGINAL,
+            "saved_mode": saved_mode,
             "this_pod_mode": current_letter_prompt_mode(),
             "history": history[:10],
             "split_started": split_started,
-            "head_to_head": head_to_head(split_started) if split_started else None,
+            "head_to_head": pairs,
             "min_mixed_picks": MIN_MIXED_PICKS,
             "output_contract": OUTPUT_CONTRACT,
         }
@@ -2444,7 +2458,10 @@ class ModelUsageDashboardView(generic.TemplateView):
 
         mode = (request.POST.get("mode") or "").strip()
         if mode not in {m for m, _label in MODE_CHOICES}:
-            return HttpResponse("Choose original, new or half and half.", status=400)
+            return HttpResponse(
+                "Choose original, new, half and half, sectioned or thirds.",
+                status=400,
+            )
         note = (request.POST.get("note") or "").strip()[:500]
         LetterPromptMode.objects.create(
             mode=mode,

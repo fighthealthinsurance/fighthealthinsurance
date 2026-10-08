@@ -2795,12 +2795,13 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     # this existed and for flows that cannot say (share, professional).
     presented_ids = models.JSONField(null=True, blank=True)
     # The appeal prompt version that wrote this draft, one of
-    # ml/appeal_prompt_versions.PROMPT_V1 / PROMPT_V2, stamped when a model
-    # writes a full letter and copied onto the chosen row. Null for rows from
-    # before versioning and for drafts no letter prompt wrote: templates,
-    # synthesized letters and medically-necessary templated drafts. Not
-    # indexed: the staff page reads it by draft id, and adding an index would
-    # mean a full scan of this large table while the migration holds its lock.
+    # ml/appeal_prompt_versions.PROMPT_V1 / PROMPT_V2 / PROMPT_V3, stamped
+    # when a model writes a full letter and copied onto the chosen row. Null
+    # for rows from before versioning and for drafts no letter prompt wrote:
+    # templates, synthesized letters and medically-necessary templated
+    # drafts. Not indexed: the staff page reads it by draft id, and adding an
+    # index would mean a full scan of this large table while the migration
+    # holds its lock.
     prompt_version = models.CharField(max_length=16, null=True, blank=True)
     # What the backend that wrote this draft was serving when it wrote it
     # (ml/serving_registry.py); for a synthesized letter, the backend whose
