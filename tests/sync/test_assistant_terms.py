@@ -7,6 +7,7 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
 from asgiref.sync import async_to_sync
+from bs4 import BeautifulSoup
 from django.core import mail
 from django.core.management import call_command
 from django.http import HttpResponse
@@ -22,6 +23,7 @@ from fighthealthinsurance import (
 )
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.assistant_handoff import claim_handoff, create_handoff
+from fighthealthinsurance.assistant_terms_views import short_field
 from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 from fighthealthinsurance.ml import spend
 from fighthealthinsurance.models import (
@@ -34,6 +36,8 @@ from fighthealthinsurance.models import (
     ProposedAppeal,
     SpendCounter,
 )
+from tests.sync.test_assistant_handoff import carried as site_form_fields
+from tests.sync.test_assistant_handoff import open_forms
 
 ALL_ON = dict(
     MCP_DRAFT_IN_CHAT_ENABLED=True,
@@ -56,11 +60,19 @@ IP = "203.0.113.7"
 START = "fighthealthinsurance.temporal_client.start_assistant_appeal_workflow"
 
 
-def chat_link(client_name: str = "Claude"):
-    """A chat link and its waiting draft, the way draft_appeal_in_chat makes them."""
-    new = assistant_drafts.create_draft(None, procedure="MRI", condition="back pain")
+def chat_link(
+    client_name: str = "Claude", procedure: str = "MRI", condition: str = "back pain"
+):
+    """A chat link and its waiting draft, the way draft_appeal_in_chat makes
+    them: the procedure and condition only in the sealed link."""
+    new = assistant_drafts.create_draft(None)
     handoff = create_handoff(
-        LETTER, "MRI", "back pain", kind="chat", client=client_name, draft=new.draft.pk
+        LETTER,
+        procedure,
+        condition,
+        kind="chat",
+        client=client_name,
+        draft=new.draft.pk,
     )
     return handoff.code, new.draft
 
@@ -89,9 +101,9 @@ class TermsTestBase(TestCase):
         self.start = self.enterContext(patch(START, new_callable=AsyncMock))
         self.client = Client(HTTP_CF_CONNECTING_IP=IP)
 
-    def open_terms(self, client=None):
+    def open_terms(self, client=None, **sent):
         client = client or self.client
-        code, draft = chat_link()
+        code, draft = chat_link(**sent)
         bound = client.post(LANDING, {"token": code, "bind": "1"})
         self.assertEqual(bound.json(), {"bound": True})
         page = client.post(LANDING, {"token": code})
@@ -146,7 +158,7 @@ class TermsPageTest(TermsTestBase):
         code, _, _ = self.open_terms()
         response = self.client.post(AGREE, terms_form(code, pii=""))
         hidden = response.wsgi_request.sensitive_post_parameters
-        for name in ("token", "email", "denial_text"):
+        for name in ("token", "email", "denial_text", "procedure", "condition"):
             self.assertIn(name, hidden)
 
 
@@ -268,7 +280,9 @@ class AgreeTest(TermsTestBase):
         draft.refresh_from_db()
         self.assertEqual(draft.status, assistant_drafts.ON_SITE)
         self.assertEqual(SpendCounter.objects.get(name="fhi:assistant").amount, 1)
-        self.assertEqual(self.client.session["assistant_handoff_channel"], "assistant")
+        self.assertIn(
+            site_form_fields(response)["assistant_form"], open_forms(self.client)
+        )
 
     def test_another_address_has_its_own_count(self):
         with override_settings(MCP_ASSISTANT_PER_IP_DAILY=1):
@@ -341,6 +355,339 @@ class AgreeTest(TermsTestBase):
         draft.refresh_from_db()
         self.assertEqual(draft.status, assistant_drafts.ON_SITE)
         self.assertFalse(Denial.objects.exists())
+
+    def test_an_appeal_finished_on_this_site_still_names_the_assistant(self):
+        code, _, _ = self.open_terms()
+        site_form = self.client.post(AGREE, terms_form(code, finish="site"))
+        response = self.client.post(
+            reverse("scan"),
+            {
+                **site_form_fields(site_form),
+                "email": EMAIL,
+                "denial_text": "My own words.",
+                "zip": "94103",
+                "pii": "on",
+                "privacy": "on",
+                "tos": "on",
+                "personalonly": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        denial = Denial.objects.get()
+        self.assertEqual(denial.channel, "site")
+        record = ConsentRecord.objects.get(denial=denial)
+        self.assertEqual(
+            (
+                record.channel,
+                record.finish_in,
+                record.on_behalf,
+                record.assistant_client,
+            ),
+            ("assistant", "site", False, "Claude"),
+        )
+        self.assertFalse(
+            SpendCounter.objects.filter(name="fhi:assistant", amount__gt=0).exists()
+        )
+
+
+def field_values(response, *names) -> dict:
+    """The values of the named inputs on a rendered page."""
+    soup = BeautifulSoup(response.content.decode(), "html.parser")
+    out = {}
+    for name in names:
+        field = soup.find("input", attrs={"name": name})
+        out[name] = None if field is None else field.get("value", "")
+    return out
+
+
+class ShortFieldsTest(TermsTestBase):
+    """What the assistant sent on what was denied and the condition, shown
+    under the letter for the person to change or clear."""
+
+    def draft_after_agreeing(self, **fields):
+        code, draft, _ = self.open_terms()
+        response = self.client.post(AGREE, terms_form(code, **fields))
+        self.assertTemplateUsed(response, "assistant_agreed.html")
+        draft.refresh_from_db()
+        return draft
+
+    def test_the_page_shows_what_the_assistant_sent_filled_in(self):
+        _, _, page = self.open_terms()
+        soup = BeautifulSoup(page.content.decode(), "html.parser")
+        procedure = soup.find(id="assistant_procedure")
+        condition = soup.find(id="assistant_condition")
+        self.assertEqual((procedure["value"], condition["value"]), ("MRI", "back pain"))
+        labels = {
+            label["for"]: label.get_text(strip=True)
+            for label in soup.find_all("label", attrs={"for": True})
+        }
+        self.assertEqual(labels["assistant_procedure"], "What was denied")
+        self.assertEqual(labels["assistant_condition"], "The condition")
+        self.assertIn("You can change or clear them.", page.content.decode())
+
+    def test_the_fields_are_kept_out_of_the_browser_and_the_letter_scrub(self):
+        # scrub.ts keeps store_ and email fields in the browser and takes
+        # their words out of the letter; these must be neither.
+        _, _, page = self.open_terms()
+        soup = BeautifulSoup(page.content.decode(), "html.parser")
+        for name in ("procedure", "condition"):
+            field = soup.find("input", attrs={"name": name, "type": "text"})
+            self.assertFalse(field["id"].startswith(("store_", "email")))
+
+    def test_edited_values_reach_the_draft(self):
+        draft = self.draft_after_agreeing(
+            procedure="MRI of the lumbar spine", condition="sciatica"
+        )
+        self.assertEqual(
+            (draft.procedure, draft.condition), ("MRI of the lumbar spine", "sciatica")
+        )
+
+    def test_values_left_as_shown_reach_the_draft(self):
+        draft = self.draft_after_agreeing(procedure="MRI", condition="back pain")
+        self.assertEqual((draft.procedure, draft.condition), ("MRI", "back pain"))
+
+    def test_cleared_values_store_blank(self):
+        draft = self.draft_after_agreeing(procedure="", condition="  ")
+        self.assertEqual((draft.procedure, draft.condition), ("", ""))
+
+    def test_over_long_values_and_hidden_characters_are_cleaned(self):
+        draft = self.draft_after_agreeing(
+            procedure="MRI\u202e\x07 of the\u200b back " + "x" * 200,
+            condition="  back\r\npain\u2066\U000e0041 ",
+        )
+        self.assertEqual(
+            draft.procedure,
+            ("MRI of the back " + "x" * 200)[: assistant_drafts.FIELD_MAX_CHARS],
+        )
+        self.assertEqual(draft.condition, "back pain")
+
+    def test_short_field_cleans_like_prepare_appeal_and_cuts_at_the_draft_limit(self):
+        self.assertEqual(short_field("A\u2060B\U000e0101 C\x00"), "AB C")
+        self.assertEqual(short_field("word " * 40), ("word " * 16).strip())
+        self.assertLessEqual(
+            len(short_field("y" * 500)), assistant_drafts.FIELD_MAX_CHARS
+        )
+
+    def test_a_long_value_the_assistant_sent_shows_as_it_will_be_kept(self):
+        _, _, page = self.open_terms(procedure="p" * 150)
+        self.assertEqual(
+            field_values(page, "procedure")["procedure"],
+            "p" * assistant_drafts.FIELD_MAX_CHARS,
+        )
+
+    def test_a_press_from_a_page_without_the_fields_keeps_what_was_sent(self):
+        draft = self.draft_after_agreeing()
+        self.assertEqual((draft.procedure, draft.condition), ("MRI", "back pain"))
+
+    def test_a_page_sent_back_keeps_the_values_as_edited(self):
+        code, _, _ = self.open_terms()
+        response = self.client.post(
+            AGREE, terms_form(code, tos="", procedure="CT scan", condition="")
+        )
+        self.assertTemplateUsed(response, "assistant_terms.html")
+        self.assertEqual(
+            field_values(response, "procedure", "condition"),
+            {"procedure": "CT scan", "condition": ""},
+        )
+
+    def test_finish_on_this_site_carries_them_as_edited(self):
+        code, _, page = self.open_terms()
+        # Without the page's script, the button's form sends what was shown.
+        self.assertEqual(
+            {
+                tag["name"]: tag["value"]
+                for tag in BeautifulSoup(page.content.decode(), "html.parser")
+                .find(id="assistant-finish-on-site")
+                .find_all("input", attrs={"name": ["procedure", "condition"]})
+            },
+            {"procedure": "MRI", "condition": "back pain"},
+        )
+        response = self.client.post(
+            AGREE,
+            {
+                "token": code,
+                "finish": "site",
+                "denial_text": "My own words.",
+                "procedure": "MRI of the \u202elumbar spine",
+                "condition": "",
+            },
+        )
+        self.assertTemplateUsed(response, "scrub.html")
+        self.assertEqual(
+            field_values(response, "default_procedure", "default_condition"),
+            {"default_procedure": "MRI of the lumbar spine", "default_condition": ""},
+        )
+
+    def test_finish_on_this_site_with_both_cleared_carries_none(self):
+        """Carried blank, and said to be given: blank means none, not "keep
+        what an earlier form left"."""
+        code, _, _ = self.open_terms()
+        response = self.client.post(
+            AGREE,
+            {"token": code, "finish": "site", "procedure": "", "condition": ""},
+        )
+        self.assertTemplateUsed(response, "scrub.html")
+        self.assertEqual(
+            field_values(
+                response, "default_procedure", "default_condition", "defaults_given"
+            ),
+            {"default_procedure": "", "default_condition": "", "defaults_given": "1"},
+        )
+
+    def submit_on_site(self, fields: dict, email: str = EMAIL, **extra):
+        response = self.client.post(
+            reverse("scan"),
+            {
+                **fields,
+                "email": email,
+                "denial_text": "My own words about the denial.",
+                "zip": "94103",
+                "pii": "on",
+                "privacy": "on",
+                "tos": "on",
+                "personalonly": "on",
+                **extra,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        return response
+
+    def start_a_guided_case(self, email: str = EMAIL):
+        """A case started earlier in this browser from a treatment guide,
+        not finished: the session keeps the guide's treatment, and /process
+        reuses the case for the same email."""
+        self.submit_on_site(
+            {
+                "default_procedure": "PrEP",
+                "default_condition": "HIV prevention",
+                "microsite_title": "PrEP",
+            },
+            email=email,
+        )
+        self.assertEqual(self.client.session["default_procedure"], "PrEP")
+        return Denial.objects.get(hashed_email=Denial.get_hashed_email(email))
+
+    def test_clearing_both_stays_cleared_when_the_case_is_reused(self):
+        """Both cleared on the terms page, then the site form: through
+        Finish on this site instead, or through Agree once the v2 flag went
+        off after the page opened, which opens the site form too, without
+        naming the assistant. Either way the reused case keeps no earlier
+        treatment."""
+        for v2_turned_off in (False, True):
+            with self.subTest(v2_turned_off=v2_turned_off):
+                self.client = Client(HTTP_CF_CONNECTING_IP=IP)
+                email = f"cleared-{str(v2_turned_off).lower()}@example.com"
+                earlier = self.start_a_guided_case(email)
+                code, _, _ = self.open_terms()
+                with override_settings(MCP_HANDOFF_V2_ENABLED=not v2_turned_off):
+                    site_form = self.client.post(
+                        AGREE,
+                        terms_form(
+                            code,
+                            procedure="",
+                            condition="",
+                            **({} if v2_turned_off else {"finish": "site"}),
+                        ),
+                    )
+                    self.assertTemplateUsed(site_form, "scrub.html")
+                    self.submit_on_site(site_form_fields(site_form), email=email)
+                self.assertEqual(
+                    list(Denial.objects.filter(hashed_email=earlier.hashed_email)),
+                    [earlier],
+                    "reused",
+                )
+                for key in (
+                    "default_procedure",
+                    "default_condition",
+                    "microsite_title",
+                    "microsite_slug",
+                ):
+                    with self.subTest(key=key):
+                        self.assertNotIn(key, self.client.session)
+                # With v2 on, the case names the assistant whose link opened
+                # the form; a form opened with it off names none.
+                record = ConsentRecord.objects.filter(denial=earlier).latest("pk")
+                self.assertEqual(
+                    (record.channel, record.assistant_client),
+                    ("site", "") if v2_turned_off else ("assistant", "Claude"),
+                )
+
+    def test_clearing_both_stays_cleared_through_an_error_and_a_retry(self):
+        earlier = self.start_a_guided_case()
+        code, _, _ = self.open_terms()
+        site_form = self.client.post(
+            AGREE, terms_form(code, finish="site", procedure="", condition="")
+        )
+        sent_back = self.submit_on_site(
+            site_form_fields(site_form), email="not-an-email"
+        )
+        self.assertTemplateUsed(sent_back, "scrub.html")
+        retry = site_form_fields(sent_back)
+        self.assertEqual(
+            {name: retry[name] for name in ("default_procedure", "default_condition")},
+            {"default_procedure": "", "default_condition": ""},
+        )
+        self.assertEqual(retry["defaults_given"], "1")
+        self.submit_on_site(retry)
+        self.assertEqual(list(Denial.objects.all()), [earlier], "reused")
+        self.assertNotIn("default_procedure", self.client.session)
+        self.assertNotIn("default_condition", self.client.session)
+
+    def test_a_treatment_left_in_replaces_an_earlier_one_on_a_reused_case(self):
+        self.start_a_guided_case()
+        code, _, _ = self.open_terms()
+        site_form = self.client.post(
+            AGREE, terms_form(code, finish="site", procedure="CT scan", condition="")
+        )
+        self.submit_on_site(site_form_fields(site_form))
+        self.assertEqual(
+            (
+                self.client.session["default_procedure"],
+                self.client.session["default_condition"],
+            ),
+            ("CT scan", ""),
+        )
+
+    def test_the_site_form_a_refusal_opens_carries_them_as_edited(self):
+        code, _, _ = self.open_terms()
+        with patch.object(spend, "reserve_generation", return_value=None):
+            response = self.client.post(
+                AGREE, terms_form(code, procedure="Physical therapy")
+            )
+        self.assertTemplateUsed(response, "scrub.html")
+        self.assertEqual(
+            field_values(response, "default_procedure", "default_condition"),
+            {"default_procedure": "Physical therapy", "default_condition": "back pain"},
+        )
+
+    def test_the_edited_treatment_reaches_the_case_finished_on_this_site(self):
+        code, _, _ = self.open_terms()
+        site_form = self.client.post(
+            AGREE,
+            terms_form(code, finish="site", procedure="Lumbar MRI", condition=""),
+        )
+        carried = field_values(site_form, "default_procedure", "default_condition")
+        response = self.client.post(
+            reverse("scan"),
+            {
+                "email": EMAIL,
+                "denial_text": "My own words.",
+                "zip": "94103",
+                "pii": "on",
+                "privacy": "on",
+                "tos": "on",
+                "personalonly": "on",
+                **carried,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            (
+                self.client.session["default_procedure"],
+                self.client.session["default_condition"],
+            ),
+            ("Lumbar MRI", ""),
+        )
 
 
 class AgreeRefusalTest(TermsTestBase):

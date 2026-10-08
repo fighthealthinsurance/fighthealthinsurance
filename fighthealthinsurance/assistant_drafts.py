@@ -266,8 +266,9 @@ def agree(
 ) -> bool:
     """Tie a waiting draft to the denial the person just agreed for, once,
     with the procedure and condition the link carried (kept only in the
-    sealed link until now) and the generation reserved for it. False when
-    another request got there first or it moved on."""
+    sealed link until now), as the person left them on the terms page, and
+    the generation reserved for it. False when another request got there
+    first or it moved on."""
     procedure = (procedure or "")[:FIELD_MAX_CHARS]
     condition = (condition or "")[:FIELD_MAX_CHARS]
     linked = AssistantDraft.objects.filter(

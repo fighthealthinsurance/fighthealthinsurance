@@ -2,23 +2,29 @@
 
 A chat link (payload kind "chat", made by draft_appeal_in_chat) opens here
 instead of the appeal form once the landing page has bound it to this
-browser. The person checks the letter, removes personal details, says who
-the appeal is for, ticks the intake page's boxes and gives an email. On
-agree, in this order: the bot check, the per-address cap
-(assistant_ip_limit), one generation from the assistant budget
-(spend.reserve_generation). Any refusal opens the filled-in site form
-instead. Then the link is used up, the Denial is made the way /process
-makes it, the boxes are recorded, the draft is tied to the denial, the
-continue link is emailed once and AssistantAppealWorkflow starts. The draft
-keeps the reservation, so a run that ends with no letters gives it back.
+browser. The person checks the letter and the few words the assistant sent
+on what was denied and the condition (two short fields they can change or
+clear), removes personal details, says who the appeal is for, ticks the
+intake page's boxes and gives an email. On agree, in this order: the bot
+check, the per-address cap (assistant_ip_limit), one generation from the
+assistant budget (spend.reserve_generation). Any refusal opens the
+filled-in site form instead. Then the link is used up, the Denial is made
+the way /process makes it, the boxes are recorded, the draft is tied to the
+denial with the two short fields as the person left them, the continue link
+is emailed once and AssistantAppealWorkflow starts. The draft keeps the
+reservation, so a run that ends with no letters gives it back.
 
 "Finish on this site instead" opens the site form and tells the assistant
-on_site. Everything here needs draft_in_chat_enabled(); with it off a chat
-link opens the site form as before.
+on_site; the two short fields go with it as the person left them, the way
+the site form carries what a site link sent. The appeal submitted there
+still names the assistant in its consent record, with finish_in "site"
+(consent.py). Everything here needs draft_in_chat_enabled(); with it off a
+chat link opens the site form as before.
 
 Nothing here logs the letter, the email or a token.
 """
 
+import dataclasses
 import hashlib
 from typing import Any, Optional
 from urllib.parse import urlencode
@@ -43,6 +49,7 @@ from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.assistant_handoff import (
     HandoffContent,
     claim_handoff,
+    one_line,
     v2_enabled,
 )
 from fighthealthinsurance.assistant_handoff_views import (
@@ -86,6 +93,11 @@ AGREED_KEY = "assistant_agreed"
 _FIELDS_WITH_A_MESSAGE = frozenset(
     ("denial_text", "email", "on_behalf", "pii", "privacy", "tos", "personalonly")
 )
+# The page's two short fields under the letter: what the assistant said was
+# denied, and the condition. Shown filled in with what it sent; the person
+# can change or clear them, and blank means none.
+PROCEDURE_FIELD = "procedure"
+CONDITION_FIELD = "condition"
 
 
 def chat_path_on() -> bool:
@@ -94,6 +106,30 @@ def chat_path_on() -> bool:
 
 def opens_terms_page(content: HandoffContent) -> bool:
     return content.kind == "chat" and chat_path_on()
+
+
+def short_field(value: str) -> str:
+    """One of the two short fields, cleaned the way prepare_appeal cleans
+    what an assistant sends (assistant_handoff.one_line) and cut at what a
+    draft keeps (assistant_drafts.FIELD_MAX_CHARS)."""
+    return one_line(value)[: assistant_drafts.FIELD_MAX_CHARS].strip()
+
+
+def _as_left(request: HttpRequest, content: HandoffContent) -> HandoffContent:
+    """What the assistant sent, with the treatment and condition as the
+    person left them on the terms page, through short_field; a cleared one
+    is "". A press from a page without the fields (one served before they
+    were there) keeps what the assistant sent."""
+
+    def edited(name: str, sent: str) -> str:
+        value = request.POST.get(name)
+        return sent if value is None else short_field(value)
+
+    return dataclasses.replace(
+        content,
+        procedure=edited(PROCEDURE_FIELD, content.procedure),
+        condition=edited(CONDITION_FIELD, content.condition),
+    )
 
 
 def _error_summary(form: Any) -> list[dict[str, str]]:
@@ -138,7 +174,11 @@ def render_terms(
     letter: str,
     form: Any = None,
     maybe_twice: bool = False,
+    procedure: str = "",
+    condition: str = "",
 ) -> HttpResponse:
+    """The terms page, with the two short fields filled in with procedure
+    and condition, cleaned as they will be kept."""
     if form is None:
         form = core_forms.AssistantTermsForm()
     return _private(
@@ -149,6 +189,9 @@ def render_terms(
                 "no_third_party_scripts": True,
                 "token": token,
                 "ocr_result": letter,
+                "procedure": short_field(procedure),
+                "condition": short_field(condition),
+                "short_field_max": assistant_drafts.FIELD_MAX_CHARS,
                 "form": form,
                 "on_behalf_choices": core_forms.AssistantTermsForm.ON_BEHALF_CHOICES,
                 "error_summary": _error_summary(form),
@@ -193,7 +236,16 @@ def render_agreed(request: HttpRequest, started: bool, emailed: bool) -> HttpRes
 
 @method_decorator(never_cache, name="dispatch")
 @method_decorator(
-    sensitive_post_parameters("token", "email", "denial_text", "zip", "fname", "lname"),
+    sensitive_post_parameters(
+        "token",
+        "email",
+        "denial_text",
+        "zip",
+        "fname",
+        "lname",
+        PROCEDURE_FIELD,
+        CONDITION_FIELD,
+    ),
     name="dispatch",
 )
 class AssistantAgreeView(View):
@@ -219,6 +271,8 @@ class AssistantAgreeView(View):
         if content is None:
             return self._used(request, token)
         letter = request.POST.get("denial_text", "") or content.letter
+        # From here on, the treatment and condition are the person's.
+        content = _as_left(request, content)
         if request.POST.get("finish") == "site" or not opens_terms_page(content):
             return self._to_site(request, token, binder, content, letter)
         form = core_forms.AssistantTermsForm(request.POST)
@@ -233,7 +287,15 @@ class AssistantAgreeView(View):
                 # The same tick sent twice: the other press used the link.
                 return self._used(request, token)
             # The other press may still be on its way to using it.
-            return render_terms(request, token, letter, form, maybe_twice=twice)
+            return render_terms(
+                request,
+                token,
+                letter,
+                form,
+                maybe_twice=twice,
+                procedure=content.procedure,
+                condition=content.condition,
+            )
         draft = assistant_drafts.waiting_draft(content.draft)
         if draft is None:
             # Nothing the assistant could collect letters from.
@@ -269,7 +331,8 @@ class AssistantAgreeView(View):
         letter: str,
         form: Any = None,
     ) -> HttpResponse:
-        """The site's own form, filled in; the assistant sees on_site."""
+        """The site's own form, filled in, with the treatment and condition
+        as the person left them; the assistant sees on_site."""
         if claim_handoff(token, binder=binder) is None:
             return self._used(request, token)
         assistant_drafts.finish_on_site(assistant_drafts.waiting_draft(content.draft))

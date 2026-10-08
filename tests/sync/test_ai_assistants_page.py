@@ -23,6 +23,14 @@ OLD_ANCHORS = (
     "how-it-works",
 )
 EM_DASHES = ("\u2014", "&mdash;", "&#8212;", "&#x2014;")
+CHATGPT_PLANS = "It works on paid plans: Plus, Pro, Business, Enterprise and Edu."
+REFRESH_LINE = (
+    "Added us before October 7, 2026? Refresh the connector, or remove and add "
+    "it again, so your assistant sees the newer tools."
+)
+SHORT_FIELDS_SHOW = (
+    "They show on our page under the letter, where you can change or clear them."
+)
 
 # One marker for each flag branch of the template, so a branch that renders in
 # the wrong state, or two branches that both render, fails a test. Each is
@@ -64,6 +72,7 @@ ONLY_WITH_CHAT = (
     "(for letters in your chat)",
     "When you agree on our page, or submit our form,",
     "When letters are drafted for your chat, that record also says",
+    SHORT_FIELDS_SHOW,
     "so the emailed link can check it's you",
     "The letters are drafts for you to read",
     "The letters are written as the patient",
@@ -135,6 +144,16 @@ class EveryStateChecks:
     def test_there_is_no_em_dash_on_the_page(self):
         for dash in EM_DASHES:
             self.assertNotIn(dash, self.page)
+
+    def test_chatgpt_names_the_paid_plans_it_works_on(self):
+        # ChatGPT Plus was checked to get every tool and run the chat path.
+        self.assertIn(CHATGPT_PLANS, self.page)
+        self.assertNotIn("It needs a paid ChatGPT plan.", self.page)
+
+    def test_it_says_to_refresh_a_connector_added_before_the_newer_tools(self):
+        # ChatGPT kept a tool list cached from before them.
+        section = BeautifulSoup(self.page, "html.parser").find(id="address")
+        self.assertIn(REFRESH_LINE, " ".join(section.get_text().split()))
 
 
 @override_settings(MCP_SERVER_ENABLED=True, MCP_PREPARE_APPEAL_ENABLED=False)
@@ -296,6 +315,10 @@ class ChatPathTest(EveryStateChecks, TestCase):
             "we also keep the few words your assistant sent on what was denied",
             self.page,
         )
+
+    def test_it_says_those_few_words_show_on_our_page_to_change_or_clear(self):
+        self.assertIn(SHORT_FIELDS_SHOW, self.page)
+        self.assertNotIn("They don't show on our page", self.page)
 
     def test_send_me_news_keeps_the_name_too(self):
         self.assertIn("we keep your name and email for our mailing list", self.page)

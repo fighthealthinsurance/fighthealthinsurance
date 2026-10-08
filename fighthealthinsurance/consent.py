@@ -13,6 +13,13 @@ from loguru import logger
 TERMS_VERSION = datetime.date(2026, 10, 5)
 PRIVACY_VERSION = datetime.date(2026, 10, 5)
 
+# A record's channel is who brought the case in: the site itself, or an AI
+# assistant through one of its links, named by assistant_client (the label
+# the link carried). Its finish_in is where the letters are written: on the
+# site, or in the chat. So a link opened with "Open my appeal form" or
+# "Finish on this site instead" is channel "assistant", finish_in "site".
+# Denial.channel is not this: it is the spend channel (ml/spend.py), and is
+# "assistant" only for a case agreed to on the chat path's terms page.
 CHANNEL_SITE = "site"
 CHANNEL_ASSISTANT = "assistant"
 FINISH_ON_SITE = "site"
@@ -69,3 +76,21 @@ def record_consent(
     except Exception:
         logger.opt(exception=True).warning("Could not record the agreements")
         return None
+
+
+def assistant_that_brought(denial: Any) -> Optional[str]:
+    """The label of the assistant that brought this case in, by its latest
+    record ("" when the link carried no name), or None when the site did or
+    nothing was recorded. Best effort, like record_consent."""
+    try:
+        latest = (
+            denial.consent_records.order_by("-pk")
+            .values_list("channel", "assistant_client")
+            .first()
+        )
+    except Exception:
+        logger.opt(exception=True).warning("Could not read the earlier agreements")
+        return None
+    if latest is None or latest[0] != CHANNEL_ASSISTANT:
+        return None
+    return str(latest[1] or "")

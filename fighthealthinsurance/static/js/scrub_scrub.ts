@@ -90,6 +90,17 @@ function typedIn(node: HTMLInputElement): boolean {
   return TYPED_INPUT_TYPES.indexOf(node.type) >= 0 && node.value !== "";
 }
 
+// A box typed in on the same page that is not about the person, marked
+// data-scrub="skip": what was denied and the condition on the chat path's
+// terms page (assistant_terms.html). It is not an About you box, so its words
+// are not taken out on their own, and it is never run together with one
+// either: a first name typed "Ann " with "MRI" took "Ann MRI" out of the
+// letter as "{{FIRST_NAME}} {{assistant_procedure}}", a placeholder nothing
+// puts back. No box on the intake page is marked.
+function leftInTheLetter(node: HTMLInputElement): boolean {
+  return node.getAttribute("data-scrub") === "skip";
+}
+
 // The boxes whose value is taken out of the letter: About you, and the
 // email. The letter is kept and may be read by staff, and the email only as
 // "how we store it" says, so an email left in the letter got around that.
@@ -119,7 +130,10 @@ function scrubText(text: string): string {
       }
       for (let j = 0; j < nodes.length; j++) {
         var secondNode = nodes[j];
-        const together = typedIn(secondNode) ? typedValue(node.value + secondNode.value) : null;
+        const together =
+          typedIn(secondNode) && !leftInTheLetter(secondNode)
+            ? typedValue(node.value + secondNode.value)
+            : null;
         if (together !== null) {
           const secondPlaceholder = storeIdToPlaceholder[secondNode.id] || `{{${secondNode.id}}}`;
           reservedTokens.push([together, placeholder + " " + secondPlaceholder]);

@@ -316,6 +316,28 @@ class ViewTest(TestCase):
             )
         )
 
+    def test_who_it_is_for_comes_from_the_terms_page_not_a_later_form(self):
+        """Our own form names the assistant too but never asks who the
+        appeal is for, so its record can't undo the terms page's answer."""
+        denial = a_denial()
+        letters(denial, 3)
+        _, draft = a_draft(drafts.READY, denial=denial)
+        for finish_in, on_behalf in (
+            (consent.FINISH_IN_CHAT, True),
+            (consent.FINISH_ON_SITE, False),
+        ):
+            consent.record_consent(
+                denial.denial_id,
+                {name: True for name in consent.BOXES},
+                channel=consent.CHANNEL_ASSISTANT,
+                on_behalf=on_behalf,
+                finish_in=finish_in,
+                assistant_client="Claude-User",
+            )
+        self.assertTrue(
+            tools.view(draft)["tell_the_person"].endswith(tools.FOR_THE_PATIENT_LETTERS)
+        )
+
 
 class AnswerTest(TestCase):
     def test_answers_are_filed_once_and_name_the_case_for_the_signal(self):

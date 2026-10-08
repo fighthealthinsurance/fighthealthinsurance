@@ -24,6 +24,7 @@ from unittest import mock
 
 import pytest
 import sentry_sdk
+from bs4 import BeautifulSoup
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -85,6 +86,39 @@ def as_text(value) -> str:
     if isinstance(value, (bytes, bytearray, memoryview)):
         return bytes(value).decode("latin-1")
     return str(value)
+
+
+def carried(page) -> dict:
+    """The hidden fields the intake form on a rendered page sends with it,
+    the way a browser would, without the CSRF token."""
+    html = page.content.decode() if hasattr(page, "content") else page
+    form = BeautifulSoup(html, "html.parser").find(id="fuck_health_insurance_form")
+    return {
+        tag["name"]: tag.get("value", "")
+        for tag in form.find_all("input", attrs={"type": "hidden"})
+        if tag.get("name") and tag["name"] != "csrfmiddlewaretoken"
+    }
+
+
+def open_forms(client) -> dict:
+    """The forms an opened link filled in that the session keeps, by key."""
+    return client.session.get(assistant_handoff_views.FORMS_KEY, {})
+
+
+def age_form(client, key: str, seconds: float) -> None:
+    """Make a form the session keeps that many seconds older. client is the
+    test client, or a request while it is being handled."""
+    session = client.session
+    forms = session[assistant_handoff_views.FORMS_KEY]
+    forms[key]["at"] -= seconds
+    session[assistant_handoff_views.FORMS_KEY] = forms
+    session.save()
+
+
+def back_link(page) -> str:
+    """Where a rendered step's Back link goes."""
+    html = page.content.decode() if hasattr(page, "content") else page
+    return BeautifulSoup(html, "html.parser").find("a", attrs={"rel": "prev"})["href"]
 
 
 class HandoffStorageTest(TestCase):
@@ -922,6 +956,11 @@ class HandoffV2Test(TestCase):
         self.assertEqual(len(assistant_handoff.client_label("x" * 100)), 40)
         self.assertEqual(assistant_handoff.client_label(None), "")
         self.assertEqual(assistant_handoff.client_label("a\nb\tc"), "abc")
+        self.assertEqual(
+            assistant_handoff.client_label("openai-mcp/1.0.0 (Codex)"),
+            "openai-mcp/1.0.0 (Codex)",
+        )
+        self.assertEqual(assistant_handoff.client_label("x<script>"), "xscript")
 
     def test_a_link_made_before_v2_still_opens(self):
         with override_settings(MCP_HANDOFF_V2_ENABLED=False):
@@ -979,8 +1018,9 @@ class HandoffV2Test(TestCase):
         page = self.client.post(PATH, {"token": handoff.code})
         self.assertEqual(page.status_code, 200)
         self.assertTemplateUsed(page, "scrub.html")
-        self.assertEqual(self.client.session["assistant_handoff_channel"], "assistant")
-        self.assertEqual(self.client.session["assistant_handoff_client"], "Claude")
+        key = carried(page)["assistant_form"]
+        self.assertEqual(list(open_forms(self.client)), [key])
+        self.assertEqual(open_forms(self.client)[key]["client"], "Claude")
         again = self.client.post(PATH, {"token": handoff.code})
         self.assertEqual(again.status_code, 404)
 
@@ -1015,19 +1055,19 @@ class HandoffV2Test(TestCase):
         )
         self.assertNotIn("fhi_handoff_binder", self.client.cookies)
 
-    def test_process_reads_the_marks_once_and_clears_them(self):
-        handoff = create_handoff(LETTER, PROCEDURE, CONDITION, client="Claude")
-        page = self.client.post(PATH, {"token": handoff.code}).content.decode()
-        hidden = dict(
-            re.findall(
-                r'<input type="hidden" name="(default_\w+|microsite_\w+)" value="([^"]*)">',
-                page,
-            )
-        )
+    def open_form(self, client_name: str = "Claude"):
+        handoff = create_handoff(LETTER, PROCEDURE, CONDITION, client=client_name)
+        self.bind(self.client, handoff.code)
+        page = self.client.post(PATH, {"token": handoff.code})
+        self.assertTemplateUsed(page, "scrub.html")
+        return page
+
+    def test_process_binds_the_forms_key_to_its_case_once_it_goes_through(self):
+        fields = carried(self.open_form())
         response = self.client.post(
             reverse("scan"),
             {
-                **hidden,
+                **fields,
                 "email": "v2@example.com",
                 "denial_text": LETTER,
                 "zip": "94103",
@@ -1038,29 +1078,104 @@ class HandoffV2Test(TestCase):
             },
         )
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn("assistant_handoff_channel", self.client.session)
-        self.assertNotIn("assistant_handoff_client", self.client.session)
-
-    def test_an_invalid_submission_clears_the_marks_too(self):
-        handoff = create_handoff(LETTER, PROCEDURE, CONDITION, client="Claude")
-        self.bind(self.client, handoff.code)
-        self.client.post(PATH, {"token": handoff.code})
-        self.assertEqual(self.client.session["assistant_handoff_channel"], "assistant")
-        response = self.client.post(reverse("scan"), {"denial_text": LETTER})
-        self.assertEqual(response.status_code, 200)
-        self.assertNotIn("assistant_handoff_channel", self.client.session)
-        self.assertNotIn("assistant_handoff_client", self.client.session)
-
-    def test_the_hook_answers_once(self):
-        request = SimpleNamespace(
-            session={"assistant_handoff_channel": "assistant", "assistant_handoff_client": "Codex"}
-        )
+        self.assertTemplateUsed(response, "health_history.html")
+        # Kept in the session entry, not a table.
         self.assertEqual(
-            assistant_handoff_views.handoff_context_for(request),
-            {"channel": "assistant", "assistant_client": "Codex"},
+            open_forms(self.client)[fields["assistant_form"]]["case"],
+            models.Denial.objects.get().denial_id,
+        )
+
+    def test_an_invalid_submission_keeps_the_key_for_the_retry(self):
+        fields = carried(self.open_form())
+        response = self.client.post(reverse("scan"), {**fields, "denial_text": LETTER})
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "scrub.html")
+        self.assertEqual(list(open_forms(self.client)), [fields["assistant_form"]])
+        self.assertEqual(carried(response)["assistant_form"], fields["assistant_form"])
+
+    def test_the_hook_answers_only_for_a_key_the_session_kept(self):
+        def request(posted: dict, session: dict):
+            return SimpleNamespace(POST=posted, session=session)
+
+        now = time.time()
+        session = {
+            assistant_handoff_views.FORMS_KEY: {
+                "kept": {"client": "openai-mcp/1.0.0 (Codex)", "at": now},
+            }
+        }
+        self.assertEqual(
+            assistant_handoff_views.handoff_context_for(
+                request({"assistant_form": "kept"}, session)
+            ),
+            assistant_handoff_views.SiteForm(
+                key="kept", client="openai-mcp/1.0.0 (Codex)"
+            ),
+        )
+        # Read, not used up.
+        self.assertIn("kept", session[assistant_handoff_views.FORMS_KEY])
+        for posted in ({}, {"assistant_form": ""}, {"assistant_form": "made-up"}):
+            with self.subTest(posted=posted):
+                self.assertIsNone(
+                    assistant_handoff_views.handoff_context_for(
+                        request(posted, session)
+                    )
+                )
+        # The marks an earlier version kept name nothing.
+        old = {
+            "assistant_handoff_channel": "assistant",
+            "assistant_handoff_client": "Codex",
+        }
+        self.assertIsNone(
+            assistant_handoff_views.handoff_context_for(request({}, dict(old)))
+        )
+
+    def test_a_key_lasts_a_day(self):
+        page = self.open_form()
+        key = carried(page)["assistant_form"]
+        age_form(self.client, key, assistant_handoff_views.FORM_TTL.total_seconds() + 1)
+        request = SimpleNamespace(
+            POST={"assistant_form": key}, session=self.client.session
         )
         self.assertIsNone(assistant_handoff_views.handoff_context_for(request))
-        self.assertEqual(request.session, {})
+
+    def test_the_session_keeps_the_newest_few_keys(self):
+        keys = [
+            carried(self.open_form(f"Client {n}"))["assistant_form"]
+            for n in range(assistant_handoff_views.FORMS_KEPT + 2)
+        ]
+        self.assertEqual(
+            set(open_forms(self.client)),
+            set(keys[-assistant_handoff_views.FORMS_KEPT :]),
+        )
+
+    def test_a_key_kept_again_after_its_day_ran_out_stays_within_the_few(self):
+        """A key read for a submission whose day ran out before its case was
+        made is kept again as the newest, and still only the newest few."""
+        kept = assistant_handoff_views.FORMS_KEPT
+        now = time.time()
+        forms = {f"newer {n}": {"client": "Codex", "at": now - n} for n in range(kept)}
+        forms["used"] = {
+            "client": "Claude",
+            "at": now - assistant_handoff_views.FORM_TTL.total_seconds() - 1,
+        }
+        request = SimpleNamespace(
+            POST={}, session={assistant_handoff_views.FORMS_KEY: forms}
+        )
+        used = assistant_handoff_views.SiteForm(key="used", client="Claude")
+        self.assertTrue(assistant_handoff_views.use_site_form(request, used, 7))
+        self.assertEqual(
+            list(request.session[assistant_handoff_views.FORMS_KEY]),
+            ["used", *[f"newer {n}" for n in range(kept - 1)]],
+        )
+
+    def test_opening_a_form_drops_the_marks_an_earlier_version_kept(self):
+        session = self.client.session
+        session["assistant_handoff_channel"] = "assistant"
+        session["assistant_handoff_client"] = "Claude"
+        session.save()
+        self.open_form()
+        self.assertNotIn("assistant_handoff_channel", self.client.session)
+        self.assertNotIn("assistant_handoff_client", self.client.session)
 
     def test_the_landing_page_tells_an_assistant_to_stop(self):
         self.assertContains(
@@ -1077,9 +1192,370 @@ class HandoffV2Test(TestCase):
             self.assertEqual(_clean_letter(text), text)
 
 
+INTAKE_BOXES = {
+    "zip": "94103",
+    "pii": "on",
+    "tos": "on",
+    "privacy": "on",
+    "personalonly": "on",
+}
+
+
+@override_settings(**FLAGS_ON, MCP_HANDOFF_V2_ENABLED=True)
+class HandoffOriginTest(TestCase):
+    """The consent record of an appeal finished on our form says whether an
+    assistant brought it in, and which one; the Denial stays a site one."""
+
+    def open_link(self, client_name: str) -> dict:
+        """Open a link; the hidden fields of the form it fills in."""
+        handoff = create_handoff(LETTER, PROCEDURE, CONDITION, client=client_name)
+        self.client.post(PATH, {"token": handoff.code, "bind": "1"})
+        page = self.client.post(PATH, {"token": handoff.code})
+        self.assertTemplateUsed(page, "scrub.html")
+        return carried(page)
+
+    def submit(self, email: str, letter: str = LETTER, **extra):
+        response = self.client.post(
+            reverse("scan"),
+            {"email": email, "denial_text": letter, **INTAKE_BOXES, **extra},
+        )
+        self.assertEqual(response.status_code, 200)
+        return response
+
+    def latest(self, email: str) -> tuple:
+        denial = models.Denial.objects.get(
+            hashed_email=models.Denial.get_hashed_email(email)
+        )
+        record = models.ConsentRecord.objects.filter(denial=denial).latest("pk")
+        return (
+            denial.channel,
+            record.channel,
+            record.finish_in,
+            record.assistant_client,
+            record.on_behalf,
+        )
+
+    def test_an_appeal_from_an_opened_link_names_the_assistant(self):
+        form = self.open_link("openai-mcp/1.0.0 (Codex)")
+        self.submit("origin-codex@example.com", **form)
+        self.assertEqual(
+            self.latest("origin-codex@example.com"),
+            ("site", "assistant", "site", "openai-mcp/1.0.0 (Codex)", False),
+        )
+
+    def test_a_link_with_no_name_still_says_an_assistant_brought_it(self):
+        form = self.open_link("")
+        self.submit("origin-unnamed@example.com", **form)
+        self.assertEqual(
+            self.latest("origin-unnamed@example.com"),
+            ("site", "assistant", "site", "", False),
+        )
+
+    def test_a_plain_appeal_names_no_assistant_whatever_it_sends(self):
+        # A made-up code opens nothing, a made-up key names nothing, and
+        # fields named like the marks are only form fields.
+        dead = self.client.post(PATH, {"token": secrets.token_urlsafe(32)})
+        self.assertEqual(dead.status_code, 404)
+        self.submit(
+            "origin-plain@example.com",
+            assistant_form=secrets.token_urlsafe(16),
+            assistant_handoff_channel="assistant",
+            assistant_handoff_client="Claude-User",
+            channel="assistant",
+            assistant_client="Claude-User",
+            from_assistant="true",
+        )
+        self.assertEqual(
+            self.latest("origin-plain@example.com"),
+            ("site", "site", "site", "", False),
+        )
+
+    def test_the_key_names_one_case_only(self):
+        form = self.open_link("Claude-User")
+        self.submit("origin-first@example.com", **form)
+        # The same form sent again for another case, key and all.
+        self.submit(
+            "origin-second@example.com",
+            "Your claim for physical therapy was denied.",
+            **form,
+        )
+        self.assertEqual(
+            self.latest("origin-second@example.com"),
+            ("site", "site", "site", "", False),
+        )
+
+    def test_a_double_click_names_the_assistant_on_the_case_carried_on(self):
+        """Submit pressed twice, and both requests load the session before
+        either saves it: the second knows nothing of the first's case, so
+        it makes its own. Both name the assistant, so the one the person
+        goes on with (the second, whose page the browser shows) does."""
+        form = self.open_link("Claude-User")
+        before = dict(self.client.session.items())
+        self.submit("origin-double@example.com", **form)
+        session = self.client.session
+        session.clear()
+        session.update(before)
+        session.save()
+        self.submit("origin-double@example.com", **form)
+        self.assertEqual(models.Denial.objects.count(), 2, "each made its own case")
+        carried_on = self.client.session["denial_id"]
+        for denial in models.Denial.objects.all():
+            with self.subTest(carried_on=denial.denial_id == carried_on):
+                record = denial.consent_records.latest("pk")
+                self.assertEqual(
+                    (record.channel, record.assistant_client),
+                    ("assistant", "Claude-User"),
+                )
+        self.assertEqual(
+            open_forms(self.client)[form["assistant_form"]]["case"], carried_on
+        )
+
+    def test_the_same_form_sent_again_for_its_case_keeps_the_assistant(self):
+        """A second press of Submit after the first went through, a reload
+        of the next step, or the browser's Back to the form and Submit
+        again: the same form, key and all, for the same case."""
+        form = self.open_link("Claude-User")
+        self.submit("origin-sent-again@example.com", **form)
+        self.submit("origin-sent-again@example.com", **form)
+        self.assertEqual(models.Denial.objects.count(), 1, "the row is reused")
+        records = models.ConsentRecord.objects.order_by("pk")
+        self.assertEqual(
+            [(r.channel, r.assistant_client) for r in records],
+            [("assistant", "Claude-User")] * 2,
+        )
+
+    def test_a_late_submission_starts_the_keys_day_again(self):
+        """The form sent just before its key's day runs out, then sent again
+        a few minutes later (a reload, or the browser's Back to it), more
+        than a day after it was opened: the key's day runs from its last
+        submission, so it still names the assistant."""
+        form = self.open_link("Claude-User")
+        key = form["assistant_form"]
+        day = assistant_handoff_views.FORM_TTL.total_seconds()
+        age_form(self.client, key, day - 6 * 60)
+        self.submit("origin-late@example.com", **form)
+        age_form(self.client, key, 12 * 60)
+        self.submit("origin-late@example.com", **form)
+        records = models.ConsentRecord.objects.order_by("pk")
+        self.assertEqual(
+            [(r.channel, r.assistant_client) for r in records],
+            [("assistant", "Claude-User")] * 2,
+        )
+
+    def test_a_key_whose_day_runs_out_while_its_case_is_made_keeps_the_assistant(
+        self,
+    ):
+        """The form sent a minute before its key's day runs out, and the day
+        running out while /process makes the case: the key it was read with
+        is the one used, so the case names the assistant, and the form sent
+        again straight after (a reload, or the browser's Back to it) does
+        too."""
+        form = self.open_link("Claude-User")
+        key = form["assistant_form"]
+        day = assistant_handoff_views.FORM_TTL.total_seconds()
+        age_form(self.client, key, day - 60)
+        read = assistant_handoff_views.handoff_context_for
+
+        def read_then_run_out(request):
+            found = read(request)
+            self.assertIsNotNone(found, "read before its day ran out")
+            age_form(request, key, 2 * 60)
+            return found
+
+        with mock.patch.object(
+            assistant_handoff_views, "handoff_context_for", read_then_run_out
+        ):
+            self.submit("origin-runs-out@example.com", **form)
+        self.submit("origin-runs-out@example.com", **form)
+        records = models.ConsentRecord.objects.order_by("pk")
+        self.assertEqual(
+            [(r.channel, r.assistant_client) for r in records],
+            [("assistant", "Claude-User")] * 2,
+        )
+
+    def test_an_abandoned_form_does_not_name_a_later_plain_case(self):
+        """The form a link opened is left unsent; a case started on /scan
+        afterwards, in the same browser, is the site's."""
+        abandoned = self.open_link("Claude-User")
+        plain = carried(self.client.get(reverse("scan")))
+        self.assertNotIn("assistant_form", plain)
+        self.submit(
+            "origin-later@example.com",
+            "Your claim for physical therapy was denied.",
+            **plain,
+        )
+        self.assertEqual(
+            self.latest("origin-later@example.com"),
+            ("site", "site", "site", "", False),
+        )
+        # The abandoned form, sent after all, is still the assistant's.
+        self.submit("origin-abandoned@example.com", **abandoned)
+        self.assertEqual(
+            self.latest("origin-abandoned@example.com"),
+            ("site", "assistant", "site", "Claude-User", False),
+        )
+
+    def test_two_tabs_keep_their_own_assistant(self):
+        """Two links opened in two tabs, then sent in the other order: each
+        appeal names the assistant whose link filled in its form."""
+        claude = self.open_link("Claude-User")
+        codex = self.open_link("openai-mcp/1.0.0 (Codex)")
+        self.assertNotEqual(claude["assistant_form"], codex["assistant_form"])
+        self.submit("origin-codex-tab@example.com", **codex)
+        self.submit("origin-claude-tab@example.com", **claude)
+        self.assertEqual(
+            self.latest("origin-codex-tab@example.com"),
+            ("site", "assistant", "site", "openai-mcp/1.0.0 (Codex)", False),
+        )
+        self.assertEqual(
+            self.latest("origin-claude-tab@example.com"),
+            ("site", "assistant", "site", "Claude-User", False),
+        )
+
+    def test_a_corrected_retry_after_an_error_keeps_the_assistant(self):
+        form = self.open_link("Claude-User")
+        sent_back = self.submit("not-an-email", **form)
+        self.assertTemplateUsed(sent_back, "scrub.html")
+        self.assertFalse(models.Denial.objects.exists())
+        retry = carried(sent_back)
+        self.assertEqual(retry["assistant_form"], form["assistant_form"])
+        # The treatment and condition the link sent come back with it too.
+        self.assertEqual(
+            (retry["default_procedure"], retry["default_condition"]),
+            (PROCEDURE, CONDITION),
+        )
+        self.submit("origin-retry@example.com", **retry)
+        self.assertEqual(
+            self.latest("origin-retry@example.com"),
+            ("site", "assistant", "site", "Claude-User", False),
+        )
+        self.assertEqual(self.client.session["default_procedure"], PROCEDURE)
+
+    def test_a_failed_submission_does_not_name_a_later_different_case(self):
+        """What an earlier review asked of the marks: a form sent back with
+        an error keeps its key, but only that form can use it."""
+        form = self.open_link("Claude-User")
+        self.submit("not-an-email", **form)
+        self.submit(
+            "origin-different@example.com",
+            "Your claim for physical therapy was denied.",
+        )
+        self.assertEqual(
+            self.latest("origin-different@example.com"),
+            ("site", "site", "site", "", False),
+        )
+
+    def test_the_flows_back_link_keeps_the_assistant_for_the_same_case(self):
+        """Back from the next step to /scan and the case sent again: the
+        Back link names the case, and the form it opens names the assistant
+        for that case alone."""
+        form = self.open_link("Claude-User")
+        next_step = self.submit("origin-again@example.com", **form)
+        again = carried(self.client.get(back_link(next_step)))
+        # The key the link's form went through with, bound to this case.
+        self.assertEqual(again["assistant_form"], form["assistant_form"])
+        self.submit("origin-again@example.com", **again)
+        self.assertEqual(models.Denial.objects.count(), 1)
+        records = models.ConsentRecord.objects.order_by("pk")
+        self.assertEqual(
+            [(r.channel, r.assistant_client) for r in records],
+            [("assistant", "Claude-User")] * 2,
+        )
+        # The next step reached by its own Back link has the same way back.
+        denial = models.Denial.objects.get()
+        session = self.client.session
+        ref = views.issue_denial_ref_token(
+            SimpleNamespace(session=session),
+            denial.denial_id,
+            "origin-again@example.com",
+            denial.semi_sekret,
+        )
+        session.save()
+        step = self.client.get(
+            f"{reverse('hh')}?{views.DENIAL_REF_QUERY_PARAM}={ref}"
+        )
+        self.assertIn("assistant_form", carried(self.client.get(back_link(step))))
+        # The Back link's form, sent with another email, is a new case and
+        # the site's.
+        self.submit(
+            "origin-again-other@example.com",
+            "Your claim for physical therapy was denied.",
+            **again,
+        )
+        self.assertEqual(
+            self.latest("origin-again-other@example.com"),
+            ("site", "site", "site", "", False),
+        )
+
+    def test_loading_the_back_link_again_keeps_one_key_for_the_case(self):
+        """The case's key, gone from the session (pushed out by newer
+        forms): the Back link makes one for the case, and loading it again
+        uses that one, not a new one each time."""
+        form = self.open_link("Claude-User")
+        next_step = self.submit("origin-reload-back@example.com", **form)
+        session = self.client.session
+        session[assistant_handoff_views.FORMS_KEY] = {}
+        session.save()
+        keys = [
+            carried(self.client.get(back_link(next_step)))["assistant_form"]
+            for _ in range(3)
+        ]
+        self.assertEqual(len(set(keys)), 1)
+        self.assertNotEqual(keys[0], form["assistant_form"])
+        self.assertEqual(list(open_forms(self.client)), keys[:1])
+        # Loading it again starts that key's day again.
+        age_form(
+            self.client, keys[0], assistant_handoff_views.FORM_TTL.total_seconds() - 60
+        )
+        self.client.get(back_link(next_step))
+        self.assertGreater(open_forms(self.client)[keys[0]]["at"], time.time() - 60)
+        self.submit("origin-reload-back@example.com", assistant_form=keys[0])
+        self.assertEqual(
+            self.latest("origin-reload-back@example.com"),
+            ("site", "assistant", "site", "Claude-User", False),
+        )
+
+    def test_a_new_scan_form_that_reuses_the_case_names_no_assistant(self):
+        """A case an assistant's link brought in, left unfinished; then a
+        new visit to /scan and a different denial, with the same email,
+        within the reuse window. /process reuses the case's row, as it
+        always has, but this submission says the site brought it."""
+        form = self.open_link("Claude-User")
+        self.submit("origin-same-email@example.com", **form)
+        plain = carried(self.client.get(reverse("scan")))
+        self.assertNotIn("assistant_form", plain)
+        next_step = self.submit(
+            "origin-same-email@example.com",
+            "Your claim for physical therapy was denied.",
+            **plain,
+        )
+        self.assertEqual(models.Denial.objects.count(), 1, "the row is reused")
+        self.assertEqual(
+            self.latest("origin-same-email@example.com"),
+            ("site", "site", "site", "", False),
+        )
+        # Nor does the Back link from there.
+        self.assertNotIn(
+            "assistant_form", carried(self.client.get(back_link(next_step)))
+        )
+
+    def test_with_v2_off_an_appeal_from_a_link_is_a_site_one(self):
+        with override_settings(MCP_HANDOFF_V2_ENABLED=False):
+            form = self.open_link("Claude-User")
+            self.assertNotIn("assistant_form", form)
+            self.submit("origin-v1@example.com", **form)
+        self.assertEqual(
+            self.latest("origin-v1@example.com"),
+            ("site", "site", "site", "", False),
+        )
+
+
 @override_settings(**FLAGS_ON, MCP_HANDOFF_V2_ENABLED=False)
 class HandoffV2OffTest(TestCase):
-    def test_with_the_flag_off_nothing_changes(self):
+    def test_with_the_flag_off_a_link_names_no_assistant_but_gives_its_defaults(self):
+        """A v1 link, a landing page with no stop line and nothing to bind,
+        and a form with no key naming an assistant; it still says the
+        treatment and condition are the link's, blank meaning none."""
         handoff = create_handoff(LETTER, PROCEDURE, CONDITION, client="Claude")
         payload = payload_of(handoff.code)
         self.assertEqual(payload["v"], 1)
@@ -1091,7 +1567,11 @@ class HandoffV2OffTest(TestCase):
         self.assertNotContains(self.client.get(PATH), 'id="handoff-form" data-bind')
         page = self.client.post(PATH, {"token": handoff.code})
         self.assertEqual(page.status_code, 200)
-        self.assertNotIn("assistant_handoff_channel", self.client.session)
+        self.assertNotIn("assistant_form", carried(page))
+        self.assertEqual(open_forms(self.client), {})
+        # The treatment and condition are the link's whatever the flag says,
+        # blank meaning none (test_assistant_terms covers why).
+        self.assertEqual(carried(page)["defaults_given"], "1")
         self.assertNotIn("fhi_handoff_binder", self.client.cookies)
 
     def test_a_page_from_before_a_flag_flip_still_binds_and_opens(self):

@@ -82,8 +82,9 @@ def django_app():
 
 
 @contextlib.asynccontextmanager
-async def running_app(routes=None):
-    """The dispatcher asgi.py mounts, with the MCP lifespan running."""
+async def running_app(routes=None, headers=None):
+    """The dispatcher asgi.py mounts, with the MCP lifespan running. headers
+    go on every request, as a client's User-Agent would."""
     routes = routes or mcp_server.mcp_asgi_routes(django_app())
     app = ProtocolTypeRouter(routes)
     lifespan_app = routes.get("lifespan")
@@ -94,15 +95,15 @@ async def running_app(routes=None):
             )
         transport = httpx.ASGITransport(app=app)
         http = await stack.enter_async_context(
-            httpx.AsyncClient(transport=transport, base_url=BASE_URL)
+            httpx.AsyncClient(transport=transport, base_url=BASE_URL, headers=headers)
         )
         yield http
 
 
 @contextlib.asynccontextmanager
-async def mcp_session(routes=None):
+async def mcp_session(routes=None, headers=None):
     """An initialized SDK client session against a fresh server."""
-    async with running_app(routes) as http:
+    async with running_app(routes, headers) as http:
         async with streamable_http_client(f"{BASE_URL}/mcp", http_client=http) as (
             read,
             write,
@@ -114,8 +115,8 @@ async def mcp_session(routes=None):
                 yield session
 
 
-async def call(tool: str, arguments: dict[str, Any], routes=None):
-    async with mcp_session(routes) as session:
+async def call(tool: str, arguments: dict[str, Any], routes=None, headers=None):
+    async with mcp_session(routes, headers) as session:
         return await session.call_tool(tool, arguments)
 
 
@@ -1481,6 +1482,16 @@ class PrepareAppealTest(TestCase):
         self.assertEqual(received["procedure"], "MRI of the back")
         self.assertEqual(received["condition"], "migraine")
 
+    async def test_a_short_field_loses_a_hidden_variation_selector_too(self):
+        """A supplementary variation selector is no format character, but
+        can carry hidden bytes after a visible one. The terms page's two
+        fields drop it the same way (assistant_handoff.one_line)."""
+        result = await prepare(
+            {"letter_text": LETTER, "procedure": "MRI\U000e0101 scan"}
+        )
+        self.assertFalse(result.isError, text_of(result))
+        self.assertEqual(result.structuredContent["received"]["procedure"], "MRI scan")
+
     def test_a_lone_surrogate_never_reaches_the_page(self):
         """json.loads keeps a body's lone "\\ud800" escape as text UTF-8 can't
         encode, and pydantic passes it in letter_text (procedure and condition
@@ -2375,6 +2386,44 @@ class ChatPathToolsTest(TestCase):
         self.assertEqual(
             models.AssistantDraft.objects.get().pk, content.draft
         )
+
+    def test_a_chat_link_keeps_the_name_the_assistant_sends_with_its_request(self):
+        # The server is stateless, so the tool call never sees the name from
+        # initialize; the User-Agent on the call is what names the assistant.
+        result = async_to_sync(call)(
+            "draft_appeal_in_chat",
+            {"letter_text": LETTER, "procedure": "MRI"},
+            routes=chat_routes(),
+            headers={"User-Agent": "Claude-User"},
+        )
+        self.assertFalse(result.isError, text_of(result))
+        code = result.structuredContent["url"].split("#")[1]
+        content = assistant_handoff.claim_handoff(code, consume=False)
+        self.assertEqual(content.client, "Claude-User")
+
+    def test_a_site_link_keeps_the_name_the_assistant_sends_with_its_request(self):
+        result = async_to_sync(call)(
+            "prepare_appeal",
+            {"letter_text": LETTER},
+            routes=chat_routes(),
+            headers={"User-Agent": "openai-mcp/1.0.0 (Codex)"},
+        )
+        self.assertFalse(result.isError, text_of(result))
+        code = result.structuredContent["url"].split("#")[1]
+        content = assistant_handoff.claim_handoff(code, consume=False)
+        self.assertEqual(content.client, "openai-mcp/1.0.0 (Codex)")
+
+    def test_a_request_that_carries_no_name_leaves_the_label_blank(self):
+        result = async_to_sync(call)(
+            "draft_appeal_in_chat",
+            {"letter_text": LETTER},
+            routes=chat_routes(),
+            headers={"User-Agent": ""},
+        )
+        self.assertFalse(result.isError, text_of(result))
+        code = result.structuredContent["url"].split("#")[1]
+        content = assistant_handoff.claim_handoff(code, consume=False)
+        self.assertEqual(content.client, "")
 
     def test_paused_it_returns_site_only_with_a_site_link_in_the_same_call(self):
         with override_settings(MCP_DRAFT_IN_CHAT_PAUSED=True):
