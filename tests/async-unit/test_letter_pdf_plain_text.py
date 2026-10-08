@@ -336,6 +336,21 @@ _COVER_WITH_MARKUP = (
     "</body></html>"
 )
 
+# A cover whose <meta> tags name fields that the writers' templates hand to the
+# PDF engine: a stylesheet address, preamble text and a page-header file.
+_COVER_WITH_METADATA = (
+    "<html><head><title>Cover</title>"
+    '<meta name="css" content="http://example.invalid/a.css">'
+    '<meta name="header-includes" content="x">'
+    '<meta name="header-html" content="a.html">'
+    "</head><body><p>Cover for Jane Doe</p></body></html>"
+)
+
+# A letter that opens with a pandoc title block (title, author, date).
+_LETTER_WITH_TITLE_BLOCK = (
+    "% My appeal\n% Jane Doe\n% October 8, 2026\n\nDear Team,\n\nI am appealing.\n"
+)
+
 # A letter with a pipe table, a definition list and a footnote.
 _LETTER_WITH_TABLE_AND_FOOTNOTE = (
     "Dear Team,\n\n"
@@ -403,6 +418,20 @@ class PandocAllowlistTest(unittest.TestCase):
             _COVER_WITH_MARKUP, suffix=".html", prefix="info_cover"
         )
         self.assertEqual(_attributes(parsed), [])
+
+    @skip_if_no_pandoc
+    def test_cover_metadata_keeps_only_title_author_and_date(self):
+        # A cover's <meta> tags (css, header-includes, header-html) do not
+        # reach the writer; only the title, author and date fields can.
+        parsed = _render_text_file(
+            _COVER_WITH_METADATA, suffix=".html", prefix="info_cover"
+        )
+        self.assertLessEqual(set(parsed["meta"]), {"title", "author", "date"})
+
+    @skip_if_no_pandoc
+    def test_letter_title_block_keeps_title_author_and_date(self):
+        parsed = _render_text_file(_LETTER_WITH_TITLE_BLOCK)
+        self.assertEqual(set(parsed["meta"]), {"title", "author", "date"})
 
     @skip_if_no_pandoc
     def test_ordinary_letter_keeps_its_structure(self):

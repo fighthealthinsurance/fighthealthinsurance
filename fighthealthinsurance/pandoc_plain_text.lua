@@ -6,7 +6,8 @@
 -- letters, the html reader for cover pages). This is deny-by-default: a node
 -- type nobody listed is rendered as its own text, not passed through. Kept
 -- elements carry no identifiers, classes or attributes, so an HTML engine has
--- nothing to act on either. Works with pandoc 2.9 and later; the generic Inline
+-- nothing to act on either, and the document metadata keeps only its title,
+-- author and date. Works with pandoc 2.9 and later; the generic Inline
 -- and Block functions it relies on are called for every element in both.
 
 local stringify = pandoc.utils.stringify
@@ -143,4 +144,12 @@ function Block(el)
     return {}
   end
   return pandoc.Para(inlines)
+end
+
+-- Document metadata keeps only the title, author and date, whose text has
+-- passed through the allowlist above like any other inlines. Every other field
+-- (from a cover's <meta> tags, for example) is dropped, since the writers'
+-- templates hand fields such as css or header-includes to the PDF engine.
+function Meta(meta)
+  return { title = meta.title, author = meta.author, date = meta.date }
 end
