@@ -439,9 +439,8 @@ class Base(Configuration):
 
     # The Cofactor AI person that *new-signup* intros (the one-press button in
     # the signup notification email) introduce the professional to by name and
-    # CC, in "Name <address>" form. Blank uses the built-in default contact,
-    # Rebeca Morales (proconnector.DEFAULT_COFACTOR_INTRO_CONTACT, the one place
-    # it's written). The backlog re-engagement intros from the processing queue
+    # CC, in "Name <address>" form. Blank (or "none") turns new-signup intros
+    # off. The backlog re-engagement intros from the processing queue
     # never use it: those don't involve Cofactor unless the professional replies
     # to us.
     COFACTOR_INTRO_CONTACT = os.getenv("COFACTOR_INTRO_CONTACT", "")

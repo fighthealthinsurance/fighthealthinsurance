@@ -9,6 +9,7 @@ graceful handling of missing name / organization.
 import datetime
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.template.defaultfilters import date as date_filter
@@ -22,8 +23,8 @@ from fighthealthinsurance.proconnector import (
     BASE_INTRO_EMAIL,
     BASE_INTRO_LETTER_CLOSING,
     BASE_INTRO_LETTER_SIGNATURE,
-    DEFAULT_COFACTOR_INTRO_CONTACT,
     INTRO_SYSTEM_PROMPT,
+    NEW_SIGNUP_INTRO_OFF,
     NEW_SIGNUP_INTRO_SYSTEM_PROMPT,
     _claims_cofactor_relationship,
     _is_safe_intro_draft,
@@ -43,6 +44,7 @@ from fighthealthinsurance.proconnector import (
     generate_intro_email,
     get_cofactor_cc_email,
     get_cofactor_intro_contact,
+    intro_cc_problem,
     get_next_interested_professional,
     get_professional_cc_email,
     intro_wording_problem,
@@ -88,9 +90,8 @@ def _set_signup(pro: InterestedProfessional, days_ago: int) -> None:
 
 REBECA = "Rebeca Morales <rmorales@cofactorai.com>"
 
-# Pins COFACTOR_INTRO_CONTACT to blank (use the built-in default) so these tests
-# never pick up a value exported in the developer's or runner's environment.
-_default_intro_contact = override_settings(COFACTOR_INTRO_CONTACT="")
+# The contact only comes from the environment, so tests that need one set it.
+_rebeca_intro_contact = override_settings(COFACTOR_INTRO_CONTACT=REBECA)
 
 
 class _FakeModel:
@@ -1136,6 +1137,7 @@ class SkipFlowTest(_ProcessViewTestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("proconnector_process"))
 
+
 # ---------------------------------------------------------------------------
 # Mailing address editing (feeds the printable letter)
 # ---------------------------------------------------------------------------
@@ -2066,7 +2068,9 @@ class LetterDocumentTitleTest(TestCase):
 
     def test_title_omits_missing_name(self):
         pro = _make_pro(name="", business_name="Acme Health Clinic")
-        self.assertEqual(build_letter_document_title(pro), "Letter - Acme Health Clinic")
+        self.assertEqual(
+            build_letter_document_title(pro), "Letter - Acme Health Clinic"
+        )
 
     def test_title_falls_back_when_nothing_known(self):
         pro = _make_pro(name="", business_name="")
@@ -2430,6 +2434,7 @@ class QuickIntroAccessTest(TestCase):
         self.assertEqual(len(mail.outbox), 0)
 
 
+@_rebeca_intro_contact
 class _QuickIntroTestCase(TestCase):
     """Shared staff login and URL helpers for the quick-intro flow tests."""
 
@@ -2503,7 +2508,7 @@ class QuickIntroPageTest(_QuickIntroTestCase):
         mock_gen.assert_not_called()
 
 
-@_default_intro_contact
+@_rebeca_intro_contact
 class QuickIntroSendTest(_QuickIntroTestCase):
     """Quick-intro sends (the new-signup version), whose bodies must mention
     the Cofactor contact (see ``new_signup_body_problem``) -- hence "Rebeca" in
@@ -2631,7 +2636,9 @@ class QuickIntroSendTest(_QuickIntroTestCase):
             side_effect=_delete_rows,
         ):
             response = self._post(
-                pro.id, "send", email_body="Body introducing Rebeca, with compensation disclosure."
+                pro.id,
+                "send",
+                email_body="Body introducing Rebeca, with compensation disclosure.",
             )
         self.assertRedirects(
             response, reverse("proconnector_process"), fetch_redirect_response=False
@@ -2654,7 +2661,9 @@ class QuickIntroSendTest(_QuickIntroTestCase):
         # example.com is a blocked domain -> not sendable.
         pro = _make_pro(email="blocked@example.com")
         response = self._post(
-            pro.id, "send", email_body="Body introducing Rebeca, with compensation disclosure."
+            pro.id,
+            "send",
+            email_body="Body introducing Rebeca, with compensation disclosure.",
         )
         self.assertEqual(response.status_code, 400)
         mock_send.assert_not_called()
@@ -2673,7 +2682,9 @@ class QuickIntroSendTest(_QuickIntroTestCase):
     def test_unsubscribed_record_is_not_sent(self, mock_send):
         pro = _make_pro(email="jane@janeclinic.com", unsubscribed=True)
         response = self._post(
-            pro.id, "send", email_body="Body introducing Rebeca, with compensation disclosure."
+            pro.id,
+            "send",
+            email_body="Body introducing Rebeca, with compensation disclosure.",
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "unsubscribed")
@@ -2687,7 +2698,9 @@ class QuickIntroSendTest(_QuickIntroTestCase):
         # test/spam filtering (claim_email_for_send doesn't check it).
         pro = _make_pro(email="test@test.com")
         response = self._post(
-            pro.id, "send", email_body="Body introducing Rebeca, with compensation disclosure."
+            pro.id,
+            "send",
+            email_body="Body introducing Rebeca, with compensation disclosure.",
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "filtered")
@@ -2702,7 +2715,9 @@ class QuickIntroSendTest(_QuickIntroTestCase):
     def test_send_failure_releases_claim(self, _mock_send):
         pro = _make_pro(email="jane@janeclinic.com")
         response = self._post(
-            pro.id, "send", email_body="Body introducing Rebeca, with compensation disclosure."
+            pro.id,
+            "send",
+            email_body="Body introducing Rebeca, with compensation disclosure.",
         )
         self.assertEqual(response.status_code, 500)
         self.assertContains(response, "Failed to send", status_code=500)
@@ -2729,7 +2744,9 @@ class QuickIntroSendTest(_QuickIntroTestCase):
         # fresh AI draft just to decorate an error page.
         pro = _make_pro(email="jane@janeclinic.com")
         response = self._post(
-            pro.id, "explode", email_body="Body introducing Rebeca, with compensation disclosure."
+            pro.id,
+            "explode",
+            email_body="Body introducing Rebeca, with compensation disclosure.",
         )
         self.assertEqual(response.status_code, 400)
         self.assertContains(response, "Unknown action", status_code=400)
@@ -2750,7 +2767,9 @@ class QuickIntroSendTest(_QuickIntroTestCase):
         a = _make_pro(email="dup@clinic.org")
         b = _make_pro(email="dup@clinic.org")
         response = self._post(
-            a.id, "send", email_body="Body introducing Rebeca, with the compensation disclosure."
+            a.id,
+            "send",
+            email_body="Body introducing Rebeca, with the compensation disclosure.",
         )
         self.assertEqual(response.status_code, 200)
         mock_send.assert_called_once()
@@ -2773,7 +2792,7 @@ _SAFE_TAIL = (
 )
 
 
-@_default_intro_contact
+@_rebeca_intro_contact
 class NewSignupIntroEmailTest(TestCase):
     def setUp(self):
         self.pro = _make_pro(name="Dr. Jane")
@@ -2830,17 +2849,14 @@ class NewSignupIntroEmailTest(TestCase):
         self.assertNotIn("copied", draft)
 
 
-@_default_intro_contact
+@_rebeca_intro_contact
 class CofactorIntroContactTest(TestCase):
-    def test_defaults_to_rebeca(self):
+    def test_uses_the_configured_contact(self):
         self.assertEqual(get_cofactor_intro_contact(), REBECA)
+        self.assertIsNone(cofactor_intro_contact_problem())
 
-    def test_built_in_default_is_rebeca(self):
-        self.assertEqual(DEFAULT_COFACTOR_INTRO_CONTACT, REBECA)
-
-    @override_settings(COFACTOR_INTRO_CONTACT="  ")
-    def test_whitespace_setting_falls_back_to_rebeca(self):
-        self.assertEqual(get_cofactor_intro_contact(), REBECA)
+    def test_no_contact_is_written_into_the_source(self):
+        self.assertFalse(hasattr(proconnector, "DEFAULT_COFACTOR_INTRO_CONTACT"))
 
     @override_settings(COFACTOR_INTRO_CONTACT="Someone Else <someone@cofactorai.com>")
     def test_setting_overrides_the_default(self):
@@ -2851,7 +2867,9 @@ class CofactorIntroContactTest(TestCase):
     def test_default_contact_has_no_problem(self):
         self.assertIsNone(cofactor_intro_contact_problem())
 
-    @override_settings(COFACTOR_INTRO_CONTACT="Rebeca Morales <rmorales-at-cofactorai.com>")
+    @override_settings(
+        COFACTOR_INTRO_CONTACT="Rebeca Morales <rmorales-at-cofactorai.com>"
+    )
     def test_malformed_address_behind_a_name_is_reported(self):
         problem = cofactor_intro_contact_problem()
         assert problem is not None
@@ -2863,7 +2881,9 @@ class CofactorIntroContactTest(TestCase):
         # contains an @ -- only a real address check catches it.
         self.assertIsNotNone(cofactor_intro_contact_problem())
 
-    @override_settings(COFACTOR_INTRO_CONTACT='"Rebeca Morales <rmorales@cofactorai.com>"')
+    @override_settings(
+        COFACTOR_INTRO_CONTACT='"Rebeca Morales <rmorales@cofactorai.com>"'
+    )
     def test_quoted_value_is_reported(self):
         self.assertIsNotNone(cofactor_intro_contact_problem())
 
@@ -2887,7 +2907,37 @@ class CofactorIntroContactTest(TestCase):
         )
 
 
-@_default_intro_contact
+class CofactorIntroContactOffTest(TestCase):
+    @override_settings(COFACTOR_INTRO_CONTACT="")
+    def test_blank_means_off(self):
+        self.assertIsNone(get_cofactor_intro_contact())
+        self.assertEqual(cofactor_intro_contact_problem(), NEW_SIGNUP_INTRO_OFF)
+
+    @override_settings(COFACTOR_INTRO_CONTACT="  ")
+    def test_whitespace_means_off(self):
+        self.assertIsNone(get_cofactor_intro_contact())
+
+    @override_settings(COFACTOR_INTRO_CONTACT="None")
+    def test_none_sentinel_means_off(self):
+        self.assertIsNone(get_cofactor_intro_contact())
+
+    def test_unset_means_off(self):
+        with override_settings():
+            del settings.COFACTOR_INTRO_CONTACT
+            self.assertIsNone(get_cofactor_intro_contact())
+            self.assertEqual(cofactor_intro_contact_problem(), NEW_SIGNUP_INTRO_OFF)
+
+    @override_settings(COFACTOR_INTRO_CONTACT="")
+    def test_off_blocks_only_the_new_signup_version(self):
+        self.assertEqual(intro_cc_problem(new_signup=True), NEW_SIGNUP_INTRO_OFF)
+        self.assertIsNone(intro_cc_problem())
+        self.assertEqual(
+            new_signup_intro_cc_recipients(),
+            ["professional@fighthealthinsurance.com"],
+        )
+
+
+@_rebeca_intro_contact
 class NewSignupBodyProblemTest(TestCase):
     """Send-time check on (possibly staff-edited) new-signup bodies."""
 
@@ -2923,7 +2973,7 @@ class NewSignupBodyProblemTest(TestCase):
         self.assertIsNone(new_signup_body_problem("No contact named here."))
 
 
-@_default_intro_contact
+@_rebeca_intro_contact
 class NewSignupSendHelperTest(TestCase):
     def setUp(self):
         self.pro = _make_pro(email="jane@janeclinic.com")
@@ -2986,8 +3036,18 @@ class NewSignupSendHelperTest(TestCase):
     def test_malformed_contact_does_not_block_backlog_sends(self):
         self.assertEqual(self._send().cc, ["professional@fighthealthinsurance.com"])
 
+    @override_settings(COFACTOR_INTRO_CONTACT="")
+    def test_off_contact_raises_rather_than_sending(self):
+        with self.assertRaisesMessage(ValueError, NEW_SIGNUP_INTRO_OFF):
+            self._send(new_signup=True)
+        self.assertEqual(len(mail.outbox), 0)
 
-@_default_intro_contact
+    @override_settings(COFACTOR_INTRO_CONTACT="")
+    def test_off_contact_does_not_block_backlog_sends(self):
+        self.assertEqual(self._send().cc, ["professional@fighthealthinsurance.com"])
+
+
+@_rebeca_intro_contact
 class NewSignupAIDraftTest(TestCase):
     def setUp(self):
         self.pro = _make_pro(name="Dr. Smith", email="d@dclinic.com")
@@ -3024,16 +3084,14 @@ class NewSignupAIDraftTest(TestCase):
     def test_draft_keeping_the_copied_introduction_is_used(self):
         text = (
             "Dear Dr. Smith, let me introduce you to Rebeca Morales at Cofactor "
-            "AI (copied on this email). Just reply all to set up a demo."
-            + _SAFE_TAIL
+            "AI (copied on this email). Just reply all to set up a demo." + _SAFE_TAIL
         )
         self.assertEqual(self._draft_with(text), text)
 
     def test_copied_introduction_match_ignores_case_and_line_breaks(self):
         text = (
             "Dear Dr. Smith, let me introduce you to rebeca morales at\ncofactor "
-            "ai (copied on this email). Just reply all to set up a demo."
-            + _SAFE_TAIL
+            "ai (copied on this email). Just reply all to set up a demo." + _SAFE_TAIL
         )
         self.assertEqual(self._draft_with(text), text)
 
@@ -3062,11 +3120,16 @@ class NewSignupAIDraftTest(TestCase):
         self.assertEqual(self._draft_with(text), build_new_signup_intro_email(self.pro))
 
     def test_draft_dropping_rebeca_falls_back(self):
-        text = "Dear Dr. Smith, let me introduce you to Cofactor AI, copied here." + _SAFE_TAIL
+        text = (
+            "Dear Dr. Smith, let me introduce you to Cofactor AI, copied here."
+            + _SAFE_TAIL
+        )
         self.assertEqual(self._draft_with(text), build_new_signup_intro_email(self.pro))
 
     def test_draft_not_saying_rebeca_is_copied_falls_back(self):
-        text = "Dear Dr. Smith, please email Rebeca Morales at Cofactor AI." + _SAFE_TAIL
+        text = (
+            "Dear Dr. Smith, please email Rebeca Morales at Cofactor AI." + _SAFE_TAIL
+        )
         self.assertEqual(self._draft_with(text), build_new_signup_intro_email(self.pro))
 
     def test_draft_with_name_and_copied_scattered_falls_back(self):
@@ -3100,7 +3163,7 @@ class NewSignupAIDraftTest(TestCase):
         )
 
 
-@_default_intro_contact
+@_rebeca_intro_contact
 class QuickIntroNewSignupTest(_QuickIntroTestCase):
     BODY = "Let me introduce you to Rebeca, with the compensation disclosure."
 
@@ -3166,6 +3229,42 @@ class QuickIntroNewSignupTest(_QuickIntroTestCase):
         self.assertEqual(len(mail.outbox), 0)
 
 
+@override_settings(COFACTOR_INTRO_CONTACT="")
+class QuickIntroOffTest(_QuickIntroTestCase):
+    BODY = "Let me introduce you to Rebeca, with the compensation disclosure."
+
+    def setUp(self):
+        super().setUp()
+        self.pro = _make_pro(email="jane@janeclinic.com")
+        patcher = patch("fighthealthinsurance.staff_views.generate_intro_email")
+        self.mock_gen = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_page_shows_the_off_message_instead_of_the_form(self):
+        response = self.client.get(self._url(self.pro.id))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "New-signup introductions are turned off")
+        self.assertNotContains(response, "Send intro email now")
+
+    def test_page_skips_the_model_call(self):
+        self.client.get(self._url(self.pro.id))
+        self.mock_gen.assert_not_called()
+
+    def test_send_refuses_with_the_message_and_sends_nothing(self):
+        response = self._post(self.pro.id, "send", email_body=self.BODY)
+        self.assertContains(
+            response, "New-signup introductions are turned off", status_code=400
+        )
+        self.pro.refresh_from_db()
+        self.assertFalse(self.pro.proconnector_attempted)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_queue_refuses_and_queues_nothing(self):
+        response = self._post(self.pro.id, "queue", email_body=self.BODY)
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(ScheduledEmail.objects.exists())
+
+
 class ProcessQueueStaysBacklogVersionTest(_ProcessViewTestCase):
     def setUp(self):
         super().setUp()
@@ -3186,6 +3285,4 @@ class ProcessQueueStaysBacklogVersionTest(_ProcessViewTestCase):
             subject="Intro to Cofactor AI",
             email_body="Re-engagement body with the compensation disclosure.",
         )
-        self.assertEqual(
-            mail.outbox[0].cc, ["professional@fighthealthinsurance.com"]
-        )
+        self.assertEqual(mail.outbox[0].cc, ["professional@fighthealthinsurance.com"])

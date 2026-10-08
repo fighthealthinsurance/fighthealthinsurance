@@ -19,7 +19,8 @@ to the signup backlog: a re-engagement note that leaves Cofactor AI off the
 thread unless the professional replies to us. The one-press intro for a *new*
 signup (``new_signup=True``, launched from the signup notification email)
 instead says "Let me introduce you to" a named Cofactor AI contact
-(COFACTOR_INTRO_CONTACT, Rebeca Morales by default) and CCs that contact.
+(COFACTOR_INTRO_CONTACT) and CCs that contact. With that setting blank the
+new-signup version is off and refuses to send.
 
 Wording constraints (enforced by ``_is_safe_intro_draft``):
   * Never describe Cofactor AI as a "partner" or say FHI "partnered" with them.
@@ -58,10 +59,6 @@ DEFAULT_PROFESSIONAL_CC_EMAIL = "professional@fighthealthinsurance.com"
 # kept so a deployment can spell out "off" rather than relying on a blank
 # looking intentional (see get_cofactor_cc_email).
 CC_DISABLED_SENTINEL = "none"
-
-# Cofactor AI contact that new-signup intros introduce by name and CC, used when
-# the COFACTOR_INTRO_CONTACT setting is absent (see get_cofactor_intro_contact).
-DEFAULT_COFACTOR_INTRO_CONTACT = "Rebeca Morales <rmorales@cofactorai.com>"
 
 # How the new-signup email refers to its Cofactor contact when the configured
 # COFACTOR_INTRO_CONTACT is a bare address with no display name.
@@ -332,18 +329,27 @@ def cofactor_cc_problem() -> Optional[str]:
     )
 
 
-def get_cofactor_intro_contact() -> str:
-    """The Cofactor AI contact that new-signup intros introduce and CC.
+def get_cofactor_intro_contact() -> Optional[str]:
+    """The Cofactor AI contact that new-signup intros introduce and CC, or
+    ``None`` when new-signup intros are off.
 
     The ``COFACTOR_INTRO_CONTACT`` setting in ``"Name <address>"`` form (a bare
-    address works too; the email then introduces "the Cofactor AI team"),
-    falling back to :data:`DEFAULT_COFACTOR_INTRO_CONTACT` when unset or blank
-    -- the setting defaults to blank, so this constant is the one place the
-    default contact lives. There is deliberately no off switch: the new-signup
-    email *is* an introduction to this person, so it can't go out without them
-    on it.
+    address works too; the email then introduces "the Cofactor AI team").
+    Unset/empty and the ``"none"`` sentinel mean off, as for
+    ``COFACTOR_CC_EMAIL``. The contact comes only from the environment.
     """
-    return _setting_str("COFACTOR_INTRO_CONTACT") or DEFAULT_COFACTOR_INTRO_CONTACT
+    cleaned = _setting_str("COFACTOR_INTRO_CONTACT")
+    if not cleaned or cleaned.lower() == CC_DISABLED_SENTINEL:
+        return None
+    return cleaned
+
+
+# Staff-facing reason the new-signup intro can't send while it's off.
+NEW_SIGNUP_INTRO_OFF = (
+    "New-signup introductions are turned off because no Cofactor AI contact "
+    "is set (COFACTOR_INTRO_CONTACT), so this page can't send. Use the full "
+    "Pro Connector workflow instead, or set the contact to turn this on."
+)
 
 
 def cofactor_intro_contact_problem() -> Optional[str]:
@@ -362,6 +368,8 @@ def cofactor_intro_contact_problem() -> Optional[str]:
     would then mangle or reject at send time.
     """
     contact = get_cofactor_intro_contact()
+    if contact is None:
+        return NEW_SIGNUP_INTRO_OFF
     address = parseaddr(contact)[1]
     try:
         validate_email(address)
@@ -416,12 +424,15 @@ def build_base_intro_email(pro: InterestedProfessional) -> str:
 def _cofactor_intro_contact_name() -> Optional[str]:
     """Display name of the new-signup Cofactor contact, or ``None`` for a bare
     address (the email then refers to :data:`UNNAMED_COFACTOR_CONTACT`)."""
-    return parseaddr(get_cofactor_intro_contact())[0].strip() or None
+    contact = get_cofactor_intro_contact()
+    if contact is None:
+        return None
+    return parseaddr(contact)[0].strip() or None
 
 
 def _copied_introduction() -> str:
     """The exact introduction-and-copy phrase of the new-signup email, e.g.
-    ``"Rebeca Morales at Cofactor AI (copied on this email)"``.
+    ``"Rebecca Lee Crumpler at Cofactor AI (copied on this email)"``.
 
     Shared by the template rendering and the AI-draft guard, so the guard can
     require the phrase itself rather than its words scattered through the text.
@@ -723,7 +734,7 @@ def new_signup_body_problem(body: Optional[str]) -> Optional[str]:
 
     Deliberately much looser than the AI-draft guard
     (:func:`_is_safe_new_signup_intro_draft`): staff may reword the
-    introduction however they like ("I've cc'd Rebeca"). A bare-address
+    introduction however they like ("I've cc'd Rebecca"). A bare-address
     contact has no name to look for, so nothing is checked for it.
     """
     name = _cofactor_intro_contact_name()

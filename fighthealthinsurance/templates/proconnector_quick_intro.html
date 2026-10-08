@@ -155,6 +155,10 @@
         <div class="sent-body">{{ pro.proconnector_email_body }}</div>
       {% endif %}
     </div>
+  {% elif intro_off %}
+    <div class="proconnector-card">
+      <div class="blocked">ℹ️ {{ intro_off }}</div>
+    </div>
   {% else %}
     <div class="proconnector-card">
       <h2>Introduction email</h2>

@@ -90,6 +90,7 @@ from fighthealthinsurance.ml.model_identity import (
     normalize_model_label,
 )
 from fighthealthinsurance.proconnector import (
+    NEW_SIGNUP_INTRO_OFF,
     PROCONNECTOR_INTRO_SUBJECT,
     address_max_length,
     address_problem,
@@ -102,6 +103,7 @@ from fighthealthinsurance.proconnector import (
     default_intro_cc_recipients,
     generate_intro_email,
     get_cofactor_cc_email,
+    get_cofactor_intro_contact,
     get_next_interested_professional,
     get_professional_cc_email,
     intro_cc_problem,
@@ -3905,12 +3907,15 @@ class ProConnectorQuickIntroView(View):
         draft.
         """
         block_reason = quick_intro_block_reason(pro)
-        if draft is None and block_reason is None:
+        # Off: show why instead of the form, and skip the model call.
+        intro_off = get_cofactor_intro_contact() is None
+        if draft is None and block_reason is None and not intro_off:
             draft = generate_intro_email(pro, new_signup=True)
         context = {
             "title": "Quick Cofactor AI Introduction",
             "pro": pro,
             "block_reason": block_reason,
+            "intro_off": NEW_SIGNUP_INTRO_OFF if intro_off else None,
             "email_body": draft,
             "subject": PROCONNECTOR_INTRO_SUBJECT,
             "cc_emails": new_signup_intro_cc_recipients(),
