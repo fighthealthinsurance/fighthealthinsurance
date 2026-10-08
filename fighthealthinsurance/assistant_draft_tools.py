@@ -17,7 +17,7 @@ from django.utils import timezone
 
 from fighthealthinsurance import assistant_drafts as drafts
 from fighthealthinsurance import assistant_handoff
-from fighthealthinsurance.consent import CHANNEL_ASSISTANT
+from fighthealthinsurance.consent import CHANNEL_ASSISTANT, FINISH_IN_CHAT
 from fighthealthinsurance.models import AssistantDraft, Denial
 from fighthealthinsurance.utils import strip_invisible_controls
 
@@ -144,10 +144,14 @@ def start(letter: str, procedure: str, condition: str, client: str) -> Started:
 
 
 def _for_someone_else(denial: Optional[Denial]) -> bool:
+    """What the person said on the terms page. A record from our own form
+    can name the assistant too, but never asks who the appeal is for."""
     if denial is None:
         return False
     return bool(
-        denial.consent_records.filter(channel=CHANNEL_ASSISTANT)
+        denial.consent_records.filter(
+            channel=CHANNEL_ASSISTANT, finish_in=FINISH_IN_CHAT
+        )
         .order_by("-pk")
         .values_list("on_behalf", flat=True)
         .first()

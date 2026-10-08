@@ -36,6 +36,7 @@ from fighthealthinsurance.assistant_handoff import (
     HANDOFF_TTL,
     HandoffContent,
     claim_handoff,
+    client_label,
     new_binder,
     v2_enabled,
 )
@@ -71,13 +72,15 @@ def set_binder_cookie(response: HttpResponse, binder: str) -> None:
 
 def handoff_context_for(request: HttpRequest) -> Optional[dict[str, str]]:
     """What the opened form carried from the assistant, read once by
-    /process: the channel and the client label, or None for a plain intake.
-    The keys are cleared so a later case in the session does not inherit them."""
+    /process for the consent record: the channel and the client label, or
+    None for a plain intake. Only render_site_form sets the keys, after a
+    link was opened; nothing a request sends can. They are cleared here so a
+    later case in the session does not inherit them."""
     channel = request.session.pop(CHANNEL_KEY, None)
     client = request.session.pop(CLIENT_KEY, "")
     if channel != "assistant":
         return None
-    return {"channel": "assistant", "assistant_client": str(client or "")}
+    return {"channel": "assistant", "assistant_client": client_label(client)}
 
 
 def handoff_enabled() -> bool:

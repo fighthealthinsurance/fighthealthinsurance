@@ -334,6 +334,38 @@ class AgreeTest(TermsTestBase):
         self.assertEqual(draft.status, assistant_drafts.ON_SITE)
         self.assertFalse(Denial.objects.exists())
 
+    def test_an_appeal_finished_on_this_site_still_names_the_assistant(self):
+        code, _, _ = self.open_terms()
+        self.client.post(AGREE, terms_form(code, finish="site"))
+        response = self.client.post(
+            reverse("scan"),
+            {
+                "email": EMAIL,
+                "denial_text": "My own words.",
+                "zip": "94103",
+                "pii": "on",
+                "privacy": "on",
+                "tos": "on",
+                "personalonly": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        denial = Denial.objects.get()
+        self.assertEqual(denial.channel, "site")
+        record = ConsentRecord.objects.get(denial=denial)
+        self.assertEqual(
+            (
+                record.channel,
+                record.finish_in,
+                record.on_behalf,
+                record.assistant_client,
+            ),
+            ("assistant", "site", False, "Claude"),
+        )
+        self.assertFalse(
+            SpendCounter.objects.filter(name="fhi:assistant", amount__gt=0).exists()
+        )
+
 
 class AgreeRefusalTest(TermsTestBase):
     def test_switching_keeps_the_outside_ai_choice_as_it_was(self):

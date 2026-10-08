@@ -2045,7 +2045,7 @@ class InitialProcessView(generic.FormView):
 
     def post(self, request, *args, **kwargs):
         # Read once and cleared before validation, so a failed submission
-        # doesn't leave them for a later case; applied in a later change.
+        # doesn't leave them for a later case; form_valid records them.
         self.handoff_context = assistant_handoff_views.handoff_context_for(request)
         return super().post(request, *args, **kwargs)
 
@@ -2180,6 +2180,30 @@ class InitialProcessView(generic.FormView):
             )
             return None
 
+    def _assistant_that_brought(
+        self, existing_denial: typing.Optional[models.Denial]
+    ) -> typing.Optional[str]:
+        """The label of the assistant that brought this case in ("" when its
+        link carried no name), or None when the site did.
+
+        An assistant brought it when this form was one its link filled in
+        ("Open my appeal form", or "Finish on this site instead" on the chat
+        path's terms page): only a link that was actually opened marks the
+        session (assistant_handoff_views.render_site_form), and post() reads
+        and clears the marks. A resubmission of the same case (the session's
+        denial, reused) keeps what its first submission recorded, as it
+        keeps the treatment. The case is still finished here, and the
+        Denial's own channel stays "site": that is what its model spend is
+        counted against (ml/spend.py)."""
+        handoff: typing.Optional[dict[str, str]] = getattr(
+            self, "handoff_context", None
+        )
+        if handoff is not None:
+            return handoff["assistant_client"]
+        if existing_denial is not None:
+            return consent.assistant_that_brought(existing_denial)
+        return None
+
     def form_valid(self, form):
         # Legacy doesn't have denial id
         cleaned_data = form.cleaned_data
@@ -2239,8 +2263,17 @@ class InitialProcessView(generic.FormView):
         )
         # After, not around, the helper: its outbox work expects no request
         # transaction, so the record is best effort and never blocks the appeal.
+        brought_by = self._assistant_that_brought(existing_denial)
         consent.record_consent(
-            denial_response.denial_id, agreements, channel=consent.CHANNEL_SITE
+            denial_response.denial_id,
+            agreements,
+            channel=(
+                consent.CHANNEL_SITE
+                if brought_by is None
+                else consent.CHANNEL_ASSISTANT
+            ),
+            finish_in=consent.FINISH_ON_SITE,
+            assistant_client=brought_by or "",
         )
 
         # Store the denial ID in the session to maintain state across the multi-step form process

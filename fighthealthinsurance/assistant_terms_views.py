@@ -12,8 +12,10 @@ makes it, the boxes are recorded, the draft is tied to the denial, the
 continue link is emailed once and AssistantAppealWorkflow starts.
 
 "Finish on this site instead" opens the site form and tells the assistant
-on_site. Everything here needs draft_in_chat_enabled(); with it off a chat
-link opens the site form as before.
+on_site; the appeal submitted there still names the assistant in its consent
+record, with finish_in "site" (consent.py). Everything here needs
+draft_in_chat_enabled(); with it off a chat link opens the site form as
+before.
 
 Nothing here logs the letter, the email or a token.
 """

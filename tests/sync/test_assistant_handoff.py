@@ -1082,6 +1082,115 @@ class HandoffV2Test(TestCase):
             self.assertEqual(_clean_letter(text), text)
 
 
+INTAKE_BOXES = {
+    "zip": "94103",
+    "pii": "on",
+    "tos": "on",
+    "privacy": "on",
+    "personalonly": "on",
+}
+
+
+@override_settings(**FLAGS_ON, MCP_HANDOFF_V2_ENABLED=True)
+class HandoffOriginTest(TestCase):
+    """The consent record of an appeal finished on our form says whether an
+    assistant brought it in, and which one; the Denial stays a site one."""
+
+    def open_link(self, client_name: str) -> None:
+        handoff = create_handoff(LETTER, PROCEDURE, CONDITION, client=client_name)
+        self.client.post(PATH, {"token": handoff.code, "bind": "1"})
+        page = self.client.post(PATH, {"token": handoff.code})
+        self.assertTemplateUsed(page, "scrub.html")
+
+    def submit(self, email: str, letter: str = LETTER, **extra) -> None:
+        response = self.client.post(
+            reverse("scan"),
+            {"email": email, "denial_text": letter, **INTAKE_BOXES, **extra},
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def latest(self, email: str) -> tuple:
+        denial = models.Denial.objects.get(
+            hashed_email=models.Denial.get_hashed_email(email)
+        )
+        record = models.ConsentRecord.objects.filter(denial=denial).latest("pk")
+        return (
+            denial.channel,
+            record.channel,
+            record.finish_in,
+            record.assistant_client,
+            record.on_behalf,
+        )
+
+    def test_an_appeal_from_an_opened_link_names_the_assistant(self):
+        self.open_link("openai-mcp/1.0.0 (Codex)")
+        self.submit("origin-codex@example.com")
+        self.assertEqual(
+            self.latest("origin-codex@example.com"),
+            ("site", "assistant", "site", "openai-mcp/1.0.0 (Codex)", False),
+        )
+
+    def test_a_link_with_no_name_still_says_an_assistant_brought_it(self):
+        self.open_link("")
+        self.submit("origin-unnamed@example.com")
+        self.assertEqual(
+            self.latest("origin-unnamed@example.com"),
+            ("site", "assistant", "site", "", False),
+        )
+
+    def test_a_plain_appeal_names_no_assistant_whatever_it_sends(self):
+        # A made-up code opens nothing, and fields named like the marks are
+        # only form fields.
+        dead = self.client.post(PATH, {"token": secrets.token_urlsafe(32)})
+        self.assertEqual(dead.status_code, 404)
+        self.submit(
+            "origin-plain@example.com",
+            assistant_handoff_channel="assistant",
+            assistant_handoff_client="Claude-User",
+            channel="assistant",
+            assistant_client="Claude-User",
+            from_assistant="true",
+        )
+        self.assertEqual(
+            self.latest("origin-plain@example.com"),
+            ("site", "site", "site", "", False),
+        )
+
+    def test_the_marks_name_one_case_only(self):
+        self.open_link("Claude-User")
+        self.submit("origin-first@example.com")
+        self.assertNotIn("assistant_handoff_channel", self.client.session)
+        self.submit(
+            "origin-second@example.com", "Your claim for physical therapy was denied."
+        )
+        self.assertEqual(
+            self.latest("origin-second@example.com"),
+            ("site", "site", "site", "", False),
+        )
+
+    def test_resubmitting_the_same_case_keeps_the_assistant(self):
+        """The flow's Back link to /scan carries no marks; the second
+        submission updates the same denial and still names the assistant."""
+        self.open_link("Claude-User")
+        self.submit("origin-again@example.com")
+        self.submit("origin-again@example.com")
+        self.assertEqual(models.Denial.objects.count(), 1)
+        records = models.ConsentRecord.objects.order_by("pk")
+        self.assertEqual(
+            [(r.channel, r.assistant_client) for r in records],
+            [("assistant", "Claude-User")] * 2,
+        )
+
+    def test_with_v2_off_an_appeal_from_a_link_is_a_site_one(self):
+        with override_settings(MCP_HANDOFF_V2_ENABLED=False):
+            self.open_link("Claude-User")
+            self.submit("origin-v1@example.com")
+        self.assertEqual(
+            self.latest("origin-v1@example.com"),
+            ("site", "site", "site", "", False),
+        )
+
+
 @override_settings(**FLAGS_ON, MCP_HANDOFF_V2_ENABLED=False)
 class HandoffV2OffTest(TestCase):
     def test_with_the_flag_off_nothing_changes(self):
