@@ -15,7 +15,6 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from django.db import models
 
 import aiohttp
-import PyPDF2
 
 # Plain asgiref sync_to_async ON PURPOSE: wrapped callables (microsites
 # static-json load, pandoc subprocess) touch no ORM; the channels database
@@ -30,6 +29,7 @@ from fighthealthinsurance.models import (
     ExtraLinkFetchLog,
     MicrositeExtraLink,
 )
+from fighthealthinsurance.pdf_text import aextract_pdf_page_texts
 
 
 class ExtraLinkFetcher:
@@ -48,6 +48,8 @@ class ExtraLinkFetcher:
     MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
     FETCH_TIMEOUT = 60.0  # seconds
     MAX_TEXT_LENGTH = 1_000_000  # 1M characters
+    PDF_MAX_PAGES = 500  # pages read from one PDF
+    PDF_EXTRACT_TIMEOUT = 60.0  # seconds
 
     async def prefetch_all_microsite_links(self) -> Dict[str, int]:
         """
@@ -342,7 +344,10 @@ class ExtraLinkFetcher:
 
     async def _extract_pdf_text(self, content: bytes) -> str:
         """
-        Extract text from PDF using PyPDF2.
+        Extract text from PDF using pypdf.
+
+        Reads at most PDF_MAX_PAGES pages, in a child process that is
+        stopped after PDF_EXTRACT_TIMEOUT seconds (see pdf_text).
 
         Args:
             content: PDF file bytes
@@ -351,38 +356,17 @@ class ExtraLinkFetcher:
             Extracted text
 
         Raises:
-            Exception: If PDF extraction fails
+            Exception: If PDF extraction fails or times out
         """
-        text_parts = []
+        try:
+            page_texts = await aextract_pdf_page_texts(
+                content, self.PDF_MAX_PAGES, self.PDF_EXTRACT_TIMEOUT
+            )
+        except Exception as e:
+            logger.warning(f"PDF extraction failed: {e}")
+            raise
 
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
-            tmp.write(content)
-            tmp.flush()
-
-            try:
-                with open(tmp.name, "rb") as f:
-                    reader = PyPDF2.PdfReader(f)
-
-                    # Handle encrypted PDFs
-                    if reader.is_encrypted:
-                        try:
-                            reader.decrypt("")
-                        except Exception as e:
-                            raise ValueError(
-                                "PDF is encrypted and cannot be decrypted"
-                            ) from e
-
-                    # Extract text from each page
-                    for page in reader.pages:
-                        page_text = page.extract_text()
-                        if page_text:
-                            text_parts.append(page_text)
-
-            except Exception as e:
-                logger.warning(f"PDF extraction failed: {e}")
-                raise
-
-        return "\n\n".join(text_parts)
+        return "\n\n".join(text for text in page_texts if text)
 
     async def _extract_docx_text(self, content: bytes) -> str:
         """

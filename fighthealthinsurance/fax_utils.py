@@ -10,7 +10,7 @@ from typing import Mapping, Optional, Tuple
 import asyncssh
 import requests
 from paramiko import SSHClient
-from PyPDF2 import PdfReader, PdfWriter
+from pypdf import PdfReader, PdfWriter
 from requests import Session
 from stopit import ThreadingTimeout as Timeout
 from loguru import logger

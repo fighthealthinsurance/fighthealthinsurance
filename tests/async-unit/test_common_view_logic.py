@@ -3,6 +3,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 import io
+import time
 from contextlib import contextmanager
 from asgiref.sync import async_to_sync
 from unittest.mock import Mock, patch, AsyncMock
@@ -39,8 +40,10 @@ from fighthealthinsurance.models import (
 )
 import pytest
 from django.test import TestCase
+from pypdf import PdfReader
 
 from tests.back_links import back_link
+from tests.pdf_fixtures import make_pdf_bytes, make_shared_stream_pdf_bytes
 
 
 @contextmanager
@@ -3010,3 +3013,64 @@ class ConfirmedStateTest(TestCase):
         denial = self._submit_review_page(denial, date_of_service="")
 
         self.assertEqual(denial.date_of_service, "01/15/2024")
+
+
+@pytest.mark.asyncio
+class TestAssembleSingleOutput:
+    async def test_merges_pdf_inputs_in_order(self, tmp_path):
+        letter = tmp_path / "letter.pdf"
+        letter.write_bytes(make_pdf_bytes(["Appeal letter"]))
+        study = tmp_path / "study.pdf"
+        study.write_bytes(make_pdf_bytes(["Supporting study", "Study appendix"]))
+        target = str(tmp_path / "combined.pdf")
+
+        helper = common_view_logic.AppealAssemblyHelper()
+        result = await helper.assemble_single_output(
+            user_header="header",
+            extra="",
+            input_paths=[str(letter), str(study)],
+            target=target,
+        )
+
+        reader = PdfReader(result)
+        assert len(reader.pages) == 3
+        assert "Appeal letter" in reader.pages[0].extract_text()
+        assert "Study appendix" in reader.pages[2].extract_text()
+
+    async def test_merge_uses_almost_no_cpu_in_this_process(self, tmp_path):
+        # Three copies of a 3000-page PDF: well over half a second of merging,
+        # none of which should be spent in this process.
+        pages = tmp_path / "pages.pdf"
+        pages.write_bytes(
+            make_shared_stream_pdf_bytes(page_count=3000, text_operations=1)
+        )
+        target = str(tmp_path / "combined.pdf")
+        helper = common_view_logic.AppealAssemblyHelper()
+
+        cpu_before = time.process_time()
+        await helper.assemble_single_output(
+            user_header="header",
+            extra="",
+            input_paths=[str(pages)] * 3,
+            target=target,
+        )
+        cpu_used = time.process_time() - cpu_before
+
+        assert len(PdfReader(target).pages) == 9000
+        assert cpu_used < 0.25
+
+    async def test_merge_that_outlasts_the_time_limit_raises_timeout_error(
+        self, tmp_path
+    ):
+        letter = tmp_path / "letter.pdf"
+        letter.write_bytes(make_pdf_bytes(["Appeal letter"]))
+        helper = common_view_logic.AppealAssemblyHelper()
+        helper.PDF_MERGE_TIMEOUT_SECS = 0.01
+
+        with pytest.raises(TimeoutError, match="merge did not finish"):
+            await helper.assemble_single_output(
+                user_header="header",
+                extra="",
+                input_paths=[str(letter)],
+                target=str(tmp_path / "combined.pdf"),
+            )

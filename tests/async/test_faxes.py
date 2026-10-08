@@ -3,7 +3,7 @@ import unittest
 from fighthealthinsurance.fax_utils import FaxSenderBase, FlexibleFaxMagic
 import tempfile
 import pytest
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 import asyncio
 
 from tests.conftest import skip_if_no_pandoc
