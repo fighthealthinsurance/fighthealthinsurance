@@ -67,6 +67,14 @@ async def _set_status(draft, status: str) -> None:
     await database_sync_to_async(assistant_drafts.set_status)(draft, status)
 
 
+async def _end(draft, status: str) -> None:
+    """Set a final status, then give a run with no letters its generation
+    back; a failed release fails the activity, and the sweep retries it too."""
+    await _set_status(draft, status)
+    if status in assistant_drafts.GIVES_BACK:
+        await database_sync_to_async(assistant_drafts.give_back_generation)(draft)
+
+
 @activity.defn
 async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
     """Read the letter (extract_entity), then fill what it left empty from
@@ -152,7 +160,8 @@ async def start_drafting(hashed_email: str, denial_uuid: str) -> bool:
 @activity.defn
 async def finish_drafts(hashed_email: str, denial_uuid: str) -> str:
     """on_site when the site's own page took the generation, else ready or
-    stopped from what the generation actually stored."""
+    stopped from what the generation actually stored. Stopped gives the
+    reserved generation back."""
     await _aclose_old_connections()
     with _sanitized("finish", denial_uuid):
         denial, draft = await _draft_for(hashed_email, denial_uuid)
@@ -165,12 +174,13 @@ async def finish_drafts(hashed_email: str, denial_uuid: str) -> str:
             return assistant_drafts.letters_status(denial, True)
 
         status = str(await database_sync_to_async(outcome)())
-        await _set_status(draft, status)
+        await _end(draft, status)
         return status
 
 
 @activity.defn
 async def mark_draft_status(hashed_email: str, denial_uuid: str, status: str) -> bool:
+    """Stopped and expired give the reserved generation back."""
     await _aclose_old_connections()
     if status not in assistant_drafts.STATUSES:
         raise ApplicationError("unknown draft status", non_retryable=True)
@@ -178,5 +188,5 @@ async def mark_draft_status(hashed_email: str, denial_uuid: str, status: str) ->
         denial, draft = await _draft_for(hashed_email, denial_uuid)
         if denial is None or draft is None:
             return False
-        await _set_status(draft, status)
+        await _end(draft, status)
         return True
