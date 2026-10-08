@@ -25,6 +25,7 @@ RUN mkdir -p ./fhi
 COPY fighthealthinsurance ./fhi/fighthealthinsurance
 COPY fhi_users ./fhi/fhi_users
 COPY  charts ./fhi/charts
+COPY data ./fhi/data
 COPY setup.py ./fhi/setup.py
 # The email logo. .dockerignore drops the app's static folder, so take it
 # from the collected static at STATIC_ROOT (BASE_DIR/static), where
