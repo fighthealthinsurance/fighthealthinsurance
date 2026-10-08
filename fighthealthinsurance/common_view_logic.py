@@ -96,6 +96,8 @@ from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.letter_dates import (
     date_the_letter,
     format_letter_date,
+    letter_date,
+    letter_zone,
     todays_letter_date,
 )
 from fighthealthinsurance.medical_code_extractor import (
@@ -812,6 +814,28 @@ def _same_but_the_date_line(text: str, other: str) -> bool:
     )
 
 
+def _dated_by_the_site(text: str, denial: Denial, original: ProposedAppeal) -> bool:
+    """Whether the letter's date line holds a date the site could have shown
+    it with: one from the day its draft was made (a day early, for the zone)
+    to today. Any other date there is the person's own edit."""
+    written = letter_date(text)
+    if written is None:
+        return True
+    zone = letter_zone(denial.your_state or denial.state)
+    today = timezone.localdate(timezone=zone)
+    made = original.created_at
+    first = (
+        timezone.localdate(made, timezone=zone)
+        if made is not None
+        else today - datetime.timedelta(days=30)
+    )
+    days = max((today - first).days, 0) + 1
+    return written in {
+        format_letter_date(today - datetime.timedelta(days=back))
+        for back in range(days + 1)
+    }
+
+
 def mark_proposal_chosen(
     denial: Denial,
     appeal_text: str,
@@ -946,7 +970,10 @@ def mark_proposal_chosen(
             unchanged = ProposedAppeal.fingerprint(appeal_text) in {
                 ProposedAppeal.fingerprint(original.appeal_text),
                 ProposedAppeal.fingerprint(substituted),
-            } or _same_but_the_date_line(appeal_text, substituted)
+            } or (
+                _same_but_the_date_line(appeal_text, substituted)
+                and _dated_by_the_site(appeal_text, denial, original)
+            )
             if not unchanged:
                 editted = True
             else:

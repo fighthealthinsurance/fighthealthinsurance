@@ -123,7 +123,7 @@ _HEADING = r"(?:#{1,6}[ \t]+)?"
 
 _DATE_LINE = re.compile(
     rf"(?P<lead>{_INVISIBLE}[ \t]*{_HEADING}{_EMPHASIS}"
-    rf"(?P<label>{_LETTER_DATE_LABEL}{_EMPHASIS}[ \t]*)?)"
+    rf"(?P<label>{_LETTER_DATE_LABEL}{_EMPHASIS}[ \t]*{_EMPHASIS})?)"
     rf"(?P<date>{_DATE})"
     rf"(?P<trail>{_EMPHASIS}[.,]?[ \t]*{_INVISIBLE}[ \t\r]*)",
     re.IGNORECASE,
@@ -136,7 +136,7 @@ _LABEL_ONLY = re.compile(
 # Where the letter turns to its reader or names its subject: the date line
 # sits above these, and nothing at or below them is read.
 _BODY_STARTS = re.compile(
-    r"[^\w]*(?:dear\b|to\s+whom\b|re\s*:|subject\s*:|regarding\s*:)",
+    r"[\W_]*(?:dear\b|to\s+whom\b|(?:re|subject|regarding)[*_ \t]*:)",
     re.IGNORECASE,
 )
 # A line naming the value under it: a label ("Date of Birth:", "Dates of
@@ -190,14 +190,9 @@ def _names_the_line_under_it(line: str) -> bool:
     )
 
 
-def date_the_letter(content: str, today: Optional[str] = None) -> str:
-    """The letter with its date line set to ``today`` (today's date in
-    Pacific time when not given). Only the first date line above the
-    salutation and subject line is replaced; a letter without one is
-    returned unchanged."""
-    if not content:
-        return content
-    lines = content.split("\n")
+def _find_date_line(lines: list[str]) -> Optional[tuple[int, re.Match[str]]]:
+    """Where the letter's own date line is, and its match: the first date
+    line above the salutation and subject line."""
     seen = 0
     # Whether the next date line is the value a line above names, and
     # whether that line has had its value yet: a blank line ends a list of
@@ -222,10 +217,31 @@ def date_the_letter(content: str, today: Optional[str] = None) -> str:
             # in a list of them.
             answered = True
             continue
-        lines[index] = (
-            match.group("lead")
-            + (today if today is not None else todays_letter_date())
-            + match.group("trail")
-        )
-        return "\n".join(lines)
-    return content
+        return index, match
+    return None
+
+
+def letter_date(content: str) -> Optional[str]:
+    """The date written on the letter's own date line, or None."""
+    found = _find_date_line((content or "").split("\n"))
+    return found[1].group("date").strip() if found else None
+
+
+def date_the_letter(content: str, today: Optional[str] = None) -> str:
+    """The letter with its date line set to ``today`` (today's date in
+    Pacific time when not given). Only the first date line above the
+    salutation and subject line is replaced; a letter without one is
+    returned unchanged."""
+    if not content:
+        return content
+    lines = content.split("\n")
+    found = _find_date_line(lines)
+    if found is None:
+        return content
+    index, match = found
+    lines[index] = (
+        match.group("lead")
+        + (today if today is not None else todays_letter_date())
+        + match.group("trail")
+    )
+    return "\n".join(lines)

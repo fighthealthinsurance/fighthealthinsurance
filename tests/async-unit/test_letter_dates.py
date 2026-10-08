@@ -130,6 +130,8 @@ class DateLineTest(SimpleTestCase):
             ("Date: October 25, 2026", f"Date: {TODAY}"),
             ("Date:  [Insert Date]", f"Date:  {TODAY}"),
             ("**Date:** later this month", f"**Date:** {TODAY}"),
+            ("Date: **[Date]**", f"Date: **{TODAY}**"),
+            ("Date: _October 25, 2026_", f"Date: _{TODAY}_"),
             ("Appeal Date: October 25, 2026", f"Appeal Date: {TODAY}"),
             ("Date Sent: 10/25/2026", f"Date Sent: {TODAY}"),
             ("## October 25, 2026", f"## {TODAY}"),
@@ -158,6 +160,17 @@ class DateLineTest(SimpleTestCase):
     def test_a_date_under_the_subject_line_is_untouched(self):
         letter = "Re: Claim 12345\nMarch 3, 2026\n\nDear Example Health,\n"
         self.assertEqual(date_the_letter(letter, TODAY), letter)
+
+    def test_a_date_under_an_emphasised_subject_line_is_untouched(self):
+        for subject in (
+            "**Subject**: Appeal of denial",
+            "**Re**: Claim 12345",
+            "__Regarding__: Claim 12345",
+            "**Re:** Claim 12345",
+        ):
+            with self.subTest(subject=subject):
+                letter = f"{subject}\nMarch 3, 2026\n\nDear Example Health,\n"
+                self.assertEqual(date_the_letter(letter, TODAY), letter)
 
     def test_a_date_under_a_date_of_birth_label_is_untouched(self):
         letter = (
@@ -323,10 +336,19 @@ class SubstitutedDatesTest(TestCase):
             )
         self.assertEqual(letter, a_letter("October 25, 2026"))
 
-    def test_a_pick_shown_on_an_earlier_day_is_recorded_unedited(self):
+    def _draft_made_on(self, day):
         draft = ProposedAppeal.objects.create(
             for_denial=self.denial, appeal_text=a_letter("Later this month")
         )
+        made = datetime.datetime(day.year, day.month, day.day, 20, 0)
+        ProposedAppeal.objects.filter(pk=draft.pk).update(
+            created_at=made.replace(tzinfo=datetime.timezone.utc)
+        )
+        draft.refresh_from_db()
+        return draft
+
+    def test_a_pick_shown_on_an_earlier_day_is_recorded_unedited(self):
+        draft = self._draft_made_on(datetime.date(2026, 11, 1))
         with frozen_clock():
             pick = mark_proposal_chosen(
                 self.denial,
@@ -335,6 +357,19 @@ class SubstitutedDatesTest(TestCase):
                 proposed_appeal_id=draft.id,
             )
         self.assertFalse(pick.editted)
+
+    def test_a_pick_with_only_its_date_changed_is_recorded_edited(self):
+        # A date the site never showed this draft with is the person's own.
+        draft = self._draft_made_on(datetime.date(2026, 11, 1))
+        for written in ("October 30, 2026", "November 5, 2026", "10/30/2026"):
+            with self.subTest(written=written), frozen_clock():
+                pick = mark_proposal_chosen(
+                    self.denial,
+                    a_letter(written),
+                    editted=None,
+                    proposed_appeal_id=draft.id,
+                )
+                self.assertTrue(pick.editted)
 
     def test_a_pick_with_its_body_changed_is_recorded_edited(self):
         draft = ProposedAppeal.objects.create(
