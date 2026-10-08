@@ -119,6 +119,14 @@ def _store_forms(request: HttpRequest, forms: dict[str, dict[str, Any]]) -> None
         request.session.pop(FORMS_KEY, None)
 
 
+def _store_newest(
+    request: HttpRequest, forms: dict[str, dict[str, Any]], key: str, entry: dict
+) -> None:
+    """Store forms with entry under key as the newest, keeping FORMS_KEPT."""
+    others = [(k, v) for k, v in forms.items() if k != key]
+    _store_forms(request, dict([(key, entry), *others][:FORMS_KEPT]))
+
+
 @dataclass(frozen=True)
 class SiteForm:
     """A submitted form that an assistant's link filled in: its key, the
@@ -139,13 +147,11 @@ def mark_site_form(
     assistant whose label is client, under a fresh key; returns the key for
     its hidden field. With case, the form continues that case and names the
     assistant for it alone."""
-    forms = _open_forms(request)
     key = secrets.token_urlsafe(16)
     entry: dict[str, Any] = {"client": client, "at": time.time()}
     if case is not None:
         entry["case"] = int(case)
-    forms = {key: entry, **forms}
-    _store_forms(request, dict(list(forms.items())[:FORMS_KEPT]))
+    _store_newest(request, _open_forms(request), key, entry)
     return key
 
 
@@ -215,18 +221,21 @@ def use_site_form(request: HttpRequest, form: SiteForm, denial_id: int) -> bool:
     double-click name the assistant, so the case the person goes on with
     does. Each time the key goes through, its day starts again, so the form
     sent again shortly after a submission late in that day still names the
-    assistant."""
+    assistant. That holds for the key this submission was read with
+    (handoff_context_for) even when its day ran out while the case was
+    being made: it is kept again, bound and the newest."""
     # Accepted limit: every request saves the session whole, so two
     # submissions at the same instant can leave a used key unbound, and that
     # form sent again for another case would name the assistant too. That
     # can only miscount the analytics label; it grants nothing.
     if form.case is not None and form.case != denial_id:
         return False
-    forms = _open_forms(request)
-    entry = forms.get(form.key)
-    if entry is not None:
-        forms[form.key] = {**entry, "case": int(denial_id), "at": time.time()}
-        _store_forms(request, forms)
+    _store_newest(
+        request,
+        _open_forms(request),
+        form.key,
+        {"client": form.client, "case": int(denial_id), "at": time.time()},
+    )
     return True
 
 

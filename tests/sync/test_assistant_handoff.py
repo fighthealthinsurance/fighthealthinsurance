@@ -106,7 +106,8 @@ def open_forms(client) -> dict:
 
 
 def age_form(client, key: str, seconds: float) -> None:
-    """Make a form the session keeps that many seconds older."""
+    """Make a form the session keeps that many seconds older. client is the
+    test client, or a request while it is being handled."""
     session = client.session
     forms = session[assistant_handoff_views.FORMS_KEY]
     forms[key]["at"] -= seconds
@@ -1147,6 +1148,26 @@ class HandoffV2Test(TestCase):
             set(keys[-assistant_handoff_views.FORMS_KEPT :]),
         )
 
+    def test_a_key_kept_again_after_its_day_ran_out_stays_within_the_few(self):
+        """A key read for a submission whose day ran out before its case was
+        made is kept again as the newest, and still only the newest few."""
+        kept = assistant_handoff_views.FORMS_KEPT
+        now = time.time()
+        forms = {f"newer {n}": {"client": "Codex", "at": now - n} for n in range(kept)}
+        forms["used"] = {
+            "client": "Claude",
+            "at": now - assistant_handoff_views.FORM_TTL.total_seconds() - 1,
+        }
+        request = SimpleNamespace(
+            POST={}, session={assistant_handoff_views.FORMS_KEY: forms}
+        )
+        used = assistant_handoff_views.SiteForm(key="used", client="Claude")
+        self.assertTrue(assistant_handoff_views.use_site_form(request, used, 7))
+        self.assertEqual(
+            list(request.session[assistant_handoff_views.FORMS_KEY]),
+            ["used", *[f"newer {n}" for n in range(kept - 1)]],
+        )
+
     def test_opening_a_form_drops_the_marks_an_earlier_version_kept(self):
         session = self.client.session
         session["assistant_handoff_channel"] = "assistant"
@@ -1315,6 +1336,37 @@ class HandoffOriginTest(TestCase):
         self.submit("origin-late@example.com", **form)
         age_form(self.client, key, 12 * 60)
         self.submit("origin-late@example.com", **form)
+        records = models.ConsentRecord.objects.order_by("pk")
+        self.assertEqual(
+            [(r.channel, r.assistant_client) for r in records],
+            [("assistant", "Claude-User")] * 2,
+        )
+
+    def test_a_key_whose_day_runs_out_while_its_case_is_made_keeps_the_assistant(
+        self,
+    ):
+        """The form sent a minute before its key's day runs out, and the day
+        running out while /process makes the case: the key it was read with
+        is the one used, so the case names the assistant, and the form sent
+        again straight after (a reload, or the browser's Back to it) does
+        too."""
+        form = self.open_link("Claude-User")
+        key = form["assistant_form"]
+        day = assistant_handoff_views.FORM_TTL.total_seconds()
+        age_form(self.client, key, day - 60)
+        read = assistant_handoff_views.handoff_context_for
+
+        def read_then_run_out(request):
+            found = read(request)
+            self.assertIsNotNone(found, "read before its day ran out")
+            age_form(request, key, 2 * 60)
+            return found
+
+        with mock.patch.object(
+            assistant_handoff_views, "handoff_context_for", read_then_run_out
+        ):
+            self.submit("origin-runs-out@example.com", **form)
+        self.submit("origin-runs-out@example.com", **form)
         records = models.ConsentRecord.objects.order_by("pk")
         self.assertEqual(
             [(r.channel, r.assistant_client) for r in records],
