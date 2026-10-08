@@ -937,8 +937,10 @@ class MedicaidEligibilityTool(BaseTool):
                         f"- {label}: they could be eligible on income, BUT they're "
                         "under 80 qualifying hours a month -- so it depends on "
                         "whether their state has already started the work "
-                        f"requirement. It applies in every state from January 1, "
-                        f"{WORK_REQUIREMENT_UNIVERSAL_YEAR}. Tell them to check "
+                        "requirement. Where it applies, states generally must "
+                        "start it no later than January 1, "
+                        f"{WORK_REQUIREMENT_UNIVERSAL_YEAR}, and some started "
+                        "earlier. Tell them to check "
                         "with their state, and do NOT say they're ineligible."
                     )
                     continue

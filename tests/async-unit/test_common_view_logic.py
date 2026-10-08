@@ -34,8 +34,13 @@ from fighthealthinsurance.models import (
     Appeal,
     FaxesToSend,
     ModelCallAttempt,
+    PlanSource,
     ProposedAppeal,
     Regulator,
+)
+from fighthealthinsurance.state_help import (
+    MedicaidInfo,
+    get_state_help_by_abbreviation,
 )
 import pytest
 from django.test import TestCase
@@ -2636,6 +2641,110 @@ class RegulatorContactInfoTest(TestCase):
                 "1-800-368-1019",
             },
         )
+
+
+class MedicaidWorkRequirementNoteTest(TestCase):
+    """The next-steps note on the federal Medicaid work requirement."""
+
+    # The real intake choices, stray whitespace and all ("Medicaid  ").
+    fixtures = ["fighthealthinsurance/fixtures/plan_source.yaml"]
+
+    def _note(self, plan_source_names, state):
+        """The work-requirement row for a denial with these plan sources and
+        this state, or None when the page shows no such row. Names are the
+        fixture's, without the stray whitespace."""
+        by_name = {source.name.strip(): source for source in PlanSource.objects.all()}
+        denial = Denial.objects.create(
+            denial_text="denied",
+            hashed_email=Denial.get_hashed_email("medicaid-note@example.com"),
+            your_state=state,
+        )
+        denial.plan_source.set([by_name[name] for name in plan_source_names])
+        rows = FindNextStepsHelper._get_outside_help_details(denial)
+        notes = [row for row in rows if "Medicaid work requirements" in row[0]]
+        return notes[0] if notes else None
+
+    def test_expansion_state_says_it_may_apply(self):
+        option, _ = self._note(["Medicaid"], "CA")
+        self.assertIn("Medicaid work requirements may apply to you.", option)
+
+    def test_expansion_state_links_the_state_medicaid_agency(self):
+        agency_url = get_state_help_by_abbreviation("CA").medicaid.agency_url
+        _, how_to = self._note(["Medicaid"], "CA")
+        self.assertIn(f"<a href='{agency_url}'", how_to)
+
+    def test_note_keeps_the_deadline_as_the_rule_states_it(self):
+        option, _ = self._note(["Medicaid"], "CA")
+        self.assertIn("no later than January 1, 2027", option)
+
+    def test_georgia_waiver_state_says_it_may_apply(self):
+        option, _ = self._note(["Medicaid"], "GA")
+        self.assertIn("Medicaid work requirements may apply to you.", option)
+
+    def test_non_expansion_state_says_it_may_not_apply(self):
+        option, _ = self._note(["Medicaid"], "TX")
+        self.assertIn("Medicaid work requirements may not apply to you.", option)
+
+    def test_non_expansion_state_still_points_to_the_state_agency(self):
+        agency_url = get_state_help_by_abbreviation("TX").medicaid.agency_url
+        _, how_to = self._note(["Medicaid"], "TX")
+        self.assertIn(f"<a href='{agency_url}'", how_to)
+
+    def test_non_medicaid_plan_has_no_note(self):
+        self.assertIsNone(self._note(["Employer -- Private"], "CA"))
+
+    def test_missing_state_has_no_note(self):
+        self.assertIsNone(self._note(["Medicaid"], None))
+
+    def test_territory_has_no_note(self):
+        # The rule does not cover the territories.
+        self.assertIsNone(self._note(["Medicaid"], "PR"))
+
+    def test_medicaid_with_medicare_has_no_note(self):
+        # People on Medicare are outside the requirement.
+        self.assertIsNone(self._note(["Medicare Regular", "Medicaid"], "CA"))
+
+    def test_medicaid_with_medicare_advantage_has_no_note(self):
+        # The most common dual pairing (a D-SNP plan) is still Medicare.
+        self.assertIsNone(self._note(["Medicare Advantage", "Medicaid"], "CA"))
+
+    def test_exemptions_are_tied_to_the_new_law(self):
+        # Georgia Pathways keeps its own, narrower rules until January 2027.
+        option, _ = self._note(["Medicaid"], "GA")
+        self.assertIn("Under the new law, many people are exempt", option)
+
+    def test_note_asks_people_to_answer_state_letters(self):
+        _, how_to = self._note(["Medicaid"], "TX")
+        self.assertIn("Watch for letters from your state and answer them.", how_to)
+
+    def test_note_gives_the_agency_phone_beside_the_link(self):
+        # Nebraska is already live; if its page moves, the call still works.
+        agency_phone = get_state_help_by_abbreviation("NE").medicaid.agency_phone
+        _, how_to = self._note(["Medicaid"], "NE")
+        self.assertIn(f"</a>, or call {agency_phone}.", how_to)
+
+    def test_agency_name_is_escaped(self):
+        # outside_help.html renders these rows with autoescape off.
+        _, how_to = self._note(["Medicaid"], "CO")
+        self.assertIn("Health Care Policy &amp; Financing", how_to)
+
+    def test_agency_without_a_usable_url_gets_name_and_phone_only(self):
+        agency = SimpleNamespace(
+            medicaid=MedicaidInfo(
+                {
+                    "agency_name": "Example Medicaid Agency",
+                    "agency_url": "javascript:alert(1)",
+                    "agency_phone": "800-555-0100",
+                }
+            )
+        )
+        with patch(
+            "fighthealthinsurance.state_help.get_state_help_by_abbreviation",
+            return_value=agency,
+        ):
+            _, how_to = self._note(["Medicaid"], "CA")
+        self.assertIn("call Example Medicaid Agency at 800-555-0100.", how_to)
+        self.assertNotIn("<a ", how_to)
 
 
 class _FixedZipEngine:

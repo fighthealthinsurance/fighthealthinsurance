@@ -542,7 +542,8 @@ WORK_REQUIREMENT_FIRST_YEAR = 2026
 # track which states went early. Between these two years the requirement is
 # real for some people and not yet in force for most, so a shortfall in that
 # window is reported as CONDITIONAL rather than as a denial: we say it may
-# already apply where they live and will apply everywhere from this year.
+# already apply where they live, and that states it reaches must generally
+# start it by this year. Not every state: see work_requirement_reach.
 #
 # Getting this wrong is asymmetric. Telling someone "you may not be eligible"
 # for a rule their state hasn't adopted can stop them applying at all, which
@@ -918,6 +919,87 @@ def _normalize_state(
         return _STATE_MAP[full_name_matches[0]]
 
     raise ValueError(f"Unknown state: {raw}")
+
+
+# Where the federal Medicaid work ("community engagement") requirement can
+# reach. Checked 2026-10-08 against:
+#
+# - CMS fact sheet, June 1, 2026:
+#   https://www.cms.gov/newsroom/fact-sheets/medicaid-community-engagement-requirement-certain-individuals-interim-final-rule-comment-period-cms
+#   "States must generally implement this requirement no later than
+#   January 1, 2027." It covers non-pregnant adults ages 19 to 64, not on
+#   Medicare, in the Medicaid adult (expansion) group or in certain section
+#   1115 demonstrations, and "43 states and the District of Columbia" cover
+#   them. 80 hours a month of work, a work program, community service or
+#   half-time school, or that many hours' pay at the federal minimum wage.
+#   Exempt: pregnant or postpartum, disabled or medically frail, parents and
+#   caretakers of children under 14 or of people with disabilities,
+#   American Indians and Alaska Natives, and others.
+# - Interim final rule CMS-2454-IFC, 91 FR 33348 (June 3, 2026):
+#   https://www.govinfo.gov/content/pkg/FR-2026-06-03/html/2026-11094.htm
+#   "beginning no later than January 1, 2027, unless granted a good faith
+#   effort exemption"; a state may start earlier ("Nebraska began
+#   implementing the community engagement requirement on May 1, 2026").
+#   A good faith effort exemption "shall expire no later than December 31,
+#   2028" (42 CFR 435.560(c)). A state that covers neither the adult group
+#   nor such a 1115 population "will not have any applicable individuals",
+#   and the rule does not apply to the territories.
+# - CMS's list of the 1115 programs with people the requirement covers,
+#   released June 2026, as the KFF tracker reports it (updated Sep 29, 2026):
+#   https://www.kff.org/medicaid/medicaid-work-requirements-tracker-overview
+#   It names programs in three non-expansion states: Georgia, Tennessee and
+#   Wisconsin. With the expansion states (40 + DC) that is the fact sheet's
+#   43 states and DC.
+# - TennCare's notice:
+#   https://www.tn.gov/tenncare/information-statistics/notices.html
+#   In Tennessee it reaches only "certain parents or caretakers whose
+#   incomes are above" $580 a month. They "automatically meet" it, so
+#   members "will not experience an impact", and they should still
+#   "continue to read and respond to all notices and mailings".
+# - Georgia Pathways, "H.R. 1 Changes to Pathways":
+#   https://pathways.georgia.gov/node/1646
+#   Pathways moves to the federal rule "Beginning on January 1, 2027".
+#   Until then its own rules apply, and they differ (a child under six, not
+#   13 and under), which is why the note says "Under the new law".
+#
+# may_apply is True for the expansion states, Wisconsin
+# (_WAIVER_100FPL_STATES) and Georgia (Pathways to Coverage, which the rule
+# names as the one state already running a requirement). Tennessee is on
+# the CMS list but stays False on purpose: the only people it reaches there
+# meet it by income, and "may not apply", with TennCare named as the one to
+# ask for sure, matches what TennCare itself tells them. Every other state
+# hears "may not apply", never "does not apply".
+_WORK_REQUIREMENT_WAIVER_STATES = _WAIVER_100FPL_STATES | frozenset({"ga"})
+
+
+class WorkRequirementReach(NamedTuple):
+    """Whether the federal work requirement can reach adults in one state."""
+
+    state_code: str  # lowercase postal code, e.g. "ga"
+    state_name: str  # display name, e.g. "Georgia"
+    may_apply: bool  # the state covers adults the requirement applies to
+
+
+def work_requirement_reach(state: Optional[str]) -> Optional[WorkRequirementReach]:
+    """Whether the federal Medicaid work requirement can reach ``state``.
+
+    ``may_apply`` is True for the expansion states and the waiver states
+    above, False for the other states. Returns None when the state is
+    missing or not recognised, and for a territory, which the rule does not
+    cover. Not fuzzy: a misread state should say nothing rather than speak
+    for the wrong one.
+    """
+    try:
+        code = _normalize_state(state, fuzzy=False)
+    except ValueError:
+        return None
+    if code is None or code in _TERRITORY_CODES:
+        return None
+    return WorkRequirementReach(
+        state_code=code,
+        state_name=_ABBR_TO_NAME[code],
+        may_apply=code in _EXPANSION_STATES or code in _WORK_REQUIREMENT_WAIVER_STATES,
+    )
 
 
 def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str], bool]:

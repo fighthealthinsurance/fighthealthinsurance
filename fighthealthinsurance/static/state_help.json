@@ -350,7 +350,7 @@
     },
     "medicaid": {
       "agency_name": "Connecticut Department of Social Services (HUSKY Health)",
-      "agency_url": "https://portal.ct.gov/DSS/Health-And-Home-Care/HUSKY-Health",
+      "agency_url": "https://portal.ct.gov/husky",
       "agency_phone": "800-842-1508",
       "managed_care_ombudsman": null
     },
@@ -387,7 +387,7 @@
     },
     "medicaid": {
       "agency_name": "Delaware Division of Medicaid and Medical Assistance",
-      "agency_url": "https://dhss.delaware.gov/dhss/dmma/",
+      "agency_url": "https://dhss.delaware.gov/dmma/",
       "agency_phone": "800-372-2022",
       "managed_care_ombudsman": null
     },
@@ -1162,7 +1162,7 @@
     },
     "medicaid": {
       "agency_name": "Montana Department of Public Health and Human Services (Medicaid)",
-      "agency_url": "https://dphhs.mt.gov/montana-medicaid",
+      "agency_url": "https://dphhs.mt.gov/MontanaHealthcarePrograms/",
       "agency_phone": "800-362-8312",
       "managed_care_ombudsman": null
     },
@@ -1199,12 +1199,12 @@
     },
     "medicaid": {
       "agency_name": "Nebraska Department of Health and Human Services (Medicaid)",
-      "agency_url": "https://dhhs.ne.gov/Pages/Medicaid.aspx",
-      "agency_phone": "800-383-4278",
+      "agency_url": "https://dhhs.ne.gov/Pages/Medicaid-and-Long-Term-Care.aspx",
+      "agency_phone": "855-632-7633",
       "managed_care_ombudsman": {
         "name": "Nebraska Medicaid Client Services",
-        "phone": "800-383-4278",
-        "url": "https://dhhs.ne.gov/Pages/Medicaid.aspx"
+        "phone": "855-632-7633",
+        "url": "https://dhhs.ne.gov/Pages/Medicaid-and-Long-Term-Care.aspx"
       }
     },
     "external_review": {
@@ -1314,12 +1314,12 @@
     },
     "medicaid": {
       "agency_name": "NJ Division of Medical Assistance and Health Services (NJ FamilyCare)",
-      "agency_url": "https://www.nj.gov/humanservices/njfc/",
+      "agency_url": "https://www.nj.gov/humanservices/dmahs/",
       "agency_phone": "800-701-0710",
       "managed_care_ombudsman": {
         "name": "NJ FamilyCare Member Services",
         "phone": "800-701-0710",
-        "url": "https://www.nj.gov/humanservices/njfc/home/contact_us.html"
+        "url": "https://njfamilycare.dhs.state.nj.us/"
       }
     },
     "external_review": {
@@ -1354,13 +1354,13 @@
       "ship_phone": "800-432-2080"
     },
     "medicaid": {
-      "agency_name": "New Mexico Human Services Department (Centennial Care)",
-      "agency_url": "https://www.hsd.state.nm.us/medicaid/",
+      "agency_name": "New Mexico Health Care Authority (Turquoise Care)",
+      "agency_url": "https://www.hca.nm.gov/",
       "agency_phone": "888-997-2583",
       "managed_care_ombudsman": {
-        "name": "Centennial Care Member Services",
+        "name": "Turquoise Care Member Services",
         "phone": "888-997-2583",
-        "url": "https://www.hsd.state.nm.us/medicaid/"
+        "url": "https://www.hca.nm.gov/turquoise-care/"
       }
     },
     "external_review": {
@@ -2093,7 +2093,7 @@
     },
     "medicaid": {
       "agency_name": "West Virginia Department of Human Services - Bureau for Medical Services",
-      "agency_url": "https://dhhr.wv.gov/bms/Pages/default.aspx",
+      "agency_url": "https://bms.wv.gov/",
       "agency_phone": "800-642-8589",
       "managed_care_ombudsman": null
     },
