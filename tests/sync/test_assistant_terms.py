@@ -1,8 +1,10 @@
 """The chat path's terms page, its per-address cap and the emailed way back
 (assistant_terms_views.py, assistant_ip_limit.py, assistant_continue.py)."""
 
+import asyncio
 import datetime
 import json
+import time
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -10,20 +12,24 @@ from asgiref.sync import async_to_sync
 from bs4 import BeautifulSoup
 from django.core import mail
 from django.core.management import call_command
+from django.db import DatabaseError
 from django.http import HttpResponse
 from django.test import Client, RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from fighthealthinsurance import (
     assistant_continue,
+    assistant_draft_tools,
     assistant_drafts,
     assistant_handoff,
     assistant_ip_limit,
+    consent,
 )
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.assistant_handoff import claim_handoff, create_handoff
-from fighthealthinsurance.assistant_terms_views import short_field
+from fighthealthinsurance.assistant_terms_views import AssistantAgreeView, short_field
 from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 from fighthealthinsurance.ml import spend
 from fighthealthinsurance.models import (
@@ -35,6 +41,10 @@ from fighthealthinsurance.models import (
     Denial,
     ProposedAppeal,
     SpendCounter,
+    SpendReservation,
+)
+from fighthealthinsurance.temporal_client import (
+    start_assistant_appeal_workflow as real_start,
 )
 from tests.sync.test_assistant_handoff import carried as site_form_fields
 from tests.sync.test_assistant_handoff import open_forms
@@ -57,7 +67,8 @@ LANDING = "/from-your-assistant"
 AGREE = "/from-your-assistant/agree"
 EMAIL = "person@example.com"
 IP = "203.0.113.7"
-START = "fighthealthinsurance.temporal_client.start_assistant_appeal_workflow"
+TEMPORAL = "fighthealthinsurance.temporal_client"
+START = f"{TEMPORAL}.start_assistant_appeal_workflow"
 
 
 def chat_link(
@@ -250,6 +261,32 @@ class AgreeTest(TermsTestBase):
         self.assertTrue(response.context["after_a_press"])
         self.assertContains(response, "it may have gone through", status_code=404)
 
+    def test_the_press_that_loses_the_link_to_another_gives_everything_back(self):
+        """Two presses at once: the other press uses the link after this one
+        counted and reserved, but before it could use the link itself."""
+        code, draft, _ = self.open_terms()
+        binder = self.client.cookies["fhi_handoff_binder"].value
+        real_take = assistant_ip_limit.take
+
+        def take_then_the_other_press_uses_the_link(request):
+            taken = real_take(request)
+            self.assertIsNotNone(claim_handoff(code, binder=binder))
+            return taken
+
+        with patch.object(
+            assistant_ip_limit, "take", take_then_the_other_press_uses_the_link
+        ):
+            response = self.client.post(AGREE, terms_form(code))
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(response.context["after_a_press"])
+        self.assertEqual(AssistantAgreementCount.objects.get().count, 0)
+        self.assertEqual(SpendCounter.objects.get(name="fhi:assistant").amount, 0)
+        self.assertIsNotNone(SpendReservation.objects.get().released_at)
+        self.assertFalse(Denial.objects.exists())
+        draft.refresh_from_db()
+        self.assertIsNone(draft.denial_id)
+        self.start.assert_not_called()
+
     def test_a_missing_box_shows_the_page_again_and_counts_nothing(self):
         code, _, _ = self.open_terms()
         response = self.client.post(AGREE, terms_form(code, tos=""))
@@ -283,6 +320,21 @@ class AgreeTest(TermsTestBase):
         self.assertIn(
             site_form_fields(response)["assistant_form"], open_forms(self.client)
         )
+
+    def test_a_count_the_database_refuses_opens_the_filled_site_form(self):
+        code, draft, _ = self.open_terms()
+        with patch.object(
+            AssistantAgreementCount.objects,
+            "get_or_create",
+            side_effect=DatabaseError("database away"),
+        ):
+            response = self.client.post(AGREE, terms_form(code))
+        self.assertTemplateUsed(response, "scrub.html")
+        self.assertIn("Edited.", response.content.decode())
+        self.assertFalse(Denial.objects.exists())
+        self.assertFalse(SpendCounter.objects.filter(amount__gt=0).exists())
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, assistant_drafts.ON_SITE)
 
     def test_another_address_has_its_own_count(self):
         with override_settings(MCP_ASSISTANT_PER_IP_DAILY=1):
@@ -330,6 +382,112 @@ class AgreeTest(TermsTestBase):
         self.assertEqual(AssistantAgreementCount.objects.get().count, 0)
         draft.refresh_from_db()
         self.assertEqual(draft.status, assistant_drafts.STOPPED)
+
+    def test_a_temporal_that_hangs_shows_the_not_started_page_soon(self):
+        code, draft, _ = self.open_terms()
+
+        async def hangs(*args, **kwargs):
+            await asyncio.sleep(5)
+
+        # The real start, so the wait covers connecting too.
+        self.start.side_effect = real_start
+        with patch(f"{TEMPORAL}.get_temporal_client", hangs), patch(
+            f"{TEMPORAL}.ASSISTANT_REQUEST_WAIT_SECONDS", 0.05
+        ):
+            began = time.monotonic()
+            response = self.client.post(AGREE, terms_form(code))
+            took = time.monotonic() - began
+        self.assertLess(took, 3)
+        self.assertTemplateUsed(response, "assistant_agreed.html")
+        self.assertFalse(response.context["started"])
+        self.assertEqual(SpendCounter.objects.get(name="fhi:assistant").amount, 0)
+        self.assertEqual(AssistantAgreementCount.objects.get().count, 0)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, assistant_drafts.STOPPED)
+
+    def test_a_workflow_already_running_counts_as_started(self):
+        code, draft, _ = self.open_terms()
+        self.start.side_effect = WorkflowAlreadyStartedError(
+            "assistant-appeal-x", "AssistantAppealWorkflow"
+        )
+        response = self.client.post(AGREE, terms_form(code))
+        self.assertTrue(response.context["started"])
+        self.assertEqual(SpendCounter.objects.get(name="fhi:assistant").amount, 1)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, assistant_drafts.READING)
+
+    def assert_given_back_and_stopped(self, draft):
+        """What a press that fails after using the link leaves: the link
+        used, the cap's place and the generation back, nothing started, and
+        the assistant told to finish on the site."""
+        self.assertEqual(AssistantHandoff.objects.count(), 0)
+        self.assertEqual(SpendCounter.objects.get(name="fhi:assistant").amount, 0)
+        self.assertEqual(AssistantAgreementCount.objects.get().count, 0)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, assistant_drafts.STOPPED)
+        self.assertEqual(
+            assistant_draft_tools.view(draft)["next"],
+            assistant_draft_tools.FINISH_ON_SITE,
+        )
+        self.start.assert_not_called()
+
+    def test_a_case_that_fails_to_save_tells_the_assistant_to_finish_on_the_site(
+        self,
+    ):
+        code, draft, _ = self.open_terms()
+        with patch.object(
+            AssistantAgreeView, "_create_denial", side_effect=RuntimeError("no case")
+        ):
+            with self.assertRaises(RuntimeError):
+                self.client.post(AGREE, terms_form(code))
+        self.assert_given_back_and_stopped(draft)
+
+    def test_boxes_that_fail_to_record_tell_the_assistant_to_finish_on_the_site(
+        self,
+    ):
+        code, draft, _ = self.open_terms()
+        with patch.object(
+            consent, "record_consent", side_effect=RuntimeError("no record")
+        ):
+            with self.assertRaisesMessage(RuntimeError, "no record"):
+                self.client.post(AGREE, terms_form(code))
+        self.assert_given_back_and_stopped(draft)
+
+    def test_a_draft_that_fails_to_tie_tells_the_assistant_to_finish_on_the_site(
+        self,
+    ):
+        code, draft, _ = self.open_terms()
+        with patch.object(
+            assistant_drafts, "agree", side_effect=RuntimeError("not tied")
+        ):
+            with self.assertRaisesMessage(RuntimeError, "not tied"):
+                self.client.post(AGREE, terms_form(code))
+        self.assert_given_back_and_stopped(draft)
+
+    def test_a_draft_tied_but_not_marked_agreed_is_stopped_with_its_generation_back(
+        self,
+    ):
+        code, draft, _ = self.open_terms()
+        with patch.object(
+            assistant_drafts, "mark_agreed", side_effect=DatabaseError("away")
+        ):
+            with self.assertRaisesMessage(DatabaseError, "away"):
+                self.client.post(AGREE, terms_form(code))
+        self.assert_given_back_and_stopped(draft)
+        self.assertIsNotNone(draft.denial_id)
+        self.assertIsNotNone(
+            SpendReservation.objects.get(pk=draft.spend_reservation_id).released_at
+        )
+
+    def test_a_case_that_fails_to_save_still_shows_its_own_error(self):
+        code, _, _ = self.open_terms()
+        with patch.object(
+            AssistantAgreeView, "_create_denial", side_effect=RuntimeError("no case")
+        ), patch.object(
+            assistant_drafts, "set_status", side_effect=DatabaseError("away")
+        ):
+            with self.assertRaisesMessage(RuntimeError, "no case"):
+                self.client.post(AGREE, terms_form(code))
 
     def test_a_continue_link_that_fails_gives_everything_back(self):
         code, draft, _ = self.open_terms()
@@ -898,6 +1056,31 @@ class PerAddressKeyTest(TestCase):
         c = assistant_ip_limit.address_of(self.request("2001:db8:1:3::1"))
         self.assertEqual(a, b)
         self.assertNotEqual(a, c)
+
+    def test_an_ipv4_address_written_as_ipv6_counts_as_the_ipv4_address(self):
+        mapped = self.request(f"::ffff:{IP}")
+        self.assertEqual(assistant_ip_limit.address_of(mapped), IP)
+        with override_settings(MCP_ASSISTANT_PER_IP_DAILY=1):
+            self.assertIsNotNone(assistant_ip_limit.take(self.request(IP)))
+            self.assertIsNone(assistant_ip_limit.take(mapped))
+
+    def test_a_count_the_database_refuses_is_no_place(self):
+        with patch.object(
+            AssistantAgreementCount.objects,
+            "get_or_create",
+            side_effect=DatabaseError("database away"),
+        ):
+            self.assertIsNone(assistant_ip_limit.take(self.request(IP)))
+
+    def test_a_give_back_the_database_refuses_does_not_raise(self):
+        taken = assistant_ip_limit.take(self.request(IP))
+        with patch.object(
+            AssistantAgreementCount.objects,
+            "filter",
+            side_effect=DatabaseError("database away"),
+        ):
+            assistant_ip_limit.give_back(taken)
+        self.assertEqual(AssistantAgreementCount.objects.get().count, 1)
 
     def test_only_the_cloudflare_header_counts(self):
         request = self.request()

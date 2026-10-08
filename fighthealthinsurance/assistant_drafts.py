@@ -290,6 +290,28 @@ def set_status(draft: AssistantDraft, status: str) -> None:
     DRAFTS.labels(status).inc()
 
 
+def advance_status(draft: AssistantDraft, status: str, **fields: Any) -> bool:
+    """Move a draft on, with ``fields``, unless it was stopped meanwhile.
+    False, with nothing written, when it was."""
+    if status not in STATUSES:
+        raise ValueError(f"unknown draft status {status!r}")
+    now = timezone.now()
+    moved = (
+        AssistantDraft.objects.filter(pk=draft.pk)
+        .exclude(status=STOPPED)
+        .update(status=status, status_at=now, **fields)
+    )
+    if not moved:
+        draft.refresh_from_db(fields=["status", "status_at"])
+        return False
+    draft.status = status
+    draft.status_at = now
+    for name, value in fields.items():
+        setattr(draft, name, value)
+    DRAFTS.labels(status).inc()
+    return True
+
+
 def waiting_draft(pk: object) -> Optional[AssistantDraft]:
     """The live draft a chat link names, while it still waits for agreement."""
     if not isinstance(pk, int) or isinstance(pk, bool):

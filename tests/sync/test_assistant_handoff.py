@@ -992,6 +992,37 @@ class HandoffV2Test(TestCase):
         self.assertEqual(models.AssistantHandoff.objects.count(), 0)
         self.assertIsNone(claim_handoff(handoff.code, binder=first))
 
+    def test_two_browsers_binding_at_once_leave_it_bound_to_one(self):
+        """The second browser reads the row unbound, then the first binds it
+        before the second's bind lands: the second is refused."""
+        handoff = create_handoff(LETTER)
+        first = assistant_handoff.new_binder()
+        second = assistant_handoff.new_binder()
+        real_live_row = assistant_handoff._live_row
+        first_open = []
+
+        def read_then_let_the_first_browser_bind(lookup):
+            row = real_live_row(lookup)
+            if not first_open:
+                first_open.append("racing")
+                first_open[0] = claim_handoff(
+                    handoff.code, binder=first, consume=False
+                )
+            return row
+
+        with mock.patch.object(
+            assistant_handoff,
+            "_live_row",
+            side_effect=read_then_let_the_first_browser_bind,
+        ):
+            second_open = claim_handoff(handoff.code, binder=second, consume=False)
+        self.assertEqual(first_open[0].letter, LETTER)
+        self.assertIsNone(second_open)
+        row = models.AssistantHandoff.objects.get()
+        self.assertEqual(row.bound, assistant_handoff._binder_digest(first))
+        self.assertIsNone(claim_handoff(handoff.code, binder=second))
+        self.assertEqual(claim_handoff(handoff.code, binder=first).letter, LETTER)
+
     def test_a_bound_link_still_expires_and_is_swept(self):
         handoff = create_handoff(LETTER)
         binder = assistant_handoff.new_binder()

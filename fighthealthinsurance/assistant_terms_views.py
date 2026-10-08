@@ -24,6 +24,7 @@ chat link opens the site form as before.
 Nothing here logs the letter, the email or a token.
 """
 
+import asyncio
 import dataclasses
 import hashlib
 from typing import Any, Optional
@@ -219,6 +220,15 @@ def _agreed_here(request: HttpRequest, token: str) -> Optional[dict[str, bool]]:
     }
 
 
+def _stop_quietly(draft: Any) -> None:
+    """Mark a draft stopped, so the assistant tells the person to finish on
+    the site, without hiding the error that stopped it."""
+    try:
+        assistant_drafts.set_status(draft, assistant_drafts.STOPPED)
+    except Exception as e:
+        logger.warning(f"assistant terms: draft not marked stopped: {type(e).__name__}")
+
+
 def render_agreed(request: HttpRequest, started: bool, emailed: bool) -> HttpResponse:
     return _private(
         render(
@@ -314,12 +324,15 @@ class AssistantAgreeView(View):
             return self._used(request, token)
         try:
             denial = self._create_denial(request, form)
+            linked = self._link(form, content, draft, denial, reservation)
         except Exception:
             assistant_ip_limit.give_back(taken)
             spend.release_generation(reservation)
+            # The link is used up, so nobody can agree to this draft now.
+            _stop_quietly(draft)
             raise
         return self._agreed(
-            request, token, form, content, draft, denial, reservation, taken
+            request, token, form, draft, denial, linked, reservation, taken
         )
 
     def _to_site(
@@ -373,17 +386,16 @@ class AssistantAgreeView(View):
         )
         return Denial.objects.get(denial_id=info.denial_id)
 
-    def _agreed(
-        self,
-        request: HttpRequest,
-        token: str,
+    @staticmethod
+    def _link(
         form: Any,
         content: HandoffContent,
         draft: Any,
         denial: Any,
         reservation: spend.Reservation,
-        taken: assistant_ip_limit.Taken,
-    ) -> HttpResponse:
+    ) -> bool:
+        """Record the boxes, then tie the draft to the new case with the
+        reserved generation. False when the draft moved on first."""
         data = form.cleaned_data
         consent.record_consent(
             denial.denial_id,
@@ -393,13 +405,26 @@ class AssistantAgreeView(View):
             finish_in=consent.FINISH_IN_CHAT,
             assistant_client=content.client,
         )
-        linked = assistant_drafts.agree(
+        return assistant_drafts.agree(
             draft,
             denial,
             content.procedure,
             content.condition,
             reservation_id=reservation.id,
         )
+
+    def _agreed(
+        self,
+        request: HttpRequest,
+        token: str,
+        form: Any,
+        draft: Any,
+        denial: Any,
+        linked: bool,
+        reservation: spend.Reservation,
+        taken: assistant_ip_limit.Taken,
+    ) -> HttpResponse:
+        data = form.cleaned_data
 
         def give_back() -> None:
             spend.release_generation(reservation)
@@ -428,13 +453,20 @@ class AssistantAgreeView(View):
         from temporalio.exceptions import WorkflowAlreadyStartedError
 
         from fighthealthinsurance.temporal_client import (
+            ASSISTANT_REQUEST_WAIT_SECONDS,
             start_assistant_appeal_workflow,
         )
 
-        try:
-            async_to_sync(start_assistant_appeal_workflow)(
-                denial.hashed_email, str(denial.uuid)
+        async def start() -> None:
+            # The person is waiting on the page, so a start that takes too
+            # long is treated as one that failed.
+            await asyncio.wait_for(
+                start_assistant_appeal_workflow(denial.hashed_email, str(denial.uuid)),
+                ASSISTANT_REQUEST_WAIT_SECONDS,
             )
+
+        try:
+            async_to_sync(start)()
         except WorkflowAlreadyStartedError:
             pass
         except Exception as e:

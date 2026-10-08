@@ -20,6 +20,7 @@ from temporalio.exceptions import ApplicationError
 from fighthealthinsurance import assistant_drafts
 from fighthealthinsurance.appeal_journey_core import aload_denial
 from fighthealthinsurance.ml import spend
+from fighthealthinsurance.models import AssistantDraft
 
 _aclose_old_connections = database_sync_to_async(close_old_connections)
 _NON_RETRYABLE_ERRORS = (ValidationError, FieldError, ProgrammingError, DataError)
@@ -63,8 +64,24 @@ async def _draft_for(hashed_email: str, denial_uuid: str):
     return denial, draft
 
 
+def _stopped(draft: AssistantDraft) -> bool:
+    """A stopped draft goes no further. Agree stops one and gives its
+    generation back when its wait on Temporal runs out, yet Temporal may
+    have started the run all the same; each step then finds nothing to do."""
+    return draft.status == assistant_drafts.STOPPED
+
+
 async def _set_status(draft, status: str) -> None:
     await database_sync_to_async(assistant_drafts.set_status)(draft, status)
+
+
+async def _advance(draft, status: str, **fields) -> bool:
+    """Move the draft on unless it was stopped since this step looked."""
+    return bool(
+        await database_sync_to_async(assistant_drafts.advance_status)(
+            draft, status, **fields
+        )
+    )
 
 
 async def _end(draft, status: str) -> None:
@@ -78,13 +95,15 @@ async def _end(draft, status: str) -> None:
 @activity.defn
 async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
     """Read the letter (extract_entity), then fill what it left empty from
-    what the assistant sent. False when there is no such case."""
+    what the assistant sent. False when there is no such case or its draft
+    was stopped."""
     await _aclose_old_connections()
     with _sanitized("reading", denial_uuid):
         denial, draft = await _draft_for(hashed_email, denial_uuid)
-        if denial is None or draft is None:
+        if denial is None or draft is None or _stopped(draft):
             return False
-        await _set_status(draft, assistant_drafts.READING)
+        if not await _advance(draft, assistant_drafts.READING):
+            return False
         from fighthealthinsurance.common_view_logic import DenialCreatorHelper
 
         try:
@@ -104,17 +123,21 @@ async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
             fields.append("diagnosis")
         if fields:
             await denial.asave(update_fields=fields)
-        return True
+        # Agree may have stopped the draft while the letter was read. What
+        # the reading filled in stays on the case, for the site's own form.
+        await draft.arefresh_from_db(fields=["status"])
+        return not _stopped(draft)
 
 
 @activity.defn
 async def ask_questions(hashed_email: str, denial_uuid: str) -> int:
     """Generate our questions for this case and keep the askable ones on
-    the draft. Returns how many there are; zero means drafting starts."""
+    the draft. Returns how many there are; zero means drafting starts. A
+    stopped draft gets zero and is left as it is."""
     await _aclose_old_connections()
     with _sanitized("questions", denial_uuid):
         denial, draft = await _draft_for(hashed_email, denial_uuid)
-        if denial is None or draft is None:
+        if denial is None or draft is None or _stopped(draft):
             return 0
         if draft.status == assistant_drafts.QUESTIONS and draft.questions:
             # A retry after they were stored: keep the questions the
@@ -133,35 +156,32 @@ async def ask_questions(hashed_email: str, denial_uuid: str) -> int:
             logger.warning(f"assistant draft: questions timed out for {denial_uuid}")
         questions = assistant_drafts.clean_questions(rows or [])
 
-        def store() -> None:
-            draft.questions = questions
-            draft.save(update_fields=["questions"])
-            assistant_drafts.set_status(
-                draft,
-                assistant_drafts.QUESTIONS if questions else assistant_drafts.DRAFTING,
-            )
-
-        await database_sync_to_async(store)()
+        status = assistant_drafts.QUESTIONS if questions else assistant_drafts.DRAFTING
+        # Agree may have stopped the draft while the questions were generated.
+        if not await _advance(draft, status, questions=questions):
+            return 0
         return len(questions)
 
 
 @activity.defn
 async def start_drafting(hashed_email: str, denial_uuid: str) -> bool:
     """Record the form as completed, so the intake journey sends no nudge,
-    and say drafting has begun. A draft past its day is drafted for only
-    when the person's answers are in: they gave them in time, and the
-    letters still reach them through the link in their email."""
+    and say drafting has begun. False, with nothing recorded, for a draft
+    that is gone or stopped. A draft past its day is drafted for only when
+    the person's answers are in: they gave them in time, and the letters
+    still reach them through the link in their email."""
     await _aclose_old_connections()
     with _sanitized("start drafting", denial_uuid):
         denial, draft = await _draft_for(hashed_email, denial_uuid)
-        if denial is None or draft is None:
+        if denial is None or draft is None or _stopped(draft):
             return False
         if draft.expires_at <= timezone.now() and draft.answers_at is None:
             return False
         from fighthealthinsurance import intake_outbox
 
+        if not await _advance(draft, assistant_drafts.DRAFTING):
+            return False
         await intake_outbox.arecord_intent(denial, intake_outbox.FORM_COMPLETED)
-        await _set_status(draft, assistant_drafts.DRAFTING)
         return True
 
 
@@ -169,11 +189,16 @@ async def start_drafting(hashed_email: str, denial_uuid: str) -> bool:
 async def finish_drafts(hashed_email: str, denial_uuid: str) -> str:
     """on_site when the site's own page took the generation, else ready or
     stopped from what the generation actually stored. Stopped gives the
-    reserved generation back."""
+    reserved generation back. A draft already stopped stays stopped, and
+    its generation still goes back if it hasn't yet, as on this step's own
+    retry after a failed release."""
     await _aclose_old_connections()
     with _sanitized("finish", denial_uuid):
         denial, draft = await _draft_for(hashed_email, denial_uuid)
         if denial is None or draft is None:
+            return assistant_drafts.STOPPED
+        if _stopped(draft):
+            await database_sync_to_async(assistant_drafts.give_back_generation)(draft)
             return assistant_drafts.STOPPED
 
         def outcome() -> str:
@@ -182,7 +207,12 @@ async def finish_drafts(hashed_email: str, denial_uuid: str) -> str:
             return assistant_drafts.letters_status(denial, True)
 
         status = str(await database_sync_to_async(outcome)())
-        await _end(draft, status)
+        # Agree may have stopped the draft while the outcome was worked out;
+        # a stopped draft stays stopped and its generation goes back.
+        if not await _advance(draft, status):
+            status = assistant_drafts.STOPPED
+        if status in assistant_drafts.GIVES_BACK:
+            await database_sync_to_async(assistant_drafts.give_back_generation)(draft)
         return status
 
 

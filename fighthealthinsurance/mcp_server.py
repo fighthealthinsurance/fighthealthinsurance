@@ -1866,10 +1866,18 @@ _WAITING_ON: set[int] = set()
 
 
 async def _signal_answers(denial_uuid: str) -> None:
-    from fighthealthinsurance.temporal_client import signal_assistant_answers_filed
+    from fighthealthinsurance.temporal_client import (
+        ASSISTANT_REQUEST_WAIT_SECONDS,
+        signal_assistant_answers_filed,
+    )
 
     try:
-        await signal_assistant_answers_filed(denial_uuid)
+        # The assistant is waiting on the reply, so a signal that takes too
+        # long is treated as a lost one.
+        await asyncio.wait_for(
+            signal_assistant_answers_filed(denial_uuid),
+            ASSISTANT_REQUEST_WAIT_SECONDS,
+        )
     except Exception as e:
         # The answers are filed and a repeat call signals again, so ask for one.
         logger.warning(f"assistant answers signal failed: {type(e).__name__}")
