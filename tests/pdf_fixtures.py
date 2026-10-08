@@ -36,13 +36,28 @@ def make_shared_stream_pdf_bytes(page_count: int, text_operations: int) -> bytes
     text of every page parses that stream once per page while the file itself
     stays a few kilobytes.
     """
+    return _shared_stream_pdf_bytes(page_count, b"(a) Tj\n" * text_operations)
+
+
+def make_shared_long_string_pdf_bytes(page_count: int, string_length: int) -> bytes:
+    """Build a PDF whose ``page_count`` pages all show one long string.
+
+    The pages share one compressed content stream that shows ``string_length``
+    letters in a single string, so each page reads as ``string_length``
+    characters of text while the file itself stays a few kilobytes.
+    """
+    return _shared_stream_pdf_bytes(page_count, b"(" + b"a" * string_length + b") Tj\n")
+
+
+def _shared_stream_pdf_bytes(page_count: int, text_operations: bytes) -> bytes:
+    """Build a PDF whose ``page_count`` pages all run ``text_operations``."""
     doc = pymupdf.open()
     first = doc.new_page()
     first.insert_text((72, 72), "a")
     contents_xref = first.get_contents()[0]
     doc.update_stream(
         contents_xref,
-        b"BT /helv 11 Tf 72 720 Td\n" + b"(a) Tj\n" * text_operations + b"ET\n",
+        b"BT /helv 11 Tf 72 720 Td\n" + text_operations + b"ET\n",
     )
     _, resources = doc.xref_get_key(first.xref, "Resources")
     for _ in range(page_count - 1):

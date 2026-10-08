@@ -8,7 +8,11 @@ import pytest
 
 from fighthealthinsurance import pubmed_tools
 from fighthealthinsurance.pubmed_tools import PubMedTools
-from tests.pdf_fixtures import make_pdf_bytes, make_shared_stream_pdf_bytes
+from tests.pdf_fixtures import (
+    make_pdf_bytes,
+    make_shared_long_string_pdf_bytes,
+    make_shared_stream_pdf_bytes,
+)
 
 
 @pytest.fixture
@@ -607,6 +611,21 @@ class TestFetchTextFromUrl:
             )
         assert "Page two" in result
         assert "Page three" not in result
+
+    async def test_pdf_text_stops_at_the_character_cap(self, tools):
+        # Pages that share one string of 500,000 letters.
+        resp = _make_mock_response(
+            content=make_shared_long_string_pdf_bytes(
+                page_count=50, string_length=500_000
+            ),
+            content_type="application/pdf",
+        )
+        session = _make_mock_session(responses=[resp])
+        with patch.object(pubmed_tools, "_PDF_MAX_TEXT_CHARS", 1000):
+            result = await tools._fetch_text_from_url(
+                "https://example.com/paper.pdf", session
+            )
+        assert 0 < len(result) <= 1000
 
     async def test_slow_pdf_parse_returns_empty_at_the_timeout(self, tools):
         # Pages that share one long content stream: far more than half a

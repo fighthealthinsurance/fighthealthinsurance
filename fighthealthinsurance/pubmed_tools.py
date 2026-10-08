@@ -80,12 +80,18 @@ _FETCH_HEADERS = {
 }
 
 # Bounds on a fetched article PDF. A full article, supplements included, fits
-# well inside them. Text is read from at most _PDF_MAX_PAGES pages, and a PDF
-# with more pages, or a body over _PDF_MAX_BYTES, is not attached to an
-# appeal. Reads run in a child process stopped at the timeout (see pdf_text).
+# well inside them. Text is read from at most _PDF_MAX_PAGES pages and kept to
+# _PDF_MAX_TEXT_CHARS characters, and a PDF with more pages, or a body over
+# _PDF_MAX_BYTES, is not attached to an appeal. Reads run in a child process
+# stopped at the timeout (see pdf_text).
 _PDF_MAX_PAGES = 100
 _PDF_MAX_BYTES = 50 * 1024 * 1024  # 50MB
 _PDF_READ_TIMEOUT_SECS = 30.0
+# The text is stored on the article, summaries read its first 1000 characters,
+# and it is the body of the PDF built for an appeal when no article PDF can be
+# fetched. 5,000 characters a page across _PDF_MAX_PAGES pages is more than a
+# full article holds.
+_PDF_MAX_TEXT_CHARS = 500_000
 
 # NCBI E-utilities REST API base URL. Used for elink (related articles) and
 # efetch (MeSH terms / publication types). NCBI requests that ``tool`` and
@@ -1483,7 +1489,7 @@ class PubMedTools(object):
 
         ``timeout_secs`` bounds the download. A PDF body over _PDF_MAX_BYTES
         is dropped; a PDF is read after the connection is released, under its
-        own page cap and timeout.
+        own page cap, character cap and timeout.
         """
         article_text = ""
         pdf_bytes: Optional[bytes] = None
@@ -1501,7 +1507,10 @@ class PubMedTools(object):
             if pdf_bytes is not None:
                 article_text = "".join(
                     await aextract_pdf_page_texts(
-                        pdf_bytes, _PDF_MAX_PAGES, _PDF_READ_TIMEOUT_SECS
+                        pdf_bytes,
+                        _PDF_MAX_PAGES,
+                        _PDF_MAX_TEXT_CHARS,
+                        _PDF_READ_TIMEOUT_SECS,
                     )
                 )
         except Exception as e:

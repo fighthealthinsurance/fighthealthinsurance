@@ -346,8 +346,9 @@ class ExtraLinkFetcher:
         """
         Extract text from PDF using pypdf.
 
-        Reads at most PDF_MAX_PAGES pages, in a child process that is
-        stopped after PDF_EXTRACT_TIMEOUT seconds (see pdf_text).
+        Reads at most PDF_MAX_PAGES pages and MAX_TEXT_LENGTH characters, in
+        a child process that is stopped after PDF_EXTRACT_TIMEOUT seconds
+        (see pdf_text).
 
         Args:
             content: PDF file bytes
@@ -360,7 +361,10 @@ class ExtraLinkFetcher:
         """
         try:
             page_texts = await aextract_pdf_page_texts(
-                content, self.PDF_MAX_PAGES, self.PDF_EXTRACT_TIMEOUT
+                content,
+                self.PDF_MAX_PAGES,
+                self.MAX_TEXT_LENGTH,
+                self.PDF_EXTRACT_TIMEOUT,
             )
         except Exception as e:
             logger.warning(f"PDF extraction failed: {e}")

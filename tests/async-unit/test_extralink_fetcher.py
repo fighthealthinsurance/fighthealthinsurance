@@ -6,7 +6,11 @@ import pytest
 from unittest.mock import Mock, patch, AsyncMock
 from fighthealthinsurance.extralink_fetcher import ExtraLinkFetcher
 from fighthealthinsurance.models import ExtraLinkDocument, MicrositeExtraLink
-from tests.pdf_fixtures import make_pdf_bytes, make_shared_stream_pdf_bytes
+from tests.pdf_fixtures import (
+    make_pdf_bytes,
+    make_shared_long_string_pdf_bytes,
+    make_shared_stream_pdf_bytes,
+)
 
 
 @pytest.mark.asyncio
@@ -182,6 +186,16 @@ class TestExtraLinkPdfText:
 
         assert "Page two" in text
         assert "Page three" not in text
+
+    async def test_extract_pdf_text_stops_at_the_text_length_cap(self):
+        fetcher = ExtraLinkFetcher()
+        fetcher.MAX_TEXT_LENGTH = 1000
+        # Pages that share one string of 500,000 letters.
+        pdf = make_shared_long_string_pdf_bytes(page_count=50, string_length=500_000)
+
+        text = await fetcher._extract_pdf_text(pdf)
+
+        assert 0 < len(text) <= 1000
 
     async def test_extract_pdf_text_raises_when_the_parse_outlasts_the_timeout(
         self,
