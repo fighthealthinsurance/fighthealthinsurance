@@ -68,11 +68,11 @@ async def _set_status(draft, status: str) -> None:
 
 
 async def _end(draft, status: str) -> None:
-    """Set a final status; a run with no letters gives its generation back
-    first, so a failed release is retried with the status."""
+    """Set a final status, then give a run with no letters its generation
+    back; a failed release fails the activity, and the sweep retries it too."""
+    await _set_status(draft, status)
     if status in assistant_drafts.GIVES_BACK:
         await database_sync_to_async(assistant_drafts.give_back_generation)(draft)
-    await _set_status(draft, status)
 
 
 @activity.defn

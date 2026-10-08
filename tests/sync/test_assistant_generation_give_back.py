@@ -114,7 +114,8 @@ class FinishDraftsTest(GiveBackTestBase):
             with self.assertRaises(ApplicationError):
                 self.finish(denial)
         draft.refresh_from_db()
-        self.assertEqual(draft.status, drafts.READING)
+        self.assertEqual(draft.status, drafts.STOPPED)
+        self.assertEqual(taken_today(), 2)
         self.assertEqual(self.finish(denial), drafts.STOPPED)
         self.assertEqual(taken_today(), 1)
 
@@ -132,6 +133,20 @@ class MarkDraftStatusTest(GiveBackTestBase):
         self.assertTrue(self.released(draft))
         self.assertEqual(draft.status, drafts.EXPIRED)
         self.assertEqual(taken_today(), 1)
+
+    def test_expired_after_the_site_generated_keeps_the_generation(self):
+        denial, draft = agreed_draft()
+        with patch.object(drafts, "site_took_generation", return_value=True):
+            self.mark(denial, drafts.EXPIRED)
+        self.assertFalse(self.released(draft))
+        self.assertEqual(taken_today(), 2)
+
+    def test_stopped_with_letters_stored_keeps_the_generation(self):
+        denial, draft = agreed_draft()
+        with patch.object(drafts, "collect_letters", return_value=[{"text": "x"}]):
+            self.mark(denial, drafts.STOPPED)
+        self.assertFalse(self.released(draft))
+        self.assertEqual(taken_today(), 2)
 
     def test_ready_keeps_the_generation(self):
         denial, draft = agreed_draft()
@@ -194,6 +209,21 @@ class SweepGivesBackTest(TestCase):
         reservation.refresh_from_db()
         self.assertIsNone(reservation.released_at)
         self.assertEqual(taken_today(), 1)
+
+    def test_a_swept_draft_the_site_generated_for_keeps_its_generation(self):
+        reservation = self._expired(drafts.QUESTIONS)
+        with patch.object(drafts, "site_took_generation", return_value=True):
+            self.assertEqual(drafts.sweep_expired(), 1)
+        reservation.refresh_from_db()
+        self.assertIsNone(reservation.released_at)
+        self.assertEqual(taken_today(), 1)
+
+    def test_a_stopped_draft_whose_release_failed_is_given_back_by_the_sweep(self):
+        reservation = self._expired(drafts.STOPPED)
+        self.assertEqual(drafts.sweep_expired(), 1)
+        reservation.refresh_from_db()
+        self.assertIsNotNone(reservation.released_at)
+        self.assertEqual(taken_today(), 0)
 
     def test_a_failed_release_keeps_the_draft_for_the_next_sweep(self):
         reservation = self._expired(drafts.QUESTIONS)

@@ -299,13 +299,22 @@ class ReleaseFailed(RuntimeError):
     """The reserved generation could not be given back; try again."""
 
 
+def generation_delivered(denial: Optional[Denial]) -> bool:
+    """Whether this denial got a generation that counts: the site's page
+    took one (from the continue link, say), or letters are stored."""
+    if denial is None:
+        return False
+    return site_took_generation(denial) or bool(collect_letters(denial))
+
+
 def give_back_generation(draft: AssistantDraft) -> bool:
     """Give back the generation reserved when the person agreed, once and to
     the day it was taken from (spend.release_generation). For a run that
-    ended without letters. on_site keeps it: the site's page generated for
-    this denial, and an assistant denial's generation spends the assistant
-    budget wherever it runs. False when there is none or it went back
-    already; ReleaseFailed when the database would not take the release."""
+    ended without letters. Kept when the site's page generated for this
+    denial or letters are stored: an assistant denial's generation spends
+    the assistant budget wherever it runs. False when there is none, it is
+    kept, or it went back already; ReleaseFailed when the database would
+    not take the release."""
     from fighthealthinsurance.ml import spend
     from fighthealthinsurance.models import SpendReservation
 
@@ -313,6 +322,8 @@ def give_back_generation(draft: AssistantDraft) -> bool:
         return False
     row = SpendReservation.objects.filter(pk=draft.spend_reservation_id).first()
     if row is None or row.released_at is not None:
+        return False
+    if generation_delivered(draft.denial):
         return False
     if spend.release_generation(spend.Reservation(id=row.pk, day=row.day)):
         return True
@@ -633,7 +644,7 @@ def sweep_expired(now: Optional[datetime] = None) -> int:
     the next sweep."""
     expired = AssistantDraft.objects.filter(expires_at__lte=now or timezone.now())
     kept: list[int] = []
-    for draft in expired.filter(
+    for draft in expired.select_related("denial").filter(
         spend_reservation__isnull=False,
         spend_reservation__released_at__isnull=True,
         status__in=(READING, QUESTIONS, *GIVES_BACK),
