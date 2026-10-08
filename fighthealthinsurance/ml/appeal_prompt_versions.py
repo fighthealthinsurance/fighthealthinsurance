@@ -8,11 +8,20 @@ time by about 40% for the Gemma models and raised their scores, almost all of
 it on tone and form. The text here is the evaluation's, word for word; change
 it only as a new version, or the comparison stops measuring what was tested.
 
+v3 is a different build of the prompt, not v1 with something added: the same
+inputs laid out as labelled sections (task, point of view, details, plan,
+evidence, the denial letter last), without the example openings, and with the
+same output contract at the end, so v3 against v2 compares the two layouts.
+AppealGenerator.make_sectioned_open_prompt builds it; v1 and v2 are built by
+make_open_prompt.
+
 Which version a letter gets is a staff setting (LetterPromptMode rows,
 changed on the Model Usage dashboard): original (v1 for every letter), new
-(v2 for every letter) or split (each full-letter call draws v1 or v2 at
-random, half and half). Every draft records the version that wrote it, so
-the staff page can compare how often people pick each version's letters.
+(v2 for every letter), split (each full-letter call draws v1 or v2 at
+random, half and half), sectioned (v3 for every letter) or thirds (each
+full-letter call draws v1, v2 or v3 at random, a third each). Every draft
+records the version that wrote it, so the staff page can compare how often
+people pick each version's letters.
 """
 
 from __future__ import annotations
@@ -26,11 +35,16 @@ from loguru import logger
 
 PROMPT_V1 = "v1"
 PROMPT_V2 = "v2"
+PROMPT_V3 = "v3"
 
 PROMPT_VERSION_CHOICES = (
     (PROMPT_V1, "v1: original prompt"),
     (PROMPT_V2, "v2: original prompt plus the output contract"),
+    (PROMPT_V3, "v3: sectioned prompt plus the output contract"),
 )
+
+# The versions whose prompt ends with OUTPUT_CONTRACT.
+_CONTRACT_VERSIONS = frozenset({PROMPT_V2, PROMPT_V3})
 
 # The September 2026 evaluation's output contract (eval/RUNS.md, "The
 # tightened output contract"), less its opening "You write health insurance
@@ -44,14 +58,35 @@ OUTPUT_CONTRACT = (
 MODE_ORIGINAL = "original"
 MODE_NEW = "new"
 MODE_SPLIT = "split"
+MODE_SECTIONED = "sectioned"
+MODE_THIRDS = "thirds"
 
+# Stored on LetterPromptMode rows, so a value keeps its meaning for good: add
+# modes, never repurpose one.
 MODE_CHOICES = (
-    (MODE_ORIGINAL, "Original prompt for every letter"),
-    (MODE_NEW, "New prompt for every letter"),
-    (MODE_SPLIT, "Half and half: each draft is written with one at random"),
+    (MODE_ORIGINAL, "Original prompt (v1) for every letter"),
+    (MODE_NEW, "New prompt (v2) for every letter"),
+    (MODE_SPLIT, "Half and half: each draft is written with v1 or v2 at random"),
+    (MODE_SECTIONED, "Sectioned prompt (v3) for every letter"),
+    (MODE_THIRDS, "Thirds: each draft is written with v1, v2 or v3 at random"),
 )
 
 _MODES = frozenset(m for m, _label in MODE_CHOICES)
+
+# The versions each mode writes letters with.
+MODE_VERSIONS = {
+    MODE_ORIGINAL: (PROMPT_V1,),
+    MODE_NEW: (PROMPT_V2,),
+    MODE_SPLIT: (PROMPT_V1, PROMPT_V2),
+    MODE_SECTIONED: (PROMPT_V3,),
+    MODE_THIRDS: (PROMPT_V1, PROMPT_V2, PROMPT_V3),
+}
+
+# The modes that draw a version at random for each call: the runs the staff
+# page compares versions head to head over.
+RANDOM_MODES = frozenset(
+    m for m, versions in MODE_VERSIONS.items() if len(versions) > 1
+)
 
 # How long a process keeps the mode it read. A staff change reaches every
 # pod within this long; each appeal run reads the mode once.
@@ -59,21 +94,28 @@ MODE_CACHE_SECONDS = 30.0
 
 
 def apply_prompt_version(prompt: str, version: Optional[str]) -> str:
-    """The prompt a call sends under ``version``.
+    """The prompt a call sends under ``version``, given the open prompt that
+    version is built with (plus any hint block).
 
-    v2 appends the contract after everything else, so it is the last thing
-    the model reads, and so context shedding (which swaps out the start of a
-    prompt and keeps what follows it) keeps it too. Any other version leaves
-    the prompt as it is.
+    v2 and v3 append the contract after everything else, so it is the last
+    thing the model reads, and so context shedding (which swaps out the start
+    of a prompt and keeps what follows it) keeps it too. Any other version
+    leaves the prompt as it is.
     """
-    if version == PROMPT_V2:
+    if version in _CONTRACT_VERSIONS:
         return f"{prompt}\n\n{OUTPUT_CONTRACT}"
     return prompt
 
 
-# The 50/50 draw. Its own generator, not the module-level random one that
-# make_open_prompt shuffles its examples with, and a module attribute so
-# tests can force either side.
+def uses_sectioned_prompt(version: Optional[str]) -> bool:
+    """Whether ``version`` is built with the sectioned layout
+    (make_sectioned_open_prompt) rather than make_open_prompt."""
+    return version == PROMPT_V3
+
+
+# The random draw for split and thirds. Its own generator, not the
+# module-level random one that make_open_prompt shuffles its examples with,
+# and a module attribute so tests can force any side.
 _split_draw: Callable[[], float] = random.SystemRandom().random
 
 
@@ -81,8 +123,17 @@ def choose_prompt_version(mode: str) -> str:
     """The version one full-letter call is written with under ``mode``."""
     if mode == MODE_NEW:
         return PROMPT_V2
+    if mode == MODE_SECTIONED:
+        return PROMPT_V3
     if mode == MODE_SPLIT:
         return PROMPT_V2 if _split_draw() < 0.5 else PROMPT_V1
+    if mode == MODE_THIRDS:
+        draw = _split_draw()
+        if draw < 1 / 3:
+            return PROMPT_V1
+        if draw < 2 / 3:
+            return PROMPT_V2
+        return PROMPT_V3
     return PROMPT_V1
 
 

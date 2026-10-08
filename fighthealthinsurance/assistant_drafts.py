@@ -258,12 +258,17 @@ def waiting_draft(pk: object) -> Optional[AssistantDraft]:
 
 
 def agree(
-    draft: AssistantDraft, denial: Denial, procedure: str = "", condition: str = ""
+    draft: AssistantDraft,
+    denial: Denial,
+    procedure: str = "",
+    condition: str = "",
+    reservation_id: Optional[int] = None,
 ) -> bool:
     """Tie a waiting draft to the denial the person just agreed for, once,
     with the procedure and condition the link carried (kept only in the
-    sealed link until now), as the person left them on the terms page.
-    False when another request got there first or it moved on."""
+    sealed link until now), as the person left them on the terms page, and
+    the generation reserved for it. False when another request got there
+    first or it moved on."""
     procedure = (procedure or "")[:FIELD_MAX_CHARS]
     condition = (condition or "")[:FIELD_MAX_CHARS]
     linked = AssistantDraft.objects.filter(
@@ -271,14 +276,80 @@ def agree(
         denial__isnull=True,
         status=WAITING,
         expires_at__gt=timezone.now(),
-    ).update(denial=denial, procedure=procedure, condition=condition)
+    ).update(
+        denial=denial,
+        procedure=procedure,
+        condition=condition,
+        spend_reservation_id=reservation_id,
+    )
     if linked != 1:
         return False
     draft.denial = denial
     draft.procedure = procedure
     draft.condition = condition
+    draft.spend_reservation_id = reservation_id
     mark_agreed(draft)
     return True
+
+
+# Run endings with no letters; on_site is not one (see give_back_generation).
+GIVES_BACK = frozenset((STOPPED, EXPIRED))
+
+
+class ReleaseFailed(RuntimeError):
+    """The reserved generation could not be given back; try again."""
+
+
+def generation_delivered(denial: Optional[Denial]) -> bool:
+    """Whether this denial got a generation that counts: the site's page
+    took one (from the continue link, say), or letters are stored, a
+    chosen copy included."""
+    if denial is None:
+        return False
+    return (
+        site_took_generation(denial)
+        or bool(collect_letters(denial))
+        or _chosen_letter_stored(denial)
+    )
+
+
+def _chosen_letter_stored(denial: Denial) -> bool:
+    """Whether a real chosen letter is stored; collect_letters leaves these
+    out because they copy a letter already shown."""
+    from fighthealthinsurance.common_view_logic import (
+        appeal_replay_queryset,
+        deliverable_candidates,
+    )
+
+    rows = deliverable_candidates(appeal_replay_queryset(denial).filter(chosen=True))
+    return any(
+        is_real_appeal(text) for text in rows.values_list("appeal_text", flat=True)
+    )
+
+
+def give_back_generation(draft: AssistantDraft) -> bool:
+    """Give back the generation reserved when the person agreed, once and to
+    the day it was taken from (spend.release_generation). For a run that
+    ended without letters. Kept when the site's page generated for this
+    denial or letters are stored: an assistant denial's generation spends
+    the assistant budget wherever it runs. False when there is none, it is
+    kept, or it went back already; ReleaseFailed when the database would
+    not take the release."""
+    from fighthealthinsurance.ml import spend
+    from fighthealthinsurance.models import SpendReservation
+
+    if draft.spend_reservation_id is None:
+        return False
+    row = SpendReservation.objects.filter(pk=draft.spend_reservation_id).first()
+    if row is None or row.released_at is not None:
+        return False
+    if generation_delivered(draft.denial):
+        return False
+    if spend.release_generation(spend.Reservation(id=row.pk, day=row.day)):
+        return True
+    if SpendReservation.objects.filter(pk=row.pk, released_at__isnull=True).exists():
+        raise ReleaseFailed("the reserved generation was not given back")
+    return False
 
 
 def finish_on_site(draft: Optional[AssistantDraft]) -> None:
@@ -587,10 +658,25 @@ def answers_for_generation(denial: Denial) -> Optional[dict[str, str]]:
 
 
 def sweep_expired(now: Optional[datetime] = None) -> int:
-    """Delete every draft past its expiry. Returns how many went."""
-    deleted, _ = AssistantDraft.objects.filter(
-        expires_at__lte=now or timezone.now()
-    ).delete()
+    """Delete every draft past its expiry. Returns how many went. A draft
+    that never reached drafting gives its generation back first, as its run
+    can no longer find it to say expired. One whose release fails stays for
+    the next sweep."""
+    expired = AssistantDraft.objects.filter(expires_at__lte=now or timezone.now())
+    kept: list[int] = []
+    for draft in expired.select_related("denial").filter(
+        spend_reservation__isnull=False,
+        spend_reservation__released_at__isnull=True,
+        status__in=(READING, QUESTIONS, *GIVES_BACK),
+    ):
+        try:
+            give_back_generation(draft)
+        except ReleaseFailed:
+            logger.warning(
+                f"assistant drafts: generation not given back for {draft.pk}"
+            )
+            kept.append(draft.pk)
+    deleted, _ = expired.exclude(pk__in=kept).delete()
     if deleted:
         DRAFTS.labels("swept").inc(deleted)
         logger.info(f"assistant drafts: swept {deleted}")

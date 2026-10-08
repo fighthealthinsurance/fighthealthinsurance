@@ -598,6 +598,51 @@ class TestShedContextPromptRebuild:
         assert new_calls[0]["prompt"] == "SHED\n\n" + OUTPUT_CONTRACT
         assert new_calls[0]["prompt_version"] == PROMPT_V2
 
+    def test_tier1_rerenders_each_layout_into_the_calls_built_from_it(self):
+        # In thirds a run holds calls written with the original prompt (v1,
+        # v2) and with the sectioned one (v3). Each layout is re-rendered by
+        # its own builder from the same shed kwargs and swapped into the calls
+        # that start with it, keeping the tail and the call's version.
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            OUTPUT_CONTRACT,
+            PROMPT_V1,
+            PROMPT_V3,
+            apply_prompt_version,
+        )
+
+        seen_original, rebuild_original = _rebuild_spy(return_value="SHED")
+        seen_sectioned, rebuild_sectioned = _rebuild_spy(
+            return_value="TASK: SHED SECTIONED"
+        )
+        new_calls, _ = _shed_context(
+            [
+                _make_call(prompt="ORIGINAL", prompt_version=PROMPT_V1),
+                _make_call(
+                    prompt=apply_prompt_version("TASK: SECTIONED", PROMPT_V3),
+                    prompt_version=PROMPT_V3,
+                ),
+                _make_call(prompt="totally different med-necessary prompt"),
+            ],
+            tier=1,
+            open_prompt_kwargs=_prompt_kwargs(),
+            rebuild_prompt=rebuild_original,
+            original_open_prompt="ORIGINAL",
+            other_open_prompts=[("TASK: SECTIONED", rebuild_sectioned)],
+        )
+        assert [c["prompt"] for c in new_calls] == [
+            "SHED",
+            "TASK: SHED SECTIONED\n\n" + OUTPUT_CONTRACT,
+            "totally different med-necessary prompt",
+        ]
+        assert [c.get("prompt_version") for c in new_calls] == [
+            PROMPT_V1,
+            PROMPT_V3,
+            None,
+        ]
+        # Both builders saw the same shed kwargs.
+        assert seen_sectioned == seen_original
+        assert seen_sectioned["pubmed_context"] is None
+
     def test_tier1_leaves_unrelated_prompts_alone(self):
         # The medically-necessary prompt is a separate string and must not
         # be touched by the prefix swap.
@@ -932,6 +977,26 @@ class TestDualCallContextBudget:
         assert sibling["pubmed_context"] is None
         assert sibling["ml_citations_context"] is None
         assert sibling["prompt"] == "REBUILT_PROMPT"
+
+    def test_shed_sibling_of_a_v3_call_gets_the_rerendered_sectioned_prompt(self):
+        big = "x" * (8000 * 4)
+        call = _make_call(prompt="TASK: SECTIONED\n\nCONTRACT", pubmed_context=big)
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={"fhi-internal": [_backend_with_context(8000)]},
+        ):
+            result = _add_proactive_shed_variants(
+                [call],
+                open_prompt_kwargs={"pubmed_context": "enrichment"},
+                rebuild_prompt=self._noop_rebuild,
+                original_open_prompt="ORIGINAL",
+                other_open_prompts=[("TASK: SECTIONED", lambda **_: "TASK: SHED")],
+                denial_id=1,
+            )
+        assert [c["prompt"] for c in result] == [
+            "TASK: SECTIONED\n\nCONTRACT",
+            "TASK: SHED\n\nCONTRACT",
+        ]
 
     def test_no_sibling_when_under_budget(self):
         call = _make_call(prompt="ORIGINAL")
