@@ -1,8 +1,0 @@
-Dear {{ user.first_name }},
-
-Please confirm your email address by clicking the link below:
-
-{{ confirmation_link }}
-
-Best regards,
-Fight Health Insurance Team

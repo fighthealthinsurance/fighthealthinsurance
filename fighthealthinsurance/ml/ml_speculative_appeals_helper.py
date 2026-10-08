@@ -34,6 +34,8 @@ from loguru import logger
 
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.exec import bridge_executor
+from fighthealthinsurance.ml import spend
+from fighthealthinsurance.ml.serving_registry import aserving_id_for
 from fighthealthinsurance.context_utils import (
     CONTEXT_LEVEL_SPECULATIVE,
     CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
@@ -86,7 +88,13 @@ class SpeculativeAppealsHelper:
         )
 
     @classmethod
-    async def generate_for_denial(
+    async def generate_for_denial(cls, *args: Any, **kwargs: Any) -> int:
+        """Model spend for the precompute counts for the denial's channel."""
+        with spend.channel_scope():
+            return await cls._generate_for_denial(*args, **kwargs)
+
+    @classmethod
+    async def _generate_for_denial(
         cls,
         denial_id: Any,
         force: bool = False,
@@ -172,6 +180,8 @@ class SpeculativeAppealsHelper:
                 )
                 .afirst()
             )
+            if denial is not None:
+                spend.set_channel_of(denial)
             if denial is None:
                 logger.warning(
                     f"speculative appeals[{trigger}]: denial {denial_id} not "
@@ -376,11 +386,12 @@ class SpeculativeAppealsHelper:
             # either way, so per-call connection isolation is unchanged.
             # executor=bridge_executor keeps this minutes-long drain off the
             # loop's small shared default executor (see exec.py).
-            drafts = await database_sync_to_async(
-                _generate_drafts,
-                thread_sensitive=False,
-                executor=bridge_executor,
-            )()
+            with spend.for_channel(spend.channel_of(denial)):
+                drafts = await database_sync_to_async(
+                    _generate_drafts,
+                    thread_sensitive=False,
+                    executor=bridge_executor,
+                )()
 
             # Generation is done; make sure it is still about the CURRENT letter
             # before persisting anything (see generated_from_text above). Read
@@ -423,6 +434,8 @@ class SpeculativeAppealsHelper:
                         speculative=True,
                         context_level=row_context_level,
                         built_for_state=generated_from_context[0],
+                        prompt_version=item.prompt_version,
+                        serving_id=await aserving_id_for(item.backend),
                     )
                     saved += 1
                     created_pks.append(row.pk)

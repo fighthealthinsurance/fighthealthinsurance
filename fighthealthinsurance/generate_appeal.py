@@ -8,7 +8,17 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from concurrent.futures import as_completed as futures_as_completed
 from concurrent.futures import wait as futures_wait
 from dataclasses import dataclass
-from typing import Any, Callable, Coroutine, Iterator, List, Optional, Tuple, TypeVar
+from typing import (
+    Any,
+    Callable,
+    Coroutine,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+)
 
 from django.utils import timezone
 from loguru import logger
@@ -40,9 +50,19 @@ class GeneratedAppeal:
     # recorded with the same attribution as the mapper's own row.
     infer_type: str = ""
     backend: str = ""
+    # The appeal prompt version that wrote this draft (see
+    # ml/appeal_prompt_versions). None for templated, synthesized and
+    # medically-necessary drafts, which no letter prompt wrote.
+    prompt_version: Optional[str] = None
 
 
 from fighthealthinsurance.denial_history_consent import history_may_be_used_now
+from fighthealthinsurance.ml.appeal_prompt_versions import (
+    apply_prompt_version,
+    choose_prompt_version,
+    current_letter_prompt_mode,
+    uses_sectioned_prompt,
+)
 from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
 from fighthealthinsurance.ml.model_identity import TEMPLATE_MODEL_NAME
 from fighthealthinsurance.context_utils import (
@@ -833,7 +853,9 @@ def identifier_found_in_text(identifier: str, text: str) -> bool:
 #   * make_open_prompt bakes enrichment (pubmed, ml citations, rag, nice,
 #     uspstf, clinical trials, regulatory citations, ucr, pa, payer-policy,
 #     medication) into the prompt string. To shed those we re-render the
-#     prompt with the matching kwargs set to None / truncated.
+#     prompt with the matching kwargs set to None / truncated. v3's
+#     make_sectioned_open_prompt takes the same kwargs and is re-rendered
+#     the same way for the calls written with it.
 #   * The same call dict also carries pubmed_context, ml_citations_context,
 #     plan_context, and patient_context as separate keys. The model injects
 #     those via ``context_extra`` only when the prompt does not already carry
@@ -923,6 +945,7 @@ def _shed_context(
     open_prompt_kwargs: Optional[dict] = None,
     rebuild_prompt: Optional[Callable[..., Optional[str]]] = None,
     original_open_prompt: Optional[str] = None,
+    other_open_prompts: Sequence[Tuple[str, Callable[..., Optional[str]]]] = (),
 ) -> tuple[list[dict], list[str]]:
     """Return (new_calls, changed_names) with context reduced by tier.
 
@@ -933,19 +956,29 @@ def _shed_context(
     ``plan_context`` + ``patient_context`` (call-dict). Higher tiers
     include all lower-tier reductions.
 
+    ``other_open_prompts`` holds an (open prompt as built, builder) pair for
+    each other prompt layout the calls were written with (v3's sections).
+    Each is re-rendered from the same shed kwargs and swapped into the calls
+    that start with it, the same way as ``original_open_prompt``.
+
     When the prompt-rebuild arguments are omitted the function falls back
     to call-dict-only shedding — kept for direct unit testing of the
     call-dict surface.
     """
     changed: set[str] = set()
 
-    new_open_prompt: Optional[str] = None
-    if (
-        tier >= 1
-        and open_prompt_kwargs is not None
-        and rebuild_prompt is not None
-        and original_open_prompt is not None
-    ):
+    # Every open prompt the calls were built from, with its builder.
+    builds = [
+        (built, rebuild)
+        for built, rebuild in (
+            (original_open_prompt, rebuild_prompt),
+            *other_open_prompts,
+        )
+        if built is not None and rebuild is not None
+    ]
+    # (open prompt as built, its shed re-render) for each rebuilt layout.
+    swaps: list[tuple[str, str]] = []
+    if tier >= 1 and open_prompt_kwargs is not None and builds:
         shed_kwargs = dict(open_prompt_kwargs)
         prompt_changed_before = len(changed)
         for key in _PROMPT_TIER1_NULLS:
@@ -975,23 +1008,26 @@ def _shed_context(
         # Only rebuild if the prompt-surface actually shrank — otherwise the
         # original ``open_prompt`` is reused as-is.
         if len(changed) > prompt_changed_before:
-            new_open_prompt = rebuild_prompt(**shed_kwargs)
+            for built, rebuild in builds:
+                shed_prompt = rebuild(**shed_kwargs)
+                if built and shed_prompt is not None:
+                    swaps.append((built, shed_prompt))
 
     new_calls = []
     for call in calls:
         new = dict(call)
-        # Swap the shed prompt into any call whose prompt is the original
-        # open_prompt or starts with it (the specialized variant appends a
-        # hint block). The medically-necessary prompt is unrelated and is
-        # left untouched.
-        if (
-            new_open_prompt is not None
-            and original_open_prompt
-            and isinstance(new.get("prompt"), str)
-            and new["prompt"].startswith(original_open_prompt)
-        ):
-            tail = new["prompt"][len(original_open_prompt) :]
-            new["prompt"] = new_open_prompt + tail
+        # Swap the shed prompt into any call whose prompt is an open prompt
+        # or starts with it (the specialized variant appends a hint block,
+        # and v2 and v3 append the contract), keeping the tail. The layouts
+        # never start with one another (v3 opens with its TASK section), so
+        # a call matches only the prompt it was built from. The
+        # medically-necessary prompt is unrelated and is left untouched.
+        prompt = new.get("prompt")
+        if isinstance(prompt, str):
+            for built, shed_prompt in swaps:
+                if prompt.startswith(built):
+                    new["prompt"] = shed_prompt + prompt[len(built) :]
+                    break
         if tier >= 1:
             for key in _SHEDDABLE_TIER1:
                 if new.get(key) is not None:
@@ -1119,6 +1155,7 @@ def _add_proactive_shed_variants(
     open_prompt_kwargs: dict,
     rebuild_prompt: Callable[..., Optional[str]],
     original_open_prompt: Optional[str],
+    other_open_prompts: Sequence[Tuple[str, Callable[..., Optional[str]]]] = (),
     denial_id: Any = None,
 ) -> List[dict]:
     """Return ``calls`` plus a tier-1 context-shed sibling for each call whose
@@ -1143,6 +1180,7 @@ def _add_proactive_shed_variants(
         open_prompt_kwargs=open_prompt_kwargs,
         rebuild_prompt=rebuild_prompt,
         original_open_prompt=original_open_prompt,
+        other_open_prompts=other_open_prompts,
     )
 
     # _shed_context stamps context_level on every variant, so compare on the
@@ -1214,6 +1252,7 @@ def _generated_to_appeals_text(
     submitted_at: Optional[float] = None,
     submitted_wall: Optional[Any] = None,
     deadline: Optional[float] = None,
+    prompt_version: Optional[str] = None,
 ) -> Iterator[GeneratedAppeal]:
     """Map one model future's (infer_type, text) results to GeneratedAppeals.
 
@@ -1338,6 +1377,7 @@ def _generated_to_appeals_text(
                         context_level=context_level,
                         infer_type=infer_type,
                         backend=backend,
+                        prompt_version=prompt_version,
                     )
                 else:
                     _note_returned(text)
@@ -2464,6 +2504,252 @@ class AppealGenerator(object):
         sections.append(f"DENIAL LETTER:\n{denial_text}")
         return "\n\n".join(sections)
 
+    def make_sectioned_open_prompt(
+        self,
+        denial_text=None,
+        procedure=None,
+        diagnosis=None,
+        is_trans=False,
+        patient=None,
+        professional=None,
+        qa_context=None,
+        professional_to_finish=None,
+        plan_id=None,
+        claim_id=None,
+        insurance_company=None,
+        is_tpa=False,
+        ml_context=None,
+        pubmed_context=None,
+        plan_context=None,
+        rag_context=None,
+        nice_context=None,
+        ucr_context=None,
+        payer_policy_context=None,
+        pa_context=None,
+        uspstf_context=None,
+        clinical_trials_context=None,
+        medication_context=None,
+        regulatory_citation_context=None,
+        plan_law_context=None,
+    ) -> Optional[str]:
+        """The v3 appeal prompt (ml/appeal_prompt_versions): the same inputs
+        as ``make_open_prompt`` laid out as labelled sections, instructions
+        first and the denial letter last, without the example openings.
+
+        Takes exactly ``make_open_prompt``'s arguments and renders each
+        section on the same condition, so context shedding re-renders either
+        builder from the same kwargs (see ``_shed_context``). v1 and v2 are
+        built by ``make_open_prompt``; only a call that drew v3 uses this.
+
+        Returns:
+            The prompt, or None if denial_text is not provided.
+        """
+        if denial_text is None:
+            return None
+
+        def _present(value: Optional[str]) -> bool:
+            # The historical ``!= ""`` gate (a whitespace-only value still
+            # renders). ``_shed_context`` relies on it; ``pa_context`` is the
+            # one ``.strip()``-gated section (``_PROMPT_TIER1_STRIP_GATED``).
+            return value is not None and value != ""
+
+        def _known(value: Optional[str]) -> bool:
+            return _present(value) and value != "UNKNOWN"
+
+        # The prompt is a sequence of labelled sections, instructions first
+        # and the denial letter last, joined by blank lines. Each section is
+        # self-contained so the model (and a reader of the logs) can tell
+        # where one kind of context ends and the next begins.
+        sections: list[str] = []
+
+        # --- Task ----------------------------------------------------------
+        if _present(procedure) and _present(diagnosis):
+            task = (
+                f"Write a health insurance appeal for procedure {procedure} "
+                f"with diagnosis {diagnosis} given the denial letter below."
+            )
+        elif _present(procedure):
+            task = (
+                f"Write a health insurance appeal for procedure {procedure} "
+                "given the denial letter below."
+            )
+        else:
+            task = "Write a health insurance appeal for the denial letter below."
+        if is_trans:
+            task = f"{task} Keep in mind the patient is trans."
+        sections.append(f"TASK: {task}")
+
+        # --- Point of view -------------------------------------------------
+        # The system prompt (``full_not_patient``) carries the full guidance
+        # on writing as the professional; this only restates the rule and
+        # supplies the sign-off, so the two never disagree about examples.
+        if professional_to_finish:
+            pov = (
+                "POINT OF VIEW: Write as the treating healthcare professional, "
+                "not the patient. Use 'I' only for yourself and refer to the "
+                "patient in the third person ('the patient', 'my patient', "
+                "'they'). Do not use any language that implies the letter was "
+                "written by the patient."
+            )
+            if professional:
+                pov = f"{pov} Sign the letter as {professional}."
+            sections.append(pov)
+
+        # --- Details to fill in ------------------------------------------
+        details: list[str] = []
+        if patient is not None:
+            details.append(f"- Patient (fill in their details): {patient}")
+        if professional is not None:
+            details.append(
+                f"- Healthcare professional (fill in their details): {professional}"
+            )
+        if _known(insurance_company):
+            company_line = f"- Insurance company: {insurance_company}"
+            if is_tpa:
+                company_line = (
+                    f"{company_line} -- a Third-Party Administrator (TPA) for a "
+                    "self-funded employer plan, which is typically governed by "
+                    "ERISA (Employee Retirement Income Security Act). ERISA "
+                    "plans have specific appeal requirements and timelines; the "
+                    "employer is the plan fiduciary and ultimately responsible "
+                    "for coverage decisions, though the TPA administers claims."
+                )
+            details.append(company_line)
+        if _known(plan_id):
+            details.append(f"- Plan ID: {plan_id}")
+        if _known(claim_id) and claim_id != insurance_company:
+            details.append(f"- Claim ID: {claim_id}")
+        if _known(qa_context):
+            details.append(
+                "- Answers from the patient's intake questions (work these "
+                f"into the appeal): {qa_context}"
+            )
+        if details:
+            sections.append(
+                "DETAILS TO INCLUDE (use these values exactly as given):\n"
+                + "\n".join(details)
+            )
+
+        # --- Plan and payer context ---------------------------------------
+        if plan_context is not None and len(plan_context) > 5:
+            sections.append(
+                "PLAN DETAILS: The patient's insurance plan details are as "
+                f"follows: {plan_context}"
+            )
+        if pa_context is not None and pa_context.strip():
+            sections.append(
+                "PAYER PRIOR-AUTH RULES: The following entries come from "
+                "the payer's own published prior-authorization requirement list. "
+                "Use them when the denial relies on PA grounds -- point out exactly "
+                "which rule (or absence of one) supports approval, cite the "
+                "criteria document by name, and reference the published "
+                "submission channel where relevant. Do not invent rules that "
+                "are not listed below.\n"
+                f"{pa_context}"
+            )
+
+        # --- Evidence and citations ---------------------------------------
+        # USPSTF is included in the citation set because its header explicitly
+        # asks the model to cite the recommendation/URL; placing it below the
+        # "may ONLY cite references provided below" instruction keeps that
+        # guidance consistent.
+        has_citations = (
+            _present(ml_context)
+            or _present(pubmed_context)
+            or _present(rag_context)
+            or _present(nice_context)
+            or _present(uspstf_context)
+            or _present(clinical_trials_context)
+        )
+        if has_citations:
+            sections.append(
+                "CITATION INSTRUCTIONS: You may ONLY cite medical literature, "
+                "studies, or references that are explicitly provided below. Do "
+                "NOT invent, fabricate, or hallucinate any citations, PMIDs, NCT "
+                "IDs, journal names, author names, or study details. If you want "
+                "to make a medical claim, either cite from the provided "
+                "references or state it as general medical knowledge without a "
+                "specific citation."
+            )
+            if _present(rag_context):
+                sections.append(
+                    "Evidence from medical guidelines and regulations:\n"
+                    f"{rag_context}"
+                )
+            if _present(ml_context):
+                sections.append(f"Provided citations (use these): {ml_context}")
+            if _present(pubmed_context):
+                sections.append(f"PubMed references (use these): {pubmed_context}")
+            if _present(nice_context):
+                # nice_context already carries the international-guidance caveat
+                # (see INTERNATIONAL_GUIDANCE_CAVEAT in nice_tools); the header
+                # here is just a section label.
+                sections.append(f"NICE (UK) guidance:\n{nice_context}")
+            if _present(uspstf_context):
+                # The header inside ``uspstf_context`` already explains the
+                # ACA cost-sharing angle and the A/B-only caveat.
+                sections.append(str(uspstf_context))
+            if _present(clinical_trials_context):
+                # The header inside ``clinical_trials_context`` already
+                # explains the "experimental/investigational" angle and
+                # the "trial != coverage" caveat.
+                sections.append(str(clinical_trials_context))
+        else:
+            # No citations provided - explicitly tell the model not to make any up
+            sections.append(
+                "IMPORTANT: No specific medical citations have been provided. Do "
+                "NOT invent or hallucinate any citations, PMIDs, NCT IDs, journal "
+                "names, or study references. You may state general medical "
+                "knowledge without citations, but do not fabricate specific "
+                "study references."
+            )
+        if ucr_context:
+            # The block carries an independent rate benchmark for this
+            # procedure + area; the model decides whether the evidence is
+            # useful for the argument it's making.
+            sections.append(
+                "UCR PRICING CONTEXT: The denial may involve "
+                "out-of-network under-reimbursement. The [UCR PRICING CONTEXT] "
+                "block below carries an independent rate benchmark for this "
+                "procedure and geographic area. If it strengthens the appeal -- "
+                "e.g. arguing the plan's allowable methodology is below typical "
+                "rates -- cite the source and effective date verbatim. If it "
+                "isn't relevant to the arguments you're making, you may omit "
+                "it. Do NOT invent rates or percentile values that are not in "
+                "the block.\n\n"
+                f"{ucr_context}"
+            )
+        if medication_context:
+            sections.append(
+                "DRUG-CLASS GUIDANCE: The medication(s) involved fall "
+                "into a class with known appeal strategies. Use the following "
+                "curated context where relevant. Do not invent citations beyond "
+                f"those listed elsewhere.\n{medication_context}"
+            )
+        if regulatory_citation_context:
+            # Pre-framed (header + conservative caveats) by
+            # regulatory_citations.get_regulatory_citation_context.
+            sections.append(str(regulatory_citation_context))
+        if plan_law_context:
+            # Which appeal law governs this plan (ERISA, the ACA appeal rules,
+            # Medicare, ...) and an invitation to cite it where it helps.
+            # Pre-framed by regulatory_citations.get_plan_law_context.
+            sections.append(str(plan_law_context))
+        if payer_policy_context:
+            sections.append(
+                f"{payer_policy_context}\n\n"
+                "When using the comparative payer-policy information above, "
+                "frame it as supporting industry context (other major insurers "
+                "recognize this service as medically necessary under documented "
+                "criteria), and do NOT assert that another payer's policy "
+                "binds the patient's plan. Always defer to the patient's own "
+                "plan documents for what is actually covered."
+            )
+
+        # --- The denial itself, last ----------------------------------------
+        sections.append(f"DENIAL LETTER:\n{denial_text}")
+        return "\n\n".join(sections)
+
     def make_open_med_prompt(
         self, procedure=None, diagnosis=None, is_trans=False
     ) -> Optional[str]:
@@ -2672,6 +2958,7 @@ class AppealGenerator(object):
         denial_text_override: Optional[str] = None,
         run_kind: str = "live",
         deadline: Optional[float] = None,
+        prompt_mode: Optional[str] = None,
     ) -> Iterator[GeneratedAppeal]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -2698,6 +2985,10 @@ class AppealGenerator(object):
             deadline: Optional time.monotonic()-based cutoff after which the
                 submitted model calls exit cooperatively (threads cannot be
                 cancelled) instead of continuing work nobody will read.
+            prompt_mode: Which appeal prompt versions the full-letter calls
+                use (ml/appeal_prompt_versions MODE_*). None reads the staff
+                setting. Each full-letter call draws its version once, and
+                every draft it yields records it.
 
         Returns:
             An iterator of ``GeneratedAppeal`` items (each carries the
@@ -2705,6 +2996,8 @@ class AppealGenerator(object):
             template-based / non-AI appeals).
         """
         logger.debug("Starting to make appeals...")
+        if prompt_mode is None:
+            prompt_mode = current_letter_prompt_mode()
         # Background/speculative work uses its own pool so it can't starve
         # interactive generations that a user is actively waiting on.
         submit_pool = background_executor if run_kind == "speculative" else executor
@@ -3005,35 +3298,56 @@ class AppealGenerator(object):
                 f"denial {denial.denial_id}"
             )
 
-        calls = [
-            {
+        # Each full-letter call is written with one appeal prompt version,
+        # drawn before its prompt is built: the staff setting picks one
+        # version for every letter or a random draw per call
+        # (ml/appeal_prompt_versions). v1 and v2 are built from open_prompt;
+        # v3 is a different build of the same inputs (labelled sections),
+        # made once, by the first call that draws it. The contract goes on
+        # last, after any specialized hint block, and the call keeps its
+        # version through context shedding (which copies the call and keeps
+        # what follows the prompt's start). The medically-necessary calls ask
+        # a one-line question whose answer goes into a template, so no letter
+        # prompt is involved and they carry no version.
+        sectioned_open_prompt: Optional[str] = None
+
+        def open_prompt_for(version: str) -> Optional[str]:
+            nonlocal sectioned_open_prompt
+            if not uses_sectioned_prompt(version):
+                return open_prompt
+            if sectioned_open_prompt is None:
+                sectioned_open_prompt = self.make_sectioned_open_prompt(
+                    **open_prompt_kwargs
+                )
+            return sectioned_open_prompt
+
+        def full_letter_call(model_name: str, hint_block: str = "") -> dict:
+            version = choose_prompt_version(prompt_mode)
+            prompt = open_prompt_for(version)
+            if prompt is not None:
+                if hint_block:
+                    prompt = f"{prompt}\n\n--- Denial-type guidance ---\n{hint_block}"
+                prompt = apply_prompt_version(prompt, version)
+            return {
                 "model_name": model_name,
-                "prompt": open_prompt,
+                "prompt": prompt,
                 "patient_context": medical_context,
                 "plan_context": plan_context,
                 "infer_type": "full",
                 "pubmed_context": pubmed_context,
                 "ml_citations_context": ml_citations_context,
                 "prof_pov": prof_pov,
+                # No prompt (no denial text) writes no letter, so no version.
+                "prompt_version": version if prompt is not None else None,
             }
-            for model_name in model_names
-        ]
+
+        calls = [full_letter_call(model_name) for model_name in model_names]
 
         backup_model_names = ml_router.generate_text_backend_names(
             use_external=denial.use_external
         )
         backup_calls = [
-            {
-                "model_name": model_name,
-                "prompt": open_prompt,
-                "patient_context": medical_context,
-                "plan_context": plan_context,
-                "infer_type": "full",
-                "pubmed_context": pubmed_context,
-                "ml_citations_context": ml_citations_context,
-                "prof_pov": prof_pov,
-            }
-            for model_name in backup_model_names
+            full_letter_call(model_name) for model_name in backup_model_names
         ]
 
         # Specialized: when one or more specialized denial-type templates
@@ -3047,22 +3361,7 @@ class AppealGenerator(object):
             if best_model_name is not None:
                 hint_block = self._build_specialized_hint_block(specialized_templates)
                 if hint_block:
-                    specialized_prompt = (
-                        f"{open_prompt}\n\n"
-                        f"--- Denial-type guidance ---\n{hint_block}"
-                    )
-                    calls.append(
-                        {
-                            "model_name": best_model_name,
-                            "prompt": specialized_prompt,
-                            "patient_context": medical_context,
-                            "plan_context": plan_context,
-                            "infer_type": "full",
-                            "pubmed_context": pubmed_context,
-                            "ml_citations_context": ml_citations_context,
-                            "prof_pov": prof_pov,
-                        }
-                    )
+                    calls.append(full_letter_call(best_model_name, hint_block))
 
         # If we need to know the medical reason ask our friendly LLMs
         static_appeal = template_generator.generate_static()
@@ -3095,6 +3394,14 @@ class AppealGenerator(object):
         logger.debug(f"Initial appeal {initial_appeals}")
         # Executor map wants a list for each parameter.
 
+        # Context shedding re-renders the sectioned prompt too when any call
+        # was written with it.
+        other_open_prompts = (
+            [(sectioned_open_prompt, self.make_sectioned_open_prompt)]
+            if sectioned_open_prompt is not None
+            else []
+        )
+
         # Every model call built above uses full context; stamp the level so
         # each produced appeal records it. The proactive shed variants (added by
         # _add_proactive_shed_variants) and the reactive tier-shed ladder get
@@ -3117,10 +3424,15 @@ class AppealGenerator(object):
             # slow-backend diagnosis needs.
             model_futures: List[Tuple[dict, Future]] = []
             for call in calls:
-                # context_level is provenance metadata, not an inference arg;
-                # strip it before spreading the call into get_model_result.
+                # context_level and prompt_version are provenance metadata, not
+                # inference args; strip them before spreading the call into
+                # get_model_result.
                 context_level = call.get("context_level")
-                call_kwargs = {k: v for k, v in call.items() if k != "context_level"}
+                call_kwargs = {
+                    k: v
+                    for k, v in call.items()
+                    if k not in ("context_level", "prompt_version")
+                }
                 prompt = call.get("prompt")
                 # Everything that doesn't depend on the future is computed once
                 # per call, not once per future: this loop is what gets the
@@ -3138,6 +3450,7 @@ class AppealGenerator(object):
                             {
                                 "model_name": call.get("model_name"),
                                 "context_level": context_level,
+                                "prompt_version": call.get("prompt_version"),
                                 "stage": stage,
                                 "infer_type": call.get("infer_type") or "",
                                 "backend": backend,
@@ -3179,6 +3492,7 @@ class AppealGenerator(object):
                     meta["submitted_at"],
                     meta["submitted_wall"],
                     deadline,
+                    prompt_version=meta["prompt_version"],
                 )
                 if meta["infer_type"] == "full":
                     full_pairs.append((f, mapper))
@@ -3206,6 +3520,7 @@ class AppealGenerator(object):
             open_prompt_kwargs=open_prompt_kwargs,
             rebuild_prompt=self.make_open_prompt,
             original_open_prompt=open_prompt,
+            other_open_prompts=other_open_prompts,
             denial_id=denial.denial_id,
         )
 
@@ -3255,6 +3570,7 @@ class AppealGenerator(object):
                     open_prompt_kwargs=open_prompt_kwargs,
                     rebuild_prompt=self.make_open_prompt,
                     original_open_prompt=open_prompt,
+                    other_open_prompts=other_open_prompts,
                 )
                 logger.warning(
                     f"{gen_prefix}make_appeals: retrying primary for denial "

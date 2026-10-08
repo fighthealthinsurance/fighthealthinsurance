@@ -7,7 +7,11 @@ from django import forms
 from django.conf import settings
 from django.forms import CheckboxInput, ModelForm, Textarea
 
+from django.core.exceptions import ValidationError
+from loguru import logger
+from django_recaptcha import client as recaptcha_client
 from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox
+import http.client
 
 if TYPE_CHECKING:
     # Typing-only base so mypy knows ``self.fields`` exists. At runtime the
@@ -18,7 +22,14 @@ else:
     _ReCaptchaMixinBase = object
 
 from fighthealthinsurance.form_utils import *
+from fighthealthinsurance.letter_placeholders import (
+    blanks_to_name,
+    describe_placeholders,
+    find_placeholders_as_written,
+)
 from fighthealthinsurance.models import (
+    LETTER_REVIEW_NOTE_MAX,
+    LETTER_REVIEW_VERDICTS,
     DenialTypes,
     InsuranceCompany,
     InsurancePlan,
@@ -39,6 +50,57 @@ REFERRAL_SOURCE_CHOICES = [
     ("News Article or Blog", "News Article or Blog"),
     ("Other", "Other"),
 ]
+
+
+# The error code a captcha tick Google calls "timeout-or-duplicate" gets: a
+# tick older than two minutes (say the person went back to their chat app and
+# returned), or the same tick sent twice by a double press. Neither says the
+# person is a bot, so a page can ask them to tick the box again.
+CAPTCHA_EXPIRED = "captcha_expired"
+
+
+class CheckboxReCaptchaField(ReCaptchaField):
+    """The "I'm not a robot" checkbox, with an expired or reused tick told
+    apart from a rejected one.
+
+    django-recaptcha raises captcha_invalid for every answer Google refuses
+    and only logs the reason, so this is its checkbox check with the reason
+    kept: an unticked box is "required", an expired or reused tick is
+    CAPTCHA_EXPIRED, Google out of reach is "captcha_error", and anything
+    else Google refuses is "captcha_invalid".
+    """
+
+    default_error_messages = {
+        CAPTCHA_EXPIRED: 'Your "I\'m not a robot" tick ran out or was already '
+        "used. Tick it again, then press the button.",
+    }
+
+    def validate(self, value):
+        forms.CharField.validate(self, value)
+        try:
+            check = recaptcha_client.submit(
+                recaptcha_response=value,
+                private_key=self.private_key,
+                remoteip=self.get_remote_ip(),
+            )
+        except (OSError, http.client.HTTPException, ValueError):
+            # Google unreachable, slow, erroring or answering nonsense: OSError
+            # covers URLError, HTTPError, timeouts, resets and SSL errors, and
+            # ValueError a reply that isn't JSON. django-recaptcha caught
+            # HTTPError only.
+            raise ValidationError(
+                self.error_messages["captcha_error"], code="captcha_error"
+            )
+        if not check.is_valid:
+            # As django-recaptcha logs it: Google's reason codes only.
+            logger.warning(f"ReCAPTCHA validation failed due to: {check.error_codes}")
+            if "timeout-or-duplicate" in (check.error_codes or []):
+                raise ValidationError(
+                    self.error_messages[CAPTCHA_EXPIRED], code=CAPTCHA_EXPIRED
+                )
+            raise ValidationError(
+                self.error_messages["captcha_invalid"], code="captcha_invalid"
+            )
 
 
 class ReCaptchaOptionalMixin(_ReCaptchaMixinBase):
@@ -68,7 +130,9 @@ class ReCaptchaOptionalMixin(_ReCaptchaMixinBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self._is_recaptcha_enabled():
-            self.fields["captcha"] = ReCaptchaField(widget=ReCaptchaV2Checkbox())
+            self.fields["captcha"] = CheckboxReCaptchaField(
+                widget=ReCaptchaV2Checkbox()
+            )
 
     @staticmethod
     def _is_recaptcha_enabled() -> bool:
@@ -183,10 +247,27 @@ class PublicDeleteDataForm(ReCaptchaOptionalMixin, DeleteDataForm):
     captcha = forms.CharField(required=False, widget=forms.HiddenInput())
 
 
+class IntakeResumeForm(StyledWidgetsMixin, forms.Form):
+    """The email address a resume link asks for before it opens a case."""
+
+    email = forms.EmailField(
+        required=True,
+        max_length=300,
+        label="Email address you used",
+        widget=forms.EmailInput(attrs={"autocomplete": "email"}),
+    )
+
+
 class ShareAppealForm(forms.Form):
+    # The same three fields as DenialRefForm: a case is found by its id, its
+    # email and its secret together, as ChooseAppealForm finds it.
     denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
     email = forms.CharField(required=True, widget=forms.HiddenInput())
-    appeal_text = forms.CharField(required=True)
+    semi_sekret = forms.CharField(required=True, widget=forms.HiddenInput())
+    # The most the assistant's prepare_appeal takes for a letter
+    # (mcp_server.LETTER_MAX_CHARS), well past any real appeal.
+    APPEAL_TEXT_MAX_CHARS = 20_000
+    appeal_text = forms.CharField(required=True, max_length=APPEAL_TEXT_MAX_CHARS)
 
 
 class BaseDenialForm(forms.Form):
@@ -198,11 +279,70 @@ class BaseDenialForm(forms.Form):
     use_external_models = forms.BooleanField(required=False, initial=True)
     denial_text = forms.CharField(required=True)
     email = forms.EmailField(required=True)
-    subscribe = forms.BooleanField(required=False, initial=True)
+    # Unticked until the person ticks it: the site promises no dark patterns.
+    subscribe = forms.BooleanField(required=False, initial=False)
 
 
 class DenialForm(BaseDenialForm):
-    pass
+    # The intake page's "this is for my own appeal" box. Only this form has
+    # it: ProDenialForm is the professional version the box points people to.
+    personalonly = forms.BooleanField(
+        required=True,
+        error_messages={
+            "required": "Please tick the box to confirm this appeal is yours, or for someone you're helping who asked you to."
+        },
+    )
+
+    # What the intake page says about a field it cannot take, in the list at
+    # the top of a page the server sends back, and under the email field when
+    # the address typed is not one it can use. ProDenialForm keeps Django's
+    # words: each form gets its own copy of every field, so these stay here.
+    INTAKE_ERROR_MESSAGES = {
+        "denial_text": {
+            "required": "Please paste your denial letter, or describe what was denied."
+        },
+        "email": {
+            "required": "We need your email to go on.",
+            "invalid": "Please check your email address. It should look like name@example.com.",
+        },
+        "pii": {
+            "required": "Please tick the box to confirm you've taken your personal details out of the letter."
+        },
+        "privacy": {
+            "required": "Please tick the box to confirm you've read the privacy policy."
+        },
+        "tos": {"required": "Please tick the box to agree to the terms of service."},
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, messages in self.INTAKE_ERROR_MESSAGES.items():
+            self.fields[name].error_messages.update(messages)
+        # The page's own label for it, so an error on it names the field the
+        # way the page does.
+        self.fields["zip"].label = "ZIP code"
+
+
+class AssistantTermsForm(ReCaptchaOptionalMixin, DenialForm):
+    """The terms page an assistant's chat link opens (assistant_terms_views.py):
+    the intake form's fields and boxes, who the appeal is for, and a bot check."""
+
+    ON_BEHALF_CHOICES = [
+        ("me", "Me"),
+        (
+            "helping",
+            "Someone I'm helping who asked me to and is fine with this site "
+            "keeping it as the privacy policy says",
+        ),
+    ]
+
+    on_behalf = forms.ChoiceField(
+        choices=ON_BEHALF_CHOICES,
+        required=True,
+        widget=forms.RadioSelect,
+        error_messages={"required": "Please say who this appeal is for."},
+    )
+    captcha = forms.CharField(required=False, widget=forms.HiddenInput())
 
 
 class ProDenialForm(BaseDenialForm):
@@ -345,6 +485,26 @@ class FaxForm(DenialRefForm):
         required=True,
         label="Your appeal letter",
     )
+    # Some of what the blank check finds is not a blank: an acronym in
+    # brackets like [ERISA], a name typed inside the brackets, a line to sign
+    # on. This box, "Send it as it is", says yes to the blanks the page names,
+    # and to the ones the person already said yes to, and to nothing else:
+    # its value is that list (JSON, each blank exactly as the letter has it),
+    # so a ticked box posts the list and an unticked one posts nothing. A
+    # letter with more blanks than a message names is named ten at a time. The appeal page's "Send anyway" posts a list of its own
+    # under the same name, in a hidden field. A letter with blanks is faxed
+    # only when every blank in it is on a posted list.
+    # The box is off the form (see __init__) until clean() holds a letter for
+    # its blanks, so it shows under the letter on the page that names them,
+    # and on no other: a page turned back for something else, like a name of
+    # only spaces, has none. It never comes back ticked.
+    approved_placeholders = forms.BooleanField(
+        required=False,
+        label="Send it as it is: I've checked these are not blanks",
+        label_suffix="",
+        widget=forms.CheckboxInput(check_test=lambda _: False),
+        template_name="partials/check_row_field.html",
+    )
     include_provided_health_history = forms.BooleanField(
         required=False,
         label="Include my health history in the fax",
@@ -352,15 +512,111 @@ class FaxForm(DenialRefForm):
     )
     # Note: we don't have fax_pwyw etc. so we don't overload.
 
+    # How many blanks the person said to fax as they are; 0 when none.
+    placeholders_sent_as_they_are: int = 0
+
+    def __init__(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._send_as_it_is_box = self.fields.pop("approved_placeholders")
+
+    def _approved_placeholders(self) -> set[str]:
+        """Every blank on a list posted as approved: by the ticked box, by
+        "Send anyway", or both. Anything that is not a JSON list of strings
+        approves nothing, so a bare "1" or "on" lets no blank through."""
+        name = self.add_prefix("approved_placeholders")
+        getlist = getattr(self.data, "getlist", None)
+        if getlist is not None:
+            posted = getlist(name)
+        else:
+            value = self.data.get(name)
+            posted = value if isinstance(value, list) else [value]
+        approved: set[str] = set()
+        for raw in posted:
+            if not isinstance(raw, str):
+                continue
+            try:
+                values = json.loads(raw)
+            except (ValueError, RecursionError):
+                # Not JSON, or nested past the parser's depth.
+                continue
+            if isinstance(values, list):
+                approved.update(value for value in values if isinstance(value, str))
+        return approved
+
+    def _offer_to_send_as_it_is(self, blanks: list[str]) -> None:
+        """Put the box back on the form, just under the letter, holding
+        exactly ``blanks``."""
+        box = self._send_as_it_is_box
+        box.widget.attrs["value"] = json.dumps(blanks)
+        letter_id = self["completed_appeal_text"].auto_id
+        if letter_id:
+            # The box's label says "these"; a screen reader reads it with
+            # the list of blanks, the letter's error, which has this id.
+            box.widget.attrs["aria-describedby"] = f"{letter_id}_error"
+        fields = list(self.fields.items())
+        names = [name for name, _ in fields]
+        at = (
+            names.index("completed_appeal_text") + 1
+            if "completed_appeal_text" in names
+            else len(fields)
+        )
+        fields.insert(at, ("approved_placeholders", box))
+        self.fields = dict(fields)
+
+    def clean(self) -> typing.Optional[dict[str, typing.Any]]:
+        """A letter with blanks left in it, like [Your Name], is faxed only
+        when the person has said yes to every one of them.
+
+        The insurance company would get the blanks exactly as written. The
+        appeal page's script names them before the form is sent; this holds
+        for a browser that never ran it, and for a blank nobody said yes to.
+        The same pattern list drives both.
+        """
+        cleaned_data = super().clean()
+        text = self.cleaned_data.get("completed_appeal_text")
+        if not text:
+            return cleaned_data
+        blanks = find_placeholders_as_written(text)
+        if not blanks:
+            return cleaned_data
+        approved = self._approved_placeholders()
+        if all(blank in approved for blank in blanks):
+            self.placeholders_sent_as_they_are = len(blanks)
+            return cleaned_data
+        # A long list is named ten at a time, and the box says yes only to
+        # what the person has been shown: the blanks named here, and the
+        # ones they said yes to before, which stay said yes to.
+        to_name = blanks_to_name(text, approved)
+        self._offer_to_send_as_it_is(to_name.send_as_it_is)
+        self.add_error(
+            "completed_appeal_text",
+            forms.ValidationError(
+                "Fill in these blanks before we fax your letter: "
+                f"{describe_placeholders(to_name.shown)}. "
+                "Your insurance company would get them exactly as written. "
+                "Replace each one with your details, or delete it if it "
+                "doesn't apply, then send the fax again. If you've checked "
+                "and these are not blanks, tick the box under your letter to "
+                "send it as it is.",
+                code="unfilled_placeholders",
+            ),
+        )
+        return cleaned_data
+
 
 class EntityExtractForm(DenialRefForm):
     """Entity Extraction form."""
 
 
 class FaxResendForm(forms.Form):
-    fax_phone = forms.CharField(required=True)
-    uuid = forms.UUIDField(required=True, widget=forms.HiddenInput)
-    hashed_email = forms.CharField(required=True, widget=forms.HiddenInput)
+    """The fax follow-up page's form. fax_ref says which of the faxes the
+    session holds the form is for (fax_views.FaxFollowUpView): a random ref
+    that means nothing outside the session, so the form holds no fax ids."""
+
+    # No longer than FaxesToSend.destination, which it is saved into. The
+    # page fills it with the number on file.
+    fax_phone = forms.CharField(required=True, max_length=20, label="Fax number")
+    fax_ref = forms.CharField(required=True, widget=forms.HiddenInput)
 
 
 class BasePostInferedForm(DenialRefForm):
@@ -542,6 +798,16 @@ class FollowUpForm(forms.Form):
 # New form for activating pro users
 class ActivateProForm(forms.Form):
     phonenumber = forms.CharField(required=True)
+
+
+# One reader's label on one letter in the staff letter review
+# (letter_review.py). The template draws its own radios, with the rule's short
+# descriptions and keyboard shortcuts; this only checks what comes back.
+class LetterReviewLabelForm(forms.Form):
+    verdict = forms.ChoiceField(choices=LETTER_REVIEW_VERDICTS)
+    note = forms.CharField(
+        required=False, max_length=LETTER_REVIEW_NOTE_MAX, strip=True
+    )
 
 
 # Form for sending mailing list emails

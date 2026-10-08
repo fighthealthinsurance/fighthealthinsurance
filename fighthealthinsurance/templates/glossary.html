@@ -15,72 +15,68 @@
     <!-- Breadcrumb -->
     <section id="glossary-breadcrumb">
         <nav aria-label="breadcrumb">
-            <ol class="breadcrumb mb-0">
-                <li class="breadcrumb-item"><a href="{% url 'root' %}">Home</a></li>
-                <li class="breadcrumb-item"><a href="{% url 'glossary_index' %}">Glossary</a></li>
-                <li class="breadcrumb-item active" aria-current="page">{{ term.term }}</li>
+            <ol class="fhi-breadcrumbs">
+                <li><a href="{% url 'root' %}">Home</a></li>
+                <li><a href="{% url 'glossary_index' %}">Glossary</a></li>
+                <li aria-current="page">{{ term.term }}</li>
             </ol>
         </nav>
     </section>
 
     <!-- Definition Section -->
-    <section id="glossary-term" class="py-4">
-        <article class="term-article">
+    <section id="glossary-term" class="fhi-section fhi-section-tight">
+        <article class="term-article fhi-stack fhi-stack-loose">
             {% if term.aliases %}
-            <p class="term-aliases text-muted mb-4">
+            <p class="term-aliases fhi-hint">
                 <strong>Also called:</strong>
                 {% for alias in term.aliases %}{{ alias }}{% if not forloop.last %}, {% endif %}{% endfor %}
             </p>
             {% endif %}
 
             <div class="term-definition">
-                <p class="lead">{{ term.definition }}</p>
+                <p class="fhi-lead">{{ term.definition }}</p>
             </div>
         </article>
     </section>
 
     <!-- Related Terms Section -->
     {% if related_terms %}
-    <section id="related-terms" class="py-5 bg-light">
-        <h2 class="mb-4">Related Terms</h2>
-        <div class="row">
+    <section id="related-terms" class="fhi-section fhi-section-alt fhi-stack fhi-stack-loose">
+        <h2>Related Terms</h2>
+        <div class="fhi-cards fhi-cards-roomy">
             {% for related in related_terms %}
-            <div class="col-md-6 mb-3">
-                <a href="{% url 'glossary_term' related.slug %}" class="term-card d-block">
-                    <div class="card h-100">
-                        <div class="card-body">
-                            <h3 class="card-title mb-1">{{ related.term }}</h3>
-                            <p class="card-text text-muted small mb-0">{{ related.short }}</p>
-                        </div>
-                    </div>
-                </a>
-            </div>
+            <a href="{% url 'glossary_term' related.slug %}" class="term-card">
+                <div class="fhi-card">
+                    <h3>{{ related.term }}</h3>
+                    <p class="fhi-note">{{ related.short }}</p>
+                </div>
+            </a>
             {% endfor %}
         </div>
-        <div class="mt-3">
-            <a href="{% url 'glossary_index' %}" class="btn btn-outline-secondary">
+        <div>
+            <a href="{% url 'glossary_index' %}" class="fhi-button fhi-button-neutral">
                 &larr; Back to full glossary
             </a>
         </div>
     </section>
     {% else %}
-    <section id="back-to-glossary" class="py-5 bg-light">
-        <a href="{% url 'glossary_index' %}" class="btn btn-outline-secondary">
+    <section id="back-to-glossary" class="fhi-section fhi-section-alt">
+        <a href="{% url 'glossary_index' %}" class="fhi-button fhi-button-neutral">
             &larr; Back to full glossary
         </a>
     </section>
     {% endif %}
 
     <!-- Final CTA Section -->
-    <section id="final-cta" class="py-5">
-        <div class="text-center">
-            <h2 class="mb-3">Facing This in a Denial Letter?</h2>
-            <p class="lead mb-4">Our free AI-powered tool can help you turn a confusing denial into a compelling appeal letter in minutes.</p>
-            <div class="d-flex justify-content-center gap-3 flex-wrap">
-                <a href="{% url 'scan' %}" class="btn btn-green fhi-btn-lg">
+    <section id="final-cta" class="fhi-section">
+        <div class="fhi-stack fhi-stack-loose fhi-stack-centred">
+            <h2>Facing This in a Denial Letter?</h2>
+            <p class="fhi-lead">Our free AI-powered tool can help you turn a confusing denial into a compelling appeal letter in minutes.</p>
+            <div class="fhi-cluster fhi-cluster-center">
+                <a href="{% url 'scan' %}" class="fhi-button fhi-button-primary fhi-button-large">
                     Start Your Appeal
                 </a>
-                <a href="{% url 'chat' %}" class="btn btn-outline-green fhi-btn-lg">
+                <a href="{% url 'chat' %}" class="fhi-button fhi-button-secondary fhi-button-large">
                     Chat with AI Assistant
                 </a>
             </div>
@@ -88,9 +84,9 @@
     </section>
 
     <!-- Disclaimer Section -->
-    <section id="disclaimer" class="py-4">
-        <div class="glossary-disclaimer disclaimer-box p-3 bg-light border rounded">
-            <p class="text-muted small mb-0">
+    <section id="disclaimer" class="fhi-section fhi-section-tight">
+        <div class="disclaimer-box fhi-disclaimer">
+            <p class="fhi-note">
                 <strong>Disclaimer:</strong> This definition is provided for general educational purposes only and is not legal, medical, or insurance advice. Insurance rules, deadlines, and terminology vary by plan, state, and over time. Always check your own plan documents and confirm current details before acting.
             </p>
         </div>

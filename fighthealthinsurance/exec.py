@@ -1,5 +1,20 @@
+import contextvars
 import os
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any, Callable, TypeVar
+
+_T = TypeVar("_T")
+
+
+class ContextThreadPoolExecutor(ThreadPoolExecutor):
+    """A pool whose work runs in a copy of the submitter's context, so the
+    ML purpose and spend channel variables reach the worker thread."""
+
+    def submit(  # type: ignore[override]
+        self, fn: Callable[..., _T], /, *args: Any, **kwargs: Any
+    ) -> "Future[_T]":
+        context = contextvars.copy_context()
+        return super().submit(context.run, fn, *args, **kwargs)
 
 
 def _pool_size(env_name: str, default: int) -> int:
@@ -17,7 +32,7 @@ def _pool_size(env_name: str, default: int) -> int:
 #
 # NOTE: DB connection-pool sizing in settings.py assumes these caps; update
 # both together.
-executor = ThreadPoolExecutor(
+executor = ContextThreadPoolExecutor(
     max_workers=_pool_size("FHI_INTERACTIVE_EXECUTOR_WORKERS", 24),
     thread_name_prefix="fhi-interactive",
 )
@@ -25,12 +40,12 @@ executor = ThreadPoolExecutor(
 # Background/speculative work (make_appeals run_kind="speculative" and other
 # precompute): deliberately smaller and fully isolated from the interactive
 # pool so precompute can never queue ahead of a waiting user.
-background_executor = ThreadPoolExecutor(
+background_executor = ContextThreadPoolExecutor(
     max_workers=_pool_size("FHI_BACKGROUND_EXECUTOR_WORKERS", 8),
     thread_name_prefix="fhi-background",
 )
 
-pubmed_executor = ThreadPoolExecutor(
+pubmed_executor = ContextThreadPoolExecutor(
     max_workers=_pool_size("FHI_PUBMED_EXECUTOR_WORKERS", 4),
     thread_name_prefix="fhi-pubmed",
 )
@@ -48,7 +63,7 @@ pubmed_executor = ThreadPoolExecutor(
 # depends on may run here -- if it did, saturating this pool with waiting
 # generations would starve the very work those generations are waiting for.
 # That's why the result-cleaner hop below has its own pool.
-bridge_executor = ThreadPoolExecutor(
+bridge_executor = ContextThreadPoolExecutor(
     max_workers=_pool_size("FHI_BRIDGE_EXECUTOR_WORKERS", 32),
     thread_name_prefix="fhi-bridge",
 )
@@ -59,7 +74,7 @@ bridge_executor = ThreadPoolExecutor(
 # bridge_executor -- putting these there would let saturation deadlock the
 # whole generation pipeline until its deadline (see invariant above). Small
 # and dedicated; tasks here depend on nothing but the network.
-cleaner_executor = ThreadPoolExecutor(
+cleaner_executor = ContextThreadPoolExecutor(
     max_workers=_pool_size("FHI_CLEANER_EXECUTOR_WORKERS", 8),
     thread_name_prefix="fhi-cleaner",
 )
@@ -68,7 +83,7 @@ cleaner_executor = ThreadPoolExecutor(
 # cache miss, each bounded by its own timeout and all of them by one budget.
 # Its own pool so a slow kffhealthnews.org can never occupy a thread that
 # generation, bridging or cleaning depends on.
-health_news_executor = ThreadPoolExecutor(
+health_news_executor = ContextThreadPoolExecutor(
     max_workers=_pool_size("FHI_HEALTH_NEWS_EXECUTOR_WORKERS", 3),
     thread_name_prefix="fhi-health-news",
 )

@@ -4,25 +4,28 @@ Thank you!
 {% endblock title %}
 
 {% load compress %}
+{% load bundles %}
 {% load static %}
 
 {% block scriptmagic %}
 <script type="module">
-  import * as main from '{% static "js/dist/scrub.bundle.js" %}';
+  import * as main from '{% bundle "scrub" %}';
 </script>
 {% endblock scriptmagic %}
 {% block content %}
-<h2>Thank you for your feedback</h2>
+<div class="fhi-page">
+{% include "partials/page_title.html" with title="Thank you for your feedback" %}
+<div class="fhi-stack">
 <p>
   Your feedback helps us improve for the future.
 </p>
 <p>
-  <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="section-btn btn btn-default smoothScroll" id="support-our-dev-button" target="_blank" rel="noopener noreferrer">
+  <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="fhi-button fhi-button-primary" id="support-our-dev-button" target="_blank" rel="noopener noreferrer">
     Support our Development (optional)
   </a>
 </p>
 
-<div class="container">
-  {% include 'partials/share_buttons.html' %}
+{% include 'partials/share_buttons.html' %}
+</div>
 </div>
 {% endblock content %}

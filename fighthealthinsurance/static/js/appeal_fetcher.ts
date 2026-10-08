@@ -254,7 +254,11 @@ function createStatusIndicator(): HTMLElement {
       border: 2px solid #ADD100;
       border-top-color: transparent;
       border-radius: 50%;
-      animation: appeal-phase-spin 0.8s linear infinite;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .appeal-phase-spinner {
+        animation: appeal-phase-spin 0.8s linear infinite;
+      }
     }
   `;
   document.head.appendChild(style);
@@ -635,7 +639,7 @@ function applyRanking(final: boolean): void {
     if (final) {
       const note = document.createElement("p");
       note.id = "appeal-ranking-note";
-      note.className = "text-muted";
+      note.className = "fhi-hint";
       note.style.margin = "8px 20px";
       note.textContent = RANKING_CAPTION_UNRANKED;
       byArrival[0].before(note);
@@ -656,7 +660,7 @@ function applyRanking(final: boolean): void {
 
     const note = document.createElement("p");
     note.id = "appeal-ranking-note";
-    note.className = "text-muted";
+    note.className = "fhi-hint";
     note.style.margin = "8px 20px";
     note.textContent = partialAtEnd ? RANKING_CAPTION_PARTIAL : RANKING_CAPTION;
     first.before(note);
@@ -694,7 +698,7 @@ function applyRanking(final: boolean): void {
   const button = document.createElement("button");
   button.id = "appeal-show-more";
   button.type = "button";
-  button.className = "btn btn-outline-secondary";
+  button.className = "fhi-button fhi-button-neutral";
   button.style.margin = "8px 20px 24px";
   button.textContent = `Show ${hidden.length} more draft${hidden.length === 1 ? "" : "s"}`;
   button.setAttribute("aria-expanded", "false");

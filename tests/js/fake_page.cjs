@@ -63,6 +63,18 @@ class FakeElement {
     return this.attributes[name];
   }
 
+  // An input's type the way a browser reports it: lowercased, and "text"
+  // when the markup gives none. Other elements report what was set.
+  get type() {
+    const type = this.attributes.type;
+    if (this.tagName !== 'INPUT') return type;
+    return type ? String(type).toLowerCase() : 'text';
+  }
+
+  set type(value) {
+    this.attributes.type = String(value);
+  }
+
   removeAttribute(name) {
     if (name === 'id') this.id = '';
     else if (name === 'class') this.className = '';
@@ -72,6 +84,15 @@ class FakeElement {
 
   querySelector(selector) {
     return this.querySelectorAll(selector)[0] || null;
+  }
+
+  // This element or the nearest one around it that the selector matches.
+  closest(selector) {
+    const match = matcher(selector);
+    for (let node = this; node && node.nodeType === 1; node = node.parentNode) {
+      if (match(node)) return node;
+    }
+    return null;
   }
 
   querySelectorAll(selector) {
@@ -175,7 +196,14 @@ class FakeElement {
   requestSubmit() {
     this.page.movedThePerson.push(describe(this) + '.requestSubmit()');
   }
-  focus() {}
+  focus() {
+    this.page.focused = this;
+  }
+  // A textarea's selection, held the way the browser holds it.
+  setSelectionRange(start, end) {
+    this.selectionStart = start;
+    this.selectionEnd = end;
+  }
 }
 
 function describe(el) {
@@ -366,7 +394,7 @@ const ESCALATION_MARKUP = `
   <form action="/choose-escalation-letter/" method="post">
     <input type="hidden" name="escalation_uuid" value="" />
     <textarea name="letter_text" class="appeal_text"></textarea>
-    <button type="submit" class="btn btn-green">Save and review this letter</button>
+    <button type="submit" class="fhi-button fhi-button-primary">Save and review this letter</button>
   </form>
 </div>
 `;

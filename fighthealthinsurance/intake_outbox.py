@@ -49,6 +49,7 @@ OUTCOME_CLAIMED = "claimed"
 OUTCOME_SKIPPED_COMPLETED = "skipped_completed"
 OUTCOME_SENT = "sent"
 OUTCOME_SMTP_FAILED = "smtp_failed"
+OUTCOME_NOT_BUILT = "not_built"
 
 # Retry backoff for a failed delivery: 30s doubling per attempt, capped at
 # one hour; rows are never dropped.

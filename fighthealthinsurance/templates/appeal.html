@@ -1,8 +1,9 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 {% block scriptmagic %}
 <script type="module">
-  import * as main from '{% static "js/dist/appeal.bundle.js" %}';
+  import * as main from '{% bundle "appeal" %}';
 </script>
 <script src="{% static 'js/pwyw.js' %}"></script>
 {# UET tracking for Stripe links handled by base.html #}
@@ -12,23 +13,41 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
 {% endblock title %}
 
 {% block content %}
-<div class="container" style="padding-top:1rem;">
-  <!-- Progress indicator -->
-  {% include 'partials/flow_progress.html' with current_step=current_step|default:8 %}
-  <h1 class="h2">Send your appeal</h1>
-</div>
+<div class="container-narrow">
+<!-- Progress indicator -->
+{% include 'partials/flow_progress.html' with current_step=current_step|default:8 %}
+<h1 class="fhi-step-title">Send your appeal</h1>
 
-<div class="alert-box alert-success">
-  <h2 class="h3">🎉 Your Appeal is Ready!</h2>
+{% if fax_payment_cancelled %}
+{% comment %}
+Back from a cancelled fax payment (FaxPaymentCancelledView). The fax was
+started when Fax My Appeal was pressed, before the checkout page opened, so
+cancelling paid for nothing and stopped nothing. Say both plainly.
+{% endcomment %}
+<div class="alert-box alert-box-info" role="status">
+  <h2 class="fhi-callout-title">You cancelled the payment, so nothing was charged</h2>
+  {% if fax_status == "sent" %}
+  <p>Your fax has already gone through to your insurance company. Paying is optional, so it went out either way.</p>
+  {% elif fax_status == "failed" %}
+  <p>Your fax didn't go through. You can try again below, or print your letter and mail it.</p>
+  {% else %}
+  <p>Your fax is still on its way. We started sending it when you pressed Fax My Appeal, and paying is optional, so it goes out either way.</p>
+  {% endif %}
+  <p>Your letter is below, just as you sent it.</p>
+</div>
+{% else %}
+<div class="alert-box alert-box-success">
+  <h2 class="fhi-callout-title">🎉 Your Appeal is Ready!</h2>
   <p style="font-size:1.1rem;"><strong>Thank you for trusting us to help you fight your denial.</strong> We've drafted your appeal letter below. Please review and improve it with your personal details and story, then submit it to your insurance company!</p>
 </div>
+{% endif %}
 
-<div class="alert-box alert-danger">
+<div class="alert-box alert-box-danger">
   <h3>⚠️ Save a Copy RIGHT NOW!</h3>
   <p style="font-size:1.05rem;"><strong>Before you do anything else, save a copy of your appeal!</strong> Computers can crash, browsers can freeze, and connections can drop. Copy the text below and save it somewhere safe (email it to yourself, save to a document, etc.) so you don't lose your work.</p>
 </div>
 
-<div class="alert-box alert-warning">
+<div class="alert-box alert-box-warning">
   <h4 style="margin-bottom:1rem;">📋 What to Do Next - Simple 2-Step Process:</h4>
   <div style="margin-left: 1.5rem;">
     <p style="margin:0.5rem 0;"><strong>Step 1:</strong> Review, edit, and improve the appeal letter below - add your personal information and any additional details that strengthen your case</p>
@@ -36,23 +55,14 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   </div>
 </div>
 
-<div class="appeal-donate-wrapper donate-wrapper">
-  <p style="color: #333; margin-bottom: 1rem;">
-    <strong>💙 Help us help others:</strong> Fight Health Insurance is completely free. If we've helped you, please consider supporting our work so we can help more people:
-    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="section-btn btn btn-default smoothScroll" id="support-our-dev-button" target="_blank" rel="noopener noreferrer">
-      Pay What You Want (optional)
-    </a>
-  </p>
-  {% include 'partials/pwyw_panel.html' %}
-</div>
-
 <h3 class="section-header">Step 1: Review, Edit, and Improve Your Appeal</h3>
 <p style="font-size:1.05rem;"><strong>Important:</strong> Take time to review and edit the appeal letter below. Click the "Fill in your PII" button to add your personal information (name, address, etc.), and feel free to add or modify any details that strengthen your case. The more personalized and detailed your appeal, the better!</p>
 
-<form action="{% url 'share_appeal' %}" method="post" class="col-md-12 d-flex flex-column align-items-center">
+<form action="{% url 'share_appeal' %}" method="post" class="fhi-stack">
   {% csrf_token %}
   <input type="hidden" name="email" value="{{ user_email }}">
   <input type="hidden" name="denial_id" value="{{ denial_id }}">
+  {% if semi_sekret %}<input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">{% endif %}
   
   <textarea class="appeal_text fhi-field" name="appeal_text" id="scrubbed_appeal_text">
     {{appeal}}
@@ -63,59 +73,59 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
 <div id="pii-panel" class="alert-box" style="background:#f0f7ff; border:1px solid #b3d4fc; padding:1.25rem; margin:1rem 0;">
   <h4 style="margin-top:0;">Your Personal Information</h4>
   <p style="font-size:0.95rem; color:#555; margin-bottom:1rem;">These values will be used to fill in placeholders in your appeal letter. Please verify and correct them before clicking the button below.</p>
-  <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem 1.5rem;">
-    <div>
-      <label for="pii_fname" class="form-label" style="font-weight:600; font-size:0.9rem;">First Name</label>
+  <div class="fhi-cards">
+    <div class="fhi-field-group">
+      <label for="pii_fname" class="fhi-label" style="font-weight:600; font-size:0.9rem;">First Name</label>
       <input type="text" id="pii_fname" class="fhi-field" placeholder="Your first name">
     </div>
-    <div>
-      <label for="pii_lname" class="form-label" style="font-weight:600; font-size:0.9rem;">Last Name</label>
+    <div class="fhi-field-group">
+      <label for="pii_lname" class="fhi-label" style="font-weight:600; font-size:0.9rem;">Last Name</label>
       <input type="text" id="pii_lname" class="fhi-field" placeholder="Your last name">
     </div>
-    <div>
-      <label for="pii_phone" class="form-label" style="font-weight:600; font-size:0.9rem;">Phone Number</label>
+    <div class="fhi-field-group">
+      <label for="pii_phone" class="fhi-label" style="font-weight:600; font-size:0.9rem;">Phone Number</label>
       <input type="tel" id="pii_phone" class="fhi-field" placeholder="e.g. (555) 123-4567">
     </div>
-    <div>
-      <label for="pii_email" class="form-label" style="font-weight:600; font-size:0.9rem;">Email</label>
+    <div class="fhi-field-group">
+      <label for="pii_email" class="fhi-label" style="font-weight:600; font-size:0.9rem;">Email</label>
       <input type="email" id="pii_email" class="fhi-field" placeholder="your@email.com">
     </div>
-    <div style="grid-column: 1 / -1;">
-      <label for="pii_street" class="form-label" style="font-weight:600; font-size:0.9rem;">Street Address</label>
+    <div class="fhi-field-group" style="grid-column: 1 / -1;">
+      <label for="pii_street" class="fhi-label" style="font-weight:600; font-size:0.9rem;">Street Address</label>
       <input type="text" id="pii_street" class="fhi-field" placeholder="123 Main St">
     </div>
-    <div>
-      <label for="pii_city" class="form-label" style="font-weight:600; font-size:0.9rem;">City</label>
+    <div class="fhi-field-group">
+      <label for="pii_city" class="fhi-label" style="font-weight:600; font-size:0.9rem;">City</label>
       <input type="text" id="pii_city" class="fhi-field" placeholder="City">
     </div>
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
-      <div>
-        <label for="pii_state" class="form-label" style="font-weight:600; font-size:0.9rem;">State</label>
+      <div class="fhi-field-group">
+        <label for="pii_state" class="fhi-label" style="font-weight:600; font-size:0.9rem;">State</label>
         <input type="text" id="pii_state" class="fhi-field" placeholder="CA">
       </div>
-      <div>
-        <label for="pii_zip" class="form-label" style="font-weight:600; font-size:0.9rem;">Zip</label>
+      <div class="fhi-field-group">
+        <label for="pii_zip" class="fhi-label" style="font-weight:600; font-size:0.9rem;">Zip</label>
         <input type="text" id="pii_zip" class="fhi-field" placeholder="94103">
       </div>
     </div>
-    <div>
-      <label for="pii_subscriber_id" class="form-label" style="font-weight:600; font-size:0.9rem;">Subscriber ID</label>
+    <div class="fhi-field-group">
+      <label for="pii_subscriber_id" class="fhi-label" style="font-weight:600; font-size:0.9rem;">Subscriber ID</label>
       <input type="text" id="pii_subscriber_id" class="fhi-field" placeholder="From your insurance card">
     </div>
-    <div>
-      <label for="pii_group_id" class="form-label" style="font-weight:600; font-size:0.9rem;">Group ID</label>
+    <div class="fhi-field-group">
+      <label for="pii_group_id" class="fhi-label" style="font-weight:600; font-size:0.9rem;">Group ID</label>
       <input type="text" id="pii_group_id" class="fhi-field" placeholder="From your insurance card">
     </div>
   </div>
 </div>
 
-<button id="descrub" class="btn btn-green" style="font-size:1.1rem; padding:12px 24px; margin:1rem 0;">
+<button id="descrub" class="fhi-button fhi-button-primary" style="margin:1rem 0;">
   ✏️ Fill in your PII (Personal Information)
 </button>
 
 <h3 class="section-header section-header-spacing">Step 2: Send Your Appeal to Your Insurance Company</h3>
 
-<div class="alert-box alert-info">
+<div class="alert-box alert-box-info">
   <h4 style="margin-bottom:1rem;">📬 How to Submit Your Appeal - Choose What Works Best For You:</h4>
   <p style="margin:0.5rem 0;">Your denial letter should include the mailing address or fax number where you need to send your appeal. Choose one of these options:</p>
 </div>
@@ -128,11 +138,16 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   <p class="option-note">
     <strong>Note:</strong> When we fax for you, your completed appeal (including personal information) is temporarily stored on our servers and our fax partner's servers to complete the transmission.
   </p>
+  {% if fax_payment_cancelled and fax_status != "failed" %}
+  <p class="option-note">
+    <strong>{% if fax_status == "sent" %}Your fax already went through.{% else %}We're already sending your fax.{% endif %}</strong> Only send it again if you changed the letter or the fax number, because this sends a second copy.
+  </p>
+  {% endif %}
 
-<form action="{% url 'stagefaxview' %}" method="post" class="col-md-12 d-flex flex-column align-items-center form-wrapper">
+<form action="{% url 'stagefaxview' %}" method="post" class="fhi-stack form-wrapper">
   {% csrf_token %}
   {{fax_form}}
-  <div class="fax-pwyw-group" aria-label="Fax price (optional, pay what you want)" style="margin:1rem 0;">
+  <div class="fax-pwyw-group" aria-label="Fax price (optional, pay what you want)">
     <label><input type="radio" name="fax_pwyw" value="0" checked>$0 <small>Need it free</small></label>
     <label><input type="radio" name="fax_pwyw" value="5">$5 <small>Original price</small></label>
     <label><input type="radio" name="fax_pwyw" value="10">$10 <small>Keep lights on</small></label>
@@ -141,8 +156,8 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
     </label>
   </div>
   <input type="hidden" name="fax_amount" value="0">
-  <button id="fax_appeal" class="btn-green" style="font-size:1.1rem; padding:12px 24px;">
-    📠 Fax My Appeal (Pay What You Want)
+  <button id="fax_appeal" class="fhi-button fhi-button-primary">
+    📠 {% if fax_payment_cancelled %}Fax It Again{% else %}Fax My Appeal{% endif %} (Pay What You Want)
   </button>
 </form>
 </div>
@@ -153,7 +168,7 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
     Click the "Print Appeal" button below to print your appeal letter. Then mail it to the address shown on your denial letter.
     <strong>We recommend using certified mail</strong> so you have proof of delivery.
   </p>
-  <button id="print_appeal" class="btn" style="font-size:1.1rem; padding:12px 24px; margin-left:1.5rem;">
+  <button id="print_appeal" class="fhi-button fhi-button-secondary" style="margin-left:1.5rem;">
     🖨️ Print My Appeal (to mail yourself)
   </button>
 </div>
@@ -174,7 +189,7 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   </p>
 </div>
 
-<div class="alert-box alert-info" style="margin:2rem 0; border-left:4px solid #ADD100;">
+<div class="alert-box alert-box-info" style="margin:2rem 0; border-left:4px solid #ADD100;">
   <h4 style="margin-bottom:0.75rem;">📣 Want to let the regulator know what's going on?</h4>
   <p style="margin:0.5rem 0;">
     Sometimes the most effective thing you can do alongside an internal appeal is
@@ -183,12 +198,12 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
     ERISA self-funded plans) the <strong>U.S. Department of Labor's EBSA</strong>.
     We'll draft regulator-friendly letters you can edit and send.
   </p>
-  <form action="{% url 'escalation_packet' %}" method="post" target="_blank" style="margin:0.75rem 0;">
+  <form class="fhi-stack" action="{% url 'escalation_packet' %}" method="post" target="_blank" style="margin:0.75rem 0;">
     {% csrf_token %}
     <input type="hidden" name="email" value="{{ user_email }}">
     <input type="hidden" name="denial_id" value="{{ denial_id }}">
     {% if semi_sekret %}<input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">{% endif %}
-    <button type="submit" id="generate_escalation_packet" class="btn btn-default" style="font-size:1.05rem; padding:10px 20px;">
+    <button type="submit" id="generate_escalation_packet" class="fhi-button fhi-button-secondary">
       📨 Click here to draft regulator letters (opens in a new window)
     </button>
   </form>
@@ -198,7 +213,7 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   </p>
 </div>
 
-<div class="alert-box alert-warning" style="margin:2rem 0;">
+<div class="alert-box alert-box-warning" style="margin:2rem 0;">
   <h4>💡 Important Reminders:</h4>
   <ul style="margin:0.5rem 0 0 1.5rem; line-height:1.8;">
     <li><strong>Save a copy:</strong> Download or save a copy of your completed appeal for your records before submitting. Computers and fax machines can be unreliable!</li>
@@ -217,14 +232,11 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   Generate PDF (limited to 1 page)
 </button>
 -->
-<div class="alert-box alert-success" style="margin:2rem 0; text-align:center;">
+<div class="alert-box alert-box-success" style="margin:2rem 0; text-align:center;">
   <h4>🙏 Thank You for Trusting Fight Health Insurance</h4>
   <p style="font-size:1.05rem;">
-    We're honored to help you fight for the care you deserve. If our service has been helpful, please consider supporting us:
+    We're honored to help you fight for the care you deserve. If our service has been helpful, you can support us below. It's optional, and $0 is fine.
   </p>
-  <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="section-btn btn btn-default smoothScroll" id="support-our-dev-button" target="_blank" rel="noopener noreferrer" style="margin-top:1rem; display:inline-block; padding:10px 20px; font-size:1.05rem;">
-    💙 Support Our Mission (Pay What You Want)
-  </a>
 </div>
 
 <div class="appeal-donate-wrapper donate-wrapper">
@@ -233,11 +245,11 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
 
 <div style="margin:1.5rem 0; display:flex; justify-content:center; gap:1rem; align-items:center;">
   {% if back_url %}
-  <a href="{{ back_url }}" class="btn btn-secondary" style="background:#6c757d; color:white; padding:10px 20px; border-radius:3px; text-decoration:none;">
+  <a href="{{ back_url }}" rel="prev" class="fhi-button fhi-button-neutral">
     ← {{ back_label|default:"Back" }}
   </a>
   {% endif %}
-  <a href="{% url 'scan' %}" class="btn btn-link" style="color:#6c757d; text-decoration:underline; font-size:0.9rem;">
+  <a href="{% url 'scan' %}" class="fhi-button fhi-button-quiet">
     Start over with a new denial
   </a>
 </div>
@@ -248,4 +260,5 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
 <p>
 * We'll do our best to include a summary or abstract if available from PubMed.
 </p>
+</div>
 {% endblock content %}

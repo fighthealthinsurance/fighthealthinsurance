@@ -82,7 +82,7 @@ else
 fi
 
 # BUILDKIT_NO_CLIENT_TOKEN=true
-FHI_VERSION=v0.23.16a
+FHI_VERSION=v0.23.25a
 
 
 MYORG=${MYORG:-totallylegitco}
@@ -340,6 +340,10 @@ kubectl delete raycluster -n totallylegitco raycluster-kuberay --ignore-not-foun
 envsubst < k8s/ray/cluster.yaml | kubectl apply -f -
 
 # Deploy a staging env
+# A Job's pod template can't change, and web-extralink-prefetch keeps its
+# finished run for an hour (ttlSecondsAfterFinished) so its log can be read.
+# Delete the last run first, or a deploy within that hour fails on the apply.
+kubectl delete job web-extralink-prefetch -n totallylegitco --ignore-not-found --timeout=2m
 envsubst < k8s/deploy.yaml | kubectl apply -f -
 
 # The Temporal fax worker (k8s/temporal/worker.yaml) runs the same app image as
@@ -378,6 +382,20 @@ fi
 # not a hook in the web/Ray pods, so a crash there cannot take the relay
 # with it (external review). Inert while the intake flags are off.
 envsubst < k8s/temporal/intake-outbox-cronjob.yaml | kubectl apply -f -
+# Assistant handoff sweep: a CronJob (every 10 minutes, no overlap) that
+# deletes prepare_appeal links past their 2 hours. Applied whatever the MCP
+# flags say, so turning the feature off still empties the table.
+envsubst < k8s/assistant-handoff-sweep-cronjob.yaml | kubectl apply -f -
+# ...and the drafts the chat path keeps for a day, swept hourly.
+envsubst < k8s/assistant-drafts-sweep-cronjob.yaml | kubectl apply -f -
+# ...and its alerts: prepare_appeal refusing at a cap, or live links near the
+# cap (docs/mcp-server.md). Applied whatever the flags say; with the tool off
+# the counts stay at zero and nothing fires.
+if crd_present prometheusrules.monitoring.coreos.com; then
+    kubectl apply -f k8s/assistant-handoff-alerts.yaml
+else
+    echo "WARNING: no PrometheusRule CRD in this cluster -- assistant handoff alerts not installed"
+fi
 # Alerts for the relay itself: a stalled outbox is invisible in worker and
 # web metrics (the events simply stop moving), so backlog age and CronJob
 # success age are the only signals that catch it (external review).

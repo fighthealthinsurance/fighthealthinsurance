@@ -1,0 +1,140 @@
+import {
+  setLocalStorageItemWithTTL,
+  type ScrubberStorageKey,
+} from "./shared";
+import { typedValuePattern } from "./typed_value_pattern";
+
+// The middle column is the storage key, typed so a new rule cannot store
+// under a key that clearFormData does not clear.
+type ScrubRegex = [RegExp, ScrubberStorageKey, string];
+var scrubRegex: ScrubRegex[] = [
+  [
+    new RegExp("patents?:?\\s+(?<token>\\w+)", "gmi"),
+    "name",
+    "Patient: {{FIRST_NAME}} {{LAST_NAME}}",
+  ],
+  [
+    new RegExp("patients?:?\\s+(?<token>\\w+)", "gmi"),
+    "name",
+    "Patient: {{FIRST_NAME}} {{LAST_NAME}}",
+  ],
+  [
+    new RegExp("member:\\s+(?<token>\\w+)", "gmi"),
+    "name",
+    "Member: {{FIRST_NAME}} {{LAST_NAME}}",
+  ],
+  [
+    new RegExp("member:\\s+(?<token>\\w+\\s+\\w+)", "gmi"),
+    "name",
+    "Member: {{FIRST_NAME}} {{LAST_NAME}}",
+  ],
+  [
+    new RegExp("dear\\s+(?<token>\\w+\\s+\\w+)", "gmi"),
+    "name",
+    "Dear {{FIRST_NAME}} {{LAST_NAME}}",
+  ],
+  [
+    new RegExp("dear\\s+(?<token>\\w+\\s+\\w+)\\s*\.?\\w+", "gmi"),
+    "name",
+    "Dear {{FIRST_NAME}} {{LAST_NAME}}",
+  ],
+  [new RegExp("dear\\s+(?<token>\\w+)", "gmi"), "name", "Dear {{FIRST_NAME}} {{LAST_NAME}}"],
+  [
+    new RegExp("Subscriber\\s*ID\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"),
+    "subscriber_id",
+    "Subscriber ID: {{SCSID}}",
+  ],
+  [
+    new RegExp("Group\\s*ID\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"),
+    "group_id",
+    "Group ID: {{GPID}}",
+  ],
+  [
+    new RegExp("Group\\s*.?\\s*:\\s*(?<token>\\w+)", "gmi"),
+    "group_id",
+    "Group ID: {{GPID}}",
+  ],
+  [
+    new RegExp("Subscriber\\s*number\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"),
+    "subscriber_id",
+    "Subscriber ID: {{SCSID}}",
+  ],
+  [
+    new RegExp("Group\\s*number\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"),
+    "group_id",
+    "Group ID: {{GPID}}",
+  ],
+];
+
+// Mapping from store_* input IDs to {{PLACEHOLDER}} format
+const storeIdToPlaceholder: Record<string, string> = {
+  store_fname: "{{FIRST_NAME}}",
+  store_lname: "{{LAST_NAME}}",
+  store_street: "{{ADDRESS}}",
+  store_city: "{{CITY}}",
+  store_state: "{{STATE}}",
+  store_zip: "{{ZIP_CODE}}",
+  email: "{{Your Email Address}}",
+  email_address: "{{Your Email Address}}",
+  subscriber_id: "{{SCSID}}",
+  group_id: "{{GPID}}",
+  phone_number: "{{Your Phone Number}}",
+};
+
+function scrubText(text: string): string {
+  var reservedTokens = [];
+  var nodes = document.querySelectorAll("input");
+  for (let i = 0; i < nodes.length; i++) {
+    var node = nodes[i];
+    // What the person typed is found however the letter spaces it: a typed
+    // "123 Sample Street Apt 4B" matches the street with "Apt 4B" on the
+    // line under it (typed_value_pattern.ts).
+    const pattern = node.id.startsWith("store_") ? typedValuePattern(node.value) : null;
+    if (pattern !== null) {
+      const placeholder = storeIdToPlaceholder[node.id] || `{{${node.id}}}`;
+      reservedTokens.push([new RegExp(pattern, "gi"), placeholder]);
+      for (let j = 0; j < nodes.length; j++) {
+        var secondNode = nodes[j];
+        const together = secondNode.value != "" ? typedValuePattern(node.value + secondNode.value) : null;
+        if (together !== null) {
+          const secondPlaceholder = storeIdToPlaceholder[secondNode.id] || `{{${secondNode.id}}}`;
+          reservedTokens.push([new RegExp(together, "gi"), placeholder + " " + secondPlaceholder]);
+        }
+      }
+    }
+  }
+  // Log only sizes: the raw text and the reserved-token regexes contain PII.
+  console.debug(
+    "scrub: text length",
+    text.length,
+    "reserved tokens",
+    reservedTokens.length,
+    "rules",
+    scrubRegex.length,
+  );
+  for (let i = 0; i < scrubRegex.length; i++) {
+    const match = scrubRegex[i][0].exec(text);
+    if (match !== null) {
+      // I want to use the groups syntax here but it is not working so just index in I guess.
+      // Don't log the match itself -- it is the patient name/ID being scrubbed.
+      console.debug("scrub: rule matched, storing under", scrubRegex[i][1]);
+      // Through the same helper as every other field on the page, so this
+      // respects the "Remember form data" setting and carries the same
+      // expiry. A bare setItem here wrote the name or the member id to the
+      // browser whatever the person had chosen.
+      setLocalStorageItemWithTTL(scrubRegex[i][1], match[1]);
+    }
+    text = text.replace(scrubRegex[i][0], scrubRegex[i][2]);
+  }
+  for (let i = 0; i < reservedTokens.length; i++) {
+    text = text.replace(reservedTokens[i][0], " " + reservedTokens[i][1]);
+  }
+  return text;
+}
+
+export function clean(): void {
+  const denialText = document.getElementById(
+    "denial_text",
+  ) as HTMLTextAreaElement;
+  denialText.value = scrubText(denialText.value);
+}

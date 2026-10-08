@@ -22,17 +22,27 @@ from django.db.models import (
     Value,
 )
 from django.db.models.functions import Coalesce, Lower
-from django.http import HttpResponse, HttpResponseBase, StreamingHttpResponse
+from django.http import (
+    Http404,
+    HttpResponse,
+    HttpResponseBase,
+    HttpResponseForbidden,
+    StreamingHttpResponse,
+)
 from django.shortcuts import redirect, render
 from django.db.models import Q
 from django.utils import timezone
+from django.utils.decorators import method_decorator
 from django.views import View, generic
+from django.views.decorators.cache import never_cache
+from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
 
 import ray
 import requests
 from loguru import logger
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
+from fighthealthinsurance import letter_review
 from fighthealthinsurance.common_view_logic import schedule_follow_ups
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.followup_emails import (
@@ -67,6 +77,10 @@ from fighthealthinsurance.models import (
     Denial,
     FollowUpSched,
     InterestedProfessional,
+    LetterReviewItem,
+    LetterReviewLabel,
+    LetterReviewPacket,
+    LetterReviewReader,
     MailingListSubscriber,
     ModelBackendHealthCheckResult,
     ModelCallAttempt,
@@ -2345,6 +2359,9 @@ class ModelUsageDashboardView(generic.TemplateView):
                     "label": label,
                     "proposed_appeal": proposed,
                     "context_level": self._context_level_stats(since, shown_on_picks),
+                    "prompt_versions": self._prompt_version_stats(
+                        since, shown_on_picks
+                    ),
                     "chooser_appeal": chooser_appeal,
                     "chooser_chat": chooser_chat,
                     "call_attempts": call_attempts.get(slug),
@@ -2385,7 +2402,91 @@ class ModelUsageDashboardView(generic.TemplateView):
         ctx["chat_shadow"] = self._chat_shadow_state()
         ctx["chat_policy"] = self._chat_policy_panel()
         ctx["reply_check"] = self._reply_check_state()
+        ctx["letter_prompts"] = self._letter_prompts_panel()
+        ctx["letter_prompt_saved"] = self.request.GET.get("prompt_saved") == "1"
         return ctx
+
+    @staticmethod
+    def _split_started(rows: List[Any]) -> Optional[datetime.datetime]:
+        """When the newest unbroken run of random-draw rows (half and half or
+        thirds) began, or None when the newest row draws no version at
+        random. ``rows`` is newest first."""
+        from fighthealthinsurance.ml.appeal_prompt_versions import RANDOM_MODES
+
+        started = None
+        for row in rows:
+            if row.mode not in RANDOM_MODES:
+                break
+            started = row.created_at
+        return started
+
+    @classmethod
+    def _letter_prompts_panel(cls) -> Dict[str, Any]:
+        """The appeal prompt switch, its history, and the head-to-head of
+        the current random-draw run (ml/appeal_prompt_stats.py)."""
+        from fighthealthinsurance.ml.appeal_prompt_stats import (
+            MIN_MIXED_PICKS,
+            head_to_head,
+        )
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            MODE_CHOICES,
+            MODE_ORIGINAL,
+            MODE_VERSIONS,
+            OUTPUT_CONTRACT,
+            current_letter_prompt_mode,
+        )
+        from fighthealthinsurance.models import LetterPromptMode
+
+        history = list(LetterPromptMode.objects.order_by("-created_at", "-id")[:200])
+        saved_mode = history[0].mode if history else MODE_ORIGINAL
+        split_started = cls._split_started(history)
+        pairs = None
+        if split_started:
+            # The pairs the current mode draws, waiting for picks or not, and
+            # any other pair the run has picks for (from an earlier mode in
+            # the same run).
+            drawn = MODE_VERSIONS.get(saved_mode, ())
+            pairs = [
+                h2h
+                for h2h in head_to_head(split_started)
+                if h2h.picks or (h2h.first in drawn and h2h.second in drawn)
+            ]
+        return {
+            "mode_choices": MODE_CHOICES,
+            "saved_mode": saved_mode,
+            "this_pod_mode": current_letter_prompt_mode(),
+            "history": history[:10],
+            "split_started": split_started,
+            "head_to_head": pairs,
+            "min_mixed_picks": MIN_MIXED_PICKS,
+            "output_contract": OUTPUT_CONTRACT,
+        }
+
+    def post(self, request, *args, **kwargs):
+        """Change the appeal prompt setting: a new LetterPromptMode row."""
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            MODE_CHOICES,
+            reset_letter_prompt_mode_cache,
+        )
+        from fighthealthinsurance.models import LetterPromptMode
+
+        mode = (request.POST.get("mode") or "").strip()
+        if mode not in {m for m, _label in MODE_CHOICES}:
+            return HttpResponse(
+                "Choose original, new, half and half, sectioned or thirds.",
+                status=400,
+            )
+        note = (request.POST.get("note") or "").strip()[:500]
+        LetterPromptMode.objects.create(
+            mode=mode,
+            changed_by=request.user if request.user.is_authenticated else None,
+            changed_by_username=getattr(request.user, "username", "") or "",
+            note=note,
+        )
+        # This pod sees the change at once; the others within the cache time.
+        reset_letter_prompt_mode_cache()
+        logger.info(f"Staff {request.user} set the letter prompt mode to {mode}")
+        return redirect(f"{request.path}?prompt_saved=1#letter-prompts")
 
     @staticmethod
     def _reply_check_state() -> Dict[str, Any]:
@@ -2548,7 +2649,7 @@ class ModelUsageDashboardView(generic.TemplateView):
             {
                 "counter": name,
                 "amount": amount,
-                "calls": name.startswith(spend.AZURE + ":"),
+                "calls": spend.is_count(name),
             }
             for name, amount in summary.items()
         ]
@@ -2835,6 +2936,74 @@ class ModelUsageDashboardView(generic.TemplateView):
             bucket["scorer"] = latest
             del bucket["sum"]
         return out
+
+    @staticmethod
+    def _prompt_version_stats(
+        since: Optional[datetime.datetime],
+        shown_on_picks: Optional[
+            Tuple[Counter, Dict[int, Tuple[Optional[str], Optional[str]]]]
+        ] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Chosen/presented/win rate by appeal prompt version, overall and per
+        model, counted exactly as the model and context-level tables count
+        (per draft shown at a pick). Drafts without a version (templates,
+        synthesized letters, rows from before versioning) are left out of
+        both sides, and a pick of one is not counted for either version."""
+        from fighthealthinsurance.ml.appeal_prompt_versions import (
+            PROMPT_VERSION_CHOICES,
+        )
+
+        chosen_qs = ModelUsageDashboardView._chosen_in_window(since)
+        chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
+        presented_qs = ModelUsageDashboardView._presented_before_pick(
+            ProposedAppeal.objects.filter(
+                chosen=False,
+                speculative=False,
+                prompt_version__isnull=False,
+                for_denial_id__in=chosen_denial_ids,
+            ).exclude(prompt_version=""),
+            chosen_qs,
+        )
+        by_version: Counter = Counter()
+        by_model: Counter = Counter()
+        for version, model_name, count in (
+            chosen_qs.filter(prompt_version__isnull=False)
+            .exclude(prompt_version="")
+            .values_list("prompt_version", "model_name")
+            .annotate(c=Count("id"))
+        ):
+            by_version[version] += count
+            by_model[f"{normalize_model_label(model_name)} · {version}"] += count
+        shown_version: Counter = Counter()
+        shown_model: Counter = Counter()
+        shown, _identity = shown_on_picks or ModelUsageDashboardView._shown_on_picks(
+            chosen_qs
+        )
+        ids_shown = sorted(shown)
+        for start in range(0, len(ids_shown), 500):
+            for draft_id, version, model_name in (
+                ProposedAppeal.objects.filter(id__in=ids_shown[start : start + 500])
+                .exclude(prompt_version__isnull=True)
+                .exclude(prompt_version="")
+                .values_list("id", "prompt_version", "model_name")
+            ):
+                times = shown[draft_id]
+                shown_version[version] += times
+                shown_model[f"{normalize_model_label(model_name)} · {version}"] += times
+        for version, model_name, count in presented_qs.values_list(
+            "prompt_version", "model_name"
+        ).annotate(c=Sum("times")):
+            if count:
+                shown_version[version] += count
+                shown_model[f"{normalize_model_label(model_name)} · {version}"] += count
+        readable = dict(PROMPT_VERSION_CHOICES)
+        version_rows = _merge_stats(dict(by_version), dict(shown_version))
+        for row in version_rows:
+            row["label"] = readable.get(row["model_name"], row["model_name"])
+        model_rows = _merge_stats(dict(by_model), dict(shown_model))
+        for row in model_rows:
+            row["label"] = row["model_name"]
+        return {"versions": version_rows, "models": model_rows}
 
     @staticmethod
     def _context_level_stats(
@@ -3216,6 +3385,14 @@ class ModelBackendStatusView(generic.TemplateView):
         names = [r.model_name for r in entries]
         latest_checks = self._latest_check_by_model(names)
         last_generation = self._last_generation_by_model(names)
+        labels = {
+            id(r): self._backend_label(r.router_instance)
+            for r in entries
+            if r.router_instance is not None
+        }
+        newest_per_leg, rows_by_id, serving_history = self._serving_rows(
+            list(labels.values())
+        )
 
         current_deployment = mhc.deployment_id()
         current_environment = mhc.environment_name()
@@ -3278,12 +3455,14 @@ class ModelBackendStatusView(generic.TemplateView):
                     "config_changed": check is not None and check.enabled != r.enabled,
                     "last_generation": last_generation.get(r.model_name),
                     "has_traits": t is not None,
+                    **self._serving_cell(labels.get(id(r)), newest_per_leg, rows_by_id),
                 }
             )
         rows.sort(key=self._row_order)
 
         ctx["title"] = "Model Backend Status"
         ctx["rows"] = rows
+        ctx["serving_history"] = serving_history
         ctx["routing"] = routing
         ctx["current_deployment_id"] = current_deployment
         ctx["current_environment"] = current_environment
@@ -3292,6 +3471,79 @@ class ModelBackendStatusView(generic.TemplateView):
             1 for row in rows if row["last_check"] is not None and row["last_check"].ok
         )
         return ctx
+
+    @staticmethod
+    def _backend_label(instance: Any) -> str:
+        from fighthealthinsurance.generate_appeal import backend_label
+
+        return backend_label(instance)
+
+    @staticmethod
+    def _serving_rows(
+        labels: List[str],
+    ) -> Tuple[Dict[str, List[Any]], Dict[int, Any], List[Any]]:
+        """From the serving registry's table (ml/serving_registry.py): for
+        each backend descriptor in ``labels``, the newest row per leg; those
+        backends' rows by id; and the newest rows of any backend, for the
+        history panel. Database reads only, like the rest of this page."""
+        from fighthealthinsurance.models import ServingIdentity
+
+        # The registry stores the descriptor cut to the column's length.
+        stored = {label[:300]: label for label in labels}
+        newest_per_leg: Dict[str, List[Any]] = {}
+        rows_by_id: Dict[int, Any] = {}
+        seen_legs: set = set()
+        for row in ServingIdentity.objects.filter(backend__in=stored).order_by(
+            "-last_seen", "-id"
+        ):
+            rows_by_id[row.pk] = row
+            leg = (row.backend, row.endpoint, row.model_id)
+            if leg in seen_legs:
+                continue
+            seen_legs.add(leg)
+            newest_per_leg.setdefault(stored[row.backend], []).append(row)
+        history = list(ServingIdentity.objects.order_by("-last_seen", "-id")[:100])
+        return newest_per_leg, rows_by_id, history
+
+    @staticmethod
+    def _serving_cell(
+        label: Optional[str],
+        newest_per_leg: Dict[str, List[Any]],
+        rows_by_id: Dict[int, Any],
+    ) -> Dict[str, Any]:
+        """The Serving column for one backend: what its legs reported in the
+        latest health round this pod recorded. A leg that did not report
+        then (its check failed, or this pod has recorded no round for it)
+        shows its last recorded answer as history, never as current."""
+        from fighthealthinsurance.ml import serving_registry
+
+        current: List[Any] = []
+        reported_at: Optional[datetime.datetime] = None
+        unreported = True
+        if label is not None:
+            latest = serving_registry.this_round(label)
+            if latest is not None:
+                legs, at = latest
+                if legs is not None:
+                    reported_at = at
+                    current = [
+                        rows_by_id[i] for i in legs if i is not None and i in rows_by_id
+                    ]
+                    unreported = len(current) < len(legs)
+        last_recorded: List[Any] = []
+        if label is not None and unreported:
+            reported = {(row.endpoint, row.model_id) for row in current}
+            last_recorded = [
+                row
+                for row in newest_per_leg.get(label, [])
+                if (row.endpoint, row.model_id) not in reported
+            ]
+        return {
+            "serving": current,
+            "serving_reported_at": reported_at,
+            "serving_unreported": unreported,
+            "serving_last_recorded": last_recorded,
+        }
 
     @classmethod
     def _row_group(cls, row: Dict[str, Any]) -> int:
@@ -4179,4 +4431,243 @@ class TemporalUIProxyView(View):
             response["Location"] = (
                 location[len(upstream) :] if location.startswith(upstream) else location
             )
+        return response
+
+
+# ---------------------------------------------------------------------------
+# Letter review (letter_review.py): staff label eval appeal letters, blind.
+#
+# Every page below is scoped to the signed-in reader. A reader reaches only
+# the items assigned to them and only their own labels; anyone else, staff
+# included, gets a 404 that looks the same as a packet that is not there. No
+# page shows another reader's label, which other readers share a letter, a
+# model name or a score (the packet carries none of those), and the pages
+# address a letter by a random slug, never the eval repo's key. Labels leave
+# through the superuser-only export, which stays shut to a superuser who
+# reads the packet until every reader is done, or the letter_review_export
+# command. Sentry never sees these pages' verdicts or notes
+# (sentry_filters.py, LETTER_REVIEW_PATH_PREFIX), and neither does the ADMINS
+# error email: every view here is marked sensitive_variables(), so a report
+# blanks its frame and every frame under it, where letters, prompts and marks
+# sit (letter_review.py marks its helpers the same way).
+# ---------------------------------------------------------------------------
+
+
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
+class LetterReviewIndexView(View):
+    """The packets the signed-in staff member reads, with their own progress.
+
+    A packet they do not read shows its name and how many letters it holds,
+    and nothing else.
+    """
+
+    def get(self, request) -> HttpResponse:
+        mine = {
+            reader.packet_id: reader
+            for reader in LetterReviewReader.objects.filter(user=request.user)
+        }
+        reading = []
+        others = []
+        superuser = request.user.is_superuser
+        for packet in LetterReviewPacket.objects.order_by("-created_at", "-id"):
+            reader = mine.get(packet.pk)
+            if reader is None:
+                total = LetterReviewItem.objects.filter(packet=packet).count()
+                others.append({"packet": packet, "total": total})
+                continue
+            labeled, assigned = letter_review.progress(reader)
+            reading.append(
+                {
+                    "packet": packet,
+                    "labeled": labeled,
+                    "assigned": assigned,
+                    "started": labeled > 0,
+                    "finished": assigned > 0 and labeled >= assigned,
+                    # The export holds the other readers' labels too, so on a
+                    # packet a superuser reads it waits for everyone.
+                    "can_export": letter_review.export_open_to(request.user, packet),
+                }
+            )
+        return render(
+            request,
+            "letter_review_index.html",
+            {
+                "reading": reading,
+                "others": others,
+                "superuser": superuser,
+            },
+        )
+
+
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
+class LetterReviewNextView(View):
+    """Send the reader to their first unlabeled letter, or to the done page."""
+
+    def get(self, request, packet_id: int) -> HttpResponse:
+        reader = letter_review.reader_or_404(packet_id, request.user)
+        item = letter_review.next_unlabeled(reader)
+        if item is None:
+            return redirect("letter_review_done", packet_id=packet_id)
+        return redirect("letter_review_item", packet_id=packet_id, slug=item.slug)
+
+
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
+class LetterReviewMineView(View):
+    """The reader's own letters by number, each with their own mark or none.
+
+    The way back to any earlier letter in one click. It reads only this
+    reader's labels, so it is as blind as the letter pages.
+    """
+
+    def get(self, request, packet_id: int) -> HttpResponse:
+        reader = letter_review.reader_or_404(packet_id, request.user)
+        letters = letter_review.reader_letters(reader)
+        labeled = sum(1 for letter in letters if letter["verdict"])
+        return render(
+            request,
+            "letter_review_mine.html",
+            {
+                "packet": reader.packet,
+                "letters": letters,
+                "labeled": labeled,
+                "assigned": len(letters),
+            },
+        )
+
+
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
+class LetterReviewDoneView(View):
+    """Where a reader lands once every letter assigned to them has a label."""
+
+    def get(self, request, packet_id: int) -> HttpResponse:
+        reader = letter_review.reader_or_404(packet_id, request.user)
+        labeled, assigned = letter_review.progress(reader)
+        return render(
+            request,
+            "letter_review_done.html",
+            {
+                "packet": reader.packet,
+                "labeled": labeled,
+                "assigned": assigned,
+                "remaining": assigned - labeled,
+            },
+        )
+
+
+@method_decorator(never_cache, name="dispatch")
+# A reader's verdict and note never go into an error report: the ADMINS
+# email masks them in the POST and blanks every frame's variables, where the
+# note and the letter's text would otherwise sit.
+@method_decorator(sensitive_post_parameters("verdict", "note"), name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
+class LetterReviewItemView(View):
+    """One letter, the input its writer saw, the rule, and the reader's label.
+
+    GET shows the reader's own label pre-filled when there is one. POST saves
+    it (one label per reader per letter, so a second save changes the first)
+    and moves on to the reader's next unlabeled letter after this one, or to
+    the next-letter redirect when none is left after it. It never lands on a
+    letter already labeled, where an old mark would sit pre-checked.
+    """
+
+    template_name = "letter_review_item.html"
+
+    def _render(
+        self,
+        request,
+        reader: LetterReviewReader,
+        item: LetterReviewItem,
+        form: core_forms.LetterReviewLabelForm,
+        saved: Optional[LetterReviewLabel],
+        *,
+        status: int = 200,
+    ) -> HttpResponse:
+        place, previous_slug, next_slug = letter_review.neighbours(reader, item)
+        labeled, assigned = letter_review.progress(reader)
+        selected = form["verdict"].value()
+        context = {
+            "packet": reader.packet,
+            "item": item,
+            "form": form,
+            "selected": selected,
+            "saved_label": saved.get_verdict_display() if saved else None,
+            "note": form["note"].value() or "",
+            "note_max": letter_review.NOTE_MAX,
+            "verdicts": letter_review.verdict_choices(),
+            "place": place,
+            "assigned": assigned,
+            "labeled": labeled,
+            "previous_slug": previous_slug,
+            "next_slug": next_slug,
+        }
+        return render(request, self.template_name, context, status=status)
+
+    def get(self, request, packet_id: int, slug: str) -> HttpResponse:
+        reader = letter_review.reader_or_404(packet_id, request.user)
+        item = letter_review.item_or_404(reader, slug)
+        label = letter_review.own_label(reader, item)
+        initial = {"verdict": label.verdict, "note": label.note} if label else {}
+        form = core_forms.LetterReviewLabelForm(initial=initial)
+        return self._render(request, reader, item, form, label)
+
+    def post(self, request, packet_id: int, slug: str) -> HttpResponse:
+        reader = letter_review.reader_or_404(packet_id, request.user)
+        item = letter_review.item_or_404(reader, slug)
+        form = core_forms.LetterReviewLabelForm(request.POST)
+        if not form.is_valid():
+            saved = letter_review.own_label(reader, item)
+            return self._render(request, reader, item, form, saved, status=400)
+        letter_review.save_label(
+            reader, item, form.cleaned_data["verdict"], form.cleaned_data["note"]
+        )
+        # The verdict stays out of the log: the review is blind, and staff
+        # read these logs. So does the eval key, which could name the writer.
+        logger.info(
+            f"Staff {request.user} saved a letter review label "
+            f"(packet {packet_id}, item {item.pk})"
+        )
+        following = letter_review.next_unlabeled_after(reader, item)
+        if following is not None:
+            return redirect(
+                "letter_review_item", packet_id=packet_id, slug=following.slug
+            )
+        return redirect("letter_review_next", packet_id=packet_id)
+
+
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
+class LetterReviewExportView(View):
+    """Download a packet's labels JSON. Superusers only.
+
+    Every reader's labels are in it, so a superuser who is also a reader on
+    the packet is refused until every reader has finished: until then it
+    would show them the other reader's marks on the letters they share.
+    """
+
+    def get(self, request, packet_id: int) -> HttpResponse:
+        if not request.user.is_superuser:
+            return HttpResponseForbidden(
+                "Only a superuser can export letter review labels."
+            )
+        packet = LetterReviewPacket.objects.filter(pk=packet_id).first()
+        if packet is None:
+            raise Http404("No such letter review")
+        if not letter_review.export_open_to(request.user, packet):
+            return HttpResponseForbidden(
+                "You read this packet, and the labels hold every reader's "
+                "marks, so they open once every reader has finished."
+            )
+        body = json.dumps(letter_review.export_labels(packet), indent=2) + "\n"
+        response = HttpResponse(body, content_type="application/json")
+        response["Content-Disposition"] = (
+            f'attachment; filename="{letter_review.export_filename(packet)}"'
+        )
+        logger.info(
+            f"Staff {request.user} exported letter review labels for packet "
+            f"{packet.pk}"
+        )
         return response

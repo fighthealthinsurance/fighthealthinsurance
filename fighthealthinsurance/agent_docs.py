@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
+from django.conf import settings
 from django.contrib.staticfiles import finders
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.http import Http404, HttpRequest, HttpResponse
@@ -63,6 +64,11 @@ PAGE_NOTES: dict[str, tuple[str, str]] = {
     "about": ("About us", "who makes this and why it exists"),
     "about-ai": ("About our AI", "how the models are used and what they cannot do"),
     "how-to-help": ("How to help", "ways to support the project"),
+    "ai-assistants": (
+        "Use it with your AI assistant",
+        "how to connect an AI assistant to the MCP server, what it can look up, "
+        "how it can help start an appeal from the chat, and what to keep out",
+    ),
     "faq": ("FAQ", "common questions about appeals and about using the tool"),
     "medicaid-faq": ("Medicaid work requirements FAQ", ""),
     "smtp-domain-faq": (
@@ -73,7 +79,11 @@ PAGE_NOTES: dict[str, tuple[str, str]] = {
         "Denial language library",
         "common phrases insurers use in denials and what they mean",
     ),
-    "preparing-2026": ("Preparing for 2026", "insurance changes to plan for"),
+    "coverage-changes": (
+        "Coverage changes for 2027",
+        "what changes for Marketplace, Medicaid, Medicare and employer plans, "
+        "the dates that matter this fall, and appeal deadlines",
+    ),
     "turning-26": ("Turning 26", "coverage options when you age off a parent's plan"),
     "medicaid-eligibility": ("Medicaid eligibility", ""),
     "other-resources": ("Other resources", "organizations and tools beyond this site"),
@@ -513,6 +523,14 @@ def build_llms_txt() -> str:
         "## Optional",
         "",
         f"- [Sitemap]({CANONICAL_ORIGIN}{reverse('django.contrib.sitemaps.views.sitemap')})",
+    ]
+    if settings.MCP_SERVER_ENABLED:  # mcp_server.py, served from asgi.py
+        lines.append(
+            f"- [MCP server]({CANONICAL_ORIGIN}/mcp): "
+            + _mcp_summary()
+            + f"; setup at {CANONICAL_ORIGIN}/ai-assistants"
+        )
+    lines += [
         "- [Source code](https://github.com/orgs/fighthealthinsurance/repositories): "
         "the tool is open source",
         "- [Substack](https://fighthealthinsurance.substack.com/): newsletter",
@@ -521,6 +539,28 @@ def build_llms_txt() -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def _mcp_summary() -> str:
+    """The llms.txt line for /mcp, naming only the tools that are listed."""
+    from fighthealthinsurance import mcp_server
+
+    reads = (
+        "tools for AI assistants over streamable HTTP, no sign-in, that "
+        "answer from the same public information as these pages"
+    )
+    if mcp_server.chat_path_enabled():
+        return (
+            reads + ". With the person's agreement, they can also load a "
+            "denial letter into the site's appeal form, or have appeal "
+            "letters drafted and brought back to the chat"
+        )
+    if mcp_server.prepare_appeal_enabled():
+        return (
+            reads + ". With the person's agreement, they can also load a "
+            "denial letter into the site's appeal form"
+        )
+    return "read-only " + reads
 
 
 @cache_control(public=True)

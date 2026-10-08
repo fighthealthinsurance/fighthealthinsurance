@@ -6,83 +6,83 @@ Fight Health Insurance Professional Version
 {% load absolute %}
 {% block content %}
 <section id="contact" class="pro-interest-section">
-    <div class="container">
-      <div class="pro-interest-card">
-        <h1 class="pro-interest-title">New Updated Professional Version Available</h1>
-        <p class="pro-interest-lead">
-          We have an exciting new option for professionals (providers, revenue cycle management, pharma, etc.) and we'd love to tell you more! Let us know a little bit about you, your common denials, and we'll be in touch to see how we can best help.
-        </p>
-        <p class="pro-interest-note">
-          Not a professional (e.g. provider's office, appeal specialist, lawyer, etc.) but still ended up here? Don't worry!
-          <a href="{% url 'scan' %}">You can try the regular appeal generator here.</a>
-        </p>
+  <div class="fhi-column fhi-column-wide">
+  <div class="pro-interest-card">
+    <h1 class="pro-interest-title">New Updated Professional Version Available</h1>
+    <p class="pro-interest-lead">
+      We have an exciting new option for professionals (providers, revenue cycle management, pharma, etc.) and we'd love to tell you more! Let us know a little bit about you, your common denials, and we'll be in touch to see how we can best help.
+    </p>
+    <p class="pro-interest-note">
+      Not a professional (e.g. provider's office, appeal specialist, lawyer, etc.) but still ended up here? Don't worry!
+      <a href="{% url 'scan' %}">You can try the regular appeal generator here.</a>
+    </p>
 
-        <form method="post" class="pro-interest-form">
-          {% csrf_token %}
-          {% if form.non_field_errors %}
-          <div class="alert alert-danger" role="alert">{{ form.non_field_errors }}</div>
-          {% endif %}
+    <form method="post" class="pro-interest-form">
+      {% csrf_token %}
+      {% if form.non_field_errors %}
+      <div class="fhi-notice fhi-notice-danger" role="alert">{{ form.non_field_errors }}</div>
+      {% endif %}
 
-          <div class="pro-row">
-            <div class="pro-field">
-              <label for="id_name">Name</label>
-              {{ form.name }}
-              {{ form.name.errors }}
-            </div>
-            <div class="pro-field">
-              <label for="id_job_title_or_provider_type">Job title or provider type</label>
-              {{ form.job_title_or_provider_type }}
-              {{ form.job_title_or_provider_type.errors }}
-            </div>
-          </div>
-
-          <div class="pro-row">
-            <div class="pro-field">
-              <label for="id_email">Email</label>
-              {{ form.email }}
-              {{ form.email.errors }}
-            </div>
-            <div class="pro-field">
-              <label for="id_phone_number">Phone number</label>
-              {{ form.phone_number }}
-              {{ form.phone_number.errors }}
-            </div>
-          </div>
-
-          <div class="pro-field">
-            <label for="id_business_name">Business name</label>
-            {{ form.business_name }}
-            {{ form.business_name.errors }}
-          </div>
-
-          <div class="pro-field">
-            <label for="id_address">Address</label>
-            {{ form.address }}
-            {{ form.address.errors }}
-          </div>
-
-          <div class="pro-field">
-            <label for="id_most_common_denial">Most common denial</label>
-            {{ form.most_common_denial }}
-            {{ form.most_common_denial.errors }}
-          </div>
-
-          <div class="pro-field">
-            <label for="id_comments">Comments</label>
-            {{ form.comments }}
-            {{ form.comments.errors }}
-          </div>
-
-          <div class="pro-field">
-            {{ form.captcha }}
-            {{ form.captcha.errors }}
-          </div>
-
-          <div class="pro-interest-actions">
-            <input class="pro-submit-btn" type="submit" value="Submit">
-          </div>
-        </form>
+      <div class="pro-row">
+        <div class="pro-field">
+          <label for="id_name">Name</label>
+          {{ form.name }}
+          {{ form.name.errors }}
+        </div>
+        <div class="pro-field">
+          <label for="id_job_title_or_provider_type">Job title or provider type</label>
+          {{ form.job_title_or_provider_type }}
+          {{ form.job_title_or_provider_type.errors }}
+        </div>
       </div>
-    </div>
+
+      <div class="pro-row">
+        <div class="pro-field">
+          <label for="id_email">Email</label>
+          {{ form.email }}
+          {{ form.email.errors }}
+        </div>
+        <div class="pro-field">
+          <label for="id_phone_number">Phone number</label>
+          {{ form.phone_number }}
+          {{ form.phone_number.errors }}
+        </div>
+      </div>
+
+      <div class="pro-field">
+        <label for="id_business_name">Business name</label>
+        {{ form.business_name }}
+        {{ form.business_name.errors }}
+      </div>
+
+      <div class="pro-field">
+        <label for="id_address">Address</label>
+        {{ form.address }}
+        {{ form.address.errors }}
+      </div>
+
+      <div class="pro-field">
+        <label for="id_most_common_denial">Most common denial</label>
+        {{ form.most_common_denial }}
+        {{ form.most_common_denial.errors }}
+      </div>
+
+      <div class="pro-field">
+        <label for="id_comments">Comments</label>
+        {{ form.comments }}
+        {{ form.comments.errors }}
+      </div>
+
+      <div class="pro-field">
+        {{ form.captcha }}
+        {{ form.captcha.errors }}
+      </div>
+
+      <div class="pro-interest-actions">
+        <input class="fhi-button fhi-button-primary fhi-button-large" type="submit" value="Submit">
+      </div>
+    </form>
+  </div>
+  </div>
 </section>
 {% endblock content %}

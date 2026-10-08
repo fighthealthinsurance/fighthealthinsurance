@@ -1,13 +1,10 @@
-{% autoescape off %}Hello,
+{% autoescape off %}Hi,
 
-We received a request to delete all data associated with {{ email }}.
+We received a request to delete all data associated with {{ email }}. To confirm the deletion, open the link below.
 
-To confirm this deletion, please click the link below:
-
+Confirm deletion:
 {{ confirmation_link }}
 
-This link will expire in 24 hours. If you did not request this, you can safely ignore this email.
+This link expires in 24 hours. If you didn't make this request, you can safely ignore this email.
 
-Best regards,
-Fight Health Insurance Team
-{% endautoescape %}
+The team at Fight Health Insurance and Timbit{% endautoescape %}

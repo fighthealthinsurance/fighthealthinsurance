@@ -1120,8 +1120,9 @@ def test_crd_probes_do_not_read_an_api_error_as_a_missing_operator():
     # A tripwire, not a fact about the number 5: adding a CRD-gated apply
     # should make someone confirm the new one uses crd_present rather than
     # hand-rolling a probe that swallows errors. Bumped when the Ray
-    # actor-reconcile alerts were added.
-    assert build.count("if crd_present ") == 5
+    # actor-reconcile alerts were added, and again for the assistant
+    # handoff alerts.
+    assert build.count("if crd_present ") == 6
     # The real invariant: every CRD-gated apply goes through the helper, so
     # the count above and the number of guarded blocks agree.
     guarded = build.count("no PrometheusRule CRD") + build.count("no PodMonitor CRD")
@@ -1205,10 +1206,9 @@ def test_temporal_workers_get_enough_memory_for_this_image():
 
 
 def test_backfill_job_has_a_writable_home():
-    """readOnlyRootFilesystem + runAsUser 1000 leaves HOME="/" . Importing the
-    app pulls fighthealthinsurance.urls -> fax_views -> common_view_logic,
-    whose DenialCreatorHelper constructs a uszipcode SearchEngine at CLASS-BODY
-    scope; that constructor mkdir's ~/.uszipcode. With HOME unset the Job
+    """readOnlyRootFilesystem + runAsUser 1000 leaves HOME="/". The uszipcode
+    SearchEngine (built on first use by DenialCreatorHelper._zip_engine, and on
+    import before #1170) mkdir's ~/.uszipcode. With HOME unset the Job
     crash-looped on `OSError: [Errno 30] Read-only file system: '/.uszipcode'`
     before running a single query, and the deploy sat on the backfill gate
     until it timed out. HOME must point at the writable /tmp emptyDir."""

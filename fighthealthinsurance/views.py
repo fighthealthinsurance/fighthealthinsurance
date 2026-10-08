@@ -32,6 +32,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
 from django.utils.decorators import classonlymethod, method_decorator
+from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.views import View, generic
 from django.views.decorators.cache import cache_control, cache_page
@@ -47,7 +48,12 @@ from django_encrypted_filefield.crypt import Cryptographer
 from loguru import logger
 from PIL import Image
 
-from fighthealthinsurance import common_view_logic
+from fighthealthinsurance import (
+    assistant_handoff_views,
+    common_view_logic,
+    consent,
+    intake_resume,
+)
 from fighthealthinsurance import forms as core_forms, models
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
@@ -63,7 +69,15 @@ from fighthealthinsurance.denial_context import (
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
+from fhi_users.fight_paperwork import (
+    PROFESSIONAL_SUBSCRIPTION_PAYMENT_TYPE,
+    UNAVAILABLE_MESSAGE,
+    fight_paperwork_enabled,
+    stripe_event_payment_type,
+    unavailable_response,
+)
 from fighthealthinsurance.log_redaction import session_key_prefix_for_log
+from fighthealthinsurance.ml import denial_triage
 from fighthealthinsurance.media_references import (
     MEDIA_REFERENCES,
     SOCIAL_MEDIA_REFERENCES,
@@ -75,11 +89,14 @@ from fighthealthinsurance.models import (
     StripeRecoveryInfo,
 )
 from fighthealthinsurance.type_utils import User
+from fighthealthinsurance.email_utils import is_blocked_email
 from fighthealthinsurance.utils import (
     is_valid_denial_id,
+    ai_assistants_page_enabled,
     medicaid_eligibility_page_enabled,
     notify_interested_professional,
-    send_fallback_email,
+    build_fallback_email,
+    mask_email_for_logging,
     should_notify_returning_lead,
 )
 
@@ -559,10 +576,12 @@ class HowToHelpView(StaticIshView):
     template_name = "how_to_help.html"
 
 
-class Preparing2026View(StaticIshView):
-    """Landing page helping users prepare for 2026 insurance changes."""
+class CoverageChangesView(StaticIshView):
+    """The yearly guide to coverage changes (currently 2027), at a URL with
+    no year in it. Each fall the template's content moves to the new year;
+    the address stays."""
 
-    template_name = "preparing_2026.html"
+    template_name = "coverage_changes.html"
 
 
 class Turning26View(StaticIshView):
@@ -607,6 +626,42 @@ class MedicaidEligibilityView(StaticIshView):
         # functools.wraps keeps view_class / view_initkwargs / __name__ that
         # Django attaches to the as_view callable and that middleware and
         # URL introspection read.
+        return view
+
+
+class AiAssistantsView(StaticIshView):
+    """How to connect Claude or ChatGPT to the MCP server. 404 while the
+    server is off, checked outside the page cache like MedicaidEligibilityView."""
+
+    template_name = "ai_assistants.html"
+
+    def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
+        from fighthealthinsurance.assistant_drafts import draft_in_chat_enabled
+        from fighthealthinsurance.mcp_server import prepare_appeal_enabled
+
+        context = super().get_context_data(**kwargs)
+        context["prepare_appeal_on"] = prepare_appeal_enabled()
+        context["chat_path_on"] = draft_in_chat_enabled() and bool(
+            getattr(settings, "MCP_HANDOFF_V2_ENABLED", False)
+        )
+        return context
+
+    @classonlymethod
+    def as_view(  # type: ignore[override]
+        cls, **initkwargs: typing.Any
+    ) -> typing.Callable[..., HttpResponseBase]:
+        cached_view = super().as_view(**initkwargs)
+
+        @functools.wraps(cached_view)
+        def view(
+            request: HttpRequest, *args: typing.Any, **kwargs: typing.Any
+        ) -> HttpResponseBase:
+            if not ai_assistants_page_enabled():
+                from django.http import Http404
+
+                raise Http404("This page is not available yet.")
+            return cached_view(request, *args, **kwargs)
+
         return view
 
 
@@ -921,17 +976,16 @@ class ShareAppealView(View):
 
     def post(self, request):
         form = core_forms.ShareAppealForm(request.POST)
-        if form.is_valid():
-            denial_id = form.cleaned_data["denial_id"]
-            hashed_email = models.Denial.get_hashed_email(form.cleaned_data["email"])
-
-            # Update the denial
-            denial = models.Denial.objects.filter(
-                denial_id=denial_id,
-                # Include the hashed e-mail so folks can't brute force denial_id
-                hashed_email=hashed_email,
-            ).get()
-            logger.debug(form.cleaned_data)
+        if not form.is_valid():
+            return HttpResponse(status=400)
+        # The case's id, email and secret together, as ChooseAppealHelper
+        # checks them. The page is the same whether or not a case matches.
+        denial = models.Denial.objects.filter(
+            denial_id=form.cleaned_data["denial_id"],
+            hashed_email=models.Denial.get_hashed_email(form.cleaned_data["email"]),
+            semi_sekret=form.cleaned_data["semi_sekret"],
+        ).first()
+        if denial is not None:
             denial.appeal_text = form.cleaned_data["appeal_text"]
             denial.save()
             # arbitrary_text: what is shared may never have been a draft, so
@@ -942,7 +996,7 @@ class ShareAppealView(View):
                 editted=True,
                 arbitrary_text=True,
             )
-            return render(request, "thankyou.html")
+        return render(request, "thankyou.html")
 
 
 DELETE_CONFIRMATION_SUBJECT = (
@@ -956,12 +1010,20 @@ def send_delete_confirmation_email(email: str, token: str) -> None:
     confirmation_link = (
         f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}/confirm-delete?{params}"
     )
-    send_fallback_email(
+    if is_blocked_email(email):
+        logger.info(
+            f"Skipping delete confirmation to blocked address: "
+            f"{mask_email_for_logging(email)}"
+        )
+        return
+    # To the person alone, with no staff copy: the link carries the token and
+    # the address that confirm the deletion.
+    build_fallback_email(
         DELETE_CONFIRMATION_SUBJECT,
         "delete_data_confirmation",
         {"confirmation_link": confirmation_link, "email": email},
         email,
-    )
+    ).send()
 
 
 def request_data_deletion(email: str) -> None:
@@ -1120,6 +1182,74 @@ class RecommendAppeal(View):
         return render(request, "")
 
 
+def review_form(
+    denial,
+    email: str,
+    procedure,
+    *,
+    date_from_letter: bool,
+    default_condition: str = "",
+) -> core_forms.PostInferedForm:
+    """The review page's form, starting from what the denial row holds.
+
+    Every field the row has a value for starts with it, so the person checks
+    what we know rather than typing it again. On the way forward from reading
+    the letter (``date_from_letter``), the denial date is also read from the
+    letter, on this server and with nothing sent anywhere, when the row has
+    none and the letter states it plainly (see denial_triage.letter_date). A
+    field filled from the letter says so under it. The way back from the next
+    step comes after the person has answered this page, so it shows the row
+    as they left it: a date they cleared stays blank.
+
+    ``default_condition`` is the condition a treatment guide or an assistant
+    handoff carried. It fills the diagnosis only when the row has none
+    (form_valid keeps it).
+    """
+    from_letter = []
+    denial_date = denial.denial_date
+    if denial_date is None and date_from_letter:
+        denial_date = denial_triage.letter_date(
+            denial.denial_text, timezone.localdate()
+        )
+        if denial_date is not None:
+            from_letter.append("denial_date")
+    form = core_forms.PostInferedForm(
+        initial={
+            "denial_type": list(denial.denial_type.all()),
+            "denial_id": denial.denial_id,
+            "email": email,
+            "your_state": denial.your_state,
+            "procedure": procedure,
+            "diagnosis": denial.diagnosis or default_condition,
+            "semi_sekret": denial.semi_sekret,
+            "insurance_company": denial.insurance_company,
+            "plan_id": denial.plan_id,
+            "claim_id": denial.claim_id,
+            "date_of_service": denial.date_of_service,
+            "employer_name": denial.employer_name,
+            "denial_date": denial_date,
+            "plan_source": list(denial.plan_source.all()),
+            "insurance_company_obj": denial.insurance_company_obj_id,
+            "insurance_plan_obj": denial.insurance_plan_obj_id,
+            "denial_type_text": denial.denial_type_text,
+        }
+    )
+    if from_letter:
+        # The partial's own text, autoescaped when it rendered; strip() hands
+        # back a plain str, so it is marked safe again.
+        hint = mark_safe(
+            loader.render_to_string("partials/from_your_letter_hint.html").strip()
+        )
+        for name in from_letter:
+            field = form.fields[name]
+            field.help_text = (
+                format_html("{}<br>{}", field.help_text, hint)
+                if field.help_text
+                else hint
+            )
+    return form
+
+
 class CategorizeReview(View):
     """View for the categorize/review page that supports GET for back navigation."""
 
@@ -1154,21 +1284,12 @@ class CategorizeReview(View):
             procedure = default_procedure
             used_default_procedure = True
 
-        # Build the PostInferedForm with denial data
-        form = core_forms.PostInferedForm(
-            initial={
-                "denial_type": list(denial.denial_type.all()),
-                "denial_id": denial.denial_id,
-                "email": email,
-                "your_state": denial.your_state,
-                "procedure": procedure,
-                "diagnosis": denial.diagnosis,
-                "semi_sekret": denial.semi_sekret,
-                "insurance_company": denial.insurance_company,
-                "plan_id": denial.plan_id,
-                "claim_id": denial.claim_id,
-                "date_of_service": denial.date_of_service,
-            }
+        form = review_form(
+            denial,
+            email,
+            procedure,
+            date_from_letter=False,
+            default_condition=request.session.get("default_condition", ""),
         )
 
         context = {
@@ -1267,6 +1388,7 @@ class FindNextSteps(View):
                     f"supplied email/semi_sekret; redirecting to scan"
                 )
                 return redirect("scan")
+            intake_resume.note_step(denial_id, "find_next_steps")
             denial_ref_form = core_forms.DenialRefForm(
                 initial={
                     "denial_id": denial_id,
@@ -1366,6 +1488,37 @@ class FindNextStepsLoading(View):
         )
 
 
+def add_pubmed_article_fields(
+    fax_form, candidate_articles, chosen_pmids: typing.Optional[set[str]] = None
+) -> None:
+    """Offer up to six PubMed articles on the fax form, one box each.
+
+    Every box starts ticked on the first visit. ``chosen_pmids`` is for the
+    page a cancelled fax payment returns to: it ticks only the articles the
+    person had left ticked, so sending again sends what they chose.
+    """
+    if candidate_articles is None:
+        return
+    for article in candidate_articles[0:6]:
+        pmid = article.pmid or ""
+        if not pmid:
+            # fax_views.form_valid round-trips the pmid through the key
+            # `pubmed_<pmid>`; without a pmid the submission is useless
+            # and empty keys collide across articles.
+            continue
+        title = article.title or ""
+        link = f"https://www.ncbi.nlm.nih.gov/pubmed/{quote(pmid, safe='')}"
+        label = mark_safe(
+            f"Include Summary* of PubMed Article "
+            f"<a href='{link}'>{html.escape(title)} -- {html.escape(pmid)}</a>"
+        )
+        fax_form.fields["pubmed_" + pmid] = forms.BooleanField(
+            label=label,
+            required=False,
+            initial=True if chosen_pmids is None else pmid in chosen_pmids,
+        )
+
+
 class ChooseAppeal(View):
     """View for selecting and finalizing appeal text before sending."""
 
@@ -1397,25 +1550,7 @@ class ChooseAppeal(View):
             }
         )
         # Add the possible articles for inclusion
-        if candidate_articles is not None:
-            for article in candidate_articles[0:6]:
-                pmid = article.pmid or ""
-                if not pmid:
-                    # fax_views.form_valid round-trips the pmid through the key
-                    # `pubmed_<pmid>`; without a pmid the submission is useless
-                    # and empty keys collide across articles.
-                    continue
-                title = article.title or ""
-                link = f"https://www.ncbi.nlm.nih.gov/pubmed/{quote(pmid, safe='')}"
-                label = mark_safe(
-                    f"Include Summary* of PubMed Article "
-                    f"<a href='{link}'>{html.escape(title)} -- {html.escape(pmid)}</a>"
-                )
-                fax_form.fields["pubmed_" + pmid] = forms.BooleanField(
-                    label=label,
-                    required=False,
-                    initial=True,
-                )
+        add_pubmed_article_fields(fax_form, candidate_articles)
 
         return render(
             request,
@@ -1842,6 +1977,59 @@ class OCRView(View):
 # genuinely different denial still gets a new row.
 DENIAL_SESSION_REUSE_WINDOW = timedelta(hours=24)
 
+# The intake form's fields in the order scrub.html shows them, each with the
+# id of the control a link to it lands on. A page the server sends back lists
+# every error at the top of the form in this order, each a link to its field.
+INTAKE_FIELD_IDS = {
+    "denial_text": "denial_text",
+    "email": "email",
+    "zip": "store_zip",
+    "pii": "pii",
+    "privacy": "privacy",
+    "tos": "tos",
+    "personalonly": "personalonly",
+    "store_raw_email": "store_raw_email",
+    "use_external_models": "use_external_models",
+    "subscribe": "subscribe",
+}
+# scrub.html also has a message under each of these fields, and the form's
+# words for them say which field they are about, so the list gives them
+# without the field's label.
+INTAKE_FIELDS_WITH_A_MESSAGE = frozenset(
+    ("denial_text", "email", "pii", "privacy", "tos", "personalonly")
+)
+
+
+def subscribe_from_appeal_flow(request, email) -> None:
+    """Add the person to the mailing list from an intake form that ticked it."""
+    # Get name from the POST data (it's not stored in cleaned_data for privacy)
+    fname = request.POST.get("fname", "")
+    lname = request.POST.get("lname", "")
+    name = f"{fname} {lname}".strip()
+    referral_source = request.POST.get("referral_source", "")
+    referral_source_details = request.POST.get("referral_source_details", "")
+    defaults = {
+        "comments": "From appeal flow",
+        "referral_source": referral_source,
+        "referral_source_details": referral_source_details,
+    }
+    if len(name) > 2:
+        defaults["name"] = name
+    # Use get_or_create to avoid duplicate subscriptions
+    try:
+        models.MailingListSubscriber.objects.get_or_create(
+            email=email,
+            defaults=defaults,
+        )
+    except Exception as e:
+        logger.debug(f"Error subscribing to mailing list: {type(e).__name__}")
+        try:
+            # Blank values would wipe what an existing subscriber already has.
+            updates = {key: value for key, value in defaults.items() if value}
+            models.MailingListSubscriber.objects.filter(email=email).update(**updates)
+        except Exception as e2:
+            logger.warning(f"Error updating subscriber: {type(e2).__name__}")
+
 
 class InitialProcessView(generic.FormView):
     """
@@ -1853,6 +2041,30 @@ class InitialProcessView(generic.FormView):
 
     template_name = "scrub.html"
     form_class = core_forms.DenialForm
+
+    def post(self, request, *args, **kwargs):
+        # The assistant whose link filled in this form, when the form carries
+        # the key render_site_form kept for it. Read here, used only by
+        # form_valid: a submission sent back with an error keeps the key, and
+        # the page it gets carries it, so the corrected retry still names the
+        # assistant. An earlier review asked that a failed submission not
+        # leave the marks for a later, different case, which is why they were
+        # once cleared before validation; the key does that now, since only a
+        # form carrying it can use it, never the next case the browser sends.
+        self.handoff_context = assistant_handoff_views.handoff_context_for(request)
+        return super().post(request, *args, **kwargs)
+
+    def _continued_case(self) -> typing.Optional[models.Denial]:
+        """The case the flow's Back link to this page names (its ?ref=, from
+        build_back_url), or None for any other visit to /scan."""
+        ref = denial_ref_from_query(self.request)
+        if not ref or not is_valid_denial_id(ref.get("denial_id")):
+            return None
+        return models.Denial.objects.filter(
+            denial_id=ref["denial_id"],
+            semi_sekret=ref["semi_sekret"],
+            hashed_email=models.Denial.get_hashed_email(ref["email"]),
+        ).first()
 
     def get_ocr_result(self) -> typing.Optional[str]:
         if self.request.method == "POST":
@@ -1893,6 +2105,53 @@ class InitialProcessView(generic.FormView):
                     )
 
         context["ocr_result"] = ocr_result
+
+        if self.request.method == "POST":
+            # A form an assistant's link filled in, sent back with an error,
+            # keeps what it carried for the retry: the treatment and the
+            # condition as given (blank too) and the key naming the assistant.
+            if self._defaults_given():
+                context["default_procedure"] = self.request.POST.get(
+                    "default_procedure", ""
+                )
+                context["default_condition"] = self.request.POST.get(
+                    "default_condition", ""
+                )
+                context["defaults_given"] = True
+            handoff = getattr(self, "handoff_context", None)
+            if handoff is not None:
+                context["assistant_form"] = handoff.key
+        else:
+            # The flow's Back link, for a case an assistant's link brought
+            # in: a key naming that assistant for this case alone.
+            continued = self._continued_case()
+            if continued is not None:
+                key = assistant_handoff_views.mark_continued_form(
+                    self.request, continued
+                )
+                if key is not None:
+                    context["assistant_form"] = key
+
+        form = context.get("form")
+        error_summary: list[dict[str, str]] = []
+        if form is not None and form.is_bound:
+            order = list(INTAKE_FIELD_IDS)
+            for name in sorted(
+                form.errors,
+                key=lambda name: order.index(name) if name in order else len(order),
+            ):
+                field_id = INTAKE_FIELD_IDS.get(name, "")
+                label = ""
+                if name in form.fields and name not in INTAKE_FIELDS_WITH_A_MESSAGE:
+                    label = form[name].label
+                error_summary.extend(
+                    {
+                        "field_id": field_id,
+                        "text": f"{label}: {error}" if label else error,
+                    }
+                    for error in form.errors[name]
+                )
+        context["error_summary"] = error_summary
 
         return context
 
@@ -1964,44 +2223,55 @@ class InitialProcessView(generic.FormView):
             )
             return None
 
+    def _assistant_that_brought(self, denial_id: int) -> typing.Optional[str]:
+        """The label of the assistant that brought this case in ("" when its
+        link carried no name), or None when the site did.
+
+        An assistant brought it when this form was one its link filled in
+        ("Open my appeal form", or "Finish on this site instead" on the chat
+        path's terms page), or the flow's Back link rendered for a case one
+        brought in, and carries the key the session kept for it (post()
+        reads it), and that key is not bound to another case
+        (assistant_handoff_views.use_site_form, which binds it to this one).
+        A form without one, a plain /scan form included, names no assistant,
+        even when it reuses a case one brought in: the same email within the
+        reuse window may well be a different denial. The case is still
+        finished here, and the Denial's own channel stays "site": that is
+        what its model spend is counted against (ml/spend.py).
+
+        The label is what the assistant said it was (mcp_server._client_name):
+        analytics only, never an identity, and nothing is allowed or trusted
+        by it."""
+        handoff: typing.Optional[assistant_handoff_views.SiteForm] = getattr(
+            self, "handoff_context", None
+        )
+        if handoff is None:
+            return None
+        if not assistant_handoff_views.use_site_form(self.request, handoff, denial_id):
+            return None
+        return handoff.client
+
+    def _defaults_given(self) -> bool:
+        """Whether this form says what the treatment and condition are, blank
+        meaning none: one an assistant's link filled in
+        (assistant_handoff_views.DEFAULTS_GIVEN_FIELD)."""
+        return (
+            self.request.POST.get(assistant_handoff_views.DEFAULTS_GIVEN_FIELD) == "1"
+        )
+
     def form_valid(self, form):
         # Legacy doesn't have denial id
         cleaned_data = form.cleaned_data
         if "denial_id" in cleaned_data:
             del cleaned_data["denial_id"]
+        # The boxes are recorded against the denial below; personalonly is a
+        # gate on the submission, not something the denial keeps.
+        agreements = {name: cleaned_data.get(name) for name in consent.BOXES}
+        cleaned_data.pop("personalonly", None)
 
         # Handle mailing list subscription
         if cleaned_data.get("subscribe"):
-            email = cleaned_data.get("email")
-            # Get name from the POST data (it's not stored in cleaned_data for privacy)
-            fname = self.request.POST.get("fname", "")
-            lname = self.request.POST.get("lname", "")
-            name = f"{fname} {lname}".strip()
-            referral_source = self.request.POST.get("referral_source", "")
-            referral_source_details = self.request.POST.get(
-                "referral_source_details", ""
-            )
-            defaults = {
-                "comments": "From appeal flow",
-                "referral_source": referral_source,
-                "referral_source_details": referral_source_details,
-            }
-            if len(name) > 2:
-                defaults["name"] = name
-            # Use get_or_create to avoid duplicate subscriptions
-            try:
-                models.MailingListSubscriber.objects.get_or_create(
-                    email=email,
-                    defaults=defaults,
-                )
-            except Exception as e:
-                logger.debug(f"Error subscribing {email} to mailing list: {e}")
-                try:
-                    models.MailingListSubscriber.objects.filter(email=email).update(
-                        **defaults
-                    )
-                except Exception as e2:
-                    logger.warning(f"Error updating subscriber? {email}!?!")
+            subscribe_from_appeal_flow(self.request, cleaned_data.get("email"))
 
         # Get microsite slug from request if available and validate it
         microsite_slug = self.request.POST.get(
@@ -2046,6 +2316,20 @@ class InitialProcessView(generic.FormView):
             denial=existing_denial,
             **cleaned_data,
         )
+        # After, not around, the helper: its outbox work expects no request
+        # transaction, so the record is best effort and never blocks the appeal.
+        brought_by = self._assistant_that_brought(denial_response.denial_id)
+        consent.record_consent(
+            denial_response.denial_id,
+            agreements,
+            channel=(
+                consent.CHANNEL_SITE
+                if brought_by is None
+                else consent.CHANNEL_ASSISTANT
+            ),
+            finish_in=consent.FINISH_ON_SITE,
+            assistant_client=brought_by or "",
+        )
 
         # Store the denial ID in the session to maintain state across the multi-step form process
         # This allows the SessionRequiredMixin to verify the user is working with a valid denial
@@ -2068,6 +2352,7 @@ class InitialProcessView(generic.FormView):
         remember_denial_ref_email(
             self.request.session, denial_response.denial_id, cleaned_data["email"]
         )
+        intake_resume.note_step(denial_response.denial_id, "hh")
 
         # Store microsite data in session for prefilling later in the flow
         default_procedure = self.request.POST.get(
@@ -2088,6 +2373,20 @@ class InitialProcessView(generic.FormView):
             self.request.session["default_condition"] = default_condition
             self.request.session["microsite_slug"] = microsite_slug
             self.request.session["microsite_title"] = microsite_title
+        elif existing_denial is None or self._defaults_given():
+            # A new case started without a guide's or an assistant's
+            # treatment must not inherit one from an earlier case in this
+            # session. A resubmission of the same case (the flow's own Back
+            # link to /scan carries no treatment) keeps it, unless its form
+            # says there is none: a form an assistant's link filled in with
+            # both left blank, or cleared on the terms page.
+            for key in (
+                "default_procedure",
+                "default_condition",
+                "microsite_slug",
+                "microsite_title",
+            ):
+                self.request.session.pop(key, None)
 
         # A resubmission reuses the session's denial, so there can already
         # be history to show.
@@ -2117,7 +2416,15 @@ class InitialProcessView(generic.FormView):
                 "form": form,
                 "next": reverse("hh"),
                 "current_step": 2,
-                "back_url": reverse("scan"),
+                # The reference lets /scan tell the flow's own way back to
+                # this case from a new visit (InitialProcessView).
+                "back_url": build_back_url(
+                    self.request,
+                    "scan",
+                    denial_response.denial_id,
+                    cleaned_data["email"],
+                    denial_response.semi_sekret,
+                ),
             },
         )
 
@@ -2191,18 +2498,6 @@ def session_gate_enforced() -> bool:
     return bool(settings.DEBUG or os.environ.get("TESTING", False))
 
 
-def legacy_denial_ref_query_accepted() -> bool:
-    """Whether a bare (denial_id, email, semi_sekret) query triple still resolves.
-
-    Owner decision, Melanie 2026-09-13: one release, so links already in
-    people's history keep working. While this is True such a link is still a
-    working credential, which is the exposure this scheme exists to end, so
-    set ``LEGACY_DENIAL_REF_QUERY = False`` next release and delete this
-    function and its callers.
-    """
-    return bool(getattr(settings, "LEGACY_DENIAL_REF_QUERY", True))
-
-
 def _denial_ref_fernet(session, create: bool) -> typing.Optional[Fernet]:
     """The cipher for this session's references.
 
@@ -2271,10 +2566,11 @@ def issue_denial_ref_token(
 
     Privacy note. The session keeps the email the later pages post, per case
     (``remember_denial_ref_email``), in the session store, which is base64
-    JSON in django_session and is not encrypted, and which nothing in this
-    repo purges. The case's ``semi_sekret`` is not in the session; it
-    travels only inside the encrypted reference. Full statement in
-    ``docs/back-link-references.md``.
+    JSON in django_session and is not encrypted. Once a session expires,
+    SESSION_COOKIE_AGE after its last save, the daily purge in
+    ``EmailPollingActor._clear_expired_sessions`` deletes its row. The case's
+    ``semi_sekret`` is not in the session; it travels only inside the
+    encrypted reference. Full statement in ``docs/back-link-references.md``.
     """
     if denial_id is None or not email or not semi_sekret:
         return None
@@ -2321,27 +2617,110 @@ def resolve_denial_ref_token(request, token) -> typing.Dict[str, str]:
     }
 
 
+# The way back from a cancelled fax payment is built the same way. Stripe
+# holds the cancel address, and it lands in analytics and access logs once
+# the person is sent back, so it carries no ids: only the staged fax's uuid
+# and hashed email, encrypted with this session's key, so it opens the
+# letter only in the browser that staged the fax. Nothing is stored for it.
+_FAX_CANCEL_REF_KIND = "fax-cancel"
+
+# Stripe keeps a checkout page open for up to a day, so the way back from
+# it has to work for as long.
+FAX_CANCEL_REF_TTL_SECONDS = 24 * 60 * 60
+
+
+def issue_fax_cancel_ref(
+    request,
+    fax_uuid: str,
+    hashed_email: str,
+    *,
+    include_history: bool = False,
+    insurer: typing.Optional[str] = None,
+) -> typing.Optional[str]:
+    """Mint this session's reference to a staged fax, for Stripe's cancel_url.
+
+    It also carries two choices the fax form had that the staged fax does
+    not keep, so the page can put them back: whether the health history went
+    with it, and the insurer as the person typed it. Never their name: the
+    reference travels to Stripe, encrypted or not."""
+    if not fax_uuid or not hashed_email:
+        return None
+    fernet = _denial_ref_fernet(request.session, create=True)
+    if fernet is None:
+        return None
+    payload = json.dumps(
+        {
+            "k": _FAX_CANCEL_REF_KIND,
+            "f": str(fax_uuid),
+            "h": str(hashed_email),
+            "i": bool(include_history),
+            "n": (insurer or "")[:200],
+        }
+    )
+    return fernet.encrypt(payload.encode("utf-8")).decode("ascii")
+
+
+def _fax_cancel_payload(
+    request, token
+) -> typing.Optional[typing.Dict[str, typing.Any]]:
+    """The decrypted cancel reference, or None (see resolve_fax_cancel_ref)."""
+    if not token or not isinstance(token, str):
+        return None
+    fernet = _denial_ref_fernet(request.session, create=False)
+    if fernet is None:
+        return None
+    try:
+        raw = fernet.decrypt(token.encode("utf-8"), ttl=FAX_CANCEL_REF_TTL_SECONDS)
+        payload = json.loads(raw.decode("utf-8"))
+    except (InvalidToken, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("k") != _FAX_CANCEL_REF_KIND:
+        return None
+    return payload
+
+
+def resolve_fax_cancel_ref(request, token) -> typing.Optional[typing.Tuple[str, str]]:
+    """The (fax uuid, hashed email) a cancel reference names, or None.
+
+    None for a string this session never issued, one older than
+    ``FAX_CANCEL_REF_TTL_SECONDS``, and a back link's reference, which this
+    session can decrypt but which names a case, not a fax.
+    """
+    payload = _fax_cancel_payload(request, token)
+    if payload is None:
+        return None
+    fax_uuid = payload.get("f")
+    hashed_email = payload.get("h")
+    if not isinstance(fax_uuid, str) or not isinstance(hashed_email, str):
+        return None
+    if not fax_uuid or not hashed_email:
+        return None
+    return fax_uuid, hashed_email
+
+
+def fax_cancel_ref_choices(request, token) -> typing.Dict[str, typing.Any]:
+    """The fax form's choices a cancel reference carries: whether the health
+    history went with the fax, and the insurer as typed. Empty for anything
+    resolve_fax_cancel_ref would refuse."""
+    payload = _fax_cancel_payload(request, token)
+    if payload is None:
+        return {}
+    insurer = payload.get("n")
+    return {
+        "include_history": payload.get("i") is True,
+        "insurer": insurer if isinstance(insurer, str) and insurer else None,
+    }
+
+
 def denial_ref_from_query(request) -> typing.Dict[str, str]:
     """The case reference a back link carries, as a plain triple.
 
-    Nothing here touches the database; every caller validates the triple the
-    way it already did, and sends {} to ``unresolved_denial_ref_response``.
+    Only ``?ref=`` is read. A query naming ``denial_id``, ``email`` and
+    ``semi_sekret`` directly opens nothing. Nothing here touches the
+    database; every caller validates the triple the way it already did, and
+    sends {} to ``unresolved_denial_ref_response``.
     """
-    token = request.GET.get(DENIAL_REF_QUERY_PARAM)
-    if token:
-        return resolve_denial_ref_token(request, token)
-    if not legacy_denial_ref_query_accepted():
-        return {}
-    denial_id = request.GET.get("denial_id")
-    email = request.GET.get("email")
-    semi_sekret = request.GET.get("semi_sekret")
-    if not denial_id or not email or not semi_sekret:
-        return {}
-    return {
-        "denial_id": str(denial_id),
-        "email": str(email),
-        "semi_sekret": str(semi_sekret),
-    }
+    return resolve_denial_ref_token(request, request.GET.get(DENIAL_REF_QUERY_PARAM))
 
 
 RESUME_HELP_QUERY_PARAM = "resume"
@@ -2355,10 +2734,13 @@ def denial_ref_offered(request) -> bool:
     refusal; reading it as "no link followed" lets it past into the blank form
     this scheme exists to stop serving.
 
-    A bare ``denial_id`` with no email and no secret does not count.
-    ``SessionRequiredMixin`` has always accepted one as a way to seed the
-    session, so counting it would put "your link did not work" in front of
-    people who followed no back link.
+    A query naming ``denial_id``, ``email`` and ``semi_sekret`` together
+    counts too. No page opens a case from those, so that link gets the same
+    explanation as any other that did not open one, rather than a blank step.
+
+    A bare ``denial_id`` with no email and no secret does not count. It
+    opens nothing either, but it was never a back link, so counting it would
+    put "your link did not work" in front of people who followed none.
     """
     if DENIAL_REF_QUERY_PARAM in request.GET:
         return True
@@ -2422,16 +2804,11 @@ class SessionRequiredMixin(View):
             and not request.session.get("denial_id")
         ):
             logger.debug("denial_id not in session, checking POST/GET")
-            # Resolve the reference rather than reading request.GET["denial_id"],
-            # which would reopen the legacy query triple after it is switched off.
+            # Resolve the reference rather than reading request.GET["denial_id"]:
+            # a case id in the query string does not seed the session.
             denial_id = request.POST.get("denial_id") or denial_ref_from_query(
                 request
             ).get("denial_id")
-            if not denial_id and legacy_denial_ref_query_accepted():
-                # A bare denial_id in the query string has always been enough
-                # to seed the session. Nothing builds such a link now, but one
-                # may sit in a history, so it closes with the transition window.
-                denial_id = request.GET.get("denial_id")
             if denial_id:
                 request.session["denial_id"] = denial_id
             else:
@@ -2538,6 +2915,9 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
             denial_response = common_view_logic.DenialCreatorHelper.update_denial(
                 **form.cleaned_data,
             )
+            # update_denial matched the row on the email hash and the secret,
+            # so its id is safe to read the rest of the row by.
+            denial = models.Denial.objects.get(denial_id=denial_response.denial_id)
         except models.Denial.DoesNotExist:
             # Stale ref (deleted denial / mismatched email hash): the GET
             # renders fine because the mixin validates without hashed_email,
@@ -2547,6 +2927,7 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
                 "EntityExtractView: stale denial ref on POST; redirecting to scan"
             )
             return redirect("scan")
+        intake_resume.note_step(denial_response.denial_id, "categorize_review")
 
         email = form.cleaned_data["email"]
 
@@ -2561,20 +2942,12 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
             procedure = default_procedure
             used_default_procedure = True
 
-        new_form = core_forms.PostInferedForm(
-            initial={
-                "denial_type": denial_response.selected_denial_type,
-                "denial_id": denial_response.denial_id,
-                "email": email,
-                "your_state": denial_response.your_state,
-                "procedure": procedure,
-                "diagnosis": denial_response.diagnosis,
-                "semi_sekret": denial_response.semi_sekret,
-                "insurance_company": denial_response.insurance_company,
-                "plan_id": denial_response.plan_id,
-                "claim_id": denial_response.claim_id,
-                "date_of_service": denial_response.date_of_service,
-            }
+        new_form = review_form(
+            denial,
+            email,
+            procedure,
+            date_from_letter=True,
+            default_condition=self.request.session.get("default_condition", ""),
         )
 
         context = {
@@ -2633,7 +3006,11 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
         context = super().get_context_data(**kwargs)
         context["next"] = reverse("hh")  # Form posts to itself
         context["current_step"] = 2
-        context["back_url"] = reverse("scan")  # Scan doesn't need denial ref
+        # The reference lets /scan tell the flow's own way back to this case
+        # from a new visit (InitialProcessView).
+        context["back_url"] = self.get_back_url(
+            "scan", self.get_denial_ref_from_request()
+        )
         return context
 
     # The page renders a box for health_history_consent, so an unticked box
@@ -2661,6 +3038,7 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
                 "PlanDocumentsView: stale denial ref on POST; redirecting to scan"
             )
             return redirect("scan")
+        intake_resume.note_step(denial_response.denial_id, "dvc")
 
         email = form.cleaned_data["email"]
         new_form = core_forms.PlanDocumentsForm(
@@ -2723,6 +3101,7 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
                 "DenialCollectedView: stale denial ref on POST; redirecting to scan"
             )
             return redirect("scan")
+        intake_resume.note_step(form.cleaned_data["denial_id"], "eev")
 
         new_form = core_forms.EntityExtractForm(
             initial={
@@ -2805,8 +3184,21 @@ class StripeWebhookView(View):
             logger.error(f"Invalid signature: {e}")
             return HttpResponse(status=403)
 
+        if (
+            stripe_event_payment_type(event) == PROFESSIONAL_SUBSCRIPTION_PAYMENT_TYPE
+            and not fight_paperwork_enabled()
+        ):
+            # 200 so Stripe stops retrying; nothing is activated or emailed.
+            logger.warning(
+                f"Ignored Fight Paperwork subscription event {event.id} ({event.type})"
+            )
+            return HttpResponse(status=200)
         StripeWebhookHelper.handle_stripe_webhook(request, event)
         return HttpResponse(status=200)
+
+
+# A paused Fight Paperwork checkout; matched by identity in CompletePaymentView.
+_FIGHT_PAPERWORK_OFF = (UNAVAILABLE_MESSAGE, 404)
 
 
 class CompletePaymentView(View):
@@ -2836,6 +3228,9 @@ class CompletePaymentView(View):
                 "session_id": request.GET.get("session_id"),
             }
             next_url, error = self._resolve_next_url(data)
+            if error is _FIGHT_PAPERWORK_OFF:
+                # Not the HTML page: it suggests starting a new checkout.
+                return unavailable_response()
             if error is not None or next_url is None:
                 message, status_code = error or ("An internal error occurred", 500)
                 if wants_json:
@@ -2939,6 +3334,11 @@ class CompletePaymentView(View):
             continue_url = lost_session.success_url
             cancel_url = lost_session.cancel_url
             payment_type = lost_session.payment_type
+            if (
+                payment_type == PROFESSIONAL_SUBSCRIPTION_PAYMENT_TYPE
+                and not fight_paperwork_enabled()
+            ):
+                return None, _FIGHT_PAPERWORK_OFF
             metadata: dict[str, str] = lost_session.metadata  # type: ignore
             recovery_info_id = metadata.get("recovery_info_id")
             line_items = []
@@ -3081,8 +3481,11 @@ def chat_interface_view(request):
 class ChatUserConsentView(FormView):
     """
     View for collecting user consent and information before using the chat interface.
-    This form collects personal information that is stored only in the browser's localStorage
-    for privacy protection (scrubbing personal information from messages).
+    The browser keeps the name, email and address fields in localStorage, and the
+    chat uses them to take those details out of messages before they are sent
+    (user_info_storage.ts). Here the server keeps the email in the session with the
+    consent flag, and puts the name, email, phone and referral answers on the
+    mailing list only when the news box is ticked.
     """
 
     template_name = "chat_consent.html"
@@ -3132,7 +3535,8 @@ class ChatUserConsentView(FormView):
             }
             return render(self.request, "chat_redirect.html", context)
 
-        # No need to save form data to database - it will be saved in browser localStorage via JavaScript
+        # Nothing else from the form is saved here: the browser keeps the
+        # name and address fields itself (user_info_storage.ts).
         return super().form_valid(form)
 
     def get(self, request, *args, **kwargs):
@@ -3144,6 +3548,21 @@ class ChatUserConsentView(FormView):
         return super().get(request, *args, **kwargs)
 
 
+class PwywThanksView(PublicCachedPageMixin, generic.TemplateView):
+    """Where Stripe sends the tab it opened for a pay-what-you-want payment,
+    paid or cancelled. It holds nothing about the person's case: the page
+    they came from is still open in their first tab, and the mixin empties
+    the session's denial id that base.html would otherwise put in a meta
+    tag. Not cached: the page differs by ?donation=."""
+
+    template_name = "pwyw_thanks.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["cancelled"] = self.request.GET.get("donation") == "cancelled"
+        return context
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
@@ -3151,7 +3570,6 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
     try:
         data = json.loads(request.body)
         amount = int(data.get("amount", 0))
-        return_url = data.get("return_url", "")
 
         if amount <= 0:
             return HttpResponse(
@@ -3164,35 +3582,15 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
 
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
 
-        # Validate and construct success/cancel URLs
-        # Use return_url if provided and it's a relative path, otherwise use root
-        if (
-            return_url
-            and return_url.startswith("/")
-            and not return_url.startswith("//")
-        ):
-            base_url = request.build_absolute_uri(return_url)
-            # Add donation=success parameter
-            from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
-
-            parsed = urlparse(base_url)
-            query_params = parse_qs(parsed.query)
-            query_params["donation"] = ["success"]
-            new_query = urlencode(query_params, doseq=True)
-            success_url = urlunparse(
-                (
-                    parsed.scheme,
-                    parsed.netloc,
-                    parsed.path,
-                    parsed.params,
-                    new_query,
-                    parsed.fragment,
-                )
-            )
-            cancel_url = base_url
-        else:
-            success_url = request.build_absolute_uri("/") + "?donation=success"
-            cancel_url = request.build_absolute_uri("/")
+        # Stripe opens in a tab of its own (pwyw.js), so it comes back to a
+        # page that only says thank you and to close the tab: the page the
+        # person was on, often their appeal letter, stays open in the first
+        # tab. Coming back to that page instead failed on the letter page,
+        # which answers only POST, so the tab showed a blank 405 and a reload
+        # did the same.
+        thanks_url = request.build_absolute_uri(reverse("pwyw_thanks"))
+        success_url = thanks_url + "?donation=success"
+        cancel_url = thanks_url + "?donation=cancelled"
 
         # Persist the line items so an expired/abandoned donation checkout can
         # be rebuilt by CompletePaymentView via the recovery email link. PWYW

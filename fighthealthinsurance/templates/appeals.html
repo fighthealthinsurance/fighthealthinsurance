@@ -1,20 +1,20 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 {% block title %}
 Fight Your Health Insurance Denial: Choose an Appeal
 {% endblock title %}
 
 {% block pre-roll %}
-<script src='{% static "js/dist/appeal_fetcher.bundle.js" %}' defer></script>
+<script src='{% bundle "appeal_fetcher" %}' defer></script>
 {% endblock pre-roll %}
 
 {% block content %}
 
-<div class="container" style="padding-top:1rem;">
-  <!-- Progress indicator -->
-  {% include 'partials/flow_progress.html' with current_step=current_step|default:7 %}
-  <h1 class="h2">Your appeal</h1>
-</div>
+<div class="container-narrow">
+<!-- Progress indicator -->
+{% include 'partials/flow_progress.html' with current_step=current_step|default:7 %}
+<h1 class="fhi-step-title">Your appeal</h1>
 
 <!-- Loading Spinner -->
 <div id="loading-text" style="text-align:center; padding:1rem;">
@@ -25,7 +25,6 @@ Fight Your Health Insurance Denial: Choose an Appeal
 </div>
 
   <!-- Main Content -->
-<div class="generic-main-content">
   <div id="loading-more">
     <!-- Pinned because main.css writes `h3 {margin-bottom: 0}` and this
          heading is outside any .alert-box, so nothing else gives it a gap. -->
@@ -37,7 +36,7 @@ Fight Your Health Insurance Denial: Choose an Appeal
       <p style="margin-top: 1rem; font-style: italic; color: #666;">Professor Timbit supervising the AI (that's Holden and Carolyn's dog)</p>
     </div>
 
-    <h4 class="h5">Why does this take time?</h4>
+    <h4>Why does this take time?</h4>
     <p>Our AI needs to:</p>
     <ul>
       <li>📖 Understand your specific denial</li>
@@ -47,30 +46,27 @@ Fight Your Health Insurance Denial: Choose an Appeal
     </ul>
     <p>Unlike ChatGPT or other generic AI tools, we're specialized in fighting insurance denials—which means better quality appeals, but a bit more processing time.</p>
 
-    <h4 class="h5">What you'll get:</h4>
+    <h4>What you'll get:</h4>
     <ul>
       <li><strong>3 Different Appeals:</strong> We generate multiple versions so you can pick the one that feels right for your situation</li>
       <li><strong>Ready to Submit:</strong> Each appeal is complete and professionally formatted</li>
       <li><strong>Fully Editable:</strong> You can customize any appeal before submitting</li>
     </ul>
 
-    <h4 class="h5">Taking longer than expected?</h4>
+    <h4>Taking longer than expected?</h4>
 	<ul>
 	<li><strong>First refresh:</strong> After 3-5 minutes, try refreshing the page (hold Shift while clicking refresh). We'll generate a fresh batch of appeals.</li>
 	<li><strong>Still waiting?</strong> Check if you have ad blockers or JavaScript blockers enabled—these can interfere with the generation process.</li>
 	<li><strong>Need help?</strong> If nothing works after a few tries, our servers (lovingly named Plushy and Steve) might be taking a nap. Email us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> and we'll investigate!</li>
 	</ul>
 	</div>
-  </div>
     <!-- </div> -->
 
-<div class="container mt-5">
-  <p class="lead mb-4">
-    When you choose a specific appeal, we <b>save that appeal to our database for model training and review</b>.
-  </p>
-</div>
+<p class="fhi-lead">
+  When you choose a specific appeal, we <b>save that appeal to our database for model training and review</b>.
+</p>
 <div id="base-form" style="display: none;">
-<form action="{% url 'choose_appeal' %}" method="post" class="col-md-12 d-flex flex-column align-items-center" id="form">
+<form action="{% url 'choose_appeal' %}" method="post" class="fhi-stack" id="form">
   {% csrf_token %}
   <input type="hidden" name="email" value="{{ user_email }}">
   <input type="hidden" name="denial_id" value="{{ denial_id }}">
@@ -82,14 +78,14 @@ Fight Your Health Insurance Denial: Choose an Appeal
   <textarea class="fhi-field" rows="20" name="appeal_text" id="appeal_text">
   </textarea>
 
-  <button type="submit" id="submit" class="btn btn-green">Choose This One</button>
+  <button type="submit" id="submit" class="fhi-button fhi-button-primary">Choose This One</button>
 </form>
 </div>
 <div id="output-container">
 </div>
 
-<div class="alert-box alert-info" style="margin:2rem 0; border-left:4px solid #ADD100;">
-  <h2 class="h3" style="margin-bottom:0.75rem;">📣 Want to let the regulator know what's going on?</h2>
+<div class="alert-box alert-box-info" style="margin:2rem 0; border-left:4px solid #ADD100;">
+  <h2 class="fhi-callout-title" style="margin-bottom:0.75rem;">📣 Want to let the regulator know what's going on?</h2>
   <p style="margin:0.5rem 0;">
     Alongside your internal appeal, you can cc the people who hold the plan
     accountable: your <strong>state Department of Insurance</strong>, the plan's
@@ -97,12 +93,12 @@ Fight Your Health Insurance Denial: Choose an Appeal
     <strong>U.S. Department of Labor's EBSA</strong>. We'll draft
     regulator-friendly letters you can edit and send.
   </p>
-  <form action="{% url 'escalation_packet' %}" method="post" target="_blank" style="margin:0.75rem 0;">
+  <form class="fhi-stack" action="{% url 'escalation_packet' %}" method="post" target="_blank" style="margin:0.75rem 0;">
     {% csrf_token %}
     <input type="hidden" name="email" value="{{ user_email }}">
     <input type="hidden" name="denial_id" value="{{ denial_id }}">
     {% if semi_sekret %}<input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">{% endif %}
-    <button type="submit" id="generate_escalation_packet" class="btn btn-default" style="font-size:1.05rem; padding:10px 20px;">
+    <button type="submit" id="generate_escalation_packet" class="fhi-button fhi-button-secondary">
       📨 Click here to draft regulator letters (opens in a new window)
     </button>
   </form>
@@ -113,15 +109,15 @@ Fight Your Health Insurance Denial: Choose an Appeal
 </div>
 
 {% if not use_external %}
-<div id="external-models-prompt" class="alert-box alert-warning" style="display:none; margin-top: 1.5rem;">
-  <h2 class="h3">Want more options?</h2>
+<div id="external-models-prompt" class="alert-box alert-box-warning" style="display:none; margin-top: 1.5rem;">
+  <h2 class="fhi-callout-title">Want more options?</h2>
   <p>
     Your denial wasn't set up to use external (cloud) AI models, and we
     generated fewer appeals than usual. External models tend to be more
     creative and may produce additional drafts for you to choose from.
     Your denial text is sent to a third-party model provider when you opt in.
   </p>
-  <button type="button" id="request-external-models-btn" class="btn btn-green">
+  <button type="button" id="request-external-models-btn" class="fhi-button fhi-button-primary">
     Generate more appeals using external models
   </button>
   <div id="external-models-status" style="margin-top: 0.75rem; font-size: 0.95rem;"></div>
@@ -130,11 +126,11 @@ Fight Your Health Insurance Denial: Choose an Appeal
 
 <div class="form-nav-centered">
   {% if back_url %}
-  <a href="{{ back_url }}" class="btn btn-secondary-custom">
+  <a href="{{ back_url }}" rel="prev" class="fhi-button fhi-button-neutral">
     ← {{ back_label|default:"Back" }}
   </a>
   {% endif %}
-  <a href="{% url 'scan' %}" class="btn-link-muted">
+  <a href="{% url 'scan' %}" class="fhi-button fhi-button-quiet fhi-button-small">
     Start over with a new denial
   </a>
 </div>

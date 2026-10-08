@@ -1,5 +1,7 @@
 import asyncio
 import concurrent
+import contextvars
+import functools
 import hashlib
 import os
 import random
@@ -36,6 +38,7 @@ from typing import (
     Union,
     cast,
 )
+from email.mime.image import MIMEImage
 from email.utils import formataddr
 from uuid import UUID
 
@@ -476,6 +479,129 @@ def mask_email_for_logging(email: Optional[str]) -> str:
     return f"{masked_local}@{domain}"
 
 
+# The llama at the top of Fight Health Insurance emails (fhi_base_email.html).
+FHI_LOGO_CID = "fhi-logo@fighthealthinsurance.com"
+FHI_LOGO_CID_SRC = f"cid:{FHI_LOGO_CID}"
+_FHI_LOGO = os.path.join("images", "better-logo-150.png")
+_APP_STATIC = os.path.join(os.path.dirname(__file__), "static")
+
+
+def _fhi_logo_paths() -> list[str]:
+    """Where the logo is: the app's static folder in a checkout, and the
+    collected copy (STATIC_ROOT) in the image, which leaves the app's static
+    folder out (.dockerignore)."""
+    roots = [_APP_STATIC]
+    static_root = getattr(settings, "STATIC_ROOT", None)
+    if static_root:
+        roots.append(str(static_root))
+    return [os.path.join(root, _FHI_LOGO) for root in roots]
+
+
+@functools.lru_cache(maxsize=1)
+def _read_fhi_logo() -> bytes:
+    # Only a successful read is cached: lru_cache doesn't keep exceptions.
+    for path in _fhi_logo_paths():
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                return f.read()
+    raise FileNotFoundError(_FHI_LOGO)
+
+
+def _fhi_logo_png() -> Optional[bytes]:
+    try:
+        return _read_fhi_logo()
+    except OSError:
+        logger.warning("Email logo missing; sending without it")
+        return None
+
+
+class InlineImageEmail(EmailMultiAlternatives):
+    """The text and HTML inside multipart/related, beside the images the HTML
+    shows by Content-ID."""
+
+    mixed_subtype = "related"
+
+    def message(self, *args: Any, **kwargs: Any):
+        msg = super().message(*args, **kwargs)
+        if msg.get_content_subtype() == "related":
+            # RFC 2387: related names the type of its first part.
+            msg.set_param("type", "multipart/alternative")
+        return msg
+
+
+def build_fallback_email(
+    subject: str,
+    template_name: str,
+    context,
+    to_email: str,
+    from_name: Optional[str] = None,
+    reply_to: Optional[str] = None,
+    extra_headers: Optional[Dict[str, str]] = None,
+    cc: Optional[List[str]] = None,
+) -> EmailMultiAlternatives:
+    """Build, without sending, the message send_fallback_email sends.
+
+    Renders emails/<template_name>.txt as the body and .html as its
+    alternative, under our From, Reply-To and auto-generated headers. A
+    caller that sends it directly sends to the recipient alone, with no staff
+    copy and no blocked-address check: the emails carrying a private link
+    (a staff copy would hold the link beside the address that opens it), and
+    the fax follow-up, which checks the address itself.
+    """
+    text_content = render_to_string(
+        f"emails/{template_name}.txt",
+        context=context,
+    )
+    html_content: str = render_to_string(
+        f"emails/{template_name}.html",
+        context=context,
+    )
+    # Fight Health Insurance emails (fhi_base_email.html) show the logo; it
+    # travels with the message.
+    logo = _fhi_logo_png() if FHI_LOGO_CID_SRC in html_content else None
+    if FHI_LOGO_CID_SRC in html_content and logo is None:
+        # No image to send: drop the reference rather than show a broken one.
+        html_content = re.sub(
+            r"<img[^>]*" + re.escape(FHI_LOGO_CID_SRC) + r"[^>]*>\s*", "", html_content
+        )
+    # Build a From: with a display name so mailbox providers show a recognizable
+    # sender (e.g. "Fight Health Insurance Support") instead of a bare address,
+    # which both helps users find/trust the mail and is one of several signals
+    # spam filters look at.
+    display_name = from_name or "Fight Health Insurance Support"
+    from_address = formataddr((display_name, settings.DEFAULT_FROM_EMAIL))
+    reply_to_address = reply_to or settings.DEFAULT_FROM_EMAIL
+    # Mark these as transactional auto-generated mail per RFC 3834 so providers
+    # don't treat them as bulk and don't generate auto-replies back to us.
+    # These are set after extra_headers so callers can't accidentally clobber
+    # them.
+    headers: Dict[str, str] = {}
+    if extra_headers:
+        headers.update(extra_headers)
+    headers["Auto-Submitted"] = "auto-generated"
+    headers["X-Auto-Response-Suppress"] = "All"
+    email_class = EmailMultiAlternatives if logo is None else InlineImageEmail
+    msg = email_class(
+        subject,
+        text_content,
+        from_address,
+        to=[to_email],
+        cc=cc or None,
+        reply_to=[reply_to_address],
+        headers=headers,
+    )
+    msg.attach_alternative(html_content, "text/html")
+    if logo is not None:
+        # Inline, by Content-ID: a linked image waits behind "load images",
+        # and Gmail drops data: URIs.
+        image = MIMEImage(logo, _subtype="png")
+        image.add_header("Content-ID", f"<{FHI_LOGO_CID}>")
+        # No filename: some clients list a named inline image as an attachment.
+        image.add_header("Content-Disposition", "inline")
+        msg.attach(image)
+    return msg
+
+
 def send_fallback_email(
     subject: str,
     template_name: str,
@@ -500,59 +626,34 @@ def send_fallback_email(
                 f"Dropping blocked CC address: {mask_email_for_logging(dropped)}"
             )
         cc = kept_cc
-    # First, render the plain text content if present
-    text_content = render_to_string(
-        f"emails/{template_name}.txt",
-        context=context,
-    )
-
-    # Secondly, render the HTML content if present
-    html_content = render_to_string(
-        f"emails/{template_name}.html",
-        context=context,
-    )
-    # Build a From: with a display name so mailbox providers show a recognizable
-    # sender (e.g. "Fight Health Insurance Support") instead of a bare address,
-    # which both helps users find/trust the mail and is one of several signals
-    # spam filters look at.
-    display_name = from_name or "Fight Health Insurance Support"
-    from_address = formataddr((display_name, settings.DEFAULT_FROM_EMAIL))
-    reply_to_address = reply_to or settings.DEFAULT_FROM_EMAIL
-    # Mark these as transactional auto-generated mail per RFC 3834 so providers
-    # don't treat them as bulk and don't generate auto-replies back to us.
-    # These are set after extra_headers so callers can't accidentally clobber
-    # them.
-    headers: Dict[str, str] = {}
-    if extra_headers:
-        headers.update(extra_headers)
-    headers["Auto-Submitted"] = "auto-generated"
-    headers["X-Auto-Response-Suppress"] = "All"
-    msg = EmailMultiAlternatives(
+    msg = build_fallback_email(
         subject,
-        text_content,
-        from_address,
-        to=[to_email],
-        cc=cc or None,
-        reply_to=[reply_to_address],
-        headers=headers,
+        template_name,
+        context,
+        to_email,
+        from_name=from_name,
+        reply_to=reply_to,
+        extra_headers=extra_headers,
+        cc=cc,
     )
     logger.debug(
         f"Sending email to {mask_email_for_logging(to_email)} with subject {subject}"
     )
-
-    # Lastly, attach the HTML content to the email instance and send.
-    msg.attach_alternative(html_content, "text/html")
     msg.send()
     try:
-        second_msg = EmailMultiAlternatives(
+        # The same class, so the copy carries the inline logo the same way.
+        second_msg = type(msg)(
             subject + " -- " + to_email,
-            text_content,
-            from_address,
+            msg.body,
+            msg.from_email,
             to=settings.BCC_EMAILS,
-            reply_to=[reply_to_address],
-            headers=headers,
+            reply_to=msg.reply_to,
+            headers=msg.extra_headers,
         )
-        second_msg.attach_alternative(html_content, "text/html")
+        for content, mimetype in msg.alternatives:
+            second_msg.attach_alternative(content, mimetype)
+        for attachment in msg.attachments:
+            second_msg.attach(attachment)
         second_msg.send()
     except Exception as e:
         logger.error(f"Error sending email to BCC: {e}")
@@ -1295,7 +1396,11 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
             logger.debug(f"fire_and_forget task {task} finished")
 
     # Create and start a thread that will run the task in its own loop
-    thread = threading.Thread(target=run_async_task)
+    # The new thread keeps the caller's context: the ML purpose and the
+    # spend channel.
+    thread = threading.Thread(
+        target=contextvars.copy_context().run, args=(run_async_task,)
+    )
     thread.daemon = True  # Thread will exit when main thread exits
     with _fire_and_forget_threads_lock:
         _fire_and_forget_threads.add(thread)
@@ -2242,6 +2347,11 @@ async def execute_critical_optional_fireandforget(
         logger.opt(exception=True).error(f"Timed out waiting for required tasks?")
     except Exception as e:
         logger.opt(exception=True).error(f"Error executing required tasks {e}")
+    except BaseException:
+        # The consumer stopped (cancelled or closed): stop what we started.
+        for owned in (*all_tasks, *required_tasks, *optional_tasks):
+            owned.cancel()
+        raise
 
     if timeout is None:
         logger.debug("No timeout set, so all tasks should be done")
@@ -2292,6 +2402,73 @@ def generate_random_unsupported_filename() -> str:
     return rand_str + ".unsupported"
 
 
+# pandoc reads a .txt or .md file with its markdown reader. Several of that
+# reader's default extensions carry markup straight into the LaTeX/PDF writer
+# as code instead of rendering it as characters: raw_tex (backslash commands
+# such as \input), raw_attribute (```{=latex} blocks), the three tex_math_*
+# extensions ($...$, \(...\), \[...\], whose contents pandoc hands to the engine
+# verbatim), latex_macros (\newcommand), raw_html (HTML tags, including ones
+# that point an HTML engine at a local file), and yaml_metadata_block (a YAML
+# header whose header-includes land in the LaTeX preamble). smart stays on: it
+# only turns straight quotes, dashes and ellipses into typographic characters.
+# Naming the reader with those extensions subtracted is the first half of the
+# guarantee that the characters a letter author typed reach the PDF as those
+# characters; the Lua filter below is the second half. Every name here exists
+# in the pandoc each image installs: 2.17 in the web and Temporal images (Debian
+# bookworm) and 2.9 in the Ray image (Ubuntu 22.04).
+_PANDOC_TEXT_READER = (
+    "markdown"
+    "-raw_tex"
+    "-raw_attribute"
+    "-tex_math_dollars"
+    "-tex_math_single_backslash"
+    "-tex_math_double_backslash"
+    "-latex_macros"
+    "-raw_html"
+    "-yaml_metadata_block"
+)
+
+
+# Lua filter that runs after the reader and keeps only an allowlist of plain
+# document structure, turning every other element into the characters it holds;
+# see the file for details.
+_PANDOC_PLAIN_TEXT_FILTER = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "pandoc_plain_text.lua"
+)
+
+
+def pandoc_reader_for(input_path: str) -> str:
+    """Name the pandoc input format for a file so that user text renders as
+    plain text. HTML files (the cover page) use pandoc's html reader with
+    raw_html turned on: tags it does not convert, an <iframe> among them, are
+    then kept as raw HTML, which the plain-text filter drops, rather than
+    having their src fetched while the cover is read. Everything else uses the
+    markdown reader with the raw-TeX, math, HTML and metadata extensions turned
+    off. Callers pass .txt, .md or .html files, so any other extension is read
+    as markdown text too."""
+    lower = input_path.lower()
+    if lower.endswith(".html") or lower.endswith(".htm"):
+        return "html+raw_html"
+    return _PANDOC_TEXT_READER
+
+
+def pandoc_convert_command(input_path: str) -> list[str]:
+    """Build the pandoc command that renders one input file to
+    ``<input_path>.pdf``. The input format is named explicitly (see
+    pandoc_reader_for), and the plain-text Lua filter keeps only an allowlist
+    of plain document structure and turns everything else into the characters
+    it holds, whatever reader built the document. Every option here is one the
+    Ray image's pandoc 2.9 accepts."""
+    return [
+        "pandoc",
+        f"--from={pandoc_reader_for(input_path)}",
+        f"--lua-filter={_PANDOC_PLAIN_TEXT_FILTER}",
+        "--wrap=auto",
+        input_path,
+        f"-o{input_path}.pdf",
+    ]
+
+
 async def _try_pandoc_engines(command: list[str]):
     engines = [None, "xelatex", "lualatex", "wkhtmltopdf", "weasyprint", "pdflatex"]
     for engine in engines:
@@ -2329,6 +2506,11 @@ def extract_file_text(path: str) -> str:
             return ""
 
 
+def ai_assistants_page_enabled() -> bool:
+    """The Claude/ChatGPT setup page serves only while the MCP server it describes is on."""
+    return bool(getattr(settings, "MCP_SERVER_ENABLED", False))
+
+
 def medicaid_eligibility_page_enabled() -> bool:
     """Whether the experimental Medicaid eligibility landing page is staged on.
 
@@ -2351,3 +2533,19 @@ def strip_internal_keys(parameters: dict) -> dict:
     body can never smuggle internal flags into the generator.
     """
     return {k: v for k, v in parameters.items() if not k.startswith("_")}
+
+
+# Invisible characters that can hide or reorder text: bidirectional controls,
+# zero-width spaces and joiners-of-nothing, the Mongolian vowel separator,
+# interlinear annotation marks, Unicode tag characters and the supplementary
+# variation selectors (which can carry hidden bytes after a visible
+# character). The joiners Persian and Indic scripts need (U+200C, U+200D)
+# and the emoji variation selectors (U+FE00 to U+FE0F) stay.
+INVISIBLE_CONTROLS = re.compile(
+    "[؜᠎​‎‏‪-‮⁠-⁤⁦-⁩" "﻿￹-￻\U000e0000-\U000e007f\U000e0100-\U000e01ef]"
+)
+
+
+def strip_invisible_controls(text: str) -> str:
+    """``text`` without INVISIBLE_CONTROLS."""
+    return INVISIBLE_CONTROLS.sub("", text)

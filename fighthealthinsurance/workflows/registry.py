@@ -13,6 +13,7 @@ for the fully-enabled set without touching configuration.
 
 from typing import List
 
+from fighthealthinsurance.workflows.assistant_appeal import AssistantAppealWorkflow
 from fighthealthinsurance.workflows.chat_routing_policy import (
     ChatRoutingPolicyWorkflow,
 )
@@ -28,17 +29,22 @@ def fax_workflows() -> List[type]:
     return [SendFaxWorkflow]
 
 
-def appeal_workflows(*, intake_enabled: bool) -> List[type]:
+def appeal_workflows(
+    *, intake_enabled: bool, drafts_enabled: bool = False
+) -> List[type]:
     """Workflows hosted on the appeal task queue.
 
     IntakeJourneyWorkflow is registered only when the intake flag is on, so
     the flag stays a real execution kill switch: with unconditional
     registration a direct Temporal start (or a task queued before the flag
-    flipped) would still run on a "dark" worker.
+    flipped) would still run on a "dark" worker. AssistantAppealWorkflow
+    (the MCP chat path) is gated the same way by its own flag.
     """
     workflows: List[type] = [GenerateAppealWorkflow]
     if intake_enabled:
         workflows.append(IntakeJourneyWorkflow)
+    if drafts_enabled:
+        workflows.append(AssistantAppealWorkflow)
     return workflows
 
 
@@ -59,13 +65,18 @@ def workflows_for_role(
     journey_enabled: bool,
     intake_enabled: bool,
     policy_enabled: bool = False,
+    drafts_enabled: bool = False,
 ) -> List[type]:
     """Every workflow a worker with this role registers under these flags."""
     registered: List[type] = []
     if role in ("fax", "all"):
         registered.extend(fax_workflows())
     if role in ("appeal", "all") and journey_enabled:
-        registered.extend(appeal_workflows(intake_enabled=intake_enabled))
+        registered.extend(
+            appeal_workflows(
+                intake_enabled=intake_enabled, drafts_enabled=drafts_enabled
+            )
+        )
     if role in ("appeal", "all") and policy_enabled:
         registered.extend(chat_policy_workflows())
     return registered
@@ -77,5 +88,9 @@ def all_enabled_workflows() -> List[type]:
     What the replay gate must have a history for.
     """
     return workflows_for_role(
-        "all", journey_enabled=True, intake_enabled=True, policy_enabled=True
+        "all",
+        journey_enabled=True,
+        intake_enabled=True,
+        policy_enabled=True,
+        drafts_enabled=True,
     )

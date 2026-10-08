@@ -35,6 +35,27 @@ return {
 """
 
 
+def _restore_follow_up_types():
+    """Put back the follow-up types the data migrations create.
+
+    These are transaction tests, so the database is emptied between tests,
+    taking those rows with it, and a test that schedules follow-ups would
+    then schedule none, depending on what ran before it. Running the
+    migrations' own idempotent functions keeps the rows the same as in
+    production."""
+    import importlib
+
+    from django.apps import apps as django_apps
+
+    for module, function in (
+        ("0155_populate_followup_types", "create_followup_types"),
+        ("0176_add_1day_followup_type", "create_1day_followup_type"),
+        ("0232_followup_subjects_plain", "plain_subjects"),
+    ):
+        migration = importlib.import_module(f"fighthealthinsurance.migrations.{module}")
+        getattr(migration, function)(django_apps, None)
+
+
 class SeleniumFollowUp(BaseCase, StaticLiveServerTestCase):
     fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
 
@@ -59,6 +80,7 @@ class SeleniumFollowUp(BaseCase, StaticLiveServerTestCase):
         elif "--no-proxy-server" not in existing:
             sb_config.chromium_arg = existing + ";--no-proxy-server"
         super().setUp()
+        _restore_follow_up_types()
 
     def _measure_on_a_phone(self):
         """The open page at 390px, with the window put back to desktop size

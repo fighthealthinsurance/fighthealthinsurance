@@ -1,19 +1,15 @@
-{% extends './base_email.html' %}
+{% extends "emails/fhi_base_email.html" %}
+{% block title %}Draft appeal on Fight Health Insurance{% endblock %}
 {% block content %}
-<img src="https://www.fighthealthinsurance.com/static/images/fpw-optimized.jpg" class="center"><br/>
+<p>Hello,</p>
 <p>
-You have been invited to join your healthcare professional in appealing (another) health insurance denial you have received.
+Your healthcare provider has started a draft appeal for a health insurance denial you received. They've invited you to review it with them on Fight Health Insurance.
+</p>
+{% include "emails/partials/button.html" with href="https://www.fighthealthinsurance.com/" label="Open Fight Health Insurance" %}
+<p>
+If you have any questions, email us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
 </p>
 <p>
-    To make sure your in the same group when you signup make sure to use the practice phone number {{ practice_number }}.
-</p>
-<p>
-    If you’ve got any questions, please feel free to reach out to us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> :) We are also planning on conducting some user studies the end of this month if your willing to share feedback with us on the new workflow before we release it drop us an e-mail at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> :)
-</p>
-<p>
-  A huge thank you,
-</p>
-<p>
-The Fight Paperwork team, our dogs, and our cats.
+The team at Fight Health Insurance and Timbit
 </p>
 {% endblock %}

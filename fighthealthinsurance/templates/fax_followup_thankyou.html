@@ -4,20 +4,26 @@ Thank you!
 {% endblock title %}
 
 {% load compress %}
+{% load bundles %}
 {% load static %}
 
 {% block scriptmagic %}
 <script type="module">
-  import * as main from '{% static "js/dist/scrub.bundle.js" %}';
+  import * as main from '{% bundle "scrub" %}';
 </script>
 {% endblock scriptmagic %}
 {% block content %}
-<h2>Thank you for using our fax machine</h2>
+<div class="fhi-page">
+{% include "partials/page_title.html" with title="Thank you for using our fax machine" %}
+<div class="fhi-stack">
+{% if fax_date %}
+<p>We're sending your fax from {{ fax_date|date:"F j" }} again, to {{ fax_number }}.</p>
+{% endif %}
 <p>
   The 90s thanks you.
 </p>
 
-<div class="container">
-  {% include 'partials/share_buttons.html' %}
+{% include 'partials/share_buttons.html' %}
+</div>
 </div>
 {% endblock content %}

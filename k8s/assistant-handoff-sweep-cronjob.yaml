@@ -1,0 +1,74 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  # Assistant handoff sweep: every 10 minutes, delete what AI assistants sent
+  # through the MCP server's prepare_appeal once its 2 hours are up
+  # (fighthealthinsurance/assistant_handoff.py). Every prepare_appeal call
+  # also sweeps first; this is the backstop for when nobody calls it. It runs
+  # whatever the MCP flags say, so turning the feature off still empties the
+  # table. Its own process, like the intake outbox relay. Applied by
+  # scripts/build.sh.
+  name: fhi-assistant-handoff-sweep
+  namespace: totallylegitco
+spec:
+  schedule: "*/10 * * * *"
+  # Never overlap two sweeps; a missed run is simply skipped (the next one,
+  # or the next prepare_appeal call, deletes the same rows).
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # One DELETE; a run that takes minutes is stuck, not busy.
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata:
+          labels:
+            group: fight-health-insurance-prod-webbackend-batch
+        spec:
+          # Non-root, as the fingerprint backfill Job runs the same image:
+          # the sweep only talks to Postgres and stdout.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          containers:
+            - image: ${FHI_BASE}:${FHI_VERSION}
+              name: totallylegitco
+              # start-server.sh runs the sweep command when this is set.
+              env:
+                - name: SWEEP_ASSISTANT_HANDOFFS
+                  value: "1"
+                - name: PDBHOST
+                  valueFrom:
+                    configMapKeyRef:
+                      name: fhi-db-config
+                      key: PDBHOST
+              envFrom:
+                - secretRef:
+                    name: fight-health-insurance-secret
+                - secretRef:
+                    name: fight-health-insurance-primary-secret
+              imagePullPolicy: Always
+              # Same partial hardening as the intake outbox relay.
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                seccompProfile:
+                  type: RuntimeDefault
+              # The same image and the same Django import floor as the intake
+              # outbox relay (about 1 GiB measured there before it does any
+              # work), so the same sizing.
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: 1536Mi
+                limits:
+                  cpu: "500m"
+                  memory: 3Gi
+          restartPolicy: Never

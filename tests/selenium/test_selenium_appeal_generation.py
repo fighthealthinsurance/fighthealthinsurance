@@ -110,6 +110,7 @@ Cheap-O-Insurance-Corp""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.assert_title_eventually("Upload your Health Insurance Denial")
         self.click("button#submit")
         self.assert_title_eventually("Optional: Health History")
@@ -171,6 +172,7 @@ Cheap-O-Insurance-Corp""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
         self.assert_title_eventually("Optional: Health History")
         self.click("button#next")
@@ -203,6 +205,7 @@ Cheap-O-Insurance-Corp""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
         self.assert_title_eventually("Optional: Health History")
         self.click("button#next")
@@ -264,6 +267,7 @@ Cheap-O-Insurance-Corp"""
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         # Move to next page
@@ -320,12 +324,13 @@ Cheap-O-Insurance-Corp"""
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         # Health History page - should have back button to scan
         self.assert_title_eventually("Optional: Health History")
         # Use js_click to avoid element click interception from overlays
-        self.js_click("a[class*='btn-secondary']")
+        self.js_click("a[rel='prev']")
 
         # Should be back at Scan page
         self.assert_title_eventually("Upload your Health Insurance Denial")
@@ -339,7 +344,7 @@ Cheap-O-Insurance-Corp"""
         """
         Test that the back button link on plan documents page works correctly,
         AND that we can then go forward again without losing form data.
-        This tests the denial_id/email/semi_sekret URL params work correctly.
+        This tests that the back links' references carry the case correctly.
         """
         test_fname = "BackBtnPlanFirst"
         test_lname = "BackBtnPlanLast"
@@ -363,6 +368,7 @@ Cheap-O-Insurance-Corp"""
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         # Health History page
@@ -373,7 +379,7 @@ Cheap-O-Insurance-Corp"""
         # Plan Documents page - should have back button to health history
         self.assert_title_eventually("Optional: Add Plan Documents")
         # Use js_click to avoid element click interception from overlays
-        self.js_click("a[class*='btn-secondary']")
+        self.js_click("a[rel='prev']")
 
         # Should be back at Health History page
         self.assert_title_eventually("Optional: Health History")
@@ -403,7 +409,7 @@ Cheap-O-Insurance-Corp"""
 
         # Go back again to plan documents (back from entity_extract now goes to plan docs)
         # Use js_click to avoid element click interception from overlays
-        self.js_click("a[class*='btn-secondary']")
+        self.js_click("a[rel='prev']")
 
         # Should be at Plan Documents (back button from entity_extract goes to dvc)
         self.assert_title_eventually("Optional: Add Plan Documents")
@@ -438,6 +444,7 @@ Sincerely, InsuranceCo""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         self.assert_title_eventually("Optional: Health History")
@@ -461,6 +468,7 @@ Sincerely, OtherInsuranceCo""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         # On health history page for second appeal
@@ -509,6 +517,7 @@ Sincerely, InsuranceCo""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         # On health history page - should have meta tags
@@ -552,6 +561,7 @@ Sincerely, InsuranceCo""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         # On health history page
@@ -564,7 +574,7 @@ Sincerely, InsuranceCo""",
 
         # Click back button link (should be a GET request)
         # Use js_click to avoid element click interception from overlays
-        self.js_click("a[class*='btn-secondary']")
+        self.js_click("a[rel='prev']")
 
         # Back at health history page via GET
         self.assert_title_eventually("Optional: Health History")
@@ -612,6 +622,7 @@ Cheap-O-Insurance-Corp"""
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         self.assert_title_eventually("Optional: Health History")
@@ -626,7 +637,7 @@ Cheap-O-Insurance-Corp"""
 
         # Click back button - should go to Plan Documents (not Health History)
         # Use js_click to avoid element click interception from overlays
-        self.js_click("a[class*='btn-secondary']")
+        self.js_click("a[rel='prev']")
 
         # Should be at Plan Documents page
         self.assert_title_eventually("Optional: Add Plan Documents")
@@ -662,6 +673,7 @@ Cheap-O-Insurance-Corp"""
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         self.assert_title_eventually("Optional: Health History")
@@ -683,7 +695,7 @@ Cheap-O-Insurance-Corp"""
 
         # Click back button - should go to Categorize Review
         # Use js_click to avoid element click interception from overlays
-        self.js_click("a[class*='btn-secondary']")
+        self.js_click("a[rel='prev']")
 
         # Should be at Categorize Review page (shows the categorization)
         self.assert_title_eventually("Categorize Your Denial")
@@ -717,6 +729,7 @@ Cheap-O-Insurance-Corp"""
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
         self.click("button#submit")
 
         self.assert_title_eventually("Optional: Health History")
@@ -743,7 +756,7 @@ Cheap-O-Insurance-Corp"""
 
         # Click back button - should go to Questions page
         # Use js_click to avoid element click interception from overlays
-        self.js_click("a[class*='btn-secondary']")
+        self.js_click("a[rel='prev']")
 
         # Should be at Questions page
         self.assert_title_eventually("Additional Resources & Questions")

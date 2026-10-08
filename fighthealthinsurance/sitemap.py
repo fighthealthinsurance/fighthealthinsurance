@@ -23,7 +23,10 @@ from django.urls import reverse
 
 from loguru import logger
 
-from fighthealthinsurance.utils import medicaid_eligibility_page_enabled
+from fighthealthinsurance.utils import (
+    ai_assistants_page_enabled,
+    medicaid_eligibility_page_enabled,
+)
 
 
 class StaticViewSitemap(Sitemap):
@@ -39,7 +42,7 @@ class StaticViewSitemap(Sitemap):
             "about",
             "pbs-newshour",
             "media-references",
-            "preparing-2026",
+            "coverage-changes",
             "turning-26",
             "other-resources",
             "faq",
@@ -56,6 +59,8 @@ class StaticViewSitemap(Sitemap):
         # discoverable) when its staging flag is on; see views.py.
         if medicaid_eligibility_page_enabled():
             items.append("medicaid-eligibility")
+        if ai_assistants_page_enabled():
+            items.append("ai-assistants")
         return items
 
     def location(self, item: str) -> str:

@@ -172,7 +172,7 @@ def _icon_font_tags(text: str):
     """Each opening tag in the markup that names Bootstrap's icon font.
 
     An inline <svg> is left alone even with a bi- class on it, the way
-    about_us.html's envelopes carry one: it draws itself, so the class is
+    base.html's footer icons carry one: it draws itself, so the class is
     only a label. Anything else with such a class, an <i> most often, is
     asking for a font glyph that never arrives.
     """

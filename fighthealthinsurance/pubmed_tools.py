@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import io
 import json
 import os
 import re
@@ -24,13 +23,13 @@ from typing import (
 from urllib.parse import quote, urlencode, urljoin
 
 import aiohttp
-import PyPDF2
 
 # Plain asgiref sync_to_async ON PURPOSE: every wrapped callable here is
 # metapub/network work with no ORM inside; the channels database variant
 # would close the connections this module's interleaved async ORM reuses.
 from asgiref.sync import async_to_sync, sync_to_async
 from django.core.cache import cache
+from django.db.models import QuerySet
 from django.utils import timezone
 from loguru import logger
 from metapub import FindIt
@@ -43,6 +42,7 @@ from fighthealthinsurance.models import (
     PubMedMiniArticle,
     PubMedQueryData,
 )
+from fighthealthinsurance.pdf_text import acount_pdf_pages, aextract_pdf_page_texts
 from fighthealthinsurance.pubmed_search import (
     EvidenceStrength,
     build_structured_query,
@@ -53,7 +53,7 @@ from fighthealthinsurance.utils import pubmed_fetcher
 
 from .exec import pubmed_executor
 from .models import Denial
-from .utils import _try_pandoc_engines, markdown_escape
+from .utils import _try_pandoc_engines, markdown_escape, pandoc_convert_command
 
 if sys.version_info >= (3, 11):
     from asyncio import timeout as async_timeout
@@ -78,6 +78,20 @@ _FETCH_HEADERS = {
     "User-Agent": f"FightHealthInsurance/1.0 (mailto:{_CONTACT_EMAIL})",
     "Accept": "application/pdf,text/html,application/xhtml+xml,*/*",
 }
+
+# Bounds on a fetched article PDF. A full article, supplements included, fits
+# well inside them. Text is read from at most _PDF_MAX_PAGES pages and kept to
+# _PDF_MAX_TEXT_CHARS characters, and a PDF with more pages, or a body over
+# _PDF_MAX_BYTES, is not attached to an appeal. Reads run in a child process
+# stopped at the timeout (see pdf_text).
+_PDF_MAX_PAGES = 100
+_PDF_MAX_BYTES = 50 * 1024 * 1024  # 50MB
+_PDF_READ_TIMEOUT_SECS = 30.0
+# The text is stored on the article, summaries read its first 1000 characters,
+# and it is the body of the PDF built for an appeal when no article PDF can be
+# fetched. 5,000 characters a page across _PDF_MAX_PAGES pages is more than a
+# full article holds.
+_PDF_MAX_TEXT_CHARS = 500_000
 
 # NCBI E-utilities REST API base URL. Used for elink (related articles) and
 # efetch (MeSH terms / publication types). NCBI requests that ``tool`` and
@@ -197,6 +211,25 @@ async def _retry_with_backoff(
     # Unreachable: ``attempts`` >= 1, so the final iteration always returns a
     # value or re-raises. Present to satisfy the type checker.
     raise AssertionError("retry loop exited without returning")
+
+
+async def _read_body_within(
+    response: aiohttp.ClientResponse, max_bytes: int
+) -> Optional[bytes]:
+    """Return the response body, or None when it is longer than ``max_bytes``.
+
+    A declared Content-Length over the limit is refused before reading, and
+    reading stops as soon as the body passes the limit.
+    """
+    declared = response.headers.get("Content-Length", "")
+    if declared.isdigit() and int(declared) > max_bytes:
+        return None
+    body = bytearray()
+    async for chunk in response.content.iter_chunked(64 * 1024):
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            return None
+    return bytes(body)
 
 
 @asynccontextmanager
@@ -1263,10 +1296,21 @@ class PubMedTools(object):
     async def find_context_for_denial(self, denial: Denial, timeout=70.0) -> str:
         result = await self._find_context_for_denial(denial, timeout)
         if result is not None and len(result) > 1:
-            await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
-                pubmed_context=result
-            )
+            await self._this_letter(denial).aupdate(pubmed_context=result)
         return result
+
+    @staticmethod
+    def _this_letter(denial: Denial) -> QuerySet[Denial]:
+        """The row, while it still holds the letter on ``denial``.
+
+        The context is built from the procedure and diagnosis on the copy it
+        was handed. A different letter submitted while it is built clears
+        what is stored here, and a write filtered on the letter leaves it
+        cleared.
+        """
+        return Denial.objects.filter(
+            denial_id=denial.denial_id, denial_text=denial.denial_text
+        )
 
     async def _find_context_for_denial(self, denial: Denial, timeout=70.0) -> str:
         """
@@ -1310,9 +1354,7 @@ class PubMedTools(object):
                     selected_pmids = list(map(lambda x: x.pmid, possible_articles))
 
                 # Use aupdate instead of asave to avoid race conditions
-                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
-                    pubmed_ids_json=selected_pmids
-                )
+                await self._this_letter(denial).aupdate(pubmed_ids_json=selected_pmids)
                 # Directly fetch the selected articles from the database
                 articles = [
                     article
@@ -1357,9 +1399,7 @@ class PubMedTools(object):
         finally:
             if selected_pmids:
                 logger.debug(f"Writing back selected pmids {selected_pmids}")
-                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
-                    pubmed_ids_json=selected_pmids
-                )
+                await self._this_letter(denial).aupdate(pubmed_ids_json=selected_pmids)
 
         # Format the articles for context
         if articles:
@@ -1445,24 +1485,34 @@ class PubMedTools(object):
         session: aiohttp.ClientSession,
         timeout_secs: float = 15.0,
     ) -> str:
-        """Fetch article text from a URL, handling both PDF and HTML content."""
+        """Fetch article text from a URL, handling both PDF and HTML content.
+
+        ``timeout_secs`` bounds the download. A PDF body over _PDF_MAX_BYTES
+        is dropped; a PDF is read after the connection is released, under its
+        own page cap, character cap and timeout.
+        """
         article_text = ""
+        pdf_bytes: Optional[bytes] = None
         try:
             async with async_timeout(timeout_secs):
                 async with session.get(url, headers=_FETCH_HEADERS) as response:
                     response.raise_for_status()
                     content_type = response.headers.get("Content-Type", "")
                     if self._is_pdf_response(url, content_type):
-                        pdf_bytes = await response.read()
-                        read_pdf = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
-                        if read_pdf.is_encrypted:
-                            read_pdf.decrypt("")
-                        for page in read_pdf.pages:
-                            article_text += page.extract_text()
+                        pdf_bytes = await _read_body_within(response, _PDF_MAX_BYTES)
                     else:
                         text = (await response.text()).strip()
                         if " " in text and len(text) > 50:
                             article_text = text
+            if pdf_bytes is not None:
+                article_text = "".join(
+                    await aextract_pdf_page_texts(
+                        pdf_bytes,
+                        _PDF_MAX_PAGES,
+                        _PDF_MAX_TEXT_CHARS,
+                        _PDF_READ_TIMEOUT_SECS,
+                    )
+                )
         except Exception as e:
             logger.debug(f"Error fetching text from {url}: {e}")
         return article_text
@@ -1541,20 +1591,41 @@ class PubMedTools(object):
         prefix: str,
         session: aiohttp.ClientSession,
     ) -> Optional[str]:
-        """Try to fetch a PDF from a URL and save to a temp file. Returns path or None."""
+        """Try to fetch a PDF from a URL and save to a temp file. Returns path or None.
+
+        The PDF is kept only if its body is at most _PDF_MAX_BYTES and pypdf
+        reads it as at most _PDF_MAX_PAGES pages within the read timeout. The
+        page count is read after the connection is released.
+        """
+        content: Optional[bytes] = None
         try:
             async with session.get(url, headers=_FETCH_HEADERS) as response:
                 if response.status == 200:
                     content_type = response.headers.get("Content-Type", "")
                     if self._is_pdf_response(url, content_type):
-                        content = await response.read()
-                        if len(content) > 512 and content.lstrip().startswith(b"%PDF"):
-                            with tempfile.NamedTemporaryFile(
-                                prefix=prefix, suffix=".pdf", delete=False
-                            ) as my_data:
-                                my_data.write(content)
-                                my_data.flush()
-                                return my_data.name
+                        content = await _read_body_within(response, _PDF_MAX_BYTES)
+                        if content is None:
+                            logger.debug(
+                                f"PDF from {url} is over {_PDF_MAX_BYTES} bytes"
+                            )
+            if (
+                content is not None
+                and len(content) > 512
+                and content.lstrip().startswith(b"%PDF")
+            ):
+                page_count = await acount_pdf_pages(content, _PDF_READ_TIMEOUT_SECS)
+                if page_count > _PDF_MAX_PAGES:
+                    logger.debug(
+                        f"PDF from {url} has {page_count} pages "
+                        f"(max {_PDF_MAX_PAGES})"
+                    )
+                    return None
+                with tempfile.NamedTemporaryFile(
+                    prefix=prefix, suffix=".pdf", delete=False
+                ) as my_data:
+                    my_data.write(content)
+                    my_data.flush()
+                    return my_data.name
         except Exception as e:
             logger.debug(f"Error fetching PDF from {url}: {e}")
         return None
@@ -1618,13 +1689,7 @@ class PubMedTools(object):
         ) as my_data:
             my_data.write(markdown_text)
             my_data.flush()
-            command = [
-                "pandoc",
-                "--read=markdown",
-                "--wrap=auto",
-                my_data.name,
-                f"-o{my_data.name}.pdf",
-            ]
+            command = pandoc_convert_command(my_data.name)
             try:
                 await _try_pandoc_engines(command)
                 return f"{my_data.name}.pdf"

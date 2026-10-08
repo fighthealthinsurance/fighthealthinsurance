@@ -2,7 +2,7 @@
 
 The home page's slider band has a 650px floor in main.css. Every other page
 with an image hero carries a few lines of copy and names .fhi-hero-short,
-which lowers the floor to 240px. That is a floor and not a cap, which is the
+which lowers the floor to 224px. That is a floor and not a cap, which is the
 thing this has to establish: on a desktop a band with little copy stops at
 the floor with the copy centred in it, and on a phone, where the copy wraps
 taller, the band grows with the copy rather than cutting it off. The air
@@ -21,7 +21,7 @@ LAPTOP = (1280, 720)
 PHONE = (390, 844)
 SMALL_PHONE = (320, 568)
 
-HERO_FLOOR = 240
+HERO_FLOOR = 224
 
 # The most air the band leaves between its edge and the copy: 12px of band
 # and 16px of copy box above, and 8px more under the copy's last piece.
@@ -39,7 +39,7 @@ PAGES = {
     "state-help/california/": "state-help-hero",
     "glossary/": "glossary-index-hero",
     "turning-26": "turning26-hero",
-    "preparing-for-2026": "prep2026-hero",
+    "coverage-changes": "prep2027-hero",
     "denial-language/": "denial-library-hero",
     "medicaid-eligibility": "medicaid-eligibility-hero",
 }
@@ -209,7 +209,7 @@ class SeleniumTestExplainHeroes(FHISeleniumBase, StaticLiveServerTestCase):
                 centres = self.execute_script("""
                     const row = document.querySelector('#microsite-hero .hero-cta-group');
                     const guide = document.createElement('a');
-                    guide.href = '#'; guide.className = 'btn btn-outline-primary';
+                    guide.href = '#'; guide.className = 'fhi-button secondary-cta';
                     guide.textContent = 'Read Our Guide';
                     row.prepend(guide);
                     return Array.from(row.querySelectorAll('a'))

@@ -6,6 +6,11 @@ import pytest
 from unittest.mock import Mock, patch, AsyncMock
 from fighthealthinsurance.extralink_fetcher import ExtraLinkFetcher
 from fighthealthinsurance.models import ExtraLinkDocument, MicrositeExtraLink
+from tests.pdf_fixtures import (
+    make_pdf_bytes,
+    make_shared_long_string_pdf_bytes,
+    make_shared_stream_pdf_bytes,
+)
 
 
 @pytest.mark.asyncio
@@ -156,3 +161,57 @@ class TestExtraLinkFetcher:
             assert result["fetched"] == 0
             assert result["failed"] == 0
             assert result["skipped"] == 0
+
+
+@pytest.mark.asyncio
+class TestExtraLinkPdfText:
+    """PDF text is read with pypdf, in a child process, within set bounds."""
+
+    async def test_extract_pdf_text_joins_page_texts(self):
+        fetcher = ExtraLinkFetcher()
+        pdf = make_pdf_bytes(["Coverage criteria", "Prior authorization"])
+
+        text = await fetcher._extract_pdf_text(pdf)
+
+        first, second = text.split("\n\n", 1)
+        assert "Coverage criteria" in first
+        assert "Prior authorization" in second
+
+    async def test_extract_pdf_text_stops_at_the_page_cap(self):
+        fetcher = ExtraLinkFetcher()
+        fetcher.PDF_MAX_PAGES = 2
+        pdf = make_pdf_bytes(["Page one", "Page two", "Page three"])
+
+        text = await fetcher._extract_pdf_text(pdf)
+
+        assert "Page two" in text
+        assert "Page three" not in text
+
+    async def test_extract_pdf_text_stops_at_the_text_length_cap(self):
+        fetcher = ExtraLinkFetcher()
+        fetcher.MAX_TEXT_LENGTH = 1000
+        # Pages that share one string of 500,000 letters.
+        pdf = make_shared_long_string_pdf_bytes(page_count=50, string_length=500_000)
+
+        text = await fetcher._extract_pdf_text(pdf)
+
+        assert 0 < len(text) <= 1000
+
+    async def test_extract_pdf_text_raises_when_the_parse_outlasts_the_timeout(
+        self,
+    ):
+        fetcher = ExtraLinkFetcher()
+        fetcher.PDF_EXTRACT_TIMEOUT = 0.5
+        # Pages that share one long content stream: far more than half a
+        # second of parsing.
+        pdf = make_shared_stream_pdf_bytes(page_count=100, text_operations=50_000)
+
+        with pytest.raises(TimeoutError, match="did not finish within"):
+            await fetcher._extract_pdf_text(pdf)
+
+    async def test_extract_pdf_text_that_needs_a_password_raises_value_error(self):
+        fetcher = ExtraLinkFetcher()
+        pdf = make_pdf_bytes(["Locked policy"], user_password="open-sesame")
+
+        with pytest.raises(ValueError, match="cannot be decrypted"):
+            await fetcher._extract_pdf_text(pdf)

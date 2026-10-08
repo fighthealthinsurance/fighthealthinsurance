@@ -21,7 +21,7 @@ class BaseConsentForm(forms.Form):
         required=True,
         widget=forms.TextInput(
             attrs={
-                "class": "form-control",
+                "class": "fhi-field",
                 "id": "store_fname",
                 "placeholder": "Enter your first name",
             }
@@ -33,7 +33,7 @@ class BaseConsentForm(forms.Form):
         required=True,
         widget=forms.TextInput(
             attrs={
-                "class": "form-control",
+                "class": "fhi-field",
                 "id": "store_lname",
                 "placeholder": "Enter your last name",
             }
@@ -44,7 +44,7 @@ class BaseConsentForm(forms.Form):
         required=True,
         widget=forms.EmailInput(
             attrs={
-                "class": "form-control",
+                "class": "fhi-field",
                 "id": "email",
                 "placeholder": "Enter your email address",
             }
@@ -53,22 +53,19 @@ class BaseConsentForm(forms.Form):
 
     tos_agreement = forms.BooleanField(
         required=True,
-        widget=forms.CheckboxInput(attrs={"class": "form-check-input", "id": "tos"}),
+        widget=forms.CheckboxInput(attrs={"class": "fhi-check", "id": "tos"}),
     )
 
     privacy_policy = forms.BooleanField(
         required=True,
-        widget=forms.CheckboxInput(
-            attrs={"class": "form-check-input", "id": "privacy"}
-        ),
+        widget=forms.CheckboxInput(attrs={"class": "fhi-check", "id": "privacy"}),
     )
 
+    # Unticked until the person ticks it: the site promises no dark patterns.
     subscribe = forms.BooleanField(
         required=False,
-        initial=True,
-        widget=forms.CheckboxInput(
-            attrs={"class": "form-check-input", "id": "subscribe"}
-        ),
+        initial=False,
+        widget=forms.CheckboxInput(attrs={"class": "fhi-check", "id": "subscribe"}),
     )
 
 
@@ -79,7 +76,7 @@ class UnderstandPolicyForm(BaseConsentForm):
         required=True,
         widget=forms.FileInput(
             attrs={
-                "class": "form-control",
+                "class": "fhi-field",
                 "id": "policy_document",
                 "accept": ".pdf,.docx,.txt",
             }
@@ -92,7 +89,7 @@ class UnderstandPolicyForm(BaseConsentForm):
         initial="summary_of_benefits",
         widget=forms.Select(
             attrs={
-                "class": "form-control",
+                "class": "fhi-field",
                 "id": "document_type",
             }
         ),
@@ -121,7 +118,7 @@ class UnderstandPolicyForm(BaseConsentForm):
         initial="unknown",
         widget=forms.Select(
             attrs={
-                "class": "form-control",
+                "class": "fhi-field",
                 "id": "plan_category",
             }
         ),
@@ -132,7 +129,7 @@ class UnderstandPolicyForm(BaseConsentForm):
         max_length=1000,
         widget=forms.Textarea(
             attrs={
-                "class": "form-control",
+                "class": "fhi-field",
                 "id": "user_question",
                 "rows": 3,
                 "placeholder": "Optional: What specific question do you have about your policy? (e.g., 'Is my MRI covered?' or 'What are the exclusions for mental health?')",
@@ -179,7 +176,7 @@ class UserConsentForm(BaseConsentForm):
         required=False,
         widget=forms.TextInput(
             attrs={
-                "class": "form-control",
+                "class": "fhi-field",
                 "id": "phone",
                 "placeholder": "Enter your phone number",
             }
@@ -191,7 +188,7 @@ class UserConsentForm(BaseConsentForm):
         required=False,
         widget=forms.TextInput(
             attrs={
-                "class": "form-control",
+                "class": "fhi-field",
                 "id": "store_street",
                 "placeholder": "Enter your street address",
             }
@@ -203,7 +200,7 @@ class UserConsentForm(BaseConsentForm):
         required=False,
         widget=forms.TextInput(
             attrs={
-                "class": "form-control",
+                "class": "fhi-field",
                 "id": "store_city",
                 "placeholder": "Enter your city",
             }
@@ -215,7 +212,7 @@ class UserConsentForm(BaseConsentForm):
         required=False,
         widget=forms.TextInput(
             attrs={
-                "class": "form-control",
+                "class": "fhi-field",
                 "id": "store_state",
                 "placeholder": "Enter your state",
             }
@@ -227,7 +224,7 @@ class UserConsentForm(BaseConsentForm):
         required=False,
         widget=forms.TextInput(
             attrs={
-                "class": "form-control",
+                "class": "fhi-field",
                 "id": "store_zip",
                 "placeholder": "Enter your ZIP code",
             }
@@ -237,7 +234,7 @@ class UserConsentForm(BaseConsentForm):
     referral_source = forms.ChoiceField(
         required=False,
         choices=REFERRAL_SOURCE_CHOICES,
-        widget=forms.Select(attrs={"class": "form-control", "id": "referral_source"}),
+        widget=forms.Select(attrs={"class": "fhi-field", "id": "referral_source"}),
     )
 
     referral_source_details = forms.CharField(
@@ -245,7 +242,7 @@ class UserConsentForm(BaseConsentForm):
         max_length=500,
         widget=forms.TextInput(
             attrs={
-                "class": "form-control",
+                "class": "fhi-field",
                 "id": "referral_source_details",
                 "placeholder": "E.g., which search engine, social media platform, or person's name",
             }
@@ -256,6 +253,6 @@ class UserConsentForm(BaseConsentForm):
         required=False,
         initial=True,
         widget=forms.CheckboxInput(
-            attrs={"class": "form-check-input", "id": "use_external_models"}
+            attrs={"class": "fhi-check", "id": "use_external_models"}
         ),
     )

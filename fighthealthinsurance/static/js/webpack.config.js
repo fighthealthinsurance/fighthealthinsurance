@@ -113,6 +113,9 @@ module.exports = async (env, argv) => {
   output: {
     path: path.resolve(__dirname, 'dist'),
     filename: '[name].bundle.js',
+    // Chunks a bundle loads itself carry their own hash, so a CDN can't
+    // serve an old one; entry bundles are versioned by {% bundle %}.
+    chunkFilename: '[id].[contenthash].bundle.js',
   },
   // Production optimizations
   optimization: isProduction ? {

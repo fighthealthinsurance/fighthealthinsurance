@@ -28,6 +28,7 @@ by :func:`before_send_transaction_filter`.
 """
 
 from typing import Any, Dict, List, Sequence
+from urllib.parse import urlsplit
 
 # Ray client connection failures are transient infrastructure noise: Ray
 # reconnects on its own, so there is nothing to action in Sentry. They are
@@ -86,6 +87,36 @@ UNROUTED_WEBSOCKET_MARKER = "No route found for path"
 # request path with source "url" only when URL resolution failed -- so this
 # value is exactly "this request matched nothing".
 UNROUTED_TRANSACTION_SOURCE = "url"
+
+
+# Code whose local variables can hold a denial letter an AI assistant sent:
+# the MCP SDK (the request body), the MCP server (tool arguments) and the
+# assistant handoff (the letter, before it is sealed and after it is opened).
+# An error event whose stack passes through one of these keeps its stack
+# trace but loses the variables of every frame (see
+# strip_local_variables_near_assistant_text).
+ASSISTANT_TEXT_MODULES = (
+    "mcp",
+    "fighthealthinsurance.mcp_server",
+    "fighthealthinsurance.assistant_handoff",
+    "fighthealthinsurance.assistant_handoff_views",
+    "fighthealthinsurance.assistant_terms_views",
+    "fighthealthinsurance.assistant_continue",
+    "fighthealthinsurance.assistant_drafts",
+    "fighthealthinsurance.assistant_draft_tools",
+)
+
+
+# The staff letter review (letter_review.py). Its pages carry each reader's
+# blind verdict and note, and the letter's text: in the item page's template
+# context, which the Django integration copies onto a template.render span;
+# in the saving POST, attached as request data; and in the variables of any
+# frame that raises. Both readers can read Sentry, so the review would stop
+# being blind there. Its transactions are dropped whole, and an error event
+# from it keeps its stack but loses the request body and every frame's
+# variables. Matched on the transaction name (the route, "/timbit/help/
+# letter_review/{packet_id}/...") or the request URL's path.
+LETTER_REVIEW_PATH_PREFIX = "/timbit/help/letter_review/"
 
 
 # sentry's logentry/Message interface renders text into "formatted" and keeps
@@ -165,6 +196,91 @@ def is_sigterm_teardown(exc: dict) -> bool:
     if exc_type == "RuntimeError":
         return any(marker in exc_value for marker in SHUTDOWN_RUNTIME_ERROR_MARKERS)
     return False
+
+
+def _frames(event: dict) -> List[Dict[str, Any]]:
+    """Every stack frame in an event: each exception's and each thread's,
+    defensively, the way exception_values reads the entries."""
+    frames: List[Dict[str, Any]] = []
+    holders: List[Any] = list(raw_exception_entries(event))
+    threads = event.get("threads")
+    if isinstance(threads, dict) and isinstance(threads.get("values"), (list, tuple)):
+        holders += list(threads["values"])
+    for holder in holders:
+        if not isinstance(holder, dict):
+            continue
+        stacktrace = holder.get("stacktrace")
+        if not isinstance(stacktrace, dict):
+            continue
+        found = stacktrace.get("frames")
+        if isinstance(found, (list, tuple)):
+            frames += [frame for frame in found if isinstance(frame, dict)]
+    return frames
+
+
+def _holds_assistant_text(frame: Dict[str, Any]) -> bool:
+    module = frame.get("module")
+    if not isinstance(module, str):
+        return False
+    return any(
+        module == name or module.startswith(name + ".")
+        for name in ASSISTANT_TEXT_MODULES
+    )
+
+
+def strip_local_variables_near_assistant_text(event: Any) -> Any:
+    """Drop the local variables of every frame when any frame is in code
+    that can hold an assistant's letter (ASSISTANT_TEXT_MODULES).
+
+    Every frame, not only the matching ones: the letter is passed down the
+    stack, into the database driver, the template engine or json, whose
+    frames are named after their own modules. The frames themselves (file,
+    function, line) stay, so the event is still worth reading. Never raises,
+    like the rest of this module.
+    """
+    if not isinstance(event, dict):
+        return event
+    frames = _frames(event)
+    if any(_holds_assistant_text(frame) for frame in frames):
+        for frame in frames:
+            frame.pop("vars", None)
+    return event
+
+
+def _url_path(url: Any) -> str:
+    if not isinstance(url, str):
+        return ""
+    try:
+        return urlsplit(url).path
+    except ValueError:  # a malformed URL, e.g. an unbalanced IPv6 bracket
+        return ""
+
+
+def is_letter_review_event(event: Any) -> bool:
+    """True when an event comes from a letter review page. Never raises."""
+    if not isinstance(event, dict):
+        return False
+    name = event.get("transaction")
+    if isinstance(name, str) and name.startswith(LETTER_REVIEW_PATH_PREFIX):
+        return True
+    request = event.get("request")
+    if not isinstance(request, dict):
+        return False
+    return _url_path(request.get("url")).startswith(LETTER_REVIEW_PATH_PREFIX)
+
+
+def strip_letter_review_details(event: Any) -> Any:
+    """Drop the request body and every frame's variables from an error event
+    raised on a letter review page (see LETTER_REVIEW_PATH_PREFIX). The stack
+    itself stays. Never raises."""
+    if not is_letter_review_event(event):
+        return event
+    request = event.get("request")
+    if isinstance(request, dict):
+        request.pop("data", None)
+    for frame in _frames(event):
+        frame.pop("vars", None)
+    return event
 
 
 def before_send_filter(event: Any, hint: Any) -> Any:
@@ -250,11 +366,13 @@ def before_send_filter(event: Any, hint: Any) -> Any:
         logger.debug("Unrouted websocket path (filtered from Sentry)")
         return None
 
-    return event
+    event = strip_letter_review_details(event)
+    return strip_local_variables_near_assistant_text(event)
 
 
 def before_send_transaction_filter(event: Any, hint: Any) -> Any:
-    """Drop transactions for requests that matched no URL route.
+    """Drop transactions for requests that matched no URL route, and every
+    transaction from a letter review page (see LETTER_REVIEW_PATH_PREFIX).
 
     This is the half of the scanner-noise problem that ``before_send`` cannot
     reach: sentry-sdk calls ``before_send`` only for error events, so at
@@ -270,6 +388,8 @@ def before_send_transaction_filter(event: Any, hint: Any) -> Any:
     """
     if not isinstance(event, dict):
         return event
+    if is_letter_review_event(event):
+        return None
     transaction_info = event.get("transaction_info")
     if not isinstance(transaction_info, dict):
         return event

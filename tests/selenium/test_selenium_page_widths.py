@@ -51,9 +51,6 @@ PAGES = {
     "/how-to-help": "wide",
     "/media-references": "wide",
     "/treatments/": "wide",
-    "/glossary/": "wide",
-    "/state-help/": "wide",
-    "/state-help/california/": "wide",
     "/remove_data": "reading",
     "/about-ai": "reading",
     "/faq/": "reading",
@@ -63,15 +60,39 @@ PAGES = {
     "/mhmda": "reading",
 }
 
+# A page built from full-width bands under a hero holds its content in a
+# .fhi-column in each band, sized like the tiers. Path -> tier of the first
+# band's column. The measure checks are for prose pages and leave these out.
+BAND_PAGES = {
+    "/glossary/": "wide",
+    "/medicaid-eligibility": "reading",
+    "/turning-26": "reading",
+    "/professionals/patient-access": "wide",
+    "/microsite/biologic-denial/": "reading",
+    "/state-help/": "reading",
+    "/state-help/california/": "reading",
+    "/coverage-changes": "reading",
+}
+
 COLUMN_JS = """
-const column = document.querySelector('.fhi-page, .fhi-page-wide');
+// Inside a box that scrolls sideways on its own (.scroll-x, or a bar of
+// letters with overflow-x: auto), a child past the column's edge is reached
+// by scrolling that box, not the page.
+const inSideScroller = el => {
+  for (let p = el.parentElement; p && p !== column; p = p.parentElement) {
+    if (p.classList.contains('scroll-x')) return true;
+    if (['auto', 'scroll'].includes(getComputedStyle(p).overflowX)) return true;
+  }
+  return false;
+};
+const column = document.querySelector(arguments[0] || '.fhi-page, .fhi-page-wide');
 if (!column) { return {missing: true}; }
 const style = getComputedStyle(column);
 const rect = column.getBoundingClientRect();
 const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
 const viewport = document.documentElement.clientWidth;
 return {
-  tier: column.classList.contains('fhi-page-wide') ? 'wide' : 'reading',
+  tier: column.matches('.fhi-page-wide, .fhi-column-wide') ? 'wide' : 'reading',
   // The padding box: the column as drawn, edge padding included.
   outer: column.clientWidth,
   inner: column.clientWidth - padding,
@@ -89,7 +110,7 @@ return {
   // boxes: a .row is 24px wider than its parent by design and its
   // columns pad the content back inside, so neither draws anything.
   escapes: Array.from(column.querySelectorAll('*'))
-    .filter(el => el.checkVisibility() && !el.closest('.scroll-x') && el.tagName !== 'SCRIPT')
+    .filter(el => el.checkVisibility() && !inSideScroller(el) && el.tagName !== 'SCRIPT')
     .filter(el => !el.matches('.row, [class*="col-"], .col'))
     .filter(el => {
       const r = el.getBoundingClientRect();
@@ -109,11 +130,13 @@ for (const p of column.querySelectorAll('p, li')) {
   // What holds the paragraph, less its padding: the width it could fill.
   const parent = p.parentElement, ps = getComputedStyle(parent);
   const room = parent.clientWidth - parseFloat(ps.paddingLeft) - parseFloat(ps.paddingRight);
-  // 65 zeros in this paragraph's own face and size is what 65ch resolves
-  // to. The probe sits on the body, so it cannot widen the paragraph.
+  // N zeros in this paragraph's own face and size is what Nch resolves to,
+  // N read from the --fhi-measure token. The probe sits on the body, so it
+  // cannot widen the paragraph.
   const face = getComputedStyle(p);
+  const chars = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fhi-measure'));
   const probe = document.createElement('span');
-  probe.textContent = '0'.repeat(65);
+  probe.textContent = '0'.repeat(chars);
   probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
   probe.style.fontFamily = face.fontFamily;
   probe.style.fontSize = face.fontSize;
@@ -139,7 +162,7 @@ HEADINGS_JS = """
 const title = document.querySelector('main h1');
 if (!title) { return {missing: true}; }
 const sections = [];
-for (const column of document.querySelectorAll('.fhi-page, .fhi-page-wide')) {
+for (const column of document.querySelectorAll('.fhi-page, .fhi-page-wide, .fhi-column')) {
   for (const h2 of column.querySelectorAll('h2')) {
     if (!h2.checkVisibility()) { continue; }
     sections.push({text: h2.textContent.trim().slice(0, 40),
@@ -164,11 +187,11 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
-    def _column(self, page, size):
+    def _column(self, page, size, selector=None):
         self.set_window_size(*size)
         self.open(f"{self.live_server_url}{page}")
         self.wait_for_ready_state_complete()
-        column = self.execute_script(COLUMN_JS)
+        column = self.execute_script(COLUMN_JS, selector)
         assert not column.get("missing"), f"{page} has no .fhi-page column"
         return column
 
@@ -189,6 +212,43 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
                     assert not c["insideBootstrap"], (
                         f"{page}: the column sits inside a Bootstrap grid."
                     )
+
+    def test_a_band_column_is_sized_like_the_tiers(self):
+        """A band's column is its tier's width and centred at a desktop,
+        gives way to the window with a gutter in between, and on a phone is
+        the whole screen less the edge padding, as the page tiers are. None
+        of it runs past its edge or pushes the page sideways."""
+        for page, tier in BAND_PAGES.items():
+            for size in (DESKTOP, LAPTOP):
+                with self.subTest(page=page, width=size[0]):
+                    c = self._column(page, size, ".fhi-column")
+                    assert not c.get("missing"), f"{page} has no .fhi-column"
+                    assert c["tier"] == tier, f"{page} is on the {c['tier']} tier"
+                    assert abs(c["outer"] - TIER_WIDTH[tier]) <= 1, (
+                        f"{page} at {size[0]}px: the column is {c['outer']:.0f}px, "
+                        f"not {TIER_WIDTH[tier]}px."
+                    )
+                    assert abs(c["left"] - c["right"]) <= 2
+            for size in (SMALL_LAPTOP, TABLET):
+                with self.subTest(page=page, width=size[0]):
+                    c = self._column(page, size, ".fhi-column")
+                    assert c["outer"] <= TIER_WIDTH[tier] + 1
+                    assert min(c["left"], c["right"]) >= LEAST_GUTTER, (
+                        f"{page} at {size[0]}px: {c['left']:.0f}px on the left and "
+                        f"{c['right']:.0f}px on the right; the column runs to the edge."
+                    )
+                    assert not c["sideways"] and not c["escapes"], (
+                        f"{page} at {size[0]}px: sideways={c['sideways']} escapes={c['escapes']}"
+                    )
+            with self.subTest(page=page, width=PHONE[0]):
+                c = self._column(page, PHONE, ".fhi-column")
+                assert abs(c["outer"] - c["viewport"]) <= 1, (
+                    f"{page} on a phone: the column is {c['outer']:.0f}px of a "
+                    f"{c['viewport']:.0f}px screen."
+                )
+                assert abs(c["padding"] - 2 * EDGE_PADDING) <= 1
+                assert not c["sideways"], f"{page} scrolls sideways on a phone."
+                assert not c["escapes"], f"{page} on a phone: past the edge: {c['escapes']}"
 
     def test_a_narrow_window_keeps_a_buffer_beside_the_column(self):
         """Between a phone and a full laptop the column gives way to the
@@ -239,7 +299,7 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
                 self.wait_for_ready_state_complete()
                 self.type("#id_email", "nobody@example.com")
                 self.click("#submit")
-                self.wait_for_element(".alert-info")
+                self.wait_for_element(".fhi-notice-info")
                 c = self.execute_script(COLUMN_JS)
                 assert not c.get("missing"), "Check Your Email has no .fhi-page column"
                 if size is PHONE:
@@ -256,7 +316,7 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
                     f"Check Your Email at {size[0]}px: past the column's edge: {c['escapes']}"
                 )
                 note = self.execute_script(
-                    "return document.querySelector('.alert-info').getBoundingClientRect().width"
+                    "return document.querySelector('.fhi-notice-info').getBoundingClientRect().width"
                 )
                 assert note <= min(640, c["inner"]) + 1, (
                     f"Check Your Email at {size[0]}px: the note is {note:.0f}px wide in a "
@@ -289,10 +349,10 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
         column sizes its headings now; this holds that a section on any
         moved page, at a desktop and on a phone, stays below the title."""
         checked = 0
-        for page in PAGES:
+        for page in [*PAGES, *BAND_PAGES]:
             for size in (DESKTOP, PHONE):
                 with self.subTest(page=page, width=size[0]):
-                    self._column(page, size)
+                    self._column(page, size, ".fhi-column" if page in BAND_PAGES else None)
                     found = self.execute_script(HEADINGS_JS)
                     assert not found.get("missing"), f"{page} has no h1 in <main>"
                     for h2 in found["sections"]:
@@ -318,7 +378,7 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
                         f"{p['measure']:.0f}px measure."
                     )
                 # A paragraph that wraps is exactly as wide as the measure,
-                # so the widest one proves the measure really is 65ch and
+                # so the widest one proves the measure really is the token and
                 # not something narrower that the cap above would also pass.
                 longest = max(paragraphs, key=lambda p: p["width"])
                 assert abs(longest["width"] - longest["measure"]) <= 1, (

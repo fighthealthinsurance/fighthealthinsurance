@@ -2,8 +2,8 @@ import { pdfjsLib, workers_path } from "./shared";
 import {
   PDFDocumentProxy,
   TextContent,
-  TextItem,
 } from "pdfjs-dist/types/src/display/api";
+import { textFromPDFItems } from "./pdf_text";
 
 // Tesseract
 import Tesseract from "tesseract.js";
@@ -422,9 +422,9 @@ const ENGINE_PRECEDENCE: Record<string, number> = {
 /**
  * Is `needle` genuinely reproduced inside `haystack`?
  *
- * Whitespace is normalised because a PDF text layer joins runs with spaces
- * while OCR emits line breaks, and calling those different re-appended the
- * whole sparse layer.
+ * Whitespace is normalised because a PDF text layer and OCR break lines and
+ * space runs differently, and calling those different re-appended the whole
+ * sparse layer.
  *
  * But a plain substring test is unsafe in the other direction, and unsafely on
  * exactly the content that matters: "Appeal by 10/1" IS a substring of an OCR
@@ -720,8 +720,8 @@ async function recognizePDFPage(
     // Keep the page's own embedded text when OCR did not reproduce it. It is
     // exact where OCR is a guess, and on a denial the sparse bits are often
     // the ones that matter: a stamped appeal deadline, a claim number.
-    // Compared with whitespace collapsed, because a text layer joins runs with
-    // spaces while OCR emits line breaks -- a raw comparison called those
+    // Compared with whitespace collapsed, because a text layer and OCR break
+    // lines and space runs differently -- a raw comparison called those
     // different and appended the whole layer a second time.
     if (pageText.length > 0 && !containsNormalised(ocrText, pageText)) {
       parts.push(pageText);
@@ -798,14 +798,9 @@ async function getPDFPageText(
 ): Promise<string> {
   const page = await pdf.getPage(pageNo);
   const tokenizedText: TextContent = await page.getTextContent();
-  const items: TextItem[] = [];
-  tokenizedText.items.forEach((item) => {
-    if ("str" in item) {
-      items.push(item as TextItem);
-    }
-  });
-  const strs = items.map((token: TextItem) => token.str);
-  return strs.join(" ");
+  // A line of text per line of the page (pdf_text.ts), so the letter box
+  // reads like the letter and its address block can be found.
+  return textFromPDFItems(tokenizedText.items);
 }
 
 async function getPDFText(pdf: PDFDocumentProxy): Promise<string> {

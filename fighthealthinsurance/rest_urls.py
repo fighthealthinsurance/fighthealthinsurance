@@ -6,6 +6,7 @@ from django.urls import include, path
 from rest_framework import routers
 
 from fighthealthinsurance import chat_lead_views, rest_views
+from fhi_users.fight_paperwork import gate_patterns
 
 if settings.DEBUG:
     RouterClass: typing.Type[routers.BaseRouter] = routers.DefaultRouter
@@ -31,16 +32,6 @@ router.register(
     r"appeal_attachments",
     rest_views.AppealAttachmentViewSet,
     basename="appeal_attachments",
-)
-router.register(
-    r"mailinglist_subscribe",
-    rest_views.MailingListSubscriberViewSet,
-    basename="subscribe",
-)
-router.register(
-    r"demo_request",
-    rest_views.DemoRequestsViewSet,
-    basename="demorequest",
 )
 router.register(
     r"interested_professional",
@@ -92,6 +83,14 @@ urlpatterns = [
         rest_views.ActorHealthStatus.as_view(),
         name="actor_health_status",
     ),
-    # Router
-    path("", include(router.urls)),
+    # Router. The two appeal notices email Fight Paperwork patients and coworkers.
+    path(
+        "",
+        include(
+            gate_patterns(
+                router.urls,
+                names={"appeals-notify-patient", "appeals-invite-provider"},
+            )
+        ),
+    ),
 ]

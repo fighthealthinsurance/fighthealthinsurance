@@ -1,4 +1,4 @@
-"""Tests for fax_send_core precheck/resend semantics and the paid-fax dispatch.
+"""Tests for fax_send_core precheck/resend semantics and the fax dispatch fallback.
 
 These cover regressions found in the adversarial review of the Temporal fax
 integration:
@@ -8,20 +8,27 @@ integration:
 2. The precheck already-sent guard must only skip *successful* sends; a failed
    attempt (sent=True, fax_success=False) stays retryable, matching the
    original FaxActor behavior.
-3. A paid fax whose Temporal dispatch fails must fall back to a Ray send when
-   Temporal owns sending (the polling sweep is gated off), and must NOT fall
-   back when Temporal is disabled (the sweep still owns the ~1h delay).
+3. A fax whose Temporal dispatch fails falls back to a Ray send, without
+   first checking for a reachable Ray cluster: under Temporal the polling
+   sweep is gated off, so nothing else would send it.
 """
 
 import pytest
+from datetime import timedelta
 from unittest.mock import MagicMock, Mock, patch
 
 from django.test import override_settings
+from django.utils import timezone
 
 from fighthealthinsurance import fax_send_core
 from fighthealthinsurance.fax_status import STATUS_ALREADY_SENT, STATUS_OK
-from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
-from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
+from fighthealthinsurance.helpers.fax_helpers import (
+    FAX_RESEND_WINDOW,
+    RESEND_DELIVERED,
+    RESEND_EXPIRED,
+    SendFaxHelper,
+    _dispatch_or_ray_fax,
+)
 from fighthealthinsurance.models import Denial, FaxesToSend
 
 
@@ -56,7 +63,7 @@ class TestResendClearsIdempotencyMarker:
     def test_resend_clears_vendor_send_completed(self, test_denial):
         """resend() to a new number must allow the vendor step to re-transmit."""
         fax = _make_fax(
-            test_denial, sent=True, fax_success=True, vendor_send_completed=True
+            test_denial, sent=True, fax_success=False, vendor_send_completed=True
         )
         with patch(
             "fighthealthinsurance.helpers.fax_helpers._dispatch_or_ray_fax"
@@ -76,7 +83,7 @@ class TestResendClearsIdempotencyMarker:
         """A resend must supersede any in-flight run so the corrected number
         isn't dropped by a run already past its send step."""
         fax = _make_fax(
-            test_denial, sent=True, fax_success=True, vendor_send_completed=True
+            test_denial, sent=True, fax_success=False, vendor_send_completed=True
         )
         with patch(
             "fighthealthinsurance.helpers.fax_helpers._dispatch_or_ray_fax"
@@ -87,6 +94,66 @@ class TestResendClearsIdempotencyMarker:
                 hashed_email=fax.hashed_email,
             )
         assert dispatch.call_args.kwargs.get("force_restart") is True
+
+
+@pytest.mark.django_db
+class TestResendRefusals:
+    """The follow-up link re-sends a failed fax, or one with no number, for
+    FAX_RESEND_WINDOW after it was staged. A delivered fax stays sent."""
+
+    def _resend(self, fax):
+        with patch(
+            "fighthealthinsurance.helpers.fax_helpers._dispatch_or_ray_fax"
+        ) as dispatch:
+            result = SendFaxHelper.resend(
+                fax_phone="8005559999",
+                uuid=str(fax.uuid),
+                hashed_email=fax.hashed_email,
+            )
+        return result, dispatch
+
+    def _staged_ago(self, fax, age):
+        FaxesToSend.objects.filter(pk=fax.pk).update(date=timezone.now() - age)
+        fax.refresh_from_db()
+
+    def test_a_delivered_fax_is_not_resent(self, test_denial):
+        fax = _make_fax(
+            test_denial, sent=True, fax_success=True, vendor_send_completed=True
+        )
+        result, dispatch = self._resend(fax)
+        assert result is False
+        dispatch.assert_not_called()
+        fax.refresh_from_db()
+        assert fax.destination == "4255551234"
+        assert fax.sent is True and fax.fax_success is True
+        assert fax.vendor_send_completed is True
+
+    def test_a_fax_past_the_window_is_not_resent(self, test_denial):
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        self._staged_ago(fax, FAX_RESEND_WINDOW + timedelta(minutes=1))
+        result, dispatch = self._resend(fax)
+        assert result is False
+        dispatch.assert_not_called()
+        fax.refresh_from_db()
+        assert fax.destination == "4255551234"
+
+    def test_a_failed_fax_inside_the_window_is_resent(self, test_denial):
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        self._staged_ago(fax, FAX_RESEND_WINDOW - timedelta(minutes=1))
+        result, dispatch = self._resend(fax)
+        assert result is True
+        dispatch.assert_called_once()
+
+    def test_refusal_reasons(self, test_denial):
+        delivered = _make_fax(test_denial, sent=True, fax_success=True)
+        old = _make_fax(test_denial, sent=True, fax_success=False)
+        self._staged_ago(old, FAX_RESEND_WINDOW + timedelta(days=1))
+        failed = _make_fax(test_denial, sent=True, fax_success=False)
+        no_number = _make_fax(test_denial, destination=None)
+        assert SendFaxHelper.resend_refusal(delivered) == RESEND_DELIVERED
+        assert SendFaxHelper.resend_refusal(old) == RESEND_EXPIRED
+        assert SendFaxHelper.resend_refusal(failed) is None
+        assert SendFaxHelper.resend_refusal(no_number) is None
 
 
 @pytest.mark.django_db
@@ -270,19 +337,23 @@ class TestPrecheckAlreadySentGuard:
 
 
 @pytest.mark.django_db
-class TestPaidFaxDispatchFallback:
+class TestFaxDispatchFallback:
+    """Staging a fax, the Stripe success page and a resend all send through
+    _dispatch_or_ray_fax, so its fallback is what keeps a fax from being
+    stranded when Temporal cannot take it."""
+
     @override_settings(TEMPORAL_ENABLED=True)
-    @patch("fighthealthinsurance.fax_actor_ref.fax_actor_ref")
-    @patch("fighthealthinsurance.temporal_client.dispatch_fax_send")
-    def test_failed_temporal_dispatch_falls_back_to_ray(
+    @patch("fighthealthinsurance.helpers.fax_helpers.fax_actor_ref")
+    @patch("fighthealthinsurance.helpers.fax_helpers.dispatch_fax_send")
+    def test_a_failed_temporal_dispatch_falls_back_to_ray(
         self, mock_dispatch, mock_actor_ref, test_denial
     ):
-        """Temporal on + dispatch failure must not orphan a paid fax."""
+        """Temporal on + dispatch failure must not orphan the fax."""
         mock_dispatch.return_value = False
         mock_actor_ref.get = MagicMock()
         fax = _make_fax(test_denial)
 
-        StripeWebhookHelper._handle_fax_payment(str(fax.uuid))
+        _dispatch_or_ray_fax(fax.hashed_email, str(fax.uuid))
 
         mock_actor_ref.get.do_send_fax.remote.assert_called_once_with(
             fax.hashed_email, str(fax.uuid)
@@ -290,19 +361,19 @@ class TestPaidFaxDispatchFallback:
 
     @override_settings(TEMPORAL_ENABLED=True)
     @patch("fighthealthinsurance.base_actor_ref.ray_cluster_available")
-    @patch("fighthealthinsurance.fax_actor_ref.fax_actor_ref")
-    @patch("fighthealthinsurance.temporal_client.dispatch_fax_send")
-    def test_paid_fax_still_dispatches_with_no_ray_cluster(
+    @patch("fighthealthinsurance.helpers.fax_helpers.fax_actor_ref")
+    @patch("fighthealthinsurance.helpers.fax_helpers.dispatch_fax_send")
+    def test_a_fax_still_dispatches_with_no_ray_cluster(
         self, mock_dispatch, mock_actor_ref, mock_cluster, test_denial
     ):
         """The fax dispatches are deliberately NOT gated on a reachable cluster,
         unlike every other per-task Ray dispatch on a request path.
 
-        This branch is only reachable under TEMPORAL_ENABLED, which is exactly
-        the configuration where the delayed-fax sweep does not run at all --
+        Under TEMPORAL_ENABLED the delayed-fax sweep does not run at all --
         FaxPollingActor is never launched and send_delayed_faxes early-returns.
-        Skipping here would strand a fax the user paid for with nothing to retry
-        it, so booting a local cluster is accepted as the lesser harm.
+        The Ray fallback is reached exactly when the Temporal dispatch failed,
+        so skipping it would strand the fax with nothing to retry it, and
+        booting a local cluster is accepted as the lesser harm.
 
         ray_cluster_available is forced False (and asserted unconsulted) so
         re-adding the gate fails here rather than silently in production.
@@ -312,24 +383,9 @@ class TestPaidFaxDispatchFallback:
         mock_actor_ref.get = MagicMock()
         fax = _make_fax(test_denial)
 
-        StripeWebhookHelper._handle_fax_payment(str(fax.uuid))
+        _dispatch_or_ray_fax(fax.hashed_email, str(fax.uuid))
 
         mock_actor_ref.get.do_send_fax.remote.assert_called_once_with(
             fax.hashed_email, str(fax.uuid)
         )
         mock_cluster.assert_not_called()
-
-    @override_settings(TEMPORAL_ENABLED=False)
-    @patch("fighthealthinsurance.fax_actor_ref.fax_actor_ref")
-    @patch("fighthealthinsurance.temporal_client.dispatch_fax_send")
-    def test_no_ray_fallback_when_temporal_disabled(
-        self, mock_dispatch, mock_actor_ref, test_denial
-    ):
-        """Temporal off: the polling sweep owns the delayed send, no Ray call."""
-        mock_dispatch.return_value = False
-        mock_actor_ref.get = MagicMock()
-        fax = _make_fax(test_denial)
-
-        StripeWebhookHelper._handle_fax_payment(str(fax.uuid))
-
-        mock_actor_ref.get.do_send_fax.remote.assert_not_called()

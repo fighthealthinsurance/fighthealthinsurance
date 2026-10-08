@@ -56,10 +56,7 @@
             headers: {
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ 
-              amount: amt,
-              return_url: window.location.pathname + window.location.search
-            })
+            body: JSON.stringify({ amount: amt })
           });
 
           const data = await response.json();
@@ -75,8 +72,22 @@
               submitBtn.disabled = false;
               submitBtn.textContent = 'Support (optional)';
             } else {
-              // Fallback: if popup was blocked, navigate current window
-              window.location.href = data.url;
+              // The browser blocked the new tab. Never send this tab to Stripe
+              // instead: it may hold an appeal letter that a reload cannot
+              // bring back. Offer the checkout as a link, which opens a tab
+              // from the person's own click.
+              if(thanks){
+                thanks.hidden = false;
+                thanks.textContent = '';
+                const link = document.createElement('a');
+                link.href = data.url;
+                link.target = '_blank';
+                link.rel = 'noopener';
+                link.textContent = 'Open the secure payment page in a new tab';
+                thanks.append('Your browser blocked the new tab. ', link, '.');
+              }
+              submitBtn.disabled = false;
+              submitBtn.textContent = 'Support (optional)';
             }
           } else if(data.success && data.message){
             // Close the blank window if we opened one

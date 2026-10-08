@@ -5,6 +5,7 @@ import mfa
 import mfa.TrustedDevice
 from fhi_users.auth import rest_auth_views
 from fhi_users.auth import auth_views
+from fhi_users.fight_paperwork import gate_patterns
 from fhi_users.auth.rest_auth_views import (
     RestLoginView,
     PatientUserViewSet,
@@ -44,8 +45,8 @@ router.register(
 router.register(r"password", PasswordViewSet, basename="password")
 
 urlpatterns = [
-    # Rest APIs served under here
-    path("rest/router/", include(router.urls)),
+    # Rest APIs served under here; only Fight Paperwork's app calls them.
+    path("rest/router/", include(gate_patterns(router.urls))),
     # Non-rest views
     path("login", auth_views.LoginView.as_view(), name="login"),
     path("logout", auth_views.LogoutView.as_view(), name="logout"),

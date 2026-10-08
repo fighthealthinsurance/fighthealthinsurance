@@ -1,0 +1,333 @@
+/**
+ * User info storage module - shared between consent forms and chat interface.
+ * Handles localStorage persistence of user information with privacy scrubbing support.
+ */
+
+import { typedValuePattern } from "./typed_value_pattern";
+
+// Storage key for user info
+const USER_INFO_KEY = "fhi_user_info";
+// Storage key for external models preference
+const EXTERNAL_MODELS_KEY = "fhi_use_external_models";
+
+// Interface for user information
+export interface UserInfo {
+  firstName: string;
+  lastName: string;
+  email: string;
+  address: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  acceptedTerms: boolean;
+}
+
+/**
+ * Save user info to localStorage
+ */
+export function saveUserInfo(userInfo: UserInfo): void {
+  try {
+    localStorage.setItem(USER_INFO_KEY, JSON.stringify(userInfo));
+  } catch (e) {
+    console.error("Error saving user info to localStorage:", e);
+  }
+}
+
+/**
+ * Get user info from localStorage
+ */
+export function getUserInfo(): UserInfo | null {
+  try {
+    const stored = localStorage.getItem(USER_INFO_KEY);
+    if (stored) {
+      return JSON.parse(stored) as UserInfo;
+    }
+  } catch (e) {
+    // Log only the error name: JSON.parse errors embed a snippet of the
+    // stored (PII) JSON in their message, and console.error survives the
+    // production build.
+    console.error("Error parsing stored user info:", (e as Error)?.name);
+  }
+  return null;
+}
+
+/**
+ * Clear user info from localStorage
+ */
+export function clearUserInfo(): void {
+  localStorage.removeItem(USER_INFO_KEY);
+}
+
+/**
+ * Save external models preference to localStorage
+ */
+export function saveExternalModelsPreference(useExternalModels: boolean): void {
+  try {
+    localStorage.setItem(EXTERNAL_MODELS_KEY, useExternalModels.toString());
+  } catch (e) {
+    console.error("Error saving external models preference to localStorage:", e);
+  }
+}
+
+/**
+ * Get external models preference from localStorage
+ */
+export function getExternalModelsPreference(): boolean {
+  try {
+    const stored = localStorage.getItem(EXTERNAL_MODELS_KEY);
+    // Pure read: no key means "no stored choice, use the default", and a read
+    // must not materialize a value. Writing "true" here recorded an explicit
+    // opt-in for anyone who merely opened the chat, which made a real choice
+    // indistinguishable from never having been asked.
+    return stored === null ? true : stored === "true";
+  } catch (e) {
+    console.error("Error getting external models preference from localStorage:", e);
+  }
+  return true;
+}
+
+/**
+ * Scrub personal info from a message, replacing with placeholders. Each
+ * value is found however the message spaces it: any run of whitespace
+ * between its words (a line break in a pasted letter) counts as the one
+ * space typed (typed_value_pattern.ts).
+ */
+export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): string {
+  if (!userInfo || !message) return message;
+
+  let scrubbedMessage = message;
+  // A value with no words is not looked for.
+  const replaceValue = (value: string, wrap: (pattern: string) => string, placeholder: string): void => {
+    const pattern = typedValuePattern(value);
+    if (pattern !== null) {
+      scrubbedMessage = scrubbedMessage.replace(new RegExp(wrap(pattern), "gi"), placeholder);
+    }
+  };
+  const asIs = (pattern: string): string => pattern;
+  const wholeWords = (pattern: string): string => `\\b${pattern}\\b`;
+
+  // Replace email first (before names) to avoid corrupting email addresses
+  // e.g., alice@example.com -> {{FIRST_NAME}}@example.com
+  if (userInfo.email) {
+    replaceValue(userInfo.email, asIs, "{{Your Email Address}}");
+  }
+
+  // Replace combined "firstName lastName" before individual names to avoid
+  // partial matches (e.g., replacing firstName first could prevent lastName match)
+  if (userInfo.firstName && userInfo.lastName) {
+    replaceValue(`${userInfo.firstName} ${userInfo.lastName}`, wholeWords, "{{PATIENT_NAME}}");
+  }
+
+  // Replace individual names (catches occurrences not part of the combined pattern)
+  if (userInfo.firstName) {
+    replaceValue(userInfo.firstName, wholeWords, "{{FIRST_NAME}}");
+  }
+
+  if (userInfo.lastName) {
+    replaceValue(userInfo.lastName, wholeWords, "{{LAST_NAME}}");
+  }
+
+  // Replace address
+  if (userInfo.address) {
+    replaceValue(userInfo.address, asIs, "{{ADDRESS}}");
+  }
+
+  // Replace city
+  if (userInfo.city) {
+    replaceValue(userInfo.city, wholeWords, "{{CITY}}");
+  }
+
+  // State is deliberately NOT scrubbed. It is coarse (1 of 50), and the
+  // Medicaid/appeal flows genuinely need it server-side: the assistant asks
+  // "which state are you in?", and when the answer got masked to {{STATE}}
+  // the model could never learn it and re-asked forever — a guaranteed chat
+  // loop. restorePersonalInfo still expands {{STATE}} for legacy history.
+
+  // Replace zip code
+  if (userInfo.zipCode) {
+    replaceValue(userInfo.zipCode, wholeWords, "{{ZIP_CODE}}");
+  }
+
+  return scrubbedMessage;
+}
+
+/**
+ * Restore personal info in a message, replacing placeholders with actual values
+ */
+export function restorePersonalInfo(message: string, userInfo: UserInfo | null): string {
+  if (!userInfo || !message) return message;
+
+  let restoredMessage = message;
+
+  if (userInfo.firstName) {
+    restoredMessage = restoredMessage.replace(/\{\{FIRST_NAME\}\}/g, userInfo.firstName);
+  }
+
+  if (userInfo.lastName) {
+    restoredMessage = restoredMessage.replace(/\{\{LAST_NAME\}\}/g, userInfo.lastName);
+  }
+
+  if (userInfo.address) {
+    restoredMessage = restoredMessage.replace(/\{\{ADDRESS\}\}/g, userInfo.address);
+  }
+
+  if (userInfo.city) {
+    restoredMessage = restoredMessage.replace(/\{\{CITY\}\}/g, userInfo.city);
+  }
+
+  if (userInfo.state) {
+    restoredMessage = restoredMessage.replace(/\{\{STATE\}\}/g, userInfo.state);
+  }
+
+  if (userInfo.zipCode) {
+    restoredMessage = restoredMessage.replace(/\{\{ZIP_CODE\}\}/g, userInfo.zipCode);
+  }
+
+  if (userInfo.email) {
+    restoredMessage = restoredMessage.replace(/\{\{Your Email Address\}\}/g, userInfo.email);
+  }
+
+  // Legacy [BRACKET] format fallbacks for older scrubbed content
+  if (userInfo.firstName) {
+    restoredMessage = restoredMessage.replace(/\[FIRST_NAME\]/g, userInfo.firstName);
+  }
+  if (userInfo.lastName) {
+    restoredMessage = restoredMessage.replace(/\[LAST_NAME\]/g, userInfo.lastName);
+  }
+  if (userInfo.email) {
+    restoredMessage = restoredMessage.replace(/\[EMAIL\]/g, userInfo.email);
+  }
+  if (userInfo.address) {
+    restoredMessage = restoredMessage.replace(/\[ADDRESS\]/g, userInfo.address);
+  }
+  if (userInfo.city) {
+    restoredMessage = restoredMessage.replace(/\[CITY\]/g, userInfo.city);
+  }
+  if (userInfo.state) {
+    restoredMessage = restoredMessage.replace(/\[STATE\]/g, userInfo.state);
+  }
+  if (userInfo.zipCode) {
+    restoredMessage = restoredMessage.replace(/\[ZIP_CODE\]/g, userInfo.zipCode);
+  }
+
+  // Combined-name and email placeholders
+  const fullName = [userInfo.firstName, userInfo.lastName].filter(Boolean).join(" ");
+  if (fullName.trim()) {
+    restoredMessage = restoredMessage.replace(/\{\{PATIENT_NAME\}\}/g, fullName);
+    restoredMessage = restoredMessage.replace(/\[Your Name\]/g, fullName);
+    restoredMessage = restoredMessage.replace(/\$your_name_here/g, fullName);
+  }
+  if (userInfo.email) {
+    restoredMessage = restoredMessage.replace(/\[Email Address\]/g, userInfo.email);
+  }
+
+  return restoredMessage;
+}
+
+// Form field IDs that map to UserInfo properties
+const FIELD_MAPPINGS: Record<string, keyof UserInfo> = {
+  store_fname: "firstName",
+  store_lname: "lastName",
+  email: "email",
+  store_street: "address",
+  store_city: "city",
+  store_state: "state",
+  store_zip: "zipCode",
+};
+
+/**
+ * Collect user info from form fields
+ */
+export function collectUserInfoFromForm(): UserInfo {
+  const getFieldValue = (id: string): string => {
+    const elem = document.getElementById(id) as HTMLInputElement | null;
+    return elem?.value || "";
+  };
+
+  return {
+    firstName: getFieldValue("store_fname"),
+    lastName: getFieldValue("store_lname"),
+    email: getFieldValue("email"),
+    address: getFieldValue("store_street"),
+    city: getFieldValue("store_city"),
+    state: getFieldValue("store_state"),
+    zipCode: getFieldValue("store_zip"),
+    acceptedTerms: true,
+  };
+}
+
+/**
+ * Populate form fields from stored user info
+ */
+export function populateFormFromUserInfo(userInfo: UserInfo | null): void {
+  if (!userInfo) return;
+
+  const setFieldValue = (id: string, value: string | undefined) => {
+    if (!value) return;
+    const elem = document.getElementById(id) as HTMLInputElement | null;
+    if (elem && !elem.value) {
+      // Only set if field is empty (don't overwrite server-provided values)
+      elem.value = value;
+    }
+  };
+
+  setFieldValue("store_fname", userInfo.firstName);
+  setFieldValue("store_lname", userInfo.lastName);
+  setFieldValue("email", userInfo.email);
+  setFieldValue("store_street", userInfo.address);
+  setFieldValue("store_city", userInfo.city);
+  setFieldValue("store_state", userInfo.state);
+  setFieldValue("store_zip", userInfo.zipCode);
+}
+
+/**
+ * Setup form persistence - call on DOMContentLoaded
+ * Handles both saving on submit and restoring on load
+ */
+export function setupFormPersistence(formId: string): void {
+  const form = document.getElementById(formId) as HTMLFormElement | null;
+  if (!form) {
+    console.error(`Form with id "${formId}" not found`);
+    return;
+  }
+
+  // Restore form fields from localStorage
+  const storedInfo = getUserInfo();
+  if (storedInfo) {
+    populateFormFromUserInfo(storedInfo);
+  }
+
+  // Restore external models preference
+  const externalModelsCheckbox = document.getElementById("use_external_models") as HTMLInputElement | null;
+  if (externalModelsCheckbox) {
+    externalModelsCheckbox.checked = getExternalModelsPreference();
+  }
+
+  // Save to localStorage on form submit
+  form.addEventListener("submit", () => {
+    const userInfo = collectUserInfoFromForm();
+    saveUserInfo(userInfo);
+
+    // Save external models preference
+    if (externalModelsCheckbox) {
+      saveExternalModelsPreference(externalModelsCheckbox.checked);
+    }
+  });
+}
+
+// Auto-initialize when imported as a script (for non-bundled usage)
+if (typeof window !== "undefined") {
+  // Export to window for template script usage
+  (window as any).userInfoStorage = {
+    saveUserInfo,
+    getUserInfo,
+    clearUserInfo,
+    saveExternalModelsPreference,
+    getExternalModelsPreference,
+    scrubPersonalInfo,
+    restorePersonalInfo,
+    collectUserInfoFromForm,
+    populateFormFromUserInfo,
+    setupFormPersistence,
+  };
+}

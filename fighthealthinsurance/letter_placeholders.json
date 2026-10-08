@@ -1,0 +1,150 @@
+{
+  "about": [
+    "Blanks a finished letter still has in it when it is about to leave the site: printed, or faxed to an insurance company.",
+    "One list for both sides. fighthealthinsurance/letter_placeholders.py reads it for the fax form on the server, and static/js/letter_placeholders.ts bundles it for the print and fax buttons.",
+    "Patterns are written in the part of regular expression syntax that Python's re (with re.ASCII) and JavaScript's RegExp read the same way: no lookbehind, no \\s, no capturing groups. The only flag is i.",
+    "A Markdown reference link is never reported when the letter defines where it goes: [text][id], or [text][] where the text is the id, with a line of its own that starts [id]: https://. That definition is never reported either. Ids match whatever their capitals and spacing.",
+    "Text matched by an ignore pattern is never reported. Each placeholder pattern then claims what it matches, in order, so a later pattern never reports part of something an earlier one found.",
+    "A pattern here stops a fax, so each one is narrow on purpose: a citation like [1], a statute subsection like (a), an amount like $500 and a karyotype like 47,XXX all pass."
+  ],
+  "reference_links": {
+    "definition": {
+      "name": "where a reference link goes: [id]: https://... at the start of a line",
+      "pattern": "(?:^|\\n) {0,3}\\[[^\\[\\]\\n]{1,200}\\]:[ \\t]{0,10}<?https?://[^ \\t\\n<>]{1,2000}>?",
+      "flags": "i"
+    },
+    "link": {
+      "name": "a reference link: [text][id], or [text][] where the text is the id",
+      "pattern": "\\[[^\\[\\]\\n]{1,200}\\]\\[[^\\[\\]\\n]{0,200}\\]"
+    },
+    "examples": [
+      "See the [Coverage Policy][1].\n\n[1]: https://example.com/policy",
+      "See the [Coverage Policy][].\n\n[Coverage Policy]: https://example.com/policy"
+    ]
+  },
+  "ignore": [
+    {
+      "name": "a karyotype, which is a diagnosis rather than a blank",
+      "pattern": "\\b[0-9]{2}, ?X{1,4}Y{0,2}\\b",
+      "examples": ["47,XXX", "46,XX", "47,XXY"]
+    },
+    {
+      "name": "the brackets of quoting in legal writing",
+      "pattern": "\\[(?:sic|emphasis (?:added|supplied|mine|in original)|(?:internal )?(?:citations?|quotation marks|footnotes?) omitted|alterations? in original)\\.?\\]",
+      "flags": "i",
+      "examples": ["[sic]", "[Emphasis added]", "[internal citations omitted]"]
+    },
+    {
+      "name": "a number masked down to its last four digits, as a statement prints it",
+      "pattern": "\\bX{3,}(?:-X{2,})*-?[0-9]{4}\\b",
+      "flags": "i",
+      "examples": ["XXXX-1234", "XXX-XX-1234"]
+    },
+    {
+      "name": "a drug's package insert, however it is capitalised",
+      "pattern": "\\bpackage inserts?\\b",
+      "flags": "i",
+      "examples": ["SEE PACKAGE INSERT FOR DOSING", "Package Insert"]
+    }
+  ],
+  "placeholders": [
+    {
+      "name": "double braces",
+      "pattern": "\\{\\{[^{}\\n]{1,200}\\}\\}",
+      "examples": ["{{FIRST_NAME}}", "{{Your Name}}"]
+    },
+    {
+      "name": "single braces",
+      "pattern": "\\{[A-Za-z_][^{}\\n]{0,200}\\}",
+      "examples": ["{Patient Name}", "{diagnosis}"]
+    },
+    {
+      "name": "brackets that start with an instruction or a detail to fill in, not followed by a link",
+      "pattern": "\\[ ?(?:insert|enter|add|fill in|your|attach|include|specify|describe|explain|provide|quote|mention|list|placeholder|todo|tbd|date|name|number of|signature|address|phone|email|city|zip)\\b[^\\[\\]\\n]{0,200}\\](?!\\()",
+      "flags": "i",
+      "examples": ["[insert date of denial, e.g. 01/02/2026]", "[your name]", "[Address Line 1]", "[provide denial reason directly from letter]", "[quote the specific reason given in the denial letter]", "[number of years]"]
+    },
+    {
+      "name": "brackets around a capitalised name, not followed by a link",
+      "pattern": "\\[[A-Z][A-Za-z_'\u2019#/&(), -]{1,200}\\](?!\\()",
+      "examples": ["[Your Name]", "[INSERT DATE]", "[CLAIM_NUMBER]", "[City, State ZIP]"]
+    },
+    {
+      "name": "brackets around a snake_case name, not followed by a link",
+      "pattern": "\\[[A-Za-z]+(?:_[A-Za-z]+)+\\](?!\\()",
+      "examples": ["[insurance_company]"]
+    },
+    {
+      "name": "brackets around a lower-case detail to fill in, not followed by a link",
+      "pattern": "\\[[a-z][a-z'\u2019/ -]{0,200}\\b(?:name|date|number|address|id)\\](?!\\()",
+      "examples": ["[patient's name]", "[diagnosis date]", "[doctor name]"]
+    },
+    {
+      "name": "brackets around a choice of two or more pronouns, in any order",
+      "pattern": "\\[(?:themselves|themself|theirs|their|them|they|himself|him|his|herself|hers|her|he|she|xemself|xyrs|xyr|xem|xe|zirself|zirs|zir|zie|ze|hirself|hirs|hir)(?:(?: ?/ ?| or )(?:themselves|themself|theirs|their|them|they|himself|him|his|herself|hers|her|he|she|xemself|xyrs|xyr|xem|xe|zirself|zirs|zir|zie|ze|hirself|hirs|hir))+\\]",
+      "flags": "i",
+      "examples": ["[his/her]", "[he or she]", "[he/she/they]", "[they or she]", "[his/her/their]"]
+    },
+    {
+      "name": "angle brackets that start with an instruction or a detail to fill in",
+      "pattern": "<(?:insert|enter|add|fill in|your|date|name|signature|placeholder)\\b[^<>\\n]{0,200}>",
+      "flags": "i",
+      "examples": ["<Insert date>", "<your name>"]
+    },
+    {
+      "name": "angle brackets around a capitalised name",
+      "pattern": "<[A-Z][A-Za-z_'\u2019#/& -]{1,200}>",
+      "examples": ["<Patient Name>"]
+    },
+    {
+      "name": "parentheses that start with an instruction",
+      "pattern": "\\((?:insert|enter|fill in)\\b[^()\\n]{0,80}\\)",
+      "flags": "i",
+      "examples": ["(Insert claim number)"]
+    },
+    {
+      "name": "INSERT in capitals, followed by what to insert",
+      "pattern": "\\bINSERT(?::? [A-Z][A-Z'#/-]*)+",
+      "examples": ["INSERT DATE HERE"]
+    },
+    {
+      "name": "a date written as its format",
+      "pattern": "\\b(?:MM|DD)[/-](?:DD|MM)[/-](?:YYYY|YY)\\b",
+      "examples": ["MM/DD/YYYY"]
+    },
+    {
+      "name": "an amount written in Xs",
+      "pattern": "\\$X{1,3}(?:,X{3})*(?:\\.X{2})?(?![A-Za-z0-9])",
+      "flags": "i",
+      "examples": ["$X,XXX.XX", "$XXX"]
+    },
+    {
+      "name": "a number written in groups of Xs",
+      "pattern": "\\bX{2,4}(?:[-/.]X{2,4})+\\b",
+      "flags": "i",
+      "examples": ["XX/XX/XXXX", "XXX-XX-XXXX"]
+    },
+    {
+      "name": "a run of Xs",
+      "pattern": "\\bX{3,}\\b",
+      "flags": "i",
+      "examples": ["XXX", "XXXXXXXX"]
+    },
+    {
+      "name": "a line to write on",
+      "pattern": "_{3,}",
+      "label": "___",
+      "examples": ["____________"]
+    },
+    {
+      "name": "a dollar-sign template variable",
+      "pattern": "\\$[A-Za-z_][A-Za-z0-9_]*",
+      "examples": ["$insurance_company", "$DATE"]
+    },
+    {
+      "name": "the stand-ins the letter builder writes when it has no detail stored",
+      "pattern": "\\b(?:FirstName|LastName|YourNameMagic|subscriber_id|group_id|claim_id|phone_number|email_address|insurance_company)\\b",
+      "examples": ["FirstName", "subscriber_id"]
+    }
+  ]
+}

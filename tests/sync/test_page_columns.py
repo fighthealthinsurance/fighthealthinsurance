@@ -27,30 +27,52 @@ ON_A_COLUMN = {
     "about_us.html": "fhi-page-wide",
     "other_resources.html": "fhi-page-wide",
     "how_to_help.html": "fhi-page-wide",
+    "ai_assistants.html": "fhi-page-wide",
     "media_references.html": "fhi-page-wide",
     "microsite_directory.html": "fhi-page-wide",
+    "fax_thankyou.html": "fhi-page-wide",
     "about_ai.html": "fhi-page",
+    "faxfollowup.html": "fhi-page",
+    "thankyou.html": "fhi-page",
+    "followup_thankyou.html": "fhi-page",
+    "fax_followup_thankyou.html": "fhi-page",
+    "professional_available.html": "fhi-page",
+    "professional_thankyou.html": "fhi-page",
+    "warnings.html": "fhi-page",
+    "server_side_ocr.html": "fhi-page",
+    "server_side_ocr_error.html": "fhi-page",
     "faq.html": "fhi-page",
     "contact.html": "fhi-page",
     "privacy_policy.html": "fhi-page",
     "tos.html": "fhi-page",
     "mhmda.html": "fhi-page",
     "glossary.html": "fhi-page",
+    "followup.html": "fhi-page",
     "remove_data.html": "fhi-page fhi-page-centred",
+    "pwyw_thanks.html": "fhi-page fhi-page-centred",
     "confirm_delete.html": "fhi-page fhi-page-centred",
     "removed_data.html": "fhi-page fhi-page-centred",
     "delete_data_email_sent.html": "fhi-page fhi-page-centred",
     "share_denial.html": "fhi-page fhi-page-centred",
+    "unsubscribed.html": "fhi-page fhi-page-centred",
+    "stripe_finish_error.html": "fhi-page fhi-page-centred",
+    "fax_payment_cancelled.html": "fhi-page fhi-page-centred",
 }
 
 # Hero pages -> the class every band under the hero opens on. The first
 # wrapper on these pages is inside the hero, so the page is read band by
 # band instead: each full-width section after the hero holds its own column,
-# which is how a band keeps its background running edge to edge.
+# which is how a band keeps its background running edge to edge. A page
+# built from bands opens each one on .fhi-column, which reads the same
+# width tokens as the page tiers and shares the wide tier's heading scale.
 BANDS_ON_A_COLUMN = {
-    "state_help_index.html": "fhi-page-wide",
-    "state_help.html": "fhi-page-wide",
-    "glossary_index.html": "fhi-page-wide",
+    "state_help_index.html": "fhi-column",
+    "state_help.html": "fhi-column",
+    "glossary_index.html": "fhi-column",
+    "medicaid_eligibility.html": "fhi-column",
+    "turning_26.html": "fhi-column",
+    "patient_access.html": "fhi-column",
+    "microsite.html": "fhi-column",
 }
 
 FIRST_WRAPPER = re.compile(r"{%\s*block content\s*%}.*?<div class=\"([^\"]+)\"", re.S)
@@ -87,7 +109,8 @@ def test_each_band_under_a_hero_opens_on_its_column() -> None:
             label = re.search(r"\bid=\"([^\"]+)\"", attributes)
             label = label.group(1) if label else (band.group(1) if band else "a band")
             found = CLASS.search(inner)
-            found = found.group(1) if found and tag == "div" else None
+            # the first class names the column; the rest are how it is laid out
+            found = found.group(1).split()[0] if found and tag == "div" else None
             if found != expected:
                 wrong.append(f"{name} #{label}: opens on {found!r}, not {expected!r}")
     assert not wrong, "\n".join(wrong)

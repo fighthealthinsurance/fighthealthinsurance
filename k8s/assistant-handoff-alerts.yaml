@@ -1,0 +1,86 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  # Alerts for prepare_appeal, the one MCP tool that keeps anything: it holds
+  # the denial letter an assistant sends until the person opens the link
+  # (fighthealthinsurance/assistant_handoff.py). Its two caps are global and
+  # /mcp takes anonymous calls, so one caller, or a real burst, can fill them.
+  # When that happens nothing errors: every assistant is told to send its
+  # person to paste the letter themselves, and the people are the only ones
+  # who notice. These alerts are how we notice instead.
+  #
+  # Counts only. No series here carries a letter, a code, or who called.
+  # What to do when one fires: docs/mcp-server.md.
+  #
+  # Both series come from the web pods (6 replicas, one registry each,
+  # scraped by k8s/fhi-web-podmonitor.yaml). Counters are per pod, so they
+  # are summed. The live-link gauge is read from the table, so every pod
+  # reports the same number, and it is taken with max(): sum() would count
+  # it six times.
+  name: fhi-assistant-handoff-alerts
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance-prod
+spec:
+  groups:
+    - name: fhi-assistant-handoff
+      rules:
+        # Any refusal at all, at either cap, in the last 15 minutes. One is
+        # enough: each refusal is a person who asked their assistant for help
+        # and got sent to do it by hand. Resolves 15 minutes after the last.
+        - alert: FhiAssistantHandoffAtCap
+          expr: sum(increase(fhi_assistant_handoff_refused_at_cap_total[15m])) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "prepare_appeal is turning people away at its cap"
+            description: >-
+              prepare_appeal refused about {{ $value | humanize }} call(s) in
+              the last 15 minutes because a cap was full: 300 links live at
+              once (MCP_PREPARE_APPEAL_MAX_LIVE) or 30 made in the last minute
+              and not yet opened (MCP_PREPARE_APPEAL_MAX_PER_MINUTE). Each
+              refused assistant was told to send its person to start the
+              appeal on the site and paste the letter there themselves. To
+              tell a burst from real use, compare
+              sum(increase(fhi_assistant_handoff_links_made_total[1h])) with
+              sum(increase(fhi_assistant_handoff_forms_opened_total[1h])):
+              many made and almost none opened is a script, not people.
+              max(fhi_assistant_handoff_live_links) at or near 300 means the
+              live cap is full; below it, the per-minute cap is refusing. The
+              app records no callers on purpose, so see whether it is one
+              source in Cloudflare's analytics for the path /mcp, by source
+              IP. One address outside an assistant platform's published
+              ranges: block it with a Cloudflare rule. Real use: raise the
+              caps (env on the web Deployment, then a rollout) and the
+              threshold in FhiAssistantHandoffNearCap with them. Once the
+              burst stops, the live links clear themselves within 2 hours.
+              Details: docs/mcp-server.md.
+
+        # Live links above 80% of the live cap for half an hour: the cap is
+        # going to fill if this keeps up.
+        #
+        # 240 is 80% of MCP_PREPARE_APPEAL_MAX_LIVE, whose default (300) is
+        # set in fighthealthinsurance/settings.py. A rule cannot read a
+        # Django setting, so the number is written out here: change both
+        # together. tests/async-unit/test_assistant_handoff_alerts.py fails
+        # when they drift, including when k8s/deploy.yaml overrides the cap.
+        - alert: FhiAssistantHandoffNearCap
+          expr: max(fhi_assistant_handoff_live_links) > 240
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "prepare_appeal links are above 80% of the live cap"
+            description: >-
+              {{ $value | humanize }} assistant handoff links have been live
+              (made, not opened, not expired) for 30 minutes, above 240 of the
+              300 MCP_PREPARE_APPEAL_MAX_LIVE allows. At 300, prepare_appeal
+              starts refusing and FhiAssistantHandoffAtCap fires. Compare
+              sum(increase(fhi_assistant_handoff_links_made_total[1h])) with
+              sum(increase(fhi_assistant_handoff_forms_opened_total[1h])):
+              links made and never opened are what fills the cap, and a link
+              lives 2 hours unless it is opened. A script filling it: find the
+              source in Cloudflare's analytics for /mcp and block it there.
+              Real use growing: raise MCP_PREPARE_APPEAL_MAX_LIVE (and this
+              threshold) before it fills. Details: docs/mcp-server.md.

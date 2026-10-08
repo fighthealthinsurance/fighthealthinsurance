@@ -9,6 +9,7 @@ https://docs.djangoproject.com/en/4.1/howto/deployment/asgi/
 
 import os
 import sys
+from typing import Any
 
 from fighthealthinsurance.env_utils import get_env_variable, should_enable_sentry
 
@@ -48,9 +49,29 @@ if get_env_variable("FHI_WS_ENFORCE_ORIGIN", "true").lower() not in (
 ):
     _ws_stack = allowed_hosts_browser_origin_validator(_ws_stack)
 
+
+def http_and_lifespan_routes(django_http_app: Any) -> dict[str, Any]:
+    """The "http" entry, plus "lifespan" when the MCP server is on.
+
+    With MCP_SERVER_ENABLED off (the default) this is Django alone, /mcp is
+    an ordinary 404, and the MCP server is never mounted. With it on, a small
+    dispatcher sends /mcp to the MCP server and everything else to Django,
+    and the MCP app answers the lifespan scope so its session manager runs
+    (see mcp_server.mcp_asgi_routes). Called after get_asgi_application(),
+    because the server's tools read Django models and settings.
+    """
+    from django.conf import settings
+
+    if not settings.MCP_SERVER_ENABLED:
+        return {"http": django_http_app}
+    from fighthealthinsurance.mcp_server import mcp_asgi_routes
+
+    return mcp_asgi_routes(django_http_app)
+
+
 application = ProtocolTypeRouter(
     {
-        "http": get_asgi_application(),
+        **http_and_lifespan_routes(get_asgi_application()),
         "websocket": _ws_stack,
     }
 )
@@ -58,6 +79,11 @@ application = ProtocolTypeRouter(
 # Intentional import after the get_asgi_application is called.
 
 from django.conf import settings
+
+from fighthealthinsurance.ml import spend as _spend
+
+# Load the spend ledger at boot, not on the first request.
+_spend._ledger.start()
 
 # Sentry only fires from real (non-local) deployments. "endpoint set and
 # DEBUG off" is not enough: dev machines routinely carry the production
@@ -69,6 +95,7 @@ from django.conf import settings
 if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
     import sentry_sdk
     from django.urls import Resolver404
+    from sentry_sdk.integrations import DidNotEnable
     from sentry_sdk.integrations.django import DjangoIntegration
     from sentry_sdk.integrations.logging import ignore_logger
 
@@ -83,6 +110,25 @@ if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
     # in before_send.
     ignore_logger("ray.util.client.logsclient")
     ignore_logger("ray.util.client.dataclient")
+    # The MCP SDK's loggers: a logger.exception there, after the request body
+    # is read, would carry the body and its tool arguments into the event as
+    # local variables. Matched with fnmatch, so this covers every mcp.* logger.
+    ignore_logger("mcp.*")
+
+    # Sentry's MCP integration records every tool argument whatever
+    # send_default_pii says, and its Starlette integration (Starlette comes
+    # with the MCP SDK) can attach request bodies, which carry them too. Some
+    # tool arguments are condition keywords, so both are turned off here
+    # rather than left to sentry_sdk.init happening to run after the MCP app
+    # is built. Both auto-enable whenever their library is installed.
+    disabled_integrations: list[Any] = []
+    try:
+        from sentry_sdk.integrations.mcp import MCPIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+
+        disabled_integrations = [MCPIntegration(), StarletteIntegration()]
+    except (ImportError, DidNotEnable):  # neither library is installed
+        pass
 
     sentry_sdk.init(
         dsn=settings.SENTRY_ENDPOINT,
@@ -90,6 +136,7 @@ if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
         # of transactions for tracing.
         traces_sample_rate=1.0,
         integrations=[DjangoIntegration()],
+        disabled_integrations=disabled_integrations,
         environment=get_env_variable("DJANGO_CONFIGURATION", "production-ish"),
         release=get_env_variable("RELEASE", "unset"),
         # Scanner probes (.bashrc, api/.env, key.pem, wp-login.php...) are

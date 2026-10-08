@@ -1,8 +1,12 @@
-Dear {{ user.first_name }},
+{% autoescape off %}{% if user.first_name %}Hello {{ user.first_name }},{% else %}Hello,{% endif %}
 
-Please activate your account by clicking the link below:
+Please activate your Fight Health Insurance account using the link below.
 
+Activate your account:
 {{ activation_link }}
 
+This link expires in 24 hours.
+
 Best regards,
-Fight Health Insurance Team
+
+The Fight Health Insurance team{% endautoescape %}

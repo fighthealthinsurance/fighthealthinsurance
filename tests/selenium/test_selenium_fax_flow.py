@@ -52,6 +52,7 @@ Cheap-O-Insurance-Corp""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
+        self.click("input#personalonly")
 
     def navigate_to_choose_appeal(self, email="fax_test@example.com"):
         """Navigate through the flow to the choose appeal page."""

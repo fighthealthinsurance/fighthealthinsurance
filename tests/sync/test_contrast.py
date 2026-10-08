@@ -36,10 +36,8 @@ stylesheet fails, and so does one whose rule starts being measurable or
 starts passing.
 
 What the gate still cannot see: colours a script writes at runtime (the drafts
-page phase labels, named in UNREACHED), and anything Bootstrap contributes,
-which is why the focus ring is checked against Bootstrap's known weight rather
-than against Bootstrap's actual text. The one exception is the few fills
-written down by hand in BOOTSTRAP_GROUNDS.
+page phase labels, named in UNREACHED). Bootstrap's stylesheet, which it
+could not read either, is gone from the site.
 """
 
 from __future__ import annotations
@@ -526,6 +524,11 @@ VOID_TAGS = frozenset(
     "area base br col embed hr img input link meta param source track wbr".split()
 )
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+# Django's own comments never render either. A partial that shows how to use
+# it in a {% comment %} would otherwise put its example markup on the page.
+_DJANGO_COMMENT = re.compile(
+    r"\{%\s*comment\b.*?%\}.*?\{%\s*endcomment\s*%\}|\{#.*?#\}", re.S
+)
 _DJANGO = re.compile(r"\{%.*?%\}|\{\{.*?\}\}", re.S)
 _INCLUDE = re.compile(r"\{%\s*include\s+[\"']([^\"']+)[\"'][^%]*%\}")
 _EXTENDS = re.compile(r"\{%\s*extends\s+[\"']([^\"']+)[\"']\s*%\}")
@@ -542,10 +545,6 @@ _STYLE_SOURCE = "data-contrast-source"
 _STYLE_OPEN = re.compile(r"<style\b", re.I)
 _STYLE_FROM = re.compile(r"<style\b[^>]*\b%s=\"([^\"]+)\"" % _STYLE_SOURCE, re.I)
 _LINKED_STYLESHEET = re.compile(r"static\s+['\"]css/([\w.-]+\.css)['\"]")
-# Bootstrap's stylesheet comes from a CDN, not from static/css, so it needs a
-# pattern of its own. A page that links it is reached by BOOTSTRAP_GROUNDS.
-BOOTSTRAP_SOURCE = "bootstrap 5.2.3"
-_LINKED_BOOTSTRAP = re.compile(r"bootstrap@5\.2\.3/dist/css/bootstrap(?:\.min)?\.css")
 
 
 def _class_variants(raw: str) -> tuple[frozenset[str], ...]:
@@ -659,6 +658,7 @@ def template_markup(name: str, stack: tuple[str, ...] = ()) -> str:
     if name in stack or not path.is_file():
         return ""
     text = _HTML_COMMENT.sub(" ", path.read_text(errors="replace"))
+    text = _DJANGO_COMMENT.sub(" ", text)
     text = _STYLE_OPEN.sub('<style %s="%s"' % (_STYLE_SOURCE, name), text)
     parent = _EXTENDS.search(text)
     if parent is not None:
@@ -830,8 +830,7 @@ def selector_states(steps: Sequence[Step]) -> frozenset[str]:
 def page_sources(markup: str) -> frozenset[str]:
     """The CSS one built page carries, named the way Rule.stylesheet names it.
 
-    That is the site stylesheets the page links, Bootstrap when the page
-    links it (the source of the fills in BOOTSTRAP_GROUNDS), and the <style>
+    That is the site stylesheets the page links and the <style>
     block of every template that renders into it: the page itself, what it
     extends, and what it or they include. Nothing else. A browser applies a
     <style> block to the document it sits in and to no other, and a page that
@@ -840,8 +839,6 @@ def page_sources(markup: str) -> frozenset[str]:
     linked = {
         name for name in _LINKED_STYLESHEET.findall(markup) if name in STYLESHEETS
     }
-    if _LINKED_BOOTSTRAP.search(markup):
-        linked.add(BOOTSTRAP_SOURCE)
     blocks = {"templates/" + name for name in _STYLE_FROM.findall(markup)}
     return frozenset(linked | blocks)
 
@@ -998,21 +995,6 @@ def _layers_from(
     return layers
 
 
-# What Bootstrap paints under words on our pages, for as long as base.html
-# loads it. The gate reads only our own CSS, so these are written down by
-# hand from Bootstrap 5.2.3's stylesheet, which sets .card's background to
-# var(--bs-card-bg), and that to #fff.
-#
-# Until 2026-09-24 a .card's white reached the gate by accident: the two
-# Pro Connector pages each had a ".card { background: white }" of their own,
-# and a template's <style> block is read as if it applied to every page. When
-# those became .proconnector-card, every Bootstrap card lost its white and
-# fell through to whichever <body> fill any template declares, the printable
-# letter's grey included, and three pages failed for words that sit on white.
-# Take an entry out when the component it describes leaves the site.
-BOOTSTRAP_GROUNDS: tuple[Rule, ...] = (
-    Rule(BOOTSTRAP_SOURCE, 0, ".card", (("background-color", "#fff", False),)),
-)
 
 
 class Painter:
@@ -1051,7 +1033,7 @@ class Painter:
         self.foregrounds: list[
             tuple[str, list[Step], frozenset[str], tuple[int, int, int, int], bool]
         ] = []
-        for rule in tuple(rules) + BOOTSTRAP_GROUNDS:
+        for rule in rules:
             important_colour = [
                 important for prop, _, important in rule.declarations if prop == "color"
             ]
@@ -1493,29 +1475,13 @@ EXCEPTIONS: tuple[Exempt, ...] = (
         ".media-reference-link:hover, .media-reference-link:focus",
         BRAND_PINK,
     ),
-    Exempt("custom.css", ".btn-green, .btn-green:focus", WHITE_ON_BRAND_LIME),
-    Exempt("custom.css", ".btn-green:hover", WHITE_ON_BRAND_LIME),
+    Exempt("custom.css", ".fhi-button-primary", WHITE_ON_BRAND_LIME),
     Exempt(
         "custom.css",
-        ".btn-green:hover, .btn-green:focus, .btn-green:active, "
-        ".section-btn:hover, .section-btn:focus, .section-btn:active",
+        ".fhi-button-primary:hover, .fhi-button-primary:focus, "
+        ".fhi-button-primary:active",
         WHITE_ON_BRAND_LIME,
     ),
-    Exempt("custom.css", ".btn-delete, .pro-submit-btn", WHITE_ON_BRAND_LIME),
-    Exempt(
-        "custom.css", ".btn-delete:hover, .pro-submit-btn:hover", WHITE_ON_BRAND_LIME
-    ),
-    Exempt(
-        "custom.css",
-        ".section-btn, .section-btn.btn.btn-default.smoothScroll",
-        WHITE_ON_BRAND_LIME,
-    ),
-    Exempt(
-        "custom.css",
-        ".section-btn:hover, .section-btn.btn.btn-default.smoothScroll:hover",
-        WHITE_ON_BRAND_LIME,
-    ),
-    Exempt("main.css", ".section-btn", WHITE_ON_BRAND_LIME),
     Exempt("custom.css", ".fhi-nav-cta a", WHITE_ON_BRAND_LIME),
     Exempt(
         "custom.css",
@@ -1559,15 +1525,18 @@ UNRESOLVED: tuple[Exempt, ...] = (
     Exempt("custom.css", ".hero-headline", HERO_PHOTOGRAPH),
     Exempt("custom.css", ".hero-tagline", HERO_PHOTOGRAPH),
     Exempt("custom.css", ".hero-subcopy", HERO_PHOTOGRAPH),
-    Exempt("custom.css", ".secondary-cta, .tertiary-cta", HERO_VEIL),
+    Exempt("custom.css", ".secondary-cta, .secondary-cta:focus", HERO_VEIL),
     Exempt("custom.css", ".how-step", HERO_VEIL),
     Exempt("custom.css", ".how-step:not(:last-child)::after", HERO_VEIL),
     Exempt("custom.css", ".how-step h6", HERO_VEIL),
     Exempt("custom.css", ".how-step p", HERO_VEIL),
     Exempt("custom.css", ".how-it-works-intro", HERO_PHOTOGRAPH),
     Exempt("custom.css", ".trust-chip", HERO_VEIL),
-    Exempt("custom.css", ".trust-chip-link:hover, .trust-chip-link:focus", HERO_VEIL),
-    Exempt("main.css", "a:hover, a:active, a:focus", EVERY_LINK),
+    Exempt(
+        "custom.css",
+        ".trust-chip-link:hover, .trust-chip-link:focus, .trust-chip-link:active",
+        HERO_VEIL,
+    ),
     Exempt("main.css", "#home h1", HERO_PHOTOGRAPH),
     Exempt("main.css", "#home h3", HERO_PHOTOGRAPH),
     Exempt("main.css", ".slider .caption", HERO_PHOTOGRAPH),
@@ -1587,12 +1556,12 @@ WRITTEN_AT_RUNTIME = (
 )
 
 UNREACHED: tuple[Exempt, ...] = (
-    Exempt(
-        "custom.css",
-        ".pwyw-pill",
-        "No template carries this class; it is the pill the pay-what-you-want "
-        "panel used before the panel was rebuilt.",
-    ),
+    # pwyw.js writes this link into the panel's message only when the
+    # browser blocks the payment tab; no template carries it. It takes the
+    # message's own colour.
+    Exempt("custom.css", ".pwyw-thanks a", WRITTEN_AT_RUNTIME),
+    Exempt("custom.css", ".pwyw-thanks a:hover", WRITTEN_AT_RUNTIME),
+    Exempt("custom.css", ".pwyw-thanks a:focus", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-active", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-done", WRITTEN_AT_RUNTIME),
     Exempt("custom.css", ".appeal-phase-label-skipped", WRITTEN_AT_RUNTIME),
@@ -1604,6 +1573,9 @@ UNREACHED: tuple[Exempt, ...] = (
         "ribbon is not on any page today.",
     ),
     Exempt("custom.css", ".pro-interest-form .errorlist", WRITTEN_AT_RUNTIME),
+    Exempt(
+        "custom.css", ".pro-interest-form > .fhi-notice .errorlist", WRITTEN_AT_RUNTIME
+    ),
     Exempt("main.css", ".select-option", BOUGHT_THEME),
     Exempt("main.css", ".slider .item-first .pro-version-text a", BOUGHT_THEME),
     Exempt("main.css", ".slider .item-first .pro-version-text a:visited", BOUGHT_THEME),
@@ -1857,57 +1829,6 @@ def test_every_colour_rule_the_gate_never_reached_is_named() -> None:
     )
 
 
-def test_every_bootstrap_ground_is_still_under_something() -> None:
-    """A fill written down for a component the site no longer uses.
-
-    It would paint nothing, and it would quietly start painting again if the
-    class came back for some other reason, so it goes when its component
-    goes, and all of them go with Bootstrap. The class has to be on a page
-    that links Bootstrap: a ground paints only where its source reaches.
-    """
-    base = (TEMPLATE_DIR / "base.html").read_text()
-    assert (
-        "bootstrap@5.2.3" in base
-    ), "base.html no longer loads Bootstrap 5.2.3; take BOOTSTRAP_GROUNDS out"
-    dom = template_dom()
-    gone = [
-        selector
-        for rule in BOOTSTRAP_GROUNDS
-        for selector in rule.selectors
-        if not dom.matching(split_selector(selector), rule.stylesheet)
-    ]
-    assert not gone, "no page that links Bootstrap has these any more: %s" % gone
-
-
-def test_a_bootstrap_ground_reaches_the_painter() -> None:
-    """Listing a fill is not the same as painting it. Each rule paints only
-    on the pages that carry its source, and for a while no page recorded
-    Bootstrap as one, so every card's white was skipped and the words in a
-    card were measured on whatever sat under the card. With none of our own
-    CSS in the way, each card on a page that links Bootstrap has to come out
-    as exactly the fill written down for it."""
-    dom = template_dom()
-    painter = Painter([], dom)
-    for rule in BOOTSTRAP_GROUNDS:
-        for selector in rule.selectors:
-            nodes = dom.matching(split_selector(selector), rule.stylesheet)
-            assert nodes, f"no page that links Bootstrap has {selector}"
-            unpainted = sorted(
-                {
-                    node.template
-                    for node in nodes
-                    if [
-                        flatten(stop, BLACK)
-                        for layer in painter._own_layers(node, None, frozenset())
-                        for stop in layer.stops
-                    ]
-                    != [WHITE]
-                }
-            )
-            assert not unpainted, (
-                f"{selector} is not painted white on these pages, although "
-                f"they link Bootstrap: {unpainted}"
-            )
 
 
 def test_every_excuse_names_a_rule_that_still_exists() -> None:
@@ -1965,21 +1886,33 @@ def test_every_excuse_carries_a_reason() -> None:
 
 # The one token every label on the lime reads, the classes that wear the lime,
 # and the two inks recorded beside the token as the candidates for a swap.
+# btn-green is the flat lime button the two standalone error pages draw for
+# themselves, since they load no stylesheet.
 INK_TOKEN = "--fhi-btn-ink"
-BRAND_BUTTON_CLASSES = frozenset(
-    ("btn-green", "section-btn", "btn-delete", "pro-submit-btn", "pwyw-pill")
-)
+BRAND_BUTTON_CLASSES = frozenset(("fhi-button-primary", "fhi-chat-button", "btn-green"))
 GRADIENT_BUTTON_CLASSES = (
-    "btn-green",
-    "section-btn",
-    "btn-delete",
-    "pro-submit-btn",
+    "fhi-button-primary",
     "fhi-chat-button",
 )
 # Same family, drawn as an edge rather than a fill. They carry the size scale
 # but not the white-on-lime measurement, because their fill is not the lime.
 OUTLINE_BUTTON_CLASSES = frozenset(
-    ("btn-outline-green", "secondary-cta", "tertiary-cta")
+    (
+        "fhi-button-secondary",
+        "fhi-button-neutral",
+        "fhi-button-outbound",
+        "fhi-button-danger",
+        "secondary-cta",
+    )
+)
+# Every class that makes or styles one of our buttons, for the checks that
+# hold for all of them.
+BUTTON_CLASSES = (
+    BRAND_BUTTON_CLASSES
+    | OUTLINE_BUTTON_CLASSES
+    | frozenset(
+        ("fhi-button", "fhi-button-quiet", "fhi-button-small", "fhi-button-large")
+    )
 )
 DARK_INK_CANDIDATES = ("#2b0f3d", "#1a1a1a")
 DECISION_DATE = "2026-09-13"
@@ -2329,10 +2262,11 @@ def test_the_controls_that_carry_no_gradient_keep_a_ring() -> None:
         for selector in rule.selectors:
             if ":focus-visible" in selector:
                 rings.add(_normalise(selector))
+    # The site's own input box and tick box; Bootstrap's form classes are
+    # gone from every page.
     for wanted in (
-        ".form-control:focus-visible",
-        ".form-select:focus-visible",
-        ".form-check-input:focus-visible",
+        ".fhi-field:focus-visible",
+        ".fhi-check:focus-visible",
     ):
         assert any(wanted in ring for ring in rings), (
             "%s lost its focus ring; only the gradient buttons trade the ring "
@@ -2355,16 +2289,9 @@ BUTTON_SIZES = ("sm", "md", "lg")
 # Where each size is applied, and the role that decides it.
 SIZE_ROLES = (
     ("custom.css", ".fhi-nav-cta a", "sm"),
-    ("custom.css", ".primary-cta", "lg"),
-    ("custom.css", ".hero-primary-cta", "lg"),
-    ("custom.css", ".fhi-btn-sm", "sm"),
-    ("custom.css", ".fhi-btn-md", "md"),
-    ("custom.css", ".fhi-btn-lg", "lg"),
-    ("custom.css", ".btn-green", "md"),
-    ("custom.css", ".btn-delete, .pro-submit-btn", "md"),
-    ("custom.css", ".section-btn, .section-btn.btn.btn-default.smoothScroll", "md"),
-    ("custom.css", ".secondary-cta, .tertiary-cta", "md"),
-    ("main.css", ".section-btn", "md"),
+    ("custom.css", ".fhi-button", "md"),
+    ("custom.css", ".fhi-button-small", "sm"),
+    ("custom.css", ".fhi-button-large", "lg"),
 )
 
 
@@ -2445,8 +2372,8 @@ def test_a_buttons_size_comes_from_its_role_not_from_a_literal() -> None:
 def test_the_primary_action_on_a_page_is_marked_large() -> None:
     """The role is in the markup where the template is what knows it."""
     dom = template_dom()
-    carried = dom.by_class.get("fhi-btn-lg", [])
-    assert carried, "no template marks its primary action with .fhi-btn-lg"
+    carried = dom.by_class.get("fhi-button-large", [])
+    assert carried, "no template marks its primary action with .fhi-button-large"
     where = {node.template for node in carried}
     for template in ("scrub.html", "remove_data.html"):
         assert template in where, (
@@ -2492,45 +2419,6 @@ def test_the_site_has_a_focus_ring() -> None:
             assert contrast_ratio(colour[:3], WHITE) >= 3.0, (
                 "the focus ring is %s, which is under 3:1 on white" % value
             )
-
-
-# Bootstrap 5.2's own `.btn:focus-visible {outline: 0}`, and the weight it
-# carries. A bare `:focus-visible` is (0, 1, 0) and loses to it in either load
-# order, which is how a ring can exist in the stylesheet and still never appear
-# on Next, Continue or Confirm Deletion.
-BOOTSTRAP_BUTTON_RESET = (0, 2, 0)
-
-
-def test_the_focus_ring_outranks_bootstraps_button_reset() -> None:
-    rules = load_rules()
-    variables = custom_properties(rules)
-    winners = []
-    for rule in rules:
-        outline = None
-        for prop, value, _ in rule.declarations:
-            if prop == "outline":
-                outline = resolve_vars(value, variables)
-        if outline is None or outline.strip().lower() in ("none", "0"):
-            continue
-        for selector in rule.selectors:
-            steps = split_selector(selector)
-            if "focus-visible" not in selector:
-                continue
-            if not any("btn" in compound.classes for _, compound in steps):
-                continue
-            if specificity(selector) >= BOOTSTRAP_BUTTON_RESET:
-                winners.append((selector, outline))
-    assert winners, (
-        "no :focus-visible rule names .btn at Bootstrap's own weight %r, so "
-        "`.btn:focus-visible {outline: 0}` wins and the ring never reaches a "
-        "button" % (BOOTSTRAP_BUTTON_RESET,)
-    )
-    for selector, outline in winners:
-        colour = next(iter(colours_in(outline)), None)
-        assert colour is not None, selector
-        assert (
-            contrast_ratio(colour[:3], WHITE) >= 3.0
-        ), "%s draws its ring in %s, under 3:1 on white" % (selector, outline)
 
 
 def test_nothing_switches_the_focus_ring_off() -> None:
@@ -2647,8 +2535,8 @@ STATE_PSEUDO = (":hover", ":focus", ":focus-visible", ":focus-within", ":active"
 def test_no_state_selector_decides_a_buttons_size() -> None:
     """A button may not change size when it is hovered or focused.
 
-    .fhi-btn-lg is one class. .btn-green:focus is a class and a pseudo-class,
-    so it outranks it. While the medium size sat on that selector, the site's
+    A size class is one class. A role with :focus is a class and a
+    pseudo-class, so it outranks it. While the medium size sat on that selector, the site's
     largest button snapped back to medium the moment a keyboard reached it:
     the target moved under the pointer, and the one control a patient tabs to
     on the upload page was the one that jumped.
@@ -2660,7 +2548,7 @@ def test_no_state_selector_decides_a_buttons_size() -> None:
     for rule in load_rules() + load_template_rules():
         for selector in rule.selectors:
             steps = split_selector(selector)
-            if not steps or not (steps[-1][1].classes & BRAND_BUTTON_CLASSES):
+            if not steps or not (steps[-1][1].classes & BUTTON_CLASSES):
                 continue
             if not any(state in selector for state in STATE_PSEUDO):
                 continue
@@ -2694,16 +2582,13 @@ TEMPLATE_BASELINE: dict[str, int] = {
     "templates/500.html": 1,
     "templates/admin_model_query.html": 4,
     "templates/admin_status.html": 4,
-    "templates/denial_language_library.html": 3,
-    "templates/faq.html": 3,
-    "templates/other_resources.html": 4,
-    "templates/preparing_2026.html": 2,
+    "templates/denial_language_library.html": 1,
+    "templates/other_resources.html": 1,
     "templates/proconnector.html": 5,
     "templates/proconnector_letter.html": 1,
     "templates/proconnector_quick_intro.html": 4,
     "templates/send_bulk_email.html": 1,
     "templates/staff_dashboard.html": 4,
-    "templates/state_help.html": 4,
 }
 
 
@@ -2855,14 +2740,10 @@ def test_a_standalone_page_declares_the_ink_it_uses() -> None:
 # decided by whichever stylesheet happens to be later.
 BOOTSTRAP_SIZE_CLASSES = ("btn-lg", "btn-sm")
 BRAND_BUTTON_MARKUP_CLASSES = (
+    "fhi-button",
     "btn-green",
-    "btn-outline-green",
-    "section-btn",
-    "btn-delete",
-    "pro-submit-btn",
     "primary-cta",
     "secondary-cta",
-    "tertiary-cta",
 )
 _CLASS_ATTR = re.compile(r'class="([^"]*)"')
 
@@ -2873,7 +2754,7 @@ def test_no_brand_button_takes_its_size_from_bootstrap() -> None:
     Sixteen of them carried Bootstrap's .btn-lg. It sets 1.25rem type like
     ours does, so they looked close enough to miss, but it also sets its own
     padding and no minimum height at all, which is what the 44px touch target
-    on these buttons depends on. And .btn-lg and .fhi-btn-lg are both single
+    on these buttons depends on. And .btn-lg and our large size are both single
     classes, so nothing but stylesheet order decides which one applies.
     """
     offenders = []
@@ -2898,5 +2779,5 @@ def test_no_brand_button_takes_its_size_from_bootstrap() -> None:
                     )
     assert not offenders, (
         "these brand buttons are sized by Bootstrap rather than by the scale. "
-        "Use fhi-btn-sm, fhi-btn-md or fhi-btn-lg:\n  %s" % "\n  ".join(offenders)
+        "Use fhi-button-small or fhi-button-large:\n  %s" % "\n  ".join(offenders)
     )

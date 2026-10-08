@@ -383,7 +383,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 context = {
                     "practice_name": user_domain.name or "our practice",
                     "inviter_name": f"{current_user.first_name} {current_user.last_name}",
-                    "professional_name": f"{first_name} {last_name}",
+                    "professional_name": f"{first_name} {last_name}".strip(),
                     "practice_phone": user_domain.visible_phone_number,
                     "email": email,
                 }
@@ -709,23 +709,6 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         """
         Creates a new professional user and optionally a new domain.
         """
-        # New self-serve Fight Paperwork signups are closed (connector
-        # agreement in place) — professionals should request a demo instead.
-        # Gated on a setting so Dev/Test keep the flow exercisable.
-        if not getattr(settings, "NEW_PROFESSIONAL_SIGNUP_ENABLED", False):
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {
-                        "error": (
-                            "New Fight Paperwork signups are currently closed. "
-                            "Please request a demo at "
-                            "https://www.fightpaperwork.com/schedule-demo and "
-                            "our team will get you set up."
-                        )
-                    }
-                ).data,
-                status=status.HTTP_403_FORBIDDEN,
-            )
         return super().create(request)
 
     def create_stripe_checkout_session(

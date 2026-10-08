@@ -1,11 +1,11 @@
-"""The client-side submit gate must require every field it validates.
+"""The intake form's client-side checks, and the submit gate they decide.
 
-`validateScrubForm` displayed a "need_denial" error and then submitted the
-form anyway, because the gate condition only checked pii/privacy/email. The
-server then rejected it with `denial_text: This field is required`, so the
-user saw the page complain and submit at the same time. An in-flight OCR run
-made it trivial to hit: a scanned PDF is rendered and OCR'd a page at a time,
-and nothing stopped submission during that window.
+Each check is one message under one field (or one group of tick boxes):
+the letter, the email, the personal-details box, and the other three
+agreements. The same list of checks shows the messages and decides whether
+the form is sent, so a message never shows on a form that goes anyway, and
+the list is exactly what the server's DenialForm requires. A blocked submit
+moves focus to the first field with a problem, in page order.
 
 There is no JS test harness in this repo, so this asserts on the source.
 """
@@ -19,23 +19,13 @@ JS = (
     / "static"
     / "js"
 )
+TEMPLATES = (
+    pathlib.Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "templates"
+)
 
 
 def _form_source() -> str:
     return (JS / "scrub_client_side_form.ts").read_text()
-
-
-def _submit_gate(src: str) -> str:
-    """The multi-field `if (...)` that decides whether the form submits.
-
-    Anchored on denialTextReady so it cannot accidentally match one of the
-    single-field `if (form.pii.checked)` validations earlier in the file.
-    """
-    m = re.search(
-        r"if \([^{}]*form\.pii\.checked[^{}]*denialTextReady[^{}]*\)\s*\{", src, re.S
-    )
-    assert m, "could not find the submit gate condition"
-    return m.group(0)
 
 
 def _js_function(src: str, name: str) -> str:
@@ -52,57 +42,205 @@ def _js_function(src: str, name: str) -> str:
     raise AssertionError(f"unbalanced braces reading {name}")
 
 
-def test_denial_text_ready_is_derived_from_the_trimmed_field():
-    """Assert the boolean CONTRACT, not that the expression appears
-    somewhere in the file: a regression could define denialTextReady from
-    something else entirely and a substring search would still pass
-    (external review)."""
+def _checks() -> "dict[str, str]":
+    """intakeChecks' list, one entry per message id: the check's source."""
+    body = _js_function(_form_source(), "function intakeChecks")
+    found = dict(re.findall(r'check\(\s*"(\w+)",\s*(\[[^\]]*\][^\n]*)\)', body))
+    assert found, body
+    return found
+
+
+def test_the_letter_counts_only_when_it_has_more_than_whitespace():
+    """One trimmed predicate, used by the check and by the reading messages
+    alike: whitespace on its own is a missing letter everywhere."""
     src = _form_source()
-    m = re.search(r"const\s+denialTextReady\s*=\s*([^;]+);", src)
-    assert m, "denialTextReady is not assigned"
-    assert m.group(1).strip() == "form.denial_text.value.trim().length > 0", m.group(1)
+    has = _js_function(src, "function hasDenialText")
+    assert "return form.denial_text.value.trim().length > 0;" in has, has
+    assert "!hasDenialText(form)" in _checks()["need_denial"]
+    validate = _js_function(src, "export function validateScrubForm")
+    assert "const denialTextReady = hasDenialText(form);" in validate, validate
+    # No untrimmed test of the letter's length anywhere.
+    assert not re.search(r"form\.denial_text\.value\.length", src), src
 
 
-def test_submit_gate_ANDs_every_field_it_validates():
-    """Every field validated above the gate must also gate it, combined with
-    AND. Previously the gate checked only pii/privacy/email, so the form
-    showed "need_denial" and submitted anyway."""
-    gate = _submit_gate(_form_source())
-    # Exactly the server-required set (forms/__init__.py: pii, tos, privacy
-    # required=True) plus email and denial_text.
-    for field in ("pii", "privacy", "tos"):
-        assert f"form.{field}.checked" in gate, f"{field} not gated: {gate}"
-    assert "form.email.value.length > 0" in gate, gate
-    assert "denialTextReady" in gate, gate
-    # Combined with AND -- an OR would let any single field satisfy the gate.
-    assert "||" not in gate, gate
-    assert gate.count("&&") >= 4, gate
+def test_each_check_is_one_message_under_its_own_fields_in_page_order():
+    assert list(_checks()) == [
+        "need_denial",
+        "email_error",
+        "pii_error",
+        "agree_chk_error",
+    ]
+    checks = _checks()
+    assert checks["need_denial"].startswith("[form.denial_text]")
+    assert checks["email_error"].startswith("[form.email]")
+    assert checks["pii_error"].startswith("[form.pii]")
+    assert checks["agree_chk_error"].startswith(
+        "[form.privacy, form.tos, form.personalonly]"
+    )
 
 
-def test_the_gate_is_not_stricter_than_the_server():
-    """personalonly is NOT required=True server-side. Gating on it made the
-    client refuse a submission the server would have accepted, which the
-    Selenium suite caught -- no test clicks that box because nothing requires
-    it."""
-    gate = _submit_gate(_form_source())
-    assert "personalonly" not in gate, gate
-    forms_src = (
-        pathlib.Path(__file__).resolve().parents[2]
-        / "fighthealthinsurance"
-        / "forms"
-        / "__init__.py"
-    ).read_text()
-    assert "personalonly = forms.BooleanField(required=True)" not in forms_src
+def test_the_checks_ask_for_exactly_what_the_server_requires():
+    """The personal-use box included: DenialForm requires it, so the client
+    does too, and nothing the server would accept is refused here."""
+    from fighthealthinsurance.forms import DenialForm
+
+    required = {name for name, field in DenialForm().fields.items() if field.required}
+    assert "personalonly" in required
+    checked = set(
+        re.findall(
+            r"form\.(\w+)",
+            " ".join(fields.split("]")[0] for fields in _checks().values()),
+        )
+    )
+    assert checked == required, (checked, required)
 
 
-def test_whitespace_only_denial_text_is_treated_as_missing_everywhere():
-    """The gate uses a trimmed predicate. If the validation branch does not,
-    whitespace-only text blocks submission while showing no message at all --
-    a silent refusal (external review)."""
+def _email_shape() -> "re.Pattern[str]":
+    fn = _js_function(_form_source(), "function looksLikeAnEmail")
+    match = re.search(r"/(\^.*\$)/\.test", fn)
+    assert match, fn
+    return re.compile(match.group(1))
+
+
+def test_an_address_in_the_wrong_shape_counts_as_missing():
+    # So an address the server refused stays marked when the person edits
+    # some other field, until the address itself changes.
+    shape = _email_shape()
+    for good in ("someone@example.com", "a.b+c@mail.example.org"):
+        assert shape.match(good), good
+    for bad in (
+        "",
+        "someone",
+        "someone@example",
+        "someone@example.",
+        "some one@example.com",
+        "@example.com",
+    ):
+        assert not shape.match(bad), bad
+    assert "looksLikeAnEmail" in _checks()["email_error"]
+
+
+def test_an_address_in_the_wrong_shape_is_told_so_in_its_own_words():
+    show = _js_function(_form_source(), "function showFieldMessage")
+    assert "check.misshapen" in show and "invalidMessage" in show
+
+
+def test_every_check_that_shows_a_message_also_stops_the_form():
+    """The checks that show the messages are the ones the gate reads, and a
+    form with any field missing is not sent."""
+    validate = _js_function(_form_source(), "export function validateScrubForm")
+    assert "const checks = intakeChecks(form);" in validate, validate
+    shown = validate.index("showFieldMessage(check)")
+    gate = re.search(
+        r"const missing = checks\.flatMap\(\(check\) => check\.missing\);\s*"
+        r"if \(missing\.length > 0\) \{\s*(?://[^\n]*\s*)*event\.preventDefault\(\);\s*"
+        r"focusFirst\(missing\);\s*return;",
+        validate,
+    )
+    assert gate, validate
+    assert shown < gate.start()
+    # Nothing is added to the form for sending before the gate has passed.
+    assert gate.end() < validate.index('hiddenFname.name = "fname"')
+    # No second gate with its own idea of what is required.
+    assert validate.count("preventDefault") == 1, validate
+
+
+def test_a_blocked_submit_moves_focus_to_the_first_problem_in_page_order():
+    focus = _js_function(_form_source(), "function focusFirst")
+    # The earliest in the document, whatever order the checks list them in:
+    # a field takes the place of the one held so far only when it comes
+    # before it.
+    assert re.search(
+        r"if \(\s*first === null \|\|\s*"
+        r"first\.compareDocumentPosition\(field\) & Node\.DOCUMENT_POSITION_PRECEDING"
+        r"\s*\)\s*\{\s*first = field;",
+        focus,
+    ), focus
+    assert "first.focus({ preventScroll: true });" in focus, focus
+    assert 'first.scrollIntoView({ block: "center" });' in focus, focus
+
+
+def test_a_page_the_server_sent_back_puts_focus_on_the_first_refused_field():
     src = _form_source()
-    assert "form.denial_text.value.trim().length < 1" in src
-    # ...and no untrimmed length test on the field is left behind.
-    assert not re.search(r"form\.denial_text\.value\.length\s*[<>]", src), src
+    refused = _js_function(src, "export function focusFirstRefusedField")
+    assert "querySelectorAll<HTMLElement>('[aria-invalid=\"true\"]')" in refused
+    assert "focusFirst(" in refused
+    setup = _js_function((JS / "scrub.ts").read_text(), "function setupScrub")
+    assert "focusFirstRefusedField(form);" in setup, setup
+
+
+def test_a_message_is_filled_when_shown_and_emptied_when_not():
+    """Each message is an empty live region. Showing one puts its words in,
+    which is what is read out; taking it down empties it again."""
+    src = _form_source()
+    show = _js_function(src, "function showFieldMessage")
+    assert "message.dataset.message" in show, show
+    assert "message.textContent = words;" in show, show
+    assert "markFields(check, true);" in show, show
+    clear = _js_function(src, "function clearFieldMessage")
+    assert 'message.textContent = "";' in clear, clear
+    assert "markFields(check, false);" in clear, clear
+    # Nothing toggles a class to show these: their words are the state.
+    for fn in (show, clear):
+        assert "classList" not in fn, fn
+
+
+def test_only_a_missing_field_is_marked_invalid_and_described_by_its_message():
+    mark = _js_function(_form_source(), "function markFields")
+    assert "const invalid = shown && check.missing.includes(field);" in mark, mark
+    assert 'field.setAttribute("aria-invalid", "true");' in mark, mark
+    assert 'field.removeAttribute("aria-invalid");' in mark, mark
+    assert "describeBy(field, check.message, invalid);" in mark, mark
+    describe = _js_function(_form_source(), "function describeBy")
+    # The field's other descriptions stay.
+    assert "token !== id" in describe, describe
+
+
+def test_typing_or_ticking_never_raises_a_new_message():
+    """hideErrorMessages runs on every keystroke and tick. It takes messages
+    down, or narrows one to the boxes still unticked, and leaves new ones
+    for the next submit."""
+    hide = _js_function(_form_source(), "export function hideErrorMessages")
+    assert "showFieldMessage" not in hide, hide
+    assert "if (!isShowing(check))" in hide, hide
+    # A message comes down once nothing it is about is missing, and until
+    # then it marks only the boxes still unticked, so a box just ticked is
+    # no longer marked invalid.
+    assert re.search(
+        r"if \(check\.missing\.length === 0\) \{\s*clearFieldMessage\(check\);\s*"
+        r"\} else \{\s*markFields\(check, true\);\s*\}",
+        hide,
+    ), hide
+
+
+def test_every_field_the_checks_name_takes_its_message_down_as_it_is_filled():
+    """Typing or ticking runs hideErrorMessages on each field a check is
+    about, so a field the person has just fixed stops showing its message."""
+    names = set(
+        re.findall(
+            r"form\.(\w+)",
+            " ".join(fields.split("]")[0] for fields in _checks().values()),
+        )
+    )
+    assert names >= {"denial_text", "email", "pii", "privacy", "tos", "personalonly"}
+    setup = _js_function((JS / "scrub.ts").read_text(), "function setupScrub")
+    for name in sorted(names):
+        wired = f'form.{name}.addEventListener("input", hideErrorMessages);'
+        assert wired in setup, f"{name} is not wired:\n{setup}"
+
+
+def test_text_read_from_a_file_takes_down_the_messages_it_answers():
+    """A file read into the letter box after a blocked submit fills the box
+    with no input event, so the letter's message and its invalid mark would
+    stay on a full box. addText takes them down itself, without firing an
+    input event, which the box's other listeners would count as typing."""
+    add = _js_function(_form_source(), "export function addText")
+    assert "input.value += text;" in add, add
+    assert add.index("input.value += text;") < add.index("hideErrorMessages("), add
+    assert "dispatchEvent" not in add, add
+    # The reader appends through addText.
+    reader = _js_function((JS / "scrub.ts").read_text(), "const recognizeEvent")
+    assert "addText(text);" in reader, reader
 
 
 def test_ocr_progress_message_is_cleared_when_the_last_run_finishes():
@@ -215,19 +353,13 @@ def test_failure_message_clears_once_the_text_arrives():
 
 
 def test_the_need_denial_message_stays_short():
-    """It is the message a blocked user reads. It had grown to four
-    sentences of editorial about insurers, which buries the one thing they
-    have to do."""
-    tpl = (
-        pathlib.Path(__file__).resolve().parents[2]
-        / "fighthealthinsurance"
-        / "templates"
-        / "scrub.html"
-    ).read_text()
-    block = tpl[tpl.index('id="need_denial"') :]
-    block = block[: block.index("</div>")]
-    words = len(re.sub(r"<[^>]+>", " ", block).split())
-    assert words < 45, f"need_denial is {words} words:\n{block}"
+    """It is the message a blocked user reads, so it says the one thing they
+    have to do and little else."""
+    tpl = (TEMPLATES / "scrub.html").read_text()
+    include = re.search(r'with id="need_denial" message="([^"]+)"', tpl)
+    assert include, "need_denial no longer carries its words in the template"
+    words = len(include.group(1).split())
+    assert words < 45, f"need_denial is {words} words:\n{include.group(1)}"
 
 
 def test_the_denial_file_is_never_posted_to_the_server():
@@ -249,6 +381,110 @@ def test_the_denial_file_is_never_posted_to_the_server():
     # No other named file input may sneak into the same form either.
     for other in re.findall(r"<input[^>]*type=\"file\"[^>]*>", tpl):
         assert "name=" not in other, other
+
+
+def test_a_dropped_denial_file_is_never_posted_to_the_server():
+    """The letter box takes a dropped file too, and that must not open a
+    second way out for the document. The drop handler hands the files to the
+    nameless #uploader (the test above keeps it nameless) and fires its
+    change event, so a dropped file is read by the same on-device listener
+    as a chosen one. Nothing in the handler may send the file, give it a
+    name, or build an input of its own to carry it."""
+    src = (JS / "scrub.ts").read_text()
+    handler = _js_function(src, "function acceptDroppedFiles")
+    assert "uploader.files = event.dataTransfer.files;" in handler, handler
+    assert 'uploader.dispatchEvent(new Event("change"' in handler, handler
+    for way_out in (
+        "fetch(",
+        "XMLHttpRequest",
+        "FormData",
+        "sendBeacon",
+        "WebSocket",
+        ".submit(",
+        ".name",
+        "createElement",
+        "setAttribute",
+        "appendChild",
+    ):
+        assert way_out not in handler, f"the drop handler uses {way_out}:\n{handler}"
+    # The input it is handed is the uploader, the one the change listener
+    # that reads a chosen file is bound to.
+    setup = _js_function(src, "function setupScrub")
+    assert 'const elm = document.getElementById("uploader");' in setup, setup
+    assert 'elm.addEventListener("change", recognizeEvent);' in setup, setup
+    assert (
+        'acceptDroppedFiles(box.closest("section") ?? box, box, elm as HTMLInputElement);'
+        in setup
+    ), setup
+
+
+def _drop_listeners() -> "list[str]":
+    """acceptDroppedFiles cut into its listeners, each from where it is
+    declared or attached up to the next one."""
+    handler = _js_function((JS / "scrub.ts").read_text(), "function acceptDroppedFiles")
+    return re.split(
+        r"(?=\b\w+\.addEventListener\()|(?=const offerDrop)|(?=const refuseDrop)",
+        handler,
+    )
+
+
+def test_a_dropped_file_is_kept_from_the_browser():
+    """Cancelling the browser's own handling is what stops it opening the
+    file in place of the page, as well as reading it. Without it on the
+    drag-over, the browser refuses the drop and no drop event comes at all."""
+    listeners = _drop_listeners()
+    offer = next(chunk for chunk in listeners if chunk.startswith("const offerDrop"))
+    assert "event.preventDefault();" in offer, offer
+    drop = next(
+        chunk for chunk in listeners if chunk.startswith('zone.addEventListener("drop"')
+    )
+    assert "event.preventDefault();" in drop, drop
+    assert drop.index("event.preventDefault();") < drop.index("uploader.files ="), drop
+
+
+def test_a_file_dropped_on_the_file_button_is_read_too():
+    """The file button is where most people drop a file, and the input behind
+    it is hidden, so it takes no drop of its own. The handler listens on the
+    letter's whole step, and that step holds the button as well as the box."""
+    listeners = _drop_listeners()
+    for event in ("dragenter", "dragover", "dragleave", "drop"):
+        assert any(
+            chunk.startswith(f'zone.addEventListener("{event}"') for chunk in listeners
+        ), f"the step does not listen for {event}"
+    tpl = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "fighthealthinsurance"
+        / "templates"
+        / "scrub.html"
+    ).read_text()
+    box = tpl.index('id="denial_text"')
+    step = tpl[tpl.rindex("<section", 0, box) : tpl.index("</section>", box)]
+    assert 'for="uploader"' in step, "the file button is outside the letter's step"
+
+
+def test_a_file_dropped_anywhere_else_is_refused_not_opened():
+    """A file let go outside the step would otherwise be opened by the
+    browser in place of the page, taking everything typed so far with it."""
+    listeners = _drop_listeners()
+    refuse = next(chunk for chunk in listeners if chunk.startswith("const refuseDrop"))
+    assert "zone.contains(event.target" in refuse, refuse
+    assert "event.preventDefault();" in refuse, refuse
+    assert 'dropEffect = "none"' in refuse, refuse
+    for event in ("dragover", "drop"):
+        assert f'window.addEventListener("{event}", refuseDrop);' in "".join(listeners)
+
+
+def test_dragging_text_into_the_letter_box_is_left_to_the_browser():
+    """Only a drag that carries files is taken over. Dragging a selection of
+    text into or within the box must still drop the text, so each listener
+    asks before it cancels the browser's own handling."""
+    for listener in _drop_listeners():
+        if "preventDefault()" not in listener:
+            continue
+        assert "carriesFiles(event)" in listener, listener
+        assert listener.index("carriesFiles(event)") < listener.index(
+            "preventDefault()"
+        ), listener
 
 
 def test_a_superseded_selection_does_not_post_a_verdict():

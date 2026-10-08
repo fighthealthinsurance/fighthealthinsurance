@@ -33,6 +33,9 @@ from fighthealthinsurance.exceptions import (
     DocumentRegenerationError,
     MissingRequiredDataError,
 )
+from fighthealthinsurance.ml.appeal_prompt_versions import (
+    MODE_CHOICES as LETTER_PROMPT_MODE_CHOICES,
+)
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.ucr_constants import UCRAreaKind, UCRSource
 from fighthealthinsurance.utils import sekret_gen
@@ -2373,7 +2376,10 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     claim_id = models.CharField(max_length=300, null=True, blank=True)
     procedure = models.CharField(max_length=300, null=True, blank=True)
     diagnosis = models.CharField(max_length=300, null=True, blank=True)
-    # Keep track of if the async thread finished extracting procedure and diagnosis
+    # Keep track of if the async thread finished extracting procedure and diagnosis.
+    # None: the letter replaced one that was read and has not been read itself
+    # (DenialCreatorHelper._invalidate_denial_text_artifacts); extract_entity
+    # reads it even where the person typed a procedure or diagnosis.
     extract_procedure_diagnosis_finished = models.BooleanField(
         default=False, null=True, blank=True
     )
@@ -2387,6 +2393,14 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     raw_email = models.TextField(max_length=300, null=True, blank=True)
     created = models.DateTimeField(db_default=Now(), null=True)
     use_external = models.BooleanField(default=True)
+    # Where the denial came from: the site, or an AI assistant through the
+    # MCP server. Model spend for it is counted per channel (ml/spend.py).
+    channel = models.CharField(
+        max_length=16,
+        choices=[("site", "Site"), ("assistant", "AI assistant")],
+        default="site",
+        db_default="site",
+    )
     # Triage from ml/denial_triage.py (TypeSafe System One): the stated denial
     # reason, the kind of plan, pre-service and urgency probabilities, and the
     # appeal deadline the letter names. Every value carries the model's
@@ -2780,6 +2794,32 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     # the win rate of whatever landed fourth. Null for picks recorded before
     # this existed and for flows that cannot say (share, professional).
     presented_ids = models.JSONField(null=True, blank=True)
+    # The appeal prompt version that wrote this draft, one of
+    # ml/appeal_prompt_versions.PROMPT_V1 / PROMPT_V2 / PROMPT_V3, stamped
+    # when a model writes a full letter and copied onto the chosen row. Null
+    # for rows from before versioning and for drafts no letter prompt wrote:
+    # templates, synthesized letters and medically-necessary templated
+    # drafts. Not indexed: the staff page reads it by draft id, and adding an
+    # index would mean a full scan of this large table while the migration
+    # holds its lock.
+    prompt_version = models.CharField(max_length=16, null=True, blank=True)
+    # What the backend that wrote this draft was serving when it wrote it
+    # (ml/serving_registry.py); for a synthesized letter, the backend whose
+    # synthesis won. Null for templates, for drafts written before the
+    # registry existed or before the first sweep, and whenever what the
+    # backend serves is unknown.
+    # No database index or constraint: it is provenance, read by id, and
+    # either would mean a full scan of this large table when the column is
+    # added.
+    serving = models.ForeignKey(
+        "ServingIdentity",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        db_index=False,
+        db_constraint=False,
+        related_name="+",
+    )
     # Chosen rows written by the professional flow (assemble_appeal). That flow
     # keeps one pick per denial -- a re-assembly replaces the earlier pick --
     # and this marker is what limits the replacement to its own rows: nothing
@@ -3000,11 +3040,13 @@ class IntakeJourneyEvent(models.Model):
     OUTCOME_SKIPPED_COMPLETED = "skipped_completed"
     OUTCOME_SENT = "sent"
     OUTCOME_SMTP_FAILED = "smtp_failed"
+    OUTCOME_NOT_BUILT = "not_built"
     OUTCOME_CHOICES = [
         (OUTCOME_CLAIMED, "Claimed"),
         (OUTCOME_SKIPPED_COMPLETED, "Skipped: form completed"),
         (OUTCOME_SENT, "Sent"),
         (OUTCOME_SMTP_FAILED, "SMTP failed"),
+        (OUTCOME_NOT_BUILT, "Not sent: the email could not be built"),
     ]
 
     denial = models.ForeignKey(
@@ -3045,6 +3087,34 @@ class IntakeJourneyEvent(models.Model):
 
     def __str__(self):
         return f"intake_event({self.event_type}, denial={self.denial_id})"
+
+
+class IntakeResumePoint(models.Model):
+    """Where an unfinished appeal picks up again, and the emailed link back to it.
+
+    Written only while the intake journey is on (see ``intake_resume``).
+    ``step`` is the furthest page of the appeal form the person has reached,
+    stored as the name of the route that reopens it. The link fields belong
+    to the "you left before finishing" email: a SHA-256 digest of a random
+    token (the token itself exists only in that email), when it stops
+    working, and how many wrong email addresses have been typed against it.
+    Its own table rather than columns on Denial, for the reason
+    IntakeJourneyEvent gives, and it goes with the denial. The journey's
+    closure deletes it.
+    """
+
+    denial = models.OneToOneField(
+        Denial, on_delete=models.CASCADE, related_name="intake_resume_point"
+    )
+    step = models.CharField(max_length=32)
+    token_digest = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    wrong_email_attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"intake_resume_point(denial={self.denial_id}, step={self.step})"
 
 
 class RegulatorEscalation(ExportModelOperationsMixin("RegulatorEscalation"), models.Model):  # type: ignore
@@ -3933,6 +4003,76 @@ class ChatTurn(models.Model):
         return f"ChatTurn<{self.outcome} {self.winner_model or 'no winner'}>"
 
 
+class ServingIdentity(models.Model):
+    """What one backend was serving, as its model server reported it.
+
+    A model name such as ``fhi-local`` can sit in front of different weights
+    over time (a new quantization, a new release, a swapped adapter), and
+    nothing else records the change. The health sweep asks each internal
+    vLLM server what it serves and writes a row here whenever that answer
+    changes; while it stays the same, only ``last_seen`` moves. Drafts point
+    at the row that was current when they were written, so a result always
+    names real weights. Rows are never deleted.
+
+    Staff only: ``backend`` and ``endpoint`` name internal hosts. Written by
+    ml/serving_registry.py.
+    """
+
+    # sha256 of everything below except the timestamps: one row per distinct
+    # answer from one backend.
+    fingerprint = models.CharField(max_length=64, unique=True)
+    # The backend's descriptor, as ModelCallAttempt.backend and drafts record
+    # it: class, model id and host.
+    backend = models.CharField(max_length=300, db_index=True)
+    model_id = models.CharField(max_length=200)
+    endpoint = models.CharField(max_length=200, blank=True, default="")
+    # vLLM's ``root``: the weights it loaded, as a local path or a Hugging
+    # Face id. ``parent`` is the base model when an adapter is loaded.
+    weights = models.CharField(max_length=500, blank=True, default="")
+    parent = models.CharField(max_length=500, blank=True, default="")
+    max_model_len = models.IntegerField(null=True, blank=True)
+    owned_by = models.CharField(max_length=100, blank=True, default="")
+    first_seen = models.DateTimeField(auto_now_add=True)
+    last_seen = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["-last_seen", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.backend}: {self.weights or self.model_id}"
+
+
+class LetterPromptMode(models.Model):
+    """Which appeal prompt version new letters are written with.
+
+    Rows are never edited: each staff change appends one and the newest
+    wins, so the table is also the record of who changed it, when, and
+    which periods ran which mode. No rows means original. Read by
+    ml/appeal_prompt_versions.current_letter_prompt_mode and changed on the
+    Model Usage dashboard (/timbit/help/model_usage).
+    """
+
+    mode = models.CharField(max_length=16, choices=LETTER_PROMPT_MODE_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # Who made the change. The username is copied so the record survives the
+    # account being deleted.
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    changed_by_username = models.CharField(max_length=150, blank=True, default="")
+    note = models.CharField(max_length=500, blank=True, default="")
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.mode} at {self.created_at} by {self.changed_by_username}"
+
+
 class ChatRoutingPolicy(models.Model):
     """One computed routing policy for the chat fan-out.
 
@@ -4572,6 +4712,16 @@ class SpendCounter(models.Model):
         return f"{self.day} {self.name}: {self.amount}"
 
 
+class SpendReservation(models.Model):
+    """One generation taken from a day's count (ml/spend.py
+    reserve_generation), so it can be given back exactly once."""
+
+    day = models.DateField()
+    name = models.CharField(max_length=80)
+    created_at = models.DateTimeField(auto_now_add=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+
+
 class ExternalServiceHealth(models.Model):
     """Last outcome of calls to one external service, shared across pods.
 
@@ -5050,3 +5200,268 @@ class SiteBanner(models.Model):
 def _clear_site_banner_cache(sender, **kwargs) -> None:
     """Refresh the cached banner list so admin changes show up right away."""
     SiteBanner.clear_cache()
+
+
+class AssistantHandoff(models.Model):
+    """What an AI assistant sent through the MCP server's prepare_appeal,
+    held for the person to open once at /from-your-assistant
+    (assistant_handoff.py).
+
+    Ciphertext only, locked with a key derived from the link's code. The code
+    itself is never stored, only a digest to find the row by, so the
+    database and its backups cannot open a row on their own. Deleted when it
+    is opened and swept once it expires. No IP, email, session or denial is
+    kept with it; it is not in the admin and no export reads it.
+    """
+
+    lookup = models.CharField(max_length=64, unique=True)
+    sealed = models.BinaryField()
+    expires_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # Digest of the browser's binder once a link is bound; empty until then.
+    bound = models.CharField(max_length=64, blank=True, default="")
+
+    def __str__(self) -> str:
+        return f"AssistantHandoff({self.pk}, expires {self.expires_at:%Y-%m-%d %H:%M})"
+
+
+class ConsentRecord(models.Model):
+    """What a person ticked before an appeal, and against which policy
+    versions (consent.py). Wording and ticks only; it goes with its denial."""
+
+    CHANNELS = (("site", "site"), ("assistant", "assistant"))
+    FINISH = (("site", "site"), ("chat", "chat"))
+
+    denial = models.ForeignKey(
+        Denial, on_delete=models.CASCADE, related_name="consent_records"
+    )
+    terms_version = models.DateField()
+    privacy_version = models.DateField()
+    boxes = models.JSONField()
+    accepted_at = models.DateTimeField(auto_now_add=True)
+    channel = models.CharField(max_length=16, choices=CHANNELS, default="site")
+    on_behalf = models.BooleanField(default=False)
+    finish_in = models.CharField(max_length=8, choices=FINISH, default="site")
+    assistant_client = models.CharField(max_length=80, blank=True, default="")
+
+    def __str__(self) -> str:
+        return f"ConsentRecord({self.pk}, denial {self.denial_id}, {self.channel})"
+
+
+class AssistantDraft(models.Model):
+    """Letters being drafted in the background for an AI assistant
+    (assistant_drafts.py). The assistant holds a random id; only its digest
+    is here. Status and the questions asked, no answers and no letter text;
+    it goes with its denial and is swept once it expires. The denial is
+    empty until the person agrees on our site."""
+
+    STATUSES = (
+        ("waiting_for_agreement", "waiting_for_agreement"),
+        ("reading", "reading"),
+        ("questions", "questions"),
+        ("drafting", "drafting"),
+        ("ready", "ready"),
+        ("on_site", "on_site"),
+        ("stopped", "stopped"),
+        ("expired", "expired"),
+        ("site_only", "site_only"),
+    )
+
+    denial = models.ForeignKey(
+        Denial,
+        on_delete=models.CASCADE,
+        related_name="assistant_drafts",
+        null=True,
+        blank=True,
+    )
+    draft_id_digest = models.CharField(max_length=64, unique=True)
+    status = models.CharField(
+        max_length=24, choices=STATUSES, default="waiting_for_agreement"
+    )
+    status_at = models.DateTimeField(auto_now_add=True)
+    questions = models.JSONField(default=list, blank=True)
+    answers_at = models.DateTimeField(null=True, blank=True)
+    procedure = models.CharField(max_length=80, blank=True, default="")
+    condition = models.CharField(max_length=80, blank=True, default="")
+    expires_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # The generation taken on agree, given back if the run delivers no letters.
+    spend_reservation = models.ForeignKey(
+        SpendReservation,
+        on_delete=models.SET_NULL,
+        related_name="assistant_drafts",
+        null=True,
+        blank=True,
+    )
+
+    def __str__(self) -> str:
+        return f"AssistantDraft({self.pk}, denial {self.denial_id}, {self.status})"
+
+
+class AssistantAgreementCount(models.Model):
+    """Agreements on the assistant terms page per address per UTC day
+    (assistant_ip_limit.py). The address is kept only as a keyed digest that
+    changes every day; rows are swept after the day ends."""
+
+    day = models.DateField(db_index=True)
+    key = models.CharField(max_length=64)
+    count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["day", "key"], name="assistant_agreement_count_day_key"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"AssistantAgreementCount({self.day}, {self.count})"
+
+
+class AssistantContinueLink(models.Model):
+    """The emailed link back to letters drafted for an assistant
+    (assistant_continue.py). Only the token's digest is kept."""
+
+    denial = models.OneToOneField(
+        Denial, on_delete=models.CASCADE, related_name="assistant_continue_link"
+    )
+    token_digest = models.CharField(max_length=64, unique=True, null=True)
+    expires_at = models.DateTimeField(db_index=True)
+    wrong_email_attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"AssistantContinueLink({self.pk}, denial {self.denial_id})"
+
+
+# Staff letter review (letter_review.py, /timbit/help/letter_review/).
+#
+# Two staff readers label appeal letters from a model eval, blind, against a
+# fabrication rule. A packet arrives from the private eval repo through
+# `manage.py letter_review_import` and the labels leave through
+# `letter_review_export`. The letters are de-identified eval cases, never a
+# person's appeal, so these tables stand apart from the appeal data: nothing
+# here points at Denial or any patient row, none of it is in the admin, and
+# no Denial-based export or RemoveDataHelper reads it. No model name, judge
+# or score is ever stored, so the pages cannot show one.
+
+LETTER_REVIEW_VERDICTS = (
+    ("fabricates", "Fabricates"),
+    ("flag", "Flag"),
+    ("clean", "Clean"),
+)
+LETTER_REVIEW_NOTE_MAX = 2000
+
+
+class LetterReviewPacket(models.Model):
+    """One packet of eval letters and the rule they are read against."""
+
+    name = models.CharField(max_length=200, unique=True)
+    rule_version = models.CharField(max_length=100)
+    rule_text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"LetterReviewPacket({self.pk}, {self.name})"
+
+
+class LetterReviewReader(models.Model):
+    """A reader's handle on one packet, tied to the staff account that reads.
+
+    The account is SET_NULL rather than PROTECT: a review must never stop a
+    staff account from being deleted, and the export keys each label on the
+    handle, so the labels a reader already made keep their name. A reader
+    with no account matches no request, so nobody inherits their items.
+    """
+
+    packet = models.ForeignKey(
+        LetterReviewPacket, on_delete=models.CASCADE, related_name="readers"
+    )
+    handle = models.CharField(max_length=64)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["packet", "handle"], name="letter_review_reader_handle"
+            ),
+            models.UniqueConstraint(
+                fields=["packet", "user"], name="letter_review_reader_user"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"LetterReviewReader({self.pk}, {self.handle})"
+
+
+class LetterReviewItem(models.Model):
+    """One letter and the input its writer saw, in a stable reading order.
+
+    ``key`` is the eval repo's name for the item and only ever leaves through
+    the export. The pages address an item by ``slug``, minted at import and
+    meaningless, so a key that names a model or a case cannot reach a
+    reader's address bar.
+
+    prompt and letter are stored as plain text, not encrypted. The cases are
+    de-identified eval data, not anyone's appeal; encrypting them (the app's
+    Cryptographer, keyed by DEFF_SALT and DEFF_PASSWORD, could) is a choice
+    still open, not something the app lacks.
+    """
+
+    packet = models.ForeignKey(
+        LetterReviewPacket, on_delete=models.CASCADE, related_name="items"
+    )
+    key = models.CharField(max_length=64)
+    slug = models.CharField(max_length=32)
+    prompt = models.TextField()
+    letter = models.TextField()
+    position = models.PositiveIntegerField()
+    readers = models.ManyToManyField(LetterReviewReader, related_name="items")
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["packet", "key"], name="letter_review_item_key"
+            ),
+            models.UniqueConstraint(
+                fields=["packet", "position"], name="letter_review_item_position"
+            ),
+            models.UniqueConstraint(
+                fields=["packet", "slug"], name="letter_review_item_slug"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"LetterReviewItem({self.pk}, position {self.position})"
+
+
+class LetterReviewLabel(models.Model):
+    """One reader's verdict on one letter. Only that reader ever sees it."""
+
+    item = models.ForeignKey(
+        LetterReviewItem, on_delete=models.CASCADE, related_name="labels"
+    )
+    reader = models.ForeignKey(
+        LetterReviewReader, on_delete=models.CASCADE, related_name="labels"
+    )
+    verdict = models.CharField(max_length=16, choices=LETTER_REVIEW_VERDICTS)
+    note = models.TextField(max_length=LETTER_REVIEW_NOTE_MAX, blank=True, default="")
+    labeled_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["item", "reader"], name="letter_review_label_once"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"LetterReviewLabel({self.pk}, item {self.item_id})"

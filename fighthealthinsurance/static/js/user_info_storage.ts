@@ -3,6 +3,8 @@
  * Handles localStorage persistence of user information with privacy scrubbing support.
  */
 
+import { takeOutTypedValues, typedValue, type TypedValue } from "./typed_value_pattern";
+
 // Storage key for user info
 const USER_INFO_KEY = "fhi_user_info";
 // Storage key for external models preference
@@ -85,67 +87,63 @@ export function getExternalModelsPreference(): boolean {
 }
 
 /**
- * Helper function to escape special regex characters in a string
- */
-function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
- * Scrub personal info from a message, replacing with placeholders
+ * Scrub personal info from a message, replacing with placeholders. Each
+ * value is found however the message spaces it: any run of whitespace
+ * between its words (a line break in a pasted letter) counts as the one
+ * space typed. A value of one word is found only where it stands whole, in
+ * any script with capitals: a first name "Ann" leaves "annual" alone, and
+ * "José" is found before a comma. A value of more words that runs on into
+ * a longer word comes out with all of it ("283 24th Street" for a typed
+ * "283 24th St"). Names in scripts without capitals are found anywhere
+ * (typed_value_pattern.ts).
  */
 export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): string {
   if (!userInfo || !message) return message;
 
-  let scrubbedMessage = message;
+  // Each value with the placeholder it is replaced by. All are looked for in
+  // the message as it is, and taken out together at the end, so taking one
+  // out never hides another (typed_value_pattern.ts). Where one is found
+  // inside another, the outer one gives the placeholder, and where two are
+  // found in the same text, the one listed first. A value with no letter or
+  // digit is not looked for.
+  const values: [TypedValue, string][] = [];
+  const replaceValue = (value: string, placeholder: string): void => {
+    const typed = typedValue(value);
+    if (typed !== null) {
+      values.push([typed, placeholder]);
+    }
+  };
 
-  // Replace email first (before names) to avoid corrupting email addresses
-  // e.g., alice@example.com -> {{FIRST_NAME}}@example.com
+  // The email comes out whole: a name inside it is inside the email's match,
+  // so alice@example.com becomes {{Your Email Address}}, not
+  // {{FIRST_NAME}}@example.com.
   if (userInfo.email) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(escapeRegExp(userInfo.email), "gi"),
-      "{{Your Email Address}}"
-    );
+    replaceValue(userInfo.email, "{{Your Email Address}}");
   }
 
-  // Replace combined "firstName lastName" before individual names to avoid
-  // partial matches (e.g., replacing firstName first could prevent lastName match)
+  // The first and last name together are one placeholder where the message
+  // has them together; each name on its own is caught below.
   if (userInfo.firstName && userInfo.lastName) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${escapeRegExp(userInfo.firstName)}\\s+${escapeRegExp(userInfo.lastName)}\\b`, "gi"),
-      "{{PATIENT_NAME}}"
-    );
+    replaceValue(`${userInfo.firstName} ${userInfo.lastName}`, "{{PATIENT_NAME}}");
   }
 
   // Replace individual names (catches occurrences not part of the combined pattern)
   if (userInfo.firstName) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${escapeRegExp(userInfo.firstName)}\\b`, "gi"),
-      "{{FIRST_NAME}}"
-    );
+    replaceValue(userInfo.firstName, "{{FIRST_NAME}}");
   }
 
   if (userInfo.lastName) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${escapeRegExp(userInfo.lastName)}\\b`, "gi"),
-      "{{LAST_NAME}}"
-    );
+    replaceValue(userInfo.lastName, "{{LAST_NAME}}");
   }
 
   // Replace address
   if (userInfo.address) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(escapeRegExp(userInfo.address), "gi"),
-      "{{ADDRESS}}"
-    );
+    replaceValue(userInfo.address, "{{ADDRESS}}");
   }
 
   // Replace city
   if (userInfo.city) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${escapeRegExp(userInfo.city)}\\b`, "gi"),
-      "{{CITY}}"
-    );
+    replaceValue(userInfo.city, "{{CITY}}");
   }
 
   // State is deliberately NOT scrubbed. It is coarse (1 of 50), and the
@@ -156,13 +154,10 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
 
   // Replace zip code
   if (userInfo.zipCode) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${escapeRegExp(userInfo.zipCode)}\\b`, "gi"),
-      "{{ZIP_CODE}}"
-    );
+    replaceValue(userInfo.zipCode, "{{ZIP_CODE}}");
   }
 
-  return scrubbedMessage;
+  return takeOutTypedValues(message, values);
 }
 
 /**
