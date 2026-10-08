@@ -1024,6 +1024,25 @@ class TestMedicaidTargetYear(TestCase):
         self.assertIn(f"January 1, {WORK_REQUIREMENT_UNIVERSAL_YEAR}", info)
         self.assertNotIn("they may not be eligible for medicaid", info)
 
+    def test_a_transition_year_row_says_the_deadline_is_where_it_applies(self):
+        # CMS counts 43 states and DC with people the requirement covers, not
+        # all 50, so the row must not tell the model it applies everywhere.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current,
+            timeline=[
+                YearVerdict(current, True, [], work_requirement_conditional=True)
+            ],
+        )
+
+        self.assertIn("Where it applies, states generally must start it", info)
+        self.assertNotIn("every state", info)
+
     def test_a_conditional_row_does_not_swallow_the_work_requirement_note(self):
         # The shared explanation is attached once, to the first year the rule
         # bites. A conditional row spells it out itself -- if it consumed the

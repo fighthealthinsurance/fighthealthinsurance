@@ -1421,7 +1421,105 @@ class FindNextStepsHelper:
                     " or ".join(how_to_parts) + ".",
                 )
             )
+        work_requirement_note = cls._medicaid_work_requirement_note(denial, state)
+        if work_requirement_note is not None:
+            outside_help_details.append(work_requirement_note)
         return outside_help_details
+
+    @classmethod
+    def _medicaid_work_requirement_note(
+        cls, denial: "Denial", state: Optional[str]
+    ) -> Optional[Tuple[str, str]]:
+        """A short note on the federal Medicaid work requirement, or None.
+
+        Only for a Medicaid plan in a state we recognise. Not for someone who
+        also named Medicare: the requirement leaves out people on Medicare.
+        The facts and their sources are in the comment above
+        ``medicaid_api.work_requirement_reach`` (checked 2026-10-08); change
+        the wording here and that comment together. Built with format_html
+        because outside_help.html renders these rows with autoescape off.
+        """
+        from fighthealthinsurance.escalation_addresses import sanitize_http_url
+        from fighthealthinsurance.medicaid_api import (
+            WORK_REQUIREMENT_UNIVERSAL_YEAR,
+            work_requirement_reach,
+        )
+        from fighthealthinsurance.regulatory_citations import (
+            MEDICAID,
+            MEDICARE,
+            MEDICARE_ADVANTAGE,
+            classify_plan,
+        )
+        from fighthealthinsurance.state_help import get_state_help_by_abbreviation
+
+        programs = classify_plan(denial.plan_source.values_list("name", flat=True))
+        if MEDICAID not in programs:
+            return None
+        if MEDICARE in programs or MEDICARE_ADVANTAGE in programs:
+            return None
+        reach = work_requirement_reach(state)
+        if reach is None:
+            return None
+
+        if reach.may_apply:
+            option = format_html(
+                "<strong>Medicaid work requirements may apply to you.</strong> "
+                "A new federal law says many adults ages 19 to 64 must show "
+                "work, school, job training, or community service to get or "
+                "keep Medicaid. Usually that means 80 hours a month. States "
+                "generally must start this no later than January 1, {}. Some "
+                "states started earlier. Under the new law, many people are "
+                "exempt, like those who are pregnant, have a disability, or "
+                "care for a child under 14.",
+                WORK_REQUIREMENT_UNIVERSAL_YEAR,
+            )
+        else:
+            option = format_html(
+                "<strong>Medicaid work requirements may not apply to you.</strong> "
+                "A new federal law says many adults ages 19 to 64 must show "
+                "work, school, job training, or community service to get or "
+                "keep Medicaid. It mainly covers states that expanded Medicaid "
+                "to more adults. {} has not expanded Medicaid.",
+                reach.state_name,
+            )
+
+        state_help = get_state_help_by_abbreviation(reach.state_code)
+        agency = state_help.medicaid if state_help else None
+        agency_name = (agency.agency_name if agency else "") or (
+            f"{reach.state_name} Medicaid"
+        )
+        agency_url = sanitize_http_url(agency.agency_url if agency else None)
+        # The phone goes beside the link, not instead of it: a state can move
+        # its pages and leave the link dead, and then the call is the only
+        # way through to someone who can say whether this applies to them.
+        agency_phone = ((agency.agency_phone if agency else None) or "").strip()
+        ask = (
+            "Your state Medicaid agency can tell you if this applies to you "
+            "and when it starts:"
+            if reach.may_apply
+            else "Your state Medicaid agency can tell you for sure:"
+        )
+        if agency_url:
+            contact = format_html(
+                "<a href='{}' target='_blank' rel='noopener'>{}</a>",
+                agency_url,
+                agency_name,
+            )
+            if agency_phone:
+                contact = format_html("{}, or call {}", contact, agency_phone)
+        elif agency_phone:
+            contact = format_html("call {} at {}", agency_name, agency_phone)
+        else:
+            contact = format_html("{}", agency_name)
+        # Exempt is not automatic everywhere: states ask people to keep
+        # reading and answering their notices (TennCare says so in as many
+        # words), so say that before pointing to the agency.
+        how_to = format_html(
+            "Watch for letters from your state and answer them. {} {}.",
+            ask,
+            contact,
+        )
+        return (option, how_to)
 
     @classmethod
     def _build_question_forms(
