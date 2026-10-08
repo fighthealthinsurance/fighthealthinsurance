@@ -136,6 +136,10 @@ async def ask_questions(hashed_email: str, denial_uuid: str) -> int:
         denial, draft = await _draft_for(hashed_email, denial_uuid)
         if denial is None or draft is None or _stopped(draft):
             return 0
+        if draft.status == assistant_drafts.QUESTIONS and draft.questions:
+            # A retry after they were stored: keep the questions the
+            # assistant may already have shown, whose names its answers carry.
+            return len(draft.questions)
         from fighthealthinsurance.common_view_logic import DenialCreatorHelper
 
         rows = None
@@ -160,16 +164,15 @@ async def ask_questions(hashed_email: str, denial_uuid: str) -> int:
 async def start_drafting(hashed_email: str, denial_uuid: str) -> bool:
     """Record the form as completed, so the intake journey sends no nudge,
     and say drafting has begun. False, with nothing recorded, for a draft
-    that is gone, expired or stopped."""
+    that is gone or stopped. A draft past its day is drafted for only when
+    the person's answers are in: they gave them in time, and the letters
+    still reach them through the link in their email."""
     await _aclose_old_connections()
     with _sanitized("start drafting", denial_uuid):
         denial, draft = await _draft_for(hashed_email, denial_uuid)
-        if (
-            denial is None
-            or draft is None
-            or draft.expires_at <= timezone.now()
-            or _stopped(draft)
-        ):
+        if denial is None or draft is None or _stopped(draft):
+            return False
+        if draft.expires_at <= timezone.now() and draft.answers_at is None:
             return False
         from fighthealthinsurance import intake_outbox
 
