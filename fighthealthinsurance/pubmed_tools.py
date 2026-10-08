@@ -53,7 +53,7 @@ from fighthealthinsurance.utils import pubmed_fetcher
 
 from .exec import pubmed_executor
 from .models import Denial
-from .utils import _try_pandoc_engines, markdown_escape
+from .utils import _try_pandoc_engines, markdown_escape, pandoc_convert_command
 
 if sys.version_info >= (3, 11):
     from asyncio import timeout as async_timeout
@@ -1689,13 +1689,7 @@ class PubMedTools(object):
         ) as my_data:
             my_data.write(markdown_text)
             my_data.flush()
-            command = [
-                "pandoc",
-                "--read=markdown",
-                "--wrap=auto",
-                my_data.name,
-                f"-o{my_data.name}.pdf",
-            ]
+            command = pandoc_convert_command(my_data.name)
             try:
                 await _try_pandoc_engines(command)
                 return f"{my_data.name}.pdf"
