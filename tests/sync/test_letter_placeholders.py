@@ -32,6 +32,7 @@ from fighthealthinsurance.forms import FaxForm
 from fighthealthinsurance.letter_placeholders import (
     PATTERNS_FILE,
     describe_placeholders,
+    find_placeholder_spans,
     find_placeholders_as_written,
     find_unfilled_placeholders,
 )
@@ -333,6 +334,15 @@ def test_every_bracketed_blank_in_the_apps_own_appeal_templates_is_caught(letter
 def test_each_blank_is_listed_once_in_the_order_it_first_appears():
     text = "Ref XXX. I am [Your Name], member {{SCSID}}.\nSincerely,\n[Your Name]"
     assert find_unfilled_placeholders(text) == ["XXX", "[Your Name]", "{{SCSID}}"]
+
+
+def test_each_blanks_place_is_where_the_letter_has_it_in_order():
+    """Every blank, each time, at its place in the letter as written: a
+    [sic] it ignores inside one is part of it there."""
+    text = "Dear [Your [sic] Name], claim XXX-XX-XXXX of MM/DD/YYYY.\n[Your Name]"
+    assert [
+        text[start:end] for start, end in find_placeholder_spans(text)
+    ] == ["[Your [sic] Name]", "XXX-XX-XXXX", "MM/DD/YYYY", "[Your Name]"]
 
 
 # Two lines to write on, of different lengths, and a third as long as the
