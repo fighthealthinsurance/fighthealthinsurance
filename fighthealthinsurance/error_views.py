@@ -31,9 +31,16 @@ from django.db import close_old_connections
 from django.views import defaults
 from loguru import logger
 
+from fighthealthinsurance.fax_views import fax_link_not_found
 from fighthealthinsurance.middleware.RequestThreadMiddleware import (
     REQUEST_THREAD_ATTR,
 )
+
+# Where the fax pages live (urls.py). Their addresses carry a fax's (uuid,
+# hashed_email) pair, so an address under these that matches no route, such
+# as a link with a ")" a mail client added at the end, gets the 404 the fax
+# views give a pair that matches no fax: no analytics tags, no referrer.
+FAX_LINK_PREFIXES = ("/v0/faxfollowup/", "/v0/sendfax/")
 
 
 def on_the_request_thread(request) -> bool:
@@ -75,7 +82,13 @@ def cleaning_up_a_foreign_thread(render: Callable) -> Callable:
     return handler
 
 
+def _page_not_found(request, exception, template_name=defaults.ERROR_404_TEMPLATE_NAME):
+    if request.path_info.startswith(FAX_LINK_PREFIXES):
+        return fax_link_not_found(request)
+    return defaults.page_not_found(request, exception, template_name)
+
+
 bad_request = cleaning_up_a_foreign_thread(defaults.bad_request)
 permission_denied = cleaning_up_a_foreign_thread(defaults.permission_denied)
-page_not_found = cleaning_up_a_foreign_thread(defaults.page_not_found)
+page_not_found = cleaning_up_a_foreign_thread(_page_not_found)
 server_error = cleaning_up_a_foreign_thread(defaults.server_error)

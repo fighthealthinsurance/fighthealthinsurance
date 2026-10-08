@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block title %}
-Fax ReSend
+{% if delivered %}Your fax went through{% elif refused %}This link no longer works{% else %}Fax ReSend{% endif %}
 {% endblock title %}
 
 {% load compress %}
@@ -9,7 +9,27 @@ Fax ReSend
 {% block scriptmagic %}
 {% endblock scriptmagic %}
 {% block content %}
+{% comment %}
+Where the fax follow-up email lands (FaxFollowUpView). A fax that went
+through, or one older than the re-send window, gets a message in place of
+the form.
+{% endcomment %}
 <div class="fhi-page">
+{% if delivered %}
+{% include "partials/page_title.html" with title="Your fax went through" %}
+<div class="fhi-stack">
+<p>Our records show this fax was delivered, so this link can't send it again.</p>
+<p>Call your insurance company to confirm they received it and ask for a reference number. Insurers sometimes say they never got an appeal.</p>
+<p>If they say it didn't arrive, or it needs to go to a different number, email <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> and we'll help.</p>
+</div>
+{% elif refused %}
+{% include "partials/page_title.html" with title="This link no longer works" %}
+<div class="fhi-stack">
+<p>The link to re-send a fax works for {{ resend_days }} days after the fax was first sent, and this one is older than that.</p>
+<p>If your insurance company doesn't have your appeal yet, email <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> and we'll help you send it.</p>
+<p><a href="{% url 'scan' %}">Start a new appeal</a></p>
+</div>
+{% else %}
 {% include "partials/page_title.html" with title="Resend Your Fax" %}
 <div class="fhi-stack">
 <p>Thank you so much for using fight health insurance.
@@ -26,5 +46,6 @@ Fax ReSend
   </form>
 </section>
 </div>
+{% endif %}
 </div>
 {% endblock content %}

@@ -86,7 +86,8 @@ CASES = [
         FHI,
         "https://www.fighthealthinsurance.com/confirm-delete?token=t&email=pat.o%27brien%40test-fhi.com",
     ),
-    ("fax_followup", dict(success=True, missing_destination=False, fax_redo_link=FAX_LINK), FHI, FAX_LINK),
+    # A delivered fax stays sent, so its email carries no re-send link.
+    ("fax_followup", dict(success=True, missing_destination=False, fax_redo_link=FAX_LINK), FHI, None),
     ("fax_followup", dict(success=False, missing_destination=True, fax_redo_link=FAX_LINK), FHI, FAX_LINK),
     ("fax_followup", dict(success=False, missing_destination=False, fax_redo_link=FAX_LINK), FHI, FAX_LINK),
     *_followups("followup"),
@@ -197,6 +198,16 @@ def test_the_continue_email_says_nothing_went_to_the_insurer():
     for part in (text, html):
         assert "Nothing has been sent to your insurer." in part
         assert "If you didn't ask for this, you can ignore this email." in part
+
+
+def test_the_delivered_fax_email_offers_no_resend_link():
+    text, html = _render(
+        "fax_followup",
+        dict(success=True, missing_destination=False, fax_redo_link=FAX_LINK),
+    )
+    for part in (text, html):
+        assert FAX_LINK not in part
+        assert "support42@fighthealthinsurance.com" in part
 
 
 def test_only_the_sent_fax_subject_says_it_was_sent():

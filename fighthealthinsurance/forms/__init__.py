@@ -603,7 +603,8 @@ class EntityExtractForm(DenialRefForm):
 
 
 class FaxResendForm(forms.Form):
-    fax_phone = forms.CharField(required=True)
+    # No longer than FaxesToSend.destination, which it is saved into.
+    fax_phone = forms.CharField(required=True, max_length=20)
     uuid = forms.UUIDField(required=True, widget=forms.HiddenInput)
     hashed_email = forms.CharField(required=True, widget=forms.HiddenInput)
 

@@ -5,6 +5,7 @@ from django.conf import settings
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.cache import add_never_cache_headers
 from django.utils.decorators import method_decorator
 from django.views import View, generic
 from django.views.decorators.cache import never_cache
@@ -14,7 +15,11 @@ from loguru import logger
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
 from fighthealthinsurance.generate_appeal import *
-from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
+from fighthealthinsurance.helpers.fax_helpers import (
+    FAX_RESEND_WINDOW,
+    RESEND_DELIVERED,
+    SendFaxHelper,
+)
 from fighthealthinsurance.models import *
 from fighthealthinsurance.stripe_utils import get_or_create_price
 from fighthealthinsurance.views import (
@@ -27,26 +32,140 @@ from fighthealthinsurance.views import (
 )
 
 
+def _fax_link_headers(
+    response: HttpResponse, form_on_page: bool = False
+) -> HttpResponse:
+    """Headers for a page whose address is a fax's (uuid, hashed_email) pair.
+
+    The views that use this are never_cache and render with
+    no_third_party_scripts, so base.html loads no analytics tags. Pages
+    without the re-send form send no referrer at all. The page with the form
+    sends strict-origin. A page a link on it opens may load the analytics
+    tags, and gets only the site's origin as its referrer, not the pair in
+    this path; same-origin would give it the whole address. The form still
+    posts with a real Origin, which Django's CSRF check needs: under
+    no-referrer a browser posts it with "Origin: null", which the check
+    refuses (as in assistant_handoff_views._private).
+    """
+    response["Referrer-Policy"] = "strict-origin" if form_on_page else "no-referrer"
+    return response
+
+
+def fax_link_not_found(request) -> HttpResponse:
+    """The site's 404 page, without the analytics tags base.html would add.
+
+    For a pair that matches no fax, and (error_views.page_not_found) for an
+    address under the fax pages' paths that matches no route.
+    """
+    response = render(request, "404.html", {"no_third_party_scripts": True}, status=404)
+    add_never_cache_headers(response)
+    return _fax_link_headers(response)
+
+
+@method_decorator(never_cache, name="dispatch")
 class FaxFollowUpView(generic.FormView):
+    """The page the fax follow-up email links to: send the fax again, to the
+    same number or a corrected one.
+
+    The fax is the one the address names; an unknown pair is a 404. A fax
+    that went through, or one staged more than FAX_RESEND_WINDOW ago, gets a
+    page that says so in place of the form, and a POST for it sends nothing.
+    """
+
     template_name = "faxfollowup.html"
     form_class = core_forms.FaxResendForm
+    fax: FaxesToSend
+
+    def dispatch(self, request, *args, **kwargs):
+        fax = FaxesToSend.objects.filter(
+            uuid=str(kwargs["uuid"]), hashed_email=kwargs["hashed_email"]
+        ).first()
+        if fax is None:
+            return fax_link_not_found(request)
+        self.fax = fax
+        refusal = SendFaxHelper.resend_refusal(fax)
+        if refusal is not None:
+            return self.refused(refusal)
+        return super().dispatch(request, *args, **kwargs)
 
     def get_initial(self):
         # Set the initial arguments to the form based on the URL route params.
         return self.kwargs
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["no_third_party_scripts"] = True
+        return context
+
+    def render_to_response(self, context, **response_kwargs):
+        # The form, on a GET or after a POST that didn't validate.
+        return _fax_link_headers(
+            super().render_to_response(context, **response_kwargs),
+            form_on_page=True,
+        )
+
+    def refused(self, refusal: str) -> HttpResponse:
+        """What the person sees in place of the form."""
+        return _fax_link_headers(
+            render(
+                self.request,
+                "faxfollowup.html",
+                {
+                    "no_third_party_scripts": True,
+                    "refused": refusal,
+                    "delivered": refusal == RESEND_DELIVERED,
+                    "resend_days": FAX_RESEND_WINDOW.days,
+                },
+                # A link past its window is a dead link, a 404 as in
+                # intake_resume_views; a delivered fax is a plain answer.
+                status=200 if refusal == RESEND_DELIVERED else 404,
+            )
+        )
+
     def form_valid(self, form):
-        SendFaxHelper.resend(**form.cleaned_data)
-        return render(self.request, "fax_followup_thankyou.html")
+        # The fax the address names, not the form's hidden copies of its ids.
+        sent = SendFaxHelper.resend(
+            fax_phone=form.cleaned_data["fax_phone"],
+            uuid=str(self.fax.uuid),
+            hashed_email=self.fax.hashed_email,
+        )
+        if not sent:
+            # Delivered (or past the window) since dispatch looked.
+            self.fax.refresh_from_db()
+            return self.refused(
+                SendFaxHelper.resend_refusal(self.fax) or RESEND_DELIVERED
+            )
+        return _fax_link_headers(
+            render(
+                self.request,
+                "fax_followup_thankyou.html",
+                {"no_third_party_scripts": True},
+            )
+        )
 
 
+@method_decorator(never_cache, name="dispatch")
 class SendFaxView(View):
+    """Stripe's success page for a fax payment (StageFaxView's success_url).
+
+    An unknown pair is a 404. The page loads no analytics tags, sends no
+    referrer and is never cached: its address is the fax's pair.
+    """
+
     def get(self, request, **kwargs):
-        result = SendFaxHelper.remote_send_fax(**self.kwargs)
-        return render(
-            self.request,
-            "fax_thankyou.html",
-            {"already_sent": result == "already_sent"},
+        try:
+            result = SendFaxHelper.remote_send_fax(**self.kwargs)
+        except FaxesToSend.DoesNotExist:
+            return fax_link_not_found(request)
+        return _fax_link_headers(
+            render(
+                self.request,
+                "fax_thankyou.html",
+                {
+                    "already_sent": result == "already_sent",
+                    "no_third_party_scripts": True,
+                },
+            )
         )
 
 
