@@ -75,7 +75,9 @@
 		   treatment and condition, blank too, with defaults_given: blank then
 		   means none, not "keep what an earlier form left". Its assistant_form
 		   key (assistant_handoff_views.FORM_FIELD) is what lets /process name
-		   the assistant, for this form only. {% endcomment %}
+		   the assistant, for this form only; the flow's Back link to a case an
+		   assistant's link brought in renders one too, for that case alone.
+		   {% endcomment %}
 		{% if default_procedure or default_condition or defaults_given %}
 		<input type="hidden" name="default_procedure" value="{{ default_procedure }}">
 		<input type="hidden" name="default_condition" value="{{ default_condition }}">

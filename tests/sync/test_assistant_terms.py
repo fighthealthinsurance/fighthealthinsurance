@@ -544,7 +544,7 @@ class ShortFieldsTest(TermsTestBase):
         self.assertEqual(response.status_code, 200)
         return response
 
-    def start_a_guided_case(self):
+    def start_a_guided_case(self, email: str = EMAIL):
         """A case started earlier in this browser from a treatment guide,
         not finished: the session keeps the guide's treatment, and /process
         reuses the case for the same email."""
@@ -553,32 +553,56 @@ class ShortFieldsTest(TermsTestBase):
                 "default_procedure": "PrEP",
                 "default_condition": "HIV prevention",
                 "microsite_title": "PrEP",
-            }
+            },
+            email=email,
         )
         self.assertEqual(self.client.session["default_procedure"], "PrEP")
-        return Denial.objects.get()
+        return Denial.objects.get(hashed_email=Denial.get_hashed_email(email))
 
     def test_clearing_both_stays_cleared_when_the_case_is_reused(self):
-        earlier = self.start_a_guided_case()
-        code, _, _ = self.open_terms()
-        site_form = self.client.post(
-            AGREE, terms_form(code, finish="site", procedure="", condition="")
-        )
-        self.submit_on_site(site_form_fields(site_form))
-        self.assertEqual(list(Denial.objects.all()), [earlier], "reused")
-        for key in (
-            "default_procedure",
-            "default_condition",
-            "microsite_title",
-            "microsite_slug",
-        ):
-            with self.subTest(key=key):
-                self.assertNotIn(key, self.client.session)
-        # And the case names the assistant whose link opened the form.
-        record = ConsentRecord.objects.filter(denial=earlier).latest("pk")
-        self.assertEqual(
-            (record.channel, record.assistant_client), ("assistant", "Claude")
-        )
+        """Both cleared on the terms page, then the site form: through
+        Finish on this site instead, or through Agree once the v2 flag went
+        off after the page opened, which opens the site form too, without
+        naming the assistant. Either way the reused case keeps no earlier
+        treatment."""
+        for v2_turned_off in (False, True):
+            with self.subTest(v2_turned_off=v2_turned_off):
+                self.client = Client(HTTP_CF_CONNECTING_IP=IP)
+                email = f"cleared-{str(v2_turned_off).lower()}@example.com"
+                earlier = self.start_a_guided_case(email)
+                code, _, _ = self.open_terms()
+                with override_settings(MCP_HANDOFF_V2_ENABLED=not v2_turned_off):
+                    site_form = self.client.post(
+                        AGREE,
+                        terms_form(
+                            code,
+                            procedure="",
+                            condition="",
+                            **({} if v2_turned_off else {"finish": "site"}),
+                        ),
+                    )
+                    self.assertTemplateUsed(site_form, "scrub.html")
+                    self.submit_on_site(site_form_fields(site_form), email=email)
+                self.assertEqual(
+                    list(Denial.objects.filter(hashed_email=earlier.hashed_email)),
+                    [earlier],
+                    "reused",
+                )
+                for key in (
+                    "default_procedure",
+                    "default_condition",
+                    "microsite_title",
+                    "microsite_slug",
+                ):
+                    with self.subTest(key=key):
+                        self.assertNotIn(key, self.client.session)
+                # With v2 on, the case names the assistant whose link opened
+                # the form; a form opened with it off names none.
+                record = ConsentRecord.objects.filter(denial=earlier).latest("pk")
+                self.assertEqual(
+                    (record.channel, record.assistant_client),
+                    ("site", "") if v2_turned_off else ("assistant", "Claude"),
+                )
 
     def test_clearing_both_stays_cleared_through_an_error_and_a_retry(self):
         earlier = self.start_a_guided_case()

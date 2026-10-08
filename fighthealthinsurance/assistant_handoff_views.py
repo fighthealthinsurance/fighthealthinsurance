@@ -23,6 +23,7 @@ site or is indexed, the landing page loads no third-party script (base.html's
 
 import secrets
 import time
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Optional
 
@@ -35,6 +36,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.debug import SafeExceptionReporterFilter
 
+from fighthealthinsurance import consent
 from fighthealthinsurance.assistant_handoff import (
     HANDOFF_TTL,
     HandoffContent,
@@ -56,7 +58,9 @@ BINDER_COOKIE_PATH = "/from-your-assistant"
 # which only that form carries, in its hidden FORM_FIELD: so only a
 # submission of that form names the assistant, never whichever case the
 # browser sends next, and two forms open in two tabs each keep their own.
-# A key is used up when its form goes through; a few are kept, for a day.
+# The session keeps the newest few, for a day. A key names the assistant for
+# one case only: the case its form first goes through for, or the case a
+# form continuing one was rendered for, kept in its entry (use_site_form).
 FORMS_KEY = "assistant_handoff_forms"
 FORM_FIELD = "assistant_form"
 FORMS_KEPT = 5
@@ -113,14 +117,61 @@ def _store_forms(request: HttpRequest, forms: dict[str, dict[str, Any]]) -> None
         request.session.pop(FORMS_KEY, None)
 
 
-def mark_site_form(request: HttpRequest, content: HandoffContent) -> str:
-    """Keep, in the session, that the form about to be rendered came from
-    this link, under a fresh key; returns the key for its hidden field."""
+@dataclass(frozen=True)
+class SiteForm:
+    """A submitted form that an assistant's link filled in: its key, the
+    label the assistant gave itself (self-reported, for analytics only:
+    mcp_server._client_name), and, once the key is bound to a case (it went
+    through for one, or its form continues one: the flow's Back link to
+    /scan), that case's id."""
+
+    key: str
+    client: str
+    case: Optional[int] = None
+
+
+def mark_site_form(
+    request: HttpRequest, client: str, case: Optional[int] = None
+) -> str:
+    """Keep, in the session, that the form about to be rendered came from an
+    assistant whose label is client, under a fresh key; returns the key for
+    its hidden field. With case, the form continues that case and names the
+    assistant for it alone."""
     forms = _open_forms(request)
     key = secrets.token_urlsafe(16)
-    forms = {key: {"client": content.client, "at": time.time()}, **forms}
+    entry: dict[str, Any] = {"client": client, "at": time.time()}
+    if case is not None:
+        entry["case"] = int(case)
+    forms = {key: entry, **forms}
     _store_forms(request, dict(list(forms.items())[:FORMS_KEPT]))
     return key
+
+
+def mark_continued_form(request: HttpRequest, denial: Any) -> Optional[str]:
+    """A key for the form the flow's Back link to /scan renders for a case an
+    assistant brought in, naming that assistant for that case only; None
+    for a case the site brought in, or with v2 off. Only the Back link,
+    whose reference names the case (views.build_back_url), continues a case:
+    a plain /scan form names no assistant, whatever case it ends up reusing.
+
+    A key the session already keeps for this case and assistant is used
+    again, so loading the page again doesn't fill the session with new ones
+    and push other tabs' forms out."""
+    if not v2_enabled():
+        return None
+    client = consent.assistant_that_brought(denial)
+    if client is None:
+        return None
+    forms = _open_forms(request)
+    for key, entry in forms.items():
+        if entry.get("case") == denial.denial_id and (
+            client_label(entry.get("client", "")) == client
+        ):
+            # Its day starts again, as the newest.
+            forms[key] = {**entry, "at": time.time()}
+            _store_forms(request, forms)
+            return key
+    return mark_site_form(request, client, case=denial.denial_id)
 
 
 def _posted_form_key(request: HttpRequest) -> str:
@@ -128,15 +179,15 @@ def _posted_form_key(request: HttpRequest) -> str:
     return key if isinstance(key, str) else ""
 
 
-def handoff_context_for(request: HttpRequest) -> Optional[dict[str, str]]:
-    """What the form being submitted carried from the assistant, for
-    /process's consent record: the channel, the client label and the form's
-    key, or None for a plain intake. Only a form an opened link filled in
-    (render_site_form) carries a key the session kept, and only that form
-    can name the assistant; a field a request makes up names none.
+def handoff_context_for(request: HttpRequest) -> Optional[SiteForm]:
+    """The form being submitted, when an assistant's link filled it in, for
+    /process's consent record; None for a plain intake. Only a form an
+    opened link filled in (render_site_form), or the Back link rendered for
+    a case one brought in, carries a key the session kept, and only that
+    form can name the assistant; a field a request makes up names none.
 
-    Read, not used up: /process uses the key up with forget_site_form once
-    the submission goes through, so a page sent back with an error keeps it
+    Read, not used: /process decides with use_site_form once the submission
+    goes through, so a page sent back with an error keeps the key, unbound,
     for the corrected retry."""
     key = _posted_form_key(request)
     if not key:
@@ -144,18 +195,35 @@ def handoff_context_for(request: HttpRequest) -> Optional[dict[str, str]]:
     entry = _open_forms(request).get(key)
     if entry is None:
         return None
-    return {
-        "channel": "assistant",
-        "assistant_client": client_label(entry.get("client", "")),
-        "form": key,
-    }
+    case = entry.get("case")
+    return SiteForm(
+        key=key,
+        client=client_label(entry.get("client", "")),
+        case=case if isinstance(case, int) else None,
+    )
 
 
-def forget_site_form(request: HttpRequest, key: str) -> None:
-    """Use up a form's key: its form went through."""
+def use_site_form(request: HttpRequest, form: SiteForm, denial_id: int) -> bool:
+    """Whether this submission of the form, gone through as case denial_id,
+    names the assistant. The first time a key goes through, its entry in the
+    session is bound to that case: it names the assistant for that case
+    again (a reload sends the form again, and so does the browser's Back to
+    it, or a second press of Submit) and never for another. A form
+    continuing a case is bound to it from the start. Both submissions of a
+    double-click name the assistant, so the case the person goes on with
+    does."""
+    # Accepted limit: every request saves the session whole, so two
+    # submissions at the same instant can leave a used key unbound, and that
+    # form sent again for another case would name the assistant too. That
+    # can only miscount the analytics label; it grants nothing.
+    if form.case is not None and form.case != denial_id:
+        return False
     forms = _open_forms(request)
-    forms.pop(key, None)
-    _store_forms(request, forms)
+    entry = forms.get(form.key)
+    if entry is not None and entry.get("case") != denial_id:
+        forms[form.key] = {**entry, "case": int(denial_id)}
+        _store_forms(request, forms)
+    return True
 
 
 def handoff_enabled() -> bool:
@@ -224,12 +292,14 @@ def render_site_form(
         "default_procedure": content.procedure,
         "default_condition": content.condition,
     }
+    # Both always carried, blank too, whatever the flags say: this form says
+    # what the treatment and condition are, and blank means none, so
+    # /process doesn't keep one an earlier form left for a case it reuses.
+    # A v2 flag turned off after the terms page opened must not undo a
+    # clearing done there.
+    context["defaults_given"] = True
     if v2_enabled():
-        # Both always carried, blank too: this form says what the treatment
-        # and condition are, and blank means none, so /process doesn't keep
-        # one an earlier form left for a case it reuses.
-        context["defaults_given"] = True
-        context["assistant_form"] = mark_site_form(request, content)
+        context["assistant_form"] = mark_site_form(request, content.client)
     if form is not None:
         context["form"] = form
     return _private(render(request, "scrub.html", context))

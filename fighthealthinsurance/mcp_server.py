@@ -1558,7 +1558,14 @@ def _client_name(ctx: Context) -> str:
     arrives on a fresh session that never saw initialize, and the User-Agent
     is the only name it carries: Claude.ai sends "Claude-User" and Codex
     "openai-mcp/1.0.0 (Codex)". client_label cuts either down before it is
-    kept."""
+    kept.
+
+    Self-reported and unchecked: any caller can send any name or User-Agent.
+    The label is analytics only, which assistant a case came from
+    (ConsentRecord.assistant_client), never an identity. Nothing is allowed,
+    limited or trusted by it; what lets a submission name an assistant at
+    all is the form key the session kept when the link was opened
+    (assistant_handoff_views), not this."""
     try:
         params = ctx.session.client_params
         if params is not None and params.clientInfo.name:

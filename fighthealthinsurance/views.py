@@ -2045,7 +2045,7 @@ class InitialProcessView(generic.FormView):
 
     def post(self, request, *args, **kwargs):
         # The assistant whose link filled in this form, when the form carries
-        # the key render_site_form kept for it. Read here, used up only by
+        # the key render_site_form kept for it. Read here, used only by
         # form_valid: a submission sent back with an error keeps the key, and
         # the page it gets carries it, so the corrected retry still names the
         # assistant. An earlier review asked that a failed submission not
@@ -2054,6 +2054,18 @@ class InitialProcessView(generic.FormView):
         # form carrying it can use it, never the next case the browser sends.
         self.handoff_context = assistant_handoff_views.handoff_context_for(request)
         return super().post(request, *args, **kwargs)
+
+    def _continued_case(self) -> typing.Optional[models.Denial]:
+        """The case the flow's Back link to this page names (its ?ref=, from
+        build_back_url), or None for any other visit to /scan."""
+        ref = denial_ref_from_query(self.request)
+        if not ref or not is_valid_denial_id(ref.get("denial_id")):
+            return None
+        return models.Denial.objects.filter(
+            denial_id=ref["denial_id"],
+            semi_sekret=ref["semi_sekret"],
+            hashed_email=models.Denial.get_hashed_email(ref["email"]),
+        ).first()
 
     def get_ocr_result(self) -> typing.Optional[str]:
         if self.request.method == "POST":
@@ -2109,7 +2121,17 @@ class InitialProcessView(generic.FormView):
                 context["defaults_given"] = True
             handoff = getattr(self, "handoff_context", None)
             if handoff is not None:
-                context["assistant_form"] = handoff["form"]
+                context["assistant_form"] = handoff.key
+        else:
+            # The flow's Back link, for a case an assistant's link brought
+            # in: a key naming that assistant for this case alone.
+            continued = self._continued_case()
+            if continued is not None:
+                key = assistant_handoff_views.mark_continued_form(
+                    self.request, continued
+                )
+                if key is not None:
+                    context["assistant_form"] = key
 
         form = context.get("form")
         error_summary: list[dict[str, str]] = []
@@ -2202,31 +2224,33 @@ class InitialProcessView(generic.FormView):
             )
             return None
 
-    def _assistant_that_brought(
-        self, existing_denial: typing.Optional[models.Denial]
-    ) -> typing.Optional[str]:
+    def _assistant_that_brought(self, denial_id: int) -> typing.Optional[str]:
         """The label of the assistant that brought this case in ("" when its
         link carried no name), or None when the site did.
 
         An assistant brought it when this form was one its link filled in
         ("Open my appeal form", or "Finish on this site instead" on the chat
-        path's terms page) and carries the key the session kept for it: only
-        a link that was actually opened keeps one
-        (assistant_handoff_views.render_site_form), and post() reads it. A
-        form without one, a plain /scan form included, names no assistant,
-        unless it resubmits a case one already brought (the session's
-        denial, reused), which keeps what its first submission recorded, as
-        it keeps the treatment. The case is still finished here, and the
-        Denial's own channel stays "site": that is what its model spend is
-        counted against (ml/spend.py)."""
-        handoff: typing.Optional[dict[str, str]] = getattr(
+        path's terms page), or the flow's Back link rendered for a case one
+        brought in, and carries the key the session kept for it (post()
+        reads it), and that key is not bound to another case
+        (assistant_handoff_views.use_site_form, which binds it to this one).
+        A form without one, a plain /scan form included, names no assistant,
+        even when it reuses a case one brought in: the same email within the
+        reuse window may well be a different denial. The case is still
+        finished here, and the Denial's own channel stays "site": that is
+        what its model spend is counted against (ml/spend.py).
+
+        The label is what the assistant said it was (mcp_server._client_name):
+        analytics only, never an identity, and nothing is allowed or trusted
+        by it."""
+        handoff: typing.Optional[assistant_handoff_views.SiteForm] = getattr(
             self, "handoff_context", None
         )
-        if handoff is not None:
-            return handoff["assistant_client"]
-        if existing_denial is not None:
-            return consent.assistant_that_brought(existing_denial)
-        return None
+        if handoff is None:
+            return None
+        if not assistant_handoff_views.use_site_form(self.request, handoff, denial_id):
+            return None
+        return handoff.client
 
     def _defaults_given(self) -> bool:
         """Whether this form says what the treatment and condition are, blank
@@ -2295,7 +2319,7 @@ class InitialProcessView(generic.FormView):
         )
         # After, not around, the helper: its outbox work expects no request
         # transaction, so the record is best effort and never blocks the appeal.
-        brought_by = self._assistant_that_brought(existing_denial)
+        brought_by = self._assistant_that_brought(denial_response.denial_id)
         consent.record_consent(
             denial_response.denial_id,
             agreements,
@@ -2307,12 +2331,6 @@ class InitialProcessView(generic.FormView):
             finish_in=consent.FINISH_ON_SITE,
             assistant_client=brought_by or "",
         )
-        handoff = getattr(self, "handoff_context", None)
-        if handoff is not None:
-            # Gone through: this form's key is used up, so a reload or
-            # another case can't use it again (a reload of this case keeps
-            # the assistant through the reused denial's record instead).
-            assistant_handoff_views.forget_site_form(self.request, handoff["form"])
 
         # Store the denial ID in the session to maintain state across the multi-step form process
         # This allows the SessionRequiredMixin to verify the user is working with a valid denial
@@ -2399,7 +2417,15 @@ class InitialProcessView(generic.FormView):
                 "form": form,
                 "next": reverse("hh"),
                 "current_step": 2,
-                "back_url": reverse("scan"),
+                # The reference lets /scan tell the flow's own way back to
+                # this case from a new visit (InitialProcessView).
+                "back_url": build_back_url(
+                    self.request,
+                    "scan",
+                    denial_response.denial_id,
+                    cleaned_data["email"],
+                    denial_response.semi_sekret,
+                ),
             },
         )
 
@@ -2981,7 +3007,11 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
         context = super().get_context_data(**kwargs)
         context["next"] = reverse("hh")  # Form posts to itself
         context["current_step"] = 2
-        context["back_url"] = reverse("scan")  # Scan doesn't need denial ref
+        # The reference lets /scan tell the flow's own way back to this case
+        # from a new visit (InitialProcessView).
+        context["back_url"] = self.get_back_url(
+            "scan", self.get_denial_ref_from_request()
+        )
         return context
 
     # The page renders a box for health_history_consent, so an unticked box

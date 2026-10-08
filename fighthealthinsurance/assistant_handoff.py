@@ -179,7 +179,9 @@ def v2_enabled() -> bool:
 
 
 def client_label(name: object) -> str:
-    """A short, plain label for the client that made a link, or ""."""
+    """A short, plain label for the client that made a link, or "". What
+    the client said it was (mcp_server._client_name): analytics only, never
+    an identity, and nothing is allowed or trusted by it."""
     if not isinstance(name, str):
         return ""
     return _CLIENT_LABEL_OK.sub("", name).strip()[:CLIENT_LABEL_MAX]
