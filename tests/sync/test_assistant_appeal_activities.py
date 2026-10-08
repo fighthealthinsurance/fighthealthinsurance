@@ -4,7 +4,7 @@ these; here only the model calls are stubbed."""
 
 import asyncio
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from asgiref.sync import async_to_sync
 from django.test import TransactionTestCase, override_settings
@@ -77,6 +77,15 @@ def agreed_draft(procedure="MRI", condition="back pain"):
     return denial, draft
 
 
+def stopped_draft():
+    """An agreed draft Agree then stopped when its wait on Temporal ran
+    out, though Temporal started the run all the same."""
+    denial, draft = agreed_draft()
+    drafts.set_status(draft, drafts.STOPPED)
+    draft.refresh_from_db()
+    return denial, draft
+
+
 class ActivityTestBase(TransactionTestCase):
     def setUp(self):
         super().setUp()
@@ -86,6 +95,14 @@ class ActivityTestBase(TransactionTestCase):
 
     def run_activity(self, activity, denial, *args):
         return async_to_sync(activity)(denial.hashed_email, str(denial.uuid), *args)
+
+    def assert_still_stopped(self, draft):
+        """Stopped, and not set again since."""
+        stopped_at = draft.status_at
+        draft.refresh_from_db()
+        self.assertEqual(
+            (draft.status, draft.status_at), (drafts.STOPPED, stopped_at)
+        )
 
 
 class ReadLetterTest(ActivityTestBase):
@@ -126,6 +143,18 @@ class ReadLetterTest(ActivityTestBase):
         denial.hashed_email = Denial.get_hashed_email("someone@example.com")
         self.assertFalse(self.read(denial))
 
+    def test_a_run_that_finds_its_draft_stopped_reads_nothing_and_changes_nothing(
+        self,
+    ):
+        denial, draft = stopped_draft()
+        found_before = (denial.procedure, denial.diagnosis)
+        extract = MagicMock(side_effect=finds_nothing)
+        self.assertFalse(self.read(denial, extract))
+        extract.assert_not_called()
+        self.assert_still_stopped(draft)
+        denial.refresh_from_db()
+        self.assertEqual((denial.procedure, denial.diagnosis), found_before)
+
 
 class AskQuestionsTest(ActivityTestBase):
     def ask(self, denial, generate):
@@ -153,6 +182,14 @@ class AskQuestionsTest(ActivityTestBase):
         self.assertEqual(draft.status, drafts.DRAFTING)
         self.assertEqual(draft.questions, [])
 
+    def test_a_stopped_draft_is_asked_nothing_and_stays_stopped(self):
+        denial, draft = stopped_draft()
+        generate = AsyncMock(return_value=QUESTIONS)
+        self.assertEqual(self.ask(denial, generate), 0)
+        generate.assert_not_called()
+        self.assert_still_stopped(draft)
+        self.assertEqual(draft.questions, [])
+
 
 class StartDraftingTest(ActivityTestBase):
     def start(self, denial):
@@ -178,6 +215,12 @@ class StartDraftingTest(ActivityTestBase):
         self.assertFalse(IntakeJourneyEvent.objects.filter(denial=denial).exists())
         draft.refresh_from_db()
         self.assertEqual(draft.status, drafts.READING)
+
+    def test_a_stopped_draft_does_not_start_drafting(self):
+        denial, draft = stopped_draft()
+        self.assertFalse(self.start(denial))
+        self.assertFalse(IntakeJourneyEvent.objects.filter(denial=denial).exists())
+        self.assert_still_stopped(draft)
 
 
 class FinishDraftsTest(ActivityTestBase):
@@ -208,6 +251,13 @@ class FinishDraftsTest(ActivityTestBase):
         self.assertEqual(self.finish(denial), drafts.STOPPED)
         draft.refresh_from_db()
         self.assertEqual(draft.status, drafts.STOPPED)
+
+    def test_a_stopped_draft_stays_stopped_whatever_was_stored(self):
+        denial, draft = stopped_draft()
+        generation_lease.acquire(denial, generation_lease.new_holder("journey"))
+        ProposedAppeal.objects.create(for_denial=denial, appeal_text=LETTER)
+        self.assertEqual(self.finish(denial), drafts.STOPPED)
+        self.assert_still_stopped(draft)
 
 
 class MarkDraftStatusTest(ActivityTestBase):

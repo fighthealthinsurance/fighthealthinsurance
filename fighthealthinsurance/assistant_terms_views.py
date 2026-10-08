@@ -324,6 +324,7 @@ class AssistantAgreeView(View):
             return self._used(request, token)
         try:
             denial = self._create_denial(request, form)
+            linked = self._link(form, content, draft, denial, reservation)
         except Exception:
             assistant_ip_limit.give_back(taken)
             spend.release_generation(reservation)
@@ -331,7 +332,7 @@ class AssistantAgreeView(View):
             _stop_quietly(draft)
             raise
         return self._agreed(
-            request, token, form, content, draft, denial, reservation, taken
+            request, token, form, draft, denial, linked, reservation, taken
         )
 
     def _to_site(
@@ -385,17 +386,16 @@ class AssistantAgreeView(View):
         )
         return Denial.objects.get(denial_id=info.denial_id)
 
-    def _agreed(
-        self,
-        request: HttpRequest,
-        token: str,
+    @staticmethod
+    def _link(
         form: Any,
         content: HandoffContent,
         draft: Any,
         denial: Any,
         reservation: spend.Reservation,
-        taken: assistant_ip_limit.Taken,
-    ) -> HttpResponse:
+    ) -> bool:
+        """Record the boxes, then tie the draft to the new case with the
+        reserved generation. False when the draft moved on first."""
         data = form.cleaned_data
         consent.record_consent(
             denial.denial_id,
@@ -405,13 +405,26 @@ class AssistantAgreeView(View):
             finish_in=consent.FINISH_IN_CHAT,
             assistant_client=content.client,
         )
-        linked = assistant_drafts.agree(
+        return assistant_drafts.agree(
             draft,
             denial,
             content.procedure,
             content.condition,
             reservation_id=reservation.id,
         )
+
+    def _agreed(
+        self,
+        request: HttpRequest,
+        token: str,
+        form: Any,
+        draft: Any,
+        denial: Any,
+        linked: bool,
+        reservation: spend.Reservation,
+        taken: assistant_ip_limit.Taken,
+    ) -> HttpResponse:
+        data = form.cleaned_data
 
         def give_back() -> None:
             spend.release_generation(reservation)

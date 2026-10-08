@@ -25,6 +25,7 @@ from fighthealthinsurance import (
     assistant_drafts,
     assistant_handoff,
     assistant_ip_limit,
+    consent,
 )
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.assistant_handoff import claim_handoff, create_handoff
@@ -415,15 +416,10 @@ class AgreeTest(TermsTestBase):
         draft.refresh_from_db()
         self.assertEqual(draft.status, assistant_drafts.READING)
 
-    def test_a_case_that_fails_to_save_tells_the_assistant_to_finish_on_the_site(
-        self,
-    ):
-        code, draft, _ = self.open_terms()
-        with patch.object(
-            AssistantAgreeView, "_create_denial", side_effect=RuntimeError("no case")
-        ):
-            with self.assertRaises(RuntimeError):
-                self.client.post(AGREE, terms_form(code))
+    def assert_given_back_and_stopped(self, draft):
+        """What a press that fails after using the link leaves: the link
+        used, the cap's place and the generation back, nothing started, and
+        the assistant told to finish on the site."""
         self.assertEqual(AssistantHandoff.objects.count(), 0)
         self.assertEqual(SpendCounter.objects.get(name="fhi:assistant").amount, 0)
         self.assertEqual(AssistantAgreementCount.objects.get().count, 0)
@@ -434,6 +430,54 @@ class AgreeTest(TermsTestBase):
             assistant_draft_tools.FINISH_ON_SITE,
         )
         self.start.assert_not_called()
+
+    def test_a_case_that_fails_to_save_tells_the_assistant_to_finish_on_the_site(
+        self,
+    ):
+        code, draft, _ = self.open_terms()
+        with patch.object(
+            AssistantAgreeView, "_create_denial", side_effect=RuntimeError("no case")
+        ):
+            with self.assertRaises(RuntimeError):
+                self.client.post(AGREE, terms_form(code))
+        self.assert_given_back_and_stopped(draft)
+
+    def test_boxes_that_fail_to_record_tell_the_assistant_to_finish_on_the_site(
+        self,
+    ):
+        code, draft, _ = self.open_terms()
+        with patch.object(
+            consent, "record_consent", side_effect=RuntimeError("no record")
+        ):
+            with self.assertRaisesMessage(RuntimeError, "no record"):
+                self.client.post(AGREE, terms_form(code))
+        self.assert_given_back_and_stopped(draft)
+
+    def test_a_draft_that_fails_to_tie_tells_the_assistant_to_finish_on_the_site(
+        self,
+    ):
+        code, draft, _ = self.open_terms()
+        with patch.object(
+            assistant_drafts, "agree", side_effect=RuntimeError("not tied")
+        ):
+            with self.assertRaisesMessage(RuntimeError, "not tied"):
+                self.client.post(AGREE, terms_form(code))
+        self.assert_given_back_and_stopped(draft)
+
+    def test_a_draft_tied_but_not_marked_agreed_is_stopped_with_its_generation_back(
+        self,
+    ):
+        code, draft, _ = self.open_terms()
+        with patch.object(
+            assistant_drafts, "mark_agreed", side_effect=DatabaseError("away")
+        ):
+            with self.assertRaisesMessage(DatabaseError, "away"):
+                self.client.post(AGREE, terms_form(code))
+        self.assert_given_back_and_stopped(draft)
+        self.assertIsNotNone(draft.denial_id)
+        self.assertIsNotNone(
+            SpendReservation.objects.get(pk=draft.spend_reservation_id).released_at
+        )
 
     def test_a_case_that_fails_to_save_still_shows_its_own_error(self):
         code, _, _ = self.open_terms()
