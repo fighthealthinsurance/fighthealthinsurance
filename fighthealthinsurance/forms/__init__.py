@@ -28,6 +28,8 @@ from fighthealthinsurance.letter_placeholders import (
     find_placeholders_as_written,
 )
 from fighthealthinsurance.models import (
+    LETTER_REVIEW_NOTE_MAX,
+    LETTER_REVIEW_VERDICTS,
     DenialTypes,
     InsuranceCompany,
     InsurancePlan,
@@ -785,6 +787,16 @@ class FollowUpForm(forms.Form):
 # New form for activating pro users
 class ActivateProForm(forms.Form):
     phonenumber = forms.CharField(required=True)
+
+
+# One reader's label on one letter in the staff letter review
+# (letter_review.py). The template draws its own radios, with the rule's short
+# descriptions and keyboard shortcuts; this only checks what comes back.
+class LetterReviewLabelForm(forms.Form):
+    verdict = forms.ChoiceField(choices=LETTER_REVIEW_VERDICTS)
+    note = forms.CharField(
+        required=False, max_length=LETTER_REVIEW_NOTE_MAX, strip=True
+    )
 
 
 # Form for sending mailing list emails

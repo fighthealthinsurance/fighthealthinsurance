@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Letter {{ place }} of {{ assigned }} - Letter review</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px 16px 40px;
+      background-color: #f5f5f5;
+      color: #222;
+      line-height: 1.5;
+    }
+    h1 {
+      color: #222;
+      font-size: 1.5rem;
+      border-bottom: 2px solid #0b5394;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+      overflow-wrap: anywhere;
+    }
+    h2 { color: #333; font-size: 1.15rem; margin: 0 0 10px; }
+    .lr-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      align-items: baseline;
+      color: #333;
+      margin-bottom: 16px;
+    }
+    .lr-bar a { color: #0b5394; }
+    .lr-error {
+      background: #f8d7da;
+      border: 1px solid #f1aeb5;
+      color: #842029;
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+    .lr-rule {
+      background: #ffffff;
+      color: #222;
+      border: 1px solid #d5d9de;
+      border-radius: 8px;
+      padding: 10px 16px;
+      margin-bottom: 16px;
+    }
+    .lr-rule summary { cursor: pointer; font-weight: bold; color: #222; }
+    .lr-rule-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0 4px; }
+    .lr-panes {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 16px;
+    }
+    .lr-pane {
+      background: #ffffff;
+      color: #222;
+      border: 1px solid #d5d9de;
+      border-radius: 8px;
+      padding: 16px 18px;
+      min-width: 0;
+    }
+    .lr-pane-note { color: #444; font-size: 0.95rem; margin: -4px 0 10px; }
+    .lr-input {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: #222;
+    }
+    /* Side by side, the input stays in view beside a long letter, so every
+       date, amount and name can be compared with it without scrolling
+       back up. Stacked (phones), it flows into the page: no nested scroll
+       box to trap a swipe. */
+    @media (min-width: 1000px) {
+      .lr-panes {
+        grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+        align-items: start;
+      }
+      .lr-pane-input { position: sticky; top: 8px; }
+      .lr-pane-input .lr-input { max-height: calc(100vh - 10rem); overflow-y: auto; }
+    }
+    .lr-letter {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      max-width: 70ch;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 1.05rem;
+      line-height: 1.65;
+      color: #1a1a1a;
+    }
+    .lr-form {
+      background: #ffffff;
+      color: #222;
+      border: 1px solid #d5d9de;
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin-top: 16px;
+    }
+    .lr-choices {
+      border: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 10px;
+    }
+    @media (min-width: 760px) {
+      .lr-choices { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    .lr-choices legend { font-weight: bold; margin-bottom: 8px; color: #222; }
+    .lr-choice {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      border: 2px solid #c4c9cf;
+      border-radius: 6px;
+      padding: 10px 12px;
+      background: #ffffff;
+      color: #222;
+      cursor: pointer;
+    }
+    .lr-choice input { margin-top: 4px; width: 18px; height: 18px; flex: none; }
+    .lr-choice-fabricates { border-left: 8px solid #b02a37; }
+    .lr-choice-flag { border-left: 8px solid #b35c00; }
+    .lr-choice-clean { border-left: 8px solid #1e7a3c; }
+    .lr-choice:has(input:checked) { background: #e8f0fb; border-color: #0b5394; }
+    .lr-choice-name { font-weight: bold; color: #1a1a1a; }
+    .lr-choice-help { color: #333; font-size: 0.95rem; }
+    .lr-key {
+      display: inline-block;
+      min-width: 1.4em;
+      text-align: center;
+      border: 1px solid #8a9199;
+      border-radius: 3px;
+      color: #222;
+      background: #f1f3f5;
+      margin-right: 4px;
+    }
+    .lr-note-label { display: block; font-weight: bold; margin: 16px 0 6px; color: #222; }
+    textarea.lr-note {
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 5.5em;
+      padding: 8px;
+      border: 1px solid #8a9199;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 1rem;
+      color: #222;
+      background: #ffffff;
+    }
+    .lr-hint { color: #444; font-size: 0.95rem; margin: 6px 0 0; }
+    .lr-saved {
+      background: #fff8e1;
+      border: 1px solid #e0c060;
+      color: #3d3000;
+      border-radius: 4px;
+      padding: 8px 12px;
+      margin: 0 0 12px;
+    }
+    .lr-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 16px; }
+    button.lr-save {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 4px;
+      background-color: #0b5394;
+      color: #ffffff;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button.lr-save:hover, button.lr-save:focus { background-color: #083b6a; color: #ffffff; }
+  </style>
+</head>
+<body>
+  <h1>Letter review &mdash; {{ packet.name }}</h1>
+  <nav class="lr-bar" aria-label="Your letters">
+    <span>Letter {{ place }} of {{ assigned }} &middot; {{ labeled }} labeled</span>
+    {% if previous_slug %}<a href="{% url 'letter_review_item' packet.pk previous_slug %}">&larr; Previous</a>{% endif %}
+    {% if next_slug %}<a href="{% url 'letter_review_item' packet.pk next_slug %}">Next &rarr;</a>{% endif %}
+    <a href="{% url 'letter_review_mine' packet.pk %}">My letters</a>
+    <a href="{% url 'letter_review_next' packet.pk %}">Go to my next unlabeled letter</a>
+    <a href="{% url 'letter_review_index' %}">All packets</a>
+  </nav>
+
+  {% if form.errors %}
+    <div class="lr-error" role="alert">
+      {% if form.verdict.errors %}Choose Fabricates, Flag or Clean before saving.{% endif %}
+      {% if form.note.errors %}The note can be at most {{ note_max }} characters.{% endif %}
+    </div>
+  {% endif %}
+
+  <details class="lr-rule"{% if place == 1 %} open{% endif %}>
+    <summary>The rule (version {{ packet.rule_version }})</summary>
+    <div class="lr-rule-text">{{ packet.rule_text }}</div>
+  </details>
+
+  <div class="lr-panes">
+    <section class="lr-pane lr-pane-input" aria-labelledby="lr-input-heading">
+      <h2 id="lr-input-heading">What the writer saw</h2>
+      <p class="lr-pane-note">This is the whole record for this letter: check its claims against this.</p>
+      <div class="lr-input">{{ item.prompt }}</div>
+    </section>
+    <section class="lr-pane" aria-labelledby="lr-letter-heading">
+      <h2 id="lr-letter-heading">The letter</h2>
+      <div class="lr-letter">{{ item.letter }}</div>
+    </section>
+  </div>
+
+  <form method="post" class="lr-form" id="lr-form"{% if form.is_bound %} data-unsaved="1"{% endif %}>
+    {% csrf_token %}
+    {% if saved_label %}
+      <p class="lr-saved">You marked this {{ saved_label }}. Saving replaces it.</p>
+    {% endif %}
+    <fieldset class="lr-choices">
+      <legend>Your mark: pick the most serious that applies</legend>
+      {% for choice in verdicts %}
+        <label class="lr-choice lr-choice-{{ choice.value }}">
+          <input type="radio" name="verdict" value="{{ choice.value }}" data-shortcut="{{ choice.shortcut }}"{% if selected == choice.value %} checked{% endif %} required>
+          <span>
+            <span class="lr-choice-name"><span class="lr-key" aria-hidden="true">{{ choice.shortcut }}</span>{{ choice.label }}</span><br>
+            <span class="lr-choice-help">{{ choice.help }}</span>
+          </span>
+        </label>
+      {% endfor %}
+    </fieldset>
+
+    <label class="lr-note-label" for="lr-note">Note (optional)</label>
+    <textarea class="lr-note" id="lr-note" name="note" maxlength="{{ note_max }}">{{ note }}</textarea>
+    <p class="lr-hint">Up to {{ note_max }} characters. Keys: 1, 2 or 3 picks a mark and Enter saves, whenever you are not typing in the note.</p>
+
+    <div class="lr-actions">
+      <button type="submit" class="lr-save">Save and next</button>
+    </div>
+  </form>
+
+  <script>
+    // 1, 2 and 3 pick a mark wherever the focus is except the note (and any
+    // other text box). Enter saves, but not from the note, where it is a new
+    // line, or from a link, button or the rule's summary, where it already
+    // does its own thing.
+    //
+    // A mark or note that has not been saved is never dropped quietly: any
+    // way off the page (a link, the back button, closing the tab) asks first.
+    (function () {
+      var form = document.getElementById("lr-form");
+      if (!form) return;
+      var note = document.getElementById("lr-note");
+      var submitted = false;
+
+      function snapshot() {
+        var picked = form.querySelector('input[name="verdict"]:checked');
+        return (picked ? picked.value : "") + "\u0000" + (note ? note.value : "");
+      }
+      // A page re-shown after a refused save holds what was typed, not what
+      // was saved, so it starts out unsaved.
+      var saved = form.hasAttribute("data-unsaved") ? null : snapshot();
+      function unsaved() {
+        return !submitted && snapshot() !== saved;
+      }
+
+      // A page restored by the back button must be able to save again.
+      window.addEventListener("pageshow", function () {
+        submitted = false;
+      });
+      window.addEventListener("beforeunload", function (e) {
+        if (unsaved()) {
+          e.preventDefault();
+          e.returnValue = "";
+        }
+      });
+      form.addEventListener("submit", function (e) {
+        if (submitted) {
+          e.preventDefault();
+          return;
+        }
+        submitted = true;
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+        var tag = (e.target && e.target.tagName) || "";
+        if (tag === "TEXTAREA" || tag === "SELECT") return;
+        if (tag === "INPUT" && e.target.type !== "radio") return;
+        if (e.key === "1" || e.key === "2" || e.key === "3") {
+          var radio = form.querySelector('input[data-shortcut="' + e.key + '"]');
+          if (radio) {
+            radio.checked = true;
+            e.preventDefault();
+          }
+        } else if (e.key === "Enter") {
+          if (tag === "A" || tag === "BUTTON" || tag === "SUMMARY") return;
+          e.preventDefault();
+          if (form.reportValidity()) {
+            if (form.requestSubmit) {
+              form.requestSubmit();
+            } else {
+              form.submit();
+            }
+          }
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

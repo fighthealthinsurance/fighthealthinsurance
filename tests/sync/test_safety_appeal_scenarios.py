@@ -578,6 +578,7 @@ class StaffOnlyAccessControlTests(TestCase):
         "/timbit/help/enable_beta",
         "/timbit/help/send_mailing_list_mail",
         "/timbit/help/delete_user_data",
+        "/timbit/help/letter_review/",
     ]
 
     def setUp(self) -> None:
