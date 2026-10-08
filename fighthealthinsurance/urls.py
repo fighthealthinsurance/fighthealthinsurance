@@ -238,28 +238,40 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.UnsubscribeView.as_view(),
         name="unsubscribe",
     ),
-    # Fax follow up
+    # Fax follow up. The address in the email redirects to the page, whose
+    # address carries no ids (fax_views.FaxFollowUpLinkView).
     # So if there's an extra / or . at the end we ignore it.
     path(
         "v0/faxfollowup/<uuid:uuid>/<slug:hashed_email>",
-        fax_views.FaxFollowUpView.as_view(),
+        fax_views.FaxFollowUpLinkView.as_view(),
         name="fax-followup",
     ),
     path(
         "v0/faxfollowup/<uuid:uuid>/<slug:hashed_email>.",
-        fax_views.FaxFollowUpView.as_view(),
+        fax_views.FaxFollowUpLinkView.as_view(),
         name="fax-followup-with-a-period",
     ),
     path(
         "v0/faxfollowup/<uuid:uuid>/<slug:hashed_email>/",
-        fax_views.FaxFollowUpView.as_view(),
+        fax_views.FaxFollowUpLinkView.as_view(),
         name="fax-followup-with-trailing-slash",
     ),
-    # Back to normal stuff
+    path(
+        "v0/faxfollowup",
+        fax_views.FaxFollowUpView.as_view(),
+        name="fax-followup-page",
+    ),
+    # Stripe's success_url for a fax payment: sends the fax, then redirects
+    # to the sent page, whose address carries no ids.
     path(
         "v0/sendfax/<uuid:uuid>/<slug:hashed_email>/",
         fax_views.SendFaxView.as_view(),
         name="sendfaxview",
+    ),
+    path(
+        "v0/sendfax/sent",
+        fax_views.FaxSentView.as_view(),
+        name="fax-sent",
     ),
     path(
         "v0/stagefax",

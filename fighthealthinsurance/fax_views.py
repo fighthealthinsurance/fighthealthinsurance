@@ -1,4 +1,6 @@
 import json
+import secrets
+from typing import Optional
 from urllib.parse import urlencode
 
 from django.conf import settings
@@ -31,23 +33,22 @@ from fighthealthinsurance.views import (
     resolve_fax_cancel_ref,
 )
 
+# What the fax links keep in the session for the pages they redirect to,
+# whose addresses carry no ids (FaxFollowUpLinkView, SendFaxView).
+# The follow-up links opened, as [ref, fax pk] pairs, the newest last.
+FAX_FOLLOWUP_SESSION_KEY = "fax_followup"
+FAX_SENT_SESSION_KEY = "fax_sent"  # what SendFaxHelper.remote_send_fax returned
+# How many follow-up links the session keeps, so each page's form still
+# re-sends its own fax when one browser opens several.
+FAX_FOLLOWUPS_KEPT = 10
 
-def _fax_link_headers(
-    response: HttpResponse, form_on_page: bool = False
-) -> HttpResponse:
-    """Headers for a page whose address is a fax's (uuid, hashed_email) pair.
 
-    The views that use this are never_cache and render with
-    no_third_party_scripts, so base.html loads no analytics tags. Pages
-    without the re-send form send no referrer at all. The page with the form
-    sends strict-origin. A page a link on it opens may load the analytics
-    tags, and gets only the site's origin as its referrer, not the pair in
-    this path; same-origin would give it the whole address. The form still
-    posts with a real Origin, which Django's CSRF check needs: under
-    no-referrer a browser posts it with "Origin: null", which the check
-    refuses (as in assistant_handoff_views._private).
-    """
-    response["Referrer-Policy"] = "strict-origin" if form_on_page else "no-referrer"
+def _fax_link_headers(response: HttpResponse) -> HttpResponse:
+    """For a response at an address that carries a fax's (uuid, hashed_email)
+    pair, the redirect a known pair gets or the 404: never cached, and no
+    referrer."""
+    response["Referrer-Policy"] = "no-referrer"
+    add_never_cache_headers(response)
     return response
 
 
@@ -55,75 +56,124 @@ def fax_link_not_found(request) -> HttpResponse:
     """The site's 404 page, without the analytics tags base.html would add.
 
     For a pair that matches no fax, and (error_views.page_not_found) for an
-    address under the fax pages' paths that matches no route.
+    address under the fax links' paths that matches no route. It is the one
+    page that renders at an address holding a pair, and that pair may be a
+    real one changed a little, such as by a ")" a mail client added.
     """
     response = render(request, "404.html", {"no_third_party_scripts": True}, status=404)
-    add_never_cache_headers(response)
     return _fax_link_headers(response)
+
+
+def _known_fax(kwargs) -> Optional[FaxesToSend]:
+    """The fax a link's (uuid, hashed_email) pair names, or None."""
+    return FaxesToSend.objects.filter(
+        uuid=str(kwargs["uuid"]), hashed_email=kwargs["hashed_email"]
+    ).first()
+
+
+def _followups_opened(session) -> list:
+    """The follow-up links this session opened, as [ref, fax pk] pairs, the
+    newest last."""
+    opened = session.get(FAX_FOLLOWUP_SESSION_KEY)
+    return list(opened) if isinstance(opened, list) else []
+
+
+@method_decorator(never_cache, name="dispatch")
+class FaxFollowUpLinkView(View):
+    """The address in the fax follow-up email, which carries the fax's (uuid,
+    hashed_email) pair.
+
+    It keeps the fax in the session and redirects to the follow-up page
+    (FaxFollowUpView), whose address carries nothing. So the pair is never
+    the address of a page that renders, where the analytics tags would
+    report it, and is not left in the back and forward history. An unknown
+    pair is a 404.
+    """
+
+    def get(self, request, **kwargs):
+        fax = _known_fax(kwargs)
+        if fax is None:
+            return fax_link_not_found(request)
+        # Opening the link lets this browser re-send the fax, so the session
+        # gets a fresh key, as when intake_resume_views opens a case: a
+        # session id set in the browser beforehand never gains the fax.
+        request.session.cycle_key()
+        # The fax gets a random ref, which the page's form posts back, so a
+        # form re-sends the fax it was shown for even after this browser
+        # opens another link. Kept even when the fax went through or is past
+        # its window, so the page says so, rather than showing a fax another
+        # link opened earlier.
+        opened = _followups_opened(request.session)
+        opened.append([secrets.token_urlsafe(16), fax.pk])
+        request.session[FAX_FOLLOWUP_SESSION_KEY] = opened[-FAX_FOLLOWUPS_KEPT:]
+        return _fax_link_headers(redirect("fax-followup-page"))
+
+    # A re-send form rendered before the follow-up page moved posts here. It
+    # gets the same redirect, to the page with the form for its fax.
+    post = get
 
 
 @method_decorator(never_cache, name="dispatch")
 class FaxFollowUpView(generic.FormView):
-    """The page the fax follow-up email links to: send the fax again, to the
-    same number or a corrected one.
+    """The fax follow-up page: send the fax again, to the same number or a
+    corrected one.
 
-    The fax is the one the address names; an unknown pair is a 404. A fax
-    that went through, or one staged more than FAX_RESEND_WINDOW ago, gets a
-    page that says so in place of the form, and a POST for it sends nothing.
+    The page shows the form for the fax of the link this session opened
+    last, with that link's ref in the form's fax_ref field. A POST re-sends
+    the fax its ref names in this session, and a ref the session doesn't
+    hold sends nothing. With no fax, the page says how to open it. A fax
+    that went through, or one staged more than FAX_RESEND_WINDOW ago, gets
+    a page that says so in place of the form, and a POST for it sends
+    nothing.
     """
 
     template_name = "faxfollowup.html"
     form_class = core_forms.FaxResendForm
     fax: FaxesToSend
+    fax_ref: str
 
     def dispatch(self, request, *args, **kwargs):
-        fax = FaxesToSend.objects.filter(
-            uuid=str(kwargs["uuid"]), hashed_email=kwargs["hashed_email"]
-        ).first()
+        opened = _followups_opened(request.session)
+        if request.method == "POST":
+            ref = request.POST.get("fax_ref")
+        else:
+            ref = opened[-1][0] if opened else None
+        fax_id = dict(opened).get(ref) if ref else None
+        fax = (
+            FaxesToSend.objects.filter(pk=fax_id).first()
+            if isinstance(fax_id, int)
+            else None
+        )
         if fax is None:
-            return fax_link_not_found(request)
+            return self.in_place_of_the_form({"missing": True}, status=404)
         self.fax = fax
+        self.fax_ref = ref
         refusal = SendFaxHelper.resend_refusal(fax)
         if refusal is not None:
             return self.refused(refusal)
         return super().dispatch(request, *args, **kwargs)
 
-    def get_initial(self):
-        # Set the initial arguments to the form based on the URL route params.
-        return self.kwargs
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context["no_third_party_scripts"] = True
-        return context
-
-    def render_to_response(self, context, **response_kwargs):
-        # The form, on a GET or after a POST that didn't validate.
-        return _fax_link_headers(
-            super().render_to_response(context, **response_kwargs),
-            form_on_page=True,
+    def in_place_of_the_form(self, context, status: int) -> HttpResponse:
+        return render(
+            self.request,
+            self.template_name,
+            {"resend_days": FAX_RESEND_WINDOW.days, **context},
+            status=status,
         )
 
     def refused(self, refusal: str) -> HttpResponse:
-        """What the person sees in place of the form."""
-        return _fax_link_headers(
-            render(
-                self.request,
-                "faxfollowup.html",
-                {
-                    "no_third_party_scripts": True,
-                    "refused": refusal,
-                    "delivered": refusal == RESEND_DELIVERED,
-                    "resend_days": FAX_RESEND_WINDOW.days,
-                },
-                # A link past its window is a dead link, a 404 as in
-                # intake_resume_views; a delivered fax is a plain answer.
-                status=200 if refusal == RESEND_DELIVERED else 404,
-            )
+        delivered = refusal == RESEND_DELIVERED
+        return self.in_place_of_the_form(
+            {"refused": refusal, "delivered": delivered},
+            # A link past its window is a dead link, a 404 as in
+            # intake_resume_views; a delivered fax is a plain answer.
+            status=200 if delivered else 404,
         )
 
+    def get_initial(self):
+        return {"fax_ref": self.fax_ref}
+
     def form_valid(self, form):
-        # The fax the address names, not the form's hidden copies of its ids.
         sent = SendFaxHelper.resend(
             fax_phone=form.cleaned_data["fax_phone"],
             uuid=str(self.fax.uuid),
@@ -135,37 +185,47 @@ class FaxFollowUpView(generic.FormView):
             return self.refused(
                 SendFaxHelper.resend_refusal(self.fax) or RESEND_DELIVERED
             )
-        return _fax_link_headers(
-            render(
-                self.request,
-                "fax_followup_thankyou.html",
-                {"no_third_party_scripts": True},
-            )
-        )
+        return render(self.request, "fax_followup_thankyou.html")
 
 
 @method_decorator(never_cache, name="dispatch")
 class SendFaxView(View):
-    """Stripe's success page for a fax payment (StageFaxView's success_url).
+    """Stripe's success address for a fax payment (StageFaxView's
+    success_url), which carries the fax's (uuid, hashed_email) pair.
 
-    An unknown pair is a 404. The page loads no analytics tags, sends no
-    referrer and is never cached: its address is the fax's pair.
+    It sends the fax as before (SendFaxHelper.remote_send_fax), keeps what
+    happened in the session and redirects to the sent page (FaxSentView). A
+    reload or the back button then shows that page without sending again,
+    and the pair is never the address of a page that renders. An unknown
+    pair is a 404. A link to a fax staged more than FAX_RESEND_WINDOW ago
+    sends nothing.
     """
 
     def get(self, request, **kwargs):
-        try:
-            result = SendFaxHelper.remote_send_fax(**self.kwargs)
-        except FaxesToSend.DoesNotExist:
+        fax = _known_fax(kwargs)
+        if fax is None:
             return fax_link_not_found(request)
-        return _fax_link_headers(
-            render(
-                self.request,
-                "fax_thankyou.html",
-                {
-                    "already_sent": result == "already_sent",
-                    "no_third_party_scripts": True,
-                },
+        if SendFaxHelper.link_expired(fax):
+            request.session.pop(FAX_SENT_SESSION_KEY, None)
+        else:
+            request.session[FAX_SENT_SESSION_KEY] = SendFaxHelper.remote_send_fax(
+                **self.kwargs
             )
+        return _fax_link_headers(redirect("fax-sent"))
+
+
+@method_decorator(never_cache, name="dispatch")
+class FaxSentView(View):
+    """The page SendFaxView redirects to: thanks, or that the fax was
+    already delivered. With nothing from SendFaxView in the session, it
+    says where to ask about the fax."""
+
+    def get(self, request):
+        result = request.session.get(FAX_SENT_SESSION_KEY)
+        if result not in ("already_sent", "dispatched"):
+            return render(request, "fax_thankyou.html", {"missing": True}, status=404)
+        return render(
+            request, "fax_thankyou.html", {"already_sent": result == "already_sent"}
         )
 
 

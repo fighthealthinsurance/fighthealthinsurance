@@ -603,10 +603,13 @@ class EntityExtractForm(DenialRefForm):
 
 
 class FaxResendForm(forms.Form):
+    """The fax follow-up page's form. fax_ref says which of the faxes the
+    session holds the form is for (fax_views.FaxFollowUpView): a random ref
+    that means nothing outside the session, so the form holds no fax ids."""
+
     # No longer than FaxesToSend.destination, which it is saved into.
     fax_phone = forms.CharField(required=True, max_length=20)
-    uuid = forms.UUIDField(required=True, widget=forms.HiddenInput)
-    hashed_email = forms.CharField(required=True, widget=forms.HiddenInput)
+    fax_ref = forms.CharField(required=True, widget=forms.HiddenInput)
 
 
 class BasePostInferedForm(DenialRefForm):

@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block title %}
-{% if delivered %}Your fax went through{% elif refused %}This link no longer works{% else %}Fax ReSend{% endif %}
+{% if missing %}We couldn't find your fax{% elif delivered %}Your fax went through{% elif refused %}This link no longer works{% else %}Fax ReSend{% endif %}
 {% endblock title %}
 
 {% load compress %}
@@ -10,12 +10,19 @@
 {% endblock scriptmagic %}
 {% block content %}
 {% comment %}
-Where the fax follow-up email lands (FaxFollowUpView). A fax that went
-through, or one older than the re-send window, gets a message in place of
-the form.
+Where the fax follow-up email's link lands (FaxFollowUpView), for the fax
+the link kept in the session. A fax that went through, or one older than
+the re-send window, gets a message in place of the form, and so does a
+visit with no fax in the session.
 {% endcomment %}
 <div class="fhi-page">
-{% if delivered %}
+{% if missing %}
+{% include "partials/page_title.html" with title="We couldn't find your fax" %}
+<div class="fhi-stack">
+<p>This page opens from the link in the email we sent about your fax. To re-send it, open that link again in this browser.</p>
+<p>The link works for {{ resend_days }} days after the fax was first sent. If yours is older, or it still doesn't work, email <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> and we'll help.</p>
+</div>
+{% elif delivered %}
 {% include "partials/page_title.html" with title="Your fax went through" %}
 <div class="fhi-stack">
 <p>Our records show this fax was delivered, so this link can't send it again.</p>

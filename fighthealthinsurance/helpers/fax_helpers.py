@@ -39,13 +39,16 @@ from fighthealthinsurance.temporal_client import (
 # sending it is worse. If this becomes a real problem in the web tier, the fix is
 # a durable retry for FaxesToSend, not a gate here.
 
-# How long after a fax is staged its follow-up link can still re-send it. The
-# link reaches the person only in the email finalize_fax sends after each
-# attempt, normally within an hour or two of staging (a delayed send waits an
-# hour, and one vendor attempt can run 30 minutes). People answer a failed-fax
-# or missing-number email within days. 30 days leaves room for a few weeks
-# away from email, and for a few rounds of trying again, each of which emails
-# the same link. Past it, the page points the person to support.
+# How long after a fax is staged the links that carry its (uuid,
+# hashed_email) pair still act on it. The follow-up link reaches the person
+# only in the email finalize_fax sends after each attempt, normally within an
+# hour or two of staging (a delayed send waits an hour, and one vendor attempt
+# can run 30 minutes). People answer a failed-fax or missing-number email
+# within days. 30 days leaves room for a few weeks away from email, and for a
+# few rounds of trying again, each of which emails the same link. Stripe's
+# success link (fax_views.SendFaxView) is opened when a payment finishes, and
+# a checkout stays open a day at most, so it is used well inside the window.
+# Past it, the pages point the person to support.
 FAX_RESEND_WINDOW = timedelta(days=30)
 
 # Why SendFaxHelper.resend_refusal turns a re-send down.
@@ -189,9 +192,15 @@ class SendFaxHelper:
         """
         if fax.sent and fax.fax_success:
             return RESEND_DELIVERED
-        if timezone.now() - fax.date > FAX_RESEND_WINDOW:
+        if cls.link_expired(fax):
             return RESEND_EXPIRED
         return None
+
+    @classmethod
+    def link_expired(cls, fax: FaxesToSend) -> bool:
+        """Whether the fax was staged more than FAX_RESEND_WINDOW ago, so the
+        links that carry its pair no longer act on it."""
+        return timezone.now() - fax.date > FAX_RESEND_WINDOW
 
     @classmethod
     def resend(cls, fax_phone: str, uuid: str, hashed_email: str) -> bool:

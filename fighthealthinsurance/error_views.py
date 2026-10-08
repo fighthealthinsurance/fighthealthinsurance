@@ -36,7 +36,7 @@ from fighthealthinsurance.middleware.RequestThreadMiddleware import (
     REQUEST_THREAD_ATTR,
 )
 
-# Where the fax pages live (urls.py). Their addresses carry a fax's (uuid,
+# Where the fax links live (urls.py). Their addresses carry a fax's (uuid,
 # hashed_email) pair, so an address under these that matches no route, such
 # as a link with a ")" a mail client added at the end, gets the 404 the fax
 # views give a pair that matches no fax: no analytics tags, no referrer.

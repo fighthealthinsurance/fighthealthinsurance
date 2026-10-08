@@ -396,10 +396,12 @@ class TestFaxFollowUpView:
             },
         )
 
-        # GET request should show the form
-        response = client.get(url)
+        # The link redirects to the page, which shows the form
+        response = client.get(url, follow=True)
         assert response.status_code == 200
-        print(f"✓ Fax follow-up page accessible at {url}")
+        assert response.redirect_chain[-1][0] == reverse("fax-followup-page")
+        assert 'name="fax_phone"' in response.content.decode()
+        print(f"✓ Fax follow-up page opens from {url}")
 
     def test_fax_followup_view_updates_destination(
         self, client, test_fax_without_destination
@@ -423,25 +425,24 @@ class TestFaxFollowUpView:
         with patch("fighthealthinsurance.helpers.SendFaxHelper.resend") as mock_resend:
             mock_resend.return_value = True
 
+            # The link keeps the fax in the session; the page's form posts
+            # the new number, and the ref the page gave this fax.
+            page = client.get(url, follow=True)
+            fax_ref = page.context["form"]["fax_ref"].value()
             response = client.post(
-                url,
-                data={
-                    "fax_phone": new_fax_number,
-                    "uuid": str(fax.uuid),
-                    "hashed_email": fax.hashed_email,
-                },
+                reverse("fax-followup-page"),
+                data={"fax_phone": new_fax_number, "fax_ref": fax_ref},
             )
 
             # Should either redirect or show success
             assert response.status_code in [200, 302]
 
-            # Verify resend was called with new fax number
-            if mock_resend.called:
-                call_kwargs = mock_resend.call_args
-                assert new_fax_number in str(call_kwargs)
-                print(f"✓ Fax resend called with new number: {new_fax_number}")
-            else:
-                print("Note: Resend mock not called - form may have validation issues")
+            # Verify resend was called with new fax number, for this fax
+            mock_resend.assert_called_once()
+            call_kwargs = mock_resend.call_args.kwargs
+            assert call_kwargs["fax_phone"] == new_fax_number
+            assert call_kwargs["uuid"] == str(fax.uuid)
+            print(f"✓ Fax resend called with new number: {new_fax_number}")
 
 
 @pytest.mark.django_db
