@@ -119,7 +119,9 @@ class FaxFollowUpView(generic.FormView):
     corrected one.
 
     The page shows the form for the fax of the link this session opened
-    last, with that link's ref in the form's fax_ref field. A POST re-sends
+    last, with that link's ref in the form's fax_ref field. The page says
+    which fax that is, by the day it was sent and the number on file, and
+    the number fills the fax number box. A POST re-sends
     the fax its ref names in this session, and a ref the session doesn't
     hold sends nothing. With no fax, the page says how to open it. A fax
     that went through, or one staged more than FAX_RESEND_WINDOW ago, gets
@@ -171,11 +173,22 @@ class FaxFollowUpView(generic.FormView):
         )
 
     def get_initial(self):
-        return {"fax_ref": self.fax_ref}
+        # The number on file fills the fax number box, so a form for some
+        # other fax than the one the person has in mind shows a number they
+        # don't expect.
+        return {"fax_ref": self.fax_ref, "fax_phone": self.fax.destination}
+
+    def get_context_data(self, **kwargs):
+        # Which fax the form is for, in the person's own details: the day
+        # they sent it and the number on file. Nothing from the letter.
+        return super().get_context_data(
+            fax_date=self.fax.date, fax_number=self.fax.destination, **kwargs
+        )
 
     def form_valid(self, form):
+        fax_phone = form.cleaned_data["fax_phone"]
         sent = SendFaxHelper.resend(
-            fax_phone=form.cleaned_data["fax_phone"],
+            fax_phone=fax_phone,
             uuid=str(self.fax.uuid),
             hashed_email=self.fax.hashed_email,
         )
@@ -185,7 +198,11 @@ class FaxFollowUpView(generic.FormView):
             return self.refused(
                 SendFaxHelper.resend_refusal(self.fax) or RESEND_DELIVERED
             )
-        return render(self.request, "fax_followup_thankyou.html")
+        return render(
+            self.request,
+            "fax_followup_thankyou.html",
+            {"fax_date": self.fax.date, "fax_number": fax_phone},
+        )
 
 
 @method_decorator(never_cache, name="dispatch")

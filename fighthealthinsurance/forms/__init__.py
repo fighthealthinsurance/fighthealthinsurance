@@ -607,8 +607,9 @@ class FaxResendForm(forms.Form):
     session holds the form is for (fax_views.FaxFollowUpView): a random ref
     that means nothing outside the session, so the form holds no fax ids."""
 
-    # No longer than FaxesToSend.destination, which it is saved into.
-    fax_phone = forms.CharField(required=True, max_length=20)
+    # No longer than FaxesToSend.destination, which it is saved into. The
+    # page fills it with the number on file.
+    fax_phone = forms.CharField(required=True, max_length=20, label="Fax number")
     fax_ref = forms.CharField(required=True, widget=forms.HiddenInput)
 
 

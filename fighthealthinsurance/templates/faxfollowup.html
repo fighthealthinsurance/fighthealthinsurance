@@ -41,6 +41,17 @@ visit with no fax in the session.
 <div class="fhi-stack">
 <p>Thank you so much for using fight health insurance.
 </p>
+{% comment %}
+Which fax the form is for, by the day the person sent it and the number on
+file, which also fills the fax number box. One browser can open several of
+these links, and the page shows the fax of the one opened last.
+{% endcomment %}
+{% if fax_number %}
+<p>This is about the fax we tried to send on {{ fax_date|date:"F j" }} to {{ fax_number }}.</p>
+{% else %}
+<p>This is about the fax you asked us to send on {{ fax_date|date:"F j" }}. We don't have a fax number on file for it.</p>
+{% endif %}
+<p>If this isn't the fax you meant, open the link in the email about that one.</p>
 <section class="scan-section">
   <form class="fhi-stack" action="{{ request.get_full_path }}" method="post" enctype="multipart/form-data">
     {% csrf_token %}

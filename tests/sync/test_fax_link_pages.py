@@ -6,7 +6,9 @@ it takes to use it. So the link keeps the fax in the session and redirects
 to a page whose address carries nothing, and that page loads the site's
 analytics tags like any other. Each link opened gets a random ref in the
 session, which the page's form posts back, so a form re-sends the fax it
-was shown for. The redirect, and the 404 for a pair that
+was shown for. The page says which fax it is, by the day it was sent and
+the number on file, and fills the fax number box with that number. The
+redirect, and the 404 for a pair that
 matches no fax, are never cached and send no referrer, and that 404 loads no
 analytics tags. The follow-up page re-sends a failed fax, or one with no
 number, for FAX_RESEND_WINDOW after it was staged. A fax that went through
@@ -20,6 +22,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.conf import settings
+from django.template.defaultfilters import date as date_filter
 from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -39,6 +42,7 @@ NEW_NUMBER = "15559876543"
 TRACKERS = ("googletagmanager.com", "bat.bing.com", "uetq")
 DISPATCH = "fighthealthinsurance.helpers.fax_helpers._dispatch_or_ray_fax"
 FAX_REF = re.compile(r'name="fax_ref" value="([^"]+)"')
+NUMBER_BOX = re.compile(r'<input[^>]*name="fax_phone"[^>]*>')
 
 
 class FaxLinkPageTestCase(TestCase):
@@ -107,6 +111,26 @@ class FaxLinkPageTestCase(TestCase):
         """The fax_ref the page's form posts back, or None with no form."""
         found = FAX_REF.search(response.content.decode())
         return found.group(1) if found else None
+
+    def number_in_box(self, response):
+        """What the page's fax number box holds, "" when it is empty."""
+        box = NUMBER_BOX.search(response.content.decode())
+        self.assertIsNotNone(box)
+        value = re.search(r'value="([^"]*)"', box.group(0))
+        return value.group(1) if value else ""
+
+    def day_sent(self, fax=None):
+        """The day the fax was sent, as the pages show it."""
+        fax = FaxesToSend.objects.get(pk=(fax or self.fax).pk)
+        return date_filter(fax.date, "F j")
+
+    def which_fax(self, fax=None):
+        """The line on the follow-up page that says which fax it is for."""
+        fax = FaxesToSend.objects.get(pk=(fax or self.fax).pk)
+        return (
+            f"This is about the fax we tried to send on {self.day_sent(fax)} "
+            f"to {fax.destination}."
+        )
 
     def resend(self, fax_phone=NEW_NUMBER, ref=None):
         """Submit the re-send form, by default the one on the page opened
@@ -275,6 +299,65 @@ class FaxFollowUpPageTest(FaxLinkPageTestCase):
         self.resend(ref=self.ref_on(page))
         self.assertEqual(FaxesToSend.objects.get(pk=other.pk).destination, NEW_NUMBER)
         self.assertUnchanged()
+
+    def test_the_page_says_which_fax_by_the_day_sent_and_number_on_file(self):
+        self.staged_ago(timedelta(days=3))
+        response = self.open_followup()
+        self.assertIn(self.which_fax(), response.content.decode())
+
+    def test_the_fax_number_box_holds_the_number_on_file(self):
+        self.assertEqual(self.number_in_box(self.open_followup()), ON_FILE)
+
+    def test_the_page_shows_nothing_from_the_letter(self):
+        html = self.open_followup().content.decode()
+        for words in ("Dear Insurer", "Pat Example", "cover my treatment"):
+            with self.subTest(words=words):
+                self.assertNotIn(words, html)
+
+    def test_a_reload_after_two_links_names_the_newer_fax_and_fills_its_number(self):
+        """Two links opened in one browser, then the first tab reloaded: the
+        page is for the fax of the link opened last, and says so."""
+        self.staged_ago(timedelta(days=5))
+        other = self.make_fax(destination="15550000000")
+        FaxesToSend.objects.filter(pk=other.pk).update(
+            date=timezone.now() - timedelta(days=1)
+        )
+        first_tab = self.open_followup()
+        self.assertIn(self.which_fax(), first_tab.content.decode())
+        self.open_followup(fax=other)
+        reloaded = self.client.get(reverse("fax-followup-page"))
+        html = reloaded.content.decode()
+        self.assertIn(self.which_fax(other), html)
+        self.assertNotIn(self.which_fax(), html)
+        self.assertEqual(self.number_in_box(reloaded), "15550000000")
+
+    def test_a_form_that_does_not_validate_still_says_which_fax(self):
+        self.open_followup()
+        response, _ = self.resend(fax_phone="")
+        self.assertIn(self.which_fax(), response.content.decode())
+
+    def test_a_fax_with_no_number_says_none_is_on_file_and_leaves_the_box_empty(
+        self,
+    ):
+        FaxesToSend.objects.filter(pk=self.fax.pk).update(destination=None)
+        response = self.open_followup()
+        html = response.content.decode()
+        self.assertIn(
+            f"This is about the fax you asked us to send on {self.day_sent()}. "
+            "We don't have a fax number on file for it.",
+            html,
+        )
+        self.assertEqual(self.number_in_box(response), "")
+
+    def test_the_thank_you_page_says_which_fax_it_re_sent(self):
+        self.staged_ago(timedelta(days=2))
+        self.open_followup()
+        response, _ = self.resend()
+        self.assertTemplateUsed(response, "fax_followup_thankyou.html")
+        self.assertIn(
+            f"We're sending your fax from {self.day_sent()} again, to {NEW_NUMBER}.",
+            response.content.decode(),
+        )
 
     def test_a_form_whose_ref_this_session_does_not_hold_sends_nothing(self):
         another_browser = Client()
