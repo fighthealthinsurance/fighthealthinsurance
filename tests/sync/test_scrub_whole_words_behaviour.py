@@ -40,9 +40,10 @@ import subprocess
 
 import pytest
 from bs4 import BeautifulSoup
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
+from tests.sync.test_assistant_terms import ALL_ON, LANDING, chat_link
 from tests.sync.test_entity_fetcher_behaviour import (
     NODE,
     SHIP_LIB,
@@ -671,24 +672,31 @@ def compiled_for_class(request, compiled):
     request.cls.compiled = compiled
 
 
-@needs_node
-@pytest.mark.usefixtures("compiled_for_class")
-class RemovePersonalDetailsTest(TestCase):
-    compiled: pathlib.Path
+def page_inputs(html: str) -> list[dict]:
+    """Every input on a page, with the value the page gives it (a tick box
+    keeps its value attribute whether or not it is ticked) and its data-
+    attributes."""
+    soup = BeautifulSoup(html, "html.parser")
+    return [
+        {
+            "id": tag.get("id") or "",
+            "type": tag.get("type") or "text",
+            "value": tag.get("value") or "",
+            "attrs": {
+                name: value
+                for name, value in tag.attrs.items()
+                if name.startswith("data-")
+            },
+        }
+        for tag in soup.find_all("input")
+    ]
 
-    def setUp(self):
-        html = self.client.get(reverse("scan")).content.decode()
-        soup = BeautifulSoup(html, "html.parser")
-        # Every input on the page, with the value the page gives it: a tick
-        # box keeps its value attribute whether or not it is ticked.
-        self.inputs = [
-            {
-                "id": tag.get("id") or "",
-                "type": tag.get("type") or "text",
-                "value": tag.get("value") or "",
-            }
-            for tag in soup.find_all("input")
-        ]
+
+class RemoveOnAPage:
+    """Remove personal details run over self.inputs, a page's inputs."""
+
+    compiled: pathlib.Path
+    inputs: list[dict]
 
     def remove(self, *cases, **spec) -> list:
         result = run(
@@ -704,6 +712,18 @@ class RemovePersonalDetailsTest(TestCase):
         for (_, letter, expected), removed in zip(cases, letters, strict=True):
             with self.subTest(letter=letter):
                 self.assertEqual(removed, expected)
+
+
+@needs_node
+@pytest.mark.usefixtures("compiled_for_class")
+class RemovePersonalDetailsTest(RemoveOnAPage, TestCase):
+    def setUp(self):
+        self.inputs = page_inputs(self.client.get(reverse("scan")).content.decode())
+
+    def test_no_box_on_the_intake_page_is_left_in_the_letter(self):
+        """data-scrub="skip" is the terms page's, for its two short fields;
+        every box here is run together with a name as before."""
+        self.assertEqual([field for field in self.inputs if field["attrs"]], [])
 
     def test_the_page_has_the_boxes_these_cases_type_into(self):
         """And a tick box whose id the scrubber reads (store_raw_email), with
@@ -899,6 +919,78 @@ class RemovePersonalDetailsTest(TestCase):
                     {"store_fname": "小明", "store_lname": "王"},
                     "Patient: 王小明患有2型糖尿病。",
                     "Patient: {{LAST_NAME}} {{FIRST_NAME}}患有2型糖尿病。",
+                ),
+            ]
+        )
+
+
+@needs_node
+@pytest.mark.usefixtures("compiled_for_class")
+class TermsPageRemovePersonalDetailsTest(RemoveOnAPage, TestCase):
+    """Remove personal details on the chat path's terms page
+    (assistant_terms.html), over every input it has. Its two short fields,
+    what was denied and the condition, hold words the letter needs, not the
+    person's: run together with a name, they came out as a placeholder like
+    {{assistant_procedure}}, which nothing puts back."""
+
+    def setUp(self):
+        self.enterContext(override_settings(**ALL_ON))
+        code, _ = chat_link(procedure="MRI", condition="back pain")
+        self.client.post(LANDING, {"token": code, "bind": "1"})
+        page = self.client.post(LANDING, {"token": code})
+        self.assertTemplateUsed(page, "assistant_terms.html")
+        self.inputs = page_inputs(page.content.decode())
+
+    def test_the_two_short_fields_are_marked_and_filled_in(self):
+        by_id = {field["id"]: field for field in self.inputs}
+        self.assertEqual(
+            {
+                name: (by_id[name]["value"], by_id[name]["attrs"])
+                for name in ("assistant_procedure", "assistant_condition")
+            },
+            {
+                "assistant_procedure": ("MRI", {"data-scrub": "skip"}),
+                "assistant_condition": ("back pain", {"data-scrub": "skip"}),
+            },
+        )
+
+    def test_a_name_beside_what_was_denied_leaves_the_treatment_in(self):
+        """A phone keyboard leaves a space after a word it suggests, and a
+        typed name or treatment can keep one: "Ann " with "MRI" is "Ann MRI",
+        which the letter has."""
+        self.assert_removed(
+            [
+                (
+                    {"store_fname": "Ann"},
+                    "Coverage for Ann MRI was denied.",
+                    "Coverage for {{FIRST_NAME}} MRI was denied.",
+                ),
+                (
+                    {"store_fname": "Ann "},
+                    "Coverage for Ann MRI was denied.",
+                    "Coverage for {{FIRST_NAME}} MRI was denied.",
+                ),
+                (
+                    {"store_fname": "Ann", "assistant_procedure": " MRI"},
+                    "Coverage for Ann MRI was denied.",
+                    "Coverage for {{FIRST_NAME}} MRI was denied.",
+                ),
+                (
+                    {"store_fname": "Ann", "store_lname": "Doe "},
+                    "Claim for Ann Doe back pain care was denied.",
+                    "Claim for {{FIRST_NAME}} {{LAST_NAME}} back pain care was denied.",
+                ),
+            ]
+        )
+
+    def test_the_name_still_comes_out_whole(self):
+        """The About you boxes are still run together with each other."""
+        self.assert_removed(
+            [
+                (
+                    {"store_fname": "Ann", "store_lname": "Doe"},
+                    "Ref AnnDoe: the MRI for back pain was denied.",
+                    "Ref {{FIRST_NAME}} {{LAST_NAME}}: the MRI for back pain was denied.",
                 ),
             ]
         )

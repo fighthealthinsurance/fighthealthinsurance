@@ -21,6 +21,9 @@ site or is indexed, the landing page loads no third-party script (base.html's
 ``no_third_party_scripts``), and an error here reports no local variables.
 """
 
+import secrets
+import time
+from datetime import timedelta
 from typing import Any, Optional
 
 from django.conf import settings
@@ -48,9 +51,22 @@ LANDING_TEMPLATE = "assistant_handoff.html"
 # lifetime.
 BINDER_COOKIE = "fhi_handoff_binder"
 BINDER_COOKIE_PATH = "/from-your-assistant"
-# Session keys that say the open form came from an assistant, for /process.
-CHANNEL_KEY = "assistant_handoff_channel"
-CLIENT_KEY = "assistant_handoff_client"
+# The forms an opened link filled in, for /process to name the assistant in
+# the consent record. Each is kept in the session under a fresh random key,
+# which only that form carries, in its hidden FORM_FIELD: so only a
+# submission of that form names the assistant, never whichever case the
+# browser sends next, and two forms open in two tabs each keep their own.
+# A key is used up when its form goes through; a few are kept, for a day.
+FORMS_KEY = "assistant_handoff_forms"
+FORM_FIELD = "assistant_form"
+FORMS_KEPT = 5
+FORM_TTL = timedelta(hours=24)
+# A hidden field of the same form: its default_procedure and
+# default_condition are what the link left, and blank means none.
+DEFAULTS_GIVEN_FIELD = "defaults_given"
+# What an earlier version kept instead, for the next submission of any form
+# in the session. Read by nothing now; dropped where a form's entry is.
+_OLD_KEYS = ("assistant_handoff_channel", "assistant_handoff_client")
 
 
 def request_binder(request: HttpRequest) -> Optional[str]:
@@ -70,17 +86,76 @@ def set_binder_cookie(response: HttpResponse, binder: str) -> None:
     )
 
 
+def _open_forms(request: HttpRequest) -> dict[str, dict[str, Any]]:
+    """The session's open forms by key, without any past FORM_TTL, the
+    newest FORMS_KEPT, as a new dict to store back."""
+    now = time.time()
+    kept = request.session.get(FORMS_KEY)
+    if not isinstance(kept, dict):
+        return {}
+    live = [
+        (key, entry)
+        for key, entry in kept.items()
+        if isinstance(entry, dict)
+        and isinstance(entry.get("at"), (int, float))
+        and now - entry["at"] <= FORM_TTL.total_seconds()
+    ]
+    live.sort(key=lambda item: item[1]["at"], reverse=True)
+    return dict(live[:FORMS_KEPT])
+
+
+def _store_forms(request: HttpRequest, forms: dict[str, dict[str, Any]]) -> None:
+    for key in _OLD_KEYS:
+        request.session.pop(key, None)
+    if forms:
+        request.session[FORMS_KEY] = forms
+    else:
+        request.session.pop(FORMS_KEY, None)
+
+
+def mark_site_form(request: HttpRequest, content: HandoffContent) -> str:
+    """Keep, in the session, that the form about to be rendered came from
+    this link, under a fresh key; returns the key for its hidden field."""
+    forms = _open_forms(request)
+    key = secrets.token_urlsafe(16)
+    forms = {key: {"client": content.client, "at": time.time()}, **forms}
+    _store_forms(request, dict(list(forms.items())[:FORMS_KEPT]))
+    return key
+
+
+def _posted_form_key(request: HttpRequest) -> str:
+    key = request.POST.get(FORM_FIELD, "")
+    return key if isinstance(key, str) else ""
+
+
 def handoff_context_for(request: HttpRequest) -> Optional[dict[str, str]]:
-    """What the opened form carried from the assistant, read once by
-    /process for the consent record: the channel and the client label, or
-    None for a plain intake. Only render_site_form sets the keys, after a
-    link was opened; nothing a request sends can. They are cleared here so a
-    later case in the session does not inherit them."""
-    channel = request.session.pop(CHANNEL_KEY, None)
-    client = request.session.pop(CLIENT_KEY, "")
-    if channel != "assistant":
+    """What the form being submitted carried from the assistant, for
+    /process's consent record: the channel, the client label and the form's
+    key, or None for a plain intake. Only a form an opened link filled in
+    (render_site_form) carries a key the session kept, and only that form
+    can name the assistant; a field a request makes up names none.
+
+    Read, not used up: /process uses the key up with forget_site_form once
+    the submission goes through, so a page sent back with an error keeps it
+    for the corrected retry."""
+    key = _posted_form_key(request)
+    if not key:
         return None
-    return {"channel": "assistant", "assistant_client": client_label(client)}
+    entry = _open_forms(request).get(key)
+    if entry is None:
+        return None
+    return {
+        "channel": "assistant",
+        "assistant_client": client_label(entry.get("client", "")),
+        "form": key,
+    }
+
+
+def forget_site_form(request: HttpRequest, key: str) -> None:
+    """Use up a form's key: its form went through."""
+    forms = _open_forms(request)
+    forms.pop(key, None)
+    _store_forms(request, forms)
 
 
 def handoff_enabled() -> bool:
@@ -140,9 +215,6 @@ def render_site_form(
     form: Any = None,
 ) -> HttpResponse:
     """The usual appeal form, filled in from an opened link."""
-    if v2_enabled():
-        request.session[CHANNEL_KEY] = "assistant"
-        request.session[CLIENT_KEY] = content.client
     context: dict[str, Any] = {
         "ocr_result": letter if letter else content.letter,
         "upload_more": True,
@@ -152,6 +224,12 @@ def render_site_form(
         "default_procedure": content.procedure,
         "default_condition": content.condition,
     }
+    if v2_enabled():
+        # Both always carried, blank too: this form says what the treatment
+        # and condition are, and blank means none, so /process doesn't keep
+        # one an earlier form left for a case it reuses.
+        context["defaults_given"] = True
+        context["assistant_form"] = mark_site_form(request, content)
     if form is not None:
         context["form"] = form
     return _private(render(request, "scrub.html", context))

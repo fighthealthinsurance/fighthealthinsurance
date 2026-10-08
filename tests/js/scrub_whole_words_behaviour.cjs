@@ -11,10 +11,11 @@
 //        each text with every place what was typed is taken out (typedValue,
 //        typedValueMatches) put in [[double brackets]], overlapping ones as
 //        one, or null where the value is not looked for
-//   {"remove": {"inputs": [{id, type, value}, ...], "cases": [[typed, letter], ...]}}
+//   {"remove": {"inputs": [{id, type, value, attrs}, ...], "cases": [[typed, letter], ...]}}
 //        each letter after Remove personal details (scrub_scrub.ts clean),
 //        on a page with the intake page's inputs: every one, with the value
-//        the page gives it, then {field id: value} typed over them
+//        the page gives it and its data- attributes ({name: value}), then
+//        {field id: value} typed over them
 //   {"chat": [[message, userInfo], ...]}
 //        what the chat's scrubPersonalInfo makes of each message
 //   {"lookbehinds": {"typescript": path, "files": [path, ...], "sources": {name: code}}}
@@ -124,10 +125,11 @@ if (spec.remove) {
   install(page);
   const doc = page.document;
   const form = doc.getElementById('fuck_health_insurance_form');
-  const inputs = spec.remove.inputs.map(({id, type, value}) => {
+  const inputs = spec.remove.inputs.map(({id, type, value, attrs}) => {
     const input = doc.createElement('input');
     if (id) input.id = id;
     if (type) input.type = type;
+    for (const [name, attr] of Object.entries(attrs || {})) input.setAttribute(name, attr);
     form.appendChild(input);
     return {input, value: value || ''};
   });

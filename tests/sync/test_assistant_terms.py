@@ -36,6 +36,8 @@ from fighthealthinsurance.models import (
     ProposedAppeal,
     SpendCounter,
 )
+from tests.sync.test_assistant_handoff import carried as site_form_fields
+from tests.sync.test_assistant_handoff import open_forms
 
 ALL_ON = dict(
     MCP_DRAFT_IN_CHAT_ENABLED=True,
@@ -278,7 +280,9 @@ class AgreeTest(TermsTestBase):
         draft.refresh_from_db()
         self.assertEqual(draft.status, assistant_drafts.ON_SITE)
         self.assertEqual(SpendCounter.objects.get(name="fhi:assistant").amount, 1)
-        self.assertEqual(self.client.session["assistant_handoff_channel"], "assistant")
+        self.assertIn(
+            site_form_fields(response)["assistant_form"], open_forms(self.client)
+        )
 
     def test_another_address_has_its_own_count(self):
         with override_settings(MCP_ASSISTANT_PER_IP_DAILY=1):
@@ -346,10 +350,11 @@ class AgreeTest(TermsTestBase):
 
     def test_an_appeal_finished_on_this_site_still_names_the_assistant(self):
         code, _, _ = self.open_terms()
-        self.client.post(AGREE, terms_form(code, finish="site"))
+        site_form = self.client.post(AGREE, terms_form(code, finish="site"))
         response = self.client.post(
             reverse("scan"),
             {
+                **site_form_fields(site_form),
                 "email": EMAIL,
                 "denial_text": "My own words.",
                 "zip": "94103",
@@ -506,6 +511,8 @@ class ShortFieldsTest(TermsTestBase):
         )
 
     def test_finish_on_this_site_with_both_cleared_carries_none(self):
+        """Carried blank, and said to be given: blank means none, not "keep
+        what an earlier form left"."""
         code, _, _ = self.open_terms()
         response = self.client.post(
             AGREE,
@@ -513,8 +520,100 @@ class ShortFieldsTest(TermsTestBase):
         )
         self.assertTemplateUsed(response, "scrub.html")
         self.assertEqual(
-            field_values(response, "default_procedure", "default_condition"),
-            {"default_procedure": None, "default_condition": None},
+            field_values(
+                response, "default_procedure", "default_condition", "defaults_given"
+            ),
+            {"default_procedure": "", "default_condition": "", "defaults_given": "1"},
+        )
+
+    def submit_on_site(self, fields: dict, email: str = EMAIL, **extra):
+        response = self.client.post(
+            reverse("scan"),
+            {
+                **fields,
+                "email": email,
+                "denial_text": "My own words about the denial.",
+                "zip": "94103",
+                "pii": "on",
+                "privacy": "on",
+                "tos": "on",
+                "personalonly": "on",
+                **extra,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        return response
+
+    def start_a_guided_case(self):
+        """A case started earlier in this browser from a treatment guide,
+        not finished: the session keeps the guide's treatment, and /process
+        reuses the case for the same email."""
+        self.submit_on_site(
+            {
+                "default_procedure": "PrEP",
+                "default_condition": "HIV prevention",
+                "microsite_title": "PrEP",
+            }
+        )
+        self.assertEqual(self.client.session["default_procedure"], "PrEP")
+        return Denial.objects.get()
+
+    def test_clearing_both_stays_cleared_when_the_case_is_reused(self):
+        earlier = self.start_a_guided_case()
+        code, _, _ = self.open_terms()
+        site_form = self.client.post(
+            AGREE, terms_form(code, finish="site", procedure="", condition="")
+        )
+        self.submit_on_site(site_form_fields(site_form))
+        self.assertEqual(list(Denial.objects.all()), [earlier], "reused")
+        for key in (
+            "default_procedure",
+            "default_condition",
+            "microsite_title",
+            "microsite_slug",
+        ):
+            with self.subTest(key=key):
+                self.assertNotIn(key, self.client.session)
+        # And the case names the assistant whose link opened the form.
+        record = ConsentRecord.objects.filter(denial=earlier).latest("pk")
+        self.assertEqual(
+            (record.channel, record.assistant_client), ("assistant", "Claude")
+        )
+
+    def test_clearing_both_stays_cleared_through_an_error_and_a_retry(self):
+        earlier = self.start_a_guided_case()
+        code, _, _ = self.open_terms()
+        site_form = self.client.post(
+            AGREE, terms_form(code, finish="site", procedure="", condition="")
+        )
+        sent_back = self.submit_on_site(
+            site_form_fields(site_form), email="not-an-email"
+        )
+        self.assertTemplateUsed(sent_back, "scrub.html")
+        retry = site_form_fields(sent_back)
+        self.assertEqual(
+            {name: retry[name] for name in ("default_procedure", "default_condition")},
+            {"default_procedure": "", "default_condition": ""},
+        )
+        self.assertEqual(retry["defaults_given"], "1")
+        self.submit_on_site(retry)
+        self.assertEqual(list(Denial.objects.all()), [earlier], "reused")
+        self.assertNotIn("default_procedure", self.client.session)
+        self.assertNotIn("default_condition", self.client.session)
+
+    def test_a_treatment_left_in_replaces_an_earlier_one_on_a_reused_case(self):
+        self.start_a_guided_case()
+        code, _, _ = self.open_terms()
+        site_form = self.client.post(
+            AGREE, terms_form(code, finish="site", procedure="CT scan", condition="")
+        )
+        self.submit_on_site(site_form_fields(site_form))
+        self.assertEqual(
+            (
+                self.client.session["default_procedure"],
+                self.client.session["default_condition"],
+            ),
+            ("CT scan", ""),
         )
 
     def test_the_site_form_a_refusal_opens_carries_them_as_edited(self):
