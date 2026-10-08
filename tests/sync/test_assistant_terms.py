@@ -280,6 +280,14 @@ class AgreeTest(TermsTestBase):
         self.assertTemplateUsed(response, "assistant_agreed.html")
         self.assertEqual(Denial.objects.count(), 2)
 
+    def test_agreeing_ties_the_reserved_generation_to_the_draft(self):
+        code, draft, _ = self.open_terms()
+        self.client.post(AGREE, terms_form(code))
+        draft.refresh_from_db()
+        self.assertIsNotNone(draft.spend_reservation)
+        self.assertEqual(draft.spend_reservation.name, "fhi:assistant")
+        self.assertIsNone(draft.spend_reservation.released_at)
+
     def test_a_spent_budget_opens_the_site_form_and_gives_the_place_back(self):
         code, draft, _ = self.open_terms()
         with patch.object(spend, "reserve_generation", return_value=None):

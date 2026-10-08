@@ -9,7 +9,8 @@ agree, in this order: the bot check, the per-address cap
 (spend.reserve_generation). Any refusal opens the filled-in site form
 instead. Then the link is used up, the Denial is made the way /process
 makes it, the boxes are recorded, the draft is tied to the denial, the
-continue link is emailed once and AssistantAppealWorkflow starts.
+continue link is emailed once and AssistantAppealWorkflow starts. The draft
+keeps the reservation, so a run that ends with no letters gives it back.
 
 "Finish on this site instead" opens the site form and tells the assistant
 on_site. Everything here needs draft_in_chat_enabled(); with it off a chat
@@ -330,7 +331,11 @@ class AssistantAgreeView(View):
             assistant_client=content.client,
         )
         linked = assistant_drafts.agree(
-            draft, denial, content.procedure, content.condition
+            draft,
+            denial,
+            content.procedure,
+            content.condition,
+            reservation_id=reservation.id,
         )
 
         def give_back() -> None:
