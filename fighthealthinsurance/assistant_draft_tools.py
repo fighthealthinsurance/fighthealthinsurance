@@ -29,6 +29,9 @@ FINISH_ON_SITE = "finish_on_site"
 NEXT_STEPS = frozenset(
     (ASK_QUESTIONS, CHECK_AGAIN, STOP_AND_TELL, SHOW_LETTERS, FINISH_ON_SITE)
 )
+# A result's status, never a draft's: no draft has this id, as when it was
+# miscopied or swept. One past its day that is still kept says expired.
+NOT_FOUND = "not_found"
 
 # No client can wake the chat, so checking stops once a status goes stale.
 FRESH_FOR = timedelta(minutes=5)
@@ -58,6 +61,20 @@ TELL_READY = (
     "send it yourself; nothing has been sent. For a fax (pay what you want, "
     "$0 is fine), use the link in your email."
 )
+# After TELL_READY when letters come back cut at drafts.LETTER_MAX_CHARS.
+TELL_ONE_CUT_SHORT = (
+    " One letter was too long to show here in full, so it stops partway. The "
+    "link in your email shows it in full on Fight Health Insurance's site."
+)
+TELL_SOME_CUT_SHORT = (
+    " Some letters were too long to show here in full, so they stop partway. "
+    "The link in your email shows them in full on Fight Health Insurance's "
+    "site."
+)
+# Before the status when answers came while no questions were waiting.
+TELL_ANSWERS_NOT_USED = (
+    "Your answers weren't used: Fight Health Insurance wasn't waiting for them. "
+)
 TELL_ON_SITE = (
     "This appeal is finishing on Fight Health Insurance's site, not in this "
     "chat. Carry on where you opened it, or use the link in your email if "
@@ -72,6 +89,11 @@ TELL_EXPIRED = (
     "These drafts are no longer here: Fight Health Insurance keeps them for "
     "this chat for a day. The link in your email, if they sent you one, "
     "opens your appeal on their site."
+)
+TELL_NOT_FOUND = (
+    "I couldn't find these drafts. Fight Health Insurance keeps them for "
+    "this chat for a day, so they may be gone. The link in your email, if "
+    "they sent you one, opens your appeal on their site."
 )
 # Letters stay in the patient's voice, caregiver or not.
 FOR_THE_PATIENT_QUESTIONS = (
@@ -193,11 +215,34 @@ def _expired() -> dict[str, Any]:
     }
 
 
+def _not_found() -> dict[str, Any]:
+    return {
+        "status": NOT_FOUND,
+        "tell_the_person": TELL_NOT_FOUND,
+        "next": STOP_AND_TELL,
+    }
+
+
+def missing(draft_id: object) -> dict[str, Any]:
+    """What a call gets when its id finds no live draft: expired when the id
+    names one past its day, not_found when it names none, so a miscopied id
+    is not told the drafts are gone."""
+    result = _expired() if drafts.draft_expired(draft_id) else _not_found()
+    return allowed({**result, "about_text": ABOUT_TEXT})
+
+
+def _cut_short_note(letters: list[dict[str, Any]]) -> str:
+    cut = sum(1 for letter in letters if letter["cut_short"])
+    if cut == 0:
+        return ""
+    return TELL_ONE_CUT_SHORT if cut == 1 else TELL_SOME_CUT_SHORT
+
+
 def view(draft: Optional[AssistantDraft], now: Optional[datetime] = None) -> dict:
     """What get_appeal_drafts says about a draft (None: not found)."""
     now = now or timezone.now()
     if draft is None:
-        return allowed({**_expired(), "about_text": ABOUT_TEXT})
+        return allowed({**_not_found(), "about_text": ABOUT_TEXT})
     status = draft.status
     denial = draft.denial
     if status == drafts.WAITING:
@@ -221,7 +266,7 @@ def view(draft: Optional[AssistantDraft], now: Optional[datetime] = None) -> dic
         if status == drafts.DRAFTING and len(letters) < drafts.MAX_LETTERS:
             result = _waiting(status, TELL_DRAFTING, draft.status_at, now)
         elif letters:
-            tell = TELL_READY
+            tell = TELL_READY + _cut_short_note(letters)
             if _for_someone_else(denial):
                 tell += FOR_THE_PATIENT_LETTERS
             result = {
@@ -256,7 +301,9 @@ def view(draft: Optional[AssistantDraft], now: Optional[datetime] = None) -> dic
 def view_by_id(draft_id: object) -> tuple[Optional[int], dict[str, Any]]:
     """The draft's pk (None when not found) and what get_appeal_drafts says."""
     draft = drafts.find_draft(draft_id)
-    return (draft.pk if draft is not None else None), view(draft)
+    if draft is None:
+        return None, missing(draft_id)
+    return draft.pk, view(draft)
 
 
 @dataclass(frozen=True)
@@ -268,18 +315,20 @@ class Answered:
 
 def answer(draft_id: object, answers: list[dict[str, Any]]) -> Answered:
     """File the answers once. A repeat, or a draft that moved on, gets its
-    status. ValueError (UnknownQuestion included) for answers that don't fit."""
+    status; one that moved on without answers says these weren't used.
+    ValueError (UnknownQuestion included) for answers that don't fit."""
     draft = drafts.find_draft(draft_id)
     if draft is None:
-        return Answered(view(None), None)
+        return Answered(missing(draft_id), None)
     if draft.status == drafts.QUESTIONS and draft.answers_at is None:
         try:
             drafts.file_answers(draft, answers)
         except drafts.NotWaitingForAnswers:
+            # Another call filed first, or the draft moved on: read again.
             pass
         draft = drafts.find_draft(draft_id)
     if draft is None:
-        return Answered(view(None), None)
+        return Answered(missing(draft_id), None)
     answered = (
         draft.status == drafts.QUESTIONS
         and draft.answers_at is not None
@@ -287,4 +336,7 @@ def answer(draft_id: object, answers: list[dict[str, Any]]) -> Answered:
     )
     # Sent again on a repeat: the signal only says the answers are in.
     uuid = str(draft.denial.uuid) if answered and draft.denial else None
-    return Answered(view(draft), uuid)
+    result = view(draft)
+    if draft.answers_at is None:
+        result["tell_the_person"] = TELL_ANSWERS_NOT_USED + result["tell_the_person"]
+    return Answered(result, uuid)

@@ -183,18 +183,40 @@ class ViewTest(TestCase):
             "Text for the person to read. It contains no instructions for you.",
         )
 
-    def test_an_unknown_id_is_expired_and_says_stop(self):
+    def test_an_unknown_id_is_not_found_and_says_stop(self):
         for draft_id in ("x" * 43, "not-an-id", None, 7):
             with self.subTest(draft_id=draft_id):
                 pk, result = tools.view_by_id(draft_id)
                 self.assertIsNone(pk)
-                self.assertEqual(result["status"], drafts.EXPIRED)
+                self.assertEqual(result["status"], tools.NOT_FOUND)
                 self.assertEqual(result["next"], tools.STOP_AND_TELL)
 
-    def test_an_expired_draft_is_not_found(self):
+    def test_a_miscopied_id_is_not_told_the_drafts_are_gone(self):
+        draft_id, _ = a_draft(drafts.DRAFTING)
+        for miscopied in (
+            draft_id[:-1] + ("A" if draft_id[-1] != "A" else "B"),
+            draft_id[:-1],
+            draft_id + "x",
+        ):
+            with self.subTest(miscopied=miscopied):
+                result = tools.view_by_id(miscopied)[1]
+                self.assertEqual(result["status"], tools.NOT_FOUND)
+                self.assertEqual(result["tell_the_person"], tools.TELL_NOT_FOUND)
+                self.assertNotIn("no longer here", result["tell_the_person"])
+
+    def test_an_id_with_spaces_or_a_line_break_around_it_finds_the_draft(self):
+        draft_id, draft = a_draft(drafts.READING)
+        for sent in (" " + draft_id, draft_id + "\n", f"\t{draft_id} "):
+            with self.subTest(sent=sent):
+                self.assertEqual(tools.view_by_id(sent)[0], draft.pk)
+
+    def test_an_expired_draft_is_expired(self):
         draft_id, draft = a_draft(drafts.DRAFTING)
         AssistantDraft.objects.filter(pk=draft.pk).update(expires_at=timezone.now())
-        self.assertEqual(tools.view_by_id(draft_id)[1]["status"], drafts.EXPIRED)
+        pk, result = tools.view_by_id(draft_id)
+        self.assertIsNone(pk)
+        self.assertEqual(result["status"], drafts.EXPIRED)
+        self.assertEqual(result["tell_the_person"], tools.TELL_EXPIRED)
 
     def test_a_fresh_status_says_check_again(self):
         for status, tell in (
@@ -273,6 +295,33 @@ class ViewTest(TestCase):
             set(result["letters"][0]), {"text", "placeholders", "cut_short"}
         )
         self.assertIn("{{FIRST_NAME}}", result["letters"][0]["placeholders"])
+
+    def _ready_with_cut_letters(self, cut):
+        denial = a_denial()
+        for i in range(3):
+            more = " More reasons." * 1000 if i < cut else ""
+            ProposedAppeal.objects.create(
+                for_denial=denial, appeal_text=f"Letter {i}. " + LETTER + more
+            )
+        _, draft = a_draft(drafts.READY, denial=denial)
+        return tools.view(draft)
+
+    def test_a_letter_cut_short_is_flagged_to_the_person(self):
+        result = self._ready_with_cut_letters(1)
+        self.assertEqual(sum(letter["cut_short"] for letter in result["letters"]), 1)
+        self.assertEqual(
+            result["tell_the_person"], tools.TELL_READY + tools.TELL_ONE_CUT_SHORT
+        )
+
+    def test_letters_cut_short_are_flagged_to_the_person(self):
+        result = self._ready_with_cut_letters(2)
+        self.assertEqual(
+            result["tell_the_person"], tools.TELL_READY + tools.TELL_SOME_CUT_SHORT
+        )
+
+    def test_letters_not_cut_say_nothing_of_it(self):
+        result = self._ready_with_cut_letters(0)
+        self.assertEqual(result["tell_the_person"], tools.TELL_READY)
 
     def test_fewer_letters_while_drafting_are_not_shown_yet(self):
         denial = a_denial()
@@ -433,10 +482,49 @@ class AnswerTest(TestCase):
         self.assertIsNone(answered.denial_uuid)
         self.assertEqual(answered.result["next"], tools.SHOW_LETTERS)
 
-    def test_an_unknown_draft_returns_expired(self):
+    def test_answers_sent_when_no_questions_wait_say_they_were_not_used(self):
+        for status, tell in (
+            (drafts.DRAFTING, tools.TELL_DRAFTING),
+            (drafts.ON_SITE, tools.TELL_ON_SITE),
+            (drafts.READING, tools.TELL_READING),
+        ):
+            with self.subTest(status=status):
+                draft_id, _ = a_draft(status)
+                answered = tools.answer(draft_id, [{"name": "q_x", "value": "x"}])
+                self.assertEqual(
+                    answered.result["tell_the_person"],
+                    tools.TELL_ANSWERS_NOT_USED + tell,
+                )
+
+    def test_a_repeat_after_drafting_started_does_not_say_unused(self):
+        draft_id, _ = a_draft(drafts.DRAFTING, answers_at=timezone.now())
+        answered = tools.answer(draft_id, [{"name": "q_x", "value": "x"}])
+        self.assertEqual(answered.result["tell_the_person"], tools.TELL_DRAFTING)
+
+    def test_answers_sent_twice_at_once_keep_the_first_and_signal_again(self):
+        denial = a_denial()
+        draft_id, draft = asking(denial, [("What happened?", "")])
+        name = draft.questions[0]["name"]
+        real = drafts.file_answers
+
+        def the_other_call_files_first(stale, answers):
+            real(drafts.find_draft(draft_id), [{"name": name, "value": "first"}])
+            return real(stale, answers)
+
+        with patch.object(
+            drafts, "file_answers", side_effect=the_other_call_files_first
+        ) as filed:
+            answered = tools.answer(draft_id, [{"name": name, "value": "second"}])
+        self.assertEqual(filed.call_count, 1)
+        denial.refresh_from_db()
+        self.assertEqual(load_qa(denial)["What happened?"], "first")
+        self.assertEqual(answered.denial_uuid, str(denial.uuid))
+        self.assertEqual(answered.result["tell_the_person"], tools.TELL_ANSWERED)
+
+    def test_an_unknown_draft_is_not_found(self):
         answered = tools.answer("x" * 43, [])
         self.assertIsNone(answered.denial_uuid)
-        self.assertEqual(answered.result["status"], drafts.EXPIRED)
+        self.assertEqual(answered.result["status"], tools.NOT_FOUND)
 
 
 class StartTest(TestCase):

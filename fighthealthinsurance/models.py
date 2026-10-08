@@ -5252,7 +5252,8 @@ class AssistantDraft(models.Model):
     """Letters being drafted in the background for an AI assistant
     (assistant_drafts.py). The assistant holds a random id; only its digest
     is here. Status and the questions asked, no answers and no letter text;
-    it goes with its denial and is swept once it expires. The denial is
+    it goes with its denial and is swept once it expires (or, while it is
+    drafting with the person's answers, up to a day after). The denial is
     empty until the person agrees on our site."""
 
     STATUSES = (

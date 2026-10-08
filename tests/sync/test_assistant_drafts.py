@@ -28,7 +28,11 @@ from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 from fighthealthinsurance.denial_context import load_qa, merge_qa
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
-from fighthealthinsurance.letter_placeholders import PATTERNS_FILE
+from fighthealthinsurance.letter_placeholders import (
+    PATTERNS_FILE,
+    find_placeholder_spans,
+    find_unfilled_placeholders,
+)
 from fighthealthinsurance.ml import ml_models, spend
 from fighthealthinsurance.models import (
     AssistantDraft,
@@ -221,22 +225,56 @@ CITATIONS_MAIN_LISTED = (
     "[Ibid]",
     "[Ibid., p. 12]",
 )
-# Brackets main never listed, which are still not listed: too short, too
-# long, or not starting with a capital.
+# Brackets neither main nor the site's fax check lists, which are still not
+# listed: reference numbers, a bare statute, a quotation's [sic].
 NEVER_LISTED = (
-    "[It]",
-    "[We]",
-    "[National Comprehensive Cancer Network Clinical Practice Guidelines]",
     "[1]",
     "[12]",
     "[3, 4]",
     "[2-5]",
     "[42 CFR 438.210]",
     "[§ 2719]",
-    "[doctor name]",
-    "[his/her]",
     "[sic]",
 )
+# Blanks main never listed (too short, too long, or not starting with a
+# capital) that the site's fax check stops a letter for, so they are listed
+# now: the assistant fills them in before a fax would stop.
+FAX_CHECK_BLOCKS = (
+    "[It]",
+    "[We]",
+    "[National Comprehensive Cancer Network Clinical Practice Guidelines]",
+    "[doctor name]",
+    "[doctor's name]",
+    "[his/her]",
+    "[ Your Name ]",
+    "<Patient Name>",
+    "{{ FIRST_NAME }}",
+    "_______________",
+    "XX/XX/XXXX",
+    "XXXXXX",
+    "MM/DD/YYYY",
+    "(Insert claim number)",
+    "INSERT DATE HERE",
+    "FirstName",
+    "$DATE",
+)
+
+
+def fax_finds(letter):
+    """What the site's fax check stops this letter for, as the letter has it."""
+    return [letter[start:end] for start, end in find_placeholder_spans(letter)]
+
+
+def covered(letter, start, end, listed):
+    """Whether letter[start:end] is listed, or is inside a listed fill-in
+    where the letter has one."""
+    for other in listed:
+        at = letter.find(other, max(0, end - len(other)))
+        while at != -1 and at <= start:
+            if at + len(other) >= end:
+                return True
+            at = letter.find(other, at + 1)
+    return False
 
 
 def generated_brackets():
@@ -433,6 +471,43 @@ class SweepTest(TestCase):
         self.assertFalse(AssistantDraft.objects.filter(pk=new.draft.pk).exists())
         self.assertTrue(AssistantDraft.objects.filter(pk=live.draft.pk).exists())
 
+    def _answered(self, status, expired_for=timedelta(seconds=1)):
+        denial = a_denial()
+        merge_qa(denial, {"What happened?": "a fall"}, source="test")
+        denial.save()
+        new = drafts.create_draft(denial)
+        AssistantDraft.objects.filter(pk=new.draft.pk).update(
+            status=status,
+            answers_at=timezone.now() - expired_for,
+            expires_at=timezone.now() - expired_for,
+        )
+        return denial, new
+
+    @override_settings(**ALL_ON)
+    def test_filed_answers_survive_the_sweep_while_the_run_drafts(self):
+        for status in (drafts.QUESTIONS, drafts.DRAFTING):
+            with self.subTest(status=status):
+                denial, new = self._answered(status)
+                self.assertEqual(drafts.sweep_expired(), 0)
+                self.assertIsNone(drafts.find_draft(new.draft_id))
+                self.assertEqual(
+                    drafts.answers_for_generation(denial), {"What happened?": "a fall"}
+                )
+
+    def test_an_answered_draft_goes_once_its_run_ends(self):
+        for status in (drafts.READY, drafts.STOPPED, drafts.ON_SITE, drafts.EXPIRED):
+            with self.subTest(status=status):
+                _, new = self._answered(status)
+                self.assertEqual(drafts.sweep_expired(), 1)
+                self.assertFalse(AssistantDraft.objects.filter(pk=new.draft.pk).exists())
+
+    def test_an_answered_draft_still_drafting_goes_a_day_after_its_expiry(self):
+        _, new = self._answered(
+            drafts.DRAFTING, expired_for=drafts.ANSWERED_KEPT_FOR + timedelta(seconds=1)
+        )
+        self.assertEqual(drafts.sweep_expired(), 1)
+        self.assertFalse(AssistantDraft.objects.filter(pk=new.draft.pk).exists())
+
     def test_the_command_sweeps_and_counts_under_a_fixed_stage(self):
         self._expired()
         before = drafts.DRAFTS.labels("swept")._value.get()
@@ -462,8 +537,10 @@ class QuestionsTest(TestCase):
         self.assertEqual(cleaned[3]["choices"], ["inpatient", "outpatient", "home"])
         self.assertEqual(len(cleaned[4]["label"]), drafts.QUESTION_MAX_CHARS)
         self.assertEqual(len({q["name"] for q in cleaned}), 5)
+        self.assertEqual(cleaned[4]["question"], "x" * 400)
         for q in cleaned:
-            self.assertEqual(set(q), {"name", "kind", "label", "choices"})
+            self.assertEqual(set(q), {"name", "kind", "label", "choices", "question"})
+            self.assertEqual(q["name"], drafts.question_field_name(q["question"]))
             self.assertNotIn("http", q["label"])
             self.assertNotIn("One way to answer", str(q))
 
@@ -497,6 +574,28 @@ class QuestionsTest(TestCase):
         )
         draft.refresh_from_db()
         self.assertIsNotNone(draft.answers_at)
+
+    def test_answers_file_under_the_questions_shown_after_the_denials_change(self):
+        denial = a_denial()
+        long_question = "What did your doctor say about the scan? " + "Details. " * 40
+        draft = asking(denial, [("Is the MRI for an injury?", ""), (long_question, "")])
+        # The site, or a retried step, wrote new questions since.
+        Denial.objects.filter(pk=denial.pk).update(
+            generated_questions=[("How long have you had back pain?", "")]
+        )
+        yes_no, text = draft.questions
+        drafts.file_answers(
+            draft,
+            [
+                {"name": yes_no["name"], "value": "no"},
+                {"name": text["name"], "value": "It's needed."},
+            ],
+        )
+        denial.refresh_from_db()
+        self.assertEqual(
+            load_qa(denial),
+            {"Is the MRI for an injury?": "No", long_question.strip(): "It's needed."},
+        )
 
     def test_an_answer_to_a_question_never_asked_is_refused_by_name(self):
         denial = a_denial()
@@ -643,19 +742,26 @@ class LettersTest(TestCase):
             with self.subTest(line=line):
                 self.assertIn(line, letter["placeholders"])
 
-    def test_a_letter_cut_short_lists_only_what_its_text_has(self):
+    def _signed_letter(self, length):
+        body = "Dear Example Health, I appeal the denial of my MRI."
+        while len(body) < length:
+            body += " The scan is medically necessary for my back pain."
+        return body + "\n\nSincerely,\n{{FIRST_NAME}} {{LAST_NAME}}"
+
+    def test_a_letter_cut_short_lists_the_fill_ins_in_the_part_cut_off(self):
         denial = a_denial()
-        self._row(
-            denial, LETTER + " Born [DOB: MM/DD/YYYY], [Your {{FIRST_NAME}}]." * 300
-        )
+        self._row(denial, self._signed_letter(drafts.LETTER_MAX_CHARS + 100))
         [letter] = drafts.collect_letters(denial)
         self.assertTrue(letter["cut_short"])
-        self.assertEqual(
-            [found for found in letter["placeholders"] if found not in letter["text"]],
-            [],
-        )
-        self.assertIn("[DOB: MM/DD/YYYY]", letter["placeholders"])
-        self.assertIn("[Your {{FIRST_NAME}}]", letter["placeholders"])
+        self.assertNotIn("{{FIRST_NAME}}", letter["text"])
+        self.assertEqual(letter["placeholders"], ["{{FIRST_NAME}}", "{{LAST_NAME}}"])
+
+    def test_a_letter_as_long_as_a_real_one_comes_back_whole(self):
+        denial = a_denial()
+        # Past the 6,000 the chat once cut at: model letters run to 7,000.
+        self._row(denial, self._signed_letter(7_500))
+        [letter] = drafts.collect_letters(denial)
+        self.assertFalse(letter["cut_short"])
 
     def test_a_long_letter_is_cut_and_says_so(self):
         denial = a_denial()
@@ -736,10 +842,32 @@ class PlaceholdersTest(SimpleTestCase):
                     drafts.placeholders_in(f"See {bracket} enclosed."), [bracket]
                 )
 
-    def test_brackets_main_never_listed_are_not_listed(self):
+    def test_what_neither_main_nor_the_fax_check_lists_is_not_listed(self):
         for bracket in NEVER_LISTED:
             with self.subTest(bracket=bracket):
                 self.assertEqual(drafts.placeholders_in(f"So {bracket} said."), [])
+
+    def test_what_the_fax_check_blocks_is_listed(self):
+        for blank in FAX_CHECK_BLOCKS:
+            letter = f"Dear plan, signed {blank} today. Sincerely."
+            with self.subTest(blank=blank):
+                self.assertTrue(find_unfilled_placeholders(letter))
+                self.assertEqual(drafts.placeholders_in(letter), [blank])
+
+    def test_a_blank_the_fax_check_finds_inside_a_listed_one_is_not_listed_again(self):
+        self.assertEqual(
+            drafts.placeholders_in(
+                "Born [DOB: MM/DD/YYYY], claim [Claim #: ________], [ Your {{SCSID}} ]."
+            ),
+            ["[ Your {{SCSID}} ]", "[Claim #: ________]", "[DOB: MM/DD/YYYY]"],
+        )
+
+    def test_a_quotation_note_the_fax_check_blocks_is_still_not_listed(self):
+        for note in ("[Cleaned up]", "[Emphasis ours]", "[Brackets in original]", "[Ibid]"):
+            letter = f"The plan must cover it {note}."
+            with self.subTest(note=note):
+                self.assertTrue(find_unfilled_placeholders(letter))
+                self.assertEqual(drafts.placeholders_in(letter), [])
 
     def test_each_fill_in_is_listed_once_sorted(self):
         self.assertEqual(
@@ -761,8 +889,16 @@ class PlaceholdersTest(SimpleTestCase):
         # Read left to right, the first bracket runs to the first "]", as
         # on main: [Your Name] is part of it, and {{X}} comes after it.
         self.assertEqual(
-            drafts.placeholders_in("Ref [Dear [Your Name] Sir {{X}}] ok"),
+            drafts.placeholders_in("Ref [Dear [Your Name] Sir 2] {{X}} ok"),
             ["[Dear [Your Name]", "{{X}}"],
+        )
+
+    def test_a_bracket_the_fax_check_stops_for_whole_is_listed_whole(self):
+        # The fax check takes [Your Name] and {{X}}, then the bracket round
+        # them, so the letter is stopped for all of it.
+        self.assertEqual(
+            drafts.placeholders_in("Ref [Dear [Your Name] Sir {{X}}] ok"),
+            ["[Dear [Your Name] Sir {{X}}]"],
         )
 
     def test_a_bracket_with_a_fill_in_inside_is_never_a_citation(self):
@@ -777,12 +913,14 @@ class PlaceholdersTest(SimpleTestCase):
                     drafts.placeholders_in(f"Per {bracket} today."), [bracket]
                 )
 
-    def test_what_is_listed_is_what_main_listed_less_its_citations(self):
+    def test_what_is_listed_is_what_main_or_the_fax_check_finds_less_citations(self):
         """Letters made at random from generated and hand-written brackets
-        (fill-ins, citations of every kind, ones main never listed) with
-        {{...}}, {...} and $name between them, and cut anywhere, as a long
-        letter is: each lists exactly what main's pattern finds in it, less
-        the citations."""
+        (fill-ins, citations of every kind, ones main never listed, blanks
+        only the fax check finds) with {{...}}, {...} and $name between
+        them, and cut anywhere, as a long letter is: each lists what main's
+        pattern and the site's fax check find in it, less the citations,
+        and nothing else, with a fill-in inside another listed only as part
+        of it."""
         fill_ins, citations = generated_brackets()
         # A large corpus, all of it brackets main listed.
         self.assertGreater(len(fill_ins), 150)
@@ -798,13 +936,18 @@ class PlaceholdersTest(SimpleTestCase):
             [],
         )
         self.assertEqual(
-            [bracket for bracket in NEVER_LISTED if MAIN_PLACEHOLDER.search(bracket)],
+            [
+                bracket
+                for bracket in NEVER_LISTED + FAX_CHECK_BLOCKS
+                if MAIN_PLACEHOLDER.search(bracket)
+            ],
             [],
         )
         pieces = (
             fill_ins
             + citations
             + list(NEVER_LISTED)
+            + list(FAX_CHECK_BLOCKS)
             + ["{{FIRST_NAME}}", "{diagnosis}", "$your_name_here", "It cost $500."]
         )
         rng = random.Random(20261006)
@@ -821,12 +964,32 @@ class PlaceholdersTest(SimpleTestCase):
             )
             letters.append(letter)
             letters.append(letter[: rng.randint(0, len(letter))])
+        citations = set(citations)
         wrong = []
         for letter in letters:
-            expected = sorted(set(MAIN_PLACEHOLDER.findall(letter)) - set(citations))
             listed = drafts.placeholders_in(letter)
-            if listed != expected:
-                wrong.append((letter, listed, expected))
+            found = [
+                match.span()
+                for match in MAIN_PLACEHOLDER.finditer(letter)
+                if match.group(0) not in citations
+            ] + [
+                (start, end)
+                for start, end in find_placeholder_spans(letter)
+                if letter[start:end] not in citations
+            ]
+            missed = [
+                letter[start:end]
+                for start, end in found
+                if not covered(letter, start, end, listed)
+            ]
+            from_elsewhere = [
+                item
+                for item in listed
+                if item in citations
+                or item not in set(MAIN_PLACEHOLDER.findall(letter)) | set(fax_finds(letter))
+            ]
+            if listed != sorted(set(listed)) or missed or from_elsewhere:
+                wrong.append((letter, listed, missed, from_elsewhere))
         self.assertEqual(wrong[:5], [])
 
     def test_every_fill_in_main_listed_in_the_apps_own_templates_is_listed(self):
@@ -840,15 +1003,28 @@ class PlaceholdersTest(SimpleTestCase):
         self.assertTrue(templates)
         for template in templates:
             letter = template["appeal_text"]
+            listed = drafts.placeholders_in(letter)
             with self.subTest(template=template["name"]):
                 self.assertEqual(
-                    drafts.placeholders_in(letter),
-                    sorted(set(MAIN_PLACEHOLDER.findall(letter))),
+                    [
+                        match.group(0)
+                        for match in MAIN_PLACEHOLDER.finditer(letter)
+                        if not covered(letter, *match.span(), listed)
+                    ],
+                    [],
+                )
+                self.assertEqual(
+                    [
+                        letter[start:end]
+                        for start, end in find_placeholder_spans(letter)
+                        if not covered(letter, start, end, listed)
+                    ],
+                    [],
                 )
 
     def test_every_listed_placeholder_is_in_the_letter(self):
         """Whatever the letter, each fill-in listed is in it exactly as
-        listed, and main listed it too. Letters made at random from
+        listed, and main or the fax check found it. Letters made at random from
         fill-ins, citations, links, stray and nested brackets and every
         example in letter_placeholders.json, and cut anywhere."""
         spec = json.loads(PATTERNS_FILE.read_text(encoding="utf-8"))
@@ -857,6 +1033,7 @@ class PlaceholdersTest(SimpleTestCase):
             + list(OTHER_BRACKETS_MAIN_LISTED)
             + list(CITATIONS_MAIN_LISTED)
             + list(NEVER_LISTED)
+            + list(FAX_CHECK_BLOCKS)
             + [
                 example
                 for section in ("ignore", "placeholders")
@@ -901,7 +1078,8 @@ class PlaceholdersTest(SimpleTestCase):
             if (
                 listed != sorted(set(listed))
                 or any(found not in letter for found in listed)
-                or not set(listed) <= set(MAIN_PLACEHOLDER.findall(letter))
+                or not set(listed)
+                <= set(MAIN_PLACEHOLDER.findall(letter)) | set(fax_finds(letter))
             ):
                 wrong.append((letter, listed))
         self.assertEqual(wrong, [])
@@ -1108,3 +1286,51 @@ class ActivityErrorsTest(TestCase):
                 raise RuntimeError("Dear Example Health, my MRI")
         self.assertNotIn("MRI", str(caught.exception))
         self.assertIsNone(caught.exception.__cause__)
+
+
+@override_settings(FHI_SPEND_BACKGROUND=False)
+class ActivityTest(TransactionTestCase):
+    """The real activities the workflow runs, on the database."""
+
+    def setUp(self):
+        super().setUp()
+        self.enterContext(override_settings(**ALL_ON))
+
+    def _run(self, step, denial):
+        return async_to_sync(step)(denial.hashed_email, str(denial.uuid))
+
+    def test_a_retried_ask_keeps_the_questions_the_assistant_was_shown(self):
+        from fighthealthinsurance.activities import assistant_appeal as acts
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        denial = a_denial()
+        shown = asking(denial, [("Is the MRI for an injury?", "")]).questions
+        fresh = AsyncMock(return_value=[("How long have you had back pain?", "")])
+        with patch.object(DenialCreatorHelper, "generate_appeal_questions", fresh):
+            self.assertEqual(self._run(acts.ask_questions, denial), 1)
+        draft = AssistantDraft.objects.get(denial=denial)
+        self.assertEqual(draft.questions, shown)
+        fresh.assert_not_awaited()
+
+    def test_drafting_starts_after_the_day_when_the_answers_came_in_time(self):
+        from fighthealthinsurance.activities import assistant_appeal as acts
+
+        denial = a_denial()
+        draft = drafts.create_draft(denial).draft
+        AssistantDraft.objects.filter(pk=draft.pk).update(
+            status=drafts.QUESTIONS,
+            answers_at=timezone.now() - timedelta(minutes=1),
+            expires_at=timezone.now() - timedelta(seconds=1),
+        )
+        self.assertTrue(self._run(acts.start_drafting, denial))
+        self.assertEqual(AssistantDraft.objects.get(pk=draft.pk).status, drafts.DRAFTING)
+
+    def test_drafting_does_not_start_after_the_day_without_answers(self):
+        from fighthealthinsurance.activities import assistant_appeal as acts
+
+        denial = a_denial()
+        draft = drafts.create_draft(denial).draft
+        AssistantDraft.objects.filter(pk=draft.pk).update(
+            status=drafts.READING, expires_at=timezone.now() - timedelta(seconds=1)
+        )
+        self.assertFalse(self._run(acts.start_drafting, denial))

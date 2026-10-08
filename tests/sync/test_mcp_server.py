@@ -2453,12 +2453,17 @@ class ChatPathToolsTest(TestCase):
         started = time.monotonic()
         result = async_to_sync(call)(
             "get_appeal_drafts",
-            {"draft_id": "x" * 43, "seen": "expired", "wait": 40},
+            {"draft_id": "x" * 43, "seen": "not_found", "wait": 40},
             routes=chat_routes(),
         )
         self.assertLess(time.monotonic() - started, 20)
-        self.assertEqual(result.structuredContent["status"], "expired")
+        self.assertEqual(result.structuredContent["status"], "not_found")
         self.assertEqual(result.structuredContent["next"], "stop_and_tell_the_person")
+
+    def test_the_description_says_what_not_found_and_cut_short_mean(self):
+        for said in ("not_found", "cut_short"):
+            with self.subTest(said=said):
+                self.assertIn(said, mcp_server.GET_APPEAL_DRAFTS_DESCRIPTION)
 
     def test_a_status_other_than_seen_returns_at_once(self):
         _, draft_id = self._draft(status="reading")

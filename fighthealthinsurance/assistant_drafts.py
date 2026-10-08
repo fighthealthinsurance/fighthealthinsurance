@@ -32,6 +32,7 @@ from fighthealthinsurance.denial_context import (
     question_field_name,
     question_text_for_field,
 )
+from fighthealthinsurance.letter_placeholders import find_placeholder_spans
 from fighthealthinsurance.models import AssistantDraft, Denial
 from fighthealthinsurance.utils import is_real_appeal, strip_invisible_controls
 
@@ -51,9 +52,17 @@ STATUSES = frozenset(
 # A draft nobody agrees to goes with its handoff link; an agreed one lives a day.
 UNAGREED_TTL = timedelta(hours=2)
 DRAFT_TTL = timedelta(hours=24)
+# How long the sweep keeps an expired draft whose run is drafting with the
+# person's answers (sweep_expired): past the run's reconcile window
+# (workflows/assistant_appeal.RECONCILE_FOR) and its generation.
+ANSWERED_KEPT_FOR = timedelta(hours=24)
 
 MAX_LETTERS = 3
-LETTER_MAX_CHARS = 6_000
+# Past any real appeal letter: the app's own templates run 900 to 2,200
+# characters and graded model letters 2,000 to 7,000. Small enough that
+# three letters, each sent twice (structured content and its text), fit
+# the usual cap an assistant puts on one tool result.
+LETTER_MAX_CHARS = 12_000
 QUESTION_MAX_CHARS = 300
 ANSWER_MAX_CHARS = 1_000
 MAX_ANSWERS = 60
@@ -61,7 +70,7 @@ MAX_CHOICES = 6
 CHOICE_MAX_CHARS = 60
 FIELD_MAX_CHARS = 80
 
-_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
+_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{43}")
 _URL = re.compile(r"https?://|www\.", re.IGNORECASE)
 # What a letter lists for the assistant to fill in (placeholders_in), less
 # its citations: {{FIRST_NAME}}, {diagnosis}, a bracket that starts with a
@@ -195,7 +204,16 @@ def new_draft_id() -> str:
 
 
 def is_draft_id(value: object) -> bool:
-    return isinstance(value, str) and _ID_PATTERN.match(value) is not None
+    return isinstance(value, str) and _ID_PATTERN.fullmatch(value) is not None
+
+
+def _given_id(draft_id: object) -> Optional[str]:
+    """The id an assistant sent, less any spaces or line breaks around it
+    (an id has none), or None when it can't be one."""
+    if not isinstance(draft_id, str):
+        return None
+    draft_id = draft_id.strip()
+    return draft_id if is_draft_id(draft_id) else None
 
 
 def _digest(draft_id: str) -> str:
@@ -221,15 +239,27 @@ def create_draft(
 
 def find_draft(draft_id: object) -> Optional[AssistantDraft]:
     """The live draft an assistant's id names, or None."""
-    if not is_draft_id(draft_id):
+    given = _given_id(draft_id)
+    if given is None:
         return None
     return (
         AssistantDraft.objects.filter(
-            draft_id_digest=_digest(str(draft_id)), expires_at__gt=timezone.now()
+            draft_id_digest=_digest(given), expires_at__gt=timezone.now()
         )
         .select_related("denial")
         .first()
     )
+
+
+def draft_expired(draft_id: object) -> bool:
+    """Whether the id names a draft past its expiry that the sweep has not
+    deleted yet. A miscopied id names none."""
+    given = _given_id(draft_id)
+    if given is None:
+        return False
+    return AssistantDraft.objects.filter(
+        draft_id_digest=_digest(given), expires_at__lte=timezone.now()
+    ).exists()
 
 
 def draft_for_denial(denial: Denial) -> Optional[AssistantDraft]:
@@ -393,11 +423,14 @@ def _kind(question: str, choices: list[str]) -> str:
 def clean_questions(rows: Any) -> list[dict[str, Any]]:
     """The questions the assistant may ask, from generated_questions rows.
 
-    Each is {name, kind, label, choices}: the name is the one the site's
-    form uses, the label is cut at QUESTION_MAX_CHARS, and a question with
-    a URL or a key the review step owns is left out. The suggested answer
-    stays out too: assistants answer with whatever hint they are given.
-    Invisible controls come out of the label, never out of the name.
+    Each is {name, kind, label, choices, question}: the name is the one the
+    site's form uses, the label is cut at QUESTION_MAX_CHARS, and a question
+    with a URL or a key the review step owns is left out. The suggested
+    answer stays out too: assistants answer with whatever hint they are
+    given. Invisible controls come out of the label, never out of the name.
+    The question is the text an answer is filed under (_file_answers), kept
+    so the answers still file if the denial's questions change; it never
+    leaves (assistant_draft_tools.QUESTION_KEYS).
     """
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -419,6 +452,7 @@ def clean_questions(rows: Any) -> list[dict[str, Any]]:
                 "kind": _kind(label, choices),
                 "label": label[:QUESTION_MAX_CHARS],
                 "choices": choices,
+                "question": question,
             }
         )
     return out
@@ -445,8 +479,9 @@ def file_answers(draft: AssistantDraft, answers: Any) -> int:
     """File the person's answers the way the site's questions page does.
 
     Only while the draft is waiting for answers, once, and only under names
-    this draft issued; anything else is refused by name before anything is
-    written. "skip" files nothing. Returns how many were filed.
+    this draft issued, each under the question it issued; anything else is
+    refused by name before anything is written. "skip" files nothing.
+    Returns how many were filed.
     """
     if not isinstance(answers, list) or len(answers) > MAX_ANSWERS:
         raise ValueError(f"answers must be a list of at most {MAX_ANSWERS}")
@@ -468,11 +503,22 @@ def file_answers(draft: AssistantDraft, answers: Any) -> int:
         return _file_answers(current, denial, answers)
 
 
+def _issued_text(question: dict[str, Any], denial: Denial) -> Optional[str]:
+    """The text an answer to an issued question is filed under: the one the
+    assistant was shown, kept with the draft, so an answer still files after
+    the denial's questions change. A draft stored before that text was kept
+    reads it from the denial's questions."""
+    name = str(question["name"])
+    text = question.get("question")
+    if isinstance(text, str) and question_field_name(text) == name:
+        return text
+    return question_text_for_field(name, denial.generated_questions)
+
+
 def _file_answers(draft: AssistantDraft, denial: Denial, answers: list) -> int:
     issued = {q["name"]: q for q in draft.questions or []}
     texts: dict[str, Optional[str]] = {
-        name: question_text_for_field(name, denial.generated_questions)
-        for name in issued
+        name: _issued_text(question, denial) for name, question in issued.items()
     }
     askable = {
         name
@@ -541,21 +587,45 @@ def _is_citation(bracket: str) -> bool:
     )
 
 
+def _is_bracketed_citation(found: str) -> bool:
+    return found.startswith("[") and found.endswith("]") and _is_citation(found)
+
+
+def _outermost(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Each span once, less any inside another one."""
+    kept: list[tuple[int, int]] = []
+    reach = -1
+    # By start, and the longest first where two start together, so a span
+    # inside another always comes after it.
+    for start, end in sorted(set(spans), key=lambda span: (span[0], -span[1])):
+        if end <= reach:
+            continue
+        kept.append((start, end))
+        reach = end
+    return kept
+
+
 def placeholders_in(text: str) -> list[str]:
     """The fill-ins left in a letter, each once, sorted, each exactly as the
     letter has it.
 
-    What main has always listed (_PLACEHOLDER, read left to right), less
-    the brackets that are clearly citations or a quotation's notes, and
-    nothing else. Listed: {{FIRST_NAME}}, {diagnosis}, $your_name_here and
-    a bracket that starts with a capital, whatever else is in it ([Dr.
-    Name], [ICD-10 Code], [Claim Number: ], [DOB: MM/DD/YYYY], [Physician
-    Name, M.D.], [Your {{FIRST_NAME}}]). Each is a piece of the letter
-    itself. A {{...}} or $name inside a listed bracket is not listed again,
-    nor is a bracket opened inside one: a bracket runs to the first "]", so
-    "Ref [Dear [Your Name] Sir]" lists "[Dear [Your Name]" and not "[Your
-    Name]" as well. Never listed, as on main: [It], [doctor name], [1], [3,
-    4], [42 CFR 438.210], or a bracket with over 41 characters inside
+    What main has always listed (_PLACEHOLDER, read left to right) and
+    every blank the site's fax check stops a letter for
+    (letter_placeholders.find_placeholder_spans: [doctor's name], <Patient
+    Name>, {{ FIRST_NAME }}, ____, XX/XX/XXXX), less the brackets that are
+    clearly citations or a quotation's notes. So the assistant can fill in
+    all a fax would stop for. Listed from main: {{FIRST_NAME}}, {diagnosis},
+    $your_name_here and a bracket that starts with a capital, whatever else
+    is in it ([Dr. Name], [ICD-10 Code], [Claim Number: ], [DOB:
+    MM/DD/YYYY], [Physician Name, M.D.], [Your {{FIRST_NAME}}]). Each is a
+    piece of the letter itself. A fill-in inside a listed one is not listed
+    again ({{FIRST_NAME}} in [Your {{FIRST_NAME}}], MM/DD/YYYY in [DOB:
+    MM/DD/YYYY]), nor is a bracket opened inside one: read left to right, a
+    bracket runs to the first "]", so "[Dear [Your Name] Sir 2]" lists
+    "[Dear [Your Name]" and not "[Your Name]" as well. A bracket the fax
+    check stops for round other blanks ("[Dear [Your Name] Sir]") is
+    listed whole. Never listed: [1], [3, 4], [42 CFR 438.210], or a
+    bracket with over 41 characters inside that the fax check passes,
     unless it starts with an instruction ([Insert Reference Number from
     Denial Letter]), as the site's own fill-in check lists it.
 
@@ -575,12 +645,18 @@ def placeholders_in(text: str) -> list[str]:
     a question; leaving out one still to be named leaves a blank in the
     letter.
     """
-    listed = {
-        found
-        for found in _PLACEHOLDER.findall(text)
-        if not (found.startswith("[") and _is_citation(found))
-    }
-    return sorted(listed | set(_LONG_INSTRUCTION.findall(text)))
+    spans = [
+        match.span()
+        for match in _PLACEHOLDER.finditer(text)
+        if not _is_bracketed_citation(match.group(0))
+    ]
+    spans += [match.span() for match in _LONG_INSTRUCTION.finditer(text)]
+    spans += [
+        (start, end)
+        for start, end in find_placeholder_spans(text)
+        if not _is_bracketed_citation(text[start:end])
+    ]
+    return sorted({text[start:end] for start, end in _outermost(spans)})
 
 
 def collect_letters(denial: Denial) -> list[dict[str, Any]]:
@@ -591,8 +667,9 @@ def collect_letters(denial: Denial) -> list[dict[str, Any]]:
     today's date on the date line (substitute_appeal_fields, as on the
     page), and each letter that reads the same after that once too (drafts
     that differ only in their date line), newest first, at most three, each
-    without invisible controls and cut at LETTER_MAX_CHARS with the
-    placeholders still in it listed.
+    without invisible controls and cut at LETTER_MAX_CHARS. Each lists the
+    placeholders in the whole letter, a cut one too, so a fill-in in the
+    part cut off (the signature's {{FIRST_NAME}}) is still asked for.
     """
     from fighthealthinsurance.appeal_fingerprints import fingerprint_text
     from fighthealthinsurance.common_view_logic import (
@@ -613,13 +690,11 @@ def collect_letters(denial: Denial) -> list[dict[str, Any]]:
         if stored in seen or shown in seen:
             continue
         seen.update((stored, shown))
-        cut = len(content) > LETTER_MAX_CHARS
-        content = content[:LETTER_MAX_CHARS]
         letters.append(
             {
-                "text": content,
+                "text": content[:LETTER_MAX_CHARS],
                 "placeholders": placeholders_in(content),
-                "cut_short": cut,
+                "cut_short": len(content) > LETTER_MAX_CHARS,
             }
         )
         if len(letters) >= MAX_LETTERS:
@@ -665,8 +740,16 @@ def sweep_expired(now: Optional[datetime] = None) -> int:
     """Delete every draft past its expiry. Returns how many went. A draft
     that never reached drafting gives its generation back first, as its run
     can no longer find it to say expired. One whose release fails stays for
-    the next sweep."""
-    expired = AssistantDraft.objects.filter(expires_at__lte=now or timezone.now())
+    the next sweep. One with the person's answers in, whose run has not
+    finished drafting, stays up to ANSWERED_KEPT_FOR past its expiry: a
+    generation that runs late still sends those answers
+    (answers_for_generation), and the chat no longer finds it (find_draft)."""
+    now = now or timezone.now()
+    expired = AssistantDraft.objects.filter(expires_at__lte=now).exclude(
+        answers_at__isnull=False,
+        status__in=(QUESTIONS, DRAFTING),
+        expires_at__gt=now - ANSWERED_KEPT_FOR,
+    )
     kept: list[int] = []
     for draft in expired.select_related("denial").filter(
         spend_reservation__isnull=False,

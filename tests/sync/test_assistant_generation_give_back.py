@@ -235,6 +235,15 @@ class SweepGivesBackTest(TestCase):
         self.assertIsNotNone(reservation.released_at)
         self.assertEqual(taken_today(), 0)
 
+    def test_an_answered_draft_kept_past_its_day_keeps_its_generation(self):
+        # The person's answers are in, so its run is about to draft with them.
+        reservation = self._expired(drafts.QUESTIONS)
+        AssistantDraft.objects.update(answers_at=timezone.now())
+        self.assertEqual(drafts.sweep_expired(), 0)
+        reservation.refresh_from_db()
+        self.assertIsNone(reservation.released_at)
+        self.assertEqual(taken_today(), 1)
+
     def test_a_swept_draft_that_reached_drafting_keeps_its_generation(self):
         reservation = self._expired(drafts.DRAFTING)
         self.assertEqual(drafts.sweep_expired(), 1)
