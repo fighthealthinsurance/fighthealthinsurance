@@ -75,6 +75,15 @@ async def _set_status(draft, status: str) -> None:
     await database_sync_to_async(assistant_drafts.set_status)(draft, status)
 
 
+async def _advance(draft, status: str, **fields) -> bool:
+    """Move the draft on unless it was stopped since this step looked."""
+    return bool(
+        await database_sync_to_async(assistant_drafts.advance_status)(
+            draft, status, **fields
+        )
+    )
+
+
 async def _end(draft, status: str) -> None:
     """Set a final status, then give a run with no letters its generation
     back; a failed release fails the activity, and the sweep retries it too."""
@@ -93,7 +102,8 @@ async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
         denial, draft = await _draft_for(hashed_email, denial_uuid)
         if denial is None or draft is None or _stopped(draft):
             return False
-        await _set_status(draft, assistant_drafts.READING)
+        if not await _advance(draft, assistant_drafts.READING):
+            return False
         from fighthealthinsurance.common_view_logic import DenialCreatorHelper
 
         try:
@@ -139,15 +149,10 @@ async def ask_questions(hashed_email: str, denial_uuid: str) -> int:
             logger.warning(f"assistant draft: questions timed out for {denial_uuid}")
         questions = assistant_drafts.clean_questions(rows or [])
 
-        def store() -> None:
-            draft.questions = questions
-            draft.save(update_fields=["questions"])
-            assistant_drafts.set_status(
-                draft,
-                assistant_drafts.QUESTIONS if questions else assistant_drafts.DRAFTING,
-            )
-
-        await database_sync_to_async(store)()
+        status = assistant_drafts.QUESTIONS if questions else assistant_drafts.DRAFTING
+        # Agree may have stopped the draft while the questions were generated.
+        if not await _advance(draft, status, questions=questions):
+            return 0
         return len(questions)
 
 
@@ -168,8 +173,9 @@ async def start_drafting(hashed_email: str, denial_uuid: str) -> bool:
             return False
         from fighthealthinsurance import intake_outbox
 
+        if not await _advance(draft, assistant_drafts.DRAFTING):
+            return False
         await intake_outbox.arecord_intent(denial, intake_outbox.FORM_COMPLETED)
-        await _set_status(draft, assistant_drafts.DRAFTING)
         return True
 
 

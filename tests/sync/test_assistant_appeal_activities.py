@@ -3,10 +3,11 @@
 these; here only the model calls are stubbed."""
 
 import asyncio
+import time
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync, sync_to_async
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 from temporalio.exceptions import ApplicationError
@@ -100,9 +101,7 @@ class ActivityTestBase(TransactionTestCase):
         """Stopped, and not set again since."""
         stopped_at = draft.status_at
         draft.refresh_from_db()
-        self.assertEqual(
-            (draft.status, draft.status_at), (drafts.STOPPED, stopped_at)
-        )
+        self.assertEqual((draft.status, draft.status_at), (drafts.STOPPED, stopped_at))
 
 
 class ReadLetterTest(ActivityTestBase):
@@ -133,8 +132,10 @@ class ReadLetterTest(ActivityTestBase):
 
     def test_a_reading_that_runs_out_of_time_goes_on_with_the_draft(self):
         denial, _ = agreed_draft()
+        started = time.monotonic()
         with patch.object(activities, "READ_TIMEOUT_S", BOUND_S):
             self.assertTrue(self.read(denial, hangs))
+        self.assertLess(time.monotonic() - started, HANG_S / 2)
         denial.refresh_from_db()
         self.assertEqual((denial.procedure, denial.diagnosis), ("MRI", "back pain"))
 
@@ -142,6 +143,14 @@ class ReadLetterTest(ActivityTestBase):
         denial, _ = agreed_draft()
         denial.hashed_email = Denial.get_hashed_email("someone@example.com")
         self.assertFalse(self.read(denial))
+
+    def test_a_draft_stopped_after_its_check_is_not_read(self):
+        denial, draft = stopped_draft()
+        extract = MagicMock(side_effect=finds_nothing)
+        with patch.object(activities, "_stopped", return_value=False):
+            self.assertFalse(self.read(denial, extract))
+        extract.assert_not_called()
+        self.assert_still_stopped(draft)
 
     def test_a_run_that_finds_its_draft_stopped_reads_nothing_and_changes_nothing(
         self,
@@ -182,6 +191,18 @@ class AskQuestionsTest(ActivityTestBase):
         self.assertEqual(draft.status, drafts.DRAFTING)
         self.assertEqual(draft.questions, [])
 
+    def test_a_draft_stopped_while_questions_are_made_stays_stopped(self):
+        denial, draft = agreed_draft()
+
+        async def stopped_meanwhile(denial_id):
+            await sync_to_async(drafts.set_status)(draft, drafts.STOPPED)
+            return QUESTIONS
+
+        self.assertEqual(self.ask(denial, stopped_meanwhile), 0)
+        self.assert_still_stopped(draft)
+        self.assertEqual(draft.questions, [])
+        self.assertFalse(self.run_activity(activities.start_drafting, denial))
+
     def test_a_stopped_draft_is_asked_nothing_and_stays_stopped(self):
         denial, draft = stopped_draft()
         generate = AsyncMock(return_value=QUESTIONS)
@@ -215,6 +236,14 @@ class StartDraftingTest(ActivityTestBase):
         self.assertFalse(IntakeJourneyEvent.objects.filter(denial=denial).exists())
         draft.refresh_from_db()
         self.assertEqual(draft.status, drafts.READING)
+
+    def test_a_draft_stopped_after_its_check_does_not_start_drafting(self):
+        # Agree stops the draft between this step's look and its write.
+        denial, draft = stopped_draft()
+        with patch.object(activities, "_stopped", return_value=False):
+            self.assertFalse(self.start(denial))
+        self.assertFalse(IntakeJourneyEvent.objects.filter(denial=denial).exists())
+        self.assert_still_stopped(draft)
 
     def test_a_stopped_draft_does_not_start_drafting(self):
         denial, draft = stopped_draft()
