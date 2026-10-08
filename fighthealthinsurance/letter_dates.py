@@ -118,7 +118,7 @@ _LETTER_DATE_LABEL = (
 )
 _EMPHASIS = r"[*_]{0,2}"
 # Zero-width space, direction marks, word joiner and byte-order mark.
-_INVISIBLE = r"[​‎‏⁠﻿]*"
+_INVISIBLE = "[\u200b\u200e\u200f\u2060\ufeff]*"
 _HEADING = r"(?:#{1,6}[ \t]+)?"
 
 _DATE_LINE = re.compile(
