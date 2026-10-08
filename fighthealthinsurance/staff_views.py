@@ -4429,11 +4429,15 @@ class TemporalUIProxyView(View):
 # through the superuser-only export, which stays shut to a superuser who
 # reads the packet until every reader is done, or the letter_review_export
 # command. Sentry never sees these pages' verdicts or notes
-# (sentry_filters.py, LETTER_REVIEW_PATH_PREFIX).
+# (sentry_filters.py, LETTER_REVIEW_PATH_PREFIX), and neither does the ADMINS
+# error email: every view here is marked sensitive_variables(), so a report
+# blanks its frame and every frame under it, where letters, prompts and marks
+# sit (letter_review.py marks its helpers the same way).
 # ---------------------------------------------------------------------------
 
 
 @method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
 class LetterReviewIndexView(View):
     """The packets the signed-in staff member reads, with their own progress.
 
@@ -4480,6 +4484,7 @@ class LetterReviewIndexView(View):
 
 
 @method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
 class LetterReviewNextView(View):
     """Send the reader to their first unlabeled letter, or to the done page."""
 
@@ -4492,6 +4497,7 @@ class LetterReviewNextView(View):
 
 
 @method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
 class LetterReviewMineView(View):
     """The reader's own letters by number, each with their own mark or none.
 
@@ -4516,6 +4522,7 @@ class LetterReviewMineView(View):
 
 
 @method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
 class LetterReviewDoneView(View):
     """Where a reader lands once every letter assigned to them has a label."""
 
@@ -4615,6 +4622,7 @@ class LetterReviewItemView(View):
 
 
 @method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
 class LetterReviewExportView(View):
     """Download a packet's labels JSON. Superusers only.
 

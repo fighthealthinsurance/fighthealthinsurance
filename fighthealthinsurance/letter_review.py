@@ -19,7 +19,10 @@ either: the pages address each item by a random slug minted at import, and
 the key comes back only in the export, to join the labels on.
 
 Nothing here, and no command, ever prints a letter or a prompt: errors name
-an item by its position and key only.
+an item by its position and key only. Nor does an error report: every
+function below that holds a letter, a prompt or a mark is marked
+sensitive_variables(), as the pages' views are, so the ADMINS email blanks
+its frame and every frame under it.
 """
 
 import re
@@ -31,6 +34,7 @@ from django.db import transaction
 from django.db.models import QuerySet
 from django.http import Http404
 from django.utils import timezone
+from django.views.decorators.debug import sensitive_variables
 
 from fighthealthinsurance.models import (
     LETTER_REVIEW_NOTE_MAX,
@@ -52,6 +56,12 @@ MAX_PROMPT = 100_000
 MAX_LETTER = 100_000
 MAX_READERS = 20
 MAX_ITEMS = 5_000
+# The largest packet file the import reads: the rule, and every item at the
+# prompt and letter limits with room for its key, readers and JSON
+# punctuation. It counts bytes against limits set in characters, so it is the
+# ceiling for an ASCII packet; a real packet is far smaller. The import
+# refuses a larger file before decoding any of it.
+MAX_PACKET_BYTES = MAX_RULE_TEXT + MAX_ITEMS * (MAX_PROMPT + MAX_LETTER + 4_000)
 
 PACKET_FIELDS = frozenset({"packet", "rule_version", "rule_text", "readers", "items"})
 ITEM_FIELDS = frozenset({"key", "prompt", "letter", "readers"})
@@ -123,6 +133,18 @@ class ImportResult:
     items_per_reader: Dict[str, int]
 
 
+def _utf8(value: str, where: str) -> None:
+    """Refuse text the database cannot store: JSON's escapes can spell a lone
+    surrogate ("\\ud800"), which decodes but has no UTF-8 form."""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise PacketError(
+            f"{where} has a character that is not valid Unicode"
+        ) from None
+
+
+@sensitive_variables()
 def _fields(obj: Any, expected: frozenset, where: str) -> Dict[str, Any]:
     if not isinstance(obj, dict):
         raise PacketError(f"{where} must be a JSON object")
@@ -141,6 +163,7 @@ def _short_text(value: Any, where: str, limit: int) -> str:
     """A one-line field: a name or a version."""
     if not isinstance(value, str) or not value.strip():
         raise PacketError(f"{where} must be a non-empty string")
+    _utf8(value, where)
     if value != value.strip() or "\n" in value or "\r" in value:
         raise PacketError(f"{where} must be one line with no outer spaces")
     if _CONTROL.search(value):
@@ -150,10 +173,12 @@ def _short_text(value: Any, where: str, limit: int) -> str:
     return value
 
 
+@sensitive_variables()
 def _long_text(value: Any, where: str, limit: int) -> str:
     """A body of text, kept exactly as sent. Never echoed in an error."""
     if not isinstance(value, str) or not value.strip():
         raise PacketError(f"{where} must be a non-empty string")
+    _utf8(value, where)
     if "\x00" in value:
         raise PacketError(f"{where} has a NUL character")
     if len(value) > limit:
@@ -176,6 +201,7 @@ def _handles(value: Any, where: str) -> Tuple[str, ...]:
     return tuple(seen)
 
 
+@sensitive_variables()
 def parse_packet(data: Any) -> ParsedPacket:
     """Check a decoded packet against the contract, strictly."""
     top = _fields(data, PACKET_FIELDS, "the packet")
@@ -282,6 +308,7 @@ def resolve_readers(packet: ParsedPacket, assigned: Dict[str, str]) -> Dict[str,
     return users
 
 
+@sensitive_variables()
 def import_packet(
     packet: ParsedPacket, users: Dict[str, User], *, replace: bool = False
 ) -> ImportResult:
@@ -355,12 +382,17 @@ def _new_slugs(count: int) -> List[str]:
     return slugs
 
 
+@sensitive_variables()
 def export_labels(packet: LetterReviewPacket) -> Dict[str, Any]:
-    """The labels JSON for one packet, in reading order then by reader."""
+    """The labels JSON for one packet, in reading order then by reader.
+
+    Reads only the columns it writes: joining the whole item would load every
+    letter and prompt in the packet to get at their keys.
+    """
     labels = (
         LetterReviewLabel.objects.filter(item__packet=packet)
-        .select_related("item", "reader")
         .order_by("item__position", "reader__handle")
+        .values_list("item__key", "reader__handle", "verdict", "note", "labeled_at")
     )
     return {
         "packet": packet.name,
@@ -368,13 +400,13 @@ def export_labels(packet: LetterReviewPacket) -> Dict[str, Any]:
         "exported_at": timezone.now().isoformat(),
         "labels": [
             {
-                "key": label.item.key,
-                "reader": label.reader.handle,
-                "verdict": label.verdict,
-                "note": label.note,
-                "labeled_at": label.labeled_at.isoformat(),
+                "key": key,
+                "reader": reader,
+                "verdict": verdict,
+                "note": note,
+                "labeled_at": labeled_at.isoformat(),
             }
-            for label in labels
+            for key, reader, verdict, note, labeled_at in labels
         ],
     }
 
@@ -411,6 +443,7 @@ def items_for(reader: LetterReviewReader) -> "QuerySet[LetterReviewItem]":
     return LetterReviewItem.objects.filter(readers=reader).order_by("position")
 
 
+@sensitive_variables()
 def item_or_404(reader: LetterReviewReader, slug: str) -> LetterReviewItem:
     item = items_for(reader).filter(slug=slug).first()
     if item is None:
@@ -418,12 +451,14 @@ def item_or_404(reader: LetterReviewReader, slug: str) -> LetterReviewItem:
     return item
 
 
+@sensitive_variables()
 def own_label(
     reader: LetterReviewReader, item: LetterReviewItem
 ) -> Optional[LetterReviewLabel]:
     return LetterReviewLabel.objects.filter(reader=reader, item=item).first()
 
 
+@sensitive_variables()
 def save_label(
     reader: LetterReviewReader, item: LetterReviewItem, verdict: str, note: str
 ) -> LetterReviewLabel:
@@ -433,10 +468,12 @@ def save_label(
     return label
 
 
+@sensitive_variables()
 def next_unlabeled(reader: LetterReviewReader) -> Optional[LetterReviewItem]:
     return items_for(reader).exclude(labels__reader=reader).first()
 
 
+@sensitive_variables()
 def next_unlabeled_after(
     reader: LetterReviewReader, item: LetterReviewItem
 ) -> Optional[LetterReviewItem]:
@@ -458,6 +495,7 @@ def progress(reader: LetterReviewReader) -> Tuple[int, int]:
     return labeled, assigned
 
 
+@sensitive_variables()
 def neighbours(
     reader: LetterReviewReader, item: LetterReviewItem
 ) -> Tuple[int, Optional[str], Optional[str]]:
@@ -469,6 +507,7 @@ def neighbours(
     return index + 1, previous_slug, next_slug
 
 
+@sensitive_variables()
 def reader_letters(reader: LetterReviewReader) -> List[Dict[str, Any]]:
     """Each of the reader's letters in order, with their own mark or None.
 

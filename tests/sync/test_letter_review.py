@@ -5,8 +5,8 @@ real eval letters, denials and reader names never go in a test.
 
 Covers the import contract and its refusals, --replace, reader assignment
 to staff accounts, reader isolation on the pages, label save and update, the
-next/done flow, the export contract, delete, and that no command prints a
-letter or a prompt.
+next/done flow, the export contract, delete, that no command prints a
+letter or a prompt, and that no error report carries one, or a mark.
 """
 
 import copy
@@ -14,17 +14,18 @@ import datetime
 import json
 import os
 import tempfile
-from io import StringIO
-from typing import Any, Dict, Optional
+from io import BytesIO, StringIO, TextIOWrapper
+from typing import Any, Callable, Dict, List, Optional
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.test import SimpleTestCase, TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
-from django.views.debug import SafeExceptionReporterFilter
+from django.views.debug import ExceptionReporter, SafeExceptionReporterFilter
 
 from fighthealthinsurance import letter_review
 from fighthealthinsurance.models import (
@@ -139,10 +140,15 @@ class StaffUsersMixin:
 
 
 def _run_import(
-    data: Any, *assign: str, replace: bool = False, raw: Optional[str] = None
+    data: Any,
+    *assign: str,
+    replace: bool = False,
+    raw: Optional[str] = None,
+    stdin: Any = None,
 ):
     out, err = StringIO(), StringIO()
-    stdin = StringIO(raw if raw is not None else json.dumps(data))
+    if stdin is None:
+        stdin = StringIO(raw if raw is not None else json.dumps(data))
     args = ["letter_review_import", "--file", "-"]
     for pair in assign:
         args += ["--assign", pair]
@@ -311,6 +317,38 @@ class ImportRefusalTests(StaffUsersMixin, TestCase):
     def test_a_packet_name_with_a_newline_is_refused(self):
         self.assertRefused(_packet_data(packet="two\nlines"))
 
+    def test_text_with_a_lone_surrogate_is_refused(self):
+        # json.dumps writes it as the escape \ud800, which decodes to a
+        # string the database cannot encode.
+        lone = "SYNTH-LONE \ud800 surrogate"
+        for field, item in (
+            ("packet", None),
+            ("rule_version", None),
+            ("rule_text", None),
+            ("prompt", 1),
+            ("letter", 1),
+        ):
+            with self.subTest(field=field):
+                data = _packet_data()
+                (data if item is None else data["items"][item])[field] = lone
+                message = self.assertRefused(data)
+                self.assertIn(f"{field} has a character that is not valid", message)
+                self.assertNotIn("SYNTH-LONE", message)
+
+    def test_json_nested_too_deeply_is_refused_without_echoing_it(self):
+        depth = 100_000
+        raw = '{"packet": ' + "[" * depth + "]" * depth + "}"
+        message = self.assertRefused(None, raw=raw)
+        self.assertIn("nests too deeply", message)
+        self.assertNotIn("[[", message)
+
+    def test_a_number_too_long_to_read_is_refused_without_echoing_it(self):
+        # Past Python's limit on the digits it turns into an int.
+        raw = '{"packet": ' + "9" * 5_000 + "}"
+        message = self.assertRefused(None, raw=raw)
+        self.assertIn("number too long", message)
+        self.assertNotIn("999", message)
+
     def test_a_reader_without_an_assignment_is_refused(self):
         message = self.assertRefused(_packet_data(), "reader_a=staff_a")
         self.assertIn("reader_b", message)
@@ -359,6 +397,105 @@ class ImportRefusalTests(StaffUsersMixin, TestCase):
         self.assertEqual(LetterReviewPacket.objects.count(), 0)
         self.assertEqual(LetterReviewItem.objects.count(), 0)
         self.assertEqual(LetterReviewReader.objects.count(), 0)
+
+
+IMPORT_COMMAND = "fighthealthinsurance.management.commands.letter_review_import"
+
+
+class ImportSizeTests(StaffUsersMixin, TestCase):
+    """A packet over MAX_PACKET_BYTES is refused before any of it is decoded,
+    and the import never reads more than one past the limit."""
+
+    def setUp(self) -> None:
+        self.make_users()
+        self.raw = json.dumps(_packet_data())
+
+    def test_the_limit_fits_a_packet_at_every_field_limit(self):
+        handles = [f"reader_{n:02d}".ljust(64, "x") for n in range(20)]
+        item = {
+            "key": "k" * 64,
+            "prompt": "p" * letter_review.MAX_PROMPT,
+            "letter": "l" * letter_review.MAX_LETTER,
+            "readers": handles,
+        }
+
+        def size(items: int) -> int:
+            # Pretty-printed, so the indentation counts too.
+            top = _packet_data(
+                packet="n" * letter_review.MAX_NAME,
+                rule_version="v" * letter_review.MAX_RULE_VERSION,
+                rule_text="r" * letter_review.MAX_RULE_TEXT,
+                readers=handles,
+                items=[item] * items,
+            )
+            return len(json.dumps(top, indent=4))
+
+        per_item = size(2) - size(1)
+        largest = size(1) + (letter_review.MAX_ITEMS - 1) * per_item
+        self.assertLessEqual(largest, letter_review.MAX_PACKET_BYTES)
+
+    def test_a_packet_at_the_limit_is_read_a_chunk_at_a_time(self):
+        with patch(f"{IMPORT_COMMAND}.MAX_PACKET_BYTES", len(self.raw)):
+            with patch(f"{IMPORT_COMMAND}.READ_CHUNK", 7):
+                _run_import(None, *ASSIGN, raw=self.raw)
+        self.assertEqual(LetterReviewItem.objects.count(), 4)
+
+    def test_a_packet_over_the_limit_is_refused_before_it_is_decoded(self):
+        # Not JSON, so a refusal about size shows it never reached the decoder.
+        stdin = StringIO("{" * 10_000)
+        with patch(f"{IMPORT_COMMAND}.MAX_PACKET_BYTES", 100):
+            with self.assertRaises(CommandError) as ctx:
+                _run_import(None, *ASSIGN, stdin=stdin)
+        self.assertEqual(str(ctx.exception), "The packet is larger than 100 bytes")
+        self.assertEqual(stdin.tell(), 101, "read stops one past the limit")
+        self.assertEqual(LetterReviewPacket.objects.count(), 0)
+
+    def test_a_real_stdin_is_read_as_utf8_bytes(self):
+        data = _packet_data()
+        data["items"][0]["letter"] = "SYNTH-LETTER caf\u00e9"
+        raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        # The text layer would read the é as two latin-1 characters; the
+        # command reads the bytes under it, as UTF-8.
+        stdin = TextIOWrapper(BytesIO(raw), encoding="latin-1")
+        with patch(f"{IMPORT_COMMAND}.MAX_PACKET_BYTES", len(raw)):
+            _run_import(None, *ASSIGN, stdin=stdin)
+        self.assertEqual(
+            LetterReviewItem.objects.get(key=KEY_1).letter, data["items"][0]["letter"]
+        )
+
+    def test_a_real_stdin_over_the_limit_counts_bytes_not_characters(self):
+        data = _packet_data()
+        data["items"][0]["letter"] = "SYNTH-LETTER caf\u00e9"
+        raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        stdin = TextIOWrapper(BytesIO(raw), encoding="utf-8")
+        # As many characters as the limit allows, but one more byte: the é.
+        with patch(f"{IMPORT_COMMAND}.MAX_PACKET_BYTES", len(raw) - 1):
+            with self.assertRaises(CommandError) as ctx:
+                _run_import(None, *ASSIGN, stdin=stdin)
+        self.assertIn("larger than", str(ctx.exception))
+
+    def test_a_packet_file_over_the_limit_is_refused(self):
+        with tempfile.NamedTemporaryFile("wb", suffix=".json", delete=False) as fh:
+            fh.write(self.raw.encode("utf-8"))
+            path = fh.name
+        try:
+            with patch(f"{IMPORT_COMMAND}.MAX_PACKET_BYTES", len(self.raw) - 1):
+                with self.assertRaises(CommandError) as ctx:
+                    call_command(
+                        "letter_review_import",
+                        "--file",
+                        path,
+                        "--assign",
+                        ASSIGN[0],
+                        "--assign",
+                        ASSIGN[1],
+                        stdout=StringIO(),
+                        stderr=StringIO(),
+                    )
+        finally:
+            os.unlink(path)
+        self.assertIn("larger than", str(ctx.exception))
+        self.assertEqual(LetterReviewPacket.objects.count(), 0)
 
 
 class ReplaceTests(StaffUsersMixin, TestCase):
@@ -932,6 +1069,16 @@ class ExportTests(PageTestBase):
         for text in ALL_BODY_TEXT + (RULE_TEXT,):
             self.assertNotIn(text[:12], out + err)
 
+    def test_export_reads_no_letter_or_prompt(self):
+        with CaptureQueriesContext(connection) as queries:
+            data = letter_review.export_labels(self.packet)
+        self.assertEqual(len(data["labels"]), 3)
+        sql = "\n".join(query["sql"] for query in queries.captured_queries)
+        self.assertIn(LetterReviewLabel._meta.db_table, sql)
+        for name in ("letter", "prompt"):
+            column = LetterReviewItem._meta.get_field(name).column
+            self.assertNotIn(connection.ops.quote_name(column), sql)
+
     def test_export_of_an_unknown_packet_is_refused(self):
         with self.assertRaises(CommandError):
             call_command(
@@ -1088,6 +1235,123 @@ class DeleteTests(PageTestBase):
         self.assertIsNone(reader.user)
         data = letter_review.export_labels(self.packet)
         self.assertEqual([l["reader"] for l in data["labels"]], ["reader_a"])
+
+
+# ---------------------------------------------------------------------------
+# Error reports: the ADMINS email lists every frame's variables
+# ---------------------------------------------------------------------------
+
+STAFF_VIEWS = "fighthealthinsurance.staff_views"
+LETTER_REVIEW = "fighthealthinsurance.letter_review"
+LETTER_REVIEW_FILES = ("staff_views.py", "letter_review.py")
+
+# Every letter_review.py function that holds a letter, a prompt or a mark.
+SENSITIVE_HELPERS = (
+    "_fields",
+    "_long_text",
+    "parse_packet",
+    "import_packet",
+    "export_labels",
+    "item_or_404",
+    "own_label",
+    "save_label",
+    "next_unlabeled",
+    "next_unlabeled_after",
+    "neighbours",
+    "reader_letters",
+)
+
+
+class ErrorReportTests(PageTestBase):
+    """A failure on a letter review page, or in a helper holding a letter, a
+    prompt or a mark, blanks the variables of its frame and every frame under
+    it in the error report Django emails to ADMINS."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.label(self.reader_a, KEY_2, "fabricates", note="SYNTH-SECRET-NOTE")
+        self.client.force_login(self.staff_a)
+
+    def report_frames(
+        self, target: str, call: Callable[..., Any], *args: Any
+    ) -> List[Dict[str, Any]]:
+        """The error report's frames when ``target`` raises during ``call``.
+
+        Caught by hand: assertRaises drops the traceback the report reads.
+        """
+        error: Optional[BaseException] = None
+        with patch(target, side_effect=RuntimeError("synthetic failure")):
+            try:
+                call(*args)
+            except RuntimeError as raised:
+                error = raised
+        assert error is not None, f"{target} did not fail the call"
+        reporter = ExceptionReporter(
+            None, type(error), error, error.__traceback__, is_email=True
+        )
+        return reporter.get_traceback_frames()
+
+    def assertBlankedFromLetterReviewDown(self, frames: List[Dict[str, Any]]) -> None:
+        start = next(
+            (
+                index
+                for index, frame in enumerate(frames)
+                if os.path.basename(frame["filename"]) in LETTER_REVIEW_FILES
+            ),
+            None,
+        )
+        self.assertIsNotNone(start, "the failure passed through letter review code")
+        blank = SafeExceptionReporterFilter.cleansed_substitute
+        for frame in frames[start:]:
+            for name, value in frame["vars"]:
+                self.assertEqual(value, blank, f"{frame['function']}: {name}")
+
+    def test_a_failure_on_any_page_blanks_its_frames(self):
+        cases = [
+            ("index", f"{STAFF_VIEWS}.render", reverse("letter_review_index")),
+            ("next", f"{STAFF_VIEWS}.redirect", self.next_url()),
+            # reader_letters' second query, with the reader's marks loaded.
+            ("my letters, reading", f"{LETTER_REVIEW}.items_for", self.mine_url()),
+            ("my letters, rendering", f"{STAFF_VIEWS}.render", self.mine_url()),
+            ("done", f"{STAFF_VIEWS}.render", self.done_url()),
+            ("item", f"{STAFF_VIEWS}.render", self.item_url(KEY_2)),
+        ]
+        for page, target, url in cases:
+            with self.subTest(page=page):
+                frames = self.report_frames(target, self.client.get, url)
+                self.assertBlankedFromLetterReviewDown(frames)
+
+    def test_a_failure_after_saving_a_label_blanks_its_frames(self):
+        frames = self.report_frames(
+            f"{STAFF_VIEWS}.redirect",
+            self.client.post,
+            self.item_url(KEY_2),
+            {"verdict": "flag", "note": "SYNTH-SECRET-NOTE"},
+        )
+        self.assertBlankedFromLetterReviewDown(frames)
+
+    def test_a_failure_exporting_blanks_its_frames(self):
+        boss = User.objects.create_superuser(
+            username="synth_super", password="pw", email="super@example.com"
+        )
+        self.client.force_login(boss)
+        # After the labels JSON, notes and all, is built.
+        frames = self.report_frames(
+            f"{LETTER_REVIEW}.export_filename", self.client.get, self.export_url()
+        )
+        self.assertBlankedFromLetterReviewDown(frames)
+
+    def test_a_helper_blanks_its_frames_whoever_calls_it(self):
+        frames = self.report_frames(
+            f"{LETTER_REVIEW}.items_for", letter_review.reader_letters, self.reader_a
+        )
+        self.assertBlankedFromLetterReviewDown(frames)
+
+    def test_every_helper_holding_a_letter_prompt_or_mark_is_marked(self):
+        for name in SENSITIVE_HELPERS:
+            with self.subTest(helper=name):
+                code = getattr(letter_review, name).__code__
+                self.assertEqual(code.co_name, "sensitive_variables_wrapper")
 
 
 # ---------------------------------------------------------------------------

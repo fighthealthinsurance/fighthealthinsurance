@@ -16,7 +16,8 @@ Every reader the packet names needs exactly one ``--assign`` to an active
 staff account, by username or email. The packet is checked strictly before
 anything is written (exact fields, unique keys, every item reader a packet
 reader, sane lengths) and the write is one transaction, so a refused import
-leaves nothing behind. A packet name that already exists is refused unless
+leaves nothing behind. A file larger than MAX_PACKET_BYTES is refused before
+any of it is decoded. A packet name that already exists is refused unless
 ``--replace``, which deletes the old packet and its labels: export them first.
 
 Output names the packet, handles, accounts and counts. It never prints a
@@ -26,17 +27,20 @@ letter or a prompt.
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Union
 
 from django.core.management.base import BaseCommand, CommandError
 
 from fighthealthinsurance.letter_review import (
+    MAX_PACKET_BYTES,
     PacketError,
     import_packet,
     parse_assignments,
     parse_packet,
     resolve_readers,
 )
+
+READ_CHUNK = 1 << 20  # 1 MiB
 
 
 def _no_repeated_fields(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
@@ -83,15 +87,40 @@ class Command(BaseCommand):
             ),
         )
 
+    def _read(self, stream: Any) -> Union[bytes, str]:
+        """The stream's contents, refused once they pass MAX_PACKET_BYTES.
+
+        A chunk at a time, and never more than one past the limit in all: a
+        single read of the whole limit would set aside that much memory
+        before reading a byte, even for a small file.
+        """
+        chunks: List[Any] = []
+        size = 0
+        while size <= MAX_PACKET_BYTES:
+            chunk = stream.read(min(READ_CHUNK, MAX_PACKET_BYTES + 1 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+        if size > MAX_PACKET_BYTES:
+            raise CommandError(f"The packet is larger than {MAX_PACKET_BYTES} bytes")
+        if chunks and isinstance(chunks[0], bytes):
+            return b"".join(chunks)
+        return "".join(chunks)
+
     def _load(self, source: str, stdin: Any) -> Any:
         try:
             if source == "-":
-                return json.load(stdin, object_pairs_hook=_no_repeated_fields)
-            path = Path(source)
-            if not path.is_file():
-                raise CommandError(f"No packet file at {source}")
-            with path.open("r", encoding="utf-8") as fh:
-                return json.load(fh, object_pairs_hook=_no_repeated_fields)
+                # The bytes under a real stdin; a test's stdin is text.
+                raw = self._read(getattr(stdin, "buffer", stdin))
+            else:
+                path = Path(source)
+                if not path.is_file():
+                    raise CommandError(f"No packet file at {source}")
+                with path.open("rb") as fh:
+                    raw = self._read(fh)
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            return json.loads(text, object_pairs_hook=_no_repeated_fields)
         except json.JSONDecodeError as exc:
             # The reason and the position only, never the text around it.
             raise CommandError(
@@ -102,6 +131,17 @@ class Command(BaseCommand):
             raise CommandError("The packet is not UTF-8 text") from None
         except PacketError as exc:
             raise CommandError(str(exc)) from None
+        except RecursionError:
+            # Nesting deeper than the decoder recurses. Never the text.
+            raise CommandError(
+                "The packet is not valid JSON: it nests too deeply"
+            ) from None
+        except ValueError:
+            # An integer past Python's limit on digits: the ValueError left
+            # once the subclasses above are caught. Never the number itself.
+            raise CommandError(
+                "The packet is not valid JSON: it has a number too long to read"
+            ) from None
 
     def handle(self, *args: Any, **options: Any) -> None:
         source: str = options["file"]
