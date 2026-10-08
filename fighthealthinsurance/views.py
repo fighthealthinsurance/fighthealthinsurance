@@ -976,17 +976,16 @@ class ShareAppealView(View):
 
     def post(self, request):
         form = core_forms.ShareAppealForm(request.POST)
-        if form.is_valid():
-            denial_id = form.cleaned_data["denial_id"]
-            hashed_email = models.Denial.get_hashed_email(form.cleaned_data["email"])
-
-            # Update the denial
-            denial = models.Denial.objects.filter(
-                denial_id=denial_id,
-                # Include the hashed e-mail so folks can't brute force denial_id
-                hashed_email=hashed_email,
-            ).get()
-            logger.debug(form.cleaned_data)
+        if not form.is_valid():
+            return HttpResponse(status=400)
+        # The case's id, email and secret together, as ChooseAppealHelper
+        # checks them. The page is the same whether or not a case matches.
+        denial = models.Denial.objects.filter(
+            denial_id=form.cleaned_data["denial_id"],
+            hashed_email=models.Denial.get_hashed_email(form.cleaned_data["email"]),
+            semi_sekret=form.cleaned_data["semi_sekret"],
+        ).first()
+        if denial is not None:
             denial.appeal_text = form.cleaned_data["appeal_text"]
             denial.save()
             # arbitrary_text: what is shared may never have been a draft, so
@@ -997,7 +996,7 @@ class ShareAppealView(View):
                 editted=True,
                 arbitrary_text=True,
             )
-            return render(request, "thankyou.html")
+        return render(request, "thankyou.html")
 
 
 DELETE_CONFIRMATION_SUBJECT = (

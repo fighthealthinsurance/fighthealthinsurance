@@ -62,6 +62,7 @@ cancelling paid for nothing and stopped nothing. Say both plainly.
   {% csrf_token %}
   <input type="hidden" name="email" value="{{ user_email }}">
   <input type="hidden" name="denial_id" value="{{ denial_id }}">
+  {% if semi_sekret %}<input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">{% endif %}
   
   <textarea class="appeal_text fhi-field" name="appeal_text" id="scrubbed_appeal_text">
     {{appeal}}

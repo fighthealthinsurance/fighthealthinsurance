@@ -168,10 +168,36 @@ class TestShareAppealForm(TestCase):
             data={
                 "denial_id": 123,
                 "email": "test@example.com",
+                "semi_sekret": "sekret",
                 "appeal_text": "This is my appeal text.",
             }
         )
         self.assertTrue(form.is_valid())
+
+    def test_missing_semi_sekret(self):
+        """Missing semi_sekret should fail."""
+        form = ShareAppealForm(
+            data={
+                "denial_id": 123,
+                "email": "test@example.com",
+                "appeal_text": "This is my appeal text.",
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("semi_sekret", form.errors)
+
+    def test_appeal_text_over_the_cap(self):
+        """An appeal_text longer than APPEAL_TEXT_MAX_CHARS should fail."""
+        form = ShareAppealForm(
+            data={
+                "denial_id": 123,
+                "email": "test@example.com",
+                "semi_sekret": "sekret",
+                "appeal_text": "a" * (ShareAppealForm.APPEAL_TEXT_MAX_CHARS + 1),
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("appeal_text", form.errors)
 
     def test_missing_denial_id(self):
         """Missing denial_id should fail."""
