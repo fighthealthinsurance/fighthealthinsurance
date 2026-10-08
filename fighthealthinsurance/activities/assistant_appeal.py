@@ -123,7 +123,10 @@ async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
             fields.append("diagnosis")
         if fields:
             await denial.asave(update_fields=fields)
-        return True
+        # Agree may have stopped the draft while the letter was read. What
+        # the reading filled in stays on the case, for the site's own form.
+        await draft.arefresh_from_db(fields=["status"])
+        return not _stopped(draft)
 
 
 @activity.defn
@@ -204,7 +207,12 @@ async def finish_drafts(hashed_email: str, denial_uuid: str) -> str:
             return assistant_drafts.letters_status(denial, True)
 
         status = str(await database_sync_to_async(outcome)())
-        await _end(draft, status)
+        # Agree may have stopped the draft while the outcome was worked out;
+        # a stopped draft stays stopped and its generation goes back.
+        if not await _advance(draft, status):
+            status = assistant_drafts.STOPPED
+        if status in assistant_drafts.GIVES_BACK:
+            await database_sync_to_async(assistant_drafts.give_back_generation)(draft)
         return status
 
 

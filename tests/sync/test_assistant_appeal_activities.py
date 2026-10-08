@@ -152,6 +152,21 @@ class ReadLetterTest(ActivityTestBase):
         extract.assert_not_called()
         self.assert_still_stopped(draft)
 
+    def test_a_draft_stopped_while_its_letter_is_read_ends_the_run(self):
+        denial, draft = agreed_draft()
+
+        async def stops_while_reading(denial_id):
+            await AssistantDraft.objects.filter(pk=draft.pk).aupdate(
+                status=drafts.STOPPED, status_at=timezone.now()
+            )
+            yield "procedure"
+
+        self.assertFalse(self.read(denial, stops_while_reading))
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, drafts.STOPPED)
+        denial.refresh_from_db()
+        self.assertEqual((denial.procedure, denial.diagnosis), ("MRI", "back pain"))
+
     def test_a_run_that_finds_its_draft_stopped_reads_nothing_and_changes_nothing(
         self,
     ):
@@ -280,6 +295,36 @@ class FinishDraftsTest(ActivityTestBase):
         self.assertEqual(self.finish(denial), drafts.STOPPED)
         draft.refresh_from_db()
         self.assertEqual(draft.status, drafts.STOPPED)
+
+    def stops_then_says(self, draft, status):
+        """letters_status that stops the draft, as Agree would, before it
+        answers."""
+
+        def stop_then_answer(*args, **kwargs):
+            drafts.set_status(AssistantDraft.objects.get(pk=draft.pk), drafts.STOPPED)
+            return status
+
+        return patch.object(drafts, "letters_status", side_effect=stop_then_answer)
+
+    def test_a_draft_stopped_while_its_letters_are_checked_stays_stopped(self):
+        denial, draft = agreed_draft()
+        generation_lease.acquire(denial, generation_lease.new_holder("journey"))
+        ProposedAppeal.objects.create(for_denial=denial, appeal_text=LETTER)
+        with self.stops_then_says(draft, drafts.READY):
+            self.assertEqual(self.finish(denial), drafts.STOPPED)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, drafts.STOPPED)
+
+    def test_a_draft_stopped_while_its_letters_are_checked_gives_back(self):
+        denial, draft = agreed_draft()
+        generation_lease.acquire(denial, generation_lease.new_holder("journey"))
+        give_back = MagicMock(return_value=True)
+        with (
+            self.stops_then_says(draft, drafts.READY),
+            patch.object(drafts, "give_back_generation", give_back),
+        ):
+            self.assertEqual(self.finish(denial), drafts.STOPPED)
+        give_back.assert_called_once()
 
     def test_a_stopped_draft_stays_stopped_whatever_was_stored(self):
         denial, draft = stopped_draft()
