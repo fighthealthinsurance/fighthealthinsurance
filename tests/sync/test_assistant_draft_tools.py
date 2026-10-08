@@ -319,6 +319,12 @@ class ViewTest(TestCase):
             result["tell_the_person"], tools.TELL_READY + tools.TELL_SOME_CUT_SHORT
         )
 
+    def test_a_cut_short_note_says_the_email_may_not_have_come(self):
+        # The email with the link can fail to send, as the agree page says.
+        for note in (tools.TELL_ONE_CUT_SHORT, tools.TELL_SOME_CUT_SHORT):
+            with self.subTest(note=note):
+                self.assertIn("if they sent you one", note)
+
     def test_letters_not_cut_say_nothing_of_it(self):
         result = self._ready_with_cut_letters(0)
         self.assertEqual(result["tell_the_person"], tools.TELL_READY)

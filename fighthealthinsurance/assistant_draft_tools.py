@@ -62,14 +62,16 @@ TELL_READY = (
     "$0 is fine), use the link in your email."
 )
 # After TELL_READY when letters come back cut at drafts.LETTER_MAX_CHARS.
+# The email can fail to send (assistant_terms_views records whether it went).
 TELL_ONE_CUT_SHORT = (
     " One letter was too long to show here in full, so it stops partway. The "
-    "link in your email shows it in full on Fight Health Insurance's site."
+    "link in your email, if they sent you one, shows it in full on Fight "
+    "Health Insurance's site."
 )
 TELL_SOME_CUT_SHORT = (
     " Some letters were too long to show here in full, so they stop partway. "
-    "The link in your email shows them in full on Fight Health Insurance's "
-    "site."
+    "The link in your email, if they sent you one, shows them in full on "
+    "Fight Health Insurance's site."
 )
 # Before the status when answers came while no questions were waiting.
 TELL_ANSWERS_NOT_USED = (

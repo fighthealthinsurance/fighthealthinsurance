@@ -5,6 +5,7 @@ import json
 import os
 import random
 import re
+import time
 from datetime import timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -167,6 +168,7 @@ CITATIONS_MAIN_LISTED = (
     "[Pub. L. 111-148]",
     "[ERISA § 503]",
     "[See 42 C.F.R. §§ 438.210, 438.404]",
+    "[See 42 CFR 438.210 and 438.211]",
     "[Section 438.210]",
     "[Section 2.1]",
     "[Sec. 4.3]",
@@ -189,6 +191,7 @@ CITATIONS_MAIN_LISTED = (
     "[Smith and Jones, 2019]",
     "[Smith & Jones 2019b]",
     "[American Diabetes Association, 2023]",
+    "[American College of Physicians, 2023]",
     "[O'Brien (2018)]",
     "[Narang et al., 2017]",
     "[May et al., 2020]",
@@ -597,6 +600,19 @@ class QuestionsTest(TestCase):
             {"Is the MRI for an injury?": "No", long_question.strip(): "It's needed."},
         )
 
+    def test_answers_file_for_a_draft_stored_before_its_question_text_was(self):
+        # A draft asking when the question text was first kept on it has only
+        # name, kind, label and choices: the text comes from the denial.
+        denial = a_denial()
+        draft = asking(denial, [("Is the MRI for an injury?", "")])
+        draft.questions = [
+            {k: v for k, v in q.items() if k != "question"} for q in draft.questions
+        ]
+        draft.save(update_fields=["questions"])
+        drafts.file_answers(draft, [{"name": draft.questions[0]["name"], "value": "yes"}])
+        denial.refresh_from_db()
+        self.assertEqual(load_qa(denial), {"Is the MRI for an injury?": "Yes"})
+
     def test_an_answer_to_a_question_never_asked_is_refused_by_name(self):
         denial = a_denial()
         draft = asking(denial, [("Is the MRI for an injury?", "")])
@@ -899,6 +915,34 @@ class PlaceholdersTest(SimpleTestCase):
         self.assertEqual(
             drafts.placeholders_in("Ref [Dear [Your Name] Sir {{X}}] ok"),
             ["[Dear [Your Name] Sir {{X}}]"],
+        )
+
+    def _listed_within_a_second(self, letter):
+        started = time.perf_counter()
+        listed = drafts.placeholders_in(letter)
+        self.assertLess(time.perf_counter() - started, 1.0)
+        return listed
+
+    def test_a_long_bracket_with_many_joining_words_is_listed_at_once(self):
+        # The fax check stops for a bracket of up to 200 characters, and each
+        # one goes through the citation rules. A rule that read each "and",
+        # "of" and "the" two ways took seconds on this one, and the server
+        # stalled while it ran.
+        bracket = (
+            "[Name of the Doctor and the Name of the Clinic and the Address of "
+            "the Clinic and the Phone Number of the Clinic and the Fax Number "
+            "of the Clinic and the Name of the Plan/Insurer]"
+        )
+        self.assertEqual(
+            self._listed_within_a_second(f"Please send {bracket} today."), [bracket]
+        )
+
+    def test_a_long_bracket_with_a_run_of_section_numbers_is_listed_at_once(self):
+        # Section numbers with no spaces round each "and", which a rule could
+        # read as one section or as a list.
+        bracket = "[Date § " + "1and" * 24 + "1 x]"
+        self.assertEqual(
+            self._listed_within_a_second(f"Please send {bracket} today."), [bracket]
         )
 
     def test_a_bracket_with_a_fill_in_inside_is_never_a_citation(self):

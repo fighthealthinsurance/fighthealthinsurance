@@ -6,7 +6,9 @@ agrees to the terms on our site, and AssistantAppealWorkflow
 for the answers, and runs the same generation the site uses. The assistant
 collects the letters with a random id it holds; only the id's digest is
 stored. Nothing here returns letter text to anyone but through
-collect_letters, and nothing is kept past expires_at.
+collect_letters. Nothing is kept past expires_at but a draft whose answers
+are in and whose letters are not drafted yet, for up to ANSWERED_KEPT_FOR
+(sweep_expired).
 """
 
 import base64
@@ -100,6 +102,11 @@ _QUOTATION_NOTE = (
 # it: a fill-in that mentions a regulation or a year ([USC Specialist's
 # Name], [Month, 2018], [Current dose, e.g. 0.125 mg]) stays listed.
 #
+# Each rule must also read a text only one way. A bracket the fax check
+# stops for can run to 200 characters (placeholders_in), and a rule that can
+# read the same words two ways tries every mix of the two before it fails:
+# seconds to minutes on one bracket, with the server stalled meanwhile.
+#
 # [Id.], [Id. at 5], [Ibid., p. 12], [Ibid], and one or more quotation notes:
 # [Emphasis added; citations omitted]. A reference number or a list of them
 # ([1], [3, 4], [2-5]) needs no rule: _PLACEHOLDER never finds one, as it
@@ -110,18 +117,23 @@ _WHOLE_CITATION = re.compile(
     rf"|(?i:(?:{_QUOTATION_NOTE})(?:(?:\s*[,;]\s*|\s+)(?:and\s+)?(?:{_QUOTATION_NOTE}))*)"
     r"\.?"
 )
+# One section or a list of them: 438.210, 300gg-19, 1001(b)(2), "438.210 and
+# 438.211". A section stops before an "and" with a number after it, which
+# only the list's "and" can take, so "1and2" is read one way.
+_SECTION = r"\d(?:(?!and\s*\d)[\w.\-])*(?:\(\w+\))*"
+_SECTIONS = rf"{_SECTION}(?:\s*(?:,|and)\s*{_SECTION})*"
 # A regulation or statute, the whole bracket: [See 42 CFR 438.210], [Title 42
 # U.S.C. 300gg-19], [CMS NCD 220.2], [Medicare LCD L33822], [Pub. L.
 # 111-148], [ERISA § 503], [Section 438.210], [ACA Section 2719].
 _REGULATION = re.compile(
     r"(?:(?:See(?: also)?|Cf\.|Under|Per|Pursuant to)\s+)?(?:Title\s+)?(?:"
-    r"\d+\s+(?:CFR|C\.F\.R\.|U\.S\.C\.|USC)\s*§*\s*\d[\w.\-]*(?:\(\w+\))*"
-    r"(?:\s*(?:,|and)\s*\d[\w.\-]*(?:\(\w+\))*)*"
-    r"|(?:CMS\s+|Medicare\s+)?(?:NCD|LCD)\s+L?\d+(?:\.\d+)*"
+    r"\d+\s+(?:CFR|C\.F\.R\.|U\.S\.C\.|USC)\s*§*\s*"
+    + _SECTIONS
+    + r"|(?:CMS\s+|Medicare\s+)?(?:NCD|LCD)\s+L?\d+(?:\.\d+)*"
     r"|Pub\.\s?L\.\s?(?:No\.\s?)?\d+-\d+"
-    r"|(?:[A-Z][A-Za-z]{1,10}\s+)?§{1,2}\s*\d[\w.\-]*(?:\(\w+\))*"
-    r"(?:\s*(?:,|and)\s*\d[\w.\-]*(?:\(\w+\))*)*"
-    r"|(?:[A-Z]{2,6}\s+)?Sec(?:tion|\.)\s?\d+(?:\.\d+)*(?:\(\w+\))*"
+    r"|(?:[A-Z][A-Za-z]{1,10}\s+)?§{1,2}\s*"
+    + _SECTIONS
+    + r"|(?:[A-Z]{2,6}\s+)?Sec(?:tion|\.)\s?\d+(?:\.\d+)*(?:\(\w+\))*"
     r")"
 )
 # A reference marker with a capital: [Reference 1], [Refs. 2-4], [References
@@ -138,8 +150,11 @@ _REFERENCE_MARK = re.compile(
 # An author's word: letters of any script, with apostrophes, stops and
 # hyphens (O'Brien, García, Smith-Jones), never a digit or an underscore.
 _AUTHOR_WORD = r"[^\W\d_](?:[^\W\d_]|['’.\-])*"
+# _AUTHOR_WORD takes "and", "of", "for" and "the" too: named again beside it,
+# each could be read two ways (see above). _is_one_source lets them stay
+# lower case (_AUTHOR_JOINERS).
 _ONE_SOURCE = (
-    rf"{_AUTHOR_WORD}(?:,?\s+(?:{_AUTHOR_WORD}|and|&|of|for|the))*"
+    rf"{_AUTHOR_WORD}(?:,?\s+(?:{_AUTHOR_WORD}|&))*"
     r"(?:,?\s+et\s+al\.?)?(?:,?\s+\(?(?:19|20)\d\d[a-z]?\)?)?"
     r"(?:,?\s+pp?\.\s*\d[\d\-–]*)?"
 )
