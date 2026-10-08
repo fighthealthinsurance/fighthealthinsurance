@@ -259,9 +259,15 @@ class IntakeResumeForm(StyledWidgetsMixin, forms.Form):
 
 
 class ShareAppealForm(forms.Form):
+    # The same three fields as DenialRefForm: a case is found by its id, its
+    # email and its secret together, as ChooseAppealForm finds it.
     denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
     email = forms.CharField(required=True, widget=forms.HiddenInput())
-    appeal_text = forms.CharField(required=True)
+    semi_sekret = forms.CharField(required=True, widget=forms.HiddenInput())
+    # The most the assistant's prepare_appeal takes for a letter
+    # (mcp_server.LETTER_MAX_CHARS), well past any real appeal.
+    APPEAL_TEXT_MAX_CHARS = 20_000
+    appeal_text = forms.CharField(required=True, max_length=APPEAL_TEXT_MAX_CHARS)
 
 
 class BaseDenialForm(forms.Form):
