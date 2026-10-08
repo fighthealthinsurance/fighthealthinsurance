@@ -507,10 +507,10 @@
     "medicaid": {
       "agency_name": "Georgia Department of Community Health (Georgia Medicaid)",
       "agency_url": "https://medicaid.georgia.gov/",
-      "agency_phone": "866-322-4260",
+      "agency_phone": "866-211-0950",
       "managed_care_ombudsman": {
-        "name": "Georgia Medicaid Member Ombudsman",
-        "phone": "866-322-4260",
+        "name": "Georgia Medicaid Member Services",
+        "phone": "866-211-0950",
         "url": "https://medicaid.georgia.gov/contact-georgia-medicaid"
       }
     },
@@ -673,10 +673,10 @@
     "medicaid": {
       "agency_name": "Indiana Family and Social Services Administration",
       "agency_url": "https://www.in.gov/fssa/ompp/",
-      "agency_phone": "800-403-0864",
+      "agency_phone": "800-457-4584",
       "managed_care_ombudsman": {
-        "name": "Indiana Medicaid Ombudsman",
-        "phone": "800-403-0864",
+        "name": "Indiana Medicaid Member Services",
+        "phone": "800-457-4584",
         "url": "https://www.in.gov/medicaid/members/member-resources/"
       }
     },
@@ -2038,8 +2038,8 @@
       "complaint_url": "https://www.insurance.wa.gov/file-complaint-or-check-your-complaint-status"
     },
     "consumer_assistance": {
-      "cap_name": "Washington Statewide Health Insurance Benefits Advisors (SHIBA)",
-      "cap_url": "https://www.insurance.wa.gov/insurance-resources/medicare/get-free-medicare-help-shiba",
+      "cap_name": "Washington Office of the Insurance Commissioner, Consumer Advocacy",
+      "cap_url": "https://www.insurance.wa.gov/ask-insurance-expert",
       "cap_phone": "800-562-6900",
       "ship_name": "Statewide Health Insurance Benefits Advisors (SHIBA)",
       "ship_url": "https://www.insurance.wa.gov/get-help-medicare",
@@ -2164,7 +2164,7 @@
       "url": "https://doi.wyo.gov/",
       "phone": "307-777-7401",
       "consumer_line": "800-438-5768",
-      "complaint_url": "https://doi.wyo.gov/consumers/consumer-affairs-contact"
+      "complaint_url": "https://doi.wyo.gov/consumers/information"
     },
     "consumer_assistance": {
       "cap_name": "Wyoming Department of Insurance Consumer Assistance",
