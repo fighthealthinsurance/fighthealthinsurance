@@ -516,9 +516,12 @@ def collect_letters(denial: Denial) -> list[dict[str, Any]]:
     """The letters the site would show, as the assistant gets them.
 
     The rows the appeal page replays, less the chosen copies: real text,
-    each distinct text once, with the denial's own values substituted,
-    newest first, at most three, each without invisible controls and cut at
-    LETTER_MAX_CHARS with the placeholders still in it listed.
+    each distinct text once, with the denial's own values substituted and
+    today's date on the date line (substitute_appeal_fields, as on the
+    page), and each letter that reads the same after that once too (drafts
+    that differ only in their date line), newest first, at most three, each
+    without invisible controls and cut at LETTER_MAX_CHARS with the
+    placeholders still in it listed.
     """
     from fighthealthinsurance.appeal_fingerprints import fingerprint_text
     from fighthealthinsurance.common_view_logic import (
@@ -533,11 +536,12 @@ def collect_letters(denial: Denial) -> list[dict[str, Any]]:
     for text in rows.values_list("appeal_text", flat=True):
         if not is_real_appeal(text):
             continue
-        fingerprint = fingerprint_text(text) or text.strip()
-        if fingerprint in seen:
-            continue
-        seen.add(fingerprint)
+        stored = fingerprint_text(text) or text.strip()
         content = strip_invisible_controls(substitute_appeal_fields(denial, text))
+        shown = fingerprint_text(content) or content.strip()
+        if stored in seen or shown in seen:
+            continue
+        seen.update((stored, shown))
         cut = len(content) > LETTER_MAX_CHARS
         content = content[:LETTER_MAX_CHARS]
         letters.append(
