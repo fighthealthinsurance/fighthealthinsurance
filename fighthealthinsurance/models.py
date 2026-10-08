@@ -5284,6 +5284,14 @@ class AssistantDraft(models.Model):
     condition = models.CharField(max_length=80, blank=True, default="")
     expires_at = models.DateTimeField(db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # The generation taken on agree, given back if the run delivers no letters.
+    spend_reservation = models.ForeignKey(
+        SpendReservation,
+        on_delete=models.SET_NULL,
+        related_name="assistant_drafts",
+        null=True,
+        blank=True,
+    )
 
     def __str__(self) -> str:
         return f"AssistantDraft({self.pk}, denial {self.denial_id}, {self.status})"
