@@ -6,7 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from fighthealthinsurance import pubmed_tools
 from fighthealthinsurance.pubmed_tools import PubMedTools
+from tests.pdf_fixtures import (
+    make_pdf_bytes,
+    make_shared_long_string_pdf_bytes,
+    make_shared_stream_pdf_bytes,
+)
 
 
 @pytest.fixture
@@ -21,14 +27,24 @@ def _make_mock_response(
     content=b"",
     content_type="text/html",
     url="https://example.com",
+    content_length=None,
 ):
     """Create a mock aiohttp response with async context manager support."""
     resp = AsyncMock()
     resp.status = status
     resp.headers = {"Content-Type": content_type}
+    if content_length is not None:
+        resp.headers["Content-Length"] = str(content_length)
     resp.json = AsyncMock(return_value=json_data or {})
     resp.text = AsyncMock(return_value=text_data)
     resp.read = AsyncMock(return_value=content)
+
+    async def iter_chunked(size):
+        for start in range(0, len(content), size):
+            yield content[start : start + size]
+
+    resp.content = MagicMock()
+    resp.content.iter_chunked = iter_chunked
     resp.url = url
     resp.raise_for_status = MagicMock()
     if status >= 400:
@@ -559,13 +575,81 @@ class TestFetchTextFromUrl:
         )
         assert result == ""
 
+    async def test_extracts_text_from_pdf_response(self, tools):
+        resp = _make_mock_response(
+            content=make_pdf_bytes(["Methods section", "Results section"]),
+            content_type="application/pdf",
+        )
+        session = _make_mock_session(responses=[resp])
+        result = await tools._fetch_text_from_url(
+            "https://example.com/paper.pdf", session
+        )
+        assert "Methods section" in result
+        assert "Results section" in result
+
+    async def test_pdf_body_over_the_byte_cap_returns_empty(self, tools):
+        resp = _make_mock_response(
+            content=make_pdf_bytes(["Article body"]),
+            content_type="application/pdf",
+        )
+        session = _make_mock_session(responses=[resp])
+        with patch.object(pubmed_tools, "_PDF_MAX_BYTES", 100):
+            result = await tools._fetch_text_from_url(
+                "https://example.com/paper.pdf", session
+            )
+        assert result == ""
+
+    async def test_pdf_reading_stops_at_the_page_cap(self, tools):
+        resp = _make_mock_response(
+            content=make_pdf_bytes(["Page one", "Page two", "Page three"]),
+            content_type="application/pdf",
+        )
+        session = _make_mock_session(responses=[resp])
+        with patch.object(pubmed_tools, "_PDF_MAX_PAGES", 2):
+            result = await tools._fetch_text_from_url(
+                "https://example.com/paper.pdf", session
+            )
+        assert "Page two" in result
+        assert "Page three" not in result
+
+    async def test_pdf_text_stops_at_the_character_cap(self, tools):
+        # Pages that share one string of 500,000 letters.
+        resp = _make_mock_response(
+            content=make_shared_long_string_pdf_bytes(
+                page_count=50, string_length=500_000
+            ),
+            content_type="application/pdf",
+        )
+        session = _make_mock_session(responses=[resp])
+        with patch.object(pubmed_tools, "_PDF_MAX_TEXT_CHARS", 1000):
+            result = await tools._fetch_text_from_url(
+                "https://example.com/paper.pdf", session
+            )
+        assert 0 < len(result) <= 1000
+
+    async def test_slow_pdf_parse_returns_empty_at_the_timeout(self, tools):
+        # Pages that share one long content stream: far more than half a
+        # second of parsing.
+        resp = _make_mock_response(
+            content=make_shared_stream_pdf_bytes(
+                page_count=100, text_operations=50_000
+            ),
+            content_type="application/pdf",
+        )
+        session = _make_mock_session(responses=[resp])
+        with patch.object(pubmed_tools, "_PDF_READ_TIMEOUT_SECS", 0.5):
+            result = await tools._fetch_text_from_url(
+                "https://example.com/paper.pdf", session
+            )
+        assert result == ""
+
 
 @pytest.mark.asyncio
 class TestTryFetchPdfToFile:
     """Tests for _try_fetch_pdf_to_file method."""
 
     async def test_saves_pdf_to_temp_file(self, tools):
-        pdf_content = b"%PDF-1.4 " + b"x" * 600
+        pdf_content = make_pdf_bytes(["Supporting study"])
         resp = _make_mock_response(content=pdf_content, content_type="application/pdf")
         session = _make_mock_session(responses=[resp])
         result = await tools._try_fetch_pdf_to_file(
@@ -596,6 +680,12 @@ class TestTryFetchPdfToFile:
                 "application/pdf",
                 200,
             ),
+            (
+                "https://example.com/paper.pdf",
+                b"%PDF-1.4 " + b"x" * 600,
+                "application/pdf",
+                200,
+            ),
         ],
     )
     async def test_returns_none_on_invalid(
@@ -607,6 +697,47 @@ class TestTryFetchPdfToFile:
         session = _make_mock_session(responses=[resp])
         result = await tools._try_fetch_pdf_to_file(url, "test_", session)
         assert result is None
+
+    async def test_returns_none_for_pdf_over_the_page_cap(self, tools):
+        resp = _make_mock_response(
+            content=make_pdf_bytes(["Page one", "Page two", "Page three"]),
+            content_type="application/pdf",
+        )
+        session = _make_mock_session(responses=[resp])
+        with patch.object(pubmed_tools, "_PDF_MAX_PAGES", 2):
+            result = await tools._try_fetch_pdf_to_file(
+                "https://example.com/paper.pdf", "test_", session
+            )
+        assert result is None
+
+    async def test_returns_none_for_body_over_the_byte_cap(self, tools):
+        resp = _make_mock_response(
+            content=make_pdf_bytes(["Supporting study"]),
+            content_type="application/pdf",
+        )
+        session = _make_mock_session(responses=[resp])
+        with patch.object(pubmed_tools, "_PDF_MAX_BYTES", 600):
+            result = await tools._try_fetch_pdf_to_file(
+                "https://example.com/paper.pdf", "test_", session
+            )
+        assert result is None
+
+    async def test_returns_none_without_reading_a_body_declared_over_the_cap(
+        self, tools
+    ):
+        resp = _make_mock_response(
+            content=make_pdf_bytes(["Supporting study"]),
+            content_type="application/pdf",
+            content_length=10_000_000,
+        )
+        resp.content.iter_chunked = MagicMock(side_effect=AssertionError("read"))
+        session = _make_mock_session(responses=[resp])
+        with patch.object(pubmed_tools, "_PDF_MAX_BYTES", 1_000_000):
+            result = await tools._try_fetch_pdf_to_file(
+                "https://example.com/paper.pdf", "test_", session
+            )
+        assert result is None
+        resp.content.iter_chunked.assert_not_called()
 
 
 @pytest.mark.asyncio

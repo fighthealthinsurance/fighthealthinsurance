@@ -61,8 +61,8 @@ from fighthealthinsurance.denial_history_consent import (
     history_may_be_used,
 )
 from fighthealthinsurance.appeal_fingerprints import fingerprint_text
+from fighthealthinsurance.pdf_text import amerge_pdfs
 from loguru import logger
-from PyPDF2 import PdfMerger
 from stopit.utils import TimeoutException
 
 from fhi_users import emails as fhi_emails
@@ -252,6 +252,10 @@ class NextStepInfo:
 
 
 class AppealAssemblyHelper:
+    # How long merging an appeal's parts into one PDF may take. The merge runs
+    # in a child process that is stopped at this limit (see pdf_text).
+    PDF_MERGE_TIMEOUT_SECS = 60.0
+
     async def _convert_input(self, input_path: str) -> Optional[str]:
         if input_path.endswith(".pdf"):
             return input_path
@@ -299,16 +303,15 @@ class AppealAssemblyHelper:
         self, user_header: str, extra: str, input_paths: list[str], target: str
     ) -> str:
         """Assembles all the inputs into one output. Will need to be chunked."""
-        merger = PdfMerger()
         converted_paths = await asyncio.gather(
             *(self._convert_input(path) for path in input_paths)
         )
 
-        for pdf_path in filter(None, converted_paths):
-            merger.append(pdf_path)
-
-        merger.write(target)
-        merger.close()
+        await amerge_pdfs(
+            [pdf_path for pdf_path in converted_paths if pdf_path],
+            target,
+            self.PDF_MERGE_TIMEOUT_SECS,
+        )
         return target
 
     def create_or_update_appeal(
