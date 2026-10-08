@@ -5331,3 +5331,136 @@ class AssistantContinueLink(models.Model):
 
     def __str__(self) -> str:
         return f"AssistantContinueLink({self.pk}, denial {self.denial_id})"
+
+
+# Staff letter review (letter_review.py, /timbit/help/letter_review/).
+#
+# Two staff readers label appeal letters from a model eval, blind, against a
+# fabrication rule. A packet arrives from the private eval repo through
+# `manage.py letter_review_import` and the labels leave through
+# `letter_review_export`. The letters are de-identified eval cases, never a
+# person's appeal, so these tables stand apart from the appeal data: nothing
+# here points at Denial or any patient row, none of it is in the admin, and
+# no Denial-based export or RemoveDataHelper reads it. No model name, judge
+# or score is ever stored, so the pages cannot show one.
+
+LETTER_REVIEW_VERDICTS = (
+    ("fabricates", "Fabricates"),
+    ("flag", "Flag"),
+    ("clean", "Clean"),
+)
+LETTER_REVIEW_NOTE_MAX = 2000
+
+
+class LetterReviewPacket(models.Model):
+    """One packet of eval letters and the rule they are read against."""
+
+    name = models.CharField(max_length=200, unique=True)
+    rule_version = models.CharField(max_length=100)
+    rule_text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"LetterReviewPacket({self.pk}, {self.name})"
+
+
+class LetterReviewReader(models.Model):
+    """A reader's handle on one packet, tied to the staff account that reads.
+
+    The account is SET_NULL rather than PROTECT: a review must never stop a
+    staff account from being deleted, and the export keys each label on the
+    handle, so the labels a reader already made keep their name. A reader
+    with no account matches no request, so nobody inherits their items.
+    """
+
+    packet = models.ForeignKey(
+        LetterReviewPacket, on_delete=models.CASCADE, related_name="readers"
+    )
+    handle = models.CharField(max_length=64)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["packet", "handle"], name="letter_review_reader_handle"
+            ),
+            models.UniqueConstraint(
+                fields=["packet", "user"], name="letter_review_reader_user"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"LetterReviewReader({self.pk}, {self.handle})"
+
+
+class LetterReviewItem(models.Model):
+    """One letter and the input its writer saw, in a stable reading order.
+
+    ``key`` is the eval repo's name for the item and only ever leaves through
+    the export. The pages address an item by ``slug``, minted at import and
+    meaningless, so a key that names a model or a case cannot reach a
+    reader's address bar.
+
+    prompt and letter are stored as plain text, not encrypted. The cases are
+    de-identified eval data, not anyone's appeal; encrypting them (the app's
+    Cryptographer, keyed by DEFF_SALT and DEFF_PASSWORD, could) is a choice
+    still open, not something the app lacks.
+    """
+
+    packet = models.ForeignKey(
+        LetterReviewPacket, on_delete=models.CASCADE, related_name="items"
+    )
+    key = models.CharField(max_length=64)
+    slug = models.CharField(max_length=32)
+    prompt = models.TextField()
+    letter = models.TextField()
+    position = models.PositiveIntegerField()
+    readers = models.ManyToManyField(LetterReviewReader, related_name="items")
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["packet", "key"], name="letter_review_item_key"
+            ),
+            models.UniqueConstraint(
+                fields=["packet", "position"], name="letter_review_item_position"
+            ),
+            models.UniqueConstraint(
+                fields=["packet", "slug"], name="letter_review_item_slug"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"LetterReviewItem({self.pk}, position {self.position})"
+
+
+class LetterReviewLabel(models.Model):
+    """One reader's verdict on one letter. Only that reader ever sees it."""
+
+    item = models.ForeignKey(
+        LetterReviewItem, on_delete=models.CASCADE, related_name="labels"
+    )
+    reader = models.ForeignKey(
+        LetterReviewReader, on_delete=models.CASCADE, related_name="labels"
+    )
+    verdict = models.CharField(max_length=16, choices=LETTER_REVIEW_VERDICTS)
+    note = models.TextField(max_length=LETTER_REVIEW_NOTE_MAX, blank=True, default="")
+    labeled_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["item", "reader"], name="letter_review_label_once"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"LetterReviewLabel({self.pk}, item {self.item_id})"

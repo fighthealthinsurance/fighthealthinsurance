@@ -181,6 +181,37 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         staff_member_required(staff_views.ProConnectorExtractCSVView.as_view()),
         name="proconnector_extract_csv",
     ),
+    # Letter review (letter_review.py): staff label eval letters, blind.
+    path(
+        "timbit/help/letter_review/",
+        staff_member_required(staff_views.LetterReviewIndexView.as_view()),
+        name="letter_review_index",
+    ),
+    path(
+        "timbit/help/letter_review/<int:packet_id>/next",
+        staff_member_required(staff_views.LetterReviewNextView.as_view()),
+        name="letter_review_next",
+    ),
+    path(
+        "timbit/help/letter_review/<int:packet_id>/done",
+        staff_member_required(staff_views.LetterReviewDoneView.as_view()),
+        name="letter_review_done",
+    ),
+    path(
+        "timbit/help/letter_review/<int:packet_id>/mine",
+        staff_member_required(staff_views.LetterReviewMineView.as_view()),
+        name="letter_review_mine",
+    ),
+    path(
+        "timbit/help/letter_review/<int:packet_id>/item/<slug:slug>",
+        staff_member_required(staff_views.LetterReviewItemView.as_view()),
+        name="letter_review_item",
+    ),
+    path(
+        "timbit/help/letter_review/<int:packet_id>/labels.json",
+        staff_member_required(staff_views.LetterReviewExportView.as_view()),
+        name="letter_review_export",
+    ),
     # Authentication
     path("v0/auth/", include("fhi_users.urls")),
     # stripe integration (TODO webhooks go here)
