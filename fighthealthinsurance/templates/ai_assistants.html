@@ -107,6 +107,7 @@
             <p>Add this address to your assistant as a custom connector:</p>
             <p class="ai-address"><code>https://www.fighthealthinsurance.com/mcp</code></p>
             <p>Step by step: <a class="link" href="#claude">Claude</a> &middot; <a class="link" href="#chatgpt">ChatGPT</a> &middot; <a class="link" href="#other-assistants">Other apps</a></p>
+            <p>Added us before October 7, 2026? Refresh the connector, or remove and add it again, so your assistant sees the newer tools.</p>
         </section>
 
         <section class="fhi-stack" id="claude">
@@ -162,8 +163,7 @@
 
         <section class="fhi-stack" id="chatgpt">
             <h2>Set it up in ChatGPT</h2>
-            {# PLAN LINE TODO: after testing on a Plus account, add one of these after the first sentence. If Plus gets all 14 tools: "It works on paid plans: Plus, Pro, Business, Enterprise and Edu." If Plus or Pro gets only the look-ups: "On Plus and Pro, ChatGPT may offer only the look-up tools. Starting an appeal from the chat needs Business, Enterprise or Edu." #}
-            <p>You add it in ChatGPT on the web, as a custom MCP server. It needs a paid ChatGPT plan. On a Business, Enterprise or Edu workspace, your admin may need to allow custom MCP servers first. OpenAI has been moving these menus around, so yours may look a little different.</p>
+            <p>You add it in ChatGPT on the web, as a custom MCP server. It works on paid plans: Plus, Pro, Business, Enterprise and Edu. On a Business, Enterprise or Edu workspace, your admin may need to allow custom MCP servers first. OpenAI has been moving these menus around, so yours may look a little different.</p>
             <ol class="ai-steps">
                 <li>
                     Open ChatGPT's <b>Plugins</b> page (<a class="link" href="https://chatgpt.com/plugins">chatgpt.com/plugins</a>). Press <b>Add</b>, or <b>+</b>, and choose <b>Create custom MCP server</b>. It may say <b>Add custom MCP server</b>.
@@ -346,7 +346,7 @@
                 {% if prepare_appeal_on %}
                 <ul>
                     <li>We keep what your assistant sent encrypted, with a key only the link carries. {% if chat_path_on %}We delete it when you press <b>Open my appeal form</b> (to finish on our site) or <b>Agree</b> or <b>Finish on this site instead</b> (for letters in your chat), or soon after the two hours if you don't.{% else %}We delete it when you press <b>Open my appeal form</b>, or soon after the two hours if you don't.{% endif %} Database backups made before then keep a locked copy, which can't be opened without the link, until the backups expire.</li>
-                    <li>{% if chat_path_on %}When you agree on our page, or submit our form,{% else %}When you submit our form,{% endif %} the letter in the box becomes an appeal we keep, like any appeal made on this site. We use appeals to improve our AI, and people on our team may read them.{% if chat_path_on %} When you agree, we also keep the few words your assistant sent on what was denied and the condition, and add them to your appeal when the letter doesn't say. They don't show on our page, so check them in your chat before you say yes.{% endif %}</li>
+                    <li>{% if chat_path_on %}When you agree on our page, or submit our form,{% else %}When you submit our form,{% endif %} the letter in the box becomes an appeal we keep, like any appeal made on this site. We use appeals to improve our AI, and people on our team may read them.{% if chat_path_on %} When you agree, we also keep the few words your assistant sent on what was denied and the condition, and add them to your appeal when the letter doesn't say. They show on our page under the letter, where you can change or clear them.{% endif %}</li>
                     <li>We keep a record of the boxes you ticked and which versions of our terms and privacy policy you agreed to, as we do for every appeal.{% if chat_path_on %} When letters are drafted for your chat, that record also says who the appeal is for, and we keep your answers to our questions with the appeal.{% endif %}</li>
                     <li>With your appeal we keep a scrambled version of your email (a hash), so you can ask us to remove your data later{% if chat_path_on %} and so the emailed link can check it's you{% endif %}. If you tick <b>Keep my email</b>, we keep your real email so we can check in about your appeal. If you tick <b>Send me news</b>, we keep your name and email for our mailing list. On our usual form, choosing follow-ups or our fax service also keeps your real email.</li>
                     <li>"Use outside AI services to get more appeal drafts" is ticked by default on our page. While it's ticked, your letter is also shared with those services, under their own terms. You can untick it.</li>
