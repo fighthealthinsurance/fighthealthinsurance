@@ -204,7 +204,13 @@ class AssistantHandoffView(View):
             if peek is None:
                 return self._landing(request, dead=True)
             if assistant_terms_views.opens_terms_page(peek):
-                return assistant_terms_views.render_terms(request, token, peek.letter)
+                return assistant_terms_views.render_terms(
+                    request,
+                    token,
+                    peek.letter,
+                    procedure=peek.procedure,
+                    condition=peek.condition,
+                )
         content = claim_handoff(token, binder=binder)
         if content is None:
             return self._landing(request, dead=True)

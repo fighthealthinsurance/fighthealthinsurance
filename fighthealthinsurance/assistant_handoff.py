@@ -36,6 +36,7 @@ import hashlib
 import json
 import re
 import secrets
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Iterable, Iterator, Optional
@@ -52,6 +53,7 @@ from prometheus_client.core import GaugeMetricFamily, Metric
 from prometheus_client.registry import Collector
 
 from fighthealthinsurance.models import AssistantHandoff
+from fighthealthinsurance.utils import strip_invisible_controls
 
 HANDOFF_TTL = timedelta(hours=2)
 # secrets.token_urlsafe(32): 256 bits, 43 URL-safe characters.
@@ -73,6 +75,11 @@ CLIENT_LABEL_MAX = 40
 # Letters, digits and the punctuation a product name and version use, so a
 # User-Agent like "openai-mcp/1.0.0 (Codex)" keeps its shape.
 _CLIENT_LABEL_OK = re.compile(r"[^A-Za-z0-9 ._()/-]")
+# Control characters (Unicode Cc) other than tab and newline, and lone
+# surrogates (Cs), which a JSON body's "\ud800" escape can carry and UTF-8
+# can't encode: kept, one would break the page that shows the letter. Line
+# endings are made "\n" first, so a carriage return never reaches this.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\ud800-\udfff]")
 # Rows made in this window and still in the table count toward
 # MCP_PREPARE_APPEAL_MAX_PER_MINUTE. Opening a link deletes its row, so this
 # caps links made and not yet opened in the last minute, not every link made:
@@ -176,6 +183,27 @@ def client_label(name: object) -> str:
     if not isinstance(name, str):
         return ""
     return _CLIENT_LABEL_OK.sub("", name).strip()[:CLIENT_LABEL_MAX]
+
+
+def clean_text(text: str) -> str:
+    """Consistent line endings, no control characters but newline and tab,
+    no lone surrogates, and no leading or trailing space."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return _CONTROL_CHARS.sub("", text).strip()
+
+
+def one_line(text: str) -> str:
+    """A few words naming a treatment or a condition, the way prepare_appeal
+    and the chat path's terms page both keep them: clean_text, without
+    format characters (Unicode Cf) or utils.INVISIBLE_CONTROLS, and each run
+    of whitespace, a line break too, as one space.
+
+    Invisible characters such as U+202E, which reverses how the text after
+    it reads, have no place in a few words. prepare_appeal refuses a line
+    break before it gets here; a form field just has it as a space."""
+    text = strip_invisible_controls(clean_text(text))
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    return " ".join(text.split())
 
 
 def sweep_expired(now: Optional[datetime] = None) -> int:

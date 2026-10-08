@@ -69,7 +69,6 @@ import logging
 import time
 import os
 import re
-import unicodedata
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from datetime import timezone as dt_timezone
@@ -1507,40 +1506,24 @@ def _tell_the_person(letter_characters: int, treatment: str, diagnosis: str) -> 
     )
 
 
-# Control characters (Unicode Cc) other than tab and newline, and lone
-# surrogates (Cs), which a JSON body's "\ud800" escape can carry and UTF-8
-# can't encode: kept, one would break the page that shows the letter. Line
-# endings are made "\n" first, so a carriage return never reaches this.
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\ud800-\udfff]")
-
-
-def _clean_text(text: str) -> str:
-    """Consistent line endings, no control characters but newline and tab,
-    no lone surrogates, and no leading or trailing space."""
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    return _CONTROL_CHARS.sub("", text).strip()
-
-
 def _clean_letter(text: str) -> str:
-    """A letter for prepare_appeal: _clean_text, and with handoff v2 on, no
-    invisible controls either (text in a v1 link is kept as it was)."""
-    text = _clean_text(text)
+    """A letter for prepare_appeal: assistant_handoff.clean_text, and with
+    handoff v2 on, no invisible controls either (text in a v1 link is kept
+    as it was)."""
+    text = assistant_handoff.clean_text(text)
     if assistant_handoff.v2_enabled():
         text = strip_invisible_controls(text).strip()
     return text
 
 
 def _one_line(field: str, value: Optional[str]) -> str:
-    """A short optional field, cleaned, on one line, or "" when not given.
-
-    Also without format characters (Unicode Cf): invisible ones such as
-    U+202E, which reverses how the text after it reads, have no place in a
-    few words naming a treatment or a condition."""
-    text = _clean_text(value or "")
+    """A short optional field, cleaned, on one line, or "" when not given:
+    assistant_handoff.one_line, which the terms page's two fields go through
+    too. A line break is refused here rather than joined."""
+    text = assistant_handoff.clean_text(value or "")
     if "\n" in text:
         raise ToolError(f"{field} must be one line, a few words.")
-    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
-    return " ".join(text.split())
+    return assistant_handoff.one_line(text)
 
 
 def prepare_appeal_enabled() -> bool:

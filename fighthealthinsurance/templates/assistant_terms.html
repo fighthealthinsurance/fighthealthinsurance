@@ -7,7 +7,9 @@ The terms page an assistant's chat link opens (assistant_terms_views.py). The
 view renders it with no_third_party_scripts; the only outside script is the
 reCAPTCHA widget, when it is on. The letter box, About you, the four boxes and
 the optional choices are the intake page's own (scrub.html), so scrub.ts runs
-here unchanged.
+here unchanged. The two short fields under the letter are this page's own;
+their ids don't start with store_, so scrub.ts doesn't keep them in the
+browser or take their words out of the letter.
 {% endcomment %}
 {% block title %}
 {% if form.errors %}Error: {% endif %}Agree to get your appeal letters
@@ -75,15 +77,17 @@ here unchanged.
       }
     });
   })();
-  // "Finish on this site instead" takes the letter, email, ZIP and the
-  // optional choices as they are now on the page.
+  // "Finish on this site instead" takes the letter, email, ZIP, what was
+  // denied, the condition and the optional choices as they are now on the
+  // page. Without this script the two short fields go as the page first
+  // showed them.
   document.addEventListener("DOMContentLoaded", function () {
     var site = document.getElementById("assistant-finish-on-site");
     if (!site) {
       return;
     }
     site.addEventListener("submit", function () {
-      ["denial_text", "email", "store_zip"].forEach(function (id) {
+      ["denial_text", "email", "store_zip", "assistant_procedure", "assistant_condition"].forEach(function (id) {
         var from = document.getElementById(id);
         var to = site.querySelector('[data-carry="' + id + '"]');
         if (from && to) {
@@ -136,6 +140,21 @@ here unchanged.
 		{% include "partials/field_error.html" with id="need_denial" message="Paste your denial letter in the box above. No letter? Describe what was denied, for example: the pharmacy denied my PrEP." errors=form.denial_text.errors %}
 		<small class="fhi-hint">This version, with the personal details we could find removed, is sent to our server.</small>
 	    </div>
+	    {% comment %} What the assistant sent on what was denied and the
+	       condition (assistant_terms_views.short_field). Agree keeps them as
+	       they are left here and Finish on this site instead carries them to
+	       the site form; blank means none. {% endcomment %}
+	    <div class="together-form-group">
+	      <div class="fhi-field-group">
+		<label for="assistant_procedure" class="fhi-label">What was denied</label>
+		<input type="text" id="assistant_procedure" name="procedure" class="fhi-field" value="{{ procedure }}" maxlength="{{ short_field_max }}" aria-describedby="assistant_fields_hint">
+	      </div>
+	      <div class="fhi-field-group">
+		<label for="assistant_condition" class="fhi-label">The condition</label>
+		<input type="text" id="assistant_condition" name="condition" class="fhi-field" value="{{ condition }}" maxlength="{{ short_field_max }}" aria-describedby="assistant_fields_hint">
+	      </div>
+	    </div>
+	    <small class="fhi-hint" id="assistant_fields_hint">What your assistant sent, if anything. We use these in your letters when the letter doesn't say. You can change or clear them.</small>
 	</section>
 	<section class="fhi-stack">
 	    <h2>About you</h2>
@@ -306,6 +325,8 @@ here unchanged.
 		<input type="hidden" name="denial_text" data-carry="denial_text" value="">
 		<input type="hidden" name="email" data-carry="email" value="">
 		<input type="hidden" name="zip" data-carry="store_zip" value="">
+		<input type="hidden" name="procedure" data-carry="assistant_procedure" value="{{ procedure }}">
+		<input type="hidden" name="condition" data-carry="assistant_condition" value="{{ condition }}">
 		<input type="hidden" name="use_external_models" data-carry="use_external_models" value="checked">
 		<input type="hidden" name="store_raw_email" data-carry="store_raw_email" value="">
 		<input type="hidden" name="subscribe" data-carry="subscribe" value="">

@@ -1482,6 +1482,16 @@ class PrepareAppealTest(TestCase):
         self.assertEqual(received["procedure"], "MRI of the back")
         self.assertEqual(received["condition"], "migraine")
 
+    async def test_a_short_field_loses_a_hidden_variation_selector_too(self):
+        """A supplementary variation selector is no format character, but
+        can carry hidden bytes after a visible one. The terms page's two
+        fields drop it the same way (assistant_handoff.one_line)."""
+        result = await prepare(
+            {"letter_text": LETTER, "procedure": "MRI\U000e0101 scan"}
+        )
+        self.assertFalse(result.isError, text_of(result))
+        self.assertEqual(result.structuredContent["received"]["procedure"], "MRI scan")
+
     def test_a_lone_surrogate_never_reaches_the_page(self):
         """json.loads keeps a body's lone "\\ud800" escape as text UTF-8 can't
         encode, and pydantic passes it in letter_text (procedure and condition
