@@ -58,9 +58,11 @@ BINDER_COOKIE_PATH = "/from-your-assistant"
 # which only that form carries, in its hidden FORM_FIELD: so only a
 # submission of that form names the assistant, never whichever case the
 # browser sends next, and two forms open in two tabs each keep their own.
-# The session keeps the newest few, for a day. A key names the assistant for
-# one case only: the case its form first goes through for, or the case a
-# form continuing one was rendered for, kept in its entry (use_site_form).
+# The session keeps the newest few, each for a day from the last time it
+# was made, rendered again for the flow's Back link, or went through. A key
+# names the assistant for one case only: the case its form first goes
+# through for, or the case a form continuing one was rendered for, kept in
+# its entry (use_site_form).
 FORMS_KEY = "assistant_handoff_forms"
 FORM_FIELD = "assistant_form"
 FORMS_KEPT = 5
@@ -211,7 +213,9 @@ def use_site_form(request: HttpRequest, form: SiteForm, denial_id: int) -> bool:
     it, or a second press of Submit) and never for another. A form
     continuing a case is bound to it from the start. Both submissions of a
     double-click name the assistant, so the case the person goes on with
-    does."""
+    does. Each time the key goes through, its day starts again, so the form
+    sent again shortly after a submission late in that day still names the
+    assistant."""
     # Accepted limit: every request saves the session whole, so two
     # submissions at the same instant can leave a used key unbound, and that
     # form sent again for another case would name the assistant too. That
@@ -220,8 +224,8 @@ def use_site_form(request: HttpRequest, form: SiteForm, denial_id: int) -> bool:
         return False
     forms = _open_forms(request)
     entry = forms.get(form.key)
-    if entry is not None and entry.get("case") != denial_id:
-        forms[form.key] = {**entry, "case": int(denial_id)}
+    if entry is not None:
+        forms[form.key] = {**entry, "case": int(denial_id), "at": time.time()}
         _store_forms(request, forms)
     return True
 

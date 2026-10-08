@@ -105,6 +105,15 @@ def open_forms(client) -> dict:
     return client.session.get(assistant_handoff_views.FORMS_KEY, {})
 
 
+def age_form(client, key: str, seconds: float) -> None:
+    """Make a form the session keeps that many seconds older."""
+    session = client.session
+    forms = session[assistant_handoff_views.FORMS_KEY]
+    forms[key]["at"] -= seconds
+    session[assistant_handoff_views.FORMS_KEY] = forms
+    session.save()
+
+
 def back_link(page) -> str:
     """Where a rendered step's Back link goes."""
     html = page.content.decode() if hasattr(page, "content") else page
@@ -1122,11 +1131,7 @@ class HandoffV2Test(TestCase):
     def test_a_key_lasts_a_day(self):
         page = self.open_form()
         key = carried(page)["assistant_form"]
-        session = self.client.session
-        forms = session[assistant_handoff_views.FORMS_KEY]
-        forms[key]["at"] -= assistant_handoff_views.FORM_TTL.total_seconds() + 1
-        session[assistant_handoff_views.FORMS_KEY] = forms
-        session.save()
+        age_form(self.client, key, assistant_handoff_views.FORM_TTL.total_seconds() + 1)
         request = SimpleNamespace(
             POST={"assistant_form": key}, session=self.client.session
         )
@@ -1271,6 +1276,7 @@ class HandoffOriginTest(TestCase):
         session.update(before)
         session.save()
         self.submit("origin-double@example.com", **form)
+        self.assertEqual(models.Denial.objects.count(), 2, "each made its own case")
         carried_on = self.client.session["denial_id"]
         for denial in models.Denial.objects.all():
             with self.subTest(carried_on=denial.denial_id == carried_on):
@@ -1291,6 +1297,24 @@ class HandoffOriginTest(TestCase):
         self.submit("origin-sent-again@example.com", **form)
         self.submit("origin-sent-again@example.com", **form)
         self.assertEqual(models.Denial.objects.count(), 1, "the row is reused")
+        records = models.ConsentRecord.objects.order_by("pk")
+        self.assertEqual(
+            [(r.channel, r.assistant_client) for r in records],
+            [("assistant", "Claude-User")] * 2,
+        )
+
+    def test_a_late_submission_starts_the_keys_day_again(self):
+        """The form sent just before its key's day runs out, then sent again
+        a few minutes later (a reload, or the browser's Back to it), more
+        than a day after it was opened: the key's day runs from its last
+        submission, so it still names the assistant."""
+        form = self.open_link("Claude-User")
+        key = form["assistant_form"]
+        day = assistant_handoff_views.FORM_TTL.total_seconds()
+        age_form(self.client, key, day - 6 * 60)
+        self.submit("origin-late@example.com", **form)
+        age_form(self.client, key, 12 * 60)
+        self.submit("origin-late@example.com", **form)
         records = models.ConsentRecord.objects.order_by("pk")
         self.assertEqual(
             [(r.channel, r.assistant_client) for r in records],
@@ -1428,11 +1452,9 @@ class HandoffOriginTest(TestCase):
         self.assertNotEqual(keys[0], form["assistant_form"])
         self.assertEqual(list(open_forms(self.client)), keys[:1])
         # Loading it again starts that key's day again.
-        session = self.client.session
-        forms = session[assistant_handoff_views.FORMS_KEY]
-        forms[keys[0]]["at"] -= assistant_handoff_views.FORM_TTL.total_seconds() - 60
-        session[assistant_handoff_views.FORMS_KEY] = forms
-        session.save()
+        age_form(
+            self.client, keys[0], assistant_handoff_views.FORM_TTL.total_seconds() - 60
+        )
         self.client.get(back_link(next_step))
         self.assertGreater(open_forms(self.client)[keys[0]]["at"], time.time() - 60)
         self.submit("origin-reload-back@example.com", assistant_form=keys[0])
