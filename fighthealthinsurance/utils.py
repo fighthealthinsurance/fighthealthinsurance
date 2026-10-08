@@ -2402,16 +2402,20 @@ def generate_random_unsupported_filename() -> str:
     return rand_str + ".unsupported"
 
 
-# pandoc reads a .txt or .md file with its markdown reader, whose default
-# extensions let several kinds of markup pass straight into the LaTeX/PDF
-# writer as code instead of being rendered as characters: raw_tex (backslash
-# commands such as \input), raw_attribute (```{=latex} blocks), the three
-# tex_math_* extensions ($...$, \(...\), \[...\], whose contents pandoc hands
-# to the engine verbatim), and latex_macros (\newcommand). Naming the reader
-# with those extensions subtracted means the characters a letter author typed
-# reach the PDF as those characters. Every name here exists in the pandoc each
-# image installs: 2.17 in the web and Temporal images (Debian bookworm) and 2.9
-# in the Ray image (Ubuntu 22.04).
+# pandoc reads a .txt or .md file with its markdown reader. Several of that
+# reader's default extensions carry markup straight into the LaTeX/PDF writer
+# as code instead of rendering it as characters: raw_tex (backslash commands
+# such as \input), raw_attribute (```{=latex} blocks), the three tex_math_*
+# extensions ($...$, \(...\), \[...\], whose contents pandoc hands to the engine
+# verbatim), latex_macros (\newcommand), raw_html (HTML tags, including ones
+# that point an HTML engine at a local file), and yaml_metadata_block (a YAML
+# header whose header-includes land in the LaTeX preamble). smart stays on: it
+# only turns straight quotes, dashes and ellipses into typographic characters.
+# Naming the reader with those extensions subtracted is the first half of the
+# guarantee that the characters a letter author typed reach the PDF as those
+# characters; the Lua filter below is the second half. Every name here exists
+# in the pandoc each image installs: 2.17 in the web and Temporal images (Debian
+# bookworm) and 2.9 in the Ray image (Ubuntu 22.04).
 _PANDOC_TEXT_READER = (
     "markdown"
     "-raw_tex"
@@ -2420,11 +2424,14 @@ _PANDOC_TEXT_READER = (
     "-tex_math_single_backslash"
     "-tex_math_double_backslash"
     "-latex_macros"
+    "-raw_html"
+    "-yaml_metadata_block"
 )
 
 
-# Lua filter that turns math and raw TeX elements into plain text after any
-# reader has run; see the file for details.
+# Lua filter that runs after the reader and keeps only an allowlist of plain
+# document structure, turning every other element into the characters it holds;
+# see the file for details.
 _PANDOC_PLAIN_TEXT_FILTER = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "pandoc_plain_text.lua"
 )
@@ -2432,22 +2439,26 @@ _PANDOC_PLAIN_TEXT_FILTER = os.path.join(
 
 def pandoc_reader_for(input_path: str) -> str:
     """Name the pandoc input format for a file so that user text renders as
-    plain text. HTML files use pandoc's html reader, which does not enable the
-    raw-TeX extensions; everything else uses the markdown reader with those
-    extensions turned off. Callers pass .txt, .md or .html files, so any
-    other extension is read as markdown text too."""
+    plain text. HTML files (the cover page) use pandoc's html reader with
+    raw_html turned on: tags it does not convert, an <iframe> among them, are
+    then kept as raw HTML, which the plain-text filter drops, rather than
+    having their src fetched while the cover is read. Everything else uses the
+    markdown reader with the raw-TeX, math, HTML and metadata extensions turned
+    off. Callers pass .txt, .md or .html files, so any other extension is read
+    as markdown text too."""
     lower = input_path.lower()
     if lower.endswith(".html") or lower.endswith(".htm"):
-        return "html"
+        return "html+raw_html"
     return _PANDOC_TEXT_READER
 
 
 def pandoc_convert_command(input_path: str) -> list[str]:
     """Build the pandoc command that renders one input file to
-    ``<input_path>.pdf``. The input format is named explicitly with the
-    raw-TeX markdown extensions turned off, and the plain-text Lua filter
-    turns any math or raw TeX the reader still produces into text. Every
-    option here is one the Ray image's pandoc 2.9 accepts."""
+    ``<input_path>.pdf``. The input format is named explicitly (see
+    pandoc_reader_for), and the plain-text Lua filter keeps only an allowlist
+    of plain document structure and turns everything else into the characters
+    it holds, whatever reader built the document. Every option here is one the
+    Ray image's pandoc 2.9 accepts."""
     return [
         "pandoc",
         f"--from={pandoc_reader_for(input_path)}",
