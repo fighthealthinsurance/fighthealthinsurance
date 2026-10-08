@@ -28,6 +28,11 @@ _RESULT_WAIT_SECONDS = 15 * 60
 # its lifetime (belt and suspenders with the caller's asyncio.wait_for).
 INTAKE_RPC_TIMEOUT_SECONDS = 15.0
 
+# The longest a person's own request waits on Temporal for the chat path,
+# connecting included: Agree on the terms page, and the answers an assistant
+# sends. Past it the request goes on as it does when Temporal is down.
+ASSISTANT_REQUEST_WAIT_SECONDS = 10.0
+
 
 async def get_temporal_client(runtime: Any = None) -> Any:
     """Connect a Temporal client using Django settings.

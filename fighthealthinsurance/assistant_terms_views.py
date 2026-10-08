@@ -24,6 +24,7 @@ chat link opens the site form as before.
 Nothing here logs the letter, the email or a token.
 """
 
+import asyncio
 import dataclasses
 import hashlib
 from typing import Any, Optional
@@ -428,13 +429,20 @@ class AssistantAgreeView(View):
         from temporalio.exceptions import WorkflowAlreadyStartedError
 
         from fighthealthinsurance.temporal_client import (
+            ASSISTANT_REQUEST_WAIT_SECONDS,
             start_assistant_appeal_workflow,
         )
 
-        try:
-            async_to_sync(start_assistant_appeal_workflow)(
-                denial.hashed_email, str(denial.uuid)
+        async def start() -> None:
+            # The person is waiting on the page, so a start that takes too
+            # long is treated as one that failed.
+            await asyncio.wait_for(
+                start_assistant_appeal_workflow(denial.hashed_email, str(denial.uuid)),
+                ASSISTANT_REQUEST_WAIT_SECONDS,
             )
+
+        try:
+            async_to_sync(start)()
         except WorkflowAlreadyStartedError:
             pass
         except Exception as e:

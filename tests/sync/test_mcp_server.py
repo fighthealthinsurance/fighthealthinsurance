@@ -2657,6 +2657,38 @@ class ChatPathToolsTest(TestCase):
         self.assertFalse(again.isError, text_of(again))
         signal.assert_awaited_once_with(str(denial.uuid))
 
+    def test_a_signal_that_hangs_is_an_error_after_a_short_wait(self):
+        from fighthealthinsurance import assistant_drafts
+
+        rows = [("What happened?", "")]
+        denial, draft_id = self._draft(status="questions")
+        denial.generated_questions = rows
+        denial.save(update_fields=["generated_questions"])
+        models.AssistantDraft.objects.filter(denial=denial).update(
+            questions=assistant_drafts.clean_questions(rows)
+        )
+        arguments = {
+            "draft_id": draft_id,
+            "answers": [
+                {"name": assistant_drafts.clean_questions(rows)[0]["name"], "value": "x"}
+            ],
+        }
+
+        async def hangs(*args, **kwargs):
+            await asyncio.sleep(5)
+
+        with mock.patch(SIGNAL, mock.AsyncMock(side_effect=hangs)), mock.patch(
+            "fighthealthinsurance.temporal_client.ASSISTANT_REQUEST_WAIT_SECONDS", 0.05
+        ):
+            began = time.monotonic()
+            failed = async_to_sync(call)(
+                "answer_appeal_questions", arguments, routes=chat_routes()
+            )
+            took = time.monotonic() - began
+        self.assertLess(took, 3)
+        self.assertTrue(failed.isError)
+        self.assertIn("Please try again", text_of(failed))
+
     def test_an_unknown_answer_name_is_refused_by_name(self):
         from fighthealthinsurance import assistant_drafts
 

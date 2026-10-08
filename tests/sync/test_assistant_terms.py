@@ -1,8 +1,10 @@
 """The chat path's terms page, its per-address cap and the emailed way back
 (assistant_terms_views.py, assistant_ip_limit.py, assistant_continue.py)."""
 
+import asyncio
 import datetime
 import json
+import time
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -15,6 +17,7 @@ from django.http import HttpResponse
 from django.test import Client, RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from fighthealthinsurance import (
     assistant_continue,
@@ -38,6 +41,9 @@ from fighthealthinsurance.models import (
     SpendCounter,
     SpendReservation,
 )
+from fighthealthinsurance.temporal_client import (
+    start_assistant_appeal_workflow as real_start,
+)
 from tests.sync.test_assistant_handoff import carried as site_form_fields
 from tests.sync.test_assistant_handoff import open_forms
 
@@ -59,7 +65,8 @@ LANDING = "/from-your-assistant"
 AGREE = "/from-your-assistant/agree"
 EMAIL = "person@example.com"
 IP = "203.0.113.7"
-START = "fighthealthinsurance.temporal_client.start_assistant_appeal_workflow"
+TEMPORAL = "fighthealthinsurance.temporal_client"
+START = f"{TEMPORAL}.start_assistant_appeal_workflow"
 
 
 def chat_link(
@@ -373,6 +380,39 @@ class AgreeTest(TermsTestBase):
         self.assertEqual(AssistantAgreementCount.objects.get().count, 0)
         draft.refresh_from_db()
         self.assertEqual(draft.status, assistant_drafts.STOPPED)
+
+    def test_a_temporal_that_hangs_shows_the_not_started_page_soon(self):
+        code, draft, _ = self.open_terms()
+
+        async def hangs(*args, **kwargs):
+            await asyncio.sleep(5)
+
+        # The real start, so the wait covers connecting too.
+        self.start.side_effect = real_start
+        with patch(f"{TEMPORAL}.get_temporal_client", hangs), patch(
+            f"{TEMPORAL}.ASSISTANT_REQUEST_WAIT_SECONDS", 0.05
+        ):
+            began = time.monotonic()
+            response = self.client.post(AGREE, terms_form(code))
+            took = time.monotonic() - began
+        self.assertLess(took, 3)
+        self.assertTemplateUsed(response, "assistant_agreed.html")
+        self.assertFalse(response.context["started"])
+        self.assertEqual(SpendCounter.objects.get(name="fhi:assistant").amount, 0)
+        self.assertEqual(AssistantAgreementCount.objects.get().count, 0)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, assistant_drafts.STOPPED)
+
+    def test_a_workflow_already_running_counts_as_started(self):
+        code, draft, _ = self.open_terms()
+        self.start.side_effect = WorkflowAlreadyStartedError(
+            "assistant-appeal-x", "AssistantAppealWorkflow"
+        )
+        response = self.client.post(AGREE, terms_form(code))
+        self.assertTrue(response.context["started"])
+        self.assertEqual(SpendCounter.objects.get(name="fhi:assistant").amount, 1)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, assistant_drafts.READING)
 
     def test_a_continue_link_that_fails_gives_everything_back(self):
         code, draft, _ = self.open_terms()
