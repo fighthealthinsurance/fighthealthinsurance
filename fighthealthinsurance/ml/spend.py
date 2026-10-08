@@ -694,9 +694,9 @@ def reserve_generation() -> Optional[Reservation]:
 
 
 def release_generation(reservation: Reservation) -> bool:
-    """Give back a reservation whose generation never started: once, and to
-    the day it was taken from. False when it was already released or is not
-    ours."""
+    """Give back a reservation whose generation never started or delivered
+    nothing: once, and to the day it was taken from. False when it was
+    already released or is not ours."""
     from django.db import transaction
     from django.db.models import F
     from django.utils import timezone

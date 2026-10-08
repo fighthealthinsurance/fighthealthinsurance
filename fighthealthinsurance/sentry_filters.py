@@ -28,6 +28,7 @@ by :func:`before_send_transaction_filter`.
 """
 
 from typing import Any, Dict, List, Sequence
+from urllib.parse import urlsplit
 
 # Ray client connection failures are transient infrastructure noise: Ray
 # reconnects on its own, so there is nothing to action in Sentry. They are
@@ -104,6 +105,18 @@ ASSISTANT_TEXT_MODULES = (
     "fighthealthinsurance.assistant_drafts",
     "fighthealthinsurance.assistant_draft_tools",
 )
+
+
+# The staff letter review (letter_review.py). Its pages carry each reader's
+# blind verdict and note, and the letter's text: in the item page's template
+# context, which the Django integration copies onto a template.render span;
+# in the saving POST, attached as request data; and in the variables of any
+# frame that raises. Both readers can read Sentry, so the review would stop
+# being blind there. Its transactions are dropped whole, and an error event
+# from it keeps its stack but loses the request body and every frame's
+# variables. Matched on the transaction name (the route, "/timbit/help/
+# letter_review/{packet_id}/...") or the request URL's path.
+LETTER_REVIEW_PATH_PREFIX = "/timbit/help/letter_review/"
 
 
 # sentry's logentry/Message interface renders text into "formatted" and keeps
@@ -234,6 +247,42 @@ def strip_local_variables_near_assistant_text(event: Any) -> Any:
     return event
 
 
+def _url_path(url: Any) -> str:
+    if not isinstance(url, str):
+        return ""
+    try:
+        return urlsplit(url).path
+    except ValueError:  # a malformed URL, e.g. an unbalanced IPv6 bracket
+        return ""
+
+
+def is_letter_review_event(event: Any) -> bool:
+    """True when an event comes from a letter review page. Never raises."""
+    if not isinstance(event, dict):
+        return False
+    name = event.get("transaction")
+    if isinstance(name, str) and name.startswith(LETTER_REVIEW_PATH_PREFIX):
+        return True
+    request = event.get("request")
+    if not isinstance(request, dict):
+        return False
+    return _url_path(request.get("url")).startswith(LETTER_REVIEW_PATH_PREFIX)
+
+
+def strip_letter_review_details(event: Any) -> Any:
+    """Drop the request body and every frame's variables from an error event
+    raised on a letter review page (see LETTER_REVIEW_PATH_PREFIX). The stack
+    itself stays. Never raises."""
+    if not is_letter_review_event(event):
+        return event
+    request = event.get("request")
+    if isinstance(request, dict):
+        request.pop("data", None)
+    for frame in _frames(event):
+        frame.pop("vars", None)
+    return event
+
+
 def before_send_filter(event: Any, hint: Any) -> Any:
     """Drop known-noise error events. Returns the event, or None to discard.
 
@@ -317,11 +366,13 @@ def before_send_filter(event: Any, hint: Any) -> Any:
         logger.debug("Unrouted websocket path (filtered from Sentry)")
         return None
 
+    event = strip_letter_review_details(event)
     return strip_local_variables_near_assistant_text(event)
 
 
 def before_send_transaction_filter(event: Any, hint: Any) -> Any:
-    """Drop transactions for requests that matched no URL route.
+    """Drop transactions for requests that matched no URL route, and every
+    transaction from a letter review page (see LETTER_REVIEW_PATH_PREFIX).
 
     This is the half of the scanner-noise problem that ``before_send`` cannot
     reach: sentry-sdk calls ``before_send`` only for error events, so at
@@ -337,6 +388,8 @@ def before_send_transaction_filter(event: Any, hint: Any) -> Any:
     """
     if not isinstance(event, dict):
         return event
+    if is_letter_review_event(event):
+        return None
     transaction_info = event.get("transaction_info")
     if not isinstance(transaction_info, dict):
         return event

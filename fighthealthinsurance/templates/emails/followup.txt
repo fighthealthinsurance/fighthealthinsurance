@@ -7,7 +7,7 @@ Thank you for trying Fight Health Insurance and for letting us check in afterwar
 If you have a minute, please fill out the follow-up form:
 {{ followup_link }}
 
-You can also reply to this email, and we'll take a look.
+You can also reply to this email, and we'll take a look. Email isn't a secure way to send medical details, so please leave those out of your reply.
 
 {% include "emails/partials/how_to_help.txt" %}
 Wishing you the best of luck in your fight with your insurance company,

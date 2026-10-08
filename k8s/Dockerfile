@@ -56,6 +56,9 @@ ADD --chown=www-data:www-data fighthealthinsurance /opt/fighthealthinsurance/fig
 # COPY --chown=www-data:www-data fighthealthinsurance/static/blog_posts.json /opt/fighthealthinsurance/fighthealthinsurance/static/blog_posts.json
 ADD --chown=www-data:www-data fhi_users /opt/fighthealthinsurance/fhi_users
 ADD --chown=www-data:www-data charts /opt/fighthealthinsurance/charts
+# The Medicaid agency table (medicaid_api.DATA_DIR) and the preventive-care
+# code lists (process_denial) are read from the repo-root data folder.
+ADD --chown=www-data:www-data data /opt/fighthealthinsurance/data
 COPY --chown=www-data:www-data scripts/start-server.sh /opt/fighthealthinsurance/
 COPY --chown=www-data:www-data *.py /opt/fighthealthinsurance/
 ADD --chown=www-data:www-data conf /opt/fighthealthinsurance/conf
