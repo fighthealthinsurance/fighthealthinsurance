@@ -4621,6 +4621,7 @@ class LetterReviewItemView(View):
             "labeled": labeled,
             "previous_slug": previous_slug,
             "next_slug": next_slug,
+            "frozen": letter_review.labels_frozen(reader.packet),
         }
         return render(request, self.template_name, context, status=status)
 
@@ -4635,6 +4636,12 @@ class LetterReviewItemView(View):
     def post(self, request, packet_id: int, slug: str) -> HttpResponse:
         reader = letter_review.reader_or_404(packet_id, request.user)
         item = letter_review.item_or_404(reader, slug)
+        if letter_review.labels_frozen(reader.packet):
+            # Every reader is done: the marks are final as given.
+            saved = letter_review.own_label(reader, item)
+            initial = {"verdict": saved.verdict, "note": saved.note} if saved else {}
+            form = core_forms.LetterReviewLabelForm(initial=initial)
+            return self._render(request, reader, item, form, saved, status=409)
         form = core_forms.LetterReviewLabelForm(request.POST)
         if not form.is_valid():
             saved = letter_review.own_label(reader, item)

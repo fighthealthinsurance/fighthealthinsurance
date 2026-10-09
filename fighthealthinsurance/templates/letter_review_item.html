@@ -208,6 +208,9 @@
     </section>
   </div>
 
+  {% if frozen %}
+    <p class="lr-saved">Every reader has finished this packet, so the marks are final.{% if saved_label %} You marked this {{ saved_label }}.{% endif %}</p>
+  {% else %}
   <form method="post" class="lr-form" id="lr-form"{% if form.is_bound %} data-unsaved="1"{% endif %}>
     {% csrf_token %}
     {% if saved_label %}
@@ -234,6 +237,7 @@
       <button type="submit" class="lr-save">Save and next</button>
     </div>
   </form>
+  {% endif %}
 
   <script>
     // 1, 2 and 3 pick a mark wherever the focus is except the note (and any

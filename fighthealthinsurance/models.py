@@ -5443,8 +5443,17 @@ class LetterReviewItem(models.Model):
         return f"LetterReviewItem({self.pk}, position {self.position})"
 
 
+class LetterReviewLabelsFrozen(Exception):
+    """A label changed after every reader finished its packet."""
+
+
 class LetterReviewLabel(models.Model):
-    """One reader's verdict on one letter. Only that reader ever sees it."""
+    """One reader's verdict on one letter. Only that reader ever sees it.
+
+    Once every reader has finished the packet the export can show readers
+    each other's marks, so from then on a label is never changed or removed:
+    the export keeps each blind verdict as it was given.
+    """
 
     item = models.ForeignKey(
         LetterReviewItem, on_delete=models.CASCADE, related_name="labels"
@@ -5466,3 +5475,20 @@ class LetterReviewLabel(models.Model):
 
     def __str__(self) -> str:
         return f"LetterReviewLabel({self.pk}, item {self.item_id})"
+
+    def _refuse_if_frozen(self) -> None:
+        from fighthealthinsurance.letter_review import labels_frozen
+
+        if self.pk is not None and labels_frozen(self.item.packet):
+            raise LetterReviewLabelsFrozen(
+                "Every reader has finished this packet, so its labels can no "
+                "longer change."
+            )
+
+    def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        self._refuse_if_frozen()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+        self._refuse_if_frozen()
+        return super().delete(*args, **kwargs)

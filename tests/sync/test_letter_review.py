@@ -29,6 +29,7 @@ from django.views.debug import ExceptionReporter, SafeExceptionReporterFilter
 
 from fighthealthinsurance import letter_review
 from fighthealthinsurance.models import (
+    LetterReviewLabelsFrozen,
     LetterReviewItem,
     LetterReviewLabel,
     LetterReviewPacket,
@@ -1157,6 +1158,63 @@ class ExportTests(PageTestBase):
 # ---------------------------------------------------------------------------
 # Delete, and what deleting a staff account does
 # ---------------------------------------------------------------------------
+
+
+class FrozenLabelTests(PageTestBase):
+    """Once every reader is done the export can show readers each other's
+    marks, so from then on each blind verdict stays as it was given."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.label(self.reader_b, KEY_3, "flag", note="SYNTH-NOTE-B3")
+        self.label(self.reader_a, KEY_1, "fabricates", note="SYNTH-NOTE-A1")
+        self.label(self.reader_b, KEY_1, "clean")
+
+    def _finish_everyone(self) -> None:
+        for key in (KEY_2, KEY_4):
+            self.label(self.reader_a, key, "clean")
+
+    def _exported(self) -> List[Dict[str, Any]]:
+        return letter_review.export_labels(self.packet)["labels"]
+
+    def test_a_reader_can_correct_a_mark_before_everyone_finishes(self):
+        self.client.force_login(self.staff_a)
+        response = self.client.post(self.item_url(KEY_1), {"verdict": "clean", "note": ""})
+        self.assertEqual(response.status_code, 302)
+        label = LetterReviewLabel.objects.get(reader=self.reader_a, item__key=KEY_1)
+        self.assertEqual(label.verdict, "clean")
+
+    def test_a_change_after_everyone_finishes_is_refused_and_the_export_is_unchanged(
+        self,
+    ):
+        self._finish_everyone()
+        before = self._exported()
+        self.client.force_login(self.staff_a)
+        response = self.client.post(self.item_url(KEY_1), {"verdict": "clean", "note": "later"})
+        self.assertEqual(response.status_code, 409)
+        self.assertContains(response, "the marks are final", status_code=409)
+        self.assertNotContains(response, 'id="lr-form"', status_code=409)
+        self.assertEqual(self._exported(), before)
+
+    def test_the_page_shows_the_mark_without_a_form_once_everyone_finishes(self):
+        self._finish_everyone()
+        self.client.force_login(self.staff_a)
+        response = self.client.get(self.item_url(KEY_1))
+        self.assertContains(response, "the marks are final")
+        self.assertNotContains(response, 'id="lr-form"')
+
+    def test_the_model_refuses_a_change_or_removal_from_any_path(self):
+        self._finish_everyone()
+        before = self._exported()
+        label = LetterReviewLabel.objects.get(reader=self.reader_a, item__key=KEY_1)
+        label.verdict = "clean"
+        with self.assertRaises(LetterReviewLabelsFrozen):
+            label.save()
+        with self.assertRaises(LetterReviewLabelsFrozen):
+            letter_review.save_label(self.reader_a, self.item(KEY_1), "clean", "")
+        with self.assertRaises(LetterReviewLabelsFrozen):
+            LetterReviewLabel.objects.get(pk=label.pk).delete()
+        self.assertEqual(self._exported(), before)
 
 
 class DeleteTests(PageTestBase):
