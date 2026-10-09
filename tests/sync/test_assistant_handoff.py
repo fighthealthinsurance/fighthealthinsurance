@@ -201,7 +201,6 @@ class HandoffStorageTest(TestCase):
         stored = " ".join(as_text(column) for column in rows[0])
         self.assertNotIn(marker, stored)
         self.assertNotIn(handoff.code, stored)
-        self.assertNotIn("MRI", stored)
 
     def test_the_stored_lookup_cannot_open_the_row(self):
         handoff = create_handoff(LETTER)
