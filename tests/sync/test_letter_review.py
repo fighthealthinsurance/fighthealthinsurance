@@ -1203,7 +1203,7 @@ class FrozenLabelTests(PageTestBase):
         self.assertContains(response, "the marks are final")
         self.assertNotContains(response, 'id="lr-form"')
 
-    def test_the_model_refuses_a_change_or_removal_from_any_path(self):
+    def test_the_model_refuses_a_single_label_change_or_removal(self):
         self._finish_everyone()
         before = self._exported()
         label = LetterReviewLabel.objects.get(reader=self.reader_a, item__key=KEY_1)

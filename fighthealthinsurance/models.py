@@ -5451,8 +5451,10 @@ class LetterReviewLabel(models.Model):
     """One reader's verdict on one letter. Only that reader ever sees it.
 
     Once every reader has finished the packet the export can show readers
-    each other's marks, so from then on a label is never changed or removed:
-    the export keeps each blind verdict as it was given.
+    each other's marks, so from then on save() and delete() refuse to change
+    or remove a label: the export keeps each blind verdict as it was given.
+    Bulk QuerySet.update() and delete() skip these methods; nothing in the
+    app uses them on labels, and deleting a packet still cascades.
     """
 
     item = models.ForeignKey(
