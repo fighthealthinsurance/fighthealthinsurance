@@ -30,7 +30,7 @@
     },
     {
       "name": "the brackets of quoting in legal writing",
-      "pattern": "\\[(?:sic|cleaned up|ibid|id|emphasis (?:added|supplied|mine|ours|in original)|(?:internal )?(?:citations?|quotation marks|quotations?|footnotes?|ellipses|ellipsis) omitted|(?:alterations?|ellipsis|ellipses|brackets|capitali[sz]ation|punctuation) in original|(?:alterations?|brackets|capitali[sz]ation|punctuation) (?:added|altered|mine))\\.?\\]",
+      "pattern": "\\[(?:sic|cleaned up|ibid|id\\.|emphasis (?:added|supplied|mine|ours|in original)|(?:internal )?(?:citations?|quotation marks|quotations?|footnotes?|ellipses|ellipsis) omitted|(?:alterations?|ellipsis|ellipses|brackets|capitali[sz]ation|punctuation) in original|(?:alterations?|brackets|capitali[sz]ation|punctuation) (?:added|altered|mine))\\.?\\]",
       "flags": "i",
       "examples": [
         "[sic]",

@@ -65,6 +65,7 @@ CAUGHT = [
         ["{{FIRST_NAME}}", "{{LAST_NAME}}"],
     ),
     ("a bracketed name", "My name is [Your Name].", ["[Your Name]"]),
+    ("a bracketed ID, not the citation [Id.]", "Member ID: [ID]", ["[ID]"]),
     (
         "real fill-ins beside a quotation's bracketed words",
         '"[It] is not medically necessary" [emphasis added]. '
