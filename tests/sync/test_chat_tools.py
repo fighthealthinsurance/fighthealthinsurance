@@ -2129,6 +2129,82 @@ class TestParseAnchoredJsonPayload(TestCase):
         with self.assertRaises(json_mod.JSONDecodeError):
             parse_anchored_json_payload(text, payload_match)
 
+    def test_jsonl_continuation_lines_are_merged_into_the_payload(self):
+        """The chat prompt asks for JSONL: stopping at the first object
+        applied part of the update and left the rest as raw JSON."""
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        text = (
+            '**generate_appeal_letter**{"procedure": "MRI"}\n'
+            '{"diagnosis": "chronic back pain"}'
+        )
+        payload, _ = parse_anchored_json_payload(text, self._match(text))
+        self.assertEqual(
+            payload, {"procedure": "MRI", "diagnosis": "chronic back pain"}
+        )
+
+    def test_jsonl_continuation_lines_are_part_of_the_span(self):
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        text = (
+            '**generate_appeal_letter**{"procedure": "MRI"}\n'
+            '{"diagnosis": "chronic back pain"}\n'
+            "Anything else?"
+        )
+        _, span = parse_anchored_json_payload(text, self._match(text))
+        self.assertEqual(span, text[: text.index("\nAnything")])
+
+    def test_prose_starting_with_a_brace_is_not_a_continuation(self):
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        text = (
+            '**generate_appeal_letter**{"procedure": "MRI"}\n'
+            "{per ERISA} the insurer must decide within 30 days."
+        )
+        _, span = parse_anchored_json_payload(text, self._match(text))
+        self.assertEqual(span, '**generate_appeal_letter**{"procedure": "MRI"}')
+
+    def test_malformed_continuation_rejects_the_call(self):
+        """As json.loads did with the whole payload: half an update is not
+        applied as if it were all of it."""
+        import json as json_mod
+
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        text = (
+            '**generate_appeal_letter**{"procedure": "MRI"}\n'
+            '{"diagnosis": "chronic back pain", oops}'
+        )
+        with self.assertRaises(json_mod.JSONDecodeError):
+            parse_anchored_json_payload(text, self._match(text))
+
+
+class TestReplaceAnchoredCall(TestCase):
+    """The replacement goes where the call is, not where its text first
+    appears."""
+
+    def test_replacement_lands_on_the_call_not_an_earlier_quote(self):
+        from fighthealthinsurance.chat.tools import GenerateAppealLetterTool
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+            replace_anchored_call,
+        )
+
+        quoted = "I'll call `**generate_appeal_letter**{\"procedure\": \"MRI\"}` now:"
+        text = quoted + '\n**generate_appeal_letter**{"procedure": "MRI"}'
+        match = GenerateAppealLetterTool(AsyncMock()).detect(text)
+        _, span = parse_anchored_json_payload(text, match)
+        result = replace_anchored_call(text, match, span, "LETTER")
+        self.assertEqual(result, quoted + "\nLETTER")
+
 
 class TestAnchoredCallRemoval(TestCase):
     """Span-bounded removal must leave no raw tool syntax behind.
@@ -2217,3 +2293,61 @@ class TestAnchoredCallRemoval(TestCase):
         self.assertNotIn("create_or_update_appeal", result)
         self.assertNotIn("back pain", result)
         self.assertIn("problem saving", result)
+
+    def test_malformed_call_removal_keeps_later_prose_with_braces(self):
+        """The removal ends at the broken object's own closing brace: ending
+        at the last brace before the next call deleted the prose up to it."""
+        from fighthealthinsurance.chat.tools.base_tool import remove_anchored_call
+
+        tool = self._tool()
+        text = (
+            "Saving that now.\n"
+            '**create_or_update_appeal**{"procedure": "MRI", oops}\n'
+            "Next, your insurer must reply within 30 days {per ERISA} of "
+            "receiving the appeal, so keep a copy."
+        )
+        result = remove_anchored_call(text, tool.detect(text))
+        self.assertEqual(
+            result,
+            "Saving that now.\n\nNext, your insurer must reply within 30 days "
+            "{per ERISA} of receiving the appeal, so keep a copy.",
+        )
+
+    def test_malformed_call_removal_keeps_a_letter_with_placeholders(self):
+        """A letter already put in the reply keeps its {placeholder} lines,
+        which end in braces the old removal ran through."""
+        from fighthealthinsurance.chat.tools.base_tool import remove_anchored_call
+
+        tool = self._tool()
+        letter = "Dear Reviewer,\nRe: claim {claim_id}\nSincerely,\n{patient_name}"
+        text = (
+            'Noted.\n**create_or_update_appeal**{"procedure": "MRI", oops}\n'
+            + letter
+        )
+        result = remove_anchored_call(text, tool.detect(text))
+        self.assertEqual(result, "Noted.\n\n" + letter)
+
+    def test_unbalanced_payload_removal_ends_at_its_line(self):
+        """An unpaired quote leaves the braces unbalanced: the removal ends
+        at the first brace that closes a line, the call's own."""
+        from fighthealthinsurance.chat.tools.base_tool import remove_anchored_call
+
+        tool = self._tool()
+        text = (
+            '**create_or_update_appeal**{"note": "it"s broken"}\n'
+            "Keep this line {it is prose}.\n"
+        )
+        result = remove_anchored_call(text, tool.detect(text))
+        self.assertEqual(result, "\nKeep this line {it is prose}.\n")
+
+    def test_malformed_continuation_is_removed_with_its_call(self):
+        from fighthealthinsurance.chat.tools.base_tool import strip_anchored_calls
+
+        tool = self._tool()
+        text = (
+            '**create_or_update_appeal**{"procedure": "MRI"}\n'
+            '{"diagnosis": "chronic back pain", oops}\n'
+            "Anything else?"
+        )
+        result = strip_anchored_calls(tool, text)
+        self.assertEqual(result, "Anything else?")

@@ -144,6 +144,17 @@ class TestToolFieldTextCoercion:
         set_tool_field(denial, "professional_to_finish", False)
         assert denial.professional_to_finish is False
 
+    def test_null_for_a_not_null_column_is_skipped(self):
+        """A null denial_text would fail the save with an IntegrityError."""
+        denial = Denial(denial_text="Your MRI claim was denied.")
+        set_tool_field(denial, "denial_text", None)
+        assert denial.denial_text == "Your MRI claim was denied."
+
+    def test_null_for_a_nullable_column_clears_it(self):
+        denial = Denial(procedure="MRI")
+        set_tool_field(denial, "procedure", None)
+        assert denial.procedure is None
+
 
 class _ExplodingTool(BaseTool):
     pattern = r"\*\*explode\*\*\s*(\{.*?\})"

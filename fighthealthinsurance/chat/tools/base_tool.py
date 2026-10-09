@@ -67,8 +67,16 @@ def set_tool_field(instance: Any, key: str, value: Any) -> None:
     list of plain values is joined; a boolean or a nested object, never
     meaningful there, is skipped. Other columns keep Django's conversion on
     save (stringifying a bool would make False truthy in memory).
+
+    A null is skipped for a NOT NULL column: the letter prompt asks for
+    "whichever fields you know", and a model may send null for one it
+    doesn't (``"denial_text": null``), which would fail the save with an
+    IntegrityError and lose the whole call.
     """
     field = instance._meta.get_field(key)
+    if value is None and not field.null:
+        logger.info(f"Skipping tool payload field {key}: null for a NOT NULL column")
+        return
     if isinstance(field, (models.CharField, models.TextField)) and not (
         value is None or isinstance(value, str)
     ):
@@ -89,6 +97,80 @@ def set_tool_field(instance: Any, key: str, value: Any) -> None:
     setattr(instance, key, value)
 
 
+# Optional closing ** markers and spaces up to the end of a line: where an
+# anchored call's JSON, and each JSONL continuation of it, must end.
+_CALL_LINE_END_RE = re.compile(r"[ \t*]*(?:\r?\n|$)")
+
+# A closing brace that ends its line (see _CALL_LINE_END_RE).
+_LINE_CLOSING_BRACE_RE = re.compile(r"\}(?=[ \t*]*(?:\r?\n|$))")
+
+
+def _balanced_object_end(text: str, start: int, limit: int) -> Optional[int]:
+    """Index just past the ``}`` that closes the ``{`` at ``start``.
+
+    Braces inside a "..." string don't count; nothing else about JSON is
+    checked, so this also finds where a MALFORMED object ends, which json
+    can't. None when the braces don't balance before ``limit``.
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    for i in range(start, limit):
+        ch = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return None
+
+
+def _jsonl_continuation(text: str, pos: int) -> Optional[Tuple[int, int]]:
+    """The ``(start, end)`` of a JSONL continuation object right after ``pos``.
+
+    The chat prompt asks for the anchored calls' content as JSONL, so a
+    model may split one call's payload over lines: ``**tool**{...}`` and
+    then ``{...}`` on the next line. A continuation follows with only
+    whitespace in between, has balanced braces, and ends its line, so prose
+    that merely starts with a brace (``{per ERISA} of receiving``) is not
+    one. It never reaches past the next tool call. Its JSON is not checked
+    here: a malformed continuation still belongs to the call.
+    """
+    start = pos
+    while start < len(text) and text[start].isspace():
+        start += 1
+    if start >= len(text) or text[start] != "{":
+        return None
+    following = next_tool_call_start(text, start + 1)
+    limit = following if following is not None else len(text)
+    end = _balanced_object_end(text, start, limit)
+    if end is None or not _CALL_LINE_END_RE.match(text, end):
+        return None
+    return start, end
+
+
+def _with_closing_wrapper(text: str, end: int) -> int:
+    """Extend ``end`` over a closing ``**`` wrapper (``**tool {...}**``).
+
+    The wrapper belongs to the call: leaving it behind would put a stray
+    ``**`` into the reply.
+    """
+    stop = end
+    while stop < len(text) and stop - end < 4 and text[stop] == "*":
+        stop += 1
+    return stop
+
+
 def parse_anchored_json_payload(text: str, match: re.Match[str]) -> Tuple[dict, str]:
     """Parse the JSON payload of an anchored ``**tool**{...}`` call precisely.
 
@@ -100,40 +182,61 @@ def parse_anchored_json_payload(text: str, match: re.Match[str]) -> Tuple[dict, 
     captured group's start with ``raw_decode``, which stops at the end of
     the first complete JSON value (same approach as FinancialAssistanceTool
     / the PA-requirement lookup). Returns ``(payload, call_span)`` where
-    ``call_span`` is the exact ``**tool**{...}`` substring of ``text`` to
-    replace -- handlers must replace it rather than ``match.group(0)``,
-    whose over-capture would swallow the text between the calls.
+    ``call_span`` is the exact ``**tool**{...}`` substring of ``text``
+    starting at ``match.start()``; handlers put their text there with
+    replace_anchored_call rather than replacing ``match.group(0)``, whose
+    over-capture would swallow the text between the calls.
+
+    JSONL continuation objects (see _jsonl_continuation) are part of the
+    call: their keys are merged in order, later ones winning, and the span
+    covers them. Stopping at the first object applied only part of the
+    update and left the rest of the payload in the reply as raw JSON.
 
     Raises ``json.JSONDecodeError`` for an undecodable or non-object
-    payload. NOTE for callers: the payload can carry medical/claim details,
-    so error paths must not log it or echo it back -- log sizes only.
+    payload, a malformed continuation included. NOTE for callers: the
+    payload can carry medical/claim details, so error paths must not log it
+    or echo it back -- log sizes only.
     """
     start = match.start(1)
-    payload, end = json.JSONDecoder().raw_decode(text[start:])
+    payload, end = json.JSONDecoder().raw_decode(text, start)
     if not isinstance(payload, dict):
         raise json.JSONDecodeError(
-            "tool payload must be a JSON object", text[start : start + end], 0
+            "tool payload must be a JSON object", text[start:end], 0
         )
-    span_end = start + end
-    # A closing wrapper (**tool {...}**) belongs to the call: leaving it
-    # behind would put a stray ** into the reply.
-    wrapper = len(text[span_end:]) - len(text[span_end:].lstrip("*"))
-    span_end += min(wrapper, 4)
-    return payload, text[match.start() : span_end]
+    while (continuation := _jsonl_continuation(text, end)) is not None:
+        more_start, end = continuation
+        # Balanced and starting with "{": a dict, or JSONDecodeError.
+        payload.update(json.loads(text[more_start:end]))
+    return payload, text[match.start() : _with_closing_wrapper(text, end)]
+
+
+def replace_anchored_call(
+    text: str, match: re.Match[str], call_span: str, replacement: str
+) -> str:
+    """Put ``replacement`` where the matched call is.
+
+    Splices at ``match.start()``, where parse_anchored_json_payload's
+    ``call_span`` begins, rather than replacing the first copy of the span
+    in the text: a reply that quotes the call in prose before making it
+    would otherwise get the replacement inside the quote, leaving the real
+    call to run a second time or be stripped as a straggler.
+    """
+    start = match.start()
+    return text[:start] + replacement + text[start + len(call_span) :]
 
 
 def remove_anchored_call(text: str, match: re.Match[str]) -> str:
     """Remove ONE anchored ``**tool**{...}`` call from ``text`` precisely.
 
-    Uses the raw_decode span when the payload parses. When it does NOT
-    parse, the removal runs to the last ``}`` of the broken body -- bounded
-    by where the next tool call of ANY kind starts, so it can't swallow a
-    later call the way a ``re.sub`` over the greedy DOTALL pattern would.
-    (Bounding by this tool's own calls only let a broken
-    create_or_update_appeal body swallow a later generate_appeal_letter
-    call and the prose before it.) Cutting at the first newline instead
-    left the rest of a pretty-printed malformed payload behind, putting its
-    contents -- possibly medical detail -- in the reply and chat history.
+    Uses the parsed span when the payload parses. When it does NOT parse,
+    the removal ends at the malformed object's own closing brace (and its
+    JSONL continuations), found by brace matching. Ending at the last ``}``
+    before the next call instead deleted any prose in between that held a
+    brace, or most of a letter with ``{placeholder}`` fields; cutting at
+    the first newline left the rest of a pretty-printed payload behind,
+    putting its contents -- possibly medical detail -- in the reply and the
+    chat history. Either way the removal stops where the next tool call of
+    ANY kind starts: that call gets its own handler pass.
     """
     start = match.start()
     try:
@@ -143,18 +246,23 @@ def remove_anchored_call(text: str, match: re.Match[str]) -> str:
         pass
 
     body_start = match.start(1)
-    # Never reach past the next tool call: it gets its own handler pass.
     following = next_tool_call_start(text, body_start + 1)
     limit = following if following is not None else len(text)
-    close = text.rfind("}", body_start, limit)
-    if close != -1:
-        end = close + 1
+    end = _balanced_object_end(text, body_start, limit)
+    if end is not None:
+        while (continuation := _jsonl_continuation(text, end)) is not None:
+            end = continuation[1]
     else:
-        # No closing brace at all (a truncated payload): fall back to the
-        # line bound, which at least takes the token and what follows it.
-        newline = text.find("\n", body_start)
-        end = min(newline if newline != -1 else limit, limit)
-    return text[:start] + text[end:]
+        # Unbalanced, e.g. an unpaired quote: end at the first brace that
+        # closes a line, the pattern's own shape for the end of a call;
+        # with none before the next call, at the end of the call's line.
+        brace = _LINE_CLOSING_BRACE_RE.search(text, body_start)
+        if brace is not None and brace.start() < limit:
+            end = brace.end()
+        else:
+            newline = text.find("\n", body_start)
+            end = min(newline if newline != -1 else limit, limit)
+    return text[:start] + text[_with_closing_wrapper(text, end) :]
 
 
 def strip_anchored_calls(

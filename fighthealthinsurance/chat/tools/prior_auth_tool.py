@@ -17,6 +17,7 @@ from .base_tool import (
     BaseTool,
     is_safe_tool_field,
     parse_anchored_json_payload,
+    replace_anchored_call,
     settable_model_fields,
     strip_anchored_calls,
 )
@@ -121,13 +122,13 @@ class PriorAuthTool(BaseTool):
                 await self._update_prior_auth_fields(prior_auth, prior_auth_data)
                 await prior_auth.asave()
 
-                # count=1: byte-identical duplicate calls each get their own
-                # pass via max_calls_per_reply.
-                cleaned_response = response_text.replace(
+                # Spliced at the match: see AppealTool.execute.
+                cleaned_response = replace_anchored_call(
+                    response_text,
+                    match,
                     call_span,
                     f"I've created/updated [Prior Auth Request #{prior_auth.id}]"
                     f"({self.domain}/prior-auths/view/{prior_auth.id}) for you.",
-                    1,
                 )
                 await self.send_status_message(
                     f"Prior Auth Request #{prior_auth.id} has been created/updated "
@@ -135,10 +136,11 @@ class PriorAuthTool(BaseTool):
                 )
                 return cleaned_response, context
             else:
-                cleaned_response = response_text.replace(
+                cleaned_response = replace_anchored_call(
+                    response_text,
+                    match,
                     call_span,
                     "I couldn't create or update the prior authorization request.",
-                    1,
                 )
                 await self.send_status_message(
                     "Failed to create or update prior authorization request."

@@ -579,6 +579,77 @@ class GenerateAppealLetterToolTest(APITestCase):
             )
         self.assertEqual(mock_draft.await_args.kwargs["denial"].procedure, "72148")
 
+    async def test_null_for_a_required_field_does_not_block_the_letter(self):
+        """The prompt asks for whichever fields the model knows: a null
+        denial_text must not fail the denial save and lose the letter."""
+        chat = await self._make_chat("lettertool8", "9999939008")
+        tool = GenerateAppealLetterTool(AsyncMock(), AsyncMock())
+        with patch(
+            "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
+            "draft_letter_for_chat",
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
+        ) as mock_draft:
+            await tool.handle(
+                '**generate_appeal_letter**{"procedure": "MRI", "denial_text": null}',
+                "",
+                chat=chat,
+            )
+        mock_draft.assert_awaited_once()
+
+    async def test_drafting_error_reaches_the_user_without_its_text(self):
+        """The exception text can quote a database row, PHI included."""
+        chat = await self._make_chat("lettertool9", "9999939009")
+        error = AsyncMock()
+        tool = GenerateAppealLetterTool(AsyncMock(), error)
+        with patch(
+            "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
+            "draft_letter_for_chat",
+            new=AsyncMock(side_effect=RuntimeError("Failing row contains (PHI)")),
+        ):
+            await tool.handle(
+                '**generate_appeal_letter**{"procedure": "MRI"}', "", chat=chat
+            )
+        self.assertNotIn("Failing row", error.await_args.args[0])
+
+    async def test_letter_survives_a_client_that_left_while_drafting(self):
+        """The letter is drafted and saved by the time the status frames
+        find the client gone. They must not swap it for a failure message,
+        or the reconnect replay shows that instead of the saved letter."""
+        chat = await self._make_chat("lettertool10", "9999939010")
+        client_gone = False
+
+        async def status(message):
+            if client_gone:
+                raise ClientGone()
+
+        async def draft(**kwargs):
+            nonlocal client_gone
+            client_gone = True
+            return DraftedLetter(GENERATED_LETTER, True)
+
+        tool = GenerateAppealLetterTool(status, AsyncMock(side_effect=ClientGone()))
+        with patch(
+            "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
+            "draft_letter_for_chat",
+            new=draft,
+        ):
+            response, _, _ = await tool.handle(
+                '**generate_appeal_letter**{"procedure": "MRI"}', "", chat=chat
+            )
+        self.assertIn(GENERATED_LETTER, response)
+
+    async def test_call_abandoned_before_drafting_is_answered_about_the_letter(self):
+        """A reply that was only the call reads as a letter problem, not
+        AppealTool's "problem saving those appeal details"."""
+        chat = await self._make_chat("lettertool11", "9999939011")
+        tool = GenerateAppealLetterTool(
+            AsyncMock(side_effect=ClientGone()), AsyncMock(side_effect=ClientGone())
+        )
+        response, _, _ = await tool.handle(
+            '**generate_appeal_letter**{"procedure": "MRI"}', "", chat=chat
+        )
+        self.assertIn("problem drafting the letter", response)
+
 
 class LetterSelectionPolicyTest(APITestCase):
     """generate_letter_for_denial picks a letter, not just any model output."""
@@ -1060,6 +1131,35 @@ class MultiCallAndErrorStripTest(APITestCase):
         self.assertEqual(result.count(GENERATED_LETTER), 1)
         # The dropped duplicate is acknowledged rather than vanishing.
         self.assertIn("drafted one letter", result)
+
+    async def test_failed_draft_strips_a_duplicate_call_without_claiming_a_letter(
+        self,
+    ):
+        """No letter, no "I drafted one letter" notice: the reply already
+        says why there is none."""
+        _, chat = await _make_professional_chat("multicall5", "9999969005")
+        response = (
+            '**generate_appeal_letter**{"procedure": "MRI"}\n'
+            '**generate_appeal_letter**{"procedure": "MRI scan"}'
+        )
+        tool = GenerateAppealLetterTool(AsyncMock(), AsyncMock())
+        with patch(
+            "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
+            "draft_letter_for_chat",
+            new=AsyncMock(return_value=None),
+        ):
+            result, _, _ = await tool.handle(response, "", chat=chat)
+        self.assertNotIn("drafted one letter", result)
+
+    async def test_appeal_update_lands_on_the_call_not_a_quote_of_it(self):
+        """A copy of the call quoted in the prose keeps its text. Replacing
+        the first copy instead left the real call in place to run again."""
+        _, chat = await _make_professional_chat("multicall6", "9999969006")
+        quoted = "I'll send `**create_or_update_appeal**{\"procedure\": \"MRI\"}` now:"
+        response = quoted + '\n**create_or_update_appeal**{"procedure": "MRI"}'
+        tool = AppealTool(AsyncMock(), AsyncMock())
+        result, _, _ = await tool.handle(response, "", chat=chat)
+        self.assertTrue(result.startswith(quoted + "\nI've created/updated"))
 
     async def test_calls_past_the_cap_are_stripped_not_leaked(self):
         """A reply with more calls than max_calls_per_reply executes the

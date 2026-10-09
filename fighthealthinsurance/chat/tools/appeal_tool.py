@@ -17,6 +17,7 @@ from .base_tool import (
     BaseTool,
     is_safe_tool_field,
     parse_anchored_json_payload,
+    replace_anchored_call,
     set_tool_field,
     settable_model_fields,
     strip_anchored_calls,
@@ -113,6 +114,9 @@ class AppealTool(BaseTool):
             # over-capture into a later tool call on another line (see
             # parse_anchored_json_payload); replacing call_span rather than
             # match.group(0) keeps that later call intact for its own handler.
+            # Spliced at the match (replace_anchored_call), so a duplicate
+            # call gets its own pass via max_calls_per_reply and a copy of
+            # the call quoted earlier in the prose is left alone.
             appeal_data, call_span = parse_anchored_json_payload(response_text, match)
             await self.send_status_message("Processing update appeal data...")
 
@@ -123,23 +127,22 @@ class AppealTool(BaseTool):
                 await appeal.asave()
                 await denial.asave()
 
-                # count=1: byte-identical duplicate calls each get their own
-                # pass via max_calls_per_reply instead of one replacement
-                # landing at every occurrence.
-                cleaned_response = response_text.replace(
+                cleaned_response = replace_anchored_call(
+                    response_text,
+                    match,
                     call_span,
                     f"I've created/updated [Appeal #{appeal.id}]({self.domain}/appeals/{appeal.id}) for you.",
-                    1,
                 )
                 await self.send_status_message(
                     f"Appeal #{appeal.id} has been created/updated successfully."
                 )
                 return cleaned_response, context
             else:
-                cleaned_response = response_text.replace(
+                cleaned_response = replace_anchored_call(
+                    response_text,
+                    match,
                     call_span,
                     "I couldn't create or update the appeal.",
-                    1,
                 )
                 await self.send_status_message("Failed to create or update appeal.")
                 return cleaned_response, context

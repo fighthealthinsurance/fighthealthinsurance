@@ -22,10 +22,15 @@ from fighthealthinsurance.chat.appeal_letter_generator import (
     denial_has_letter_context,
     draft_letter_for_chat,
 )
+from fighthealthinsurance.client_gone import ClientGone
 from fighthealthinsurance.denial_context import merge_qa
 
 from .appeal_tool import AppealTool
-from .base_tool import parse_anchored_json_payload, strip_anchored_calls
+from .base_tool import (
+    parse_anchored_json_payload,
+    replace_anchored_call,
+    strip_anchored_calls,
+)
 from .patterns import GENERATE_APPEAL_LETTER_REGEX
 
 # Payload keys that are letter-generation context rather than Appeal/Denial
@@ -108,21 +113,64 @@ class GenerateAppealLetterTool(AppealTool):
     def _appeal_link(self, appeal: Any) -> str:
         return f"[Appeal #{appeal.id}]({self.domain}/appeals/{appeal.id})"
 
+    def strip_calls_on_error(self, response_text: str) -> str:
+        """Span-bounded on-error strip (see AppealTool.strip_calls_on_error),
+        with a fallback about the letter: a reply that was only this call
+        would otherwise read AppealTool's "problem saving those appeal
+        details"."""
+        return strip_anchored_calls(
+            self,
+            response_text,
+            empty_fallback=(
+                "Sorry -- I ran into a problem drafting the letter. Please "
+                "ask me again and I'll retry."
+            ),
+        )
+
     def _replace_call(
-        self, response_text: str, call_span: str, replacement: str
+        self,
+        response_text: str,
+        match: re.Match[str],
+        call_span: str,
+        replacement: str,
+        drafted: bool = False,
     ) -> str:
         """Replace this call's exact span, then strip straggler calls.
 
         A reply should carry at most one generate_appeal_letter call; any
         further ones would each run another full generation, so they are
         removed (span-bounded) rather than executed or left to render raw.
-        The notice keeps the drop visible to the user and to the model,
-        which reads this text back as history.
+        When a letter was drafted, the notice keeps the drop visible to the
+        user and to the model, which reads this text back as history.
+        Otherwise the replacement already says why there is no letter, a
+        repeat call would have met the same end, and a notice saying a
+        letter was drafted would contradict it.
         """
-        updated = response_text.replace(call_span, replacement, 1)
+        updated = replace_anchored_call(response_text, match, call_span, replacement)
         if self.detect(updated):
-            updated = strip_anchored_calls(self, updated, notice=_ONE_LETTER_NOTICE)
+            updated = strip_anchored_calls(
+                self, updated, notice=_ONE_LETTER_NOTICE if drafted else None
+            )
         return updated
+
+    async def _status_after_draft(self, message: str) -> None:
+        """Send a status frame once drafting is over, best-effort.
+
+        By then the letter exists, and may already be saved to the appeal.
+        A failed send -- ClientGone from a user who closed the tab during
+        the draft -- must not abort the tool: BaseTool.handle would strip
+        the call and persist a failure message where the letter belongs,
+        so the reconnect replay would show that instead of the letter. The
+        departure is already recorded on the ChatInterface, whose send
+        wrapper raised.
+        """
+        try:
+            await self.send_status_message(message)
+        except Exception as e:
+            logger.info(
+                f"{self.name}: status frame after drafting not sent "
+                f"({type(e).__name__}); keeping the letter in the reply"
+            )
 
     async def execute(
         self,
@@ -188,6 +236,7 @@ class GenerateAppealLetterTool(AppealTool):
                 return (
                     self._replace_call(
                         response_text,
+                        match,
                         call_span,
                         "I couldn't set up the appeal record to draft a letter into.",
                     ),
@@ -209,6 +258,7 @@ class GenerateAppealLetterTool(AppealTool):
                 return (
                     self._replace_call(
                         response_text,
+                        match,
                         call_span,
                         "Before I draft the letter I need at least one of: "
                         "the procedure or service that was denied, the "
@@ -232,7 +282,7 @@ class GenerateAppealLetterTool(AppealTool):
                 self.drafted_this_turn[0] = drafted
 
             if drafted and drafted.saved_to_appeal:
-                await self.send_status_message(
+                await self._status_after_draft(
                     f"Appeal letter drafted and saved to Appeal #{appeal.id}."
                 )
                 replacement = (
@@ -244,7 +294,7 @@ class GenerateAppealLetterTool(AppealTool):
                 # A reserve draft was served but the appeal already carries a
                 # letter (possibly user-edited); it was deliberately left
                 # untouched -- say so instead of claiming a save.
-                await self.send_status_message("Appeal letter drafted.")
+                await self._status_after_draft("Appeal letter drafted.")
                 replacement = (
                     f"{self._appeal_link(appeal)} already has a saved letter, "
                     f"so I've left that one untouched. Here's a draft you can "
@@ -254,14 +304,14 @@ class GenerateAppealLetterTool(AppealTool):
             elif drafted:
                 # The letter exists but the appeal save failed: deliver it
                 # without claiming it was saved anywhere.
-                await self.send_status_message("Appeal letter drafted.")
+                await self._status_after_draft("Appeal letter drafted.")
                 replacement = (
                     f"I've drafted an appeal letter, but couldn't attach it to "
                     f"{self._appeal_link(appeal)} just now -- please copy it "
                     f"from this chat. Here's the draft:\n\n---\n\n{drafted.text}"
                 )
             else:
-                await self.send_status_message("Letter generation did not succeed.")
+                await self._status_after_draft("Letter generation did not succeed.")
                 replacement = (
                     f"I wasn't able to draft the letter just now -- the "
                     f"letter-writing models didn't return a usable draft. "
@@ -269,11 +319,29 @@ class GenerateAppealLetterTool(AppealTool):
                     f"{self._appeal_link(appeal)}, where you can also generate "
                     f"the letter, or ask me to try again in a few minutes."
                 )
-            return self._replace_call(response_text, call_span, replacement), context
+            return (
+                self._replace_call(
+                    response_text,
+                    match,
+                    call_span,
+                    replacement,
+                    drafted=drafted is not None,
+                ),
+                context,
+            )
 
+        except ClientGone:
+            # The client left before the draft was done. Not a tool error:
+            # BaseTool.handle ends the tool quietly, with no traceback and
+            # no error frame into the closed socket.
+            raise
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error drafting appeal letter: {type(e).__name__}"
             )
-            await self.send_error_message(f"Error drafting appeal letter: {str(e)}")
+            # Generic on purpose: the exception text can carry PHI (a
+            # database error quotes the failing row).
+            await self.send_error_message(
+                "Error drafting appeal letter. Please try again in a moment."
+            )
             raise
