@@ -29,6 +29,7 @@ from channels.db import database_sync_to_async
 from loguru import logger
 
 from fighthealthinsurance.exec import bridge_executor, letter_executor
+from fighthealthinsurance.ml import spend
 from fighthealthinsurance.ml.ml_models import _env_float
 from fighthealthinsurance.utils import is_real_appeal
 
@@ -187,6 +188,9 @@ async def find_reserve_letter(denial: Any) -> Optional[str]:
     return None
 
 
+# The denial's spend channel, as at every entry point that holds the
+# Denial: the drain's model calls are counted against its budget.
+@spend.for_denial_channel
 async def generate_letter_for_denial(
     denial: Any,
     *,

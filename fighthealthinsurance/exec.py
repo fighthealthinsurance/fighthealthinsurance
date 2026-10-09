@@ -101,7 +101,7 @@ health_news_executor = ContextThreadPoolExecutor(
 # but a too-small pool would still make live requests wait behind
 # abandoned ones. Same deadlock posture as bridge_executor: these tasks
 # block ON model futures, and nothing a model call depends on runs here.
-letter_executor = ThreadPoolExecutor(
+letter_executor = ContextThreadPoolExecutor(
     max_workers=_pool_size("FHI_LETTER_EXECUTOR_WORKERS", 8),
     thread_name_prefix="fhi-letter",
 )
