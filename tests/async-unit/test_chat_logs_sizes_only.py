@@ -576,7 +576,9 @@ class TestScoringAndSummaryLogs:
     async def test_document_summary_errors_log_class_names(self):
         doc = MagicMock()
         doc.full_text = "Denial letter SENTINEL-doc-text"
-        doc.asave = AsyncMock(side_effect=[None, RuntimeError("SENTINEL-doc-save")])
+        # The only save is the FAILED-status write: the caller's claim, not
+        # summarize_chunks itself, marks the document PROCESSING.
+        doc.asave = AsyncMock(side_effect=RuntimeError("SENTINEL-doc-save"))
         chat_document = MagicMock()
         chat_document.objects.aget = AsyncMock(return_value=doc)
         chat_document.DoesNotExist = type("DoesNotExist", (Exception,), {})
