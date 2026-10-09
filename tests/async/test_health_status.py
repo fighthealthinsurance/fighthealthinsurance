@@ -167,6 +167,26 @@ class TestHealthStatus(TestCase):
             assert health_status.model_ok(_InternalGood()) is None
 
     @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_last_sweep_result_pairs_verdict_with_sweep_time(self, fake_router):
+        """last_sweep_result() reports a backend's verdict and when that sweep
+        ran, for the staff status page."""
+        bad = _ExternalBad()
+        fake_router.all_models_by_cost = [_InternalGood(), bad]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        before = time.time()
+        _HealthStatus._refresh(health_status)
+
+        ok, checked_at = health_status.last_sweep_result(bad)
+        assert ok is False and before <= checked_at <= time.time()
+
+    def test_last_sweep_result_does_not_start_the_sweep(self):
+        """Reading the cache for the status page must not kick off a sweep."""
+        with mock.patch.object(health_status, "ensure_started") as ensure_started:
+            health_status.last_sweep_result(_InternalGood())
+        ensure_started.assert_not_called()
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
     def test_all_internal_dead_sends_alert(self, fake_router):
         """All internal backends failing triggers email + error log."""
         fake_router.all_models_by_cost = [_InternalBad(), _ExternalGood()]

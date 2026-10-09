@@ -12,6 +12,7 @@ Trade-offs:
 """
 
 import concurrent.futures
+import datetime
 import os
 import threading
 import time
@@ -21,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from loguru import logger
 
 from fighthealthinsurance.ml import ml_router as ml_router_module
+from fighthealthinsurance.utils import sanitize_url_for_display
 
 REFRESH_INTERVAL_SECONDS = 60 * 60  # hourly
 ALERT_THROTTLE_SECONDS = 60 * 60  # at most one alert email per hour
@@ -66,6 +68,9 @@ class _HealthStatus:
         # router can consult it on the request path without ever blocking on the
         # sweep lock.
         self._health_map: Dict[str, bool] = {}
+        # When the sweep that produced ``_health_map`` ran (epoch seconds), or
+        # None before the first one on this process.
+        self._health_map_checked_at: Optional[float] = None
         self._timer: Optional[threading.Timer] = None
         self._initialized = False
         # Whether the recurring background sweep has been kicked off. Kept
@@ -126,6 +131,15 @@ class _HealthStatus:
         """
         self.ensure_started()
         return self._health_map.get(_model_key(model))
+
+    def last_sweep_result(self, model: Any) -> Tuple[Optional[bool], Optional[float]]:
+        """The last background sweep's verdict for ``model`` and when that
+        sweep ran (epoch seconds); ``None`` for either when there is none.
+
+        A read for the staff status page. Unlike :meth:`model_ok` it never
+        starts the sweep, so looking at the page has no side effects.
+        """
+        return self._health_map.get(_model_key(model)), self._health_map_checked_at
 
     def ensure_started(self) -> None:
         """Start the periodic health sweep once, in the background, so cached
@@ -313,6 +327,7 @@ class _HealthStatus:
             # sweep; on an enumeration failure (no candidates) keep the last
             # known-good map rather than wiping it to "unknown".
             self._health_map = new_health
+            self._health_map_checked_at = snapshot.last_checked
 
         return internal_total, internal_alive, internal_failures, enumeration_error
 
@@ -460,6 +475,17 @@ class _HealthStatus:
             self._schedule_refresh()
 
 
+def _display_url(url: Any) -> Optional[str]:
+    """``url`` without userinfo, query or fragment, for the status page;
+    ``None`` when the backend has no endpoint of that kind."""
+    if not url or not isinstance(url, str):
+        return None
+    try:
+        return sanitize_url_for_display(url)
+    except ValueError:
+        return "?"
+
+
 def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any]]:
     """Run a fresh, uncached health check across every known model backend.
 
@@ -469,6 +495,14 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
     breakdown — ``{"name", "ok", "external", "error"}`` — for the staff-only
     system status dashboard. It does not send alerts or mutate the cached
     snapshot.
+
+    Each row also carries the backend's endpoint (``url``, plus
+    ``backup_url`` when a different backup endpoint is configured) with
+    credentials, query and fragment stripped; ``checked_at``, when this
+    probe answered (``None`` if it hadn't by the deadline); and the hourly
+    background sweep's last verdict for the same instance (``sweep_ok``,
+    ``sweep_checked_at``), the cached result the router reads for backends
+    that have no live signal of their own.
 
     Checks run in parallel with a shared deadline; a backend whose check has
     not finished by ``timeout_seconds`` is reported as not-ok with a timeout
@@ -501,9 +535,19 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
         logger.opt(exception=True).debug("Could not build model query references")
         ref_by_id = {}
 
+    # When each probe returned or raised, keyed by id(model). Written by the
+    # probe threads, and read only for probes that finished by the deadline.
+    answered_at: Dict[int, datetime.datetime] = {}
+
+    def probe(m: Any) -> Any:
+        try:
+            return m.model_is_ok()
+        finally:
+            answered_at[id(m)] = datetime.datetime.now(datetime.timezone.utc)
+
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(candidates)))
     try:
-        future_map = {ex.submit(m.model_is_ok): m for m in candidates}
+        future_map = {ex.submit(probe, m): m for m in candidates}
         concurrent.futures.wait(future_map, timeout=timeout_seconds)
         for future, m in future_map.items():
             name = str(
@@ -521,6 +565,9 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
                     err = str(e)
             else:
                 err = f"timeout>{timeout_seconds}s"
+            sweep_ok, sweep_at = health_status.last_sweep_result(m)
+            api_base = getattr(m, "api_base", None)
+            backup_api_base = getattr(m, "backup_api_base", None)
             results.append(
                 {
                     "name": name,
@@ -528,6 +575,21 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
                     "external": is_external,
                     "error": err,
                     "ref": ref_by_id.get(id(m)),
+                    "url": _display_url(api_base),
+                    "backup_url": (
+                        _display_url(backup_api_base)
+                        if backup_api_base != api_base
+                        else None
+                    ),
+                    "checked_at": answered_at.get(id(m)) if future.done() else None,
+                    "sweep_ok": sweep_ok,
+                    "sweep_checked_at": (
+                        datetime.datetime.fromtimestamp(
+                            sweep_at, tz=datetime.timezone.utc
+                        )
+                        if sweep_at is not None
+                        else None
+                    ),
                 }
             )
     finally:

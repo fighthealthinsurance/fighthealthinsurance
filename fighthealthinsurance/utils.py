@@ -40,6 +40,7 @@ from typing import (
 )
 from email.mime.image import MIMEImage
 from email.utils import formataddr
+from urllib.parse import urlparse, urlunparse
 from uuid import UUID
 
 from django.conf import settings
@@ -477,6 +478,22 @@ def mask_email_for_logging(email: Optional[str]) -> str:
         masked_local = "*****"
 
     return f"{masked_local}@{domain}"
+
+
+def sanitize_url_for_display(url: str) -> str:
+    """Strip sensitive URL components for safe display in status messages."""
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if hostname is not None:
+        display_host = f"[{hostname}]" if ":" in hostname else hostname
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        netloc = f"{display_host}:{port}" if port is not None else display_host
+    else:
+        netloc = parsed.netloc.rsplit("@", 1)[-1]
+    return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
 
 
 # The llama at the top of Fight Health Insurance emails (fhi_base_email.html).

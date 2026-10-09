@@ -273,6 +273,7 @@ class AdminStatusView(generic.TemplateView):
         ctx = super().get_context_data(**kwargs)
         ctx["title"] = "System Status"
         ctx["generated_at"] = timezone.now()
+        ctx["deployment"] = self._deployment_status()
         ctx["models"] = self._model_status()
         ctx["mcp"] = self._mcp_status()
         ctx["actors"] = self._actor_status()
@@ -287,6 +288,19 @@ class AdminStatusView(generic.TemplateView):
         ctx["letter_scoring"] = self._letter_scoring_status()
         ctx["storage"] = self._storage_status()
         return ctx
+
+    @staticmethod
+    def _deployment_status() -> Dict[str, Any]:
+        """Which release and environment this pod runs, from the same helpers
+        the deploy-time model check stamps its rows with."""
+        from fighthealthinsurance.ml import model_health_check as mhc
+
+        deployment_id = mhc.deployment_id()
+        return {
+            "id": deployment_id,
+            "versioned": mhc.is_versioned_deployment_id(deployment_id),
+            "environment": mhc.environment_name(),
+        }
 
     @staticmethod
     def _model_status() -> Dict[str, Any]:
