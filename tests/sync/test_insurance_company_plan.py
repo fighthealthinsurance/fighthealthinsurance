@@ -203,6 +203,18 @@ class FindNextStepsInsuranceCompanyTests(TestCase):
 
     def setUp(self):
         """Set up test data."""
+        # find_next_steps asks the model for appeal questions; these tests
+        # are about what it saves, so no model is called.
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        questions = patch.object(
+            DenialCreatorHelper,
+            "generate_appeal_questions",
+            new=AsyncMock(return_value=[]),
+        )
+        questions.start()
+        self.addCleanup(questions.stop)
+
         self.anthem = InsuranceCompany.objects.create(
             name="Anthem Blue Cross Blue Shield",
             alt_names="Anthem\nBCBS",
