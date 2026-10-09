@@ -223,10 +223,42 @@ async def test_a_page_left_before_any_letters_is_generated_for():
 
 
 @pytest.mark.asyncio
-async def test_the_wait_for_the_site_is_bounded():
-    rec = _SiteRecorder(prechecks=[STATUS_OK], generations=[SITE_IS_GENERATING])
+@pytest.mark.parametrize("failing_rechecks", [0, 80])
+async def test_the_wait_for_the_site_ends_by_its_deadline(failing_rechecks):
+    """However the rechecks go, the wait ends inside the limit by workflow
+    time, not by adding up the timers."""
+    from datetime import timedelta
+
+    from fighthealthinsurance.workflows.generate_appeal import SITE_WAIT_LIMIT
+
+    calls = {"precheck": 0}
+
+    @activity.defn(name="precheck_appeal_journey")
+    async def precheck_appeal_journey(hashed_email: str, denial_uuid: str) -> str:
+        calls["precheck"] += 1
+        if 2 <= calls["precheck"] < 2 + failing_rechecks:
+            raise ApplicationError("simulated failing recheck")
+        return STATUS_OK
+
+    @activity.defn(name="generate_and_store_appeals")
+    async def generate_and_store_appeals(hashed_email: str, denial_uuid: str) -> int:
+        return SITE_IS_GENERATING
+
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        result = await _run(env, rec)
-    assert result == 0
-    # 5, 10, 20, 30, 30, ... minutes until six hours have passed.
-    assert 2 < rec.calls.count("generate") < 20
+        task_queue = str(uuid.uuid4())
+        async with Worker(
+            env.client,
+            task_queue=task_queue,
+            workflows=[GenerateAppealWorkflow],
+            activities=[precheck_appeal_journey, generate_and_store_appeals],
+        ):
+            handle = await env.client.start_workflow(
+                GenerateAppealWorkflow.run,
+                GenerateAppealInput(hashed_email="h", denial_uuid="u"),
+                id=str(uuid.uuid4()),
+                task_queue=task_queue,
+            )
+            assert await handle.result() == 0
+            events = (await handle.fetch_history()).events
+    elapsed = events[-1].event_time.ToDatetime() - events[0].event_time.ToDatetime()
+    assert elapsed <= SITE_WAIT_LIMIT + timedelta(minutes=1), elapsed

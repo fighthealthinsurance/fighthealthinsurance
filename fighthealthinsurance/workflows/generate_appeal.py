@@ -13,9 +13,11 @@ workflow history.
 
 import asyncio
 from datetime import timedelta
+from typing import Optional
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 
 from fighthealthinsurance.workflows.types import GenerateAppealInput
 
@@ -56,26 +58,39 @@ class GenerateAppealWorkflow:
         # (the precheck sees them); a page left before any were stored is
         # generated for here, so nobody is left without letters.
         delay = SITE_RECHECK_INITIAL
-        waited = timedelta(0)
+        deadline = workflow.now() + SITE_WAIT_LIMIT
         while stored == SITE_IS_GENERATING:
-            if waited >= SITE_WAIT_LIMIT:
-                workflow.logger.warning(
-                    "the site held the generation lease past the wait limit"
-                )
-                return 0
-            await asyncio.sleep(delay.total_seconds())
-            waited += delay
-            delay = min(delay * 2, SITE_RECHECK_MAX)
-            if not await self._precheck(journey):
-                return 0
+            remaining = deadline - workflow.now()
+            if remaining > timedelta(0):
+                await asyncio.sleep(min(delay, remaining).total_seconds())
+                delay = min(delay * 2, SITE_RECHECK_MAX)
+            remaining = deadline - workflow.now()
+            if remaining <= timedelta(0):
+                return self._stop_waiting()
+            try:
+                # Retried only until the deadline, so a failing check cannot
+                # keep the wait open past it.
+                if not await self._precheck(journey, within=remaining):
+                    return 0
+            except ActivityError:
+                return self._stop_waiting()
             stored = await self._generate(journey)
         return int(stored)
 
-    async def _precheck(self, journey: GenerateAppealInput) -> bool:
+    def _stop_waiting(self) -> int:
+        workflow.logger.warning(
+            "the site held the generation lease past the wait limit"
+        )
+        return 0
+
+    async def _precheck(
+        self, journey: GenerateAppealInput, within: Optional[timedelta] = None
+    ) -> bool:
         status = await workflow.execute_activity(
             appeal_activities.precheck_appeal_journey,
             args=[journey.hashed_email, journey.denial_uuid],
             start_to_close_timeout=timedelta(seconds=60),
+            schedule_to_close_timeout=within,
             retry_policy=DURABLE_RETRY,
         )
         if status != "ok":
