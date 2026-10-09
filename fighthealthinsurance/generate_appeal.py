@@ -82,7 +82,9 @@ from .ml.ml_models import (
     ProviderUnavailable,
     RemoteFullOpenLike,
     RemoteModelLike,
+    context_already_in_prompt,
     describe_model_error,
+    render_citations_context,
     repetition_penalty,
 )
 from .ml.ml_router import ml_router
@@ -856,9 +858,12 @@ def identifier_found_in_text(identifier: str, text: str) -> bool:
 #     make_sectioned_open_prompt takes the same kwargs and is re-rendered
 #     the same way for the calls written with it.
 #   * The same call dict also carries pubmed_context, ml_citations_context,
-#     plan_context, and patient_context as separate keys, which the model
-#     re-injects via ``context_extra`` (see ml_models.RemoteFullOpenLike).
-#     We null/truncate those alongside the prompt re-render.
+#     plan_context, and patient_context as separate keys. The model injects
+#     those via ``context_extra`` only when the prompt does not already carry
+#     them verbatim (see RemoteFullOpenLike._build_context_extra), but they
+#     still feed the token estimate and the trusted-URL registration, so we
+#     null/truncate them alongside the prompt re-render to keep the two
+#     surfaces consistent.
 
 # In-prompt enrichment dropped entirely at tier 1+. Names match the
 # ``make_open_prompt`` parameters (note: ``ml_context`` is the prompt-side
@@ -1057,10 +1062,11 @@ def _estimate_call_token_footprint(
     """Rough token estimate of what a model call actually sends.
 
     Sums the prompt with the patient/plan/pubmed/citation context that the
-    model re-injects via ``context_extra`` (see
-    ``ml_models.RemoteOpenLike._build_context_extra``). Enrichment baked
-    into the prompt string is already counted via ``prompt``; the call-dict
-    contexts are added on top because that mirrors what is sent on the wire.
+    model injects via ``context_extra`` (see
+    ``ml_models.RemoteOpenLike._build_context_extra``). A call-dict context
+    the prompt already carries verbatim is not injected again, so it is not
+    counted again either (``context_already_in_prompt`` is the shared rule);
+    the rest are added on top because that mirrors what is sent on the wire.
 
     ``patient_context_char_cap`` mirrors the on-the-wire truncation that
     ``_build_context_extra`` applies (``patient_context[0:max_len/2]``): the
@@ -1076,13 +1082,22 @@ def _estimate_call_token_footprint(
         and len(patient_context) > patient_context_char_cap
     ):
         patient_context = patient_context[:patient_context_char_cap]
-    return (
-        estimate_tokens(call.get("prompt"))
-        + estimate_tokens(patient_context)
-        + estimate_tokens(call.get("plan_context"))
-        + estimate_tokens(call.get("pubmed_context"))
-        + estimate_tokens(call.get("ml_citations_context"))
-    )
+    prompt = call.get("prompt")
+    # A citation list goes on the wire one citation per line (see
+    # render_citations_context), not as its Python repr, so count that.
+    citations = call.get("ml_citations_context")
+    if isinstance(citations, (list, tuple)):
+        citations = render_citations_context(list(citations))
+    total = estimate_tokens(prompt)
+    for value in (
+        patient_context,
+        call.get("plan_context"),
+        call.get("pubmed_context"),
+        citations,
+    ):
+        if not context_already_in_prompt(prompt, value):
+            total += estimate_tokens(value)
+    return total
 
 
 def _model_context_limit(model_name: Optional[str]) -> Optional[int]:

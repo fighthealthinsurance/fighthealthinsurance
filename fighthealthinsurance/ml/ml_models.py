@@ -131,6 +131,7 @@ from fighthealthinsurance.utils import all_concrete_subclasses
 # followed by whitespace and a capital letter (avoids splitting on "Dr.", "U.S.", etc.)
 _sentence_split_re = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 
+
 # The work-requirements answer the system prompt mandates VERBATIM. Named
 # here, rather than buried in the prompt literal, because two other places
 # have to agree with it: response_similarity.CANNED_REPLY_SIGNATURES (which
@@ -138,6 +139,47 @@ _sentence_split_re = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 # the required text twice) and the drift test that checks the two still
 # match. Editing the wording is fine; editing it in only one of those places
 # is what broke it before.
+def render_citations_context(
+    ml_citations_context: Optional[Union[str, List[str]]],
+) -> Optional[str]:
+    """One citation per line. ``make_open_prompt`` renders the list the same
+    way, so the prompt and the context-injection surface compare
+    byte-for-byte."""
+    if ml_citations_context is None:
+        return None
+    if isinstance(ml_citations_context, str):
+        return ml_citations_context
+    return "\n".join(str(c) for c in ml_citations_context if c)
+
+
+def context_already_in_prompt(prompt: Optional[str], value: Any) -> bool:
+    """True when ``prompt`` already carries ``value`` verbatim.
+
+    The one rule behind two surfaces: ``_build_context_extra`` skips such a
+    value instead of injecting it a second time, and
+    ``generate_appeal._estimate_call_token_footprint`` leaves it out of the
+    wire-size estimate for the same reason. A citation list is compared in
+    its rendered one-per-line form.
+    """
+    if not prompt or not value:
+        return False
+    rendered = (
+        render_citations_context(list(value))
+        if isinstance(value, (list, tuple))
+        else value
+    )
+    if not isinstance(rendered, str) or not rendered.strip():
+        return False
+    return rendered.strip() in prompt
+
+
+# System prompt for the prior-auth letter path. Callers that reuse that path
+# for a different short letter (see generate_regulator_letter) pass their own.
+PRIOR_AUTH_SYSTEM_PROMPT = (
+    "You are an AI assistant helping a healthcare professional with insurance "
+    "and medical questions. Provide accurate, helpful, and concise information."
+)
+
 MEDICAID_WORK_REQUIREMENTS_BLOCK = """New federal rules require many adults (ages 19-64) to complete at least 80 hours per month of work, job training, school, or community service to keep Medicaid coverage. States must implement these requirements by January 1, 2027 — a few have started earlier, and some may receive extensions.
 
 **Key Points:**
@@ -1283,9 +1325,10 @@ class RemoteModelLike(DenialBase):
         if previous_context_summary:
             text_to_check += " " + previous_context_summary.lower()
 
-        # Check recent-ish history (last 40 messages) for context
+        # The whole history, not a recent window: the Medicaid tool blocks
+        # are attached if and only if Medicaid shows up anywhere in the chat.
         if history:
-            for msg in history[-40:]:
+            for msg in history:
                 content = msg.get("content", "")
                 if content:
                     text_to_check += " " + content.lower()
@@ -1399,19 +1442,29 @@ class RemoteModelLike(DenialBase):
             return (True, None)
         return (False, "empty or no response")
 
-    async def generate_prior_auth_response(self, prompt: str) -> Optional[str]:
+    async def generate_prior_auth_response(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        prof_pov: bool = True,
+    ) -> Optional[str]:
         """
-        Generate a prior authorization response from the model.
+        Generate a prior authorization response (or another short professional
+        letter) from the model.
 
         Args:
             prompt: The prompt for the model
+            system_prompt: Overrides PRIOR_AUTH_SYSTEM_PROMPT for callers that
+                reuse this path for a different kind of letter (see
+                generate_regulator_letter).
+            prof_pov: Whether the letter is written by the professional
+                (True) or the patient (False).
 
         Returns:
             Generated response or None
         """
-        system_prompt = "You are an AI assistant helping a healthcare professional with insurance and medical questions. Provide accurate, helpful, and concise information."
         result = await self._infer(
-            system_prompts=[system_prompt],
+            system_prompts=[system_prompt or PRIOR_AUTH_SYSTEM_PROMPT],
             prompt=prompt,
         )
         if result:
@@ -1499,10 +1552,10 @@ Beneath the surface, you channel the spirit of Sir Humphrey Appleby (if he cared
 
 Some important rules:
 
-You cannot submit claims or appeals yourself. You can draft, guide, or recommend — but actual submissions must be done by the user (you refuse to directly touch fax machines). You don't have to say this everytime just if they ask you to send a fax or similar.
+You cannot submit claims or appeals yourself. You can draft, guide, or recommend — but actual submissions must be done by the user (you refuse to directly touch fax machines). You don't have to say this every time, just if they ask you to send a fax or similar.
 You can however create an appeal or prior auth request for the user to submit.
 
-If you want to look up something in PubMed (e.g., for clinical justification, or if the professional asks you to include a recent study), use the format **pubmedquery:[your search terms]**. The system will return results as pubmedcontext:[...] which you can then cite.
+If you want to look up something in PubMed (e.g., for clinical justification, or if the professional asks you to include a recent study), use the format **pubmed_query: your search terms**. The system will return results as pubmedcontext:[...] which you can then cite.
 Note: you can send back a pubmed query as a standalone message or at the end of another message.
 It's possible the pubmed integration will be disabled, so if it doesn't work you'll just need to do your best without the pubmed information.
 Keep in mind PubMed is a database of medical literature, so you should only use it for clinical information. That is to say Pubmed is only good for **medical** queries, not billing or insurance questions.
@@ -1512,16 +1565,16 @@ Keep in mind PubMed is a database of medical literature, so you should only use 
 - You may ONLY cite references that have been provided to you in pubmedcontext:[...] or clinicaltrialscontext:[...] responses
 - If you haven't received either, do NOT cite any specific studies or trials
 - If asked for references and you don't have any, either:
-  1. Use **pubmedquery:[search terms]** to look up literature, OR
-  2. Use **clinical_trials_query: your search terms here** to look up registered trials (especially for "experimental/investigational" denials), OR
+  1. Use **pubmed_query: search terms** to look up literature, OR
+  2. Use **clinical_trials_query: search terms** to look up registered trials (especially for "experimental/investigational" denials), OR
   3. Say "I can search PubMed or ClinicalTrials.gov for relevant evidence if you'd like" instead of making up citations
 - When you DO have pubmedcontext results, cite them accurately using the title and journal provided
 - When you DO have clinicaltrialscontext results, cite them accurately using the NCT ID and the URL provided
 - Generic medical knowledge is fine to share, but do NOT attach fake citations to it
 
-If your asked to do anything related to {product_name} account billing (for example cancelling the {product_name} subscription), tell them you can't and direct them to the billing page or suggest they e-mail {support_email}.
+If you're asked to do anything related to {product_name} account billing (for example cancelling the {product_name} subscription), tell them you can't and direct them to the billing page or suggest they e-mail {support_email}.
 
-For example, if searching for semaglutide you would write **pubmedquery:semaglutide**. If you want to search for a specific study, you can use the format **pubmedquery:semaglutide 2023 weight loss**.
+For example, if searching for semaglutide you would write **pubmed_query: semaglutide**. If you want to search for a specific study, you can use the format **pubmed_query: semaglutide 2023 weight loss**.
 
 
 If anyone gets frustrated or stuck, you can gently remind them to reach out to {support_email}.
@@ -1551,7 +1604,7 @@ IMPORTANT: Do NOT ask the user for the patient's name. The patient's name is pro
             """**Medicaid Information Tool**: For Medicaid/Medicare questions, you MUST use this tool format: **medicaid_info {"state": "StateName", "topic": "", "limit": 5}**
 
 (note: fill in the statename with the actual name of the state).
-When possible even if the user has not explicitily provided the state if they're using a state specific name (like MediCal) infer the state for them. Otherwise ask.
+When possible even if the user has not explicitly provided the state if they're using a state specific name (like MediCal) infer the state for them. Otherwise ask.
 
 This means, for example, you get the phone number for medical (california medicaid) by calling this tool and looking at the response.
 
@@ -1560,7 +1613,7 @@ Rules for medicaid questions:
 - If user mentions Medicaid/Medicare but no state → Ask "Which state?" then ONLY use tool call
 - NEVER provide generic Medicaid information, websites, or advice
 - NEVER mix tool calls with long explanations
-- The tool provides ALL necessary information, although you can reformat it's output.
+- The tool provides ALL necessary information, although you can reformat its output.
 - After you have delivered the state information, """
             + MEDICAID_ELIGIBILITY_OFFER_RULE
             + """
@@ -1597,9 +1650,9 @@ Use this when someone needs the OFFICIAL wording — renewal deadlines, income t
 
 Offer it proactively after you've given someone an eligibility estimate, or an answer about income limits, deadlines, or what a notice means. Everything we tell them is an estimate off simplified rules; the official page is the thing they can actually check it against, and their own state agency is the only one who decides. Give them the link, don't just describe it."""
 
-        pubmed_tool = """**PubMed Research Tool**: For medical research questions, you can search PubMed using: [*pubmed query: search terms*]. This provides access to recent medical literature and research. It can be a little slow but is a great way to learn possibly relevant medical information. Pubmed is not good for insurance information."""
+        pubmed_tool = """**PubMed Research Tool**: For medical research questions, you can search PubMed using: **pubmed_query: search terms**. This provides access to recent medical literature and research. It can be a little slow but is a great way to learn possibly relevant medical information. Pubmed is not good for insurance information."""
 
-        clinical_trials_tool = """**ClinicalTrials.gov Tool**: When an insurer denies a treatment as "experimental" or "investigational", you can check the public trial registry using: [*clinical trials query: search terms*]. The system returns clinicaltrialscontext:[...] with NCT IDs, study phases, status, conditions, interventions, and a brief summary you can cite.
+        clinical_trials_tool = """**ClinicalTrials.gov Tool**: When an insurer denies a treatment as "experimental" or "investigational", you can check the public trial registry using: **clinical_trials_query: search terms**. The system returns clinicaltrialscontext:[...] with NCT IDs, study phases, status, conditions, interventions, and a brief summary you can cite.
 Use this to distinguish between (1) FDA-approved standard-of-care, (2) off-label but guideline-supported, (3) actively studied but not yet established, and (4) truly speculative therapies. The existence of registered trials does NOT by itself prove insurance coverage -- the appeal argument is that the therapy is being actively studied or used clinically, so the relevant question is whether it is medically appropriate for THIS patient, not whether the therapy is hypothetical. When you cite a trial, include the NCT ID and the URL provided in the response."""
 
         doc_fetcher_tool = """**Document Fetcher Tool**: If a user shares a URL to a document (insurance plan, medical guidelines, denial letter, etc.), you can fetch and read it using: **fetch_doc {"url": "https://example.com/document.pdf"}**
@@ -1731,7 +1784,7 @@ We have a selection of tools to help you. You should try and use these tools whe
 {financial_assistance_tool}
 
 For eligibility determinations if you have a tool you must use the tool rather than guessing on your own.
-This means if someone asks if their eligible for medical, medicaid, medicare, or similar you must use the tool.
+This means if someone asks if they're eligible for Medi-Cal, Medicaid, Medicare, or similar you must use the tool.
 You can call these tools, but not the person chatting with you. So, for example, you can offer to lookup more info for them.
 
 ***THE MEDICAID PATH***
@@ -1743,7 +1796,7 @@ A lot of people asking about Medicaid in general ("what is Medicaid?", "how do I
 Plenty of people just want the answer to their question. If they say no, ignore the offer, or move on to something else, let it go and help them with what they actually asked.
 """
             medicaid_names_reminder = f"""
-Remember that medicaid can go by many names, including but not limited to: {", ".join(MEDICAID_PROGRAM_ALIASES)}. You can use these names to infer which state a person is in (although confirming that theyr'e in the state can be good to do).
+Remember that medicaid can go by many names, including but not limited to: {", ".join(MEDICAID_PROGRAM_ALIASES)}. You can use these names to infer which state a person is in (although confirming that they're in the state can be good to do).
 """
         else:
             # Only include PubMed tool for non-Medicaid conversations
@@ -1769,7 +1822,7 @@ If a chat is linked to an appeal or prior authorization record, pay attention to
 
 {tools}
 
-Don't tell people which tools your using.
+Don't tell people which tools you're using.
 
 At the end of every response, add the symbol 🐼 followed by a brief summary of what's going on in the conversation (e.g., "Discussing how to appeal a denial for physical therapy visits, patient age is 42, PT is needed after a fall."). Or if the chat is regarding medicaid / medicare eligibility it should be the information collected so far (like income etc.). This summary is for internal use only and will not be shown to the user. Use it to maintain continuity in future replies. Always fold NEW details from the user's latest message into this summary -- their state, age, income, or answers to questions you asked -- so the summary tracks the answers you have collected, not just the questions you asked.
 (Note: the 42 year old patient in that last sentence is just an example, not what is actually being discussed).
@@ -1789,11 +1842,9 @@ Some important notes:
 
 - You do not speak on behalf of Fight Health Insurance INC or anyone else as you are an AI chat bot.
 
-- If people ask about Luigi gently stear the conversation back to their specific billing/coverage/admin task.
+- If people ask about Luigi gently steer the conversation back to their specific billing/coverage/admin task.
 
-- At the end of every response add the 🐼 emoji with the context of the chat so far necessary for answering the next turn of conversation.
-
-- Avoid any promises of success (although you can point to general information like it is believed the majourity of appeals are successful, but tracking is imperfect, etc.)
+- Avoid any promises of success (although you can point to general information like it is believed the majority of appeals are successful, but tracking is imperfect, etc.)
 
 - For queer folks needing immediate support (not health insurance related) PFLAG keeps a list of hotlines at https://pflag.org/resource/support-hotlines/ .
 
@@ -2445,7 +2496,7 @@ class RemoteOpenLike(RemoteModel):
             The system prompt as a string, or the first prompt if multiple are available
         """
         key = prompt_type
-        prompt = "Your are a helpful assistant with extensive medical knowledge who loves helping patients. CRITICAL: Only cite medical literature, studies, PMIDs, journal names, or author names that are EXPLICITLY provided in the input. NEVER fabricate or hallucinate citations. If no citations are provided, do not include any specific study references."
+        prompt = "You are a helpful assistant with extensive medical knowledge who loves helping patients. CRITICAL: Only cite medical literature, studies, PMIDs, journal names, or author names that are EXPLICITLY provided in the input. NEVER fabricate or hallucinate citations. If no citations are provided, do not include any specific study references."
         # Professional POV: switch to the *_not_patient variant only when the
         # map has one, plus 'full' (whose hard-coded professional fallback
         # below covers maps without the variant). Switching the key for every
@@ -2909,19 +2960,29 @@ class RemoteOpenLike(RemoteModel):
     def _clean_diagnosis_response(self, response: str) -> Optional[str]:
         return self._clean_extracted_field(response, self.diagnosis_response_regex)
 
-    async def generate_prior_auth_response(self, prompt: str) -> Optional[str]:
+    async def generate_prior_auth_response(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        prof_pov: bool = True,
+    ) -> Optional[str]:
         """
-        Generate a prior authorization response from the model.
+        Generate a prior authorization response (or another short professional
+        letter) from the model.
 
         Args:
             prompt: The prompt for the model
+            system_prompt: Overrides PRIOR_AUTH_SYSTEM_PROMPT for callers that
+                reuse this path for a different kind of letter (see
+                generate_regulator_letter).
+            prof_pov: Whether the letter is written by the professional
+                (True) or the patient (False).
 
         Returns:
             Generated response or None
         """
-        system_prompt = "You are an AI assistant helping a healthcare professional with insurance and medical questions. Provide accurate, helpful, and concise information."
         result = await self._checked_infer(
-            system_prompt=system_prompt,
+            system_prompt=system_prompt or PRIOR_AUTH_SYSTEM_PROMPT,
             prompt=prompt,
             pubmed_context=None,  # TODO: Add
             ml_citations_context=None,  # TODO: Add
@@ -2929,7 +2990,7 @@ class RemoteOpenLike(RemoteModel):
             plan_context=None,
             temperature=0.7,
             infer_type="prior_auth",
-            prof_pov=True,
+            prof_pov=prof_pov,
         )
         if result and len(result) > 0:
             return result[0][1]
@@ -3024,20 +3085,6 @@ class RemoteOpenLike(RemoteModel):
             return result.split("Date of service is")[1].strip()
         return result
 
-    async def questions(
-        self, prompt: str, patient_context: str, plan_context
-    ) -> List[str]:
-        result = await self._infer_no_context(
-            system_prompts=self.get_system_prompts("question"),
-            prompt=prompt,
-            patient_context=patient_context,
-            plan_context=plan_context,
-            timeout=ml_task_timeout("context"),
-        )
-        if result:
-            return result.split("\n")
-        return []
-
     async def get_procedure_and_diagnosis(
         self, prompt: str
     ) -> tuple[Optional[str], Optional[str]]:
@@ -3082,7 +3129,7 @@ class RemoteOpenLike(RemoteModel):
                 return (procedure, diagnosis)
             else:
                 logger.debug(
-                    f"Non-understood response {model_response} for procedure/diagnsosis."
+                    f"Non-understood response {model_response} for procedure/diagnosis."
                 )
         else:
             logger.debug(f"No model response for {self.model}")
@@ -3704,6 +3751,7 @@ class RemoteOpenLike(RemoteModel):
                     pubmed_context,
                     plan_context,
                     ml_citations_context,
+                    prompt=prompt,
                 )
 
                 # Detect if backend supports system messages
@@ -4089,23 +4137,47 @@ class RemoteOpenLike(RemoteModel):
         patient_context: Optional[str] = None,
         pubmed_context: Optional[str] = None,
         plan_context: Optional[str] = None,
-        ml_citations_context: Optional[List[str]] = None,
+        ml_citations_context: Optional[Union[str, List[str]]] = None,
+        prompt: Optional[str] = None,
     ) -> str:
         """Assemble the optional ``System context: …`` preamble injected into the
         user turn. Shared by the OpenAI-compatible path and the Anthropic
         Messages path (``RemoteAzureClaude``) so context handling stays in one
-        place."""
+        place.
+
+        Anything ``prompt`` already carries verbatim is skipped: the appeal
+        prompt from ``make_open_prompt`` embeds the plan, PubMed and citation
+        context under labelled sections, and the questions/citations prompts
+        inline the patient history, so re-injecting the same text here only
+        doubled the prompt and gave the model two competing framings. The
+        call-dict copies are still passed through (``_checked_infer`` needs
+        them to register their URLs as trusted input) -- they just don't
+        reach the wire twice.
+        """
+
+        def _already_in_prompt(value: str) -> bool:
+            return context_already_in_prompt(prompt, value)
+
         context_extra = ""
-        if patient_context is not None and len(patient_context) > 3:
+        if (
+            patient_context is not None
+            and len(patient_context) > 3
+            and not _already_in_prompt(patient_context)
+        ):
             patient_context_max = int(self.max_len / 2)
             context_extra = f"When answering the following question you can use the patient context {patient_context[0:patient_context_max]}."
-        if pubmed_context is not None:
+        if pubmed_context is not None and not _already_in_prompt(pubmed_context):
             context_extra += f"You can also use this context from pubmed: {pubmed_context} and you can include the DOI number in the appeal."
-        if plan_context is not None and len(plan_context) > 3:
+        if (
+            plan_context is not None
+            and len(plan_context) > 3
+            and not _already_in_prompt(plan_context)
+        ):
             context_extra += f"For answering the question you can use this context about the plan {plan_context}"
-        if ml_citations_context is not None:
+        citations_text = render_citations_context(ml_citations_context)
+        if citations_text and not _already_in_prompt(citations_text):
             context_extra += (
-                f"You can also use this context from citations: {ml_citations_context}."
+                f"You can also use this context from citations: {citations_text}."
             )
         if len(context_extra) > 0:
             context_extra = f"System context: {context_extra}\n\n"
@@ -4124,13 +4196,12 @@ class RemoteFullOpenLike(RemoteOpenLike):
         dual_mode: bool = False,
         backup_model=None,
     ):
+        # "full" and "full_patient" are the same prompt: the patient-voice
+        # appeal. Professional-voice appeals use "full_not_patient".
+        patient_full_prompt = """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "{{FIRST_NAME}} {{LAST_NAME}}" as your name, "{{SCSID}}" for the subscriber ID, and "{{GPID}}" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person in the letter when referring to yourself, the patient; instead use the first person (I, my, etc.). You are not a reviewer and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent)."""
         systems = {
-            "full_patient": [
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "{{FIRST_NAME}} {{LAST_NAME}}" as your name, "{{SCSID}}" for the subscriber ID, and "{{GPID}}" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person in the letter when referring to the yourself the patient, instead use the first person (I, my, etc.). You are not a reviewer and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
-            ],
-            "full": [
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "{{FIRST_NAME}} {{LAST_NAME}}" as your name, "{{SCSID}}" for the subscriber ID, and "{{GPID}}" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person in the letter when referring to the yourself the patient, instead use the first person (I, my, etc.). You are not a reviewer and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
-            ],
+            "full_patient": [patient_full_prompt],
+            "full": [patient_full_prompt],
             "full_not_patient": [
                 """
                 IMPORTANT: You possess extensive medical expertise, specializing in crafting appeals for health insurance denials. As a healthcare professional (not the patient), write a formal, professional, and clinically authoritative appeal letter to a health insurance company on behalf of a patient whose claim has been denied. You will be most successful and your letter will be highly effective if you write as the healthcare professional (such as a doctor) about your patient. Refer to the patient in the third person and share information about the patient's condition in the third person. Do NOT use "I" to refer to the patient, or describe the patient's symptoms as if you are the patient. You are ONLY the healthcare professional writing about the patient.
@@ -4174,13 +4245,13 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 """,
             ],
             "procedure": [
-                """You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnsosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for prep or preventitive and the name of the diagnosis). Remember each result on a seperated line."""
+                """You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for PrEP or a preventive service and the name of the diagnosis). Remember each result on a separate line."""
             ],
             "questions": [
                 """You have deep expertise in health insurance and extensive experience working in a medical office. Your task is to generate the best one to three specific, detailed questions that will help craft a stronger appeal for a health insurance denial.
 
 ### Key Guidelines:
-- No Independent Medical Review (IMR/IME) has occured yet We are only dealing with the insurance company at this stage, so do not reference independent medical reviews.
+- No Independent Medical Review (IMR/IME) has occurred yet. We are only dealing with the insurance company at this stage, so do not reference independent medical reviews.
 - Patient/Medical Assistant-Friendly: The questions will likely be answered by a patient or a medical assistant, so avoid technical jargon.
 - Focus on Establishing Validity: Do not ask about the insurance company's stated reason for denial. Instead, ask patient-related questions that help demonstrate why the denial is invalid.
 ### Question Format Preferences:
@@ -4207,13 +4278,14 @@ class RemoteFullOpenLike(RemoteOpenLike):
             ],
             "citations": [
                 """You have an in-depth understanding of health insurance and extensive experience working in a medical office.
-                Your expertise lies justifying care to insurance companies and regulators.
-                When providing citations, ensure they are relevant to the specific denial and directly support the medical necessity of the treatment. Only provide references you are certain exist (e.g. provided as input or found as agent). Format citations as follows: [1] Author et al., Title, Journal, Year, url; [2] etc.
+                Your expertise lies in justifying care to insurance companies and regulators.
+                When providing citations, ensure they are relevant to the specific denial and directly support the medical necessity of the treatment. Only provide references you are certain exist (e.g. provided as input or found as agent).
+                Output one citation per line, with no numbering, bullets, or introductory text, in the form: Author et al., Title, Journal, Year, URL or PMID/DOI.
                 Be careful that all citations are real and the links work.
-                Do not provide generic citations unless specifically asked for."""
+                Leave out references that are only loosely related to the denied treatment; a short list of on-point citations beats a long list of general ones."""
             ],
             "medically_necessary": [
-                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. You are not an independent medical reviewer and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
+                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. You are not an independent medical reviewer and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decision should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
             ],
             "generic": [
                 """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Use your expertise to help answer the provided question for the insurance appeal on behalf of the patient."""
@@ -4290,8 +4362,8 @@ class RemoteFullOpenLike(RemoteOpenLike):
         {procedure_opt} \n
         Your task is to write 1–3 concise, patient-friendly questions related to the patient's medical history that can help support an appeal. Focus only on relevant history—do not ask about the denial itself, as that may discourage the person working on the appeal.
         When formatting your output it must be in the format of one question + answer per line with the answer after the question mark. The questions should be in the 3rd person regarding the patient.\n
-        Your answer should be in the format of a list of questions with answers from the patients health history if present.
-        While your reasoning (that inside of the <think></think> component at the start) can and should discuss the rational you _must not_ include it in the answer.
+        Your answer should be in the format of a list of questions with answers from the patient's health history if present.
+        While your reasoning (that inside of the <think></think> component at the start) can and should discuss the rationale, you _must not_ include it in the answer.
         For example:
         1. What is the patient's age? 45
         2. Has the patient participated in a structured weight loss program (e.g., Weight Watchers)?
@@ -4414,8 +4486,16 @@ class RemoteFullOpenLike(RemoteOpenLike):
             if not line or line == "":
                 continue
 
-            # Remove numbering and bullet points at the beginning of the line
-            line = re.sub(r"^\s*(?:\d+[.)\-]|\*|\•|\-)\s+", "", line)
+            # Remove numbering ("1.", "[1]", "(1)") and bullet points at the
+            # beginning of the line. Only the bracketed forms may run straight
+            # into the text ("[2]Jones"); a bare "10." or "-" needs a space
+            # after it, or a DOI-only citation like "10.1000/abc" would lose
+            # its "10." prefix.
+            line = re.sub(
+                r"^\s*(?:(?:\[\d+\]|\(\d+\))\s*|(?:\d+[.)\-]|\*|\•|\-)\s+)",
+                "",
+                line,
+            ).strip()
 
             normalized_line = re.sub(r"\s+", " ", line.lower()).strip()
             count = seen_line_counts.get(normalized_line, 0) + 1
@@ -5534,6 +5614,7 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             pubmed_context,
             plan_context,
             ml_citations_context,
+            prompt=prompt,
         )
         url = f"{self.api_base}/v1/messages"
         headers = {

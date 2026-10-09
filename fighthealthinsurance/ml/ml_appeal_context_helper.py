@@ -62,19 +62,14 @@ class MLAppealContextHelper:
         ``None`` on empty/failure. Assumes the caller already applied the
         length threshold.
 
-        Privacy: routes through ``ml_router.summarize`` with
+        Privacy: routes through ``ml_router.summarize_denial_letter`` with
         ``use_external=denial.use_external`` so an opt-out denial never sends
         its (PHI-bearing) letter to an external provider.
         """
         denial_id = denial.denial_id
         try:
-            summary: Optional[str] = await ml_router.summarize(
-                title=(
-                    "health insurance denial letter (preserve the denied "
-                    "service/procedure, the payer's stated denial reason(s), "
-                    "and any codes, dates, and claim/plan identifiers)"
-                ),
-                text=denial.denial_text,
+            summary: Optional[str] = await ml_router.summarize_denial_letter(
+                denial.denial_text,
                 use_external=denial.use_external,
                 max_input_chars=cls.DENIAL_TEXT_SUMMARY_INPUT_MAX_CHARS,
             )
