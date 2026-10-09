@@ -884,11 +884,20 @@ class PlaceholdersTest(SimpleTestCase):
             "[Ibid]",
             "[It]",
             "[We]",
+            "[This]",
+            "[Their]",
+            "[Which]",
         ):
             letter = f"The plan must cover it {note}."
             with self.subTest(note=note):
                 self.assertEqual(find_unfilled_placeholders(letter), [])
                 self.assertEqual(drafts.placeholders_in(letter), [])
+
+    def test_brackets_main_listed_that_the_fax_check_passes_are_still_listed(self):
+        self.assertEqual(
+            drafts.placeholders_in("Signed [Dr. Name] for [ICD-10 Code] on [Claim Number: ]."),
+            ["[Claim Number: ]", "[Dr. Name]", "[ICD-10 Code]"],
+        )
 
     def test_each_fill_in_is_listed_once_sorted(self):
         self.assertEqual(
