@@ -19,6 +19,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from fighthealthinsurance.appeal_journey_core import (
+    SITE_IS_GENERATING,
     STATUS_ALREADY_HAS_APPEALS,
     STATUS_NO_DENIAL_TEXT,
     STATUS_NOT_FOUND,
@@ -154,3 +155,78 @@ async def test_generation_exhausting_retries_fails_the_workflow():
         with pytest.raises(WorkflowFailureError):
             await _run(env, rec)
     assert sum(1 for c in rec.calls if c[0] == "generate") == 3
+
+
+class _SiteRecorder:
+    """Precheck and generation answers given in order, the last repeating."""
+
+    def __init__(self, prechecks, generations):
+        self.prechecks = list(prechecks)
+        self.generations = list(generations)
+        self.calls: list = []
+
+    def _next(self, answers, kind):
+        n = sum(1 for c in self.calls if c == kind)
+        return answers[min(n - 1, len(answers) - 1)]
+
+    def activities(self):
+        rec = self
+
+        @activity.defn(name="precheck_appeal_journey")
+        async def precheck_appeal_journey(hashed_email: str, denial_uuid: str) -> str:
+            rec.calls.append("precheck")
+            return rec._next(rec.prechecks, "precheck")
+
+        @activity.defn(name="generate_and_store_appeals")
+        async def generate_and_store_appeals(
+            hashed_email: str, denial_uuid: str
+        ) -> int:
+            rec.calls.append("generate")
+            return rec._next(rec.generations, "generate")
+
+        return [precheck_appeal_journey, generate_and_store_appeals]
+
+
+@pytest.mark.asyncio
+async def test_letters_the_site_stored_end_the_wait():
+    """The site's page held the lease and stored letters: after the wait
+    the precheck sees them and the workflow ends without generating."""
+    rec = _SiteRecorder(
+        prechecks=[STATUS_OK, STATUS_ALREADY_HAS_APPEALS],
+        generations=[SITE_IS_GENERATING],
+    )
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run(env, rec)
+    assert result == 0
+    assert rec.calls == ["precheck", "generate", "precheck"]
+
+
+@pytest.mark.asyncio
+async def test_a_page_left_before_any_letters_is_generated_for():
+    """The person left the page mid-generation and nothing was stored: once
+    the site lets go, the workflow generates in the background."""
+    rec = _SiteRecorder(
+        prechecks=[STATUS_OK],
+        generations=[SITE_IS_GENERATING, SITE_IS_GENERATING, 3],
+    )
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run(env, rec)
+    assert result == 3
+    assert rec.calls == [
+        "precheck",
+        "generate",
+        "precheck",
+        "generate",
+        "precheck",
+        "generate",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_wait_for_the_site_is_bounded():
+    rec = _SiteRecorder(prechecks=[STATUS_OK], generations=[SITE_IS_GENERATING])
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run(env, rec)
+    assert result == 0
+    # 5, 10, 20, 30, 30, ... minutes until six hours have passed.
+    assert 2 < rec.calls.count("generate") < 20

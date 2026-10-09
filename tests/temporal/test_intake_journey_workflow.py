@@ -255,3 +255,58 @@ async def test_collision_never_resolved_defers_after_the_window():
     checks = rec.calls.count(("postcondition", "u"))
     assert 1 < checks <= 150
     assert len(state["check_times"]) == checks
+
+
+@pytest.mark.asyncio
+async def test_the_site_writing_the_letters_completes_the_journey():
+    """The person is on the site's appeals page, which holds the generation
+    lease and stores their letters: the real generation workflow waits for
+    it rather than failing, sees the letters, and the intake journey
+    completes with no nudge."""
+    from unittest.mock import AsyncMock, patch
+
+    from fighthealthinsurance.activities import appeal_journey
+    from fighthealthinsurance.appeal_journey_core import (
+        SITE_IS_GENERATING,
+        STATUS_ALREADY_HAS_APPEALS,
+        STATUS_OK,
+    )
+    from fighthealthinsurance.workflows.generate_appeal import GenerateAppealWorkflow
+
+    rec = _Recorder()
+    # The core's answer while the site holds the lease (see
+    # test_generation_lease.test_a_lease_the_site_holds_ends_the_journey_cleanly).
+    site_holds = AsyncMock(return_value=SITE_IS_GENERATING)
+    precheck = AsyncMock(side_effect=[STATUS_OK, STATUS_ALREADY_HAS_APPEALS])
+    with patch.object(
+        appeal_journey, "aload_denial", AsyncMock(return_value=object())
+    ), patch.object(appeal_journey, "aprecheck_appeal_journey", precheck), patch.object(
+        appeal_journey, "agenerate_and_store_appeals", site_holds
+    ):
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            task_queue = str(uuid.uuid4())
+            worker = Worker(
+                env.client,
+                task_queue=task_queue,
+                workflows=[IntakeJourneyWorkflow, GenerateAppealWorkflow],
+                activities=[
+                    *rec.activities(),
+                    appeal_journey.precheck_appeal_journey,
+                    appeal_journey.generate_and_store_appeals,
+                ],
+            )
+            handle = await env.client.start_workflow(
+                IntakeJourneyWorkflow.run,
+                IntakeJourneyInput(
+                    hashed_email="h", denial_uuid="u", contact_opt_in=True
+                ),
+                id=str(uuid.uuid4()),
+                task_queue=task_queue,
+            )
+            async with worker:
+                await handle.signal(IntakeJourneyWorkflow.form_completed)
+                result = await handle.result()
+    assert result == "completed"
+    assert site_holds.await_count == 1
+    assert precheck.await_count == 2
+    assert rec.calls == []
