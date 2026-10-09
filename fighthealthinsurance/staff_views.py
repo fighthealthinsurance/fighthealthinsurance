@@ -79,6 +79,7 @@ from fighthealthinsurance.models import (
     InterestedProfessional,
     LetterReviewItem,
     LetterReviewLabel,
+    LetterReviewLabelsFrozen,
     LetterReviewPacket,
     LetterReviewReader,
     MailingListSubscriber,
@@ -4646,9 +4647,16 @@ class LetterReviewItemView(View):
         if not form.is_valid():
             saved = letter_review.own_label(reader, item)
             return self._render(request, reader, item, form, saved, status=400)
-        letter_review.save_label(
-            reader, item, form.cleaned_data["verdict"], form.cleaned_data["note"]
-        )
+        try:
+            letter_review.save_label(
+                reader, item, form.cleaned_data["verdict"], form.cleaned_data["note"]
+            )
+        except LetterReviewLabelsFrozen:
+            # The last reader finished between the check above and this save.
+            saved = letter_review.own_label(reader, item)
+            initial = {"verdict": saved.verdict, "note": saved.note} if saved else {}
+            form = core_forms.LetterReviewLabelForm(initial=initial)
+            return self._render(request, reader, item, form, saved, status=409)
         # The verdict stays out of the log: the review is blind, and staff
         # read these logs. So does the eval key, which could name the writer.
         logger.info(

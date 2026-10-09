@@ -5476,19 +5476,34 @@ class LetterReviewLabel(models.Model):
     def __str__(self) -> str:
         return f"LetterReviewLabel({self.pk}, item {self.item_id})"
 
-    def _refuse_if_frozen(self) -> None:
+    def _lock_and_refuse_if_frozen(self) -> None:
+        """Lock the packet, then refuse a change to a stored label once every
+        reader is done. Every label write takes the same lock, so the save
+        that finishes a packet can't slip between this check and the write.
+        The packet is the stored row's, not whatever item is in memory."""
         from fighthealthinsurance.letter_review import labels_frozen
 
-        if self.pk is not None and labels_frozen(self.item.packet):
+        stored = (
+            LetterReviewLabel.objects.filter(pk=self.pk)
+            .values_list("item__packet_id", flat=True)
+            .first()
+            if self.pk is not None
+            else None
+        )
+        packet_id = stored if stored is not None else self.item.packet_id
+        packet = LetterReviewPacket.objects.select_for_update().get(pk=packet_id)
+        if stored is not None and labels_frozen(packet):
             raise LetterReviewLabelsFrozen(
                 "Every reader has finished this packet, so its labels can no "
                 "longer change."
             )
 
     def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
-        self._refuse_if_frozen()
-        super().save(*args, **kwargs)
+        with transaction.atomic():
+            self._lock_and_refuse_if_frozen()
+            super().save(*args, **kwargs)
 
     def delete(self, *args: typing.Any, **kwargs: typing.Any) -> typing.Any:
-        self._refuse_if_frozen()
-        return super().delete(*args, **kwargs)
+        with transaction.atomic():
+            self._lock_and_refuse_if_frozen()
+            return super().delete(*args, **kwargs)

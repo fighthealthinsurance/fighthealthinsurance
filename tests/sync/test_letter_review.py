@@ -1216,6 +1216,59 @@ class FrozenLabelTests(PageTestBase):
             LetterReviewLabel.objects.get(pk=label.pk).delete()
         self.assertEqual(self._exported(), before)
 
+    def test_the_check_reads_the_stored_packet_not_the_item_in_memory(self):
+        self._finish_everyone()
+        before = self._exported()
+        other = self.load_packet(_packet_data(packet="synthetic-open-packet"))
+        label = LetterReviewLabel.objects.get(reader=self.reader_a, item__key=KEY_1)
+        label.item = other.items.first()
+        label.verdict = "clean"
+        with self.assertRaises(LetterReviewLabelsFrozen):
+            label.save(update_fields=["verdict"])
+        self.assertEqual(self._exported(), before)
+
+    def test_a_save_that_loses_the_race_to_the_last_reader_is_a_409(self):
+        """The last reader finishes between the page's check and this save."""
+        real = letter_review.labels_frozen
+        calls = {"n": 0}
+
+        def finishes_after_the_page_check(packet):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                self._finish_everyone()
+                return False
+            return real(packet)
+
+        self.client.force_login(self.staff_a)
+        with patch.object(letter_review, "labels_frozen", finishes_after_the_page_check):
+            response = self.client.post(
+                self.item_url(KEY_1), {"verdict": "clean", "note": ""}
+            )
+        self.assertEqual(response.status_code, 409)
+        label = LetterReviewLabel.objects.get(reader=self.reader_a, item__key=KEY_1)
+        self.assertEqual(label.verdict, "fabricates")
+
+    def test_every_label_write_locks_its_packet_inside_a_transaction(self):
+        """The save that finishes a packet and an edit to one of its labels
+        take the same packet lock, so neither can slip between the other's
+        check and write."""
+        from django.db.models import QuerySet
+
+        seen: List[Any] = []
+        real = QuerySet.select_for_update
+
+        def spy(qs, *args, **kwargs):
+            if qs.model is LetterReviewPacket:
+                seen.append(connection.in_atomic_block)
+            return real(qs, *args, **kwargs)
+
+        with patch.object(QuerySet, "select_for_update", spy):
+            label = self.label(self.reader_a, KEY_2, "clean")
+            label.verdict = "flag"
+            label.save()
+            label.delete()
+        self.assertEqual(seen, [True, True, True])
+
 
 class DeleteTests(PageTestBase):
     def setUp(self) -> None:
