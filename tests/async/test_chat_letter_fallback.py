@@ -25,7 +25,9 @@ from fighthealthinsurance.chat.appeal_letter_generator import (
 from fighthealthinsurance.chat.tools import AppealTool, GenerateAppealLetterTool
 from fighthealthinsurance.chat_interface import ChatInterface
 from fighthealthinsurance.client_gone import ClientGone
+from fighthealthinsurance.context_utils import CONTEXT_LEVEL_TEMPLATE
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
+from fighthealthinsurance.ml.model_identity import TEMPLATE_MODEL_NAME
 from fighthealthinsurance.models import (
     Appeal,
     ChatTurn,
@@ -589,8 +591,12 @@ class LetterSelectionPolicyTest(APITestCase):
         )
 
     async def test_long_model_letter_wins_immediately(self):
-        long_letter = GeneratedAppeal(text="word " * 120, model_name="fhi-model")
-        never_reached = GeneratedAppeal(text="word " * 400, model_name="other")
+        long_letter = GeneratedAppeal(
+            text="word " * 120, model_name="fhi-model", infer_type="full"
+        )
+        never_reached = GeneratedAppeal(
+            text="word " * 400, model_name="other", infer_type="full"
+        )
         with patch.object(
             common_view_logic.appealGenerator,
             "make_appeals",
@@ -607,16 +613,59 @@ class LetterSelectionPolicyTest(APITestCase):
             text="The MRI is medically necessary for diagnosis.",
             model_name="fhi-model",
         )
-        static_letter = GeneratedAppeal(text="word " * 300, model_name=None)
+        static_letter = GeneratedAppeal(
+            text="word " * 300,
+            model_name=TEMPLATE_MODEL_NAME,
+            context_level=CONTEXT_LEVEL_TEMPLATE,
+        )
         with patch.object(
             common_view_logic.appealGenerator,
             "make_appeals",
             return_value=iter([one_liner, static_letter]),
         ):
             item = await generate_letter_for_denial(self._denial())
-        self.assertIsNotNone(item)
-        self.assertIsNone(item.model_name)
         self.assertEqual(item.text, static_letter.text)
+
+    async def test_template_does_not_end_the_wait_for_a_model_letter(self):
+        """make_appeals names its templates with a pseudo-model, so a model
+        name alone must not count as a model's letter."""
+        template = GeneratedAppeal(
+            text="word " * 300,
+            model_name=TEMPLATE_MODEL_NAME,
+            context_level=CONTEXT_LEVEL_TEMPLATE,
+        )
+        model_letter = GeneratedAppeal(
+            text="word " * 120, model_name="fhi-model", infer_type="full"
+        )
+        with patch.object(
+            common_view_logic.appealGenerator,
+            "make_appeals",
+            return_value=iter([template, model_letter]),
+        ):
+            item = await generate_letter_for_denial(self._denial())
+        self.assertEqual(item.model_name, "fhi-model")
+
+    async def test_too_short_a_deadline_serves_a_template_without_models(self):
+        """Inside make_appeals' give-up margin a model answer can't be used,
+        so no model is asked."""
+
+        class _Template:
+            name = "test"
+
+            @classmethod
+            def static_appeal(cls):
+                return RESERVE_LETTER
+
+        with patch(
+            "fighthealthinsurance.generate_appeal.detect_specialized_templates",
+            return_value=[_Template],
+        ), patch.object(
+            common_view_logic.appealGenerator, "make_appeals"
+        ) as make_appeals:
+            item = await generate_letter_for_denial(
+                self._denial(), deadline_seconds=10
+            )
+        self.assertEqual((make_appeals.called, item.text), (False, RESERVE_LETTER))
 
     async def test_runt_only_output_returns_none(self):
         runt = GeneratedAppeal(text="no", model_name="fhi-model")
@@ -637,6 +686,33 @@ class LetterSelectionPolicyTest(APITestCase):
             item = await generate_letter_for_denial(self._denial())
         self.assertIsNone(item)
 
+    async def _consent_seen_by_the_summarizer(self, stored, chat_consent):
+        denial = self._denial()
+        denial.use_external = stored
+        seen = []
+
+        async def record_consent(summarized_denial):
+            seen.append(summarized_denial.use_external)
+            return None
+
+        with patch(
+            "fighthealthinsurance.ml.ml_appeal_context_helper."
+            "MLAppealContextHelper.maybe_summarize_denial_text",
+            new=AsyncMock(side_effect=record_consent),
+        ), patch.object(
+            common_view_logic.appealGenerator,
+            "make_appeals",
+            return_value=iter([]),
+        ):
+            await generate_letter_for_denial(denial, use_external=chat_consent)
+        return seen
+
+    async def test_stored_opt_out_is_not_widened_by_the_chat(self):
+        """A denial whose owner declined outside models stays declined when
+        the chat's toggle is left at its default (on)."""
+        self.assertEqual(
+            await self._consent_seen_by_the_summarizer(False, True), [False]
+        )
 
     async def test_summarizer_sees_chat_consent_not_the_stored_opt_in(self):
         """This chat's use_external applies before ANY model call: the
@@ -847,13 +923,36 @@ class DraftLetterForChatTest(APITestCase):
         await ProposedAppeal.objects.acreate(
             appeal_text=RESERVE_LETTER, for_denial=denial
         )
-        with patch.object(
-            Appeal, "asave", new=AsyncMock(side_effect=RuntimeError("db down"))
+        with patch(
+            "django.db.models.query.QuerySet.aupdate",
+            new=AsyncMock(side_effect=RuntimeError("db down")),
         ):
             drafted = await draft_letter_for_chat(
                 appeal=appeal, denial=denial, use_external=False, prefer_existing=True
             )
         self.assertEqual(drafted, DraftedLetter(RESERVE_LETTER, False))
+
+    async def test_request_for_a_new_letter_is_not_answered_by_a_reserve(self):
+        """A draft made before whatever the person wants changed is no
+        answer to a redo; with generation failing there is no letter."""
+        user, chat = await _make_professional_chat("draftpersist6", "9999940006")
+        appeal, denial = await _link_letter_appeal(chat, user)
+        await ProposedAppeal.objects.acreate(
+            appeal_text=RESERVE_LETTER, for_denial=denial
+        )
+        with patch(
+            "fighthealthinsurance.chat.appeal_letter_generator."
+            "generate_letter_for_denial",
+            new=AsyncMock(return_value=None),
+        ):
+            drafted = await draft_letter_for_chat(
+                appeal=appeal,
+                denial=denial,
+                use_external=False,
+                prefer_existing=True,
+                use_reserve=False,
+            )
+        self.assertIsNone(drafted)
 
 
 class PairedToolCallsTest(APITestCase):
@@ -1130,10 +1229,16 @@ class OverwritePolicyTest(APITestCase):
             )
 
     async def test_zero_model_template_does_not_replace_edited_letter(self):
+        """make_appeals names templates with a pseudo-model; that name must
+        not pass them off as a model's letter."""
         appeal, denial = await self._appeal_with_edited_letter(
             "overwrite1", "9999970001"
         )
-        template = GeneratedAppeal(text=FULL_MODEL_LETTER, model_name=None)
+        template = GeneratedAppeal(
+            text=FULL_MODEL_LETTER,
+            model_name=TEMPLATE_MODEL_NAME,
+            context_level=CONTEXT_LEVEL_TEMPLATE,
+        )
         drafted = await self._draft_with(appeal, denial, template)
         self.assertTrue(drafted.preserved_existing)
         fresh = await Appeal.objects.aget(id=appeal.id)
@@ -1143,9 +1248,63 @@ class OverwritePolicyTest(APITestCase):
         appeal, denial = await self._appeal_with_edited_letter(
             "overwrite2", "9999970002"
         )
-        fragment = GeneratedAppeal(text=GENERATED_LETTER, model_name="fhi-model")
+        fragment = GeneratedAppeal(
+            text=GENERATED_LETTER, model_name="fhi-model", infer_type="full"
+        )
         drafted = await self._draft_with(appeal, denial, fragment)
         self.assertTrue(drafted.preserved_existing)
+        fresh = await Appeal.objects.aget(id=appeal.id)
+        self.assertEqual(fresh.appeal_text, EDITED_LETTER)
+
+    async def test_medically_necessary_paragraph_does_not_replace_letter(self):
+        """A model's reason paragraph, however long, is not a letter."""
+        appeal, denial = await self._appeal_with_edited_letter(
+            "overwrite4", "9999970004"
+        )
+        reason = GeneratedAppeal(
+            text=FULL_MODEL_LETTER,
+            model_name="fhi-model",
+            infer_type="medically_necessary",
+        )
+        await self._draft_with(appeal, denial, reason)
+        fresh = await Appeal.objects.aget(id=appeal.id)
+        self.assertEqual(fresh.appeal_text, EDITED_LETTER)
+
+    async def test_full_draft_never_replaces_a_sent_appeals_letter(self):
+        """A sent appeal's text records what went out."""
+        appeal, denial = await self._appeal_with_edited_letter(
+            "overwrite5", "9999970005"
+        )
+        await Appeal.objects.filter(id=appeal.id).aupdate(sent=True)
+        full = GeneratedAppeal(
+            text=FULL_MODEL_LETTER, model_name="fhi-model", infer_type="full"
+        )
+        await self._draft_with(appeal, denial, full)
+        fresh = await Appeal.objects.aget(id=appeal.id)
+        self.assertEqual(fresh.appeal_text, EDITED_LETTER)
+
+    async def test_letter_saved_while_drafting_is_kept_from_a_fragment(self):
+        """The overwrite check reads the appeal as it is when the draft is
+        done, not as it was when drafting began (empty, here)."""
+        user, chat = await _make_professional_chat("overwrite6", "9999970006")
+        appeal, denial = await _link_letter_appeal(chat, user)
+
+        async def person_saves_a_letter_meanwhile(*args, **kwargs):
+            await Appeal.objects.filter(id=appeal.id).aupdate(
+                appeal_text=EDITED_LETTER
+            )
+            return GeneratedAppeal(
+                text=GENERATED_LETTER, model_name="fhi-model", infer_type="full"
+            )
+
+        with patch(
+            "fighthealthinsurance.chat.appeal_letter_generator."
+            "generate_letter_for_denial",
+            new=AsyncMock(side_effect=person_saves_a_letter_meanwhile),
+        ):
+            await draft_letter_for_chat(
+                appeal=appeal, denial=denial, use_external=False
+            )
         fresh = await Appeal.objects.aget(id=appeal.id)
         self.assertEqual(fresh.appeal_text, EDITED_LETTER)
 
@@ -1154,7 +1313,9 @@ class OverwritePolicyTest(APITestCase):
         appeal, denial = await self._appeal_with_edited_letter(
             "overwrite3", "9999970003"
         )
-        full = GeneratedAppeal(text=FULL_MODEL_LETTER, model_name="fhi-model")
+        full = GeneratedAppeal(
+            text=FULL_MODEL_LETTER, model_name="fhi-model", infer_type="full"
+        )
         drafted = await self._draft_with(appeal, denial, full)
         self.assertTrue(drafted.saved_to_appeal)
         fresh = await Appeal.objects.aget(id=appeal.id)

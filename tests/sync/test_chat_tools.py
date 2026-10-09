@@ -2006,6 +2006,54 @@ class TestLetterRequestDetector(TestCase):
             with self.subTest(message=message):
                 self.assertFalse(looks_like_letter_request(message))
 
+    def test_ignores_declined_requests(self):
+        """The fallback must not draft, and maybe save, a letter the person
+        said not to write."""
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            looks_like_letter_request,
+        )
+
+        for message in [
+            "Don't write the letter yet",
+            "I will write my own appeal, just tell me the deadline",
+            "Please do not draft an appeal letter",
+        ]:
+            with self.subTest(message=message):
+                self.assertFalse(looks_like_letter_request(message))
+
+    def test_a_negation_outside_the_request_clause_still_counts(self):
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            looks_like_letter_request,
+        )
+
+        self.assertTrue(
+            looks_like_letter_request(
+                "Please draft the letter, and don't forget my diagnosis"
+            )
+        )
+
+    def test_redo_requests_want_a_fresh_letter(self):
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            wants_fresh_letter,
+        )
+
+        for message in [
+            "please redo the letter with the new diagnosis",
+            "Can you write another appeal letter?",
+            "Rewrite the appeal please",
+        ]:
+            with self.subTest(message=message):
+                self.assertTrue(wants_fresh_letter(message))
+
+    def test_a_first_request_does_not_want_a_fresh_letter(self):
+        """A plain request is answered by a stored draft when the models
+        are down."""
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            wants_fresh_letter,
+        )
+
+        self.assertFalse(wants_fresh_letter("Please go ahead and draft a letter."))
+
 
 class TestDenialLetterContextGate(TestCase):
     """denial_has_letter_context: is there anything to write a letter about?"""
