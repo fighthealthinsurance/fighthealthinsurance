@@ -8,6 +8,7 @@ core-delegating) Ray actor tests in ``tests/sync-actor/test_fax_actor.py``.
 Requires the Temporal test server, which ``temporalio`` downloads on first run.
 """
 
+import asyncio
 import uuid
 
 import pytest
@@ -85,6 +86,9 @@ class _Recorder:
         return [precheck_fax, send_fax_via_vendor, release_send_claim, finalize_fax]
 
 
+RUN_TIMEOUT_S = 120
+
+
 async def _run(env: WorkflowEnvironment, rec: _Recorder, *, delay_send: bool = False):
     task_queue = str(uuid.uuid4())
     async with Worker(
@@ -93,11 +97,16 @@ async def _run(env: WorkflowEnvironment, rec: _Recorder, *, delay_send: bool = F
         workflows=[SendFaxWorkflow],
         activities=rec.activities(),
     ):
-        return await env.client.execute_workflow(
-            SendFaxWorkflow.run,
-            SendFaxInput(hashed_email="h", fax_uuid="u", delay_send=delay_send),
-            id=str(uuid.uuid4()),
-            task_queue=task_queue,
+        # A workflow task that fails is retried forever, so without a bound a
+        # broken mock hangs the suite instead of failing this test.
+        return await asyncio.wait_for(
+            env.client.execute_workflow(
+                SendFaxWorkflow.run,
+                SendFaxInput(hashed_email="h", fax_uuid="u", delay_send=delay_send),
+                id=str(uuid.uuid4()),
+                task_queue=task_queue,
+            ),
+            timeout=RUN_TIMEOUT_S,
         )
 
 
@@ -230,7 +239,7 @@ async def test_precheck_retries_through_transient_failure_then_sends():
     delayed sweep gated off under Temporal) nothing to retry it. So precheck
     retries through the outage and the fax still goes out.
     """
-    rec = _Recorder(precheck_status=STATUS_OK, send_result=True, precheck_fail_times=3)
+    rec = _Recorder(precheck_status=STATUS_OK, send_result="sent", precheck_fail_times=3)
     async with await WorkflowEnvironment.start_time_skipping() as env:
         result = await _run(env, rec)
     assert result is True
@@ -249,7 +258,7 @@ async def test_finalize_retries_through_transient_failures():
     limit, which would have failed the workflow with the fax already delivered
     but recorded as unsent.
     """
-    rec = _Recorder(precheck_status=STATUS_OK, send_result=True, finalize_fail_times=4)
+    rec = _Recorder(precheck_status=STATUS_OK, send_result="sent", finalize_fail_times=4)
     async with await WorkflowEnvironment.start_time_skipping() as env:
         result = await _run(env, rec)
     assert result is True
