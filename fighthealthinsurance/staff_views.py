@@ -104,6 +104,7 @@ from fighthealthinsurance.ml.model_identity import (
     normalize_model_label,
 )
 from fighthealthinsurance.proconnector import (
+    NEW_SIGNUP_INTRO_OFF,
     PROCONNECTOR_INTRO_SUBJECT,
     address_max_length,
     address_problem,
@@ -116,13 +117,17 @@ from fighthealthinsurance.proconnector import (
     default_intro_cc_recipients,
     generate_intro_email,
     get_cofactor_cc_email,
+    get_cofactor_intro_contact,
     get_next_interested_professional,
     get_professional_cc_email,
+    intro_cc_problem,
     intro_wording_problem,
     mailable_interested_professionals,
     mark_email_queued,
     mark_email_sent,
     mark_email_skipped,
+    new_signup_body_problem,
+    new_signup_intro_cc_recipients,
     release_email_claim,
     non_spam_interested_professionals,
     queue_proconnector_intro_email,
@@ -4043,7 +4048,7 @@ class ProConnectorProcessView(View):
 
 
 def _intro_send_problem(
-    pro: InterestedProfessional, body: str, subject: str
+    pro: InterestedProfessional, body: str, subject: str, *, new_signup: bool = False
 ) -> Optional[str]:
     """First problem blocking a *real* send/queue of the intro to ``pro``, or
     ``None``.
@@ -4056,13 +4061,20 @@ def _intro_send_problem(
     because a misconfigured CC makes the send helpers raise, and checking
     before the record is claimed means staff see the actual reason and the
     record stays in the queue for a retry once the setting is fixed.
+    ``new_signup`` also checks that the body mentions the Cofactor contact the
+    new-signup version CCs (:func:`new_signup_body_problem`) and that contact's
+    configuration.
     """
     problem = ProConnectorProcessView._intro_form_problem(body, subject)
     if problem is not None:
         return problem
     if not is_sendable_email(pro.email):
         return f"{pro.email} is not a sendable address; cannot send."
-    return cofactor_cc_problem()
+    if new_signup:
+        problem = new_signup_body_problem(body)
+        if problem is not None:
+            return problem
+    return intro_cc_problem(new_signup=new_signup)
 
 
 class ProConnectorLetterView(View):
@@ -4111,9 +4123,12 @@ class ProConnectorQuickIntroView(View):
     Linked (as a button) from the team notification email each new
     interested-professional signup sends: staff press it, land here behind the
     staff login, and confirm with a single press -- the intro email is drafted
-    automatically (AI-personalized, falling back to the approved base email)
-    and sent and recorded exactly like a send from the full processing
-    workflow (:class:`ProConnectorProcessView`). The GET only previews the
+    automatically (AI-personalized, falling back to the approved new-signup
+    email) and sent and recorded like a send from the full processing workflow
+    (:class:`ProConnectorProcessView`). Unlike that workflow, which re-engages
+    the signup backlog without involving Cofactor AI, this is the new-signup
+    version: it says "Let me introduce you to" the named Cofactor AI contact
+    and CCs them (``new_signup=True`` throughout). The GET only previews the
     draft; the send itself is a POST, so mail scanners prefetching the email's
     links can never trigger an introduction.
 
@@ -4144,16 +4159,19 @@ class ProConnectorQuickIntroView(View):
         draft.
         """
         block_reason = quick_intro_block_reason(pro)
-        if draft is None and block_reason is None:
-            draft = generate_intro_email(pro)
+        # Off: show why instead of the form, and skip the model call.
+        intro_off = get_cofactor_intro_contact() is None
+        if draft is None and block_reason is None and not intro_off:
+            draft = generate_intro_email(pro, new_signup=True)
         context = {
             "title": "Quick Cofactor AI Introduction",
             "pro": pro,
             "block_reason": block_reason,
+            "intro_off": NEW_SIGNUP_INTRO_OFF if intro_off else None,
             "email_body": draft,
             "subject": PROCONNECTOR_INTRO_SUBJECT,
-            "cc_emails": default_intro_cc_recipients(),
-            "cofactor_cc_problem": cofactor_cc_problem(),
+            "cc_emails": new_signup_intro_cc_recipients(),
+            "cofactor_cc_problem": intro_cc_problem(new_signup=True),
             "error": error,
             "notice": notice,
             "send_window_hint": describe_send_window(pro.phone_number),
@@ -4192,7 +4210,7 @@ class ProConnectorQuickIntroView(View):
         # rejected like the full workflow's -- never auto-drafted -- so content
         # nobody reviewed can never go out.
         subject = PROCONNECTOR_INTRO_SUBJECT
-        error = _intro_send_problem(pro, body, subject)
+        error = _intro_send_problem(pro, body, subject, new_signup=True)
         if error:
             return self._render(request, pro, draft=body, error=error, status=400)
 
@@ -4219,7 +4237,7 @@ class ProConnectorQuickIntroView(View):
                 ),
             )
         try:
-            deliver(pro, subject=subject, body=body)
+            deliver(pro, subject=subject, body=body, new_signup=True)
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Failed to {action} quick pro-connector intro to "
