@@ -931,6 +931,52 @@ class TestAReachedModelIsNotAnOutage:
             result = await model._checked_infer(**_CHECKED_INFER_KWARGS)
         assert (result, recorded.call_args.args[2]) == ([], "no_completion")
 
+    @pytest.mark.parametrize("dual_mode", [False, True], ids=["sequential", "dual"])
+    @pytest.mark.parametrize(
+        "primary_empty", [True, False], ids=["primary-empty", "backup-empty"]
+    )
+    @pytest.mark.asyncio
+    async def test_beside_an_endpoint_answering_503_it_is_no_completion(
+        self, monkeypatch, make_fake_model_post, dual_mode, primary_empty
+    ):
+        """The other endpoint's HTTP error leaves through a different branch
+        than a cooling one, and it too must not make a reached model an
+        outage."""
+        model = RemoteFullOpenLike(
+            "http://primary.example/v1",
+            "tok",
+            "primary-model",
+            backup_api_base="http://backup.example/v1",
+            backup_model="backup-model",
+            dual_mode=dual_mode,
+        )
+        empty = make_fake_model_post(200, "{}", json_data=NO_TEXT_JSON)
+        down = make_fake_model_post(503, "overloaded")
+        primary, backup = (empty, down) if primary_empty else (down, empty)
+        monkeypatch.setattr(
+            aiohttp.ClientSession,
+            "post",
+            _ByEndpoint(
+                {"http://primary.example": primary, "http://backup.example": backup}
+            ),
+        )
+        with patch.object(ml_models, "record_ml_result") as recorded:
+            result = await model._checked_infer(**_CHECKED_INFER_KWARGS)
+        assert (result, recorded.call_args.args[2]) == ([], "no_completion")
+
+
+class _ByEndpoint:
+    """ClientSession.post stand-in answering each endpoint its own way."""
+
+    def __init__(self, by_base):
+        self._by_base = by_base
+
+    def __call__(self, url, *args, **kwargs):
+        for base, post in self._by_base.items():
+            if str(url).startswith(base):
+                return post(url, *args, **kwargs)
+        raise AssertionError(f"unexpected endpoint {url}")
+
 
 class TestOdd200sAreFailedReads:
     """Entity extraction (raise_on_unavailable) read an empty or malformed
@@ -1598,3 +1644,18 @@ class TestChatOutagesRaiseWhenAsked:
                 "Hi there", history=[], raise_on_unavailable=True
             )
         assert result == ("Hi there", None)
+
+    @pytest.mark.asyncio
+    async def test_an_outage_after_an_empty_answer_is_not_an_outage(self):
+        """The first try reached the model, which answered with nothing: the
+        call reads empty, as on the appeal path, not as an outage."""
+        model = _plain()
+        with patch.object(
+            model,
+            "_infer",
+            side_effect=[NoAnswerText("no text"), ProviderUnavailable("HTTP 503")],
+        ):
+            result = await model.generate_chat_response(
+                "Hi there", history=[], raise_on_unavailable=True
+            )
+        assert result == (None, None)

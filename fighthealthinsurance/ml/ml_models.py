@@ -2073,6 +2073,9 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
             )
 
         result: Optional[str] = None
+        # True once a try reached the model (it answered, even with no text):
+        # an outage on a later try is then not an outage of this call.
+        reached = False
         # Evaluated once per iteration and reused by the loop condition and
         # the corrective-feedback branch (the comparison is not free).
         repeats_last = False
@@ -2115,14 +2118,17 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
                     timeout=chat_timeout,
                     raise_on_unavailable=raise_on_unavailable,
                 )
+                reached = True
             except NoAnswerText:
                 # Reached, and it answered with no text: a real empty answer,
                 # asked again like one returned as None.
+                reached = True
                 raw_result = None
             except ProviderUnavailable:
-                if result is not None:
-                    # The first try answered: keep that answer, as a retry
-                    # that returned None would, rather than fail the turn.
+                if reached:
+                    # An earlier try reached the model: keep what it gave (an
+                    # answer, or nothing, filed as empty), as a retry that
+                    # returned None would, rather than call it an outage.
                     break
                 raise
             if raw_result:
@@ -3846,7 +3852,9 @@ class RemoteOpenLike(RemoteModel):
                     f"{describe_model_error(e)}"
                 )
             if raise_on_unavailable:
-                raise ProviderUnavailable(describe_model_error(e)) from e
+                raise _unavailable_from(
+                    transport_failures + [describe_model_error(e)]
+                ) from e
         except MODEL_TRANSPORT_ERRORS as e:
             # Transport failures are logged (classified) per-attempt in
             # __infer; anything landing here was raised outside that wrapper.
@@ -3854,7 +3862,11 @@ class RemoteOpenLike(RemoteModel):
                 f"{self}: giving up on {self.api_base} -- {describe_model_error(e)}"
             )
             if raise_on_unavailable:
-                raise ProviderUnavailable(describe_model_error(e)) from e
+                # With the other endpoint's notes, so a model reached there
+                # (it answered with nothing) is NoAnswerText, not an outage.
+                raise _unavailable_from(
+                    transport_failures + [describe_model_error(e)]
+                ) from e
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Unexpected error calling {self.api_base} for {self}"

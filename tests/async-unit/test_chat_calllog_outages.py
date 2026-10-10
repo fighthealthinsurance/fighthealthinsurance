@@ -296,12 +296,15 @@ def test_a_provider_outage_in_a_fanout_is_one_line_without_a_traceback(
             _log_fanout_task_error(e, "best_two_within_timelimit")
 
     logged = [
-        (r["message"], r["exception"])
+        (r["level"].name, r["message"], r["exception"])
         for r in capture.records
         if r["function"] == "_log_fanout_task_error"
     ]
+    # Debug: the outage was logged where it began, and the chat race raises
+    # it on every call while it lasts.
     assert logged == [
         (
+            "DEBUG",
             "Task failed in best_two_within_timelimit -- "
             "unavailable: HTTP 503 Service Unavailable",
             None,
