@@ -5443,8 +5443,19 @@ class LetterReviewItem(models.Model):
         return f"LetterReviewItem({self.pk}, position {self.position})"
 
 
+class LetterReviewLabelsFrozen(Exception):
+    """A label changed after every reader finished its packet."""
+
+
 class LetterReviewLabel(models.Model):
-    """One reader's verdict on one letter. Only that reader ever sees it."""
+    """One reader's verdict on one letter. Only that reader ever sees it.
+
+    Once every reader has finished the packet the export can show readers
+    each other's marks, so from then on save() and delete() refuse to change
+    or remove a label: the export keeps each blind verdict as it was given.
+    Bulk QuerySet.update() and delete() skip these methods; nothing in the
+    app uses them on labels, and deleting a packet still cascades.
+    """
 
     item = models.ForeignKey(
         LetterReviewItem, on_delete=models.CASCADE, related_name="labels"
@@ -5466,3 +5477,47 @@ class LetterReviewLabel(models.Model):
 
     def __str__(self) -> str:
         return f"LetterReviewLabel({self.pk}, item {self.item_id})"
+
+    def _lock_and_refuse_if_frozen(self) -> None:
+        """Lock the packet, then refuse a change to a stored label once every
+        reader is done. Every label write takes the same lock, so the save
+        that finishes a packet can't slip between this check and the write.
+        A stored label is checked against its stored packet and, if it is
+        being moved to another letter, that letter's packet too."""
+        from fighthealthinsurance.letter_review import labels_frozen
+
+        # Lock the label's own row before reading its packet, so a move of
+        # the same label can't change the packet between the read and the
+        # packet locks. Packets are locked after the label, always.
+        stored = (
+            LetterReviewLabel.objects.select_for_update(of=("self",))
+            .filter(pk=self.pk)
+            .values_list("item__packet_id", flat=True)
+            .first()
+            if self.pk is not None
+            else None
+        )
+        packet_ids = sorted(
+            {self.item.packet_id} | ({stored} if stored is not None else set())
+        )
+        # In id order, so two writers never wait on each other's lock.
+        packets = list(
+            LetterReviewPacket.objects.select_for_update()
+            .filter(pk__in=packet_ids)
+            .order_by("pk")
+        )
+        if stored is not None and any(labels_frozen(packet) for packet in packets):
+            raise LetterReviewLabelsFrozen(
+                "Every reader has finished this packet, so its labels can no "
+                "longer change."
+            )
+
+    def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        with transaction.atomic():
+            self._lock_and_refuse_if_frozen()
+            super().save(*args, **kwargs)
+
+    def delete(self, *args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+        with transaction.atomic():
+            self._lock_and_refuse_if_frozen()
+            return super().delete(*args, **kwargs)

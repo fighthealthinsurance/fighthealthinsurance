@@ -29,6 +29,7 @@ from django.views.debug import ExceptionReporter, SafeExceptionReporterFilter
 
 from fighthealthinsurance import letter_review
 from fighthealthinsurance.models import (
+    LetterReviewLabelsFrozen,
     LetterReviewItem,
     LetterReviewLabel,
     LetterReviewPacket,
@@ -1157,6 +1158,152 @@ class ExportTests(PageTestBase):
 # ---------------------------------------------------------------------------
 # Delete, and what deleting a staff account does
 # ---------------------------------------------------------------------------
+
+
+class FrozenLabelTests(PageTestBase):
+    """Once every reader is done the export can show readers each other's
+    marks, so from then on each blind verdict stays as it was given."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.label(self.reader_b, KEY_3, "flag", note="SYNTH-NOTE-B3")
+        self.label(self.reader_a, KEY_1, "fabricates", note="SYNTH-NOTE-A1")
+        self.label(self.reader_b, KEY_1, "clean")
+
+    def _finish_everyone(self) -> None:
+        for key in (KEY_2, KEY_4):
+            self.label(self.reader_a, key, "clean")
+
+    def _exported(self) -> List[Dict[str, Any]]:
+        return letter_review.export_labels(self.packet)["labels"]
+
+    def test_a_reader_can_correct_a_mark_before_everyone_finishes(self):
+        self.client.force_login(self.staff_a)
+        response = self.client.post(self.item_url(KEY_1), {"verdict": "clean", "note": ""})
+        self.assertEqual(response.status_code, 302)
+        label = LetterReviewLabel.objects.get(reader=self.reader_a, item__key=KEY_1)
+        self.assertEqual(label.verdict, "clean")
+
+    def test_a_change_after_everyone_finishes_is_refused_and_the_export_is_unchanged(
+        self,
+    ):
+        self._finish_everyone()
+        before = self._exported()
+        self.client.force_login(self.staff_a)
+        response = self.client.post(self.item_url(KEY_1), {"verdict": "clean", "note": "later"})
+        self.assertEqual(response.status_code, 409)
+        self.assertContains(response, "the marks are final", status_code=409)
+        self.assertNotContains(response, 'id="lr-form"', status_code=409)
+        self.assertEqual(self._exported(), before)
+
+    def test_the_page_shows_the_mark_without_a_form_once_everyone_finishes(self):
+        self._finish_everyone()
+        self.client.force_login(self.staff_a)
+        response = self.client.get(self.item_url(KEY_1))
+        self.assertContains(response, "the marks are final")
+        self.assertNotContains(response, 'id="lr-form"')
+
+    def test_the_model_refuses_a_single_label_change_or_removal(self):
+        self._finish_everyone()
+        before = self._exported()
+        label = LetterReviewLabel.objects.get(reader=self.reader_a, item__key=KEY_1)
+        label.verdict = "clean"
+        with self.assertRaises(LetterReviewLabelsFrozen):
+            label.save()
+        with self.assertRaises(LetterReviewLabelsFrozen):
+            letter_review.save_label(self.reader_a, self.item(KEY_1), "clean", "")
+        with self.assertRaises(LetterReviewLabelsFrozen):
+            LetterReviewLabel.objects.get(pk=label.pk).delete()
+        self.assertEqual(self._exported(), before)
+
+    def test_the_check_reads_the_stored_packet_not_the_item_in_memory(self):
+        self._finish_everyone()
+        before = self._exported()
+        other = self.load_packet(_packet_data(packet="synthetic-open-packet"))
+        label = LetterReviewLabel.objects.get(reader=self.reader_a, item__key=KEY_1)
+        label.item = other.items.first()
+        label.verdict = "clean"
+        with self.assertRaises(LetterReviewLabelsFrozen):
+            label.save(update_fields=["verdict"])
+        self.assertEqual(self._exported(), before)
+
+    def test_a_stored_label_is_locked_before_its_packet(self):
+        """Its own row first, so a concurrent move of the same label can't
+        change which packet is checked."""
+        from django.db.models import QuerySet
+
+        order: List[str] = []
+        real = QuerySet.select_for_update
+
+        def spy(qs, *args, **kwargs):
+            order.append(qs.model.__name__)
+            return real(qs, *args, **kwargs)
+
+        label = self.label(self.reader_a, KEY_2, "clean")
+        with patch.object(QuerySet, "select_for_update", spy):
+            label.verdict = "flag"
+            label.save()
+            label.delete()
+        self.assertEqual(
+            order,
+            ["LetterReviewLabel", "LetterReviewPacket"] * 2,
+        )
+
+    def test_a_label_cannot_be_moved_onto_a_finished_packet(self):
+        other = self.load_packet(_packet_data(packet="synthetic-open-packet"))
+        moving = LetterReviewLabel.objects.filter(item__packet=other).first() or LetterReviewLabel.objects.create(
+            item=other.items.first(),
+            reader=other.readers.first(),
+            verdict="clean",
+        )
+        self._finish_everyone()
+        before = self._exported()
+        moving.item = self.item(KEY_2)
+        with self.assertRaises(LetterReviewLabelsFrozen):
+            moving.save()
+        self.assertEqual(self._exported(), before)
+
+    def test_a_save_that_loses_the_race_to_the_last_reader_is_a_409(self):
+        """The last reader finishes between the page's check and this save."""
+        real = letter_review.labels_frozen
+        calls = {"n": 0}
+
+        def finishes_after_the_page_check(packet):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                self._finish_everyone()
+                return False
+            return real(packet)
+
+        self.client.force_login(self.staff_a)
+        with patch.object(letter_review, "labels_frozen", finishes_after_the_page_check):
+            response = self.client.post(
+                self.item_url(KEY_1), {"verdict": "clean", "note": ""}
+            )
+        self.assertEqual(response.status_code, 409)
+        label = LetterReviewLabel.objects.get(reader=self.reader_a, item__key=KEY_1)
+        self.assertEqual(label.verdict, "fabricates")
+
+    def test_every_label_write_locks_its_packet_inside_a_transaction(self):
+        """The save that finishes a packet and an edit to one of its labels
+        take the same packet lock, so neither can slip between the other's
+        check and write."""
+        from django.db.models import QuerySet
+
+        seen: List[Any] = []
+        real = QuerySet.select_for_update
+
+        def spy(qs, *args, **kwargs):
+            if qs.model is LetterReviewPacket:
+                seen.append(connection.in_atomic_block)
+            return real(qs, *args, **kwargs)
+
+        with patch.object(QuerySet, "select_for_update", spy):
+            label = self.label(self.reader_a, KEY_2, "clean")
+            label.verdict = "flag"
+            label.save()
+            label.delete()
+        self.assertEqual(seen, [True, True, True])
 
 
 class DeleteTests(PageTestBase):

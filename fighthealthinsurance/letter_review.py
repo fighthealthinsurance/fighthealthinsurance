@@ -546,6 +546,13 @@ def packet_finished(packet: LetterReviewPacket) -> bool:
     )
 
 
+def labels_frozen(packet: LetterReviewPacket) -> bool:
+    """Whether the packet's labels can no longer change: every reader is
+    done, so the export may already have shown readers each other's marks.
+    Until then a reader can still correct a mark."""
+    return packet_finished(packet)
+
+
 def export_open_to(user: Any, packet: LetterReviewPacket) -> bool:
     """Whether this user may download the packet's labels from the page.
 
