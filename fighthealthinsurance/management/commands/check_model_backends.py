@@ -20,6 +20,7 @@ import os
 from typing import Any
 
 from django.core.management.base import BaseCommand
+from loguru import logger
 
 
 class Command(BaseCommand):
@@ -75,7 +76,33 @@ class Command(BaseCommand):
             )
             raise SystemExit(2)
 
+    @staticmethod
+    def _sync_spend() -> None:
+        """Store and re-read the shared spend ledger, on this thread.
+
+        This process is short-lived. Read first, so a provider paused for
+        credit on another pod reads as paused here, and a probe that now
+        succeeds lifts the pause (spend.unpause). Stored before exiting, so
+        that lift reaches the other pods: the background writer may never
+        run. A database outage only costs the sync, never the check's
+        result or exit code.
+        """
+        from fighthealthinsurance.ml import spend
+
+        try:
+            spend.sync_now()
+        except Exception as e:
+            logger.warning(f"Spend ledger not synced: {type(e).__name__}")
+
     def handle(self, *args: str, **options: Any):
+        self._sync_spend()
+        try:
+            self._check(options)
+        finally:
+            # Every exit, the SystemExit ones included.
+            self._sync_spend()
+
+    def _check(self, options: dict[str, Any]) -> None:
         from fighthealthinsurance.ml import model_health_check as mhc
 
         deploy_hook: bool = options["deploy_hook"]

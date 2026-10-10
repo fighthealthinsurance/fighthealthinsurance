@@ -31,7 +31,9 @@ The budgets (settings, all in US dollars):
 A provider that refuses for credit or quota (HTTP 402, or a 400, 401, 403
 or 429 whose body says so) is paused for every use for the rest of the UTC
 day with :func:`pause`, on every pod, instead of being asked again on every
-turn. Anthropic, Claude on Azure and Perplexity are not budgeted or counted
+turn. :func:`unpause` lifts it early once the provider answers again or by
+hand (``manage.py unpause_spend <provider>``), on every pod at its next
+refresh. Anthropic, Claude on Azure and Perplexity are not budgeted or counted
 here; they are providers only so that pause can reach them.
 
 How it stays off the request path: :func:`allows` reads a per-process copy
@@ -66,6 +68,7 @@ from typing import (
     List,
     Mapping,
     Optional,
+    Set,
     Tuple,
     TypeVar,
 )
@@ -83,6 +86,8 @@ PERPLEXITY = "perplexity"
 # Providers here only so a credit refusal can pause them; nothing is
 # budgeted or counted for them.
 UNBUDGETED = frozenset({ANTHROPIC, AZURE_ANTHROPIC, PERPLEXITY})
+# Every provider a credit refusal can pause (unpause_spend checks against it).
+PROVIDERS = (TYPESAFE, DEEPINFRA, AZURE, ANTHROPIC, AZURE_ANTHROPIC, PERPLEXITY)
 FHI = "fhi"  # our own generations, counted not priced
 CHAT = "chat"
 LETTERS = "letters"
@@ -339,6 +344,12 @@ class _Ledger:
         self._landed = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._local_pauses: Dict[str, datetime.date] = {}
+        # Pause counts lifted here (unpause) and not yet set back to 0 in the
+        # database, per (counter, day).
+        self._clears: Set[Tuple[str, datetime.date]] = set()
+        # One thread at a time stores and reads: the worker, or a flush from
+        # a short-lived process, so neither stores a pending total twice.
+        self._io = threading.Lock()
 
     # --- the request path: memory only -------------------------------------
 
@@ -380,9 +391,40 @@ class _Ledger:
         with self._lock:
             return self._local_pauses.get(name) == _today()
 
-    def pause_locally(self, name: str) -> None:
+    def pause(self, name: str) -> bool:
+        """Pause ``name`` here and count it for other pods in one step, so a
+        refresh can't land between the two and lift it (see _refresh). A
+        lift not yet stored is dropped: this pause came after it. False when
+        it was paused here already."""
+        today = _today()
+        key = (counter(PAUSED, name), today)
         with self._lock:
-            self._local_pauses[name] = _today()
+            if self._local_pauses.get(name) == today:
+                return False
+            self._local_pauses[name] = today
+            self._clears.discard(key)
+            self._pending[key] = self._pending.get(key, 0) + 1
+        self._ensure_worker()
+        self._wake.set()
+        return True
+
+    def unpause(self, name: str) -> bool:
+        """Lift today's pause of ``name`` here, and queue setting its stored
+        count back to 0 so other pods lift it at their next refresh. False
+        when this process knew of no pause to lift."""
+        today = _today()
+        flag = counter(PAUSED, name)
+        key = (flag, today)
+        with self._lock:
+            here = self._local_pauses.pop(name, None) == today
+            waiting = self._pending.pop(key, 0) > 0
+            stored = self._view.by_day.get(flag, {}).pop(today, 0) > 0
+            if not (here or waiting or stored):
+                return False
+            self._clears.add(key)
+        self._ensure_worker()
+        self._wake.set()
+        return True
 
     # --- the worker ---------------------------------------------------------
 
@@ -433,10 +475,12 @@ class _Ledger:
         if time.monotonic() - self._refreshed_at >= REFRESH_SECONDS:
             self._refresh_wanted.set()
         try:
-            self._write_pending()
-            if self._refresh_wanted.is_set():
-                self._refresh_wanted.clear()
-                self._refresh()
+            with self._io:
+                self._write_clears()
+                self._write_pending()
+                if self._refresh_wanted.is_set():
+                    self._refresh_wanted.clear()
+                    self._refresh()
         except Exception as e:
             # Pending totals stay pending and are written next time.
             logger.warning(f"Spend ledger work failed: {type(e).__name__}")
@@ -450,6 +494,17 @@ class _Ledger:
         if self._refresh_wanted.is_set():
             # A failed refresh is tried again, but not in a tight loop.
             time.sleep(WRITE_EVERY_SECONDS)
+
+    def _write_clears(self) -> None:
+        """Set each lifted pause's stored count back to 0. Runs before the
+        pending totals are stored, so a pause made after the lift lands on
+        top of it rather than being wiped by it."""
+        with self._lock:
+            batch = list(self._clears)
+        for name, day in batch:
+            self._clear(name, day)
+            with self._lock:
+                self._clears.discard((name, day))
 
     def _write_pending(self) -> None:
         """Store each pending total, subtracting only what was stored."""
@@ -465,8 +520,11 @@ class _Ledger:
                 else:
                     self._pending.pop(key, None)
                 # Stored now: keep it in the view until the next refresh
-                # reads it back, so this process never under-counts.
-                if (day.year, day.month) == self._view.month:
+                # reads it back, so this process never under-counts. Not a
+                # pause lifted while it was being stored: its clear, next
+                # tick, sets it back to 0.
+                this_month = (day.year, day.month) == self._view.month
+                if this_month and key not in self._clears:
                     self._view.add(name, day, amount)
 
     def _store(self, name: str, day: datetime.date, amount: int) -> None:
@@ -488,6 +546,20 @@ class _Ledger:
                     amount=F("amount") + amount
                 )
 
+    def flush(self) -> None:
+        """Store the lifts and pending totals and refresh, on the calling
+        thread, in the worker's order. Waits on the database and raises when
+        it can't be reached."""
+        with self._io:
+            self._write_clears()
+            self._write_pending()
+            self._refresh()
+
+    def _clear(self, name: str, day: datetime.date) -> None:
+        from fighthealthinsurance.models import SpendCounter
+
+        SpendCounter.objects.filter(day=day, name=name).update(amount=0)
+
     def _refresh(self) -> None:
         from fighthealthinsurance.models import SpendCounter
 
@@ -500,6 +572,20 @@ class _Ledger:
         for name, day, amount in rows:
             view.add(name, day, int(amount))
         with self._lock:
+            # Rows read before a lift made here was stored still hold it.
+            for name, day in self._clears:
+                view.by_day.get(name, {}).pop(day, None)
+            # A local pause only bridges the time until its count is stored.
+            # Once stored, with none of ours pending, a count back at 0 means
+            # it was lifted (unpause on some pod): lift it here too.
+            for name, day in list(self._local_pauses.items()):
+                key = (counter(PAUSED, name), day)
+                if (
+                    day == today
+                    and key not in self._pending
+                    and view.day_total(*key) <= 0
+                ):
+                    del self._local_pauses[name]
             self._view = view
         self._refreshed_at = time.monotonic()
         self._landed.set()
@@ -516,6 +602,7 @@ class _Ledger:
             self._view = view
             self._pending.clear()
             self._local_pauses.clear()
+            self._clears.clear()
         self._refreshed_at = time.monotonic()
 
     def reset_for_tests(self) -> None:
@@ -523,12 +610,13 @@ class _Ledger:
             self._view = _Month()
             self._pending.clear()
             self._local_pauses.clear()
+            self._clears.clear()
         self._refreshed_at = float("-inf")
 
     def flush_sync_for_tests(self) -> None:
-        """Write the pending totals and refresh, on the calling thread."""
-        self._write_pending()
-        self._refresh()
+        """Write the lifts and pending totals and refresh, on the calling
+        thread."""
+        self.flush()
 
 
 _ledger = _Ledger()
@@ -641,14 +729,38 @@ def pause(provider: str, use: str = "*", reason: str = "") -> None:
     next UTC day, here at once and on other pods at their next refresh."""
     try:
         name = counter(provider, use)
-        if _ledger.paused_locally(name):
+        if not _ledger.pause(name):
             return
-        _ledger.pause_locally(name)
-        _ledger.add(counter(PAUSED, name), 1)
         because = f" ({reason})" if reason else ""
         logger.warning(f"Paused {name} for the rest of the UTC day{because}")
     except Exception as e:
         logger.warning(f"Spend pause not recorded: {type(e).__name__}")
+
+
+def unpause(provider: str, use: str = "*", reason: str = "") -> bool:
+    """Lift a pause of ``provider`` for ``use`` before the UTC day ends (it
+    answered again after a top-up, or by hand): here at once, and on other
+    pods at their next refresh, which reads its count set back to 0. A later
+    refusal pauses it again as usual. True when a pause was lifted. Never
+    raises and never waits on the database."""
+    try:
+        name = counter(provider, use)
+        if not _ledger.unpause(name):
+            return False
+        because = f" ({reason})" if reason else ""
+        logger.warning(f"Lifted the pause on {name} before the UTC day ended{because}")
+        return True
+    except Exception as e:
+        logger.warning(f"Spend unpause not recorded: {type(e).__name__}")
+        return False
+
+
+def sync_now() -> None:
+    """Store this process's lifts and pending totals and re-read the ledger,
+    on the calling thread: for a short-lived process (a management command)
+    that may exit before its worker thread runs. Waits on the database and
+    raises when it can't be reached, so never on the request path."""
+    _ledger.flush()
 
 
 def is_count(name: str) -> bool:

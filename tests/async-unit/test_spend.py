@@ -273,6 +273,83 @@ class TestPauses:
         assert spend.quota_refusal(status, body) is refused
 
 
+class TestUnpause:
+    """unpause lifts a credit pause before the UTC day ends: here at once,
+    and on other pods once the worker stores its count back at 0."""
+
+    def test_unpause_says_it_lifted_a_pause_made_here(self):
+        _load()
+        spend.pause(spend.DEEPINFRA)
+        assert spend.unpause(spend.DEEPINFRA) is True
+
+    def test_a_provider_paused_here_is_asked_again_after_unpause(self):
+        _load()
+        spend.pause(spend.DEEPINFRA)
+        spend.unpause(spend.DEEPINFRA)
+        assert spend.allows(spend.DEEPINFRA, spend.CHAT)
+
+    def test_unpause_lifts_another_pods_pause_read_from_the_ledger(self):
+        _load(**{spend.counter(spend.PAUSED, "anthropic:*"): {TODAY: 1}})
+        spend.unpause(spend.ANTHROPIC)
+        assert spend.allows(spend.ANTHROPIC, spend.CHAT)
+
+    @pytest.mark.parametrize(
+        "rows",
+        [{}, {spend.counter(spend.PAUSED, "anthropic:*"): {EARLIER: 1}}],
+        ids=["never-paused", "paused-on-an-earlier-day"],
+    )
+    def test_unpause_of_a_provider_not_paused_today_returns_false(self, rows):
+        _load(**rows)
+        assert spend.unpause(spend.ANTHROPIC) is False
+
+    def test_unpause_lifts_only_the_use_it_names(self):
+        _load()
+        spend.pause(spend.DEEPINFRA, spend.CHAT)
+        spend.unpause(spend.DEEPINFRA)
+        assert not spend.allows(spend.DEEPINFRA, spend.CHAT)
+
+    def test_pausing_again_after_an_unpause_pauses(self):
+        _load()
+        spend.pause(spend.DEEPINFRA)
+        spend.unpause(spend.DEEPINFRA)
+        spend.pause(spend.DEEPINFRA)
+        assert not spend.allows(spend.DEEPINFRA, spend.CHAT)
+
+    def test_active_pauses_no_longer_lists_a_lifted_pause(self):
+        _load(**{spend.counter(spend.PAUSED, "typesafe:*"): {TODAY: 1}})
+        spend.pause(spend.DEEPINFRA)
+        spend.unpause(spend.TYPESAFE)
+        spend.unpause(spend.DEEPINFRA)
+        assert spend.active_pauses() == []
+
+    def test_unpause_queues_the_shared_count_to_be_set_back_to_zero(self):
+        _load(**{spend.counter(spend.PAUSED, "anthropic:*"): {TODAY: 1}})
+        spend.unpause(spend.ANTHROPIC)
+        assert spend._ledger._clears == {("paused:anthropic:*", TODAY)}
+
+    def test_a_pause_after_an_unpause_drops_the_queued_lift(self):
+        # The pause came later, so the shared count must stay set.
+        _load(**{spend.counter(spend.PAUSED, "anthropic:*"): {TODAY: 1}})
+        spend.unpause(spend.ANTHROPIC)
+        spend.pause(spend.ANTHROPIC)
+        assert spend._ledger._clears == set()
+
+    def test_unpause_logs_one_warning_with_its_reason(self, log_capture):
+        _load()
+        spend.pause(spend.ANTHROPIC)
+        with log_capture() as cap:
+            spend.unpause(spend.ANTHROPIC, reason="it answered again")
+        assert cap.messages("WARNING") == [
+            "Lifted the pause on anthropic:* before the UTC day ended "
+            "(it answered again)"
+        ]
+
+    def test_unpause_never_raises(self):
+        _load()
+        with patch.object(spend._ledger, "unpause", side_effect=RuntimeError("broken")):
+            assert spend.unpause(spend.ANTHROPIC) is False
+
+
 class TestTypeSafeRequests:
     """ml/typesafe.ask applies the budget before sending and counts after."""
 
