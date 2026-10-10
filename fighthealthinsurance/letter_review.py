@@ -31,12 +31,13 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from django.db import transaction
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 from django.http import Http404
 from django.utils import timezone
 from django.views.decorators.debug import sensitive_variables
 
 from fighthealthinsurance.models import (
+    LETTER_REVIEW_FORMS,
     LETTER_REVIEW_NOTE_MAX,
     LETTER_REVIEW_VERDICTS,
     LetterReviewItem,
@@ -64,6 +65,9 @@ MAX_ITEMS = 5_000
 MAX_PACKET_BYTES = MAX_RULE_TEXT + MAX_ITEMS * (MAX_PROMPT + MAX_LETTER + 4_000)
 
 PACKET_FIELDS = frozenset({"packet", "rule_version", "rule_text", "readers", "items"})
+# "form" may be left out, for a verdict packet.
+OPTIONAL_PACKET_FIELDS = frozenset({"form"})
+FORMS = tuple(value for value, _ in LETTER_REVIEW_FORMS)
 ITEM_FIELDS = frozenset({"key", "prompt", "letter", "readers"})
 
 VERDICTS = tuple(value for value, _ in LETTER_REVIEW_VERDICTS)
@@ -95,6 +99,65 @@ VERDICT_HELP: Dict[str, str] = {
     ),
 }
 
+
+@dataclass(frozen=True)
+class Question:
+    """One yes or no question on a binary packet's letters. ``field`` is the
+    label's column and the export's key."""
+
+    field: str
+    text: str
+    help: str
+    required: bool
+
+
+# Most serious first. The first two are required, and a letter is done once
+# both have an answer; the rest a reader may skip.
+QUESTIONS: Tuple[Question, ...] = (
+    Question(
+        "invents_or_contradicts",
+        "Does the letter invent or contradict facts?",
+        "Yes if it invents a source, approval or guideline claim, or case "
+        "specifics (dates, amounts, IDs, names, test results); misstates the "
+        "service or the denial reason; or says something the input "
+        "contradicts.",
+        True,
+    ),
+    Question(
+        "unsupported_history",
+        "Does it state patient history the input doesn't give?",
+        "Yes if it says the patient had a condition, treatment or result the "
+        "input doesn't mention. That's its own problem, not inventing facts: "
+        "it should be a fill-in for the patient to confirm.",
+        True,
+    ),
+    Question(
+        "argues_against_reason",
+        "Does it argue against the insurer's stated reason?",
+        "Yes if it answers the reason the denial gives, not only appeals in "
+        "general.",
+        False,
+    ),
+    Question(
+        "specific_medical_necessity",
+        "Does it make a medical-necessity case specific to this patient?",
+        "Yes if the case rests on this patient's situation as the input gives "
+        "it, not only on general medical knowledge.",
+        False,
+    ),
+    Question(
+        "ready_to_send",
+        "Is it ready to send without edits?",
+        "Simple fill-ins like [Name] or [Date] are fine. Notes to the person, "
+        "markdown, or missing substance mean no.",
+        False,
+    ),
+)
+ANSWER_FIELDS = tuple(q.field for q in QUESTIONS)
+REQUIRED_ANSWERS = tuple(q.field for q in QUESTIONS if q.required)
+# A short break screen after every this many letters, on a binary packet.
+BREAK_EVERY = 10
+
 SLUG_BYTES = 9  # secrets.token_urlsafe(9) is 12 characters of [A-Za-z0-9_-]
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -123,6 +186,7 @@ class ParsedPacket:
     rule_text: str
     readers: Tuple[str, ...]
     items: Tuple[ParsedItem, ...]
+    form: str = "verdict"
 
 
 @dataclass(frozen=True)
@@ -145,13 +209,15 @@ def _utf8(value: str, where: str) -> None:
 
 
 @sensitive_variables()
-def _fields(obj: Any, expected: frozenset, where: str) -> Dict[str, Any]:
+def _fields(
+    obj: Any, expected: frozenset, where: str, optional: frozenset = frozenset()
+) -> Dict[str, Any]:
     if not isinstance(obj, dict):
         raise PacketError(f"{where} must be a JSON object")
     missing = sorted(expected - set(obj))
     if missing:
         raise PacketError(f"{where} is missing {', '.join(missing)}")
-    extra = sorted(str(name) for name in set(obj) - expected)
+    extra = sorted(str(name) for name in set(obj) - expected - optional)
     if extra:
         raise PacketError(
             f"{where} has fields outside the contract: {', '.join(extra)}"
@@ -204,8 +270,11 @@ def _handles(value: Any, where: str) -> Tuple[str, ...]:
 @sensitive_variables()
 def parse_packet(data: Any) -> ParsedPacket:
     """Check a decoded packet against the contract, strictly."""
-    top = _fields(data, PACKET_FIELDS, "the packet")
+    top = _fields(data, PACKET_FIELDS, "the packet", OPTIONAL_PACKET_FIELDS)
     name = _short_text(top["packet"], "packet", MAX_NAME)
+    form = top.get("form", "verdict")
+    if form not in FORMS:
+        raise PacketError(f"form must be one of {', '.join(FORMS)}")
     rule_version = _short_text(top["rule_version"], "rule_version", MAX_RULE_VERSION)
     rule_text = _long_text(top["rule_text"], "rule_text", MAX_RULE_TEXT)
     readers = _handles(top["readers"], "readers")
@@ -251,6 +320,7 @@ def parse_packet(data: Any) -> ParsedPacket:
         rule_text=rule_text,
         readers=readers,
         items=tuple(items),
+        form=form,
     )
 
 
@@ -337,6 +407,7 @@ def import_packet(
             name=packet.name,
             rule_version=packet.rule_version,
             rule_text=packet.rule_text,
+            form=packet.form,
         )
         readers = {
             handle: LetterReviewReader.objects.create(
@@ -389,6 +460,8 @@ def export_labels(packet: LetterReviewPacket) -> Dict[str, Any]:
     Reads only the columns it writes: joining the whole item would load every
     letter and prompt in the packet to get at their keys.
     """
+    if packet.form == "binary":
+        return _export_answers(packet)
     labels = (
         LetterReviewLabel.objects.filter(item__packet=packet)
         .order_by("item__position", "reader__handle")
@@ -407,6 +480,33 @@ def export_labels(packet: LetterReviewPacket) -> Dict[str, Any]:
                 "labeled_at": labeled_at.isoformat(),
             }
             for key, reader, verdict, note, labeled_at in labels
+        ],
+    }
+
+
+@sensitive_variables()
+def _export_answers(packet: LetterReviewPacket) -> Dict[str, Any]:
+    """A binary packet's labels: each question's answer, true, false or null
+    (skipped), keyed by its field."""
+    rows = (
+        LetterReviewLabel.objects.filter(item__packet=packet)
+        .order_by("item__position", "reader__handle")
+        .values("item__key", "reader__handle", "note", "labeled_at", *ANSWER_FIELDS)
+    )
+    return {
+        "packet": packet.name,
+        "rule_version": packet.rule_version,
+        "form": packet.form,
+        "exported_at": timezone.now().isoformat(),
+        "labels": [
+            {
+                "key": row["item__key"],
+                "reader": row["reader__handle"],
+                "answers": {field: row[field] for field in ANSWER_FIELDS},
+                "note": row["note"],
+                "labeled_at": row["labeled_at"].isoformat(),
+            }
+            for row in rows
         ],
     }
 
@@ -443,6 +543,22 @@ def items_for(reader: LetterReviewReader) -> "QuerySet[LetterReviewItem]":
     return LetterReviewItem.objects.filter(readers=reader).order_by("position")
 
 
+def complete(packet: LetterReviewPacket) -> Q:
+    """Labels that finish their letter: a verdict, or on a binary packet an
+    answer to every required question."""
+    if packet.form == "binary":
+        return Q(**{f"{field}__isnull": False for field in REQUIRED_ANSWERS})
+    return Q(verdict__isnull=False)
+
+
+def _done_items(reader: LetterReviewReader) -> "QuerySet[LetterReviewLabel, int]":
+    return (
+        LetterReviewLabel.objects.filter(reader=reader)
+        .filter(complete(reader.packet))
+        .values_list("item_id", flat=True)
+    )
+
+
 @sensitive_variables()
 def item_or_404(reader: LetterReviewReader, slug: str) -> LetterReviewItem:
     item = items_for(reader).filter(slug=slug).first()
@@ -468,9 +584,38 @@ def save_label(
     return label
 
 
+def label_done(reader: LetterReviewReader, item: LetterReviewItem) -> bool:
+    """Whether the reader's label already finishes this letter."""
+    return (
+        LetterReviewLabel.objects.filter(reader=reader, item=item)
+        .filter(complete(reader.packet))
+        .exists()
+    )
+
+
+@sensitive_variables()
+def save_answers(
+    reader: LetterReviewReader,
+    item: LetterReviewItem,
+    answers: Dict[str, Optional[bool]],
+    note: str,
+) -> LetterReviewLabel:
+    """Store a binary packet's answers. A question left out is stored as
+    skipped (null); a required one left out is refused."""
+    missing = [field for field in REQUIRED_ANSWERS if answers.get(field) is None]
+    if missing:
+        raise ValueError(f"required answers missing: {', '.join(missing)}")
+    defaults: Dict[str, Any] = {field: answers.get(field) for field in ANSWER_FIELDS}
+    defaults.update({"verdict": None, "note": note})
+    label, _ = LetterReviewLabel.objects.update_or_create(
+        reader=reader, item=item, defaults=defaults
+    )
+    return label
+
+
 @sensitive_variables()
 def next_unlabeled(reader: LetterReviewReader) -> Optional[LetterReviewItem]:
-    return items_for(reader).exclude(labels__reader=reader).first()
+    return items_for(reader).exclude(pk__in=_done_items(reader)).first()
 
 
 @sensitive_variables()
@@ -481,7 +626,7 @@ def next_unlabeled_after(
     return (
         items_for(reader)
         .filter(position__gt=item.position)
-        .exclude(labels__reader=reader)
+        .exclude(pk__in=_done_items(reader))
         .first()
     )
 
@@ -489,9 +634,11 @@ def next_unlabeled_after(
 def progress(reader: LetterReviewReader) -> Tuple[int, int]:
     """(labeled, assigned) for one reader."""
     assigned = items_for(reader).count()
-    labeled = LetterReviewLabel.objects.filter(
-        reader=reader, item__readers=reader
-    ).count()
+    labeled = (
+        LetterReviewLabel.objects.filter(reader=reader, item__readers=reader)
+        .filter(complete(reader.packet))
+        .count()
+    )
     return labeled, assigned
 
 
@@ -511,28 +658,43 @@ def neighbours(
 def reader_letters(reader: LetterReviewReader) -> List[Dict[str, Any]]:
     """Each of the reader's letters in order, with their own mark or None.
 
-    Only this reader's labels are read, so the list stays blind.
+    Only this reader's labels are read, so the list stays blind. ``mark``
+    colours the row: a verdict, or on a binary packet the most serious yes.
     """
-    marks: Dict[int, str] = dict(
-        LetterReviewLabel.objects.filter(reader=reader).values_list(
-            "item_id", "verdict"
-        )
+    binary = reader.packet.form == "binary"
+    marks: Dict[int, str] = {}
+    texts: Dict[int, str] = {}
+    labels = LetterReviewLabel.objects.filter(reader=reader).filter(
+        complete(reader.packet)
     )
-    names = dict(LETTER_REVIEW_VERDICTS)
-    letters: List[Dict[str, Any]] = []
-    for place, (item_id, slug) in enumerate(
-        items_for(reader).values_list("id", "slug"), start=1
-    ):
-        verdict = marks.get(item_id)
-        letters.append(
-            {
-                "place": place,
-                "slug": slug,
-                "verdict": verdict,
-                "verdict_label": names[verdict] if verdict else None,
-            }
+    if binary:
+        for row in labels.values("item_id", *REQUIRED_ANSWERS):
+            invents, history = (row[field] for field in REQUIRED_ANSWERS)
+            marks[row["item_id"]] = (
+                "fabricates" if invents else "flag" if history else "clean"
+            )
+            texts[row["item_id"]] = (
+                f"invents: {'yes' if invents else 'no'}, "
+                f"history: {'yes' if history else 'no'}"
+            )
+    else:
+        names = dict(LETTER_REVIEW_VERDICTS)
+        for item_id, verdict in labels.values_list("item_id", "verdict"):
+            if verdict:
+                marks[item_id] = verdict
+                texts[item_id] = names[verdict]
+    return [
+        {
+            "place": place,
+            "slug": slug,
+            "done": item_id in marks,
+            "mark": marks.get(item_id),
+            "mark_text": texts.get(item_id),
+        }
+        for place, (item_id, slug) in enumerate(
+            items_for(reader).values_list("id", "slug"), start=1
         )
-    return letters
+    ]
 
 
 def packet_finished(packet: LetterReviewPacket) -> bool:

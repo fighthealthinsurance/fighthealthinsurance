@@ -15,7 +15,8 @@ Usage::
 Every reader the packet names needs exactly one ``--assign`` to an active
 staff account, by username or email. The packet is checked strictly before
 anything is written (exact fields, unique keys, every item reader a packet
-reader, sane lengths) and the write is one transaction, so a refused import
+reader, sane lengths; "form" is optional, "verdict" or "binary", default
+"verdict") and the write is one transaction, so a refused import
 leaves nothing behind. A file larger than MAX_PACKET_BYTES is refused before
 any of it is decoded. A packet name that already exists is refused unless
 ``--replace``, which deletes the old packet and its labels: export them first.
@@ -158,7 +159,8 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f"{verb} letter review packet {packet.name!r} "
-                f"(rule {packet.rule_version}): {len(packet.items)} items, "
+                f"(rule {packet.rule_version}, {packet.form} form): "
+                f"{len(packet.items)} items, "
                 f"{shared} read by more than one reader"
             )
         )

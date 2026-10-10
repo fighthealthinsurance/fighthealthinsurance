@@ -198,6 +198,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="letter_review_done",
     ),
     path(
+        "timbit/help/letter_review/<int:packet_id>/break",
+        staff_member_required(staff_views.LetterReviewBreakView.as_view()),
+        name="letter_review_break",
+    ),
+    path(
         "timbit/help/letter_review/<int:packet_id>/mine",
         staff_member_required(staff_views.LetterReviewMineView.as_view()),
         name="letter_review_mine",

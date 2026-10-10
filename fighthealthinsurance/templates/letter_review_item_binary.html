@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Letter {{ place }} of {{ assigned }} - Letter review</title>
+  <style>
+    :root { --lr-text: 18px; }
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 20px 16px 40px;
+      background-color: #f5f5f5;
+      color: #222;
+      line-height: 1.5;
+    }
+    h1 {
+      color: #222;
+      font-size: 1.5rem;
+      border-bottom: 2px solid #0b5394;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+      overflow-wrap: anywhere;
+    }
+    h2 { color: #333; font-size: 1.15rem; margin: 0 0 10px; }
+    .lr-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      align-items: baseline;
+      color: #333;
+      margin-bottom: 10px;
+    }
+    .lr-bar a { color: #0b5394; }
+    .lr-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0 0 12px; color: #333; }
+    .lr-progress progress { flex: 1 1 200px; max-width: 420px; height: 12px; }
+    .lr-tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 20px;
+      align-items: center;
+      margin: 0 0 14px;
+      color: #222;
+    }
+    .lr-sizes { display: inline-flex; gap: 4px; align-items: center; }
+    .lr-sizes button {
+      border: 1px solid #8a9199;
+      border-radius: 4px;
+      background: #ffffff;
+      color: #222;
+      padding: 2px 10px;
+      cursor: pointer;
+    }
+    .lr-sizes button[aria-pressed="true"] { background: #0b5394; border-color: #0b5394; color: #ffffff; }
+    .lr-tools label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+    .lr-error {
+      background: #f8d7da;
+      border: 1px solid #f1aeb5;
+      color: #842029;
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+    .lr-rule {
+      background: #ffffff;
+      color: #222;
+      border: 1px solid #d5d9de;
+      border-radius: 8px;
+      padding: 10px 16px;
+      margin-bottom: 16px;
+    }
+    .lr-rule summary { cursor: pointer; font-weight: bold; color: #222; }
+    .lr-rule-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0 4px; }
+    .lr-panes { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+    .lr-pane {
+      background: #ffffff;
+      color: #222;
+      border: 1px solid #d5d9de;
+      border-radius: 8px;
+      padding: 16px 18px;
+      min-width: 0;
+    }
+    .lr-pane > summary { cursor: pointer; }
+    .lr-pane > summary h2 { display: inline; }
+    .lr-pane-note { color: #444; font-size: 0.95rem; margin: 6px 0 10px; }
+    .lr-input {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: var(--lr-text);
+      line-height: 1.6;
+      max-width: 65ch;
+    }
+    .lr-letter {
+      max-width: 62ch;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: var(--lr-text);
+      line-height: 1.6;
+      color: #1a1a1a;
+    }
+    .lr-letter p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 1em; }
+    mark.lr-hl {
+      background: #ffe08a;
+      color: inherit;
+      padding: 0 2px;
+      border-radius: 2px;
+      box-shadow: inset 0 -2px 0 #b58900;
+    }
+    .lr-fill {
+      background: #e3ecf7;
+      color: inherit;
+      border: 1px dashed #5b7fae;
+      border-radius: 3px;
+      padding: 0 2px;
+    }
+    body.lr-no-hl mark.lr-hl, body.lr-no-hl .lr-fill {
+      background: none;
+      box-shadow: none;
+      border: none;
+      padding: 0;
+    }
+    .lr-letter.lr-focus p { opacity: 0.3; transition: opacity 0.15s; cursor: pointer; }
+    .lr-letter.lr-focus p.lr-current { opacity: 1; cursor: auto; }
+    .lr-rules { font-size: 0.9rem; color: #444; margin: 14px 0 0; }
+    .lr-rules summary { cursor: pointer; }
+    .lr-rules ul { margin: 6px 0 0; padding-left: 20px; }
+    .lr-q {
+      border: 1px solid #d5d9de;
+      border-radius: 6px;
+      padding: 10px 12px 12px;
+      margin: 0 0 10px;
+    }
+    .lr-q legend { font-weight: bold; padding: 0 4px; color: #1a1a1a; }
+    .lr-q-help { color: #333; font-size: 0.95rem; margin: 2px 0 8px; }
+    .lr-q-optional { color: #555; font-weight: normal; font-size: 0.9rem; }
+    .lr-opts { display: flex; flex-wrap: wrap; gap: 8px; }
+    .lr-opt {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 2px solid #c4c9cf;
+      border-radius: 6px;
+      padding: 6px 14px;
+      background: #ffffff;
+      color: #222;
+      cursor: pointer;
+    }
+    .lr-opt input { width: 18px; height: 18px; margin: 0; }
+    .lr-opt:has(input:checked) { background: #e8f0fb; border-color: #0b5394; }
+    .lr-note-label { display: block; font-weight: bold; margin: 14px 0 6px; color: #222; }
+    textarea.lr-note {
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 5em;
+      padding: 8px;
+      border: 1px solid #8a9199;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 1rem;
+      color: #222;
+      background: #ffffff;
+    }
+    .lr-hint { color: #444; font-size: 0.95rem; margin: 6px 0 0; }
+    .lr-saved {
+      background: #fff8e1;
+      border: 1px solid #e0c060;
+      color: #3d3000;
+      border-radius: 4px;
+      padding: 8px 12px;
+      margin: 0 0 12px;
+    }
+    .lr-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 14px; }
+    button.lr-save, button.lr-step-button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 4px;
+      background-color: #0b5394;
+      color: #ffffff;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button.lr-save:hover, button.lr-save:focus,
+    button.lr-step-button:hover, button.lr-step-button:focus { background-color: #083b6a; color: #ffffff; }
+    button.lr-step-back {
+      padding: 10px 20px;
+      border: 1px solid #0b5394;
+      border-radius: 4px;
+      background-color: #ffffff;
+      color: #0b5394;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button.lr-step-back:hover, button.lr-step-back:focus { background-color: #e8f0fb; color: #083b6a; }
+    .lr-step-nav { display: none; }
+    .lr-visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    /* Wide screens: the input, the letter and the questions side by side,
+       the input and the questions kept in view while the letter scrolls. */
+    @media (min-width: 1100px) {
+      .lr-panes {
+        grid-template-columns: minmax(0, 4fr) minmax(0, 6fr) minmax(0, 4fr);
+        align-items: start;
+      }
+      .lr-step-input, .lr-pane-form {
+        position: sticky;
+        top: 8px;
+        max-height: calc(100vh - 16px);
+        overflow-y: auto;
+        box-sizing: border-box;
+      }
+    }
+    /* Phones: one step at a time once the script runs; without it the
+       steps simply stack. */
+    @media (max-width: 759px) {
+      body.lr-stepping .lr-step { display: none; }
+      body.lr-stepping .lr-step.lr-step-on { display: block; }
+      body.lr-stepping .lr-step-nav {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 14px;
+      }
+    }
+  </style>
+</head>
+<body data-reader-key="{{ reader_key }}"{% if form.errors %} data-start-step="2"{% endif %}>
+  <h1>Letter review: {{ packet.name }}</h1>
+  <p id="lr-step-status" class="lr-visually-hidden" aria-live="polite"></p>
+  <nav class="lr-bar" aria-label="Your letters">
+    <span>Letter {{ place }} of {{ assigned }}</span>
+    {% if previous_slug %}<a href="{% url 'letter_review_item' packet.pk previous_slug %}">&larr; Previous</a>{% endif %}
+    {% if next_slug %}<a href="{% url 'letter_review_item' packet.pk next_slug %}">Next &rarr;</a>{% endif %}
+    <a href="{% url 'letter_review_mine' packet.pk %}">My letters</a>
+    <a href="{% url 'letter_review_next' packet.pk %}">Go to my next unlabeled letter</a>
+    <a href="{% url 'letter_review_index' %}">All packets</a>
+  </nav>
+  <div class="lr-progress">
+    <progress max="{{ assigned }}" value="{{ labeled }}" aria-label="Letters done">{{ labeled }} of {{ assigned }}</progress>
+    <span>{{ labeled }} of {{ assigned }} done{% if labeled < assigned %} &middot; a break in {{ until_break }}{% endif %}</span>
+  </div>
+
+  <div class="lr-tools" aria-label="Reading options">
+    <span class="lr-sizes" role="group" aria-label="Text size">
+      Text size
+      <button type="button" data-size="16px" aria-pressed="false">Smaller</button>
+      <button type="button" data-size="18px" aria-pressed="true">Normal</button>
+      <button type="button" data-size="21px" aria-pressed="false">Larger</button>
+    </span>
+    <label><input type="checkbox" id="lr-hl-toggle" checked> Highlight specifics not in the input</label>
+    <label><input type="checkbox" id="lr-focus-toggle"> Focus mode (arrow keys or tap to move)</label>
+  </div>
+
+  {% if form.errors %}
+    <div class="lr-error" role="alert">
+      {% if form.invents_or_contradicts.errors or form.unsupported_history.errors %}Answer the first two questions before saving.{% endif %}
+      {% if form.note.errors %}The note can be at most {{ note_max }} characters.{% endif %}
+    </div>
+  {% endif %}
+
+  <details class="lr-rule"{% if place == 1 %} open{% endif %}>
+    <summary>The rule (version {{ packet.rule_version }})</summary>
+    <div class="lr-rule-text">{{ packet.rule_text }}</div>
+  </details>
+
+  <div class="lr-panes">
+    <div class="lr-step lr-step-input" id="lr-step-0">
+    <details class="lr-pane lr-pane-input" open>
+      <summary data-step-heading><h2>What the writer saw</h2></summary>
+      <p class="lr-pane-note">This is the whole record for this letter: check its claims against this.</p>
+      <div class="lr-input">{{ item.prompt }}</div>
+    </details>
+    {# Outside the details, so collapsing the input keeps the way on. #}
+    <div class="lr-step-nav"><span></span><button type="button" class="lr-step-button" data-step-to="1">Next: the letter &rarr;</button></div>
+    </div>
+
+    <section class="lr-pane lr-step" id="lr-step-1" aria-labelledby="lr-letter-heading">
+      <h2 id="lr-letter-heading" tabindex="-1" data-step-heading>The letter</h2>
+      <div class="lr-letter" id="lr-letter">{% for para in paragraphs %}<p>{% for seg in para %}{% if seg.kind == "unmatched" %}<mark class="lr-hl">{{ seg.text }}</mark>{% elif seg.kind == "fill-in" %}<span class="lr-fill">{{ seg.text }}</span>{% else %}{{ seg.text }}{% endif %}{% endfor %}</p>{% endfor %}</div>
+      <details class="lr-rules">
+        <summary>What gets highlighted</summary>
+        <ul>{% for rule in highlight_rules %}<li>{{ rule }}</li>{% endfor %}</ul>
+      </details>
+      <div class="lr-step-nav">
+        <button type="button" class="lr-step-back" data-step-to="0">&larr; The input</button>
+        <button type="button" class="lr-step-button" data-step-to="2">Next: the questions &rarr;</button>
+      </div>
+    </section>
+
+    <section class="lr-pane lr-pane-form lr-step" id="lr-step-2" aria-labelledby="lr-answers-heading">
+      <h2 id="lr-answers-heading" tabindex="-1" data-step-heading>Your answers</h2>
+      {% if frozen %}
+        <p class="lr-saved">Every reader has finished this packet, so the answers are final.</p>
+        {% for q in questions %}
+          <p><strong>{{ q.text }}</strong> {% if q.value == "yes" %}Yes{% elif q.value == "no" %}No{% else %}Skipped{% endif %}</p>
+        {% endfor %}
+      {% else %}
+      <form method="post" id="lr-form"{% if form.is_bound %} data-unsaved="1"{% endif %}>
+        {% csrf_token %}
+        {% if saved %}<p class="lr-saved">You answered this letter already. Saving replaces your answers.</p>{% endif %}
+        {% for q in questions %}
+          <fieldset class="lr-q">
+            <legend>{{ q.text }}{% if not q.required %} <span class="lr-q-optional">(optional)</span>{% endif %}</legend>
+            <p class="lr-q-help" id="lr-help-{{ q.field }}">{{ q.help }}</p>
+            <div class="lr-opts">
+              <label class="lr-opt"><input type="radio" name="{{ q.field }}" value="yes" aria-describedby="lr-help-{{ q.field }}"{% if q.value == "yes" %} checked{% endif %}{% if q.required %} required{% endif %}> Yes</label>
+              <label class="lr-opt"><input type="radio" name="{{ q.field }}" value="no" aria-describedby="lr-help-{{ q.field }}"{% if q.value == "no" %} checked{% endif %}{% if q.required %} required{% endif %}> No</label>
+              {% if not q.required %}<label class="lr-opt"><input type="radio" name="{{ q.field }}" value=""{% if not q.value %} checked{% endif %}> Skip</label>{% endif %}
+            </div>
+          </fieldset>
+        {% endfor %}
+        <label class="lr-note-label" for="lr-note">Note (optional)</label>
+        <textarea class="lr-note" id="lr-note" name="note" maxlength="{{ note_max }}">{{ note }}</textarea>
+        <p class="lr-hint">Up to {{ note_max }} characters.</p>
+        <div class="lr-actions">
+          <button type="submit" class="lr-save">Save and next</button>
+        </div>
+      </form>
+      {% endif %}
+      <div class="lr-step-nav">
+        <button type="button" class="lr-step-back" data-step-to="1">&larr; The letter</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // Reading options (text size, highlights, focus mode) are remembered in
+    // this browser for this reader. On phones the page shows one step at a
+    // time. A change that has not been saved is never dropped quietly.
+    (function () {
+      var body = document.body;
+      var prefix = "letterReview." + (body.getAttribute("data-reader-key") || "") + ".";
+      function load(name) {
+        try { return window.localStorage.getItem(prefix + name); } catch (e) { return null; }
+      }
+      function keep(name, value) {
+        try { window.localStorage.setItem(prefix + name, value); } catch (e) {}
+      }
+
+      var sizeButtons = document.querySelectorAll("[data-size]");
+      function applySize(size) {
+        var known = false;
+        sizeButtons.forEach(function (b) { if (b.getAttribute("data-size") === size) known = true; });
+        if (!known) size = "18px";
+        document.documentElement.style.setProperty("--lr-text", size);
+        sizeButtons.forEach(function (b) {
+          b.setAttribute("aria-pressed", b.getAttribute("data-size") === size ? "true" : "false");
+        });
+      }
+      applySize(load("textSize"));
+      sizeButtons.forEach(function (b) {
+        b.addEventListener("click", function () {
+          applySize(b.getAttribute("data-size"));
+          keep("textSize", b.getAttribute("data-size"));
+        });
+      });
+
+      var hl = document.getElementById("lr-hl-toggle");
+      function applyHighlights() { body.classList.toggle("lr-no-hl", !hl.checked); }
+      hl.checked = load("highlights") !== "off";
+      applyHighlights();
+      hl.addEventListener("change", function () {
+        applyHighlights();
+        keep("highlights", hl.checked ? "on" : "off");
+      });
+
+      var letter = document.getElementById("lr-letter");
+      var paras = letter ? letter.querySelectorAll("p") : [];
+      var focusToggle = document.getElementById("lr-focus-toggle");
+      var current = 0;
+      function setCurrent(i, scroll) {
+        if (!paras.length) return;
+        current = Math.max(0, Math.min(paras.length - 1, i));
+        paras.forEach(function (p, n) { p.classList.toggle("lr-current", n === current); });
+        if (scroll) paras[current].scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+      function applyFocus() {
+        if (!letter) return;
+        letter.classList.toggle("lr-focus", focusToggle.checked);
+        if (focusToggle.checked) setCurrent(current, false);
+      }
+      focusToggle.checked = load("focus") === "on";
+      applyFocus();
+      focusToggle.addEventListener("change", function () {
+        applyFocus();
+        keep("focus", focusToggle.checked ? "on" : "off");
+      });
+      paras.forEach(function (p, n) {
+        p.addEventListener("click", function () {
+          if (focusToggle.checked) setCurrent(n, false);
+        });
+      });
+      document.addEventListener("keydown", function (e) {
+        if (!focusToggle.checked || e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+        // On a phone, only while the letter is the step on screen.
+        var letterStep = document.getElementById("lr-step-1");
+        if (body.classList.contains("lr-stepping") && !letterStep.classList.contains("lr-step-on")) return;
+        var tag = (e.target && e.target.tagName) || "";
+        if (tag === "TEXTAREA" || tag === "SELECT") return;
+        // Radios move with the arrows and text boxes type; a checkbox, such
+        // as the focus toggle just ticked, does neither.
+        if (tag === "INPUT" && e.target.type !== "checkbox") return;
+        if (e.key === "ArrowDown" || e.key === "j") {
+          setCurrent(current + 1, true);
+          e.preventDefault();
+        } else if (e.key === "ArrowUp" || e.key === "k") {
+          setCurrent(current - 1, true);
+          e.preventDefault();
+        }
+      });
+
+      var steps = document.querySelectorAll(".lr-step");
+      var phone = window.matchMedia("(max-width: 759px)");
+      var stepNames = ["the input", "the letter", "your answers"];
+      var status = document.getElementById("lr-step-status");
+      // A step chosen by its button takes the keyboard focus to its heading
+      // and is announced; the first one, on load, is not.
+      function showStep(i, moved) {
+        steps.forEach(function (s, n) { s.classList.toggle("lr-step-on", n === i); });
+        var inner = steps[i] && steps[i].querySelector("details.lr-pane");
+        if (inner) inner.open = true;
+        window.scrollTo(0, 0);
+        if (moved && steps[i] && body.classList.contains("lr-stepping")) {
+          var heading = steps[i].querySelector("[data-step-heading]");
+          if (heading) heading.focus();
+          status.textContent = "Step " + (i + 1) + " of " + steps.length + ": " + stepNames[i];
+        }
+      }
+      function applySteps() {
+        body.classList.toggle("lr-stepping", phone.matches);
+      }
+      document.querySelectorAll("[data-step-to]").forEach(function (b) {
+        b.addEventListener("click", function () { showStep(parseInt(b.getAttribute("data-step-to"), 10), true); });
+      });
+      applySteps();
+      showStep(parseInt(body.getAttribute("data-start-step") || "0", 10));
+      if (phone.addEventListener) phone.addEventListener("change", applySteps);
+
+      var form = document.getElementById("lr-form");
+      if (!form) return;
+      var submitted = false;
+      function snapshot() {
+        var parts = [];
+        form.querySelectorAll('input[type="radio"]:checked, textarea').forEach(function (el) {
+          parts.push(el.name + "=" + el.value);
+        });
+        return parts.join("\u0000");
+      }
+      // A page re-shown after a refused save holds what was typed, not what
+      // was saved, so it starts out unsaved.
+      var saved = form.hasAttribute("data-unsaved") ? null : snapshot();
+      window.addEventListener("pageshow", function () { submitted = false; });
+      window.addEventListener("beforeunload", function (e) {
+        if (!submitted && snapshot() !== saved) {
+          e.preventDefault();
+          e.returnValue = "";
+        }
+      });
+      form.addEventListener("submit", function (e) {
+        if (submitted) {
+          e.preventDefault();
+          return;
+        }
+        submitted = true;
+      });
+    })();
+  </script>
+</body>
+</html>
