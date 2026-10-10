@@ -13,9 +13,6 @@ place back.
 """
 
 import datetime
-import hashlib
-import hmac
-import ipaddress
 from dataclasses import dataclass
 from typing import Optional
 
@@ -26,10 +23,12 @@ from django.http import HttpRequest
 from django.utils import timezone
 from loguru import logger
 
-HEADER = "HTTP_CF_CONNECTING_IP"
+from fighthealthinsurance import client_network
+
+HEADER = client_network.CF_IP_META
 _LABEL = b"fhi-assistant-agreements-per-ip-v1"
 # Requests without a usable header share one bucket, so they can't skip the cap.
-_NO_ADDRESS = "none"
+_NO_ADDRESS = client_network.NO_ADDRESS
 
 
 @dataclass(frozen=True)
@@ -44,25 +43,13 @@ def _today() -> datetime.date:
 
 def address_of(request: HttpRequest) -> str:
     """The address the cap counts: the IPv4 address, or the IPv6 /64."""
-    raw = str(request.META.get(HEADER, "") or "").strip()
-    try:
-        ip = ipaddress.ip_address(raw)
-    except ValueError:
-        return _NO_ADDRESS
-    if isinstance(ip, ipaddress.IPv6Address):
-        if ip.ipv4_mapped is not None:
-            return str(ip.ipv4_mapped)
-        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
-    return str(ip)
+    return client_network.prefix_of(
+        client_network.cf_ip_from_meta(request.META), v4_bits=32, v6_bits=64
+    )
 
 
 def key_for(address: str, day: datetime.date) -> str:
-    secret = settings.SECRET_KEY
-    if isinstance(secret, str):
-        secret = secret.encode("utf-8")
-    secret = hmac.new(secret, _LABEL, hashlib.sha256).digest()
-    message = f"{day.isoformat()}|{address}".encode("utf-8")
-    return hmac.new(secret, message, hashlib.sha256).hexdigest()
+    return client_network.period_key(_LABEL, day.isoformat(), address)
 
 
 def daily_cap() -> int:

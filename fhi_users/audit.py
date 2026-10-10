@@ -471,6 +471,32 @@ def _get_geo_reader() -> Any:
     return _geo_reader
 
 
+def peek_network_info(ip_address: Optional[str]) -> tuple[str, str]:
+    """``(asn_name, country_code)`` for an IP address, from the geo database
+    only if it is already loaded; ``("", "")`` otherwise.
+
+    Never loads the database and never takes its lock, so it is safe on the
+    event loop (a lookup in the loaded database is a bisect). The LLM usage
+    metrics use it: losing the ASN for the few seconds the startup warm-up
+    takes costs less than stalling every socket on the worker for the load.
+    """
+    candidate = _parse_ip_literal(ip_address)
+    reader = _geo_reader
+    if candidate is None or reader is None:
+        return ("", "")
+    try:
+        result = reader.lookup(candidate)
+    except Exception:
+        return ("", "")
+    if result is None:
+        return ("", "")
+    asn_name = str(getattr(result, "asn_name", "") or "")[:200]
+    country = str(getattr(result, "country_code", "") or "").strip().upper()
+    if len(country) != 2 or not (country.isascii() and country.isalpha()):
+        country = ""
+    return (asn_name, country)
+
+
 def _reset_geo_reader_cache_for_tests() -> None:
     """Test hook: clear the cached geo reader / failure flag."""
     global _geo_reader, _geo_reader_failed
