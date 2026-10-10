@@ -2181,13 +2181,17 @@ class ModelStateLiveSignalsTest(StaffClientMixin, ChooserStatsHelperMixin, TestC
 
     def _chat_only_state(self, instance):
         """The state of NAME registered only as a chat-only outside model,
-        which no catalog lists (DeepInfra's chat models)."""
-        router = SimpleNamespace(
-            models_by_name={}, chat_outside_models_by_name={self.NAME: instance}
-        )
+        which no general pool holds (DeepInfra's chat models):
+        enumerate_backend_checks carries the router's chat instance."""
+        result = _backend(self.NAME)
+        result.chat_only = True
+        checkable = [(result, instance)]
         with mock.patch.object(
-            mhc, "enumerate_backend_checks", return_value=([], [])
-        ), mock.patch("fighthealthinsurance.ml.ml_router.ml_router", router):
+            mhc, "enumerate_backend_checks", return_value=([], checkable)
+        ), mock.patch(
+            "fighthealthinsurance.ml.ml_router.ml_router",
+            SimpleNamespace(models_by_name={}),
+        ):
             return _model_states([self.NAME])[self.NAME]
 
     def test_a_chat_only_model_is_not_read_as_retired(self):

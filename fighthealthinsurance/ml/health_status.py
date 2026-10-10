@@ -23,7 +23,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from loguru import logger
 
@@ -137,9 +137,12 @@ def _note_reachable(model: Any) -> None:
     """A /models probe just heard ``model``'s endpoint list it, so that host
     is reachable again: a connect-failure cooldown on it (an outside one
     escalates up to an hour while the host stays gone) no longer holds, and
-    its next outage starts from the short cooldown. Only reachability:
-    /models can list a model a key is refused for, so the refused and
-    missing flags stay until a call is served. In memory; never raises.
+    its next outage starts from the short cooldown. /models can list a model
+    a key is refused for, so the refused flag always stays until a call is
+    served. The missing flag stays only for an outside provider, whose
+    /models can list a model its chat endpoint still refuses; our own
+    servers say "does not exist" from the very list the probe just read, so
+    theirs is cleared. In memory; never raises.
     """
     try:
         note_reachable = getattr(model, "_note_reachable", None)
@@ -163,6 +166,59 @@ def _note_reachable(model: Any) -> None:
         logger.opt(exception=True).debug(f"Reachability not noted for {model}")
 
 
+# How a probe in _probe_all ended: it answered (or raised), it was still
+# running at the deadline, or it never started before the deadline.
+_DONE, _TIMED_OUT, _NEVER_STARTED = "done", "timed_out", "never_started"
+
+
+def _probe_all(
+    models: List[Any],
+    timeout: float,
+    probe: Optional[Callable[[Any], Any]] = None,
+) -> List[Tuple[Any, str, bool, Optional[str]]]:
+    """Run ``model_is_ok`` for every model at once, with a shared deadline,
+    for the sweep, the down recheck and the staff breakdown alike. Returns
+    ``(model, state, ok, error)`` in input order, each read once from its
+    final state after the wait, so a probe that finishes right at the
+    deadline is never dropped from both "passed" and "failed".
+
+    A worker per model, so no probe waits in a queue past the deadline (with
+    fewer, one queued behind slow ones was marked down for the hour). Returns
+    at the deadline without joining stragglers: a ``with`` block's
+    shutdown(wait=True) would join every probe, so one hung model_is_ok()
+    could stall the sweep (and its held lock) or the staff page past the
+    deadline. Those still running finish in the background and read as
+    ``_TIMED_OUT``; any that never started are cancelled and read as
+    ``_NEVER_STARTED``, which measured nothing.
+
+    ``probe`` replaces ``model_is_ok`` as the call made for each model (the
+    staff breakdown wraps it to record when each one answered).
+    """
+    if not models:
+        return []
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=len(models))
+    out: List[Tuple[Any, str, bool, Optional[str]]] = []
+    try:
+        futures = [
+            (ex.submit(probe, m) if probe else ex.submit(m.model_is_ok), m)
+            for m in models
+        ]
+        concurrent.futures.wait([f for f, _ in futures], timeout=timeout)
+        for future, m in futures:
+            if future.done():
+                try:
+                    out.append((m, _DONE, bool(future.result(timeout=0)), None))
+                except Exception as e:
+                    out.append((m, _DONE, False, str(e)))
+            elif future.cancel():
+                out.append((m, _NEVER_STARTED, False, None))
+            else:
+                out.append((m, _TIMED_OUT, False, f"timeout>{timeout}s"))
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
+    return out
+
+
 @dataclass
 class BackendHealthDetail:
     name: str
@@ -176,7 +232,8 @@ class BackendHealthDetail:
 @dataclass
 class PassedProbe:
     """A backend whose probe passed in the sweep, or in a later recheck that
-    put it back. The snapshot re-reads it for live problems at each read
+    put it back, or an outside one with its own live signal whose probe
+    answered at all. The snapshot re-reads it for live problems at each read
     (see ``live_problem``)."""
 
     model: Any
@@ -425,21 +482,11 @@ class _HealthStatus:
         if not down:
             return
         recovered: List[Any] = []
-        ex = concurrent.futures.ThreadPoolExecutor(max_workers=len(down))
-        try:
-            future_map = {ex.submit(m.model_is_ok): m for m in down}
-            concurrent.futures.wait(future_map, timeout=SWEEP_TIMEOUT_SECONDS)
-            for future, m in future_map.items():
-                if not future.done():
-                    continue
-                try:
-                    if future.result(timeout=0):
-                        recovered.append(m)
-                except Exception as e:
-                    logger.debug(f"Recheck error for {_model_key(m)}: {e}")
-        finally:
-            # As in the sweep: return at the deadline, not after stragglers.
-            ex.shutdown(wait=False, cancel_futures=True)
+        for m, state, ok, err in _probe_all(down, SWEEP_TIMEOUT_SECONDS):
+            if ok:
+                recovered.append(m)
+            elif state == _DONE and err is not None:
+                logger.debug(f"Recheck error for {_model_key(m)}: {err}")
         if len(recovered) < len(down):
             self._recheck_seconds = min(
                 self._recheck_seconds * 2, REFRESH_INTERVAL_SECONDS
@@ -552,96 +599,72 @@ class _HealthStatus:
         for m in candidates:
             if not getattr(m, "external", True):
                 internal_total += 1
-        # Run health checks in parallel with a shared deadline. We wait up to
-        # timeout_seconds for the checks to finish, then classify every backend
-        # from its *final* state. Doing the classification in a single pass (as
-        # opposed to splitting it across an as_completed loop plus a "not done"
-        # sweep) means a check that completes right at the deadline is never
-        # dropped from both buckets, which could otherwise fire a false "all
-        # internal models are dead" page for a slow-but-healthy backend.
+        # Run health checks in parallel with a shared deadline (_probe_all),
+        # then classify every backend from its final state.
         details: List[BackendHealthDetail] = []
         new_health: Dict[str, bool] = {}
         timeout_seconds = SWEEP_TIMEOUT_SECONDS
-        if candidates:
-            # A worker per candidate, so every probe starts at once and its
-            # own budget fits the deadline. With fewer, a probe still queued
-            # behind slow ones at the deadline was marked down for the hour.
-            ex = concurrent.futures.ThreadPoolExecutor(max_workers=len(candidates))
-            try:
-                future_map = {ex.submit(m.model_is_ok): m for m in candidates}
-                # Block until all checks finish or the deadline elapses.
-                concurrent.futures.wait(future_map, timeout=timeout_seconds)
-
-                for future, m in future_map.items():
-                    name = _probe_name(m)
-                    is_internal = not getattr(m, "external", True)
-                    ok = False
-                    err: Optional[str] = None
-                    if future.done():
-                        try:
-                            ok = future.result(timeout=0)
-                        except Exception as e:
-                            err = str(e)
-                            logger.debug(f"Health check error for {name}: {e}")
-                    elif future.cancel():
-                        # Never started, so it measured nothing this round:
-                        # the backend keeps last round's result (or stays
-                        # unchecked) rather than reading down for an hour.
-                        previous = self._health_map.get(_model_key(m))
-                        if previous is not None:
-                            new_health[_model_key(m)] = previous
-                        continue
-                    else:
-                        err = f"timeout>{timeout_seconds}s"
-                    # Routing's input: the probe alone. Live problems are
-                    # read on top where the status is shown (get_snapshot),
-                    # so this map never holds a refusal or a pause past the
-                    # moment it clears.
-                    new_health[_model_key(m)] = bool(ok)
-                    if ok:
-                        # alive_models is the public "a model is ready to
-                        # write your appeal" number, and a context-only or
-                        # chat-only backend can't draft, so it never counts.
-                        drafting = id(m) not in non_drafting_ids
-                        if drafting:
-                            alive_count += 1
-                        if is_internal:
-                            internal_alive += 1
-                        passed.append(
-                            PassedProbe(
-                                model=m,
-                                name=name,
-                                drafting=drafting,
-                                external=not is_internal,
-                            )
-                        )
-                        if not getattr(m, "health_checked_live", False):
-                            # Its /models answered: the host is reachable.
-                            _note_reachable(m)
-                    else:
-                        # The public snapshot lists failing EXTERNAL backends,
-                        # timed out or not, saying no more than it does today:
-                        # the recorded reason can name our billing or key
-                        # state. Internal failures stay out of it (their names
-                        # are internal wire paths) and drive the staff alert,
-                        # which carries that reason.
-                        if is_internal:
-                            err = err or _unavailable_reason(m)
-                        detail = BackendHealthDetail(
-                            name=name,
-                            ok=False,
-                            error=err or "not ok",
-                            key=_model_key(m),
-                        )
-                        (internal_failures if is_internal else details).append(detail)
-            finally:
-                # Return at the deadline rather than blocking on stragglers: a
-                # `with` block's shutdown(wait=True) would join every probe, so
-                # one hung model_is_ok() could stall the sweep (and the held
-                # _lock) past timeout_seconds and delay publishing _health_map.
-                # Cancel queued probes; let any in-flight ones finish in the
-                # background. Matches compute_model_health_details below.
-                ex.shutdown(wait=False, cancel_futures=True)
+        for m, state, ok, err in _probe_all(candidates, timeout_seconds):
+            name = _probe_name(m)
+            is_internal = not getattr(m, "external", True)
+            if state == _NEVER_STARTED:
+                # Never started, so it measured nothing this round: the
+                # backend keeps last round's result (or stays unchecked)
+                # rather than reading down for an hour.
+                previous = self._health_map.get(_model_key(m))
+                if previous is not None:
+                    new_health[_model_key(m)] = previous
+                continue
+            if state == _DONE and err is not None:
+                logger.debug(f"Health check error for {name}: {err}")
+            # Routing's input: the probe alone. Live problems are read on top
+            # where the status is shown (get_snapshot), so this map never
+            # holds a refusal or a pause past the moment it clears.
+            new_health[_model_key(m)] = ok
+            live_signal = bool(getattr(m, "health_checked_live", False))
+            # For an outside backend with its own live signal the probe is
+            # just that signal read at sweep time, and nothing revisits it
+            # for the hour (routing ignores the map for it; _down_for_routing
+            # skips it). Let get_snapshot's live_problem overlay judge it at
+            # each read, so a back-off that clears a minute after the sweep
+            # is counted again at once. A probe that raised or timed out is
+            # a failure like any other, as is an internal one: the all-dead
+            # alert counts internal backends from the probe alone.
+            if ok or (live_signal and not is_internal and err is None):
+                # alive_models is the public "a model is ready to write your
+                # appeal" number, and a context-only or chat-only backend
+                # can't draft, so it never counts.
+                drafting = id(m) not in non_drafting_ids
+                if drafting:
+                    alive_count += 1
+                if is_internal:
+                    internal_alive += 1
+                passed.append(
+                    PassedProbe(
+                        model=m,
+                        name=name,
+                        drafting=drafting,
+                        external=not is_internal,
+                    )
+                )
+                if ok and not live_signal:
+                    # Its /models answered: the host is reachable.
+                    _note_reachable(m)
+            else:
+                # The public snapshot lists failing EXTERNAL backends, timed
+                # out or not, saying no more than it does today: the recorded
+                # reason can name our billing or key state. Internal failures
+                # stay out of it (their names are internal wire paths) and
+                # drive the staff alert, which carries that reason.
+                if is_internal:
+                    err = err or _unavailable_reason(m)
+                detail = BackendHealthDetail(
+                    name=name,
+                    ok=False,
+                    error=err or "not ok",
+                    key=_model_key(m),
+                )
+                (internal_failures if is_internal else details).append(detail)
 
         snapshot = HealthSnapshot(
             alive_models=alive_count,
@@ -898,86 +921,60 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
         finally:
             answered_at[id(m)] = datetime.datetime.now(datetime.timezone.utc)
 
-    # A worker per candidate, as in the sweep, so none waits in a queue past
-    # the deadline.
-    ex = concurrent.futures.ThreadPoolExecutor(max_workers=len(candidates))
-    try:
-        future_map = {ex.submit(probe, m): m for m in candidates}
-        concurrent.futures.wait(future_map, timeout=timeout_seconds)
-        for future, m in future_map.items():
-            name = _probe_name(m)
-            is_external = bool(getattr(m, "external", True))
+    for m, state, ok, err in _probe_all(candidates, timeout_seconds, probe=probe):
+        name = _probe_name(m)
+        is_external = bool(getattr(m, "external", True))
+        if state == _NEVER_STARTED:
+            # Still queued at the deadline: to staff, as late as one running.
+            err = f"timeout>{timeout_seconds}s"
+        sweep_ok, sweep_at = health_status.last_sweep_result(m)
+        api_base = getattr(m, "api_base", None)
+        backup_api_base = getattr(m, "backup_api_base", None)
+        wire_model = getattr(m, "model", None)
+        backup_model = getattr(m, "backup_model", None) or wire_model
+        # The same rule as RemoteModelLike.backend_descriptor: a backup
+        # leg is worth naming when it differs in endpoint or in model.
+        backup_url = (
+            _display_url(backup_api_base)
+            if backup_api_base != api_base or backup_model != wire_model
+            else None
+        )
+        # A passing /models probe says nothing of a refused key or a credit
+        # pause, so this pod's live signals can still take the backend down,
+        # and their reason beats the probe's own.
+        live = live_problem(m)
+        if live:
             ok = False
-            err: Optional[str] = None
-            # Read once: a probe that finishes after this point is still a
-            # timeout, in its status and in its answer time alike.
-            done = future.done()
-            if done:
-                try:
-                    ok = bool(future.result(timeout=0))
-                except Exception as e:
-                    err = str(e)
-            else:
-                err = f"timeout>{timeout_seconds}s"
-            sweep_ok, sweep_at = health_status.last_sweep_result(m)
-            api_base = getattr(m, "api_base", None)
-            backup_api_base = getattr(m, "backup_api_base", None)
-            wire_model = getattr(m, "model", None)
-            backup_model = getattr(m, "backup_model", None) or wire_model
-            # The same rule as RemoteModelLike.backend_descriptor: a backup
-            # leg is worth naming when it differs in endpoint or in model.
-            backup_url = (
-                _display_url(backup_api_base)
-                if backup_api_base != api_base or backup_model != wire_model
-                else None
-            )
-            # A passing /models probe says nothing of a refused key or a
-            # credit pause, so this pod's live signals can still take the
-            # backend down, and their reason beats the probe's own.
-            live = live_problem(m)
-            if live:
-                ok = False
-            if not ok:
-                err = live or err or "not ok"
-            chat_only = id(m) in chat_only_ids
-            results.append(
-                {
-                    "name": name,
-                    "ok": ok,
-                    "external": is_external,
-                    # Callers count what can draft by leaving context_only
-                    # rows out, so a chat-only row (it cannot draft either)
-                    # carries it too; chat_only says which kind it is.
-                    "context_only": id(m) in context_only_ids or chat_only,
-                    "chat_only": chat_only,
-                    "error": err,
-                    "ref": ref_by_id.get(id(m)),
-                    "url": _display_url(api_base),
-                    "backup_url": backup_url,
-                    "backup_model": (
-                        backup_model
-                        if backup_url and backup_model != wire_model
-                        else None
-                    ),
-                    "checked_at": answered_at.get(id(m)) if done else None,
-                    "sweep_ok": sweep_ok,
-                    "sweep_checked_at": (
-                        datetime.datetime.fromtimestamp(
-                            sweep_at, tz=datetime.timezone.utc
-                        )
-                        if sweep_at is not None
-                        else None
-                    ),
-                }
-            )
-    finally:
-        # Return at the deadline rather than blocking on stragglers. Exiting a
-        # `with ThreadPoolExecutor()` calls shutdown(wait=True), which joins
-        # every submitted probe — so a single hung/slow model_is_ok() would
-        # stall the staff status request well past timeout_seconds, defeating
-        # the bounded live check. Cancel queued probes and let any in-flight
-        # ones finish in the background instead.
-        ex.shutdown(wait=False, cancel_futures=True)
+        if not ok:
+            err = live or err or "not ok"
+        chat_only = id(m) in chat_only_ids
+        results.append(
+            {
+                "name": name,
+                "ok": ok,
+                "external": is_external,
+                # Callers count what can draft by leaving context_only rows
+                # out, so a chat-only row (it cannot draft either) carries it
+                # too; chat_only says which kind it is.
+                "context_only": id(m) in context_only_ids or chat_only,
+                "chat_only": chat_only,
+                "error": err,
+                "ref": ref_by_id.get(id(m)),
+                "url": _display_url(api_base),
+                "backup_url": backup_url,
+                "backup_model": (
+                    backup_model if backup_url and backup_model != wire_model else None
+                ),
+                # Only a probe that finished by the deadline answered in time.
+                "checked_at": answered_at.get(id(m)) if state == _DONE else None,
+                "sweep_ok": sweep_ok,
+                "sweep_checked_at": (
+                    datetime.datetime.fromtimestamp(sweep_at, tz=datetime.timezone.utc)
+                    if sweep_at is not None
+                    else None
+                ),
+            }
+        )
 
     results.sort(key=lambda r: (r["ok"], r["external"], r["name"]))
     return results

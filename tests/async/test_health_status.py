@@ -175,11 +175,15 @@ class _FlakyRefused(_FlakyOutside):
         return "refused (HTTP 401)"
 
 
-class _CheckedLive(_Flaky):
-    """A backend with its own live signal: routing never reads the sweep for
-    it."""
+class _CheckedLive(_FlakyOutside):
+    """An outside backend with its own live signal (a paid provider's 429
+    back-off): its probe is that signal, its recorded reason says the same,
+    and routing never reads the sweep for it."""
 
     health_checked_live = True
+
+    def unavailable_reason(self):
+        return None if self.healthy else "rate limited, backing off (30s left)"
 
 
 class _WaitsForAll:
@@ -850,6 +854,46 @@ class TestSnapshotLiveOverlay(TestCase):
         status._initialized = True
         assert status.get_snapshot()["alive_models"] == 1
 
+    # An outside backend with its own live signal (a paid provider) probes as
+    # that signal read at sweep time, and nothing revisits it for the hour:
+    # the read-time overlay judges it instead, so a back-off that clears a
+    # minute after the sweep is counted again at once.
+
+    def test_a_live_checked_backend_down_at_the_sweep_is_not_counted(self):
+        status = _swept([_CheckedLive()])
+        assert status.get_snapshot()["alive_models"] == 0
+
+    def test_a_live_checked_backend_down_at_the_sweep_is_listed_as_not_ok(self):
+        status = _swept([_CheckedLive()])
+        assert status.get_snapshot()["details"] == [
+            {"name": "flaky", "ok": False, "error": "not ok"}
+        ]
+
+    def test_a_live_checked_backend_that_clears_is_counted_at_the_next_read(self):
+        backend = _CheckedLive()
+        status = _swept([backend])
+        backend.healthy = True
+        assert status.get_snapshot()["alive_models"] == 1
+
+    def test_a_live_checked_backend_that_clears_is_no_longer_listed(self):
+        backend = _CheckedLive()
+        status = _swept([backend])
+        backend.healthy = True
+        assert status.get_snapshot()["details"] == []
+
+    def test_a_live_checked_probe_that_raised_stays_down_until_the_next_sweep(self):
+        """A probe that raised read no live signal: a failure like any
+        other, not left to the overlay."""
+
+        class _Raises(_CheckedLive):
+            def model_is_ok(self):
+                raise RuntimeError("probe broke")
+
+        backend = _Raises()
+        status = _swept([backend])
+        backend.healthy = True
+        assert status.get_snapshot()["alive_models"] == 0
+
 
 class TestSweepPool(TestCase):
     """Every probe gets its own worker, and a probe that never started
@@ -917,8 +961,9 @@ class TestDownRecheck(TestCase):
         assert healthy.probes == 1
 
     def test_a_backend_with_its_own_live_signal_is_not_rechecked(self):
-        """Routing never reads the sweep for it, so a recheck would change
-        nothing."""
+        """Routing never reads the sweep for it, and the snapshot's read-time
+        overlay already judges it by that signal at each read, so no recheck
+        is needed."""
         live = _CheckedLive()
         status = _swept([live])
         status._recheck_down()

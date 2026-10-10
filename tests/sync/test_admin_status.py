@@ -1153,6 +1153,14 @@ class AdminStatusLetterScoringTest(TestCase):
         phrase = AdminStatusView._scoring_failure_hint("TypeSafeCoolingDown")
         self.assertIn("could not be reached", phrase)
 
+    def test_the_cooldown_hint_names_the_connect_cap(self):
+        """A connect cooldown lasts at most CONNECT_COOLDOWN_SECONDS (2
+        minutes), not the 15-minute FHI_TYPESAFE_COOLDOWN_SECONDS default."""
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        phrase = AdminStatusView._scoring_failure_hint("TypeSafeCoolingDown")
+        self.assertIn("CONNECT_COOLDOWN_SECONDS", phrase)
+
     def test_the_page_explains_a_422(self):
         self._health(
             last_failure_at=timezone.now() - datetime.timedelta(minutes=2),

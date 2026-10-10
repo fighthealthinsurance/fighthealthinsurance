@@ -4973,8 +4973,8 @@ class ModelCallAttempt(models.Model):
     # ok, runt_only, rejected_at_peek (the undeliverable first item that made
     # the ladder fall through to the next stage), no_output (the model answered
     # with nothing), error (the call itself failed -- see error_detail),
-    # abandoned (the requester's deadline passed before the call answered),
-    # not_registered, no_prompt, all_backends_failed.
+    # abandoned (the requester's deadline passed before the call answered,
+    # or before it was sent), not_registered, no_prompt, all_backends_failed.
     outcome = models.CharField(max_length=64, db_index=True)
     # Classified failure reason (describe_model_error) or exception text.
     error_detail = models.TextField(blank=True, default="")

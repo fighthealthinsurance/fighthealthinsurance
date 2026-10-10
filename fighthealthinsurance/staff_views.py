@@ -968,10 +968,13 @@ class AdminStatusView(generic.TemplateView):
             )
         if summary == "TypeSafeCoolingDown":
             # Only a cooldown a connection failure started reads like this:
-            # one an HTTP refusal started carries that status.
+            # one an HTTP refusal started carries that status. That cooldown
+            # is capped at CONNECT_COOLDOWN_SECONDS, so it lasts 2 minutes,
+            # not the setting's 15-minute default.
             return (
                 "not sent: TypeSafe could not be reached moments ago; asked "
-                "again after FHI_TYPESAFE_COOLDOWN_SECONDS"
+                "again within 2 minutes (CONNECT_COOLDOWN_SECONDS in "
+                "ml/typesafe.py), or FHI_TYPESAFE_COOLDOWN_SECONDS if lower"
             )
         if summary == "TypeSafeError":
             # ml/typesafe.py refuses before sending: a non-https URL or a
@@ -2261,9 +2264,10 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
 
     Reads only what is already in memory or stored: the backend catalog and
     configuration classification (``enumerate_backend_checks``, which builds
-    clients but never calls one), the router's registered instances (chat-only
-    outside models included) for internal/external/context-only, the newest
-    stored health-check row per model, and this pod's live signals
+    clients but never calls one), the router's registered instances for
+    internal/external/context-only (chat-only outside models come through
+    enumerate_backend_checks, which carries the router's chat instance), the
+    newest stored health-check row per model, and this pod's live signals
     (``health_status.live_problem``). It never probes a backend, so the page
     stays cheap and cannot wake a model.
 
@@ -2293,10 +2297,6 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
     try:
         static_results, checkable = mhc.enumerate_backend_checks()
         registered = ml_router.models_by_name
-        # Chat-only outside models are in no catalog and no general pool, so
-        # without these they read as retired and their live state went
-        # unseen.
-        chat_only = getattr(ml_router, "chat_outside_models_by_name", None) or {}
     except Exception:
         # The usage numbers do not depend on the router; a broken backend
         # config should cost the tags, not the page.
@@ -2336,9 +2336,7 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
     }
 
     for name in real:
-        instances = registered.get(name) or (
-            [chat_only[name]] if name in chat_only else []
-        )
+        instances = registered.get(name) or []
         instance = instances[0] if instances else probe_by_name.get(name)
         if instance is None:
             static = static_by_name.get(name)
