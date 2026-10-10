@@ -87,6 +87,76 @@
     {% endif %}
   </div>
 
+  {# ---------------- MCP server ---------------- #}
+  <div class="status-section" id="mcp">
+    <h2>&#128268; MCP server</h2>
+    {% if mcp.error %}
+      <p><span class="status-badge bad">ERROR</span> <span class="error-text">{{ mcp.error }}</span></p>
+    {% else %}
+      <p class="summary-line">
+        {% if mcp.on %}
+          <span class="status-badge ok">ON</span>
+          &nbsp;{{ mcp.tools|length }} tool{{ mcp.tools|length|pluralize }} listed
+          &middot; prepare_appeal: {{ mcp.prepare_on|yesno:"on,off" }}
+          &middot; chat path: {{ mcp.chat_on|yesno:"on,off" }}
+        {% else %}
+          <span class="status-badge unknown">OFF</span> MCP is off: /mcp is not served.
+        {% endif %}
+      </p>
+      <p>{% for name, on, label in mcp.flags %}<span class="pill">{{ name }}: {{ label }}</span> {% endfor %}</p>
+      {% if mcp.tools_error %}<p class="error-text">Could not list the tools ({{ mcp.tools_error }}).</p>{% endif %}
+      <table class="status">
+        <thead>
+          <tr>
+            <th rowspan="2">Tool</th>
+            {% for w in mcp.windows %}<th class="num" colspan="{{ mcp.outcomes|length }}">{{ w }}</th>{% endfor %}
+            <th rowspan="2">Last call (30 days)</th>
+          </tr>
+          <tr>{% for w in mcp.windows %}{% for o in mcp.outcomes %}<th class="num">{{ o }}</th>{% endfor %}{% endfor %}</tr>
+        </thead>
+        <tbody>
+        {% for row in mcp.calls %}
+          <tr>
+            <td>{{ row.tool }}</td>
+            {% for n, outcome in row.cells %}<td class="num{% if n and outcome == 'failed' %} error-text{% endif %}">{{ n }}</td>{% endfor %}
+            <td>{% if row.last_call_at %}{{ row.last_call_at|timesince }} ago{% else %}none{% endif %}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="11">No tools listed and no calls in the last 30 days.</td></tr>
+        {% endfor %}
+        </tbody>
+        <tbody>
+          <tr><th colspan="11">Connections and discovery</th></tr>
+        {% for description, row in mcp.protocol %}
+          <tr>
+            <td>{{ description }}</td>
+            {% for n, outcome in row.cells %}<td class="num{% if n and outcome == 'failed' %} error-text{% endif %}">{{ n }}</td>{% endfor %}
+            <td>{% if row.last_call_at %}{{ row.last_call_at|timesince }} ago{% else %}none{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="meta" style="margin-top: 10px;">
+        Requests per UTC hour, shared by every pod and kept 90 days; a window holds every hour that overlaps it.
+        ok: answered. refused: turned down (an argument a tool doesn't take, an unknown tool or page, a bad host or a body too large).
+        failed: something broke on our side. Only the tool name or request type and the outcome are stored, never what was sent or who sent it.
+        Counting started with the deploy that added it, and requests stopped before our server (Cloudflare, the ingress) aren't counted.
+      </p>
+
+      <h3>Assistant activity</h3>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="value">{{ mcp.assistant.clients_7d|default:0 }} / {{ mcp.assistant.clients_30d|default:0 }}</div><div class="label">distinct assistants (7 / 30 days)</div></div>
+        <div class="stat-card"><div class="value">{{ mcp.assistant.consents_7d|default:0 }} / {{ mcp.assistant.consents_30d|default:0 }}</div><div class="label">appeals started through an assistant (7 / 30 days)</div></div>
+        <div class="stat-card {% if mcp.assistant.budget_left is False %}stat-alert{% endif %}">
+          <div class="value">{% if mcp.assistant.budget_left is None %}?{% else %}{{ mcp.assistant.budget_left|yesno:"yes,no" }}{% endif %}</div>
+          <div class="label">assistant budget left now{% if mcp.assistant.budget_left is None %} (spend ledger not loaded){% endif %}</div>
+        </div>
+      </div>
+      <p>Chat drafts: {% for status, n in mcp.assistant.drafts %}<span class="pill">{{ status }}: {{ n }}</span> {% endfor %}</p>
+      <p>Handoff links: {% for label, n in mcp.assistant.handoffs %}<span class="pill">{{ label }}: {{ n }}</span> {% endfor %}</p>
+    {% endif %}
+  </div>
+
   {# ---------------- Ray Actors ---------------- #}
   <div class="status-section">
     <h2>⚙️ Ray Polling Actors</h2>

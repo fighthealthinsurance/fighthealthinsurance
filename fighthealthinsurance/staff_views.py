@@ -272,6 +272,7 @@ class AdminStatusView(generic.TemplateView):
         ctx["title"] = "System Status"
         ctx["generated_at"] = timezone.now()
         ctx["models"] = self._model_status()
+        ctx["mcp"] = self._mcp_status()
         ctx["actors"] = self._actor_status()
         ctx["fax"] = self._fax_backend_status()
         ctx["fax_queue"] = self._fax_queue_status()
@@ -313,6 +314,126 @@ class AdminStatusView(generic.TemplateView):
             out["working"] = ml_router.working()
         except Exception as e:
             logger.opt(exception=True).error("Error computing model status")
+            out["ok"] = False
+            out["error"] = str(e)
+        return out
+
+    # The MCP flags shown, and what the chat path needs besides them.
+    _MCP_FLAGS = (
+        "MCP_SERVER_ENABLED",
+        "MCP_PREPARE_APPEAL_ENABLED",
+        "MCP_HANDOFF_V2_ENABLED",
+        "MCP_DRAFT_IN_CHAT_ENABLED",
+        "MCP_DRAFT_IN_CHAT_PAUSED",
+    )
+    _MCP_CHAT_NEEDS = (
+        "TEMPORAL_ENABLED",
+        "TEMPORAL_APPEAL_JOURNEY_ENABLED",
+        "TEMPORAL_PAYLOAD_KEY",
+    )
+
+    @classmethod
+    def _mcp_status(cls) -> Dict[str, Any]:
+        """The MCP server: its flags, the tools it lists, calls per tool from
+        the shared hourly count (mcp_call_counts.py), and assistant activity.
+        Database reads and settings only, and counts only: no arguments, no
+        letters and no client beyond a count of distinct names."""
+        out: Dict[str, Any] = {
+            "ok": True,
+            "error": None,
+            "on": False,
+            "flags": [],
+            "prepare_on": False,
+            "chat_on": False,
+            "tools": [],
+            "tools_error": None,
+            "windows": [],
+            "outcomes": [],
+            "calls": [],
+            "protocol": [],
+            "assistant": {},
+        }
+        try:
+            from django.conf import settings
+
+            from fighthealthinsurance import mcp_call_counts, mcp_server
+            from fighthealthinsurance.ml import spend
+            from fighthealthinsurance.models import (
+                AssistantDraft,
+                AssistantHandoff,
+                ConsentRecord,
+            )
+
+            # On or off, set or not: never a value, as one of these is a key.
+            flags = []
+            for name in cls._MCP_FLAGS + cls._MCP_CHAT_NEEDS:
+                on = bool(getattr(settings, name, False))
+                if name.endswith("_KEY"):
+                    flags.append((name, on, "set" if on else "not set"))
+                else:
+                    flags.append((name, on, "on" if on else "off"))
+            out["flags"] = flags
+            out["on"] = bool(getattr(settings, "MCP_SERVER_ENABLED", False))
+            out["prepare_on"] = mcp_server.prepare_appeal_enabled()
+            out["chat_on"] = out["prepare_on"] and mcp_server.chat_path_enabled()
+
+            tools: List[str] = []
+            if out["on"]:
+                try:
+                    tools = mcp_server.registered_tool_names()
+                except Exception as e:
+                    logger.opt(exception=True).error("Could not list MCP tools")
+                    out["tools_error"] = type(e).__name__
+            out["tools"] = tools
+            out["windows"] = [name for name, _ in mcp_call_counts.WINDOWS]
+            out["outcomes"] = list(mcp_call_counts.OUTCOMES)
+            protocol = dict(mcp_call_counts.PROTOCOL_ROWS)
+            rows = mcp_call_counts.summary(tools + list(protocol))
+            out["calls"] = [r for r in rows if r.tool not in protocol]
+            out["protocol"] = [
+                (protocol[r.tool], r) for r in rows if r.tool in protocol
+            ]
+
+            now = timezone.now()
+            assistant: Dict[str, Any] = {}
+            for days in (7, 30):
+                recent = ConsentRecord.objects.filter(
+                    accepted_at__gte=now - datetime.timedelta(days=days)
+                )
+                assistant[f"clients_{days}d"] = (
+                    recent.exclude(assistant_client="")
+                    .values("assistant_client")
+                    .distinct()
+                    .count()
+                )
+                assistant[f"consents_{days}d"] = recent.filter(
+                    channel="assistant"
+                ).count()
+            by_status = dict(
+                AssistantDraft.objects.values_list("status")
+                .order_by()
+                .annotate(n=Count("id"))
+            )
+            assistant["drafts"] = [
+                (status, by_status.get(status, 0))
+                for status, _ in AssistantDraft.STATUSES
+            ]
+            live = AssistantHandoff.objects.filter(expires_at__gt=now)
+            assistant["handoffs"] = [
+                ("waiting to be opened", live.filter(bound="").count()),
+                ("opened in a browser", live.exclude(bound="").count()),
+                (
+                    "expired, not yet swept",
+                    AssistantHandoff.objects.filter(expires_at__lte=now).count(),
+                ),
+            ]
+            loaded = spend._ledger.wait_until_loaded(
+                mcp_server.LEDGER_LOAD_WAIT_SECONDS
+            )
+            assistant["budget_left"] = spend.assistant_budget_left() if loaded else None
+            out["assistant"] = assistant
+        except Exception as e:
+            logger.opt(exception=True).error("Error reading MCP status")
             out["ok"] = False
             out["error"] = str(e)
         return out

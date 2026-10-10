@@ -311,6 +311,9 @@ class Base(Configuration):
     ]
     # The spend ledger's background thread (off in tests, like the banner).
     FHI_SPEND_BACKGROUND = True
+    # MCP call counts are written on their own thread (mcp_server.py); off in
+    # tests, where that thread's writes would escape the test's transaction.
+    FHI_MCP_CALL_COUNT_OWN_THREAD = True
     TYPESAFE_LETTER_RANKING_ENABLED = (
         os.getenv("TYPESAFE_LETTER_RANKING_ENABLED", "false").lower() == "true"
     )
@@ -1194,6 +1197,7 @@ class Test(_TestBase):
     # No background banner refresh thread in tests (see Base).
     SITE_BANNER_BACKGROUND_REFRESH = False
     FHI_SPEND_BACKGROUND = False
+    FHI_MCP_CALL_COUNT_OWN_THREAD = False
     # The chat roster is set per test; the default keeps the best externals.
     FHI_CHAT_OUTSIDE_MODELS: list = []
     FHI_CHAT_EXPLORE_RATE = 0.0
@@ -1255,6 +1259,7 @@ class TestSync(_TestBase):
     # No background banner refresh thread in tests (see Base).
     SITE_BANNER_BACKGROUND_REFRESH = False
     FHI_SPEND_BACKGROUND = False
+    FHI_MCP_CALL_COUNT_OWN_THREAD = False
     # The chat roster is set per test; the default keeps the best externals.
     FHI_CHAT_OUTSIDE_MODELS: list = []
     FHI_CHAT_EXPLORE_RATE = 0.0
@@ -1333,6 +1338,7 @@ class TestActor(_TestBase):
     # No background banner refresh thread in tests (see Base).
     SITE_BANNER_BACKGROUND_REFRESH = False
     FHI_SPEND_BACKGROUND = False
+    FHI_MCP_CALL_COUNT_OWN_THREAD = False
     # The chat roster is set per test; the default keeps the best externals.
     FHI_CHAT_OUTSIDE_MODELS: list = []
     FHI_CHAT_EXPLORE_RATE = 0.0

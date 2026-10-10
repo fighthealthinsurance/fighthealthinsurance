@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import socket
+import threading
 import time
 from fnmatch import fnmatch
 from pathlib import Path
@@ -27,6 +28,7 @@ import yaml
 from asgiref.sync import async_to_sync
 from channels.routing import ProtocolTypeRouter
 from datetime import datetime, timedelta
+from datetime import timezone as dt_timezone
 from django.core.handlers.asgi import ASGIHandler
 from django.db import DatabaseError, connection
 from prometheus_client import REGISTRY
@@ -43,6 +45,7 @@ from fighthealthinsurance import (
     assistant_draft_tools,
     assistant_handoff,
     glossary,
+    mcp_call_counts,
     mcp_server,
     models,
 )
@@ -135,6 +138,15 @@ def writes_in(queries: CaptureQueriesContext) -> list[str]:
         for q in queries.captured_queries
         if q["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
     ]
+
+
+CALL_COUNT_TABLE = models.McpToolCallCount._meta.db_table
+
+
+def writes_besides_the_call_count(queries: CaptureQueriesContext) -> list[str]:
+    """Every write but the one count each call adds (mcp_call_counts.py),
+    which holds a tool name and an outcome and nothing sent."""
+    return [sql for sql in writes_in(queries) if CALL_COUNT_TABLE not in sql]
 
 
 class ProtocolTest(TestCase):
@@ -693,8 +705,15 @@ class InsurerAppealContactsTest(TestCase):
                 {"insurer": "UnitedHealthcare", "state": "NY"},
             )
         self.assertFalse(result.isError)
-        self.assertTrue(queries.captured_queries, "the lookup never reached the DB")
-        self.assertEqual(writes_in(queries), [])
+        self.assertTrue(
+            [
+                q
+                for q in queries.captured_queries
+                if CALL_COUNT_TABLE not in q["sql"]
+            ],
+            "the lookup never reached the DB",
+        )
+        self.assertEqual(writes_besides_the_call_count(queries), [])
 
 
 class TreatmentGuideTest(TestCase):
@@ -1028,7 +1047,7 @@ class SiteSearchAndPagesTest(TestCase):
         with CaptureQueriesContext(connection) as queries:
             result = async_to_sync(call)("get_page", {"url": "/turning-26"})
         self.assertFalse(result.isError, text_of(result))
-        self.assertEqual(writes_in(queries), [])
+        self.assertEqual(writes_besides_the_call_count(queries), [])
 
 
 def enable_sdk_loggers() -> None:
@@ -2008,7 +2027,7 @@ class AppealChecklistTest(TestCase):
                 },
             )
         self.assertFalse(result.isError, text_of(result))
-        self.assertEqual(writes_in(queries), [])
+        self.assertEqual(writes_besides_the_call_count(queries), [])
 
 
 class PlanKindAndPeerToPeerTest(TestCase):
@@ -2135,6 +2154,279 @@ class ToolCallCountersTest(TestCase):
                 {"tool": "no_such_tool", "outcome": "refused"},
             )
         )
+
+
+class SharedCallCountTest(TestCase):
+    """Every request is also counted in the shared hourly table the staff
+    status page reads (mcp_call_counts.py): a tool call by tool, anything
+    else by request type, and the outcome. Nothing sent is stored, and the
+    count is written in the background so the answer never waits on it."""
+
+    @staticmethod
+    async def counted(protocol=False):
+        """{(tool or request type, outcome): count}, summed over hours."""
+        await mcp_server.flush_call_counts()
+        totals: dict = {}
+        async for row in models.McpToolCallCount.objects.all():
+            if row.tool.startswith("_") == protocol:
+                key = (row.tool, row.outcome)
+                totals[key] = totals.get(key, 0) + row.count
+        return totals
+
+    async def test_tool_calls_are_counted_by_tool_and_outcome(self):
+        await call("get_state_help", {"state": "CA"})
+        await call("get_state_help", {"state": "CA"})
+        await call("get_state_help", {"state": "CA", "letter": "x"})
+        self.assertEqual(
+            await self.counted(),
+            {("get_state_help", "ok"): 2, ("get_state_help", "refused"): 1},
+        )
+
+    async def test_an_unknown_tool_is_counted_under_unknown_not_its_name(self):
+        await call("no_such_tool", {})
+        self.assertEqual(await self.counted(), {("unknown", "refused"): 1})
+
+    async def test_a_connection_and_a_tool_list_are_counted_by_type(self):
+        async with mcp_session() as session:
+            await session.list_tools()
+        protocol = await self.counted(protocol=True)
+        self.assertEqual(protocol[("_initialize", "ok")], 1)
+        self.assertEqual(protocol[("_tools_list", "ok")], 1)
+        self.assertEqual(await self.counted(), {})
+
+    async def test_a_tool_call_that_reaches_its_tool_is_counted_once(self):
+        await call("get_state_help", {"state": "CA"})
+        self.assertEqual(await self.counted(), {("get_state_help", "ok"): 1})
+        protocol = await self.counted(protocol=True)
+        self.assertNotIn("_tools_call", {tool for tool, _ in protocol})
+
+    async def test_a_request_refused_unread_counts_as_other(self):
+        # Refused on its length, so the body is never read, and neither is
+        # its method.
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "get_state_help", "arguments": {"state": "CA"}},
+                "padding": "x" * (70 * 1024),
+            }
+        )
+        async with running_app() as http:
+            response = await http.post("/mcp", content=body, headers=MCP_HEADERS)
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(await self.counted(protocol=True), {("_other", "refused"): 1})
+        self.assertEqual(await self.counted(), {})
+
+    async def _through_the_counter(
+        self, body: bytes, status: int, reach_tool: bool = False
+    ):
+        """One request through _counted_request to an app that reads the
+        body and answers with ``status``, marking the call as reaching its
+        tool when ``reach_tool``, as call_tool does."""
+
+        async def app(scope, receive, send):
+            more = True
+            while more:
+                more = (await receive()).get("more_body", False)
+            if reach_tool:
+                mcp_server._REACHED_TOOL.get()["tool"] = True
+            await send({"type": "http.response.start", "status": status})
+            await send({"type": "http.response.body", "body": b""})
+
+        chunks = [body[:10], body[10:]]
+
+        async def receive():
+            chunk = chunks.pop(0)
+            return {"type": "http.request", "body": chunk, "more_body": bool(chunks)}
+
+        async def send(message):
+            pass
+
+        await mcp_server._counted_request(app, {"type": "http"}, receive, send)
+        return await self.counted(protocol=True)
+
+    async def test_a_tool_call_read_and_refused_counts_as_tools_call(self):
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call"})
+        self.assertEqual(
+            await self._through_the_counter(body.encode(), 400),
+            {("_tools_call", "refused"): 1},
+        )
+
+    async def test_a_large_call_whose_method_is_unread_is_still_counted_once(self):
+        # Past the peek, with the method after the params: labelled _other,
+        # but its tool counted it, so the request adds nothing.
+        body = json.dumps(
+            {"params": {"pad": "x" * 70_000}, "jsonrpc": "2.0", "id": 1, "method": "tools/call"}
+        )
+        self.assertEqual(
+            await self._through_the_counter(body.encode(), 200, reach_tool=True), {}
+        )
+
+    async def test_a_count_carries_the_time_of_the_call_not_of_the_write(self):
+        stamps = []
+        release = threading.Event()
+
+        def late(tool, outcome, now=None):
+            release.wait(10)
+            stamps.append((now, datetime.now(dt_timezone.utc)))
+
+        try:
+            with mock.patch.object(mcp_call_counts, "bump", side_effect=late):
+                before = datetime.now(dt_timezone.utc)
+                await call("get_state_help", {"state": "CA"})
+                after = datetime.now(dt_timezone.utc)
+                await asyncio.sleep(0.2)
+        finally:
+            release.set()
+            await mcp_server.flush_call_counts()
+        self.assertTrue(stamps)
+        for called, written in stamps:
+            self.assertTrue(before <= called <= after, (before, called, after))
+            self.assertLess(called, written)
+
+    async def test_a_tool_call_that_reached_its_tool_is_left_to_it(self):
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call"})
+        self.assertEqual(
+            await self._through_the_counter(body.encode(), 200, reach_tool=True), {}
+        )
+
+    async def test_tool_calls_the_sdk_refuses_count_as_refused_tools_calls(self):
+        # No tool name: the SDK answers 200 with a JSON-RPC error. No id: it
+        # reads as a notification and answers 202. Neither reaches a tool.
+        no_name = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"arguments": {}},
+        }
+        no_id = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {"name": "get_state_help", "arguments": {"state": "CA"}},
+        }
+        async with running_app() as http:
+            statuses = [
+                (await http.post("/mcp", json=body, headers=MCP_HEADERS)).status_code
+                for body in (no_name, no_id)
+            ]
+        self.assertTrue(all(code < 400 for code in statuses), statuses)
+        self.assertEqual(
+            await self.counted(protocol=True), {("_tools_call", "refused"): 2}
+        )
+        self.assertEqual(await self.counted(), {})
+
+    async def test_a_body_nested_too_deep_is_counted_and_raises_nothing(self):
+        async with running_app() as http:
+            response = await http.post("/mcp", content="[" * 20000, headers=MCP_HEADERS)
+        self.assertGreaterEqual(response.status_code, 400)
+        protocol = await self.counted(protocol=True)
+        self.assertEqual({tool for tool, _ in protocol}, {"_other"})
+        self.assertEqual(sum(protocol.values()), 1)
+
+    async def test_a_large_body_is_labelled_from_its_start(self):
+        body = json.dumps(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "pad": "x" * 70_000}
+        )
+        self.assertEqual(
+            await self._through_the_counter(body.encode(), 500),
+            {("_tools_list", "failed"): 1},
+        )
+
+    async def test_a_get_and_an_unreadable_body_count_as_other_refused(self):
+        async with running_app() as http:
+            got = await http.get("/mcp")
+            posted = await http.post("/mcp", content="not json", headers=MCP_HEADERS)
+        self.assertEqual((got.status_code, posted.status_code), (405, 400))
+        self.assertEqual(
+            await self.counted(protocol=True), {("_other", "refused"): 2}
+        )
+
+    async def test_nothing_sent_is_stored(self):
+        sent = "Rebecca Lee Crumpler, member ID ZX9-4471"
+        await call("get_state_help", {"state": "CA", "letter": sent})
+        await call(sent, {"note": sent})
+        await mcp_server.flush_call_counts()
+        fields = {f.name for f in models.McpToolCallCount._meta.get_fields()}
+        self.assertEqual(
+            fields, {"id", "hour", "tool", "outcome", "count", "last_call_at"}
+        )
+        stored = {
+            value
+            async for row in models.McpToolCallCount.objects.values_list(
+                "tool", "outcome"
+            )
+            for value in row
+        }
+        protocol = {name for name, _ in mcp_call_counts.PROTOCOL_ROWS}
+        allowed = {"get_state_help", "unknown"} | protocol
+        allowed |= set(mcp_call_counts.OUTCOMES)
+        self.assertLessEqual(stored, allowed)
+        self.assertIn("unknown", stored)
+
+    async def test_a_count_that_cannot_be_stored_never_breaks_the_call(self):
+        before = ToolCallCountersTest._count("get_state_help", "ok")
+        with mock.patch.object(
+            mcp_call_counts, "bump", side_effect=DatabaseError("down")
+        ):
+            result = await call("get_state_help", {"state": "CA"})
+            await mcp_server.flush_call_counts()
+        self.assertFalse(result.isError, text_of(result))
+        self.assertEqual(
+            ToolCallCountersTest._count("get_state_help", "ok"), before + 1
+        )
+
+    async def test_a_hung_count_write_does_not_delay_the_answer(self):
+        release = threading.Event()
+
+        def hung(tool, outcome, now=None):
+            release.wait(10)
+
+        try:
+            with mock.patch.object(mcp_call_counts, "bump", side_effect=hung):
+                result = await call("get_state_help", {"state": "CA"})
+                # The answer is back while the writes are still stuck.
+                self.assertGreaterEqual(len(mcp_server._COUNT_TASKS), 1)
+                self.assertFalse(result.isError, text_of(result))
+        finally:
+            release.set()
+            await mcp_server.flush_call_counts()
+        self.assertEqual(mcp_server._COUNT_TASKS, set())
+
+    async def test_on_its_own_thread_a_stuck_count_never_holds_up_a_tool(self):
+        release = threading.Event()
+        threads = []
+
+        def stuck(tool, outcome, now=None):
+            threads.append(threading.current_thread().name)
+            release.wait(10)
+
+        try:
+            with override_settings(
+                FHI_MCP_CALL_COUNT_OWN_THREAD=True
+            ), mock.patch.object(mcp_call_counts, "bump", side_effect=stuck):
+                await call("get_state_help", {"state": "CA"})
+                # Its lookup runs on the shared thread, with a count stuck.
+                await call(
+                    "find_insurer_appeal_contacts", {"insurer": "Zzyzx Mutual"}
+                )
+                self.assertTrue(mcp_server._COUNT_TASKS)
+        finally:
+            release.set()
+            await mcp_server.flush_call_counts()
+        self.assertTrue(threads)
+        self.assertTrue(all(t.startswith("mcp-call-count") for t in threads))
+
+    async def test_counts_past_the_cap_are_dropped_not_queued(self):
+        held = {asyncio.get_running_loop().create_future() for _ in range(2)}
+        with mock.patch.object(
+            mcp_server, "MAX_PENDING_COUNTS", 2
+        ), mock.patch.object(mcp_server, "_COUNT_TASKS", held):
+            result = await call("get_state_help", {"state": "CA"})
+            self.assertEqual(len(mcp_server._COUNT_TASKS), 2)
+        self.assertFalse(result.isError, text_of(result))
+        self.assertEqual(await self.counted(), {})
+        self.assertEqual(await self.counted(protocol=True), {})
 
 
 class CaregiverWordingTest(TestCase):
