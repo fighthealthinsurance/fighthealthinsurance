@@ -16,6 +16,7 @@ import aiohttp
 import pytest
 
 from fighthealthinsurance.ml.ml_models import (
+    ProviderUnavailable,
     RemoteFullOpenLike,
     _error_text_indicates_missing_model,
 )
@@ -158,6 +159,21 @@ class TestMissingModelCooldown:
         warnings = cap.messages("WARNING")
         assert len(warnings) == 1
         assert "not served" in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_error_object_in_200_body_raises_provider_unavailable_when_asked(
+        self, monkeypatch, missing_model_200_post
+    ):
+        """As for the HTTP 404: a caller that asked (entity extraction, the
+        appeal path's first try) learns it on the call that found it out,
+        not as a model that answered and found nothing."""
+        model = _model("http://missing.example/v1")
+        monkeypatch.setattr(aiohttp.ClientSession, "post", missing_model_200_post)
+
+        with pytest.raises(ProviderUnavailable, match="not served here"):
+            await model._infer(
+                system_prompts=["sys"], prompt="hi", raise_on_unavailable=True
+            )
 
     @pytest.mark.asyncio
     async def test_error_object_in_200_body_still_raises_for_probe(

@@ -68,10 +68,10 @@ ML_CALLS_TOTAL = Counter(
 # (outcome=none/timeout/error) and once here with its classified reason
 # (transport_error, http_error, bad_body, no_text, context_overflow, missing_model,
 # skipped_missing_model, skipped_refused, skipped_budget, skipped_cooling,
-# unexpected_error). The skips are calls not made because the pair failed
-# moments ago (or its provider's budget is spent); counting them as plain
-# outcome=none would let the failure rate fall during the very outage that
-# started the cooldown.
+# skipped_rate_limited, unexpected_error). The skips are calls not made
+# because the pair failed moments ago (or its provider's budget is spent, or
+# it is backing off after a 429); counting them as plain outcome=none would
+# let the failure rate fall during the very outage that started the cooldown.
 ML_CALL_FAILURES_TOTAL = Counter(
     "fhi_ml_call_failures_total",
     "Classified model call failures (transport, http, bad body...).",
@@ -92,10 +92,11 @@ ML_CALL_SECONDS = Histogram(
 # produced was rejected and filed as a no_output attempt, so the failure
 # rate the call series exists to alert on never moved. Results: accepted;
 # rejected_bad_result (a refusal / severe repetition / runt, after the one
-# retry); no_completion (nothing came back to judge -- an outage, which the
-# call series already classifies, not a content rejection); error (the
-# inference raised); rejected_repetition (the cleaners removed everything);
-# skipped_deadline (the requester's budget had passed).
+# retry); no_completion (the model was reached and gave nothing to judge,
+# not a content rejection); error (the inference raised); rejected_repetition
+# (the cleaners removed everything); skipped_deadline (never asked: the
+# requester's budget had passed); unavailable (not asked because it is known
+# gone, refused, out of credit or cooling, or not reached on either try).
 ML_RESULTS_TOTAL = Counter(
     "fhi_ml_results_total",
     "Checked appeal inferences by what became of the completion (accepted, "

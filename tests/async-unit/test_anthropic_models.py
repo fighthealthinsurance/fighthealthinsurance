@@ -16,7 +16,11 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 import aiohttp
 
-from fighthealthinsurance.ml.ml_models import RemoteAnthropic, RemoteFullOpenLike
+from fighthealthinsurance.ml.ml_models import (
+    ProviderUnavailable,
+    RemoteAnthropic,
+    RemoteFullOpenLike,
+)
 from fighthealthinsurance.utils import RateLimiter
 
 
@@ -259,12 +263,10 @@ class TestRemoteAnthropicInfer(unittest.TestCase):
         """Run the async test for invalid Retry-After."""
         asyncio.run(self.async_test_infer_429_with_invalid_retry_after_uses_default())
 
-    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
-    async def async_test_infer_other_http_errors_propagate(self):
-        """Test that non-429 HTTP errors are re-raised, not swallowed."""
-        model = RemoteAnthropic(model="claude-sonnet-4-6")
-
-        error = aiohttp.ClientResponseError(
+    @staticmethod
+    def _server_error() -> aiohttp.ClientResponseError:
+        """A non-429 HTTP error from the parent transport."""
+        return aiohttp.ClientResponseError(
             request_info=MagicMock(),
             history=(),
             status=500,
@@ -272,20 +274,74 @@ class TestRemoteAnthropicInfer(unittest.TestCase):
             headers={},
         )
 
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    async def async_test_infer_other_http_errors_return_none(self):
+        """A non-429 HTTP error returns None to a caller that did not ask to
+        raise, as on the shared transport: the caller moves on to the next
+        model instead of counting a provider's 5xx as a bug."""
+        model = RemoteAnthropic(model="claude-sonnet-4-6")
+
         with patch.object(
             RemoteFullOpenLike,
             "_infer",
             new_callable=AsyncMock,
-            side_effect=error,
+            side_effect=self._server_error(),
+        ):
+            result = await model._infer(
+                system_prompts=["You are helpful."], prompt="Test prompt"
+            )
+
+        self.assertIsNone(result)
+
+    def test_infer_other_http_errors_return_none(self):
+        """Run the async test."""
+        asyncio.run(self.async_test_infer_other_http_errors_return_none())
+
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    async def async_test_infer_other_http_errors_say_unavailable_when_asked(self):
+        """raise_on_unavailable turns the HTTP error into ProviderUnavailable."""
+        model = RemoteAnthropic(model="claude-sonnet-4-6")
+
+        with patch.object(
+            RemoteFullOpenLike,
+            "_infer",
+            new_callable=AsyncMock,
+            side_effect=self._server_error(),
+        ):
+            with self.assertRaises(ProviderUnavailable):
+                await model._infer(
+                    system_prompts=["You are helpful."],
+                    prompt="Test prompt",
+                    raise_on_unavailable=True,
+                )
+
+    def test_infer_other_http_errors_say_unavailable_when_asked(self):
+        """Run the async test."""
+        asyncio.run(
+            self.async_test_infer_other_http_errors_say_unavailable_when_asked()
+        )
+
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    async def async_test_infer_other_http_errors_reach_a_probe(self):
+        """A probe (raise_http_errors) still gets the raw status."""
+        model = RemoteAnthropic(model="claude-sonnet-4-6")
+
+        with patch.object(
+            RemoteFullOpenLike,
+            "_infer",
+            new_callable=AsyncMock,
+            side_effect=self._server_error(),
         ):
             with self.assertRaises(aiohttp.ClientResponseError):
                 await model._infer(
-                    system_prompts=["You are helpful."], prompt="Test prompt"
+                    system_prompts=["You are helpful."],
+                    prompt="Test prompt",
+                    raise_http_errors=True,
                 )
 
-    def test_infer_other_http_errors_propagate(self):
+    def test_infer_other_http_errors_reach_a_probe(self):
         """Run the async test."""
-        asyncio.run(self.async_test_infer_other_http_errors_propagate())
+        asyncio.run(self.async_test_infer_other_http_errors_reach_a_probe())
 
     @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
     async def async_test_infer_429_through_real_infer_marks_exhausted(self):

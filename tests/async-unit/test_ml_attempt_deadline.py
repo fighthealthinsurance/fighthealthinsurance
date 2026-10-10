@@ -9,6 +9,7 @@ not be allowed to outlive the budget in the first place.
 
 import asyncio
 import time
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from asgiref.sync import sync_to_async
@@ -103,3 +104,112 @@ async def test_concurrent_attempts_do_not_see_each_others_budget():
     tight, loose = await asyncio.gather(run(5.0, 0.05), run(120.0, 0.05))
     assert tight <= 5.0, tight
     assert 100.0 < loose <= 120.0, loose
+
+
+# The appeal path's calls (_checked_infer) under a requester deadline: the WS
+# path sets no attempt_deadline, only ``deadline``, and the retry after a
+# timeout used to get a fresh 300s whatever was left of it.
+_GOOD_DRAFT = "The denied service is medically necessary for this patient."
+_CHECKED_INFER_KWARGS = dict(
+    prompt="denial text",
+    patient_context=None,
+    plan_context=None,
+    infer_type="medically_necessary",
+    pubmed_context=None,
+    system_prompt="sys",
+    temperature=0.5,
+)
+
+
+def _model_answering(*answers):
+    """An appeal backend whose calls return ``answers`` in turn."""
+    model = ml_models.RemoteFullOpenLike("http://deadline.example/v1", "tok", "m")
+    model._infer_no_context = AsyncMock(side_effect=list(answers))  # type: ignore[method-assign]
+    return model
+
+
+@pytest.mark.asyncio
+async def test_a_call_never_outlives_the_requesters_deadline():
+    model = _model_answering(_GOOD_DRAFT)
+    await model._checked_infer(
+        **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 60.0
+    )
+    assert model._infer_no_context.await_args.kwargs["timeout"] <= 60.0
+
+
+@pytest.mark.asyncio
+async def test_the_retry_gets_only_what_is_left_of_the_deadline():
+    model = _model_answering(None, _GOOD_DRAFT)
+    await model._checked_infer(
+        **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 60.0
+    )
+    assert model._infer_no_context.await_args_list[1].kwargs["timeout"] <= 60.0
+
+
+@pytest.mark.asyncio
+async def test_the_retry_is_skipped_when_too_little_of_the_deadline_is_left():
+    """A letter does not fit in a few seconds: the retry would only spend a
+    request (a paid one, on a hosted model) nobody reads."""
+    model = _model_answering(None, _GOOD_DRAFT)
+    result = await model._checked_infer(
+        **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 5.0
+    )
+    assert (result, model._infer_no_context.await_count) == ([], 1)
+
+
+@pytest.mark.asyncio
+async def test_the_retry_is_skipped_when_too_little_of_the_attempt_is_left():
+    model = _model_answering(None, _GOOD_DRAFT)
+    with ml_models.attempt_deadline(5.0):
+        await model._checked_infer(**_CHECKED_INFER_KWARGS)
+    assert model._infer_no_context.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_the_retry_runs_while_there_is_time_for_it():
+    model = _model_answering(None, _GOOD_DRAFT)
+    await model._checked_infer(
+        **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 200.0
+    )
+    assert model._infer_no_context.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_model_never_asked_raises_deadline_skipped():
+    """An empty result read as a model that answered nothing; the caller
+    could only guess from the clock that it was never asked."""
+    model = _model_answering(_GOOD_DRAFT)
+    with pytest.raises(ml_models.DeadlineSkipped):
+        await model._checked_infer(
+            **_CHECKED_INFER_KWARGS, deadline=time.monotonic() - 1.0
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_deadline_skip_is_recorded_once():
+    model = _model_answering(_GOOD_DRAFT)
+    with patch.object(ml_models, "record_ml_result") as recorded:
+        with pytest.raises(ml_models.DeadlineSkipped):
+            await model._checked_infer(
+                **_CHECKED_INFER_KWARGS, deadline=time.monotonic() - 1.0
+            )
+    assert [c.args[2] for c in recorded.call_args_list] == ["skipped_deadline"]
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_retry_keeps_what_the_asked_call_gave():
+    """The model was asked and answered nothing: that is no_completion, and
+    no DeadlineSkipped, though no time was left for the retry."""
+    model = _model_answering(None, _GOOD_DRAFT)
+    with patch.object(ml_models, "record_ml_result") as recorded:
+        await model._checked_infer(
+            **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 5.0
+        )
+    assert recorded.call_args.args[2] == "no_completion"
+
+
+@pytest.mark.asyncio
+async def test_a_prior_auth_letter_moves_on_from_a_deadline_skip():
+    model = _model_answering(_GOOD_DRAFT)
+    with ml_models.attempt_deadline(0.0):
+        assert await model.generate_prior_auth_response("Request prior auth.") is None

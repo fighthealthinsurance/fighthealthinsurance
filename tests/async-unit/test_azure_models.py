@@ -60,6 +60,10 @@ ANTHROPIC_TEMPERATURE_REJECTION_TEXT = (
     '{"type":"error","error":{"type":"invalid_request_error",'
     '"message":"temperature: Extra inputs are not permitted"}}'
 )
+ANTHROPIC_TEMPERATURE_DEPRECATED_TEXT = (
+    '{"type":"error","error":{"type":"invalid_request_error",'
+    '"message":"`temperature` is deprecated for this model."}}'
+)
 
 
 class _FakeAiohttpResponse:
@@ -398,25 +402,52 @@ class TestAzureInfer(unittest.TestCase):
 
         asyncio.run(run())
 
+    @staticmethod
+    def _server_error() -> aiohttp.ClientResponseError:
+        """A non-429 HTTP error from the parent transport."""
+        return aiohttp.ClientResponseError(
+            request_info=MagicMock(),
+            history=(),
+            status=500,
+            message="Server error",
+            headers={},
+        )
+
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
-    def test_non_429_propagates(self):
-        """Non-429 HTTP errors propagate rather than being swallowed."""
+    def test_non_429_returns_none(self):
+        """A non-429 HTTP error returns None to a caller that did not ask to
+        raise, as on the shared transport, rather than escaping as a bug."""
+
+        async def run():
+            """Force a 500 from the parent _infer and assert None."""
+            m = RemoteAzureOpenAI(model="gpt-5")
+            with patch.object(
+                RemoteFullOpenLike,
+                "_infer",
+                new_callable=AsyncMock,
+                side_effect=self._server_error(),
+            ):
+                self.assertIsNone(await m._infer(system_prompts=["x"], prompt="y"))
+
+        asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_OPENAI_ENV)
+    def test_non_429_reaches_a_probe(self):
+        """A probe (raise_http_errors) still gets the raw status."""
 
         async def run():
             """Force a 500 from the parent _infer and assert it raises."""
             m = RemoteAzureOpenAI(model="gpt-5")
-            error = aiohttp.ClientResponseError(
-                request_info=MagicMock(),
-                history=(),
-                status=500,
-                message="Server error",
-                headers={},
-            )
             with patch.object(
-                RemoteFullOpenLike, "_infer", new_callable=AsyncMock, side_effect=error
+                RemoteFullOpenLike,
+                "_infer",
+                new_callable=AsyncMock,
+                side_effect=self._server_error(),
             ):
                 with self.assertRaises(aiohttp.ClientResponseError):
-                    await m._infer(system_prompts=["x"], prompt="y")
+                    await m._infer(
+                        system_prompts=["x"], prompt="y", raise_http_errors=True
+                    )
 
         asyncio.run(run())
 
@@ -619,8 +650,7 @@ class TestAzureClaudeMessages(unittest.TestCase):
             )
             failing = _FakeAiohttpSession(_FakeAiohttpResponse(status=500, headers={}))
             with patch.object(aiohttp, "ClientSession", return_value=failing):
-                with self.assertRaises(aiohttp.ClientResponseError):
-                    await m._infer(system_prompts=["x"], prompt="y")
+                self.assertIsNone(await m._infer(system_prompts=["x"], prompt="y"))
             self.assertEqual(
                 counter("fhi_ml_calls_total", model=label, outcome="error"),
                 err_before + 1,
@@ -723,6 +753,32 @@ class TestAzureClaudeMessages(unittest.TestCase):
         asyncio.run(run())
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_custom_claude_deployment_deprecated_temperature_retries_without(self):
+        """Anthropic's own wording, "`temperature` is deprecated for this
+        model.", takes the same fallback: it used to fail every call."""
+
+        async def run():
+            """Queue the deprecation 400 then a 200 and inspect bodies."""
+            m = RemoteAzureClaude(model="appeals-fable")
+            bodies: list = []
+            session = _FakeSequencedSession(
+                [
+                    _FakeAiohttpResponse(
+                        status=400, text=ANTHROPIC_TEMPERATURE_DEPRECATED_TEXT
+                    ),
+                    _FakeAiohttpResponse({"content": [{"type": "text", "text": "ok"}]}),
+                ],
+                bodies,
+            )
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                result = await m._infer(system_prompts=["x"], prompt="y")
+            self.assertEqual(result, ("ok", []))
+            self.assertNotIn("temperature", bodies[1])
+            self.assertIn("appeals-fable", m._temperature_unsupported_models)
+
+        asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_error_body_does_not_overwrite_http_reason_phrase(self):
         """The provider body rides alongside ClientResponseError.message, never
         over it: model_health_check._categorize_http_error classifies a 400 as
@@ -738,8 +794,11 @@ class TestAzureClaudeMessages(unittest.TestCase):
             )
             session = _FakeAiohttpSession(response)
             with patch.object(aiohttp, "ClientSession", return_value=session):
+                # A probe: other callers get None, not the raw error.
                 with self.assertRaises(aiohttp.ClientResponseError) as ctx:
-                    await m._infer(system_prompts=["x"], prompt="y")
+                    await m._infer(
+                        system_prompts=["x"], prompt="y", raise_http_errors=True
+                    )
             self.assertEqual(ctx.exception.message, "error")
             self.assertIn("max_tokens", getattr(ctx.exception, "fhi_response_body"))
 
@@ -898,8 +957,8 @@ class TestAzureClaudeMessages(unittest.TestCase):
         asyncio.run(run())
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
-    def test_non_temperature_400_still_propagates_without_retrying(self):
-        """A 400 that isn't a temperature rejection raises on the first
+    def test_non_temperature_400_fails_without_retrying(self):
+        """A 400 that isn't a temperature rejection fails on the first
         attempt: the classifier matches loosely, so a mismatch would other-
         wise turn every unrelated 400 into two paid round-trips and poison
         the deployment's memo."""
@@ -916,8 +975,7 @@ class TestAzureClaudeMessages(unittest.TestCase):
                 bodies,
             )
             with patch.object(aiohttp, "ClientSession", return_value=session):
-                with self.assertRaises(aiohttp.ClientResponseError):
-                    await m._infer(system_prompts=["x"], prompt="y")
+                self.assertIsNone(await m._infer(system_prompts=["x"], prompt="y"))
             self.assertEqual(len(bodies), 1)
             self.assertNotIn("claude-sonnet-4-6", m._temperature_unsupported_models)
 
@@ -939,8 +997,23 @@ class TestAzureClaudeMessages(unittest.TestCase):
         asyncio.run(run())
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
-    def test_messages_api_non_429_propagates(self):
-        """Non-429 HTTP errors propagate rather than being swallowed."""
+    def test_messages_api_non_429_returns_none(self):
+        """A non-429 HTTP error returns None to a caller that did not ask to
+        raise, as on the shared transport."""
+
+        async def run():
+            """Force a 500 response and assert None."""
+            m = RemoteAzureClaude(model="claude-sonnet-4-6")
+            response = _FakeAiohttpResponse(status=500, headers={})
+            session = _FakeAiohttpSession(response)
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                self.assertIsNone(await m._infer(system_prompts=["x"], prompt="y"))
+
+        asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_messages_api_non_429_reaches_a_probe(self):
+        """A probe (raise_http_errors) still gets the raw status."""
 
         async def run():
             """Force a 500 response and assert it raises ClientResponseError."""
@@ -949,7 +1022,9 @@ class TestAzureClaudeMessages(unittest.TestCase):
             session = _FakeAiohttpSession(response)
             with patch.object(aiohttp, "ClientSession", return_value=session):
                 with self.assertRaises(aiohttp.ClientResponseError):
-                    await m._infer(system_prompts=["x"], prompt="y")
+                    await m._infer(
+                        system_prompts=["x"], prompt="y", raise_http_errors=True
+                    )
 
         asyncio.run(run())
 

@@ -21,7 +21,7 @@ from fighthealthinsurance.ml.ml_metrics import (
     record_ml_call,
     record_ml_failure,
 )
-from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
+from fighthealthinsurance.ml.ml_models import DeadlineSkipped, RemoteFullOpenLike
 from fighthealthinsurance.reliability_events import capture_reliability_event
 
 
@@ -639,10 +639,12 @@ class TestCheckedResultsAreCounted:
             infer_type="full",
             result="skipped_deadline",
         )
-        result = await m._checked_infer(
-            **_checked_infer_kwargs(infer_type="full", deadline=time.monotonic() - 1)
-        )
-        assert result == []
+        with pytest.raises(DeadlineSkipped):
+            await m._checked_infer(
+                **_checked_infer_kwargs(
+                    infer_type="full", deadline=time.monotonic() - 1
+                )
+            )
         m._infer_no_context.assert_not_called()
         assert (
             _counter_value(

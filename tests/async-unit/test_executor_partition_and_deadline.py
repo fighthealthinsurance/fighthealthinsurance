@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from fighthealthinsurance import exec as fhi_exec
-from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
+from fighthealthinsurance.ml.ml_models import DeadlineSkipped, RemoteFullOpenLike
 from fighthealthinsurance.utils import (
     fire_and_forget_in_new_threadpool,
     join_fire_and_forget_threads,
@@ -116,17 +116,17 @@ class TestCheckedInferDeadline:
 
         with patch.object(m, "_infer_no_context", side_effect=fake_infer_no_context):
             start = time.monotonic()
-            result = await m._checked_infer(
-                prompt="p",
-                patient_context=None,
-                plan_context=None,
-                infer_type="full",
-                pubmed_context=None,
-                system_prompt="sys",
-                temperature=0.7,
-                deadline=time.monotonic() - 1.0,
-            )
-        assert result == []
+            with pytest.raises(DeadlineSkipped):
+                await m._checked_infer(
+                    prompt="p",
+                    patient_context=None,
+                    plan_context=None,
+                    infer_type="full",
+                    pubmed_context=None,
+                    system_prompt="sys",
+                    temperature=0.7,
+                    deadline=time.monotonic() - 1.0,
+                )
         assert calls == []
         assert time.monotonic() - start < 1.0
 
