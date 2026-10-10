@@ -55,6 +55,7 @@ from fighthealthinsurance import (
     intake_resume,
 )
 from fighthealthinsurance import forms as core_forms, models
+from fighthealthinsurance.form_utils import append_help_text, from_your_letter_hint
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
 from fighthealthinsurance.structured_data import render_json_ld
@@ -1204,18 +1205,49 @@ def review_form(
     ``default_condition`` is the condition a treatment guide or an assistant
     handoff carried. It fills the diagnosis only when the row has none
     (form_valid keeps it).
+
+    On the way forward the letter's triage (ml/denial_triage.suggestions)
+    also pre-ticks the denial types it names and, when the row has none, the
+    plan source, each marked as read from the letter. What the person leaves
+    ticked is saved by find_next_steps and is what every later step reads.
+    The way back shows the row as they left it, so an unticked suggestion
+    stays unticked.
     """
     from_letter = []
     denial_date = denial.denial_date
-    if denial_date is None and date_from_letter:
-        denial_date = denial_triage.letter_date(
-            denial.denial_text, timezone.localdate()
+    denial_types = list(denial.denial_type.all())
+    plan_sources = list(denial.plan_source.all())
+    if date_from_letter:
+        if denial_date is None:
+            denial_date = denial_triage.letter_date(
+                denial.denial_text, timezone.localdate()
+            )
+            if denial_date is not None:
+                from_letter.append("denial_date")
+        suggested = denial_triage.suggestions(
+            denial, min_confidence=denial_triage.SUGGEST_CONFIDENCE
         )
-        if denial_date is not None:
-            from_letter.append("denial_date")
+        if suggested.denial_type_names:
+            have = {denial_type.pk for denial_type in denial_types}
+            extra = [
+                denial_type
+                for denial_type in models.DenialTypes.objects.filter(
+                    name__in=suggested.denial_type_names
+                )
+                if denial_type.pk not in have
+            ]
+            if extra:
+                denial_types += extra
+                from_letter.append("denial_type")
+        if suggested.plan_source_name and not plan_sources:
+            plan_sources = list(
+                models.PlanSource.objects.filter(name=suggested.plan_source_name)[:1]
+            )
+            if plan_sources:
+                from_letter.append("plan_source")
     form = core_forms.PostInferedForm(
         initial={
-            "denial_type": list(denial.denial_type.all()),
+            "denial_type": denial_types,
             "denial_id": denial.denial_id,
             "email": email,
             "your_state": denial.your_state,
@@ -1228,25 +1260,24 @@ def review_form(
             "date_of_service": denial.date_of_service,
             "employer_name": denial.employer_name,
             "denial_date": denial_date,
-            "plan_source": list(denial.plan_source.all()),
+            "plan_source": plan_sources,
             "insurance_company_obj": denial.insurance_company_obj_id,
             "insurance_plan_obj": denial.insurance_plan_obj_id,
             "denial_type_text": denial.denial_type_text,
         }
     )
     if from_letter:
-        # The partial's own text, autoescaped when it rendered; strip() hands
-        # back a plain str, so it is marked safe again.
-        hint = mark_safe(
-            loader.render_to_string("partials/from_your_letter_hint.html").strip()
-        )
+        hint = from_your_letter_hint()
         for name in from_letter:
-            field = form.fields[name]
-            field.help_text = (
-                format_html("{}<br>{}", field.help_text, hint)
-                if field.help_text
-                else hint
-            )
+            append_help_text(form.fields[name], hint)
+    # The appeal deadline the letter appears to give, beside the date it is
+    # counted from; empty unless TYPESAFE_DEADLINE_SHOW_ENABLED is on and the
+    # triage is confident, current and still ahead.
+    deadline_note = denial_triage.deadline_sentence_if_enabled(
+        denial, timezone.localdate()
+    )
+    if deadline_note:
+        append_help_text(form.fields["denial_date"], deadline_note)
     return form
 
 
@@ -1360,6 +1391,7 @@ class FindNextSteps(View):
                 "denial_form": denial_ref_form,
                 "pharmacy_suggestion": next_step_info.pharmacy_coupon_suggestion,
                 "financial_assistance": next_step_info.financial_assistance,
+                "appeal_deadline_note": next_step_info.appeal_deadline_note,
                 "current_step": 6,
                 "back_url": build_back_url(
                     request, "categorize_review", denial_id, email, semi_sekret
@@ -1406,6 +1438,7 @@ class FindNextSteps(View):
                     "denial_form": denial_ref_form,
                     "pharmacy_suggestion": next_step_info.pharmacy_coupon_suggestion,
                     "financial_assistance": next_step_info.financial_assistance,
+                    "appeal_deadline_note": next_step_info.appeal_deadline_note,
                     "current_step": 6,
                     "back_url": build_back_url(
                         request,
@@ -1493,9 +1526,11 @@ def add_pubmed_article_fields(
 ) -> None:
     """Offer up to six PubMed articles on the fax form, one box each.
 
-    Every box starts ticked on the first visit. ``chosen_pmids`` is for the
-    page a cancelled fax payment returns to: it ticks only the articles the
-    person had left ticked, so sending again sends what they chose.
+    Every box starts ticked on the first visit, except an article Jev judged
+    off topic or against the treatment (``judged_drop``, set by
+    candidate_articles), which is offered unticked. ``chosen_pmids`` is for
+    the page a cancelled fax payment returns to: it ticks only the articles
+    the person had left ticked, so sending again sends what they chose.
     """
     if candidate_articles is None:
         return
@@ -1515,7 +1550,11 @@ def add_pubmed_article_fields(
         fax_form.fields["pubmed_" + pmid] = forms.BooleanField(
             label=label,
             required=False,
-            initial=True if chosen_pmids is None else pmid in chosen_pmids,
+            initial=(
+                not getattr(article, "judged_drop", False)
+                if chosen_pmids is None
+                else pmid in chosen_pmids
+            ),
         )
 
 
@@ -1585,9 +1624,10 @@ class GenerateAppeal(View):
 
         An unticked checkbox sends nothing at all and ``merge_qa`` keeps
         what it already holds for a key nobody sent, so unticking a box
-        would otherwise never take. Only keys that already hold an answer
-        are written, so a box nobody ever ticked adds no "False" noise to
-        the prompt, which is read as prose.
+        would otherwise never take. Only keys that already hold an answer,
+        or that the page offered pre-ticked, are written, so a box nobody
+        ever ticked adds no "False" noise to the prompt, which is read as
+        prose.
 
         Nothing is excluded by name: the page itself is the ownership
         boundary. ``in_network`` is the one reserved key that is also a
@@ -1596,8 +1636,6 @@ class GenerateAppeal(View):
         """
         try:
             stored = load_qa(denial)
-            if not stored:
-                return {}
             question_forms = (
                 common_view_logic.FindNextStepsHelper._build_question_forms(denial)
             )
@@ -1608,7 +1646,13 @@ class GenerateAppeal(View):
                         continue
                     if name in posted:
                         continue
-                    if name in stored:
+                    # A box the page offered pre-ticked from the letter
+                    # (ml/denial_triage.suggestions) was answered too when
+                    # it comes back unticked: without the "False" the page
+                    # would tick it again on the way back.
+                    if name in stored or question_form.get_initial_for_field(
+                        field, name
+                    ):
                         answers[name] = "False"
             return answers
         except Exception as e:

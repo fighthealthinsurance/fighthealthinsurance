@@ -21,13 +21,20 @@ resolves to a date when it is in calendar days AND anchored to this notice
 "business days", "after receipt" and "from the date of service" stay
 unresolved on purpose, with the window kept as text for a person to read.
 
-What a reader gets. Nothing, yet. The triage is stored with the model's
-confidence and a hash of the text it was computed from, and shown to staff
-in the admin. ``deadline_to_show`` and ``deadline_sentence`` are the
-patient-facing rule (confident, still ahead, computed from the CURRENT text)
-but are not wired to any patient-facing surface until the extraction has been
-checked against a representative set of real letters. A confidently wrong
-date can cost someone an appeal; a missing one cannot.
+What a reader gets. The triage is stored with the model's confidence and a
+hash of the text it was computed from. ``suggestions`` turns a current,
+confident triage into what intake would otherwise ask: the denial types, the
+plan source (the REGULATION labels are the PlanSource fixture's kinds), and
+the urgent and pre-service boxes. The review and questions pages offer them
+pre-ticked with a "from your letter" hint, so a person confirms or unticks
+each one and what they leave is what every later step reads; a flow with no
+page to review (an assistant's case) applies them at a higher bar.
+``deadline_to_show`` and ``deadline_sentence`` are the patient-facing rule
+for the deadline (confident, still ahead, computed from the CURRENT text),
+shown only while ``TYPESAFE_DEADLINE_SHOW_ENABLED`` is on: a confidently
+wrong date can cost someone an appeal and a missing one cannot, so staff
+label deadlines in the admin (``appeal_deadline_check``) until the tally
+says the extraction holds up on real letters.
 
 Data protection: the denial text only, never the form fields, and only when
 the user allowed external models (``denial.use_external``). Inert until both
@@ -46,9 +53,8 @@ import re
 import typing
 
 from django.conf import settings
-from loguru import logger
 
-from fighthealthinsurance.ml import spend, typesafe
+from fighthealthinsurance.ml import letter_quality, spend, typesafe
 
 # Bump when the questions or the candidate rules change: a stored triage
 # from an older rubric is not "current" and gets redone. The model half is
@@ -56,10 +62,17 @@ from fighthealthinsurance.ml import spend, typesafe
 # reports none); see letter_quality.scorer_for, which records it the same way.
 # 2: requests moved to the documented System One body and a pinned Jev
 # release, so a triage stored before then is redone.
-RUBRIC_VERSION = 2
+# 3: the regulation choices became the PlanSource kinds, so a stored answer
+# maps onto the plan source intake asks for.
+RUBRIC_VERSION = 3
 _RUBRIC_SUFFIX = f"/rubric-{RUBRIC_VERSION}"
 # The provenance under the default model; rows record source_for(payload).
 SOURCE = f"typesafe/{typesafe.DEFAULT_MODEL}{_RUBRIC_SUFFIX}"
+
+
+# Key of the cross-pod health record (models.ExternalServiceHealth) the
+# staff pages read; extract_set_triage keeps it current.
+SERVICE = "typesafe-triage"
 
 
 def source_for(payload: typing.Any) -> str:
@@ -77,6 +90,11 @@ def same_rubric(source: typing.Optional[str]) -> bool:
 
 # A deadline is only ever SHOWN to a reader at or above this confidence.
 DEADLINE_CONFIDENCE_TO_SHOW = 0.7
+# A suggestion is offered pre-ticked, on a page the person reviews, at or
+# above SUGGEST_CONFIDENCE; it is applied without a person in the loop (an
+# assistant's case, which has no review page) only at APPLY_CONFIDENCE.
+SUGGEST_CONFIDENCE = 0.7
+APPLY_CONFIDENCE = 0.85
 
 MAX_DATE_CANDIDATES = 8
 NONE_LABEL = "none_of_these"
@@ -108,20 +126,65 @@ CATEGORIES: dict[str, str] = {
     "other": "None of the above fits the stated reason",
 }
 
+# The kinds of plan the PlanSource fixture lists (fixtures/plan_source.yaml),
+# so a confident answer becomes the plan source intake would ask for
+# (PLAN_SOURCE_FOR_REGULATION). "unknown" is a real answer, not a failure.
 REGULATION: dict[str, str] = {
-    "employer_plan": (
-        "An employer-sponsored group health plan (ERISA), including self-funded "
-        "plans: an employer or group name, a plan administrator, a reference to "
-        "ERISA or the Department of Labor"
+    "employer_private": (
+        "A private employer's group health plan (ERISA), fully insured or "
+        "self-funded: an employer or group name, a plan administrator or TPA, "
+        "a reference to ERISA or the Department of Labor"
     ),
-    "state_regulated": (
-        "An individual, marketplace or fully insured plan regulated by a state "
-        "insurance department"
+    "employer_state_gov": "A health plan for employees of a state government",
+    "employer_other_gov": (
+        "A health plan for employees of a city, county, school district or "
+        "other local public employer"
     ),
-    "medicare": "Medicare or a Medicare Advantage plan",
+    "federal_employee": (
+        "The Federal Employees Health Benefits program (FEHB) or another plan "
+        "for federal employees"
+    ),
+    "union": "A union or multiemployer (Taft-Hartley) trust fund plan",
+    "marketplace_individual": (
+        "An individual, family or marketplace (ACA exchange) plan the person "
+        "bought themselves, regulated by a state insurance department"
+    ),
+    "medicare_advantage": (
+        "A Medicare Advantage (Part C) plan run by a private insurer"
+    ),
+    "medicare": "Original Medicare (Part A or B), not a private Medicare plan",
     "medicaid": "Medicaid, CHIP or a state managed-care Medicaid plan",
+    "va": "Veterans Affairs (VA) health care or VA Community Care",
     "unknown": "The letter does not say enough to tell",
 }
+
+# What each answer means for intake, by NAME (the fixture rows are matched by
+# name, never by primary key). A category or kind missing here has no
+# counterpart and suggests nothing.
+PLAN_SOURCE_FOR_REGULATION: dict[str, str] = {
+    "employer_private": "Employer -- Private",
+    "employer_state_gov": "Employer -- State Government",
+    "employer_other_gov": "Employer -- Other Government",
+    "federal_employee": "Employer -- Federal Government",
+    "union": "Union",
+    "marketplace_individual": "State Marketplace / Affordable Care Act",
+    "medicare_advantage": "Medicare Advantage",
+    "medicare": "Medicare Regular",
+    "medicaid": "Medicaid",
+    "va": "Veterans Affairs",
+}
+DENIAL_TYPE_FOR_CATEGORY: dict[str, str] = {
+    "medical_necessity": "Medically Necessary",
+    "prior_authorization": "Prior Authorization Requred",
+    "out_of_network": "Denied Out-Of-Network Provider",
+    "not_a_covered_benefit": "Not Covered By Plan",
+    "experimental_investigational": "Experimental Medical Treatment",
+}
+PRE_SERVICE_TYPE = "Pre-Service"
+POST_SERVICE_TYPE = "Post-Service"
+# The DataSource name on rows stored from a triage without a person's review
+# (DenialCreatorHelper.apply_triage_suggestions).
+TRIAGE_DATA_SOURCE = "typesafe"
 
 PRE_SERVICE_QUESTION = (
     "The denial is for a service the patient has not yet received (a prior "
@@ -588,8 +651,15 @@ async def triage(
     denial_date: typing.Optional[datetime.date],
     *,
     timeout_seconds: typing.Optional[float] = None,
+    on_failure: typing.Optional[typing.Callable[[str], typing.Awaitable[None]]] = None,
 ) -> typing.Optional[Triage]:
-    """Triage one denial, or return None. Never raises, never logs the text."""
+    """Triage one denial, or return None. Never raises, never logs the text.
+
+    ``on_failure`` is awaited with letter_quality.failure_summary(e) when
+    the request or the answer fails, as score_letter's is
+    (letter_quality.report_failure): how the call site records "why" where
+    the status pages can see it.
+    """
     if not enabled():
         _count("skipped")
         return None
@@ -607,11 +677,10 @@ async def triage(
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        # A spent or paused budget is normal operation, not a failure.
-        budget = isinstance(e, typesafe.TypeSafeBudgetSpent)
-        _count("skipped" if budget else "failed")
-        (logger.debug if typesafe.announced(e) else logger.warning)(
-            f"denial triage unavailable: {type(e).__name__}: {e}"
+        _count(
+            await letter_quality.report_failure(
+                e, what="denial triage", on_failure=on_failure
+            )
         )
         return None
     _count("triaged")
@@ -631,7 +700,14 @@ TRIAGE_COLUMNS = (
     "triage_source",
     "triage_text_hash",
     "triaged_at",
+    # A person's verdict on the deadline above (DEADLINE_CHECKS), so it goes
+    # with the triage it judged.
+    "appeal_deadline_check",
 )
+
+DEADLINE_CORRECT = "correct"
+DEADLINE_WRONG = "wrong"
+DEADLINE_CHECKS = (DEADLINE_CORRECT, DEADLINE_WRONG)
 
 
 def row_values(
@@ -652,6 +728,8 @@ def row_values(
         "triage_source": result.source,
         "triage_text_hash": text_hash(denial_text),
         "triaged_at": now,
+        # A new triage has not been checked by anyone yet.
+        "appeal_deadline_check": None,
     }
 
 
@@ -683,8 +761,8 @@ def deadline_to_show(
 
     Confidently identified, computed from the current text, and strictly
     after today: a deadline that is today (or earlier) would read as "you
-    already lost", which the letter may not even say. Not wired to any
-    patient-facing surface yet; see the module docstring.
+    already lost", which the letter may not even say. Readers are told it
+    only through deadline_sentence_if_enabled; see the module docstring.
     """
     deadline = getattr(denial, "appeal_deadline", None)
     confidence = getattr(denial, "appeal_deadline_confidence", None)
@@ -710,4 +788,82 @@ def deadline_sentence(denial: typing.Any, today: datetime.date) -> str:
     return (
         f"Your denial letter appears to say appeals are due by "
         f"{deadline.strftime('%B %-d, %Y')}. Check the letter to be sure."
+    )
+
+
+def deadline_show_enabled() -> bool:
+    """Whether readers may be told the deadline (TYPESAFE_DEADLINE_SHOW_ENABLED,
+    off until the staff labels say the extraction holds up)."""
+    return bool(getattr(settings, "TYPESAFE_DEADLINE_SHOW_ENABLED", False))
+
+
+def deadline_sentence_if_enabled(denial: typing.Any, today: datetime.date) -> str:
+    """deadline_sentence while the flag is on; otherwise an empty string."""
+    if not deadline_show_enabled():
+        return ""
+    return deadline_sentence(denial, today)
+
+
+@dataclasses.dataclass(frozen=True)
+class Suggestions:
+    """What a current, confident triage says intake should hold. Names, not
+    rows: the caller looks them up (DenialTypes.name, PlanSource.name)."""
+
+    denial_type_names: tuple[str, ...] = ()
+    plan_source_name: typing.Optional[str] = None
+    urgent: bool = False
+    pre_service: bool = False
+
+    def __bool__(self) -> bool:
+        return bool(
+            self.denial_type_names
+            or self.plan_source_name
+            or self.urgent
+            or self.pre_service
+        )
+
+
+def _at_least(value: typing.Any, bar: float) -> bool:
+    return (
+        isinstance(value, (int, float)) and not isinstance(value, bool) and value >= bar
+    )
+
+
+def suggestions(denial: typing.Any, *, min_confidence: float) -> Suggestions:
+    """What the stored triage suggests, at ``min_confidence`` or above.
+
+    Nothing unless the person allowed external models (the triage only
+    exists with that consent, and a withdrawn consent withdraws its use) and
+    the triage is current: computed from the letter on the row, under this
+    rubric. A pre-service probability at the bar suggests the Pre-Service
+    type and box; one at or below 1 - bar suggests Post-Service.
+    """
+    if not getattr(denial, "use_external", False) or not is_current(denial):
+        return Suggestions()
+    type_names: list[str] = []
+    category_type = DENIAL_TYPE_FOR_CATEGORY.get(
+        str(getattr(denial, "triage_category", "") or "")
+    )
+    if category_type and _at_least(
+        getattr(denial, "triage_category_confidence", None), min_confidence
+    ):
+        type_names.append(category_type)
+    pre_service_p = getattr(denial, "triage_pre_service", None)
+    pre_service = _at_least(pre_service_p, min_confidence)
+    if pre_service:
+        type_names.append(PRE_SERVICE_TYPE)
+    elif (
+        isinstance(pre_service_p, (int, float)) and pre_service_p <= 1 - min_confidence
+    ):
+        type_names.append(POST_SERVICE_TYPE)
+    plan_source_name = None
+    if _at_least(getattr(denial, "triage_regulation_confidence", None), min_confidence):
+        plan_source_name = PLAN_SOURCE_FOR_REGULATION.get(
+            str(getattr(denial, "triage_regulation", "") or "")
+        )
+    return Suggestions(
+        denial_type_names=tuple(type_names),
+        plan_source_name=plan_source_name,
+        urgent=_at_least(getattr(denial, "triage_urgent", None), min_confidence),
+        pre_service=pre_service,
     )

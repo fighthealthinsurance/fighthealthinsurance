@@ -192,9 +192,44 @@ class DenialAdmin(admin.ModelAdmin):
             "triage_source",
             "triage_text_hash",
             "triaged_at",
+            # Set by the two deadline actions below, never typed.
+            "appeal_deadline_check",
         )
     )
     readonly_fields = ("triage_summary",)
+    actions = ("mark_deadline_correct", "mark_deadline_wrong")
+
+    def _label_deadline(self, request, queryset, verdict: str) -> None:
+        """Record a person's verdict on the triage deadline of each selected
+        denial that has a current one; the tally on the model dashboard's
+        Jev panel decides when readers may be told deadlines."""
+        from fighthealthinsurance.ml import denial_triage
+
+        ids = [
+            denial.pk
+            for denial in queryset.exclude(appeal_deadline_label__isnull=True)
+            if denial_triage.is_current(denial)
+        ]
+        updated = Denial.objects.filter(pk__in=ids).update(
+            appeal_deadline_check=verdict
+        )
+        self.message_user(
+            request,
+            f"Marked {updated} deadline(s) {verdict}; "
+            f"{queryset.count() - updated} had no current triage deadline.",
+        )
+
+    @admin.action(description="Triage deadline is correct")
+    def mark_deadline_correct(self, request, queryset):
+        from fighthealthinsurance.ml import denial_triage
+
+        self._label_deadline(request, queryset, denial_triage.DEADLINE_CORRECT)
+
+    @admin.action(description="Triage deadline is wrong")
+    def mark_deadline_wrong(self, request, queryset):
+        from fighthealthinsurance.ml import denial_triage
+
+        self._label_deadline(request, queryset, denial_triage.DEADLINE_WRONG)
 
     def save_model(self, request, obj, form, change):  # type: ignore[override]
         # The triage columns are not on the form, but denial_date is, and an
@@ -225,6 +260,11 @@ class DenialAdmin(admin.ModelAdmin):
             f"pre_service={(obj.triage_pre_service or 0):.2f}",
             f"urgent={(obj.triage_urgent or 0):.2f}",
             f"deadline={self.appeal_deadline_current(obj) or 'none'}",
+            (
+                f"deadline_check={obj.appeal_deadline_check}"
+                if obj.appeal_deadline_check
+                else ""
+            ),
             f"triaged_at={obj.triaged_at:%Y-%m-%d %H:%M}" if obj.triaged_at else "",
         ]
         return "; ".join(part for part in parts if part)

@@ -18,6 +18,25 @@ the web pods.
 A backend already in rate-limit back-off is reported `FAIL_RATE_LIMITED`
 without being called.
 
+TypeSafe (Jev, provider `typesafe`) is checked in the same run. It is not a
+router backend: it answers typed questions about a text for letter ranking,
+denial triage, the chat reply check and research judging. Its probe is one
+canned yes/no question about a fixed sentence (no user data), sent through
+`ml/typesafe.ask`, the client every Jev feature uses, and counted under the
+"other" TypeSafe use. It waits up to 10 seconds for the process's spend
+ledger to load first (`ml/spend.py` refuses TypeSafe until it has). With no
+`TYPESAFE_API_KEY` the row is `NOT_CONFIGURED`. A rejected key is
+`FAIL_AUTH`; spent credits (HTTP 402), or this month's TypeSafe budget spent
+or paused after a credit refusal, is `FAIL_BILLING`; an unknown or retired
+model (404, 410) is `FAIL_MODEL_NOT_FOUND`; a rate limit (429) or an overload
+(529) is `FAIL_RATE_LIMITED`; TypeSafe unreachable, or cooling down after it
+was, is `FAIL_NETWORK`; a bad `TYPESAFE_API_URL` or `TYPESAFE_MODEL` is
+`FAIL_CLIENT_INIT`. The error is the summary every Jev feature records (an
+HTTP status, "timeout" or a class name). Run it alone
+with `python manage.py check_model_backends --model typesafe`. Its latest
+result also shows on the model usage dashboard's Jev panel, beside each Jev
+feature's own last success and failure.
+
 Results are categorized, persisted for the staff status page, and logged as a
 greppable summary block.
 

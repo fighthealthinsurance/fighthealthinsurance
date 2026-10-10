@@ -249,7 +249,7 @@ class TestQuestions:
 def _payload(deadline="180 days from notice", deadline_conf=0.9, category="medical_necessity"):
     answers = {
         "category": {"type": "choice", "choice": category, "confidence": 0.85},
-        "regulation": {"type": "choice", "choice": "employer_plan", "confidence": 0.6},
+        "regulation": {"type": "choice", "choice": "employer_private", "confidence": 0.6},
         "pre_service": {"type": "noul", "noul": 0.92},
         "urgent": {"type": "noul", "noul": 0.05},
     }
@@ -265,7 +265,7 @@ class TestParse:
     def test_happy_path_picks_the_internal_window_not_the_external_review_date(self):
         result = dt.parse(_payload(), self.candidates)
         assert result.category == "medical_necessity"
-        assert result.regulation == "employer_plan"
+        assert result.regulation == "employer_private"
         assert result.pre_service == pytest.approx(0.92)
         assert result.deadline_label == "180 days from notice"
         assert result.deadline == datetime.date(2027, 3, 1)
@@ -329,7 +329,7 @@ class TestTriage:
             raise dt.typesafe.TypeSafeError("HTTP 500")
 
         with override_settings(**ENABLED), patch.object(dt, "_post", fake_post):
-            with patch.object(dt.logger, "warning", side_effect=lambda m, *a, **k: seen.append(str(m))):
+            with patch.object(dt.letter_quality.logger, "warning", side_effect=lambda m, *a, **k: seen.append(str(m))):
                 assert asyncio.run(dt.triage(LETTER + " " + secret, None)) is None
         assert seen and all(secret not in m for m in seen)
 
@@ -425,3 +425,131 @@ class TestRowValues:
             assert dt.source_for({}) == f"typesafe/jev-latest/rubric-{dt.RUBRIC_VERSION}"
             assert dt.source_for({"model": "jev-1.14.0"}) == f"typesafe/jev-1.14.0/rubric-{dt.RUBRIC_VERSION}"
             assert dt.source_for({"model": "a/b"}) == f"typesafe/jev-latest/rubric-{dt.RUBRIC_VERSION}"
+
+
+class _Triaged:
+    """A denial-shaped object with a current triage of LETTER."""
+
+    def __init__(self, use_external=True, stale=False, **fields):
+        self.use_external = use_external
+        self.denial_text = LETTER
+        self.triage_text_hash = dt.text_hash("another letter" if stale else LETTER)
+        self.triage_source = dt.SOURCE
+        self.triage_category = fields.get("category", "medical_necessity")
+        self.triage_category_confidence = fields.get("category_confidence", 0.9)
+        self.triage_regulation = fields.get("regulation", "employer_private")
+        self.triage_regulation_confidence = fields.get("regulation_confidence", 0.9)
+        self.triage_pre_service = fields.get("pre_service", 0.95)
+        self.triage_urgent = fields.get("urgent", 0.9)
+
+
+class TestSuggestions:
+    def test_a_confident_current_triage_suggests_what_intake_asks(self):
+        found = dt.suggestions(_Triaged(), min_confidence=dt.SUGGEST_CONFIDENCE)
+        assert found.denial_type_names == ("Medically Necessary", "Pre-Service")
+        assert found.plan_source_name == "Employer -- Private"
+        assert found.urgent and found.pre_service
+
+    def test_a_low_pre_service_probability_suggests_post_service(self):
+        found = dt.suggestions(_Triaged(pre_service=0.05), min_confidence=0.7)
+        assert dt.POST_SERVICE_TYPE in found.denial_type_names
+        assert not found.pre_service
+
+    def test_an_unsure_pre_service_probability_suggests_neither(self):
+        found = dt.suggestions(_Triaged(pre_service=0.5), min_confidence=0.7)
+        assert dt.PRE_SERVICE_TYPE not in found.denial_type_names
+        assert dt.POST_SERVICE_TYPE not in found.denial_type_names
+
+    def test_below_the_bar_nothing_is_suggested(self):
+        triaged = _Triaged(
+            category_confidence=0.6, regulation_confidence=0.6, pre_service=0.5, urgent=0.6
+        )
+        assert not dt.suggestions(triaged, min_confidence=0.7)
+
+    def test_the_apply_bar_is_higher_than_the_suggest_bar(self):
+        triaged = _Triaged(category_confidence=0.8)
+        assert "Medically Necessary" in dt.suggestions(
+            triaged, min_confidence=dt.SUGGEST_CONFIDENCE
+        ).denial_type_names
+        assert "Medically Necessary" not in dt.suggestions(
+            triaged, min_confidence=dt.APPLY_CONFIDENCE
+        ).denial_type_names
+
+    @pytest.mark.parametrize(
+        "triaged",
+        [_Triaged(use_external=False), _Triaged(stale=True)],
+        ids=["consent withdrawn", "letter replaced"],
+    )
+    def test_nothing_without_consent_or_for_another_letter(self, triaged):
+        assert not dt.suggestions(triaged, min_confidence=0.7)
+
+    def test_categories_and_kinds_without_a_counterpart_suggest_nothing(self):
+        found = dt.suggestions(
+            _Triaged(category="eligibility", regulation="unknown"), min_confidence=0.7
+        )
+        assert found.denial_type_names == ("Pre-Service",)
+        assert found.plan_source_name is None
+
+
+class TestMappingsMatchTheFixtures:
+    """The suggestions name fixture rows; a renamed row must fail here, not
+    silently suggest nothing."""
+
+    @staticmethod
+    def _names(fixture, model):
+        import pathlib
+
+        import yaml
+
+        path = pathlib.Path(dt.__file__).parents[1] / "fixtures" / fixture
+        return {
+            row["fields"]["name"]
+            for row in yaml.safe_load(path.read_text())
+            if row["model"].endswith(model)
+        }
+
+    def test_every_suggested_denial_type_exists(self):
+        names = self._names("initial.yaml", "denialtypes")
+        wanted = set(dt.DENIAL_TYPE_FOR_CATEGORY.values()) | {
+            dt.PRE_SERVICE_TYPE,
+            dt.POST_SERVICE_TYPE,
+        }
+        assert wanted <= names
+
+    def test_every_suggested_plan_source_exists(self):
+        assert set(dt.PLAN_SOURCE_FOR_REGULATION.values()) <= self._names(
+            "plan_source.yaml", "plansource"
+        )
+
+    def test_mappings_only_name_known_answers(self):
+        assert set(dt.DENIAL_TYPE_FOR_CATEGORY) <= set(dt.CATEGORIES)
+        assert set(dt.PLAN_SOURCE_FOR_REGULATION) <= set(dt.REGULATION)
+        # triage_regulation is a 24-character column.
+        assert all(len(label) <= 24 for label in dt.REGULATION)
+
+
+class TestFailureHook:
+    def test_a_failure_is_reported_by_status_alone(self):
+        seen = []
+
+        async def fake_post(document, questions, timeout):
+            raise dt.typesafe.TypeSafeError("HTTP 402", status=402)
+
+        async def note(summary):
+            seen.append(summary)
+
+        with override_settings(**ENABLED), patch.object(dt, "_post", fake_post):
+            assert asyncio.run(dt.triage(LETTER, None, on_failure=note)) is None
+        assert seen == ["HTTP 402"]
+
+
+class TestDeadlineFlag:
+    TODAY = datetime.date(2026, 9, 7)
+
+    def test_the_sentence_needs_the_flag(self):
+        denial = _DenialLike(datetime.date(2026, 10, 15), 0.9)
+        assert dt.deadline_sentence_if_enabled(denial, self.TODAY) == ""
+        with override_settings(TYPESAFE_DEADLINE_SHOW_ENABLED=True):
+            assert "October 15, 2026" in dt.deadline_sentence_if_enabled(
+                denial, self.TODAY
+            )

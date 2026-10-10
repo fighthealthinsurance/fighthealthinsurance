@@ -188,6 +188,35 @@ def failure_summary(e: BaseException) -> str:
     return type(e).__name__
 
 
+async def report_failure(
+    e: BaseException,
+    *,
+    what: str,
+    on_failure: typing.Optional[typing.Callable[[str], typing.Awaitable[None]]] = None,
+) -> str:
+    """What every Jev feature does when its request or the answer fails:
+    log the failure (at debug when typesafe.announced it already, else as a
+    warning), await ``on_failure`` with failure_summary(e) so the call site
+    can record "why" where the status pages see it (for a spent budget too:
+    the status page explains that summary), and say how to count it:
+    "skipped" for a spent or paused budget, which is normal operation, else
+    "failed". The exception text never carries the document: typesafe.ask
+    raises on status alone and aiohttp's errors describe the connection.
+    The hook's own errors are logged and swallowed.
+    """
+    (logger.debug if typesafe.announced(e) else logger.warning)(
+        f"{what} unavailable: {type(e).__name__}: {e}"
+    )
+    if on_failure is not None:
+        try:
+            await on_failure(failure_summary(e))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.opt(exception=True).warning(f"{what} failure hook failed")
+    return "skipped" if isinstance(e, typesafe.TypeSafeBudgetSpent) else "failed"
+
+
 # Process-local request outcomes, exported by letter_quality_metrics.
 outcomes: dict[str, int] = {"scored": 0, "failed": 0, "skipped": 0}
 
@@ -534,23 +563,7 @@ async def score_letter(
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        # The exception text never carries the document: _post raises on
-        # status alone and aiohttp's own errors describe the connection.
-        # A spent or paused budget is normal operation, not a failure.
-        budget = isinstance(e, typesafe.TypeSafeBudgetSpent)
-        _count("skipped" if budget else "failed")
-        (logger.debug if typesafe.announced(e) else logger.warning)(
-            f"letter scoring unavailable: {type(e).__name__}: {e}"
-        )
-        # Still noted for a spent budget: the status page explains the
-        # "TypeSafeBudgetSpent" summary (staff_views._scoring_failure_hint).
-        if on_failure is not None:
-            try:
-                await on_failure(failure_summary(e))
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.opt(exception=True).warning("letter scoring failure hook failed")
+        _count(await report_failure(e, what="letter scoring", on_failure=on_failure))
         return None
     _count("scored")
     return score

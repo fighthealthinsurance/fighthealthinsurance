@@ -704,7 +704,7 @@ class TestDenialTriageThroughAsk:
             "model": model,
             "answers": {
                 "category": {"type": "choice", "choice": "medical_necessity", "confidence": 0.85},
-                "regulation": {"type": "choice", "choice": "employer_plan", "confidence": 0.6},
+                "regulation": {"type": "choice", "choice": "employer_private", "confidence": 0.6},
                 "pre_service": {"type": "noul", "noul": 0.92},
                 "urgent": {"type": "noul", "noul": 0.05},
                 "deadline": {"type": "choice", "choice": "180 days from notice", "confidence": 0.9},

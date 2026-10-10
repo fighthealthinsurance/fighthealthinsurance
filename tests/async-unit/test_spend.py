@@ -87,6 +87,13 @@ class TestTypeSafeBudget:
         assert not spend.allows(spend.TYPESAFE, spend.LETTERS)
         assert not spend.allows(spend.TYPESAFE, spend.TRIAGE)
 
+    def test_research_spend_counts_toward_the_month(self):
+        _load(**{_k("typesafe", "research"): {EARLIER: 5 * M}})
+        assert not spend.allows(spend.TYPESAFE, spend.RESEARCH)
+        assert not spend.allows(spend.TYPESAFE, spend.LETTERS)
+        _load(**{_k("typesafe", "research"): {EARLIER: int(4.99 * M)}})
+        assert spend.allows(spend.TYPESAFE, spend.RESEARCH)
+
     def test_chat_never_spends_the_letters_reserve(self):
         # Chat has spent little, but letters and chat together reached $3.
         _load(

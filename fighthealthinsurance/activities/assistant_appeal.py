@@ -113,6 +113,15 @@ async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
                         pass
         except TimeoutError:
             logger.warning(f"assistant draft: reading timed out for {denial_uuid}")
+        # No person reviews an assistant's case, so what the letter's triage
+        # confidently says about the denial types and the plan source is
+        # stored here (the site's pages offer it pre-ticked instead).
+        try:
+            await DenialCreatorHelper.apply_triage_suggestions(denial.denial_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"assistant draft: triage suggestions not applied for {denial_uuid}"
+            )
         await denial.arefresh_from_db(fields=["procedure", "diagnosis"])
         fields = []
         if not denial.procedure and draft.procedure:

@@ -1545,3 +1545,121 @@ class TestCatalogFailureIsVisible:
     def test_a_check_naming_the_class_keeps_the_row(self, monkeypatch):
         """The class name is what the row reports, so re-checking it works."""
         assert len(self._catalog_rows(monkeypatch, ["RemoteAzureOpenAI"])) == 1
+class TestTypeSafeProbe:
+    """TypeSafe (Jev) is probed with one canned yes/no question; its
+    failures land in the same categories, rows and e-mail as a model's."""
+
+    KEY = {"TYPESAFE_API_KEY": "test-key"}
+
+    @staticmethod
+    def _probe(ask):
+        from django.test import override_settings
+
+        from fighthealthinsurance.ml import spend, typesafe
+
+        with override_settings(**TestTypeSafeProbe.KEY), patch.object(
+            typesafe, "ask", ask
+        ), patch.object(spend._ledger, "wait_until_loaded", return_value=True):
+            entry = mhc.typesafe_entry()
+            assert entry.enabled
+            return asyncio.run(mhc.check_typesafe(entry, timeout=5))
+
+    def test_without_a_key_it_is_not_configured_and_not_a_failure(self):
+        entry = mhc.typesafe_entry()
+        assert entry.category == mhc.CATEGORY_NOT_CONFIGURED
+        assert not entry.enabled and not entry.failed
+        assert entry.provider == mhc.TYPESAFE_PROVIDER
+
+    def test_a_probability_passes(self):
+        from fighthealthinsurance.ml import spend
+
+        ask = AsyncMock(
+            return_value={"model": "jev-1.13.0", "answers": {"probe": {"noul": 0.97}}}
+        )
+        result = self._probe(ask)
+        assert result.ok and result.category == mhc.CATEGORY_PASS
+        state, questions = ask.await_args.args
+        assert state == mhc.TYPESAFE_PROBE_STATE
+        assert questions == mhc.TYPESAFE_PROBE_QUESTIONS
+        assert ask.await_args.kwargs["use"] == spend.OTHER
+
+    @pytest.mark.parametrize(
+        "status,category",
+        [
+            (401, mhc.CATEGORY_AUTH),
+            (402, mhc.CATEGORY_BILLING),
+            (404, mhc.CATEGORY_MODEL_NOT_FOUND),
+            (410, mhc.CATEGORY_MODEL_NOT_FOUND),
+            (429, mhc.CATEGORY_RATE_LIMITED),
+            (529, mhc.CATEGORY_RATE_LIMITED),
+            (503, mhc.CATEGORY_NETWORK),
+            (422, mhc.CATEGORY_OTHER),
+        ],
+    )
+    def test_http_failures_are_categorized(self, status, category):
+        from fighthealthinsurance.ml import typesafe
+
+        result = self._probe(
+            AsyncMock(side_effect=typesafe.TypeSafeError(f"HTTP {status}", status=status))
+        )
+        assert result.category == category and result.failed
+        assert result.error == f"HTTP {status}"
+
+    def test_a_refused_url_or_model_is_a_client_init_failure(self):
+        from fighthealthinsurance.ml import typesafe
+
+        result = self._probe(AsyncMock(side_effect=typesafe.TypeSafeError("bad url")))
+        assert result.category == mhc.CATEGORY_CLIENT_INIT
+        assert result.error == "TypeSafeError"
+
+    def test_a_spent_or_paused_budget_is_billing(self):
+        from fighthealthinsurance.ml import typesafe
+
+        result = self._probe(AsyncMock(side_effect=typesafe.TypeSafeBudgetSpent("x")))
+        assert result.category == mhc.CATEGORY_BILLING
+        assert result.error == "TypeSafeBudgetSpent"
+
+    def test_a_cooldown_reads_as_what_started_it(self):
+        from fighthealthinsurance.ml import typesafe
+
+        unreachable = self._probe(
+            AsyncMock(side_effect=typesafe.TypeSafeCoolingDown("cooling down"))
+        )
+        assert unreachable.category == mhc.CATEGORY_NETWORK
+        refused = self._probe(
+            AsyncMock(side_effect=typesafe.TypeSafeCoolingDown("cooling down", status=401))
+        )
+        assert refused.category == mhc.CATEGORY_AUTH
+
+    def test_a_timeout(self):
+        result = self._probe(AsyncMock(side_effect=asyncio.TimeoutError()))
+        assert result.category == mhc.CATEGORY_TIMEOUT
+
+    def test_an_answer_without_a_probability_is_malformed(self):
+        result = self._probe(AsyncMock(return_value={"answers": {"probe": {"noul": 3}}}))
+        assert result.category == mhc.CATEGORY_MALFORMED_RESPONSE
+
+    def test_the_run_includes_typesafe_only_when_wanted(self, monkeypatch, fresh_router):
+        _clear_provider_env(monkeypatch)
+        results = asyncio.run(mhc.run_checks_async())
+        assert mhc.TYPESAFE_PROVIDER in {r.provider for r in results}
+        results = asyncio.run(mhc.run_checks_async(only_models=["fhi-local"]))
+        assert mhc.TYPESAFE_PROVIDER not in {r.provider for r in results}
+        results = asyncio.run(mhc.run_checks_async(only_models=["typesafe"]))
+        assert [r.provider for r in results] == [mhc.TYPESAFE_PROVIDER]
+
+    def test_a_typesafe_failure_is_in_the_alert_email(self):
+        failing = _result(
+            provider=mhc.TYPESAFE_PROVIDER,
+            model_name="jev-1.13.0",
+            internal_name="jev-1.13.0",
+            category=mhc.CATEGORY_AUTH,
+        )
+        failing.error = "HTTP 401"
+        summary = mhc.HealthCheckRunSummary(
+            run_id="r", deployment_id="d", environment="e", results=[failing]
+        )
+        with patch("django.core.mail.send_mail") as send:
+            assert mhc._send_consolidated_alert(summary)
+        body = send.call_args.args[1]
+        assert "provider: typesafe" in body and "HTTP 401" in body

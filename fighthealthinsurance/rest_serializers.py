@@ -2,6 +2,7 @@ from typing import List, Optional
 
 from django import forms
 from django.urls import reverse
+from django.utils import timezone
 
 from drf_braces.serializers.form_serializer import FormSerializer
 from drf_spectacular.utils import extend_schema_field
@@ -10,6 +11,7 @@ from rest_framework import serializers
 
 from fhi_users.auth import rest_serializers as auth_serializers
 from fighthealthinsurance import forms as core_forms
+from fighthealthinsurance.ml import denial_triage
 from fighthealthinsurance.models import (
     Appeal,
     AppealAttachment,
@@ -288,13 +290,54 @@ class AppealSummarySerializer(serializers.ModelSerializer):
         return ", ".join(denial_types) if denial_types else None
 
 
+class DenialTriageSerializer(serializers.Serializer):
+    """The letter's triage (ml/denial_triage.py), as far as it may be read:
+    current values only, each with the model's confidence, and the deadline
+    only under the rule a patient is shown it by."""
+
+    category = serializers.CharField(allow_null=True)
+    category_confidence = serializers.FloatField(allow_null=True)
+    regulation = serializers.CharField(allow_null=True)
+    regulation_confidence = serializers.FloatField(allow_null=True)
+    pre_service = serializers.FloatField(allow_null=True)
+    urgent = serializers.FloatField(allow_null=True)
+    appeal_deadline = serializers.DateField(allow_null=True)
+
+
 class DenialModelSerializer(serializers.ModelSerializer):
-    """Full model serializer for Denial records."""
+    """Full model serializer for Denial records.
+
+    The raw triage columns are left out: they outlive the letter they were
+    computed from, and a deadline is only fit to read when it is confident,
+    current and still ahead. ``triage`` carries what may be read instead.
+    """
+
+    triage = serializers.SerializerMethodField()
 
     class Meta:
         model = Denial
-        # Staff-page bookkeeping (lifetime_counters), not denial data.
-        exclude: list[str] = ["person_counted"]
+        # person_counted is staff-page bookkeeping (lifetime_counters), not
+        # denial data; the triage columns are served through ``triage``.
+        exclude: list[str] = ["person_counted", *denial_triage.TRIAGE_COLUMNS]
+
+    @extend_schema_field(DenialTriageSerializer(allow_null=True))
+    def get_triage(self, obj: Denial) -> Optional[dict]:
+        if not obj.use_external or not denial_triage.is_current(obj):
+            return None
+        deadline = (
+            denial_triage.deadline_to_show(obj, timezone.localdate())
+            if denial_triage.deadline_show_enabled()
+            else None
+        )
+        return {
+            "category": obj.triage_category,
+            "category_confidence": obj.triage_category_confidence,
+            "regulation": obj.triage_regulation,
+            "regulation_confidence": obj.triage_regulation_confidence,
+            "pre_service": obj.triage_pre_service,
+            "urgent": obj.triage_urgent,
+            "appeal_deadline": deadline.isoformat() if deadline else None,
+        }
 
 
 class AppealDetailSerializer(serializers.ModelSerializer):

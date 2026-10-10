@@ -12,6 +12,12 @@ Additional Resources & Questions
 
   <h1 class="fhi-step-title">Questions</h1>
 
+{% if appeal_deadline_note %}
+<div class="alert-box alert-box-info">
+  <p>{{ appeal_deadline_note }}</p>
+</div>
+{% endif %}
+
 {# Branch on the view's outcome, never on `combined`: a Django Form with #}
 {# no fields in it is still truthy. An absent or unrecognised outcome     #}
 {# falls through to the questions branch, which is gated on               #}

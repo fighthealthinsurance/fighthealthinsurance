@@ -334,6 +334,20 @@ class Base(Configuration):
     TYPESAFE_DENIAL_TRIAGE_ENABLED = (
         os.getenv("TYPESAFE_DENIAL_TRIAGE_ENABLED", "false").lower() == "true"
     )
+    # Whether readers are told the appeal deadline triage read from their
+    # letter (review and questions pages, the REST triage field). Off until
+    # the staff labels in the Denial admin (tallied on the model dashboard's
+    # Jev panel) say the extraction holds up on real letters.
+    TYPESAFE_DEADLINE_SHOW_ENABLED = (
+        os.getenv("TYPESAFE_DEADLINE_SHOW_ENABLED", "false").lower() == "true"
+    )
+    # Research judging (ml/research_judging.py): same key, its own switch.
+    # Jev judges each PubMed article against the denial's treatment, and
+    # articles off topic or against the treatment are left out of the
+    # appeal's research and offered unticked on the fax page.
+    TYPESAFE_RESEARCH_JUDGING_ENABLED = (
+        os.getenv("TYPESAFE_RESEARCH_JUDGING_ENABLED", "false").lower() == "true"
+    )
     # Chat shadow scoring (ml/chat_shadow.py): same key, its own switch. When
     # on, a background task scores delivered chat replies for the staff
     # dashboard, only in chats that allowed outside models: every turn that
@@ -1142,6 +1156,8 @@ class Test(_TestBase):
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+    TYPESAFE_DEADLINE_SHOW_ENABLED = False
+    TYPESAFE_RESEARCH_JUDGING_ENABLED = False
     TYPESAFE_CHAT_SHADOW_ENABLED = False
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
@@ -1221,6 +1237,8 @@ class TestSync(_TestBase):
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+    TYPESAFE_DEADLINE_SHOW_ENABLED = False
+    TYPESAFE_RESEARCH_JUDGING_ENABLED = False
     TYPESAFE_CHAT_SHADOW_ENABLED = False
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
@@ -1283,6 +1301,8 @@ class TestActor(_TestBase):
     TYPESAFE_LETTER_RANKING_ENABLED = False
     ADVANCED_OCR_OFFERED = False
     TYPESAFE_DENIAL_TRIAGE_ENABLED = False
+    TYPESAFE_DEADLINE_SHOW_ENABLED = False
+    TYPESAFE_RESEARCH_JUDGING_ENABLED = False
     TYPESAFE_CHAT_SHADOW_ENABLED = False
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.

@@ -518,3 +518,45 @@ class TestSortKey:
             reverse=True,
         )
         assert keys == [(2, 0.8), (2, 0.4), (1, 0.9), (0, 0.0)]
+
+
+class TestReportFailure:
+    """The one failure path every Jev feature shares (letter scoring, denial
+    triage, research judging)."""
+
+    def test_a_spent_budget_is_skipped_and_still_reported(self):
+        seen = []
+
+        async def hook(summary):
+            seen.append(summary)
+
+        counted = asyncio.run(
+            lq.report_failure(
+                typesafe.TypeSafeBudgetSpent("budget spent"), what="x", on_failure=hook
+            )
+        )
+        assert counted == "skipped"
+        assert seen == ["TypeSafeBudgetSpent"]
+
+    def test_anything_else_failed_by_status(self):
+        seen = []
+
+        async def hook(summary):
+            seen.append(summary)
+
+        counted = asyncio.run(
+            lq.report_failure(
+                typesafe.TypeSafeError("HTTP 503", status=503), what="x", on_failure=hook
+            )
+        )
+        assert counted == "failed"
+        assert seen == ["HTTP 503"]
+
+    def test_a_broken_hook_is_swallowed(self):
+        async def hook(summary):
+            raise RuntimeError("status page down")
+
+        assert (
+            asyncio.run(lq.report_failure(TimeoutError(), what="x", on_failure=hook))
+            == "failed"
+        )

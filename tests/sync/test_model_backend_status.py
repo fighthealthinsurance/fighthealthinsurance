@@ -637,6 +637,8 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 "azure-openai/gpt-5.5",
                 # Retired.
                 "fhi-2025-may-0.3-float16-q8-vllm-compressed",
+                # TypeSafe (Jev), not configured here: off, with the others.
+                "jev-1.13.0",
             ],
         )
 

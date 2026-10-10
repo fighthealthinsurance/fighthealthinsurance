@@ -36,8 +36,11 @@ from metapub import FindIt
 
 from fighthealthinsurance.context_utils import truncate_at_boundary
 from fighthealthinsurance.microsites import get_microsite
+from fighthealthinsurance.ml import research_judging, spend
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
+    ExternalServiceHealth,
+    PubMedArticleJudgment,
     PubMedArticleSummarized,
     PubMedMiniArticle,
     PubMedQueryData,
@@ -62,6 +65,43 @@ else:
 
 # Return type for the generic retry helper below.
 T = TypeVar("T")
+
+# How long building one denial's research context waits for Jev's article
+# judgments (ml/research_judging.py) before going on with the articles as
+# they are; judgments that landed in time are stored either way.
+JUDGING_BUDGET_SECONDS = 15.0
+
+
+def judgment_rows(pmids: list[str], key: str) -> "QuerySet[PubMedArticleJudgment]":
+    """The stored judgments of these articles for one treatment and
+    condition, under the current research rubric, oldest first (so a newer
+    row wins when they are read into a dict)."""
+    return PubMedArticleJudgment.objects.filter(
+        pmid__in=pmids,
+        treatment_key=key,
+        scorer__startswith="typesafe/",
+        scorer__endswith=research_judging._RUBRIC_SUFFIX,
+    ).order_by("created_at")
+
+
+def judgment_of(row: PubMedArticleJudgment) -> research_judging.Judgment:
+    return research_judging.Judgment(
+        on_topic=row.on_topic,
+        supports=row.supports,
+        undermines=row.undermines,
+        scorer=row.scorer,
+    )
+
+
+def stored_judgments(
+    denial: Denial, pmids: list[str]
+) -> dict[str, research_judging.Judgment]:
+    """What is already known about these articles for this denial's
+    treatment and condition. Reads only; sends nothing anywhere."""
+    if not (denial.procedure or "").strip() or not pmids:
+        return {}
+    key = research_judging.treatment_key(denial.procedure, denial.diagnosis)
+    return {row.pmid: judgment_of(row) for row in judgment_rows(pmids, key)}
 
 
 PER_QUERY = 2
@@ -1323,6 +1363,9 @@ class PubMedTools(object):
         query = f"{procedure_opt} {diagnosis_opt}".strip()
         articles: list[PubMedArticleSummarized] = []
         missing_pmids: list[str] = []
+        # Whether the articles came from our search rather than from a
+        # selection already on the row: only ours may be cut by judging.
+        searched = False
 
         try:
             async with async_timeout(timeout):
@@ -1352,6 +1395,7 @@ class PubMedTools(object):
                     )
 
                     selected_pmids = list(map(lambda x: x.pmid, possible_articles))
+                    searched = True
 
                 # Use aupdate instead of asave to avoid race conditions
                 await self._this_letter(denial).aupdate(pubmed_ids_json=selected_pmids)
@@ -1401,6 +1445,11 @@ class PubMedTools(object):
                 logger.debug(f"Writing back selected pmids {selected_pmids}")
                 await self._this_letter(denial).aupdate(pubmed_ids_json=selected_pmids)
 
+        if articles:
+            articles = await self._judged_for_context(
+                denial, articles, searched=searched
+            )
+
         # Format the articles for context
         if articles:
             logger.debug("Making single context input")
@@ -1420,6 +1469,113 @@ class PubMedTools(object):
                 return r
         else:
             return ""
+
+    async def judge_articles(
+        self, denial: Denial, articles: list[PubMedArticleSummarized]
+    ) -> dict[str, research_judging.Judgment]:
+        """Jev's judgment of each article for this denial's treatment and
+        condition: the stored ones, plus new ones for up to
+        research_judging.MAX_ARTICLES others when judging is on and the
+        person allowed external models. Each new judgment is stored as it
+        lands, so a caller that stops waiting keeps what arrived."""
+        procedure = (denial.procedure or "").strip()
+        if not procedure:
+            return {}
+        key = research_judging.treatment_key(denial.procedure, denial.diagnosis)
+        pmids = list(dict.fromkeys(a.pmid for a in articles if a.pmid))
+        judgments = {
+            row.pmid: judgment_of(row) async for row in judgment_rows(pmids, key)
+        }
+        if not research_judging.enabled() or not denial.use_external:
+            return judgments
+        by_pmid = {a.pmid: a for a in articles if a.pmid}
+        missing = [pmid for pmid in pmids if pmid not in judgments][
+            : research_judging.MAX_ARTICLES
+        ]
+        if not missing:
+            return judgments
+        gate = asyncio.Semaphore(research_judging.CONCURRENCY)
+
+        async def note_failure(summary: str) -> None:
+            await ExternalServiceHealth.anote_failure(research_judging.SERVICE, summary)
+
+        async def one(pmid: str) -> None:
+            article = by_pmid[pmid]
+            async with gate:
+                judgment = await research_judging.judge_article(
+                    article.title,
+                    article.abstract,
+                    denial.procedure,
+                    denial.diagnosis,
+                    on_failure=note_failure,
+                )
+            if judgment is None:
+                return
+            judgments[pmid] = judgment
+            await ExternalServiceHealth.anote_success(research_judging.SERVICE)
+            try:
+                await PubMedArticleJudgment.objects.aget_or_create(
+                    pmid=pmid,
+                    treatment_key=key,
+                    scorer=judgment.scorer,
+                    defaults={
+                        "on_topic": judgment.on_topic,
+                        "supports": judgment.supports,
+                        "undermines": judgment.undermines,
+                    },
+                )
+            except Exception as e:
+                # Another case stored the same judgment first; ours is kept
+                # in memory for this build either way.
+                logger.debug(f"article judgment not stored: {type(e).__name__}")
+
+        # The spend channel (site or assistant) is a context variable, so the
+        # tasks gather starts inherit it.
+        with spend.for_channel(spend.channel_of(denial)):
+            await asyncio.gather(*(one(pmid) for pmid in missing))
+        return judgments
+
+    async def _judged_for_context(
+        self,
+        denial: Denial,
+        articles: list[PubMedArticleSummarized],
+        *,
+        searched: bool,
+    ) -> list[PubMedArticleSummarized]:
+        """The articles to quote, ordered by how strongly Jev finds each
+        supports the treatment. Articles our search found that Jev finds off
+        topic or against the treatment are left out, and the row's article
+        list is rewritten to match; a selection already on the row (possibly
+        the person's own) is only reordered, never cut. Waits at most
+        JUDGING_BUDGET_SECONDS; past that, or on any failure, the articles
+        go on as they are."""
+        try:
+            judgments = await asyncio.wait_for(
+                self.judge_articles(denial, articles),
+                timeout=JUDGING_BUDGET_SECONDS,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"article judging skipped: {type(e).__name__}")
+            return articles
+        if not judgments:
+            return articles
+        kept, dropped = research_judging.order(
+            articles, judgments, pmid_of=lambda a: a.pmid or ""
+        )
+        if not searched:
+            return kept + dropped
+        kept_pmids = [a.pmid for a in kept]
+        if kept_pmids != [a.pmid for a in articles]:
+            if dropped:
+                logger.debug(
+                    f"PubMed context for denial {denial.denial_id}: left out "
+                    f"{len(dropped)} article(s) judged off topic or against "
+                    "the treatment"
+                )
+            await self._this_letter(denial).aupdate(pubmed_ids_json=kept_pmids)
+        return kept
 
     @staticmethod
     def format_article_short(article: PubMedArticleSummarized) -> str:

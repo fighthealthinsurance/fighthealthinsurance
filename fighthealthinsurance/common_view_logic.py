@@ -105,7 +105,7 @@ from fighthealthinsurance.medical_code_extractor import (
     extract_icd10_codes,
     extract_procedure_codes,
 )
-from fighthealthinsurance.ml import denial_triage, letter_quality
+from fighthealthinsurance.ml import denial_triage, letter_quality, research_judging
 from fighthealthinsurance.ml import spend
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.ml.serving_registry import aserving_id_for
@@ -144,7 +144,7 @@ from fighthealthinsurance.utils import (
     warn_unusable_appeal,
 )
 from .clinicaltrials_tools import ClinicalTrialsTools
-from .pubmed_tools import PubMedTools
+from .pubmed_tools import PubMedTools, stored_judgments
 from .nice_tools import NICETools
 from .email_utils import is_sendable_email
 from .utils import (
@@ -224,6 +224,10 @@ class NextStepInfo:
     # least one specific match; None otherwise. Same gating as the pharmacy
     # field: server-rendered into outside_help.html, not REST-serialized.
     financial_assistance: Optional["FinancialAssistanceResults"] = None
+    # The appeal deadline the letter appears to give, as one hedged sentence
+    # (ml/denial_triage.deadline_sentence_if_enabled); empty unless
+    # TYPESAFE_DEADLINE_SHOW_ENABLED is on. Server-rendered only.
+    appeal_deadline_note: str = ""
 
     def convert_to_serializable(self) -> "NextStepInfoSerializable":
         return NextStepInfoSerializable(
@@ -1111,9 +1115,7 @@ class ChooseAppealHelper:
         draft_unsaved: bool = False,
         editted: bool = False,
         presented_ids: Optional[List[int]] = None,
-    ) -> Tuple[
-        Optional[str], Optional[str], Optional[QuerySet[PubMedArticleSummarized]]
-    ]:
+    ) -> Tuple[Optional[str], Optional[str], Optional[list[PubMedArticleSummarized]]]:
         hashed_email = Denial.get_hashed_email(email)
         # Get the current info
         denial: Denial = Denial.objects.filter(
@@ -1135,11 +1137,16 @@ class ChooseAppealHelper:
     @classmethod
     def candidate_articles(
         cls, denial_id, denial: Denial
-    ) -> Optional[QuerySet[PubMedArticleSummarized]]:
+    ) -> Optional[list[PubMedArticleSummarized]]:
         """The PubMed articles the send page offers to include with a fax.
 
         Its own step so the page a cancelled fax payment returns to can offer
         the same articles as the page the person left.
+
+        Ordered by Jev's stored judgments (ml/research_judging.py; read only,
+        nothing is sent): the articles that most support the treatment
+        first, then any it found off topic or against the treatment, each of
+        those marked ``judged_drop`` so the page offers it unticked.
         """
         articles = None
         article_ids = None
@@ -1166,11 +1173,28 @@ class ChooseAppealHelper:
         # Query for articles if we have IDs
         if article_ids:
             try:
-                articles = PubMedArticleSummarized.objects.filter(
-                    pmid__in=article_ids
-                ).distinct()
+                articles = list(
+                    PubMedArticleSummarized.objects.filter(
+                        pmid__in=article_ids
+                    ).distinct()
+                )
             except Exception as e:
                 logger.debug(f"Error finding articles {article_ids}: {e}")
+
+        if articles:
+            try:
+                judgments = stored_judgments(
+                    denial, [a.pmid for a in articles if a.pmid]
+                )
+                if judgments:
+                    kept, dropped = research_judging.order(
+                        articles, judgments, pmid_of=lambda a: a.pmid or ""
+                    )
+                    for article in dropped:
+                        setattr(article, "judged_drop", True)
+                    articles = kept + dropped
+            except Exception as e:
+                logger.debug(f"Error ordering articles by judgment: {e}")
 
         logger.debug(f"Loaded articles {articles}...")
         return articles
@@ -1594,6 +1618,24 @@ class FindNextStepsHelper:
         question_forms = []
         prof_pov = denial.professional_to_finish
 
+        # The urgent and pre-service boxes the letter's triage points to
+        # (ml/denial_triage.suggestions) start ticked and say so; a stored
+        # answer still wins (magic_combined_form), and GenerateAppeal saves
+        # an unticked one as an answer, so a box the person cleared stays
+        # clear.
+        suggested = denial_triage.suggestions(
+            denial, min_confidence=denial_triage.SUGGEST_CONFIDENCE
+        )
+        suggested_boxes = {
+            name: True
+            for name, ticked in (
+                ("urgent", suggested.urgent),
+                ("pre_service", suggested.pre_service),
+            )
+            if ticked
+        }
+        letter_hint = from_your_letter_hint() if suggested_boxes else ""
+
         # Deliberately no ``initial=`` from the denial type: ``appeal_text``
         # is canned appeal boilerplate, not an answer, and an answer box is
         # the person's. Some of those paragraphs are also longer than the
@@ -1602,7 +1644,10 @@ class FindNextStepsHelper:
         for dt in denial.denial_type.all():
             new_form = dt.get_form()
             if new_form is not None:
-                new_form = new_form(prof_pov=prof_pov)
+                new_form = new_form(prof_pov=prof_pov, initial=suggested_boxes)
+                for name in suggested_boxes:
+                    if name in new_form.fields:
+                        append_help_text(new_form.fields[name], letter_hint)
                 question_forms.append(new_form)
 
         # Add generated questions form if available, and only if it was
@@ -1927,6 +1972,9 @@ class FindNextStepsHelper:
         # Combine all forms
         pharmacy_coupon_suggestion = cls._build_pharmacy_coupon_suggestion(denial)
         financial_assistance = cls._build_financial_assistance(denial)
+        appeal_deadline_note = denial_triage.deadline_sentence_if_enabled(
+            denial, timezone.localdate()
+        )
         try:
             combined_form = magic_combined_form(question_forms, existing_answers)
             return NextStepInfo(
@@ -1938,6 +1986,7 @@ class FindNextStepsHelper:
                 ),
                 pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
                 financial_assistance=financial_assistance,
+                appeal_deadline_note=appeal_deadline_note,
             )
         except Exception as e:
             # Anything landing here rebuilds the page without the answers
@@ -1955,6 +2004,7 @@ class FindNextStepsHelper:
                 ),
                 pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
                 financial_assistance=financial_assistance,
+                appeal_deadline_note=appeal_deadline_note,
             )
 
     @classmethod
@@ -2079,6 +2129,9 @@ class FindNextStepsHelper:
             ),
             pharmacy_coupon_suggestion=cls._build_pharmacy_coupon_suggestion(denial),
             financial_assistance=cls._build_financial_assistance(denial),
+            appeal_deadline_note=denial_triage.deadline_sentence_if_enabled(
+                denial, timezone.localdate()
+            ),
         )
 
 
@@ -2606,10 +2659,11 @@ class DenialCreatorHelper:
           mirror and is kept: a new letter is not a reason to throw their
           answers away. Compared before the mirrors are cleared.
         * the denial types ``extract_set_denialtype`` read out of the old
-          letter, which carry the ``regex`` source. A type the person added
-          on the review page carries no source and is kept; one they left
-          ticked keeps the ``regex`` source and is read again from the new
-          letter.
+          letter, which carry the ``regex`` source, and the types and plan
+          source ``apply_triage_suggestions`` took from its triage, which
+          carry the ``typesafe`` source. A type the person added on the
+          review page carries no source and is kept; one they left ticked
+          keeps its source and is read again from the new letter.
         * the question set (``generated_questions``, its stamp, and the
           speculative ``candidate_generated_questions``), so the questions are
           asked again about the new letter even when the procedure and
@@ -2696,7 +2750,14 @@ class DenialCreatorHelper:
                 ):
                     letter_values_cleared.append(column)
             types_deleted, _ = DenialTypesRelation.objects.filter(
-                denial=denial, src__name="regex"
+                denial=denial,
+                src__name__in=("regex", denial_triage.TRIAGE_DATA_SOURCE),
+            ).delete()
+            # A plan source applied from the old letter's triage (an
+            # assistant's case, apply_triage_suggestions) goes with it; one
+            # the person picked carries no source and stays.
+            PlanSourceRelation.objects.filter(
+                denial=denial, src__name=denial_triage.TRIAGE_DATA_SOURCE
             ).delete()
             Denial.objects.filter(denial_id=denial.denial_id).update(
                 denial_text_summary=None,
@@ -4455,10 +4516,19 @@ class DenialCreatorHelper:
         if denial_triage.is_current(denial):
             return EXTRACTION_OUTCOME_CACHED
         text = denial.denial_text
+
+        async def _note_triage_failure(summary: str) -> None:
+            # Cross-pod record for the staff pages: why the last call failed.
+            await ExternalServiceHealth.anote_failure(denial_triage.SERVICE, summary)
+
         with spend.for_channel(spend.channel_of(denial)):
-            result = await denial_triage.triage(text, denial.denial_date)
+            result = await denial_triage.triage(
+                text, denial.denial_date, on_failure=_note_triage_failure
+            )
         if result is None:
             return EXTRACTION_OUTCOME_NOTHING_FOUND
+        # TypeSafe answered. Best effort, like the failure note.
+        await ExternalServiceHealth.anote_success(denial_triage.SERVICE)
         values = denial_triage.row_values(result, timezone.now(), text)
         # An anchored window is always resolved against the date on the row
         # at WRITE time, and the write is conditional on that date (and on
@@ -4488,6 +4558,75 @@ class DenialCreatorHelper:
             "changed while it was in flight"
         )
         return EXTRACTION_OUTCOME_NOTHING_FOUND
+
+    @classmethod
+    async def apply_triage_suggestions(cls, denial_id) -> int:
+        """Store what the letter's triage confidently says, for a case no
+        person reviews (an assistant's: activities/assistant_appeal.py).
+
+        The site's own flow never calls this: there the review and questions
+        pages offer the same suggestions pre-ticked and the person decides.
+        Here the bar is ml/denial_triage.APPLY_CONFIDENCE, and only what the
+        case lacks is added: denial types it does not already have (from any
+        source, or the type would be listed, and its questions asked, twice),
+        and a plan source only when it has none. Each row carries the
+        ``typesafe`` source, so a replaced letter's sweep takes it away
+        (_invalidate_denial_text_artifacts); rows added while the letter was
+        replaced are removed again here, as extract_set_denialtype does.
+
+        Returns how many rows were added.
+        """
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        suggested = denial_triage.suggestions(
+            denial, min_confidence=denial_triage.APPLY_CONFIDENCE
+        )
+        if not suggested.denial_type_names and not suggested.plan_source_name:
+            return 0
+        letter = denial.denial_text
+        src, _ = await DataSource.objects.aget_or_create(
+            name=denial_triage.TRIAGE_DATA_SOURCE
+        )
+        type_pks: list[int] = []
+        source_pks: list[int] = []
+        if suggested.denial_type_names:
+            have = {
+                pk
+                async for pk in DenialTypesRelation.objects.filter(
+                    denial=denial
+                ).values_list("denial_type_id", flat=True)
+            }
+            async for denial_type in DenialTypes.objects.filter(
+                name__in=suggested.denial_type_names
+            ):
+                if denial_type.pk in have:
+                    continue
+                relation = await DenialTypesRelation.objects.acreate(
+                    denial=denial, denial_type=denial_type, src=src
+                )
+                type_pks.append(relation.pk)
+        if (
+            suggested.plan_source_name
+            and not await PlanSourceRelation.objects.filter(denial=denial).aexists()
+        ):
+            plan_source = await PlanSource.objects.filter(
+                name=suggested.plan_source_name
+            ).afirst()
+            if plan_source is not None:
+                source_relation = await PlanSourceRelation.objects.acreate(
+                    denial=denial, plan_source=plan_source, src=src
+                )
+                source_pks.append(source_relation.pk)
+        if (type_pks or source_pks) and not await Denial.objects.filter(
+            denial_id=denial_id, denial_text=letter
+        ).aexists():
+            await DenialTypesRelation.objects.filter(pk__in=type_pks).adelete()
+            await PlanSourceRelation.objects.filter(pk__in=source_pks).adelete()
+            logger.info(
+                f"apply_triage_suggestions({denial_id}): the letter was replaced "
+                "while its suggestions were stored; removed them"
+            )
+            return 0
+        return len(type_pks) + len(source_pks)
 
     @classmethod
     async def extract_set_regulator(cls, denial_id) -> str:

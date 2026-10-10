@@ -46,6 +46,28 @@ wins, including the ones `scripts/run_local.sh` sets.
   example when the ones registered are unavailable
   (`MLRouter._general_purpose_only`).
 
+## TypeSafe (Jev)
+
+TypeSafe's Jev is not a writer: it answers typed yes/no, multiple-choice and
+scale questions about a text, for a fraction of a cent, through one client
+(`ml/typesafe.py`, `TYPESAFE_API_KEY`). Every feature has its own switch,
+off by default, and sends text only with the person's external-models
+consent:
+
+| Switch | What Jev does |
+| --- | --- |
+| `TYPESAFE_LETTER_RANKING_ENABLED` | Scores appeal drafts so the strongest shows first (`ml/letter_quality.py`). |
+| `TYPESAFE_DENIAL_TRIAGE_ENABLED` | Reads the denial letter: the denial reason, the kind of plan, pre-service, urgency, the internal appeal deadline (`ml/denial_triage.py`). The review and questions pages offer the matching denial types, plan source and urgent/pre-service boxes pre-ticked, marked as read from the letter; an assistant's case, which no one reviews, takes them at a higher confidence. |
+| `TYPESAFE_DEADLINE_SHOW_ENABLED` | Tells readers the deadline triage found, hedged. Off until staff labels in the Denial admin say it holds up. |
+| `TYPESAFE_RESEARCH_JUDGING_ENABLED` | Judges each PubMed article against the denial's treatment; articles off topic or against it are left out of the appeal's research and offered unticked on the fax page (`ml/research_judging.py`). |
+| `FHI_CHAT_JEV_GATE_ENABLED`, `TYPESAFE_CHAT_SHADOW_ENABLED` | Checks and scores chat replies ([chat-pipeline.md](chat-pipeline.md)). |
+
+Spend is capped by `FHI_SPEND_TYPESAFE_*` (`ml/spend.py`). The model usage
+dashboard's Jev panel shows whether each feature is on and working (its last
+answer and last failure) and the deploy-time probe
+([model-backend-health.md](model-backend-health.md)); the spend rows in its
+chat routing policy panel show the month's TypeSafe spend per use.
+
 ## Options
 
 1. **Hosted API (simplest).** Export `ANTHROPIC_API_KEY` (or `DEEPINFRA_API`,

@@ -1,0 +1,67 @@
+{% comment %}
+Is Jev working: every use of TypeSafe's Jev on one panel, from
+ModelUsageDashboardView._jev_panel: each use's switch and last outcome, the
+newest deploy-time probe, and the staff tally of triage deadlines. Read from
+rows and settings; this page never calls TypeSafe.
+{% endcomment %}
+<div class="window-section" id="jev">
+  <h2>Jev (TypeSafe) <span class="source-label">({{ jev.model }}, API key {% if jev.key_present %}present{% else %}missing{% endif %})</span></h2>
+  <p class="note">
+    One row per use of Jev. Levels: <span class="state-tag state-ok">ok</span> answered in the last {{ jev.window_hours }} h;
+    <span class="state-tag state-fail">failing</span> its newest outcome in that window is a failure;
+    <span class="state-tag state-warn">idle</span> on, with no answer in that window;
+    <span class="state-tag state-off">off</span> its switch is off or the key is missing.
+    Every use sends text only with the person's consent to outside models.
+  </p>
+  <table class="usage">
+    <thead>
+      <tr>
+        <th>Use</th>
+        <th>State</th>
+        <th>Last answer</th>
+        <th>Last failure</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in jev.rows %}
+      <tr>
+        <td>{{ row.label }} <span class="source-label">({{ row.flag }})</span></td>
+        <td>
+          {% if row.error %}<span class="state-tag state-fail">unreadable: {{ row.error }}</span>
+          {% elif row.level == "ok" %}<span class="state-tag state-ok">ok</span>
+          {% elif row.level == "failing" %}<span class="state-tag state-fail">failing</span>
+          {% elif row.level == "idle" %}<span class="state-tag state-warn">idle</span>
+          {% else %}<span class="state-tag state-off">off</span>{% endif %}
+        </td>
+        <td>{% if row.last_success_at %}{{ row.last_success_at|timesince }} ago{% else %}never{% endif %}</td>
+        <td>{% if row.last_failure_at %}{{ row.last_failure }}{% if row.last_failure_hint %} ({{ row.last_failure_hint }}){% endif %}, {{ row.last_failure_at|timesince }} ago{% else %}none recorded{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="note">TypeSafe's spend this month, by use, and any pause after a credit refusal are in the <a href="#chat-routing-policy">chat routing policy</a> panel's spend rows.</p>
+
+  <h3>Deploy-time probe</h3>
+  {% if jev.probe_error %}
+  <p class="note">The probe result could not be read ({{ jev.probe_error }}).</p>
+  {% elif jev.probe %}
+  <p class="window-totals">
+    {% if jev.probe.ok %}<span class="state-tag state-ok">{{ jev.probe.category }}</span>{% elif jev.probe.category == "NOT_CONFIGURED" %}<span class="state-tag state-off">{{ jev.probe.category }}</span>{% else %}<span class="state-tag state-fail">{{ jev.probe.category }}</span>{% endif %}
+    {{ jev.probe.created_at|timesince }} ago, deploy {{ jev.probe.deployment_id|default:"unknown" }}{% if jev.probe.latency_ms is not None %}, {{ jev.probe.latency_ms }} ms{% endif %}{% if jev.probe.error %}: {{ jev.probe.error }}{% endif %}.
+    See <a href="{% url 'model_backend_status' %}">Model Backend Status</a>.
+  </p>
+  {% else %}
+  <p class="note">No deploy-time probe of TypeSafe has been recorded yet.</p>
+  {% endif %}
+
+  <h3>Triage deadlines</h3>
+  {% if jev.deadlines_error %}
+  <p class="note">The deadline tally could not be read ({{ jev.deadlines_error }}).</p>
+  {% elif jev.deadlines %}
+  <p class="window-totals">
+    Readers are {% if jev.deadlines.show_on %}<strong>shown</strong>{% else %}<strong>not shown</strong>{% endif %} the deadline (TYPESAFE_DEADLINE_SHOW_ENABLED).
+    Confident deadlines from the current rubric, as labelled by staff in the Denial admin:
+    <strong>{{ jev.deadlines.correct }}</strong> correct, <strong>{{ jev.deadlines.wrong }}</strong> wrong, {{ jev.deadlines.unlabelled }} not yet labelled.
+  </p>
+  {% endif %}
+</div>

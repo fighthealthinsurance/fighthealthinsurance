@@ -1,6 +1,9 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from django import forms
+from django.template.loader import render_to_string
+from django.utils.html import format_html
+from django.utils.safestring import SafeString, mark_safe
 
 if TYPE_CHECKING:
     # Only so the checker knows a form is underneath; at runtime the mixin
@@ -8,6 +11,24 @@ if TYPE_CHECKING:
     from django.forms import BaseForm as _StyledWidgetsMixinBase
 else:
     _StyledWidgetsMixinBase = object
+
+
+def append_help_text(field: forms.Field, note: Any) -> None:
+    """Show ``note`` under whatever help text ``field`` already has. Plain
+    text is escaped; pass a SafeString for markup."""
+    field.help_text = (
+        format_html("{}<br>{}", field.help_text, note)
+        if field.help_text
+        else format_html("{}", note)
+    )
+
+
+def from_your_letter_hint() -> SafeString:
+    """The note under a field whose value was read from the person's letter
+    rather than told to us (partials/from_your_letter_hint.html)."""
+    # The partial's own text, autoescaped when it rendered; strip() hands
+    # back a plain str, so it is marked safe again.
+    return mark_safe(render_to_string("partials/from_your_letter_hint.html").strip())
 
 
 # See https://docs.djangoproject.com/en/5.1/topics/http/file-uploads/

@@ -68,6 +68,7 @@
     Jump to:
     {% for w in windows %}<a href="#window-{{ w.slug }}">{{ w.label }}</a>{% if not forloop.last %} &middot; {% endif %}{% endfor %}
     &middot; <a href="#letter-prompts">Appeal prompt versions</a>
+    &middot; <a href="#jev">Jev (TypeSafe)</a>
   </nav>
   <ul class="intro-list">
     <li><span class="legend-key" style="background:#1f77b4;"></span><strong>ProposedAppeal (denial flow)</strong>: real patients choosing among the drafts written for their own case.</li>
@@ -115,6 +116,8 @@
   </ul>
 
   {% include "model_usage_prompts_partial.html" with panel=letter_prompts %}
+
+  {% include "model_usage_jev_partial.html" with jev=jev %}
 
   {% for w in windows %}
   <div class="window-section" id="window-{{ w.slug }}">

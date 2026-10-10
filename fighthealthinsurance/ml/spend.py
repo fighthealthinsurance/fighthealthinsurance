@@ -10,7 +10,7 @@ amounts in micro-dollars.
 The budgets (settings, all in US dollars):
 
 * TypeSafe (Jev), one account: FHI_SPEND_TYPESAFE_MONTHLY_USD (5). Letter
-  scoring and denial triage may use all of it. Chat may use at most
+  scoring, denial triage and research judging may use all of it. Chat may use at most
   FHI_SPEND_TYPESAFE_CHAT_MONTHLY_USD (3), and stops before total spend
   would reach into FHI_SPEND_TYPESAFE_LETTERS_RESERVE_USD (2), which is kept
   for letters. Chat's month is spread by day: each day it may spend what is
@@ -94,9 +94,13 @@ FHI = "fhi"  # our own generations, counted not priced
 CHAT = "chat"
 LETTERS = "letters"
 TRIAGE = "triage"
+RESEARCH = "research"
 ASSISTANT = "assistant"
 OTHER = "other"
 PAUSED = "paused"
+# Every use TypeSafe spend is recorded under; the monthly cap is their sum,
+# so a use missing here would spend without counting toward it.
+TYPESAFE_USES = (CHAT, LETTERS, TRIAGE, RESEARCH, ASSISTANT, OTHER)
 
 # Denial.channel values.
 CHANNEL_SITE = "site"
@@ -215,8 +219,9 @@ def current_use() -> str:
 
 
 def typesafe_use(default: str) -> str:
-    """The TypeSafe use for a letter or triage call: ``default`` (LETTERS,
-    TRIAGE), or ASSISTANT when the denial came through an assistant."""
+    """The TypeSafe use for a letter, triage or research call: ``default``
+    (LETTERS, TRIAGE, RESEARCH), or ASSISTANT when the denial came through
+    an assistant."""
     return ASSISTANT if assistant_work() else default
 
 
@@ -710,10 +715,7 @@ def allows(provider: str, use: str) -> bool:
             if not view.loaded:
                 return False
             monthly = round(_usd_setting("FHI_SPEND_TYPESAFE_MONTHLY_USD", 5.0) * MICRO)
-            total = sum(
-                view.month_total(counter(TYPESAFE, u))
-                for u in (CHAT, LETTERS, TRIAGE, ASSISTANT, OTHER)
-            )
+            total = sum(view.month_total(counter(TYPESAFE, u)) for u in TYPESAFE_USES)
             if use not in (CHAT, ASSISTANT):
                 return total < monthly
             reserve = round(

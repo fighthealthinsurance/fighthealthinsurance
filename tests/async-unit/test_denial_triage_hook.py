@@ -1,7 +1,7 @@
 """DenialCreatorHelper.extract_set_triage: the gate, the write, idempotence."""
 
 import datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 from asgiref.sync import async_to_sync
@@ -44,7 +44,7 @@ def test_triage_is_written_to_the_denial_with_its_text_hash():
         dt, "triage", new=AsyncMock(return_value=_result())
     ) as triage:
         async_to_sync(DenialCreatorHelper.extract_set_triage)(denial.denial_id)
-        triage.assert_awaited_once_with(TEXT, datetime.date(2026, 9, 2))
+        triage.assert_awaited_once_with(TEXT, datetime.date(2026, 9, 2), on_failure=ANY)
     denial.refresh_from_db()
     assert denial.triage_category == "medical_necessity"
     assert denial.appeal_deadline == datetime.date(2027, 3, 1)
@@ -59,7 +59,7 @@ def test_triage_is_written_to_the_denial_with_its_text_hash():
 def test_a_result_for_a_replaced_letter_updates_nothing():
     denial = _denial()
 
-    async def replace_then_answer(text, date):
+    async def replace_then_answer(text, date, **_kwargs):
         await Denial.objects.filter(pk=denial.pk).aupdate(denial_text="a different letter")
         return _result()
 
@@ -73,7 +73,7 @@ def test_a_result_for_a_replaced_letter_updates_nothing():
 def test_a_result_after_consent_was_withdrawn_updates_nothing():
     denial = _denial()
 
-    async def withdraw_then_answer(text, date):
+    async def withdraw_then_answer(text, date, **_kwargs):
         await Denial.objects.filter(pk=denial.pk).aupdate(use_external=False)
         return _result()
 
@@ -87,7 +87,7 @@ def test_a_result_after_consent_was_withdrawn_updates_nothing():
 def test_a_date_confirmed_during_the_call_resolves_the_window_at_write_time():
     denial = Denial.objects.create(hashed_email="h", denial_text=TEXT, use_external=True, denial_date=None)
 
-    async def confirm_then_answer(text, date):
+    async def confirm_then_answer(text, date, **_kwargs):
         assert date is None
         await Denial.objects.filter(pk=denial.pk).aupdate(denial_date=datetime.date(2026, 9, 2))
         return dt.parse(
@@ -113,7 +113,7 @@ def test_a_date_confirmed_during_the_call_resolves_the_window_at_write_time():
 def test_a_date_corrected_during_the_call_wins_over_the_date_the_call_started_with():
     denial = _denial()  # denial_date 2026-09-02
 
-    async def correct_then_answer(text, date):
+    async def correct_then_answer(text, date, **_kwargs):
         assert date == datetime.date(2026, 9, 2)
         await Denial.objects.filter(pk=denial.pk).aupdate(denial_date=datetime.date(2026, 9, 12))
         return _result()  # resolved March 1 against the OLD date

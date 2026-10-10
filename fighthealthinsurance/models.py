@@ -1374,6 +1374,41 @@ class PubMedArticleSummarized(models.Model):
     article_url = models.TextField(blank=True, null=True)
 
 
+class PubMedArticleJudgment(models.Model):
+    """What Jev (ml/research_judging.py) answered about one article for one
+    treatment and condition: is it on topic, does it support the treatment,
+    does it argue against it. Each is a probability.
+
+    Keyed by the PMID and a hash of the normalized treatment and condition,
+    with no link to a denial and nothing about a person, so one judgment
+    serves every case about the same treatment and condition (the way
+    GenericContextGeneration's citations do). ``scorer`` is the model and
+    rubric that answered; a judgment under another rubric is not reused.
+    PubMedArticleSummarized.says_effective cannot hold this: that row is per
+    article, shared by every query that found it, and "effective" only
+    means something for a given treatment and condition.
+    """
+
+    pmid = models.CharField(max_length=32)
+    treatment_key = models.CharField(max_length=16)
+    on_topic = models.FloatField()
+    supports = models.FloatField()
+    undermines = models.FloatField()
+    scorer = models.CharField(max_length=80)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["pmid", "treatment_key", "scorer"],
+                name="pubmed_judgment_uniq",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.pmid} @ {self.treatment_key} ({self.scorer})"
+
+
 class PubMedMiniArticle(models.Model):
     """PubMedArticles with a summary for the given query."""
 
@@ -2421,6 +2456,11 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # lands after the letter was replaced is recognisable as stale.
     triage_text_hash = models.CharField(max_length=16, null=True, blank=True)
     triaged_at = models.DateTimeField(null=True, blank=True)
+    # A staff member's verdict on the triage's deadline ("correct" or
+    # "wrong", from the admin's actions), cleared with the triage it judged.
+    # The tally decides when readers may be told the deadline
+    # (TYPESAFE_DEADLINE_SHOW_ENABLED).
+    appeal_deadline_check = models.CharField(max_length=8, null=True, blank=True)
     health_history = models.TextField(null=True, blank=True)
     qa_context = models.TextField(null=True, blank=True)
     plan_context = models.TextField(null=True, blank=True)
