@@ -591,6 +591,9 @@ class MLCitationsHelper:
         # the decision that call used rather than a second read of the
         # column that can disagree with it.
         used_history_sink: dict = {}
+        # Set once a generation run returns, empty or not; a run that raised
+        # leaves it unset and stores nothing.
+        generated = False
         if (
             denial.ml_citation_context is not None
             and len(denial.ml_citation_context) > 0
@@ -629,6 +632,7 @@ class MLCitationsHelper:
                         timeout=timeout,
                         used_history_sink=used_history_sink,
                     )
+                    generated = True
 
                     if citations:
                         logger.debug(
@@ -642,8 +646,11 @@ class MLCitationsHelper:
                     f"Error generating citations for denial {denial.denial_id}: {e}"
                 )
 
-        # Store citations in the denial object directly using aupdate
-        if citations:
+        # Store citations in the denial object directly using aupdate. A run
+        # that finished and found nothing stores [] too, so the appeal step's
+        # barrier (which waits for these columns) can tell "done, nothing
+        # found" from "still running" instead of sitting out its timeout.
+        if citations or generated:
             used_history = bool(used_history_sink.get("used"))
             # The consent test goes inside the write rather than in front of
             # it: a refusal landing between a check and an update would be
@@ -664,6 +671,20 @@ class MLCitationsHelper:
                 if speculative
                 else "ml_citation_context"
             )
+            if not citations:
+                # Only where the column is still NULL: citations another run
+                # stored meanwhile are worth more than this run's nothing.
+                # Best-effort, since the marker only saves the barrier's wait.
+                try:
+                    await rows.filter(**{f"{field}__isnull": True}).aupdate(
+                        **{field: []}
+                    )
+                except Exception as e:
+                    logger.opt(exception=True).debug(
+                        f"Could not mark citations for denial "
+                        f"{denial.denial_id} as found empty: {e}"
+                    )
+                return citations
             if await rows.aupdate(**{field: citations}):
                 logger.debug(
                     f"Stored {len(citations)} citations for denial {denial.denial_id}"
