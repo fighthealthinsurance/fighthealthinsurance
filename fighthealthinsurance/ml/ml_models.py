@@ -116,6 +116,7 @@ CleanerUtils.is_valid_url = classmethod(  # type: ignore[assignment,method-assig
 
 from fighthealthinsurance.exec import *
 from fighthealthinsurance.ml.medicaid_names import MEDICAID_PROGRAM_ALIASES
+from fighthealthinsurance.ml.retired_models import retirement
 from fighthealthinsurance.ml.question_parsing import (
     NO_QUESTIONS,
     parse_appeal_questions,
@@ -2347,6 +2348,23 @@ class RemoteOpenLike(RemoteModel):
             r"\s*diagnosis\s*:?\s*", re.IGNORECASE
         )
         self.backup_api_base = backup_api_base
+        # A retired model is never called, even as another model's backup.
+        retired_backup = (
+            retirement(None, self.backup_model)
+            if backup_api_base and self.backup_model != model
+            else None
+        )
+        if retired_backup is not None:
+            logger.info(
+                f"Dropping backup {self.backup_model} for {model}: "
+                f"{retired_backup.describe()}"
+            )
+            self.backup_api_base = None
+            self.backup_model = model
+            if not api_base:
+                raise ValueError(
+                    f"The only endpoint for {model} serves a retired model"
+                )
         self._expensive = expensive
         self.dual_mode = dual_mode
         # Deployments observed rejecting the ``temperature`` parameter at

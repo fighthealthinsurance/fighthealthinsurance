@@ -2103,7 +2103,8 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
 
     Returns ``{name: {"key": ..., "category": ...}}``. ``category`` is set
     only for "failing". A health row whose category is a configuration
-    verdict (not configured, disabled, missing credentials, client init) is
+    verdict (retired, not configured, disabled, missing credentials, client
+    init) is
     ignored for a backend that is configured now: it describes the settings
     at that run, not how the backend answered.
     """
@@ -2136,6 +2137,7 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
     static_by_name = {r.model_name: r for r in static_results}
     probe_by_name = {r.model_name: instance for r, instance in checkable}
     config_categories = {
+        mhc.CATEGORY_RETIRED,
         mhc.CATEGORY_NOT_CONFIGURED,
         mhc.CATEGORY_DISABLED,
         mhc.CATEGORY_MISSING_CREDENTIALS,
@@ -2167,6 +2169,8 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
             static = static_by_name.get(name)
             if static is None:
                 states[name] = {"key": "retired"}
+            elif static.category == mhc.CATEGORY_RETIRED:
+                states[name] = {"key": "on_retired_list"}
             elif static.category == mhc.CATEGORY_NOT_CONFIGURED:
                 states[name] = {"key": "not_configured"}
             elif static.category == mhc.CATEGORY_DISABLED:
@@ -3438,6 +3442,7 @@ class ModelBackendStatusView(generic.TemplateView):
                     "internal_name": r.internal_name,
                     "enabled": r.enabled,
                     "config_category": config_category,
+                    "retired": r.category == mhc.CATEGORY_RETIRED,
                     # Missing credentials and a failed client construction keep
                     # enabled=True, so they need their own flag or the page
                     # would call them enabled.
@@ -3456,6 +3461,9 @@ class ModelBackendStatusView(generic.TemplateView):
                     ),
                     "top_external_rank": rank,
                     "last_check": check,
+                    # Informational whatever the model is now: never a failure.
+                    "last_check_retired": check is not None
+                    and check.category == mhc.CATEGORY_RETIRED,
                     "stale_deployment": stale_deployment,
                     "stale_environment": stale_environment,
                     "config_changed": check is not None and check.enabled != r.enabled,

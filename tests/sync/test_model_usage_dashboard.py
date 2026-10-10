@@ -1402,6 +1402,7 @@ class ModelStateTagTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
         static = [
             _backend("off/not-configured", mhc.CATEGORY_NOT_CONFIGURED, enabled=False),
             _backend("off/disabled", mhc.CATEGORY_DISABLED, enabled=False),
+            _backend("off/retired", mhc.CATEGORY_RETIRED, enabled=False),
             _backend("ext/no-key", mhc.CATEGORY_MISSING_CREDENTIALS),
         ]
         checkable = [
@@ -1454,6 +1455,7 @@ class ModelStateTagTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
             "ext/unrouted",
             "off/not-configured",
             "off/disabled",
+            "off/retired",
             "ext/no-key",
             "gone/retired-model",
             SYNTHESIZED_MODEL_NAME,
@@ -1478,6 +1480,7 @@ class ModelStateTagTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
                 "ext/unrouted": "external_ok",
                 "off/not-configured": "not_configured",
                 "off/disabled": "disabled",
+                "off/retired": "on_retired_list",
                 "ext/no-key": "failing",
                 "gone/retired-model": "retired",
                 SYNTHESIZED_MODEL_NAME: "placeholder",
@@ -1533,7 +1536,13 @@ class ModelStateTagTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
         shown = [
             self._make_candidate(task, i, name)
             for i, name in enumerate(
-                ["ext/broken", "fhi-internal", "gone/retired-model", "ctx/search"]
+                [
+                    "ext/broken",
+                    "fhi-internal",
+                    "gone/retired-model",
+                    "ctx/search",
+                    "off/retired",
+                ]
             )
         ]
         self._vote(task, shown[0], shown)
@@ -1551,6 +1560,7 @@ class ModelStateTagTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
             f'<a class="state-tag state-fail" href="{status}">failing: FAIL_TIMEOUT</a>',
             f'<a class="state-tag state-ok" href="{status}">internal, healthy</a>',
             f'<a class="state-tag state-off" href="{status}">not in the code any more</a>',
+            f'<a class="state-tag state-off" href="{status}">retired</a>',
             f'<a class="state-tag state-context" href="{status}">context only</a>',
             f'<a class="state-tag state-warn" href="{status}">external, no health check yet</a>',
             f'<a class="state-tag state-off" href="{status}">disabled</a>',

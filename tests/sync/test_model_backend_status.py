@@ -253,6 +253,72 @@ class ModelBackendStatusContentTest(StatusPageTestCase):
         self.assertIsNone(rows[0]["last_generation"])
 
 
+MAY = "fhi-2025-may-0.3-float16-q8-vllm-compressed"
+
+
+class ModelBackendStatusRetiredTest(StatusPageTestCase):
+    """A retired model reads Retired with its reason, even with its host set."""
+
+    def test_retired_with_the_reason(self):
+        self.configure(NEW_HEALTH_BACKEND_HOST="new.example.invalid")
+        response = self.get_page()
+        may = self.row(response, MAY)
+        self.assertTrue(may["retired"])
+        self.assertFalse(may["enabled"])
+        self.assertFalse(may["config_failing"])
+        self.assertFalse(may["routed"])
+        self.assertContains(
+            response,
+            '<span class="pill pill-off">Retired</span>'
+            '<div class="sub">'
+            "Retired 2026-10-10: parked 2026-10-08, replaced by Gemma 4 26B</div>",
+        )
+
+    def test_a_stored_retired_row_is_not_shown_as_a_failure(self):
+        self.configure(NEW_HEALTH_BACKEND_HOST="new.example.invalid")
+        ModelBackendHealthCheckResult.objects.create(
+            run_id="run-retired",
+            model_name=MAY,
+            category=mhc.CATEGORY_RETIRED,
+            ok=False,
+            started_at=timezone.now(),
+        )
+        response = self.get_page()
+        self.assertNotContains(response, '<span class="pill pill-fail">RETIRED</span>')
+        self.assertNotContains(response, '<div class="err">Retired 2026-10-10')
+
+    def test_an_old_retired_row_stays_grey_after_the_slot_moves_on(self):
+        self.configure(
+            NEW_HEALTH_BACKEND_HOST="new.example.invalid",
+            NEW_HEALTH_BACKEND_MODEL="/models/fhi-next",
+        )
+        ModelBackendHealthCheckResult.objects.create(
+            run_id="run-retired",
+            model_name="fhi-next",
+            category=mhc.CATEGORY_RETIRED,
+            ok=False,
+            error="Retired 2026-10-10: test",
+            started_at=timezone.now(),
+        )
+        response = self.get_page()
+        self.assertTrue(self.row(response, "fhi-next")["last_check_retired"])
+        self.assertContains(response, '<span class="pill pill-off">RETIRED</span>')
+        self.assertNotContains(response, '<span class="pill pill-fail">RETIRED</span>')
+        self.assertContains(response, '<div class="sub">Retired 2026-10-10: test</div>')
+
+    def test_another_model_in_the_same_slot_is_not_retired(self):
+        self.configure(
+            NEW_HEALTH_BACKEND_HOST="new.example.invalid",
+            NEW_HEALTH_BACKEND_MODEL="/models/fhi-next",
+        )
+        response = self.get_page()
+        row = self.row(response, "fhi-next")
+        self.assertFalse(row["retired"])
+        self.assertTrue(row["enabled"])
+        self.assertTrue(row["routed"])
+        self.assertNotIn(MAY, [r["model_name"] for r in response.context["rows"]])
+
+
 class ModelBackendStatusRoutingTest(StatusPageTestCase):
     """The routing panel and columns match what the router would pick."""
 
@@ -484,7 +550,7 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 "sonar",
                 # Failing configuration.
                 "azure-openai/gpt-5.5",
-                # Not configured.
+                # Retired.
                 "fhi-2025-may-0.3-float16-q8-vllm-compressed",
             ],
         )

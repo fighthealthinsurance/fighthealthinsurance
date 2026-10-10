@@ -67,6 +67,7 @@ from fighthealthinsurance.ml.ml_models import (
     candidate_model_backends,
 )
 from fighthealthinsurance.ml.ml_router import MLRouter
+from fighthealthinsurance.ml.retired_models import retirement
 
 # Where the consolidated failure alert is sent. Matches the on-call alias used
 # by the existing model-liveness alerts.
@@ -102,6 +103,8 @@ CATEGORY_PASS_UNREGISTERED = "PASS_UNREGISTERED"
 CATEGORY_NOT_CONFIGURED = "NOT_CONFIGURED"
 # Excluded by the ENABLED_REMOTE_MODELS allow-list; never invoked.
 CATEGORY_DISABLED = "DISABLED"
+# On the retired list (ml/retired_models.py); never invoked, whatever the settings.
+CATEGORY_RETIRED = "RETIRED"
 CATEGORY_MISSING_CREDENTIALS = "FAIL_MISSING_CREDENTIALS"
 CATEGORY_CLIENT_INIT = "FAIL_CLIENT_INIT"
 CATEGORY_AUTH = "FAIL_AUTH"
@@ -113,7 +116,7 @@ CATEGORY_MALFORMED_RESPONSE = "FAIL_MALFORMED_RESPONSE"
 CATEGORY_OTHER = "FAIL_OTHER"
 
 # Categories that count as failures for alerting/strict mode. PASS variants
-# and the two intentionally-off categories are not failures — but
+# and the intentionally-off categories are not failures — but
 # PASS_UNREGISTERED is called out separately in the summary and email because
 # it means users can't see a model that works.
 FAILURE_CATEGORIES = frozenset(
@@ -388,8 +391,8 @@ def enumerate_backend_checks(
     Returns ``(static_results, checkable)``:
 
     * ``static_results`` — rows that are decided without any network call:
-      not-configured providers, allow-list-disabled models, missing
-      credentials, and client-construction failures.
+      retired models, not-configured providers, allow-list-disabled models,
+      missing credentials, and client-construction failures.
     * ``checkable`` — ``(pending_result, instance)`` pairs for enabled,
       constructable backends that should actually be invoked.
 
@@ -436,6 +439,13 @@ def enumerate_backend_checks(
                 backend_cls=backend_cls,
             )
 
+            retired = retirement(desc.name, desc.internal_name)
+            if retired is not None:
+                base.category = CATEGORY_RETIRED
+                base.enabled = False
+                base.error = retired.describe()
+                static_results.append(base)
+                continue
             if status == "not_configured":
                 base.category = CATEGORY_NOT_CONFIGURED
                 base.enabled = False
