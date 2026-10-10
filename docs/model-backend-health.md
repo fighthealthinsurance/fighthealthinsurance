@@ -2,7 +2,11 @@
 
 Every production deploy (`k8s/deploy.yaml`) runs an end-to-end health check
 of all **enabled** model backends
-([`fighthealthinsurance/ml/model_health_check.py`](../fighthealthinsurance/ml/model_health_check.py)).
+([`fighthealthinsurance/ml/model_health_check.py`](../fighthealthinsurance/ml/model_health_check.py)),
+including the models a backend serves to chat only (its `chat_models()`, e.g.
+DeepInfra's chat roster). Like any other row, a chat-only model can trigger
+the alert email and fail a strict deploy. When `ENABLED_REMOTE_MODELS` leaves
+one out, it is reported `DISABLED`.
 The staging and dev manifests (`k8s/deploy_staging.yaml`, `k8s/deploy_dev.yaml`)
 have no job that runs it. Each backend gets one tiny "Reply with exactly: OK"
 inference, one attempt with no retries, all backends at once. The probe uses
@@ -25,7 +29,7 @@ greppable summary block.
 | `NOT_CONFIGURED` | No configuration; listed, never called. | No |
 | `DISABLED` | Excluded by `ENABLED_REMOTE_MODELS` ([ml-backends.md](ml-backends.md)); listed, never called. | No |
 | `FAIL_MODEL_NOT_FOUND` | The endpoint does not serve the model: unknown, retired or deprecated (HTTP 410, or a 400/404 whose body names the model). | Yes |
-| `FAIL_BILLING` | Credit or quota exhausted (HTTP 402, or a 400/401/403/429 with a quota message); will not recover on its own. | Yes |
+| `FAIL_BILLING` | Credit or quota exhausted (HTTP 402, or a 400/401/403/429 with a quota message); will not recover on its own. Also pauses the provider on every pod (see [Credit and quota pauses](#credit-and-quota-pauses)). | Yes |
 | `FAIL_RATE_LIMITED` | A passing rate limit: HTTP 429 without a quota message, or already in back-off from one. | Yes |
 | `FAIL_MISSING_CREDENTIALS`, `FAIL_CLIENT_INIT`, `FAIL_AUTH`, `FAIL_TIMEOUT`, `FAIL_NETWORK`, `FAIL_MALFORMED_RESPONSE`, `FAIL_OTHER` | What went wrong. | Yes |
 
@@ -92,6 +96,24 @@ python manage.py check_model_backends --no-persist
   when nothing was verified: the check itself crashed, or the leader claim hit
   a database error. A lost leader claim still exits 0.
 
+### Credit and quota pauses
+
+A credit or quota refusal from an outside provider, whether to a live request
+or to this check (`FAIL_BILLING`), pauses that provider for every use on every
+pod until 00:00 UTC (`fighthealthinsurance/ml/spend.py`). Every run of
+`check_model_backends` reads and writes that shared spend ledger,
+`--no-persist` included, since that flag only skips the result rows. So a
+manual probe that gets a quota refusal pauses the provider fleet-wide. A probe
+of a paused provider that answers lifts the pause on every pod, so after a
+top-up a deploy or a manual run of the check clears it. To lift it by hand:
+
+```bash
+python manage.py unpause_spend anthropic   # typesafe, deepinfra, azure, anthropic, azure-anthropic, perplexity
+```
+
+Other pods follow at their next ledger refresh (about 30 seconds). A provider
+still out of credit is paused again by its next refusal.
+
 ## Alerting
 
 When any enabled backend fails, the deploy hook sends **one** consolidated
@@ -147,6 +169,13 @@ or roll back a deploy today:
   calls.
   - A context-only backend (Perplexity) reads "n/a (citations only)" under
     "Last stored generation": it builds citations and never drafts.
+  - A chat-only roster model reads "n/a (chat only)" under "Last stored
+    generation": it answers chat and never drafts.
+  - The "Live (this pod)" column shows what this pod's own calls have found
+    since the check: a model not served, a key or account refused, or an
+    endpoint unreachable. Those three are held in this pod's memory, so other
+    pods can differ, and they clear on their own. The column also shows a
+    provider paused on every pod for credit or quota until 00:00 UTC.
   - A registered backend that no request path picks, such as an external model
     outside the router's top 3, reads "registered, not picked by any path".
   - "Last stored generation" counts drafts and chooser candidates, not the
@@ -155,7 +184,9 @@ or roll back a deploy today:
     classification row is not shown as a failed check. Once the backend is
     configured, that row shows as a grey pill flagged "config changed since"
     until a real check runs.
-  - The healthy count is out of the enabled backends only.
+  - The healthy count is out of the enabled backends only. A backend counts
+    as healthy when its latest check passed and it is not failing live on
+    this pod. The page also gives the number that are failing live.
   `/timbit/help/model_usage` shows which models users actually pick.
 - **Database:** `ModelBackendHealthCheckResult` keeps one row per backend per
   run (including `NOT_CONFIGURED` and `DISABLED`). Skipped runs and

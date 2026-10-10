@@ -1055,3 +1055,59 @@ async def test_existing_wordless_appeal_is_skipped():
     assert "a valid existing appeal body" in contents
     assert "unusable appeal -- not-words" in output
     assert "saved appeal id=" in output
+
+
+async def _context_barrier_calls():
+    """Drive ``generate_appeals`` with ``warm_then_fetch`` replaced by a
+    recorder that keeps each call's keyword arguments and still runs the
+    fetch, and return the recorded calls.
+
+    The test settings set FHI_CONTEXT_BARRIER_TIMEOUT_S to 0, so the real
+    barrier never waits there: a test that times the flow cannot tell which
+    readiness check a barrier was given. These read it from the call itself.
+    """
+    calls = []
+
+    async def recording_warm_then_fetch(denial, **kwargs):
+        calls.append(kwargs)
+        return await kwargs["fetch"]()
+
+    with patch(
+        "fighthealthinsurance.common_view_logic.warm_then_fetch",
+        new=recording_warm_then_fetch,
+    ):
+        await _run_generate_appeals_over_saved([])
+    return calls
+
+
+def _barrier_call_watching(calls, field):
+    """The one recorded barrier call whose readiness fields include ``field``."""
+    matches = [c for c in calls if field in c["readiness_fields"]]
+    assert len(matches) == 1, f"expected one barrier watching {field}: {calls}"
+    return matches[0]
+
+
+@pytest.mark.asyncio
+async def test_citation_barrier_counts_an_empty_citation_list_as_done():
+    """A finished citation run that found nothing stores [] (every run does
+    while the citation backend is paused, refused or retired), and only None
+    means not run yet. The appeal flow's citation barrier must stop waiting
+    on [], or every appeal waits out the whole barrier timeout."""
+    calls = await _context_barrier_calls()
+
+    citations = _barrier_call_watching(calls, "candidate_ml_citation_context")
+    is_ready = citations.get("is_ready")
+    assert is_ready is not None, "the citation barrier needs its own check"
+    assert is_ready([]) is True
+    assert is_ready(None) is False
+
+
+@pytest.mark.asyncio
+async def test_pubmed_barrier_keeps_the_default_readiness_check():
+    """PubMed stores its context only when it found some, never a "found
+    nothing" value, so its barrier keeps the default check (a non-empty
+    value) rather than the citation barrier's."""
+    calls = await _context_barrier_calls()
+
+    pubmed = _barrier_call_watching(calls, "pubmed_context")
+    assert pubmed.get("is_ready") is None
