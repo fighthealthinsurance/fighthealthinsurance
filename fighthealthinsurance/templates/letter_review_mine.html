@@ -74,9 +74,9 @@
     <ol class="lr-letters">
       {% for letter in letters %}
         <li>
-          <a class="lr-mark-{{ letter.verdict|default:'none' }}" href="{% url 'letter_review_item' packet.pk letter.slug %}">
+          <a class="lr-mark-{{ letter.mark|default:'none' }}" href="{% url 'letter_review_item' packet.pk letter.slug %}">
             <span class="lr-num">Letter {{ letter.place }}</span>
-            <span class="lr-mark">{{ letter.verdict_label|default:"not yet" }}</span>
+            <span class="lr-mark">{{ letter.mark_text|default:"not yet" }}</span>
           </a>
         </li>
       {% endfor %}

@@ -5375,6 +5375,12 @@ LETTER_REVIEW_VERDICTS = (
     ("clean", "Clean"),
 )
 LETTER_REVIEW_NOTE_MAX = 2000
+# What a reader answers on each letter: one of the three verdicts, or yes or
+# no to each question (letter_review.QUESTIONS).
+LETTER_REVIEW_FORMS = (
+    ("verdict", "One verdict per letter"),
+    ("binary", "Yes or no questions per letter"),
+)
 
 
 class LetterReviewPacket(models.Model):
@@ -5383,6 +5389,9 @@ class LetterReviewPacket(models.Model):
     name = models.CharField(max_length=200, unique=True)
     rule_version = models.CharField(max_length=100)
     rule_text = models.TextField()
+    form = models.CharField(
+        max_length=16, choices=LETTER_REVIEW_FORMS, default="verdict"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self) -> str:
@@ -5471,7 +5480,10 @@ class LetterReviewLabelsFrozen(Exception):
 
 
 class LetterReviewLabel(models.Model):
-    """One reader's verdict on one letter. Only that reader ever sees it.
+    """One reader's mark on one letter. Only that reader ever sees it.
+
+    A verdict packet's label has a verdict; a binary packet's has yes or no
+    answers, the first two always, the rest when the reader gave one.
 
     Once every reader has finished the packet the export can show readers
     each other's marks, so from then on save() and delete() refuse to change
@@ -5486,7 +5498,14 @@ class LetterReviewLabel(models.Model):
     reader = models.ForeignKey(
         LetterReviewReader, on_delete=models.CASCADE, related_name="labels"
     )
-    verdict = models.CharField(max_length=16, choices=LETTER_REVIEW_VERDICTS)
+    verdict = models.CharField(
+        max_length=16, choices=LETTER_REVIEW_VERDICTS, null=True, blank=True
+    )
+    invents_or_contradicts = models.BooleanField(null=True, blank=True)
+    unsupported_history = models.BooleanField(null=True, blank=True)
+    argues_against_reason = models.BooleanField(null=True, blank=True)
+    specific_medical_necessity = models.BooleanField(null=True, blank=True)
+    ready_to_send = models.BooleanField(null=True, blank=True)
     note = models.TextField(max_length=LETTER_REVIEW_NOTE_MAX, blank=True, default="")
     labeled_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
