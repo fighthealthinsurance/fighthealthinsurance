@@ -13,6 +13,7 @@ from fighthealthinsurance.ml.chat_policy import ChatPolicy, narrow_externals
 CHAT_OUTSIDE_LIMIT = 3
 _explore_draw = random.random
 from fighthealthinsurance.ml.ml_models import *
+from fighthealthinsurance.ml.retired_models import retirement
 
 # The hosted model that backs up our own models for summaries and appeal
 # questions (DeepInfra's Gemma). Named once so the two paths can't drift apart.
@@ -71,6 +72,13 @@ class MLRouter(object):
                 # failure, bad config) must skip only ITSELF -- previously the
                 # whole backend's remaining models were dropped with it.
                 try:
+                    retired = retirement(m.name, m.internal_name)
+                    if retired is not None:
+                        logger.info(
+                            f"MLRouter: skipping retired model {m.name} "
+                            f"({retired.describe()})"
+                        )
+                        continue
                     if m.model is None:
                         m.model = backend(model=m.internal_name)
                     # Honor the ENABLED_REMOTE_MODELS allow-list (if set): only
@@ -175,6 +183,9 @@ class MLRouter(object):
                 logger.warning(f"Skipping chat models of {backend}: {type(e).__name__}")
                 continue
             for m in descriptions:
+                if retirement(m.name, m.internal_name) is not None:
+                    logger.info(f"MLRouter: skipping retired chat model {m.name}")
+                    continue
                 if (
                     enabled_models is not None
                     and m.name not in enabled_models

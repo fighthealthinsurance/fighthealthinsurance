@@ -11,6 +11,7 @@ and the check_model_backends management command exit codes.
 
 import asyncio
 import contextvars
+import datetime
 import os
 from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -22,11 +23,15 @@ from django.core.management import call_command
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml import model_health_check as mhc
 from fighthealthinsurance.ml.ml_metrics import ML_CALL_PURPOSE
+from fighthealthinsurance.ml import retired_models
 from fighthealthinsurance.ml.ml_models import (
+    NewRemoteInternal,
     _attach_error_body,
     _note_probe_transport_error,
     begin_probe_observations,
 )
+from fighthealthinsurance.ml.ml_router import MLRouter
+from fighthealthinsurance.ml.retired_models import Retirement, retirement
 
 
 @pytest.fixture
@@ -56,8 +61,11 @@ def _clear_provider_env(monkeypatch):
         # catalog-shape expectations below.
         "AZURE_ANTHROPIC_MODELS",
         "HEALTH_BACKEND_HOST",
+        "HEALTH_BACKEND_MODEL",
         "HEALTH_BACKUP_BACKEND_HOST",
+        "HEALTH_BACKUP_BACKEND_MODEL",
         "NEW_HEALTH_BACKEND_HOST",
+        "NEW_HEALTH_BACKEND_MODEL",
         "ALPHA_HEALTH_BACKEND_HOST",
         "ENABLED_REMOTE_MODELS",
         "FORCE_MODEL",
@@ -353,7 +361,11 @@ class TestEnumeration:
         static, checkable = mhc.enumerate_backend_checks()
         assert checkable == []
         assert static, "expected provider catalog rows even with nothing configured"
-        assert {r.category for r in static} == {mhc.CATEGORY_NOT_CONFIGURED}
+        # The May slot's default model is retired, so it says so instead.
+        assert {r.category for r in static} == {
+            mhc.CATEGORY_NOT_CONFIGURED,
+            mhc.CATEGORY_RETIRED,
+        }
         assert all(not r.enabled and not r.failed for r in static)
 
     def test_claude_enumerated_and_registered_when_key_set(
@@ -457,6 +469,149 @@ class TestEnumeration:
         assert calls == ["anthropic/claude-opus-4-8"]
         by_name = {r.model_name: r for r in results}
         assert by_name["anthropic/claude-sonnet-4-6"].category == mhc.CATEGORY_DISABLED
+
+
+MAY = "fhi-2025-may-0.3-float16-q8-vllm-compressed"
+MAY_REASON = "Retired 2026-10-10: parked 2026-10-08, replaced by Gemma 4 26B"
+
+
+def _may_host_set(monkeypatch):
+    """Only the May slot's host, as a settings sync once put it back."""
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("NEW_HEALTH_BACKEND_HOST", "new.example.invalid")
+
+
+class TestRetiredModels:
+    def test_may_is_matched_by_name_or_wire_path(self):
+        assert retirement(MAY).describe() == MAY_REASON
+        assert retirement(None, f"/models/{MAY}").describe() == MAY_REASON
+        assert retirement("fhi-local", "/models/fhi-local") is None
+
+    def test_the_router_never_builds_a_retired_model_with_its_host_set(
+        self, monkeypatch, fresh_router
+    ):
+        _may_host_set(monkeypatch)
+        built = []
+        real_init = NewRemoteInternal.__init__
+
+        def spy(self, *args, **kwargs):
+            built.append(kwargs.get("model"))
+            real_init(self, *args, **kwargs)
+
+        with patch.object(NewRemoteInternal, "__init__", spy):
+            router = MLRouter()
+        assert built == []
+        assert MAY not in router.models_by_name
+        assert router.all_models_by_cost == []
+
+    def test_the_health_check_lists_it_as_retired_not_checkable(
+        self, monkeypatch, fresh_router
+    ):
+        _may_host_set(monkeypatch)
+        static, checkable = mhc.enumerate_backend_checks()
+        may = [r for r in static if r.model_name == MAY]
+        assert len(may) == 1
+        assert may[0].category == mhc.CATEGORY_RETIRED
+        assert may[0].error == MAY_REASON
+        assert not may[0].enabled and not may[0].failed
+        assert checkable == []
+
+    def test_naming_it_in_a_manual_run_still_does_not_check_it(
+        self, monkeypatch, fresh_router
+    ):
+        _may_host_set(monkeypatch)
+        static, checkable = mhc.enumerate_backend_checks(only_models=[MAY])
+        assert [(r.model_name, r.category) for r in static] == [
+            (MAY, mhc.CATEGORY_RETIRED)
+        ]
+        assert checkable == []
+
+    @pytest.mark.django_db
+    def test_no_call_and_no_alert_with_its_host_set(
+        self, monkeypatch, fresh_router, mailoutbox
+    ):
+        from fighthealthinsurance.models import ModelBackendHealthCheckResult
+
+        _may_host_set(monkeypatch)
+        monkeypatch.setenv("FHI_DEPLOYMENT_ID", "vtest-retired-1")
+        monkeypatch.setenv("FHI_MODEL_HEALTH_ALERT_EMAIL", "1")
+        calls = []
+
+        # Any probe fails, so a call to May would have meant an alert.
+        async def fake_check(result, instance, timeout):
+            calls.append(result.model_name)
+            result.category = mhc.CATEGORY_NETWORK
+            return result
+
+        with patch.object(mhc, "check_backend", side_effect=fake_check):
+            summary = mhc.run_health_check(
+                require_leader=True, send_alert_email=True, persist=True
+            )
+        assert calls == []
+        assert summary.failures == []
+        assert summary.email_sent is False
+        assert mailoutbox == []
+        row = ModelBackendHealthCheckResult.objects.get(
+            run_id=summary.run_id, model_name=MAY
+        )
+        assert row.category == mhc.CATEGORY_RETIRED
+        assert row.error == MAY_REASON
+
+    def test_another_model_in_the_same_slot_is_checked_as_before(
+        self, monkeypatch, fresh_router
+    ):
+        _may_host_set(monkeypatch)
+        monkeypatch.setenv("NEW_HEALTH_BACKEND_MODEL", "/models/fhi-next")
+        static, checkable = mhc.enumerate_backend_checks()
+        assert [r.model_name for r, _ in checkable] == ["fhi-next"]
+        assert checkable[0][0].ui_registered
+        assert not any(r.category == mhc.CATEGORY_RETIRED for r in static)
+
+    def _legacy_with_backup(self, monkeypatch, backup_model, primary=True):
+        _clear_provider_env(monkeypatch)
+        if primary:
+            monkeypatch.setenv("HEALTH_BACKEND_HOST", "legacy.example.invalid")
+        monkeypatch.setenv("HEALTH_BACKUP_BACKEND_HOST", "backup.example.invalid")
+        monkeypatch.setenv("HEALTH_BACKUP_BACKEND_MODEL", backup_model)
+        return MLRouter()
+
+    def test_a_retired_backup_is_dropped_and_the_primary_kept(
+        self, monkeypatch, fresh_router
+    ):
+        router = self._legacy_with_backup(monkeypatch, f"/models/{MAY}")
+        [legacy] = router.models_by_name["fhi-legacy"]
+        assert legacy.api_base == "http://legacy.example.invalid:80/v1"
+        assert legacy.backup_api_base is None
+        assert legacy.backup_model == legacy.model
+
+    def test_an_unlisted_backup_is_kept(self, monkeypatch, fresh_router):
+        router = self._legacy_with_backup(monkeypatch, "/models/fhi-other")
+        [legacy] = router.models_by_name["fhi-legacy"]
+        assert legacy.backup_api_base == "http://backup.example.invalid:80/v1"
+        assert legacy.backup_model == "/models/fhi-other"
+
+    def test_a_model_whose_only_endpoint_is_retired_is_not_registered(
+        self, monkeypatch, fresh_router
+    ):
+        router = self._legacy_with_backup(
+            monkeypatch, f"/models/{MAY}", primary=False
+        )
+        assert "fhi-legacy" not in router.models_by_name
+
+    def test_any_backend_can_retire_a_model_by_name(self, monkeypatch, fresh_router):
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-123")
+        monkeypatch.setitem(
+            retired_models.RETIRED_MODELS,
+            "anthropic/claude-haiku-4-5",
+            Retirement(datetime.date(2026, 10, 10), "test"),
+        )
+        static, checkable = mhc.enumerate_backend_checks()
+        registered = ml_router_module.ml_router.models_by_name
+        assert "anthropic/claude-haiku-4-5" not in registered
+        assert "anthropic/claude-sonnet-4-6" in {r.model_name for r, _ in checkable}
+        retired = {r.model_name for r in static if r.category == mhc.CATEGORY_RETIRED}
+        assert "anthropic/claude-haiku-4-5" in retired
 
 
 def _fake_results(*categories):

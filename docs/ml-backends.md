@@ -77,6 +77,10 @@ wins, including the ones `scripts/run_local.sh` sets.
    - The current internal models use two more backends with the same shape:
      `NEW_HEALTH_BACKEND_HOST` / `_PORT` / `_MODEL` and
      `ALPHA_HEALTH_BACKEND_HOST` / `_PORT` / `_MODEL`.
+   - A model on the retired list (`fighthealthinsurance/ml/retired_models.py`)
+     is never registered or called, even with its host set. The
+     `NEW_HEALTH_BACKEND_*` default, the May fine-tune, is on it, so that slot
+     serves a model only when `NEW_HEALTH_BACKEND_MODEL` names another one.
    - On a machine where `kubectl` can see the team's cluster,
      `scripts/run_local.sh` port-forwards the cluster backends and sets
      `HEALTH_BACKEND_*` and `NEW_HEALTH_BACKEND_*` itself, overriding what
