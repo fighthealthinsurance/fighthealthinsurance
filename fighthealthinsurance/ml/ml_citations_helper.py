@@ -502,7 +502,9 @@ class MLCitationsHelper:
         Returns:
             List of citation strings
         """
-        if denial.ml_citation_context and len(denial.ml_citation_context) > 0:
+        # The same test as generate_citations_for_denial: a stored [] is a
+        # finished run's answer, not a missing one.
+        if denial.ml_citation_context is not None:
             return denial.ml_citation_context  # type: ignore
 
         # Run CMS Medicare Coverage Database lookup alongside the ML
@@ -574,8 +576,9 @@ class MLCitationsHelper:
         cls, denial: Denial, speculative: bool
     ) -> List[str]:
         """
-        Generate citations for a denial object if they don't already exist.
+        Generate citations for a denial object if no run has finished for it.
         Pulls the speculative/candidate value if nothing changed since computed.
+        A stored [] (a run that finished and found nothing) counts as finished.
 
         Args:
             denial: The Denial object to generate citations for
@@ -594,23 +597,27 @@ class MLCitationsHelper:
         # Set once a generation run returns, empty or not; a run that raised
         # leaves it unset and stores nothing.
         generated = False
-        if (
-            denial.ml_citation_context is not None
-            and len(denial.ml_citation_context) > 0
-        ):
+        # None means no run has finished; [] is one that finished and found
+        # nothing (see the store below). Going again on [] ran the whole
+        # generation a second time: the appeal step's barrier releases on
+        # that [] and then calls here, so the appeal waited on a rerun that,
+        # with the backend still down, found nothing again.
+        if denial.ml_citation_context is not None:
             logger.debug(f"Citations already exist for denial {denial.denial_id}")
             return cast(List[str], denial.ml_citation_context)
 
         elif (
-            denial.candidate_ml_citation_context
+            denial.candidate_ml_citation_context is not None
             and (
                 not denial.procedure or (denial.candidate_procedure == denial.procedure)
             )
             and (
                 not denial.diagnosis or (denial.candidate_diagnosis == denial.diagnosis)
             )
-            and len(denial.candidate_ml_citation_context) > 0
         ):
+            # A speculative [] for the same procedure and diagnosis is the
+            # same "done, found nothing"; it is handed back without a store,
+            # since citations stays [] and nothing was generated.
             logger.debug(f"Using candidate citations for denial {denial.denial_id}")
             citations = cast(List[str], denial.candidate_ml_citation_context)
 
@@ -649,7 +656,17 @@ class MLCitationsHelper:
         # Store citations in the denial object directly using aupdate. A run
         # that finished and found nothing stores [] too, so the appeal step's
         # barrier (which waits for these columns) can tell "done, nothing
-        # found" from "still running" instead of sitting out its timeout.
+        # found" from "still running" instead of sitting out its timeout, and
+        # the call after it takes that [] as the answer (see the top).
+        # The cost: a run that found nothing because no citation backend
+        # could answer (paused, refused, out of credit, timed out) is kept as
+        # [] as well, so this denial is not tried again once the backend is
+        # back; a new letter clears both columns and starts over. That
+        # includes runs that asked no backend at all (none selectable, or
+        # no consent to outside models). Leaving those at None for a later
+        # retry would bring the barrier's wait back on every appeal while
+        # the backend is down, and the column has no room to tell "asked
+        # nobody" from "asked, found nothing" without changing its shape.
         if citations or generated:
             used_history = bool(used_history_sink.get("used"))
             # The consent test goes inside the write rather than in front of
@@ -674,7 +691,8 @@ class MLCitationsHelper:
             if not citations:
                 # Only where the column is still NULL: citations another run
                 # stored meanwhile are worth more than this run's nothing.
-                # Best-effort, since the marker only saves the barrier's wait.
+                # Best-effort: without the marker the barrier waits out its
+                # timeout and the next call runs again, nothing worse.
                 try:
                     await rows.filter(**{f"{field}__isnull": True}).aupdate(
                         **{field: []}

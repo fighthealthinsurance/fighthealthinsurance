@@ -364,3 +364,58 @@ class TestAFinishedEmptyRunIsRecorded:
                 denial=denial, speculative=False
             )
         assert await _column(denial, "ml_citation_context") is None
+
+
+class TestAFinishedEmptyRunIsTheAnswer:
+    """A stored [] is a finished run that found nothing, so the next call
+    hands it back rather than generating again. The appeal step's barrier
+    releases on that [] and then calls the helper; going again there cost
+    the appeal a second full run, which with the backend down found nothing
+    again. A speculative [] counts only while it was found for the live
+    procedure and diagnosis, like a non-empty one."""
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_stored_empty_list_is_returned_without_generating(self):
+        denial = await _denial_on_the_row(ml_citation_context=[])
+        with _generation(return_value=["Generated again"]) as generation:
+            result = await MLCitationsHelper.generate_citations_for_denial(
+                denial=denial, speculative=False
+            )
+        assert (result, generation.await_count) == ([], 0)
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_empty_candidate_list_for_the_same_details_is_used_without_generating(
+        self,
+    ):
+        denial = await _denial_on_the_row(
+            procedure="MRI",
+            diagnosis="Migraine",
+            candidate_procedure="MRI",
+            candidate_diagnosis="Migraine",
+            candidate_ml_citation_context=[],
+        )
+        with _generation(return_value=["Generated again"]) as generation:
+            result = await MLCitationsHelper.generate_citations_for_denial(
+                denial=denial, speculative=False
+            )
+        assert (result, generation.await_count) == ([], 0)
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_empty_candidate_list_for_another_procedure_is_generated_again(
+        self,
+    ):
+        denial = await _denial_on_the_row(
+            procedure="Knee MRI",
+            diagnosis="Migraine",
+            candidate_procedure="MRI",
+            candidate_diagnosis="Migraine",
+            candidate_ml_citation_context=[],
+        )
+        with _generation(return_value=["Cited for the knee MRI"]) as generation:
+            result = await MLCitationsHelper.generate_citations_for_denial(
+                denial=denial, speculative=False
+            )
+        assert (result, generation.await_count) == (["Cited for the knee MRI"], 1)
