@@ -128,6 +128,52 @@ def _model_answering(*answers):
     return model
 
 
+class _Clock:
+    """ml_models' view of time, moved on by hand, so a call can take ten
+    seconds without the test waiting them out."""
+
+    def __init__(self):
+        self.offset = 0.0
+
+    def monotonic(self) -> float:
+        return time.monotonic() + self.offset
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+@pytest.fixture
+def clock():
+    """Patch ml_models' clock only: the event loop keeps the real one."""
+    moved = _Clock()
+    with patch.object(ml_models, "time", moved):
+        yield moved
+
+
+# Under MIN_RETRY_WINDOW_SECONDS of this is left once the first call has
+# taken _FIRST_CALL_SECONDS: time to ask once, none for the retry.
+_DEADLINE_SECONDS = 20.0
+_FIRST_CALL_SECONDS = 10.0
+
+
+def _model_with_a_slow_first_call(clock, *answers):
+    """_model_answering, but the first call takes _FIRST_CALL_SECONDS on
+    ``clock``. An exception among ``answers`` is raised by its call."""
+    model = _model_answering()
+    pending = list(answers)
+
+    async def answer(**kwargs):
+        if len(pending) == len(answers):
+            clock.offset += _FIRST_CALL_SECONDS
+        given = pending.pop(0)
+        if isinstance(given, BaseException):
+            raise given
+        return given
+
+    model._infer_no_context = AsyncMock(side_effect=answer)  # type: ignore[method-assign]
+    return model
+
+
 @pytest.mark.asyncio
 async def test_a_call_never_outlives_the_requesters_deadline():
     model = _model_answering(_GOOD_DRAFT)
@@ -147,22 +193,44 @@ async def test_the_retry_gets_only_what_is_left_of_the_deadline():
 
 
 @pytest.mark.asyncio
-async def test_the_retry_is_skipped_when_too_little_of_the_deadline_is_left():
+async def test_the_retry_is_skipped_when_too_little_of_the_deadline_is_left(clock):
     """A letter does not fit in a few seconds: the retry would only spend a
     request (a paid one, on a hosted model) nobody reads."""
-    model = _model_answering(None, _GOOD_DRAFT)
+    model = _model_with_a_slow_first_call(clock, None, _GOOD_DRAFT)
     result = await model._checked_infer(
-        **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 5.0
+        **_CHECKED_INFER_KWARGS, deadline=clock.monotonic() + _DEADLINE_SECONDS
     )
     assert (result, model._infer_no_context.await_count) == ([], 1)
 
 
 @pytest.mark.asyncio
-async def test_the_retry_is_skipped_when_too_little_of_the_attempt_is_left():
-    model = _model_answering(None, _GOOD_DRAFT)
-    with ml_models.attempt_deadline(5.0):
+async def test_the_retry_is_skipped_when_too_little_of_the_attempt_is_left(clock):
+    model = _model_with_a_slow_first_call(clock, None, _GOOD_DRAFT)
+    with ml_models.attempt_deadline(_DEADLINE_SECONDS):
         await model._checked_infer(**_CHECKED_INFER_KWARGS)
     assert model._infer_no_context.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_the_first_call_is_not_sent_with_too_little_of_the_deadline_left():
+    """It could only time out: a paid request nobody reads, filed as an
+    outage of a healthy model."""
+    model = _model_answering(_GOOD_DRAFT)
+    with pytest.raises(ml_models.DeadlineSkipped):
+        await model._checked_infer(
+            **_CHECKED_INFER_KWARGS,
+            deadline=time.monotonic() + ml_models.MIN_RETRY_WINDOW_SECONDS - 5.0,
+        )
+    assert model._infer_no_context.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_the_first_call_is_not_sent_with_too_little_of_the_attempt_left():
+    model = _model_answering(_GOOD_DRAFT)
+    with ml_models.attempt_deadline(ml_models.MIN_RETRY_WINDOW_SECONDS - 5.0):
+        with pytest.raises(ml_models.DeadlineSkipped):
+            await model._checked_infer(**_CHECKED_INFER_KWARGS)
+    assert model._infer_no_context.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -197,50 +265,103 @@ async def test_a_deadline_skip_is_recorded_once():
 
 
 @pytest.mark.asyncio
-async def test_a_skipped_retry_keeps_what_the_asked_call_gave():
+async def test_a_skipped_retry_keeps_what_the_asked_call_gave(clock):
     """The model was asked and answered nothing: that is no_completion, and
     no DeadlineSkipped, though no time was left for the retry."""
-    model = _model_answering(None, _GOOD_DRAFT)
+    model = _model_with_a_slow_first_call(clock, None, _GOOD_DRAFT)
     with patch.object(ml_models, "record_ml_result") as recorded:
         await model._checked_infer(
-            **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 5.0
+            **_CHECKED_INFER_KWARGS, deadline=clock.monotonic() + _DEADLINE_SECONDS
         )
     assert recorded.call_args.args[2] == "no_completion"
 
 
 @pytest.mark.asyncio
-async def test_a_skipped_retry_after_an_outage_raises_provider_unavailable():
+async def test_a_skipped_retry_after_an_outage_raises_provider_unavailable(clock):
     """The asked call was not reached (a 5xx, a timeout) and no time is left
     for the retry: the outage is raised, as when both tries fail. Not a
     DeadlineSkipped, since the model was asked."""
-    model = _model_answering(ml_models.ProviderUnavailable("HTTP 503"), _GOOD_DRAFT)
+    model = _model_with_a_slow_first_call(
+        clock, ml_models.ProviderUnavailable("HTTP 503"), _GOOD_DRAFT
+    )
     with pytest.raises(ml_models.ProviderUnavailable) as excinfo:
         await model._checked_infer(
-            **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 5.0
+            **_CHECKED_INFER_KWARGS, deadline=clock.monotonic() + _DEADLINE_SECONDS
         )
     assert type(excinfo.value) is ml_models.ProviderUnavailable
 
 
 @pytest.mark.asyncio
-async def test_a_skipped_retry_after_an_outage_is_an_unavailable_result():
-    model = _model_answering(ml_models.ProviderUnavailable("HTTP 503"), _GOOD_DRAFT)
+async def test_a_skipped_retry_after_an_outage_is_an_unavailable_result(clock):
+    model = _model_with_a_slow_first_call(
+        clock, ml_models.ProviderUnavailable("HTTP 503"), _GOOD_DRAFT
+    )
     with patch.object(ml_models, "record_ml_result") as recorded:
         with pytest.raises(ml_models.ProviderUnavailable):
             await model._checked_infer(
-                **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 5.0
+                **_CHECKED_INFER_KWARGS,
+                deadline=clock.monotonic() + _DEADLINE_SECONDS,
             )
     assert [c.args[2] for c in recorded.call_args_list] == ["unavailable"]
 
 
 @pytest.mark.asyncio
-async def test_a_skipped_retry_after_no_text_stays_no_completion():
+async def test_a_skipped_retry_after_no_text_stays_no_completion(clock):
     """Reached, and it answered with no text: not an outage."""
-    model = _model_answering(ml_models.NoAnswerText("no text"), _GOOD_DRAFT)
+    model = _model_with_a_slow_first_call(
+        clock, ml_models.NoAnswerText("no text"), _GOOD_DRAFT
+    )
     with patch.object(ml_models, "record_ml_result") as recorded:
         result = await model._checked_infer(
-            **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 5.0
+            **_CHECKED_INFER_KWARGS, deadline=clock.monotonic() + _DEADLINE_SECONDS
         )
     assert (result, recorded.call_args.args[2]) == ([], "no_completion")
+
+
+# The retry fails in passing (a 503, a timeout in what is left of the
+# budget) after a first try that reached the model: it was reached, so it is
+# not an outage. Only an outage on both tries is "unavailable".
+_REFUSAL = "I cannot directly create an appeal letter for you."
+
+
+@pytest.mark.asyncio
+async def test_a_retry_outage_after_no_text_stays_no_completion():
+    model = _model_answering(
+        ml_models.NoAnswerText("no text"), ml_models.ProviderUnavailable("HTTP 503")
+    )
+    with patch.object(ml_models, "record_ml_result") as recorded:
+        result = await model._checked_infer(**_CHECKED_INFER_KWARGS)
+    assert (result, recorded.call_args.args[2]) == ([], "no_completion")
+
+
+@pytest.mark.asyncio
+async def test_a_retry_outage_after_a_refusal_is_a_rejected_result():
+    model = _model_answering(_REFUSAL, ml_models.ProviderUnavailable("HTTP 503"))
+    with patch.object(ml_models, "record_ml_result") as recorded:
+        result = await model._checked_infer(**_CHECKED_INFER_KWARGS)
+    assert (result, recorded.call_args.args[2]) == ([], "rejected_bad_result")
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_then_no_text_is_a_rejected_result():
+    """The first try gave an answer to judge, and it was rejected."""
+    model = _model_answering(_REFUSAL, ml_models.NoAnswerText("no text"))
+    with patch.object(ml_models, "record_ml_result") as recorded:
+        await model._checked_infer(**_CHECKED_INFER_KWARGS)
+    assert recorded.call_args.args[2] == "rejected_bad_result"
+
+
+@pytest.mark.asyncio
+async def test_no_text_from_a_model_now_known_unusable_is_no_completion():
+    """It was reached, so it is not an outage; and it is not asked again."""
+    model = _model_answering(ml_models.NoAnswerText("no text"), _GOOD_DRAFT)
+    model._transport_cooldowns[(model.api_base, model.model)] = time.monotonic() + 60
+    with patch.object(ml_models, "record_ml_result") as recorded:
+        await model._checked_infer(**_CHECKED_INFER_KWARGS)
+    assert (recorded.call_args.args[2], model._infer_no_context.await_count) == (
+        "no_completion",
+        1,
+    )
 
 
 @pytest.mark.asyncio

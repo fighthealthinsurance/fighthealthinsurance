@@ -91,13 +91,15 @@ ML_CALL_SECONDS = Histogram(
 # runt or runaway repetition read as 100% ok there while every draft it
 # produced was rejected and filed as a no_output attempt, so the failure
 # rate the call series exists to alert on never moved. Results: accepted;
-# rejected_bad_result (a refusal / severe repetition / runt, after the one
-# retry); no_completion (the model was reached and gave nothing to judge,
-# not a content rejection); error (the inference raised); rejected_repetition
-# (the cleaners removed everything); skipped_deadline (never asked: the
-# requester's budget had passed); unavailable (not asked because it is known
-# gone, refused, out of credit or cooling, or not reached on either try, or
-# on the only try there was time for).
+# rejected_bad_result (a refusal / severe repetition / runt on either try,
+# and nothing usable after the one retry); no_completion (the model was
+# reached -- one of its endpoints answered, on at least one try -- and gave
+# nothing to judge, not a content rejection); error (the inference raised);
+# rejected_repetition (the cleaners removed everything); skipped_deadline
+# (never asked: too little of the requester's or the attempt's budget was
+# left for a letter to fit, MIN_RETRY_WINDOW_SECONDS); unavailable (not
+# asked because it is known gone, refused, out of credit or cooling, or not
+# reached on either try, or on the only try there was time for).
 ML_RESULTS_TOTAL = Counter(
     "fhi_ml_results_total",
     "Checked appeal inferences by what became of the completion (accepted, "

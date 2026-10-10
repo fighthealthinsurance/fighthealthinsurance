@@ -11,6 +11,7 @@ import aiohttp
 import pytest
 
 from fighthealthinsurance.ml.ml_models import (
+    NoAnswerText,
     RemoteFullOpenLike,
     _http_error_indicates_context_overflow,
 )
@@ -97,6 +98,21 @@ class TestOverflowLogging:
 
         assert fake_post.calls == 2
         assert model._missing_models == {}
+
+    @pytest.mark.asyncio
+    async def test_overflow_is_no_answer_text_to_a_caller_that_asked(
+        self, monkeypatch, make_fake_model_post
+    ):
+        """The model was reached: entity extraction reads it as a failed
+        read and the appeal path as a no_completion, never as an outage."""
+        model = _model()
+        fake_post = make_fake_model_post(400, VLLM_OVERFLOW_BODY)
+        monkeypatch.setattr(aiohttp.ClientSession, "post", fake_post)
+
+        with pytest.raises(NoAnswerText):
+            await model._infer(
+                system_prompts=["sys"], prompt="hi", raise_on_unavailable=True
+            )
 
     @pytest.mark.asyncio
     async def test_probe_path_still_raises_http_status(

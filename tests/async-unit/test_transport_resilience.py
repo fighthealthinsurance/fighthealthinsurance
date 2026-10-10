@@ -15,6 +15,7 @@ from fighthealthinsurance.ml import ml_models
 from fighthealthinsurance.ml.ml_models import (
     RemoteAzureClaude,
     RemoteFullOpenLike,
+    RemoteHealthInsurance,
     RemoteOpenLike,
 )
 
@@ -161,6 +162,47 @@ class TestPrimaryHttpErrorTriesTheBackup:
                 system_prompts=["sys"], prompt="hi", raise_http_errors=True
             )
         assert excinfo.value.status == 502
+
+
+class TestSamePairBackupAfterATimeout:
+    """fhi-legacy with no distinct backup configured names its own primary
+    pair as the backup and asks it again in sequence. After a timeout that
+    only waited out a second full window, twice the clamp."""
+
+    @staticmethod
+    def _legacy(monkeypatch) -> RemoteHealthInsurance:
+        for name in (
+            "HEALTH_BACKEND_PORT",
+            "HEALTH_BACKUP_BACKEND_HOST",
+            "HEALTH_BACKUP_BACKEND_PORT",
+            "HEALTH_BACKUP_BACKEND_MODEL",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        with patch.dict(os.environ, {"HEALTH_BACKEND_HOST": "legacy.example"}):
+            return RemoteHealthInsurance("fhi-legacy")
+
+    @pytest.mark.asyncio
+    async def test_a_timeout_is_not_asked_again(self, monkeypatch):
+        model = self._legacy(monkeypatch)
+        asked = []
+
+        async def hang(*args, **kwargs):
+            asked.append(kwargs.get("api_base"))
+            await asyncio.sleep(5)
+
+        monkeypatch.setattr(model, "_RemoteOpenLike__infer", hang)
+        await model._infer(system_prompts=["sys"], prompt="hi", timeout=0.05)
+        assert len(asked) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_502_is_still_asked_again(self, monkeypatch, make_fake_model_post):
+        """A single 502, a reset or a worker restart is what the same-pair
+        retry is there to rescue."""
+        model = self._legacy(monkeypatch)
+        fake_post = make_fake_model_post(502, "upstream error")
+        monkeypatch.setattr(aiohttp.ClientSession, "post", fake_post)
+        await model._infer(system_prompts=["sys"], prompt="hi")
+        assert fake_post.calls == 2
 
 
 class TestDualModeCancellation:

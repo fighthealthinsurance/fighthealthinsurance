@@ -30,6 +30,7 @@ from fighthealthinsurance.ml.ml_models import (
     RemoteFullOpenLike,
     RemotePerplexity,
     RetiredEndpointError,
+    can_be_asked,
     _connect_failed,
     _http_error_indicates_retired_model,
     _http_error_indicates_unsupported_temperature,
@@ -65,6 +66,11 @@ NO_TEXT_JSON = {
         {"message": {"role": "assistant", "content": None}, "finish_reason": "length"}
     ]
 }
+# Anthropic's wording for a prompt longer than the context window.
+OVERFLOW_BODY = (
+    '{"type":"error","error":{"type":"invalid_request_error",'
+    '"message":"prompt is too long: 215000 tokens > 200000 maximum"}}'
+)
 AZURE_CLAUDE_ENV = {
     "AZURE_ANTHROPIC_API_KEY": "test-key",
     "AZURE_ANTHROPIC_ENDPOINT": "https://res.services.ai.azure.com/anthropic",
@@ -344,6 +350,52 @@ class TestRefusedKeyCooldown:
         assert fake_post.calls == 2
 
 
+class TestOurServersAreAskedAgain:
+    """Our own servers are never parked or struck for an HTTP error: a 401
+    there is a setting to fix, and their 400s can quote the request back.
+    Parking one would take the internal appeal pool out of routing."""
+
+    @staticmethod
+    def _ours() -> RemoteFullOpenLike:
+        return _OurServer("http://ours.example/v1", "tok", "our-model")
+
+    def test_a_401_does_not_start_a_refusal_cooldown(self):
+        model = self._ours()
+        model._note_http_refusal(
+            model.api_base, model.model, 401, INVALID_KEY_BODY, probe=False
+        )
+        assert not model._pair_refused(model.api_base, model.model)
+
+    def test_5xx_answers_do_not_cool_it(self):
+        model = self._ours()
+        for _ in range(model.TRANSPORT_STRIKES_TO_COOL):
+            model._note_http_refusal(model.api_base, model.model, 503, "", probe=False)
+        assert not model._transport_cooling(model.api_base, model.model)
+
+    def test_a_400_with_retirement_wording_does_not_park_it(self):
+        model = self._ours()
+        model._note_http_refusal(
+            model.api_base,
+            model.model,
+            400,
+            '{"error":{"code":"model_decommissioned"}}',
+            probe=False,
+        )
+        assert not model._model_marked_missing(model.api_base, model.model)
+
+    @pytest.mark.asyncio
+    async def test_the_call_after_a_401_is_sent(
+        self, monkeypatch, make_fake_model_post
+    ):
+        model = self._ours()
+        fake_post = make_fake_model_post(401, INVALID_KEY_BODY)
+        await _answered(monkeypatch, model, fake_post)
+
+        await _ask(model)
+
+        assert fake_post.calls == 2
+
+
 class TestCreditRefusal:
     """Anthropic answers an empty balance with a 400, not a 402 or 429."""
 
@@ -484,6 +536,10 @@ def _connector_refused(*args, **kwargs):
     )
 
 
+def _connect_timed_out(*args, **kwargs):
+    raise aiohttp.ConnectionTimeoutError("Connection timeout to host gone.example")
+
+
 def _cooldowns(model, outages: int, connect_failed=True, answered_between=False):
     """How long each of ``outages`` outages in a row cools the pair, each
     three failures, on a pinned clock with the 120s base cooldown."""
@@ -508,6 +564,23 @@ def _cooldowns(model, outages: int, connect_failed=True, answered_between=False)
             # Past the longest cooldown and the strike window.
             now += 4000.0
     return lengths
+
+
+def _burst(model, failures: int = 9):
+    """``failures`` refused connects to the pair, all sent before the first
+    three cooled it (calls in flight during one short blip), on a pinned
+    clock with the 120s base cooldown."""
+    with patch.dict(os.environ, {"FHI_TRANSPORT_COOLDOWN_SECONDS": "120"}), patch(
+        "fighthealthinsurance.ml.ml_models.time.monotonic", return_value=1000.0
+    ):
+        for _ in range(failures):
+            model._note_transport_failure(
+                model.api_base,
+                model.model,
+                "connection refused",
+                connect_failed=True,
+            )
+    return model
 
 
 class TestUnreachableHostCooldown:
@@ -573,6 +646,23 @@ class TestUnreachableHostCooldown:
                 await _ask(model)
         left = model._transport_cooldowns[key] - time.monotonic()
         assert 470.0 < left <= 480.0
+
+    def test_failures_in_flight_when_it_cooled_do_not_escalate_it(self):
+        """Escalation is for an outage that outlasts a cooldown; a burst of
+        calls failing in one blip escalated it every three failures."""
+        model = _burst(_plain())
+        assert model._transport_recools[(model.api_base, model.model)] == 1
+
+    def test_failures_in_flight_when_it_cooled_do_not_lengthen_it(self):
+        model = _burst(_plain())
+        cooling_until = model._transport_cooldowns[(model.api_base, model.model)]
+        assert cooling_until - 1000.0 == 120.0
+
+    def test_a_burst_of_failures_warns_once(self, log_capture):
+        with log_capture() as cap:
+            _burst(_plain())
+        cooling = [m for m in cap.messages("WARNING") if "cooling down" in m]
+        assert len(cooling) == 1
 
     @pytest.mark.asyncio
     async def test_an_answer_through_the_transport_ends_the_escalation(
@@ -750,11 +840,21 @@ class TestRetryAfterAnOutage:
         it used to be filed as a model that answered nothing."""
         model = _plain()
         fake_post = make_fake_model_post(503, "overloaded")
-        monkeypatch.setattr(aiohttp.ClientSession, "post", fake_post)
+        # ml_models' clock only (the event loop keeps the real one): the 503
+        # takes 10s of a 20s deadline, leaving too little for a letter.
+        taken = []
+        clock = SimpleNamespace(monotonic=lambda: time.monotonic() + sum(taken))
+
+        def slow_post(*args, **kwargs):
+            taken.append(10.0)
+            return fake_post(*args, **kwargs)
+
+        monkeypatch.setattr(aiohttp.ClientSession, "post", slow_post)
+        monkeypatch.setattr(ml_models, "time", clock)
         with patch.object(ml_models, "record_ml_result") as recorded:
             with pytest.raises(ProviderUnavailable, match="503"):
                 await model._checked_infer(
-                    **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 5.0
+                    **_CHECKED_INFER_KWARGS, deadline=clock.monotonic() + 20.0
                 )
         assert (fake_post.calls, recorded.call_args.args[2]) == (1, "unavailable")
 
@@ -785,6 +885,47 @@ class TestRetryAfterAnOutage:
             aiohttp.ClientSession,
             "post",
             make_fake_model_post(200, "{}", json_data=NO_TEXT_JSON),
+        )
+        with patch.object(ml_models, "record_ml_result") as recorded:
+            result = await model._checked_infer(**_CHECKED_INFER_KWARGS)
+        assert (result, recorded.call_args.args[2]) == ([], "no_completion")
+
+
+def _beside_a_cooling_backup() -> RemoteFullOpenLike:
+    """A model whose distinct backup endpoint is cooling down."""
+    model = RemoteFullOpenLike(
+        "http://primary.example/v1",
+        "tok",
+        "primary-model",
+        backup_api_base="http://backup.example/v1",
+        backup_model="backup-model",
+    )
+    backup = (model.backup_api_base, model.backup_model)
+    model._transport_cooldowns[backup] = time.monotonic() + 300
+    return model
+
+
+class TestAReachedModelIsNotAnOutage:
+    """A primary that answered without text, or whose context overflowed,
+    was filed as "unavailable" whenever its backup endpoint was down: an
+    outage blamed on the leg that did not fail the call."""
+
+    @pytest.mark.parametrize(
+        "status, body, json_data",
+        [
+            pytest.param(200, "{}", NO_TEXT_JSON, id="no-text"),
+            pytest.param(400, OVERFLOW_BODY, None, id="context-overflow"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_it_is_no_completion(
+        self, monkeypatch, make_fake_model_post, status, body, json_data
+    ):
+        model = _beside_a_cooling_backup()
+        monkeypatch.setattr(
+            aiohttp.ClientSession,
+            "post",
+            make_fake_model_post(status, body, json_data=json_data),
         )
         with patch.object(ml_models, "record_ml_result") as recorded:
             result = await model._checked_infer(**_CHECKED_INFER_KWARGS)
@@ -940,6 +1081,16 @@ class TestRateLimitBackOff:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         assert model.unavailable_reason() == "not configured"
 
+    def test_a_missing_key_takes_it_out_of_routing(self, monkeypatch):
+        model = _anthropic()
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        assert model.is_available() is False
+
+    def test_a_back_off_takes_it_out_of_routing(self):
+        model = _anthropic()
+        model.rate_limiter.mark_exhausted(30.0)
+        assert model.is_available() is False
+
     @pytest.mark.asyncio
     async def test_a_skipped_call_is_counted_with_its_reason(self):
         model = _anthropic()
@@ -1000,6 +1151,84 @@ class TestAzureClaudeParity:
         with patch.object(ml_models, "record_ml_call") as call:
             await _ask(_azure_claude())
         assert [c.args[1] for c in call.call_args_list] == ["none"]
+
+    @pytest.mark.asyncio
+    async def test_a_connect_timeout_reads_as_unreachable(self, monkeypatch):
+        """Not as a model that used up its whole budget: it never connected."""
+        monkeypatch.setattr(aiohttp.ClientSession, "post", _connect_timed_out)
+        with pytest.raises(ProviderUnavailable, match="connection timeout"):
+            await _ask(_azure_claude(), raise_on_unavailable=True)
+
+    @pytest.mark.asyncio
+    async def test_a_connect_timeout_is_counted_as_a_transport_error(self, monkeypatch):
+        monkeypatch.setattr(aiohttp.ClientSession, "post", _connect_timed_out)
+        with patch.object(ml_models, "record_ml_call") as call, patch.object(
+            ml_models, "record_ml_failure"
+        ) as failure:
+            await _ask(_azure_claude())
+        assert (
+            [c.args[1] for c in call.call_args_list],
+            [c.args[1] for c in failure.call_args_list],
+        ) == (["none"], ["transport_error"])
+
+    @pytest.mark.asyncio
+    async def test_a_connect_timeout_strikes_as_a_failed_connect(self, monkeypatch):
+        model = _azure_claude()
+        monkeypatch.setattr(aiohttp.ClientSession, "post", _connect_timed_out)
+        with patch.object(model, "_note_transport_failure") as note:
+            await _ask(model)
+        assert note.call_args.kwargs["connect_failed"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_context_overflow_is_counted_as_one(
+        self, monkeypatch, make_fake_model_post
+    ):
+        """Not as an HTTP outage of the priciest backend."""
+        with patch.object(ml_models, "record_ml_failure") as failure:
+            await _answered(
+                monkeypatch, _azure_claude(), make_fake_model_post(400, OVERFLOW_BODY)
+            )
+        assert [c.args[1] for c in failure.call_args_list] == ["context_overflow"]
+
+    @pytest.mark.asyncio
+    async def test_a_context_overflow_is_no_answer_text_when_asked(
+        self, monkeypatch, make_fake_model_post
+    ):
+        """Reached, as on the shared transport: not ProviderUnavailable."""
+        with pytest.raises(NoAnswerText):
+            await _answered(
+                monkeypatch,
+                _azure_claude(),
+                make_fake_model_post(400, OVERFLOW_BODY),
+                raise_on_unavailable=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_context_overflow_is_no_completion_on_the_appeal_path(
+        self, monkeypatch, make_fake_model_post
+    ):
+        monkeypatch.setattr(
+            aiohttp.ClientSession, "post", make_fake_model_post(400, OVERFLOW_BODY)
+        )
+        # Configured while asked: is_available reads the settings live.
+        with patch.dict(os.environ, AZURE_CLAUDE_ENV), patch.object(
+            ml_models, "record_ml_result"
+        ) as recorded:
+            await _azure_claude()._checked_infer(**_CHECKED_INFER_KWARGS)
+        assert recorded.call_args.args[2] == "no_completion"
+
+    @pytest.mark.asyncio
+    async def test_a_probe_still_gets_the_raw_context_overflow(
+        self, monkeypatch, make_fake_model_post
+    ):
+        with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+            await _answered(
+                monkeypatch,
+                _azure_claude(),
+                make_fake_model_post(400, OVERFLOW_BODY),
+                raise_http_errors=True,
+            )
+        assert excinfo.value.status == 400
 
     @pytest.mark.asyncio
     async def test_a_refused_connect_after_a_cooldown_logs_no_warning(
@@ -1258,3 +1487,114 @@ class TestReachableHostEndsAConnectCooldown:
         )
         model._note_reachable(model.api_base, model.model)
         assert model._pair_refused(model.api_base, model.model)
+
+    @staticmethod
+    def _not_served(model):
+        """Park the pair as a 404 "does not exist" does."""
+        model._note_http_refusal(
+            model.api_base,
+            model.model,
+            404,
+            f"The model `{model.model}` does not exist.",
+            probe=False,
+        )
+        return model
+
+    def test_our_server_listing_the_model_again_is_asked_again(self):
+        """Our server says "does not exist" from the very list /models just
+        showed the model in: once fixed, it was still skipped for an hour."""
+        model = self._not_served(_OurServer("http://ours.example/v1", "tok", "m"))
+        model._note_reachable(model.api_base, model.model)
+        assert model.is_available()
+
+    def test_an_outside_provider_listing_the_model_stays_parked(self):
+        """Its /models can list a model its chat endpoint still refuses."""
+        model = self._not_served(_plain())
+        model._note_reachable(model.api_base, model.model)
+        assert model._model_marked_missing(model.api_base, model.model)
+
+
+class TestCanBeAsked:
+    """The one in-memory test of whether a model may be asked now, shared by
+    _checked_infer, the router and the shed ladder."""
+
+    def test_an_available_model_with_budget_can_be_asked(self):
+        assert can_be_asked(_plain())
+
+    def test_an_unavailable_model_cannot(self):
+        model = _cooled(_plain(), "connection refused", connect_failed=True)
+        assert not can_be_asked(model)
+
+    def test_a_model_whose_budget_is_spent_cannot(self):
+        model = _plain()
+        with patch.object(model, "_spend_allows", return_value=False):
+            assert not can_be_asked(model)
+
+    def test_a_double_without_a_spend_check_is_judged_on_availability(self):
+        assert can_be_asked(SimpleNamespace(is_available=lambda: True))
+
+
+class TestChatOutagesRaiseWhenAsked:
+    """A chat call returned (None, None) for an outage as for an empty
+    answer, so the chat CallLog filed a provider's 503 as "empty" and put
+    its time in the model's medians. The live chat race asks to raise."""
+
+    @pytest.mark.asyncio
+    async def test_an_outage_raises_when_asked(self, monkeypatch, make_fake_model_post):
+        monkeypatch.setattr(
+            aiohttp.ClientSession, "post", make_fake_model_post(503, "overloaded")
+        )
+        with pytest.raises(ProviderUnavailable, match="503"):
+            await _anthropic().generate_chat_response(
+                "Hi there", history=[], raise_on_unavailable=True
+            )
+
+    @pytest.mark.asyncio
+    async def test_an_outage_is_not_asked_twice_when_raising(
+        self, monkeypatch, make_fake_model_post
+    ):
+        fake_post = make_fake_model_post(503, "overloaded")
+        monkeypatch.setattr(aiohttp.ClientSession, "post", fake_post)
+        with pytest.raises(ProviderUnavailable):
+            await _anthropic().generate_chat_response(
+                "Hi there", history=[], raise_on_unavailable=True
+            )
+        assert fake_post.calls == 1
+
+    @pytest.mark.asyncio
+    async def test_an_outage_still_answers_nothing_by_default(
+        self, monkeypatch, make_fake_model_post
+    ):
+        monkeypatch.setattr(
+            aiohttp.ClientSession, "post", make_fake_model_post(503, "overloaded")
+        )
+        result = await _anthropic().generate_chat_response("Hi there", history=[])
+        assert result == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_an_empty_answer_is_asked_again_when_raising(
+        self, monkeypatch, make_fake_model_post
+    ):
+        """A model that answered with nothing is not an outage: it gets its
+        second try and the turn reads as empty."""
+        fake_post = make_fake_model_post(200, "{}", json_data=NO_TEXT_JSON)
+        monkeypatch.setattr(aiohttp.ClientSession, "post", fake_post)
+        result = await _plain().generate_chat_response(
+            "Hi there", history=[], raise_on_unavailable=True
+        )
+        assert (result, fake_post.calls) == ((None, None), 2)
+
+    @pytest.mark.asyncio
+    async def test_an_outage_on_the_second_try_keeps_the_first_answer(self):
+        """As a second try that answered None would: the turn is not failed
+        for an answer it already has."""
+        model = _plain()
+        # The model echoed the message back, which is asked again.
+        echo = ("Hi there", None)
+        with patch.object(
+            model, "_infer", side_effect=[echo, ProviderUnavailable("HTTP 503")]
+        ):
+            result = await model.generate_chat_response(
+                "Hi there", history=[], raise_on_unavailable=True
+            )
+        assert result == ("Hi there", None)

@@ -45,6 +45,7 @@ class ScriptedModel(RemoteOpenLike):
         temperature=0.7,
         raise_http_errors: bool = False,
         timeout=None,
+        raise_on_unavailable: bool = False,
     ):
         self.infer_calls.append(
             {
