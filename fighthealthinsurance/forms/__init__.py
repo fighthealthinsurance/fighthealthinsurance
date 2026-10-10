@@ -810,31 +810,6 @@ class LetterReviewLabelForm(forms.Form):
     )
 
 
-_YES_NO = (("yes", "Yes"), ("no", "No"))
-
-
-# A binary packet's answers on one letter (letter_review.QUESTIONS): the first
-# two are required, the rest may be skipped. Again the template draws the
-# radios.
-class LetterReviewAnswersForm(forms.Form):
-    invents_or_contradicts = forms.ChoiceField(choices=_YES_NO)
-    unsupported_history = forms.ChoiceField(choices=_YES_NO)
-    argues_against_reason = forms.ChoiceField(choices=_YES_NO, required=False)
-    specific_medical_necessity = forms.ChoiceField(choices=_YES_NO, required=False)
-    ready_to_send = forms.ChoiceField(choices=_YES_NO, required=False)
-    note = forms.CharField(
-        required=False, max_length=LETTER_REVIEW_NOTE_MAX, strip=True
-    )
-
-    def answers(self) -> dict[str, typing.Optional[bool]]:
-        """Each question's answer as True, False or None (skipped)."""
-        return {
-            name: {"yes": True, "no": False}.get(self.cleaned_data.get(name) or "")
-            for name in self.fields
-            if name != "note"
-        }
-
-
 # Form for sending mailing list emails
 class SendMailingListMailForm(forms.Form):
     subject = forms.CharField(

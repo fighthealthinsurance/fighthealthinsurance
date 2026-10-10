@@ -2,7 +2,6 @@ import csv
 import datetime
 import json
 import statistics
-from urllib.parse import urlencode
 from collections import Counter, defaultdict
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
@@ -31,7 +30,6 @@ from django.http import (
     StreamingHttpResponse,
 )
 from django.shortcuts import redirect, render
-from django.urls import reverse
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.decorators import method_decorator
@@ -44,7 +42,7 @@ import requests
 from loguru import logger
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
-from fighthealthinsurance import letter_review, letter_review_highlight
+from fighthealthinsurance import letter_review
 from fighthealthinsurance.common_view_logic import schedule_follow_ups
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.followup_emails import (
@@ -4675,7 +4673,7 @@ class LetterReviewMineView(View):
     def get(self, request, packet_id: int) -> HttpResponse:
         reader = letter_review.reader_or_404(packet_id, request.user)
         letters = letter_review.reader_letters(reader)
-        labeled = sum(1 for letter in letters if letter["done"])
+        labeled = sum(1 for letter in letters if letter["verdict"])
         return render(
             request,
             "letter_review_mine.html",
@@ -4709,13 +4707,10 @@ class LetterReviewDoneView(View):
 
 
 @method_decorator(never_cache, name="dispatch")
-# A reader's marks and note never go into an error report: the ADMINS email
-# masks them in the POST and blanks every frame's variables, where the note
-# and the letter's text would otherwise sit.
-@method_decorator(
-    sensitive_post_parameters("verdict", "note", *letter_review.ANSWER_FIELDS),
-    name="dispatch",
-)
+# A reader's verdict and note never go into an error report: the ADMINS
+# email masks them in the POST and blanks every frame's variables, where the
+# note and the letter's text would otherwise sit.
+@method_decorator(sensitive_post_parameters("verdict", "note"), name="dispatch")
 @method_decorator(sensitive_variables(), name="dispatch")
 class LetterReviewItemView(View):
     """One letter, the input its writer saw, the rule, and the reader's label.
@@ -4725,51 +4720,32 @@ class LetterReviewItemView(View):
     and moves on to the reader's next unlabeled letter after this one, or to
     the next-letter redirect when none is left after it. It never lands on a
     letter already labeled, where an old mark would sit pre-checked.
-
-    A verdict packet takes one of three verdicts. A binary packet takes yes
-    or no to each question, with reading aids (letter_review_item_binary.html)
-    and a break page after every BREAK_EVERY letters a reader finishes.
     """
 
     template_name = "letter_review_item.html"
-    binary_template_name = "letter_review_item_binary.html"
-
-    @staticmethod
-    def _binary(reader: LetterReviewReader) -> bool:
-        return reader.packet.form == "binary"
-
-    @classmethod
-    def _form(cls, reader: LetterReviewReader, data: Any = None, label: Any = None):
-        if cls._binary(reader):
-            initial: Dict[str, Any] = {}
-            if label is not None:
-                initial = {
-                    field: {True: "yes", False: "no"}.get(getattr(label, field), "")
-                    for field in letter_review.ANSWER_FIELDS
-                }
-                initial["note"] = label.note
-            return core_forms.LetterReviewAnswersForm(data, initial=initial)
-        initial = {"verdict": label.verdict, "note": label.note} if label else {}
-        return core_forms.LetterReviewLabelForm(data, initial=initial)
 
     def _render(
         self,
         request,
         reader: LetterReviewReader,
         item: LetterReviewItem,
-        form: Any,
+        form: core_forms.LetterReviewLabelForm,
         saved: Optional[LetterReviewLabel],
         *,
         status: int = 200,
     ) -> HttpResponse:
         place, previous_slug, next_slug = letter_review.neighbours(reader, item)
         labeled, assigned = letter_review.progress(reader)
-        context: Dict[str, Any] = {
+        selected = form["verdict"].value()
+        context = {
             "packet": reader.packet,
             "item": item,
             "form": form,
+            "selected": selected,
+            "saved_label": saved.get_verdict_display() if saved else None,
             "note": form["note"].value() or "",
             "note_max": letter_review.NOTE_MAX,
+            "verdicts": letter_review.verdict_choices(),
             "place": place,
             "assigned": assigned,
             "labeled": labeled,
@@ -4777,129 +4753,51 @@ class LetterReviewItemView(View):
             "next_slug": next_slug,
             "frozen": letter_review.labels_frozen(reader.packet),
         }
-        if not self._binary(reader):
-            context.update(
-                {
-                    "selected": form["verdict"].value(),
-                    "saved_label": saved.get_verdict_display() if saved else None,
-                    "verdicts": letter_review.verdict_choices(),
-                }
-            )
-            return render(request, self.template_name, context, status=status)
-        context.update(
-            {
-                # Reading options are remembered per reader, in their browser.
-                "reader_key": request.user.pk,
-                "saved": saved is not None,
-                "questions": [
-                    {
-                        "field": q.field,
-                        "text": q.text,
-                        "help": q.help,
-                        "required": q.required,
-                        "value": form[q.field].value() or "",
-                    }
-                    for q in letter_review.QUESTIONS
-                ],
-                "paragraphs": letter_review_highlight.paragraphs(
-                    item.letter, item.prompt
-                ),
-                "highlight_rules": letter_review_highlight.RULES,
-                "break_every": letter_review.BREAK_EVERY,
-                "until_break": letter_review.BREAK_EVERY
-                - labeled % letter_review.BREAK_EVERY,
-            }
-        )
-        return render(request, self.binary_template_name, context, status=status)
+        return render(request, self.template_name, context, status=status)
 
     def get(self, request, packet_id: int, slug: str) -> HttpResponse:
         reader = letter_review.reader_or_404(packet_id, request.user)
         item = letter_review.item_or_404(reader, slug)
         label = letter_review.own_label(reader, item)
-        return self._render(
-            request, reader, item, self._form(reader, label=label), label
-        )
-
-    def _final(self, request, reader, item) -> HttpResponse:
-        # Every reader is done: the marks are final as given.
-        saved = letter_review.own_label(reader, item)
-        form = self._form(reader, label=saved)
-        return self._render(request, reader, item, form, saved, status=409)
+        initial = {"verdict": label.verdict, "note": label.note} if label else {}
+        form = core_forms.LetterReviewLabelForm(initial=initial)
+        return self._render(request, reader, item, form, label)
 
     def post(self, request, packet_id: int, slug: str) -> HttpResponse:
         reader = letter_review.reader_or_404(packet_id, request.user)
         item = letter_review.item_or_404(reader, slug)
         if letter_review.labels_frozen(reader.packet):
-            return self._final(request, reader, item)
-        form = self._form(reader, data=request.POST)
+            # Every reader is done: the marks are final as given.
+            saved = letter_review.own_label(reader, item)
+            initial = {"verdict": saved.verdict, "note": saved.note} if saved else {}
+            form = core_forms.LetterReviewLabelForm(initial=initial)
+            return self._render(request, reader, item, form, saved, status=409)
+        form = core_forms.LetterReviewLabelForm(request.POST)
         if not form.is_valid():
             saved = letter_review.own_label(reader, item)
             return self._render(request, reader, item, form, saved, status=400)
-        binary = self._binary(reader)
-        was_done = binary and letter_review.label_done(reader, item)
         try:
-            if binary:
-                letter_review.save_answers(
-                    reader, item, form.answers(), form.cleaned_data["note"]
-                )
-            else:
-                letter_review.save_label(
-                    reader,
-                    item,
-                    form.cleaned_data["verdict"],
-                    form.cleaned_data["note"],
-                )
+            letter_review.save_label(
+                reader, item, form.cleaned_data["verdict"], form.cleaned_data["note"]
+            )
         except LetterReviewLabelsFrozen:
             # The last reader finished between the check above and this save.
-            return self._final(request, reader, item)
-        # The marks stay out of the log: the review is blind, and staff read
-        # these logs. So does the eval key, which could name the writer.
+            saved = letter_review.own_label(reader, item)
+            initial = {"verdict": saved.verdict, "note": saved.note} if saved else {}
+            form = core_forms.LetterReviewLabelForm(initial=initial)
+            return self._render(request, reader, item, form, saved, status=409)
+        # The verdict stays out of the log: the review is blind, and staff
+        # read these logs. So does the eval key, which could name the writer.
         logger.info(
             f"Staff {request.user} saved a letter review label "
             f"(packet {packet_id}, item {item.pk})"
         )
-        if binary and not was_done:
-            labeled, assigned = letter_review.progress(reader)
-            if labeled < assigned and labeled % letter_review.BREAK_EVERY == 0:
-                # The break goes on from this letter, as a save would.
-                url = reverse("letter_review_break", args=[packet_id])
-                return redirect(f"{url}?{urlencode({'after': item.slug})}")
         following = letter_review.next_unlabeled_after(reader, item)
         if following is not None:
             return redirect(
                 "letter_review_item", packet_id=packet_id, slug=following.slug
             )
         return redirect("letter_review_next", packet_id=packet_id)
-
-
-@method_decorator(never_cache, name="dispatch")
-@method_decorator(sensitive_variables(), name="dispatch")
-class LetterReviewBreakView(View):
-    """A short pause after every BREAK_EVERY letters a reader finishes, with
-    their progress and the way on to their next letter."""
-
-    def get(self, request, packet_id: int) -> HttpResponse:
-        reader = letter_review.reader_or_404(packet_id, request.user)
-        labeled, assigned = letter_review.progress(reader)
-        # The letter just saved, if it is one of this reader's: go on from
-        # there, not back to an earlier one they skipped.
-        after = (
-            letter_review.items_for(reader)
-            .filter(slug=request.GET.get("after", ""))
-            .first()
-        )
-        following = letter_review.next_unlabeled_after(reader, after) if after else None
-        return render(
-            request,
-            "letter_review_break.html",
-            {
-                "packet": reader.packet,
-                "labeled": labeled,
-                "assigned": assigned,
-                "break_every": letter_review.BREAK_EVERY,
-                "following": following,
-            },
-        )
 
 
 @method_decorator(never_cache, name="dispatch")

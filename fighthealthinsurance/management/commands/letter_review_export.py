@@ -7,10 +7,8 @@ Usage::
 
 The JSON is the labels contract the private eval repo reads: the packet
 name, its rule version, when it was exported, and one entry per label with
-the item key, reader handle, verdict, note and when it was labeled. A binary
-packet's export also names its form, and each entry carries "answers" (each
-question's field: true, false or null for skipped) in place of the verdict.
-Unlabeled items are left out. No letter or prompt text is in it. With ``--out -`` (the
+the item key, reader handle, verdict, note and when it was labeled. Unlabeled
+items are left out. No letter or prompt text is in it. With ``--out -`` (the
 default) stdout carries only the JSON and the summary goes to stderr.
 """
 
