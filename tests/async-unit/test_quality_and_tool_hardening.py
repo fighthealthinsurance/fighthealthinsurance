@@ -13,7 +13,7 @@
 """
 
 import re
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,7 +23,9 @@ from fighthealthinsurance.chat.tools.base_tool import (
     set_tool_field,
     settable_model_fields,
 )
+from fighthealthinsurance.chat.tools.appeal_tool import AppealTool
 from fighthealthinsurance.chat.tools.medicaid_tool import MedicaidInfoTool
+from fighthealthinsurance.chat.tools.prior_auth_tool import PriorAuthTool
 from fighthealthinsurance.generate_appeal import AppealTemplateGenerator
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
 from fighthealthinsurance.models import Appeal, Denial, PriorAuthRequest
@@ -150,10 +152,52 @@ class TestToolFieldTextCoercion:
         set_tool_field(denial, "denial_text", None)
         assert denial.denial_text == "Your MRI claim was denied."
 
-    def test_null_for_a_nullable_column_clears_it(self):
+    def test_null_leaves_a_stored_value_alone(self):
+        """A model's null means it doesn't know the field, not "erase it":
+        the procedure an earlier turn stored stays for the letter."""
         denial = Denial(procedure="MRI")
         set_tool_field(denial, "procedure", None)
-        assert denial.procedure is None
+        assert denial.procedure == "MRI"
+
+
+class TestPriorAuthPayloadFields:
+    @pytest.mark.asyncio
+    async def test_null_keeps_a_required_field(self):
+        """Prior-auth payloads get the same field handling: a null for a NOT
+        NULL column would fail the save and lose the call."""
+        tool = PriorAuthTool(AsyncMock(), AsyncMock())
+        prior_auth = PriorAuthRequest(diagnosis="back pain")
+        await tool._update_prior_auth_fields(prior_auth, {"diagnosis": None})
+        assert prior_auth.diagnosis == "back pain"
+
+
+class TestToolErrorFrames:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tool_cls,token,helper",
+        [
+            (AppealTool, "create_or_update_appeal", "_get_or_create_appeal"),
+            (
+                PriorAuthTool,
+                "create_or_update_prior_auth",
+                "_get_or_create_prior_auth",
+            ),
+        ],
+    )
+    async def test_processing_error_frame_omits_the_exception_text(
+        self, tool_cls, token, helper
+    ):
+        """The exception text can quote a database row, PHI included."""
+        status, error = AsyncMock(), AsyncMock()
+        tool = tool_cls(status, error)
+        with patch.object(
+            tool, helper, AsyncMock(side_effect=RuntimeError("SENTINEL-frame-err"))
+        ):
+            await tool.handle(f'{token} {{"diagnosis": "x"}}', "", chat=MagicMock())
+        frames = [
+            str(call.args) for call in status.await_args_list + error.await_args_list
+        ]
+        assert [f for f in frames if "SENTINEL-frame-err" in f] == []
 
 
 class _ExplodingTool(BaseTool):

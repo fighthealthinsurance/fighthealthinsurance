@@ -89,24 +89,50 @@ class DraftedLetter(NamedTuple):
     ``saved_to_appeal`` lets callers word their reply honestly: a letter
     that is not on the appeal is still delivered, but must not be presented
     as "saved to Appeal #N". ``preserved_existing`` distinguishes WHY it
-    wasn't saved -- the appeal already carried a real (possibly
-    user-edited) letter that a reserve draft must not clobber -- from a
-    plain save failure, so callers can word the two differently.
+    wasn't saved -- the appeal's own letter was deliberately left alone --
+    from a plain save failure, and ``appeal_sent`` marks the case where that
+    letter already went out. letter_placement_note words each.
     """
 
     text: str
     saved_to_appeal: bool
     preserved_existing: bool = False
+    appeal_sent: bool = False
+
+
+def letter_placement_note(drafted: DraftedLetter, appeal_link: str) -> str:
+    """One sentence for the reply saying where a delivered letter is: saved
+    to the appeal, kept off it (and why), or not saved at all."""
+    if drafted.saved_to_appeal:
+        return f"It's saved to {appeal_link}."
+    if drafted.appeal_sent:
+        return (
+            f"{appeal_link} has already been sent, so its letter stays as it "
+            f"went out -- use this draft for a follow-up, or copy it from this "
+            f"chat."
+        )
+    if drafted.preserved_existing:
+        return (
+            f"{appeal_link} already has a saved letter, so I've left that one "
+            f"untouched -- copy this draft from the chat if you prefer it."
+        )
+    return (
+        f"I couldn't attach it to {appeal_link} just now, so please copy it "
+        f"from this chat."
+    )
 
 
 def _requested_letter_clauses(text: Optional[str]) -> List[str]:
     """The clauses of ``text`` that ask for a letter, declined ones left out.
-    Each runs from the sentence start to the end of its match."""
+    Each runs from the clause start -- after the last sentence end, comma,
+    semicolon or colon -- to the end of its match, so a negation or a "new"
+    earlier in the sentence ("I'm not sure what to say, can you write my
+    appeal?") doesn't count against the request."""
     if not text:
         return []
     clauses = []
     for match in _LETTER_REQUEST_RE.finditer(text):
-        start = max(text.rfind(mark, 0, match.start()) for mark in ".!?\n") + 1
+        start = max(text.rfind(mark, 0, match.start()) for mark in ".!?\n,;:") + 1
         clause = text[start : match.end()]
         if not _DECLINED_RE.search(clause):
             clauses.append(clause)
@@ -304,10 +330,12 @@ async def generate_letter_for_denial(
                     f"{template.name}: {type(e).__name__}"
                 )
 
-        if deadline_seconds < _MIN_MODEL_DEADLINE_SECONDS:
+        def _template_only(seconds_left: float) -> Optional[GeneratedAppeal]:
+            """The longest static template, for a deadline too short for a
+            model answer to be used; no model is called."""
             letters = [t for t in non_ai_appeals if is_real_appeal(t)]
             logger.info(
-                f"chat letter: {deadline_seconds:.0f}s left for denial "
+                f"chat letter: {seconds_left:.0f}s left for denial "
                 f"{denial.denial_id}, too little for a model answer; "
                 f"{'serving a template' if letters else 'no template to serve'}"
             )
@@ -318,6 +346,9 @@ async def generate_letter_for_denial(
                 model_name=TEMPLATE_MODEL_NAME,
                 context_level=CONTEXT_LEVEL_TEMPLATE,
             )
+
+        if deadline_seconds < _MIN_MODEL_DEADLINE_SECONDS:
+            return _template_only(deadline_seconds)
 
         diagnostics: dict = {}
 
@@ -358,6 +389,12 @@ async def generate_letter_for_denial(
                 f"chat letter: no denial summary for denial "
                 f"{denial.denial_id} ({type(e).__name__}); using the full text"
             )
+        # Again with the time the summary took: it can leave too little for
+        # the drain to use any model answer, which the fan-out would still
+        # pay for.
+        seconds_left = drain_deadline - time.monotonic()
+        if seconds_left < _MIN_MODEL_DEADLINE_SECONDS:
+            return _template_only(seconds_left)
 
         def _drain() -> Optional[GeneratedAppeal]:
             """Blocking: run the models and pull the first usable letter."""
@@ -512,7 +549,10 @@ async def draft_letter_for_chat(
                 f"without overwriting what went out"
             )
             return DraftedLetter(
-                text=letter, saved_to_appeal=False, preserved_existing=True
+                text=letter,
+                saved_to_appeal=False,
+                preserved_existing=True,
+                appeal_sent=True,
             )
         if not is_full_model_draft(generated_item) and is_real_appeal(current):
             logger.info(

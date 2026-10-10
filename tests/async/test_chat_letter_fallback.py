@@ -9,7 +9,8 @@ same pipeline instead of having the chat model write the letter inline.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+import itertools
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from loguru import logger
 from rest_framework.test import APITestCase
@@ -40,6 +41,7 @@ from fighthealthinsurance.models import (
 # selection to a mock backend and makes the chat LLM pass fail.
 from tests.chat_fixtures import (
     FrameRecorder as _FrameRecorder,
+    RecordingChatModel,
     llm_call_fails as _llm_call_fails,
     make_professional_chat as _make_professional_chat,
 )
@@ -264,6 +266,35 @@ class ChatLetterFallbackTest(APITestCase):
             f for f in recorder.frames if f.get("role") == "assistant"
         ]
         self.assertEqual(assistant_frames, [])
+
+    async def test_redo_turn_keeps_stored_drafts_from_the_letter_tool(self):
+        """The redo rule reaches the letter tool too, not just the fallback:
+        if its generation fails, a draft from before the request must not
+        stand in for the new letter."""
+        user, chat = await _make_professional_chat("letterfall19", "9999920019")
+        await _link_letter_appeal(chat, user)
+        interface = ChatInterface(
+            send_json_message_func=_FrameRecorder(), chat=chat, user=user
+        )
+        model = RecordingChatModel(
+            always_reply='**generate_appeal_letter**{"procedure": "MRI"}'
+        )
+        with patch(
+            "fighthealthinsurance.ml.ml_router.MLRouter."
+            "get_chat_backends_with_fallback",
+            return_value=([model], []),
+        ), patch(
+            "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
+            new_callable=AsyncMock,
+        ), patch(
+            "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
+            "draft_letter_for_chat",
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
+        ) as mock_draft:
+            await interface.handle_chat_message(
+                "Please redo the letter with the new diagnosis."
+            )
+        self.assertFalse(mock_draft.await_args.kwargs["use_reserve"])
 
 
     async def _interface_with_linked_appeal(self, username, npi):
@@ -694,6 +725,40 @@ class GenerateAppealLetterToolTest(APITestCase):
         )
         self.assertIn("problem drafting the letter", response)
 
+    async def test_letter_for_a_sent_appeal_says_it_went_out(self):
+        """Not "already has a saved letter ... copy this draft if you prefer
+        it": that letter was sent, and the reply has to say so."""
+        chat = await self._make_chat("lettertool12", "9999939012")
+        tool = GenerateAppealLetterTool(AsyncMock(), AsyncMock())
+        sent = DraftedLetter(
+            GENERATED_LETTER,
+            saved_to_appeal=False,
+            preserved_existing=True,
+            appeal_sent=True,
+        )
+        with patch(
+            "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
+            "draft_letter_for_chat",
+            new=AsyncMock(return_value=sent),
+        ):
+            response, _, _ = await tool.handle(
+                '**generate_appeal_letter**{"procedure": "MRI"}', "", chat=chat
+            )
+        self.assertIn("has already been sent", response)
+
+    async def test_tool_passes_its_stored_draft_rule_to_the_drafter(self):
+        chat = await self._make_chat("lettertool13", "9999939013")
+        tool = GenerateAppealLetterTool(AsyncMock(), AsyncMock(), use_reserve=False)
+        with patch(
+            "fighthealthinsurance.chat.tools.generate_appeal_letter_tool."
+            "draft_letter_for_chat",
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
+        ) as mock_draft:
+            await tool.handle(
+                '**generate_appeal_letter**{"procedure": "MRI"}', "", chat=chat
+            )
+        self.assertFalse(mock_draft.await_args.kwargs["use_reserve"])
+
 
 class LetterSelectionPolicyTest(APITestCase):
     """generate_letter_for_denial picks a letter, not just any model output."""
@@ -760,25 +825,49 @@ class LetterSelectionPolicyTest(APITestCase):
             item = await generate_letter_for_denial(self._denial())
         self.assertEqual(item.model_name, "fhi-model")
 
+    class _Template:
+        """A specialized template whose static letter is RESERVE_LETTER."""
+
+        name = "test"
+
+        @classmethod
+        def static_appeal(cls):
+            return RESERVE_LETTER
+
     async def test_too_short_a_deadline_serves_a_template_without_models(self):
         """Inside make_appeals' give-up margin a model answer can't be used,
         so no model is asked."""
-
-        class _Template:
-            name = "test"
-
-            @classmethod
-            def static_appeal(cls):
-                return RESERVE_LETTER
-
         with patch(
             "fighthealthinsurance.generate_appeal.detect_specialized_templates",
-            return_value=[_Template],
+            return_value=[self._Template],
         ), patch.object(
             common_view_logic.appealGenerator, "make_appeals"
         ) as make_appeals:
             item = await generate_letter_for_denial(
                 self._denial(), deadline_seconds=10
+            )
+        self.assertEqual((make_appeals.called, item.text), (False, RESERVE_LETTER))
+
+    async def test_a_summary_that_leaves_too_little_time_serves_a_template(self):
+        """The floor applies to the time left after the denial summary,
+        which may take up to a third of the deadline."""
+        clock = MagicMock()
+        # Drafting starts at 0s; the summary returns at 20s of a 30s deadline.
+        clock.monotonic.side_effect = itertools.chain([0.0], itertools.repeat(20.0))
+        with patch(
+            "fighthealthinsurance.generate_appeal.detect_specialized_templates",
+            return_value=[self._Template],
+        ), patch(
+            "fighthealthinsurance.ml.ml_appeal_context_helper."
+            "MLAppealContextHelper.maybe_summarize_denial_text",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "fighthealthinsurance.chat.appeal_letter_generator.time", clock
+        ), patch.object(
+            common_view_logic.appealGenerator, "make_appeals"
+        ) as make_appeals:
+            item = await generate_letter_for_denial(
+                self._denial(), deadline_seconds=30
             )
         self.assertEqual((make_appeals.called, item.text), (False, RESERVE_LETTER))
 

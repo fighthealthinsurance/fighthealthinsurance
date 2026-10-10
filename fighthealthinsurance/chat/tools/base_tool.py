@@ -68,17 +68,18 @@ def set_tool_field(instance: Any, key: str, value: Any) -> None:
     meaningful there, is skipped. Other columns keep Django's conversion on
     save (stringifying a bool would make False truthy in memory).
 
-    A null is skipped for a NOT NULL column: the letter prompt asks for
-    "whichever fields you know", and a model may send null for one it
-    doesn't (``"denial_text": null``), which would fail the save with an
-    IntegrityError and lose the whole call.
+    A null is always skipped. The letter prompt asks for "whichever fields
+    you know", so a model's null means it doesn't know, not "erase it":
+    setting it would wipe what an earlier turn stored (the procedure the
+    letter is about) or, on a NOT NULL column, fail the save with an
+    IntegrityError and lose the whole call. An empty string still clears.
     """
-    field = instance._meta.get_field(key)
-    if value is None and not field.null:
-        logger.info(f"Skipping tool payload field {key}: null for a NOT NULL column")
+    if value is None:
+        logger.info(f"Skipping tool payload field {key}: null")
         return
-    if isinstance(field, (models.CharField, models.TextField)) and not (
-        value is None or isinstance(value, str)
+    field = instance._meta.get_field(key)
+    if isinstance(field, (models.CharField, models.TextField)) and not isinstance(
+        value, str
     ):
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             value = str(value)
@@ -103,6 +104,14 @@ _CALL_LINE_END_RE = re.compile(r"[ \t*]*(?:\r?\n|$)")
 
 # A closing brace that ends its line (see _CALL_LINE_END_RE).
 _LINE_CLOSING_BRACE_RE = re.compile(r"\}(?=[ \t*]*(?:\r?\n|$))")
+
+# How a JSON object starts: a quoted key, or nothing ({}). A letter's
+# {Date} or {Your Name} placeholder line starts otherwise.
+_JSON_OBJECT_START_RE = re.compile(r'\{\s*["}]')
+
+# More of a payload after its object's closing brace: an optional comma,
+# then a quoted key, as in {"procedure": "MRI"} "diagnosis": "back pain"}.
+_PAYLOAD_TAIL_RE = re.compile(r'[ \t]*,?[ \t]*"[^"\n]*"[ \t]*:')
 
 
 def _balanced_object_end(text: str, start: int, limit: int) -> Optional[int]:
@@ -141,15 +150,17 @@ def _jsonl_continuation(text: str, pos: int) -> Optional[Tuple[int, int]]:
     The chat prompt asks for the anchored calls' content as JSONL, so a
     model may split one call's payload over lines: ``**tool**{...}`` and
     then ``{...}`` on the next line. A continuation follows with only
-    whitespace in between, has balanced braces, and ends its line, so prose
-    that merely starts with a brace (``{per ERISA} of receiving``) is not
-    one. It never reaches past the next tool call. Its JSON is not checked
-    here: a malformed continuation still belongs to the call.
+    whitespace in between, starts the way a JSON object does (a quoted key),
+    has balanced braces, and ends its line. So prose that merely starts
+    with a brace (``{per ERISA} of receiving``) is not one, nor is a
+    letter's ``{Date}`` placeholder line. It never reaches past the next
+    tool call. Its JSON is not checked further here: a malformed
+    continuation still belongs to the call.
     """
     start = pos
     while start < len(text) and text[start].isspace():
         start += 1
-    if start >= len(text) or text[start] != "{":
+    if not _JSON_OBJECT_START_RE.match(text, start):
         return None
     following = next_tool_call_start(text, start + 1)
     limit = following if following is not None else len(text)
@@ -171,6 +182,31 @@ def _with_closing_wrapper(text: str, end: int) -> int:
     return stop
 
 
+def _object_and_continuations_end(text: str, end: int) -> int:
+    """Where a call's payload ends, given where its first object ends.
+
+    Runs on through its JSONL continuations, which may also follow the
+    closing wrapper of a ``**tool {...}**`` first line.
+    """
+    while (
+        continuation := _jsonl_continuation(text, _with_closing_wrapper(text, end))
+    ) is not None:
+        end = continuation[1]
+    return end
+
+
+def _line_closing_brace_end(text: str, pos: int, limit: int) -> Optional[int]:
+    """Index just past the last brace on ``pos``'s line, when that brace
+    closes the line (see _CALL_LINE_END_RE); None otherwise. Looks no
+    further than ``limit``."""
+    line_end = text.find("\n", pos)
+    line_end = min(line_end if line_end != -1 else len(text), limit)
+    brace = text.rfind("}", pos, line_end)
+    if brace != -1 and _CALL_LINE_END_RE.match(text, brace + 1):
+        return brace + 1
+    return None
+
+
 def parse_anchored_json_payload(text: str, match: re.Match[str]) -> Tuple[dict, str]:
     """Parse the JSON payload of an anchored ``**tool**{...}`` call precisely.
 
@@ -188,14 +224,16 @@ def parse_anchored_json_payload(text: str, match: re.Match[str]) -> Tuple[dict, 
     over-capture would swallow the text between the calls.
 
     JSONL continuation objects (see _jsonl_continuation) are part of the
-    call: their keys are merged in order, later ones winning, and the span
-    covers them. Stopping at the first object applied only part of the
-    update and left the rest of the payload in the reply as raw JSON.
+    call, also after a ``**tool {...}**`` first line: their keys are merged
+    in order, later ones winning, and the span covers them. Stopping at the
+    first object applied only part of the update and left the rest of the
+    payload in the reply as raw JSON.
 
     Raises ``json.JSONDecodeError`` for an undecodable or non-object
-    payload, a malformed continuation included. NOTE for callers: the
-    payload can carry medical/claim details, so error paths must not log it
-    or echo it back -- log sizes only.
+    payload, a malformed continuation included, and for more payload after
+    the object on the same line (``{"procedure": "MRI"} "diagnosis": ...}``).
+    NOTE for callers: the payload can carry medical/claim details, so error
+    paths must not log it or echo it back -- log sizes only.
     """
     start = match.start(1)
     payload, end = json.JSONDecoder().raw_decode(text, start)
@@ -203,10 +241,20 @@ def parse_anchored_json_payload(text: str, match: re.Match[str]) -> Tuple[dict, 
         raise json.JSONDecodeError(
             "tool payload must be a JSON object", text[start:end], 0
         )
-    while (continuation := _jsonl_continuation(text, end)) is not None:
+    while (
+        continuation := _jsonl_continuation(text, _with_closing_wrapper(text, end))
+    ) is not None:
         more_start, end = continuation
-        # Balanced and starting with "{": a dict, or JSONDecodeError.
+        # Balanced and starting like an object: a dict, or JSONDecodeError.
         payload.update(json.loads(text[more_start:end]))
+    if (
+        _PAYLOAD_TAIL_RE.match(text, end)
+        and _line_closing_brace_end(text, end, len(text)) is not None
+    ):
+        # The rest of the line is more payload whose object got split:
+        # rejected, as json.loads rejected extra data, rather than half
+        # applied with the rest left in the reply.
+        raise json.JSONDecodeError("more payload after the tool's object", text, end)
     return payload, text[match.start() : _with_closing_wrapper(text, end)]
 
 
@@ -255,13 +303,8 @@ def remove_anchored_call(text: str, match: re.Match[str]) -> str:
         # when the line closes with a brace -- the pattern's own shape for
         # where a call ends -- since it can be more of the payload:
         # {"procedure": "MRI", oops} "diagnosis": "back pain"}
-        line_end = text.find("\n", end)
-        line_end = min(line_end if line_end != -1 else len(text), limit)
-        tail_brace = text.rfind("}", end, line_end)
-        if tail_brace != -1 and _CALL_LINE_END_RE.match(text, tail_brace + 1):
-            end = tail_brace + 1
-        while (continuation := _jsonl_continuation(text, end)) is not None:
-            end = continuation[1]
+        end = _line_closing_brace_end(text, end, limit) or end
+        end = _object_and_continuations_end(text, end)
     else:
         # Unbalanced, e.g. an unpaired quote: end at the first brace that
         # closes a line, the pattern's own shape for the end of a call;

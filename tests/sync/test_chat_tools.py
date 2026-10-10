@@ -2032,6 +2032,26 @@ class TestLetterRequestDetector(TestCase):
             )
         )
 
+    def test_a_negation_in_an_earlier_clause_does_not_cancel_the_request(self):
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            looks_like_letter_request,
+        )
+
+        self.assertTrue(
+            looks_like_letter_request(
+                "I'm not sure what to say, can you write my appeal letter?"
+            )
+        )
+
+    def test_new_in_an_earlier_clause_is_not_a_redo(self):
+        from fighthealthinsurance.chat.appeal_letter_generator import (
+            wants_fresh_letter,
+        )
+
+        self.assertFalse(
+            wants_fresh_letter("I got a new denial, please draft the appeal letter")
+        )
+
     def test_redo_requests_want_a_fresh_letter(self):
         from fighthealthinsurance.chat.appeal_letter_generator import (
             wants_fresh_letter,
@@ -2185,6 +2205,55 @@ class TestParseAnchoredJsonPayload(TestCase):
         )
         with self.assertRaises(json_mod.JSONDecodeError):
             parse_anchored_json_payload(text, self._match(text))
+
+    def test_placeholder_line_after_the_call_is_not_a_continuation(self):
+        """A letter's {Date} line starts unlike a JSON object: taking it for
+        more payload rejected the call and deleted the line."""
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        text = (
+            "Sure.\n"
+            '**generate_appeal_letter**{"procedure": "MRI"}\n\n'
+            "{Date}\n\nDear {Insurer},"
+        )
+        payload, _ = parse_anchored_json_payload(text, self._match(text))
+        self.assertEqual(payload, {"procedure": "MRI"})
+
+    def test_continuation_after_a_wrapped_first_line_is_merged(self):
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        text = (
+            '**generate_appeal_letter {"procedure": "MRI"}**\n'
+            '{"diagnosis": "back pain"}'
+        )
+        payload, _ = parse_anchored_json_payload(text, self._match(text))
+        self.assertEqual(payload, {"procedure": "MRI", "diagnosis": "back pain"})
+
+    def test_more_payload_on_the_calls_line_rejects_the_call(self):
+        """Half an update is not applied as if it were all of it, with the
+        rest left in the reply."""
+        import json as json_mod
+
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        text = '**generate_appeal_letter**{"procedure": "MRI"} "diagnosis": "back pain"}'
+        with self.assertRaises(json_mod.JSONDecodeError):
+            parse_anchored_json_payload(text, self._match(text))
+
+    def test_prose_with_a_brace_after_the_call_does_not_reject_it(self):
+        from fighthealthinsurance.chat.tools.base_tool import (
+            parse_anchored_json_payload,
+        )
+
+        text = '**generate_appeal_letter**{"procedure": "MRI"} -- see {section}'
+        payload, _ = parse_anchored_json_payload(text, self._match(text))
+        self.assertEqual(payload, {"procedure": "MRI"})
 
 
 class TestReplaceAnchoredCall(TestCase):
@@ -2365,3 +2434,26 @@ class TestAnchoredCallRemoval(TestCase):
         )
         result = strip_anchored_calls(tool, text)
         self.assertEqual(result, "Anything else?")
+
+    def test_placeholder_line_after_a_broken_call_survives(self):
+        from fighthealthinsurance.chat.tools.base_tool import remove_anchored_call
+
+        tool = self._tool()
+        text = (
+            'Noted.\n**create_or_update_appeal**{"procedure": "MRI", oops}\n'
+            "{Date}\nDear Reviewer,"
+        )
+        result = remove_anchored_call(text, tool.detect(text))
+        self.assertEqual(result, "Noted.\n\n{Date}\nDear Reviewer,")
+
+    def test_split_payload_on_the_calls_line_is_removed_whole(self):
+        from fighthealthinsurance.chat.tools.base_tool import remove_anchored_call
+
+        tool = self._tool()
+        text = (
+            '**create_or_update_appeal**{"procedure": "MRI"} '
+            '"diagnosis": "back pain"}\n'
+            "Anything else?"
+        )
+        result = remove_anchored_call(text, tool.detect(text))
+        self.assertEqual(result, "\nAnything else?")

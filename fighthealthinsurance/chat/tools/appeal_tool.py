@@ -164,7 +164,11 @@ class AppealTool(BaseTool):
             logger.opt(exception=True).warning(
                 f"Error processing appeal data: {type(e).__name__}"
             )
-            await self.send_error_message(f"Error processing appeal data: {str(e)}")
+            # Generic on purpose: the exception text can carry PHI (a
+            # database error quotes the failing row).
+            await self.send_error_message(
+                "Error processing appeal data. Please try again in a moment."
+            )
             raise
 
     async def _get_or_create_appeal(

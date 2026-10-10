@@ -107,6 +107,7 @@ from fighthealthinsurance.chat.appeal_letter_generator import (
     DraftedLetter,
     denial_has_letter_context,
     draft_letter_for_chat,
+    letter_placement_note,
     looks_like_letter_request,
     wants_fresh_letter,
 )
@@ -332,6 +333,10 @@ class ChatInterface:
         # delivers a letter the tool already drafted instead of generating --
         # and saving over it -- another. Reset at the start of each turn.
         self._turn_drafted_letter: list[Optional[DraftedLetter]] = [None]
+        # Whether the turn's message asks for a new letter (a redo, another
+        # version). Then neither the letter tool nor the total-failure
+        # fallback may hand back a stored draft: it predates the request.
+        self._turn_wants_fresh_letter = False
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -1400,6 +1405,7 @@ class ChatInterface:
             use_external=self.use_external_models,
             deadline_seconds=self._remaining_letter_deadline(),
             drafted_this_turn=self._turn_drafted_letter,
+            use_reserve=not self._turn_wants_fresh_letter,
         )
         response_text, context, _ = await generate_letter_tool.handle(
             response_text, context, chat=chat
@@ -1583,6 +1589,9 @@ class ChatInterface:
         self._reply_gate = None
         # Nor may a previous turn's letter count as this turn's.
         self._turn_drafted_letter[0] = None
+        self._turn_wants_fresh_letter = not is_document and wants_fresh_letter(
+            user_message
+        )
 
         # SAFETY: Check for crisis/self-harm indicators in user-authored messages.
         # Skip for document uploads — OCR'd clinical text often contains
@@ -2522,7 +2531,7 @@ class ChatInterface:
                 if letter_appeal:
                     fallback_reply = await self._attempt_letter_fallback_reply(
                         letter_appeal,
-                        fresh_letter=wants_fresh_letter(user_message),
+                        fresh_letter=self._turn_wants_fresh_letter,
                     )
                 else:
                     logger.info(
@@ -2732,21 +2741,10 @@ class ChatInterface:
             if not drafted:
                 return None
             # Word the appeal-row relationship honestly: saved, deliberately
-            # left alone (it already had a real letter), or failed to save.
-            appeal_link = f"[Appeal #{appeal.id}](/appeals/{appeal.id})"
-            if drafted.saved_to_appeal:
-                saved_note = f"It's saved to {appeal_link}."
-            elif drafted.preserved_existing:
-                saved_note = (
-                    f"{appeal_link} already has a saved letter, so I've left "
-                    f"that one untouched -- copy this draft from the chat if "
-                    f"you prefer it."
-                )
-            else:
-                saved_note = (
-                    f"I couldn't attach it to {appeal_link} just now, so "
-                    f"please copy it from this chat."
-                )
+            # left alone (or already sent), or failed to save.
+            saved_note = letter_placement_note(
+                drafted, f"[Appeal #{appeal.id}](/appeals/{appeal.id})"
+            )
             return (
                 f"Our chat models are having trouble right now, so I drafted "
                 f"your appeal letter with our dedicated appeal generator "

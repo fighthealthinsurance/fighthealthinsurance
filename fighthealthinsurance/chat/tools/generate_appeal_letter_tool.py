@@ -21,6 +21,7 @@ from fighthealthinsurance.chat.appeal_letter_generator import (
     DraftedLetter,
     denial_has_letter_context,
     draft_letter_for_chat,
+    letter_placement_note,
 )
 from fighthealthinsurance.client_gone import ClientGone
 from fighthealthinsurance.denial_context import merge_qa
@@ -85,6 +86,7 @@ class GenerateAppealLetterTool(AppealTool):
         use_external: bool = True,
         deadline_seconds: Optional[float] = None,
         drafted_this_turn: Optional[List[Optional[DraftedLetter]]] = None,
+        use_reserve: bool = True,
     ):
         """
         Args:
@@ -104,11 +106,15 @@ class GenerateAppealLetterTool(AppealTool):
                 the turn are stripped instead of drafting a second letter
                 that would overwrite the first on the appeal. None (direct
                 use) disables the per-turn guard.
+            use_reserve: Whether a stored draft may stand in when generation
+                fails. False when the user asked for a new letter (a redo,
+                another version): a stored draft predates that request.
         """
         super().__init__(send_status_message, send_error_message, domain)
         self.use_external = use_external
         self.deadline_seconds = deadline_seconds
         self.drafted_this_turn = drafted_this_turn
+        self.use_reserve = use_reserve
 
     def _appeal_link(self, appeal: Any) -> str:
         return f"[Appeal #{appeal.id}]({self.domain}/appeals/{appeal.id})"
@@ -276,39 +282,25 @@ class GenerateAppealLetterTool(AppealTool):
                 appeal=appeal,
                 denial=denial,
                 use_external=self.use_external,
+                use_reserve=self.use_reserve,
                 deadline_seconds=self.deadline_seconds,
             )
             if drafted and self.drafted_this_turn is not None:
                 self.drafted_this_turn[0] = drafted
 
-            if drafted and drafted.saved_to_appeal:
+            if drafted:
                 await self._status_after_draft(
                     f"Appeal letter drafted and saved to Appeal #{appeal.id}."
+                    if drafted.saved_to_appeal
+                    else "Appeal letter drafted."
                 )
+                # Where the letter is, worded honestly: saved, kept off an
+                # appeal whose own letter was left alone (or already sent),
+                # or not saved at all.
+                note = letter_placement_note(drafted, self._appeal_link(appeal))
                 replacement = (
-                    f"I've drafted an appeal letter and saved it to "
-                    f"{self._appeal_link(appeal)}. Here's the draft -- tell me "
-                    f"what you'd like to change:\n\n---\n\n{drafted.text}"
-                )
-            elif drafted and drafted.preserved_existing:
-                # A reserve draft was served but the appeal already carries a
-                # letter (possibly user-edited); it was deliberately left
-                # untouched -- say so instead of claiming a save.
-                await self._status_after_draft("Appeal letter drafted.")
-                replacement = (
-                    f"{self._appeal_link(appeal)} already has a saved letter, "
-                    f"so I've left that one untouched. Here's a draft you can "
-                    f"compare with it or copy from this chat:"
-                    f"\n\n---\n\n{drafted.text}"
-                )
-            elif drafted:
-                # The letter exists but the appeal save failed: deliver it
-                # without claiming it was saved anywhere.
-                await self._status_after_draft("Appeal letter drafted.")
-                replacement = (
-                    f"I've drafted an appeal letter, but couldn't attach it to "
-                    f"{self._appeal_link(appeal)} just now -- please copy it "
-                    f"from this chat. Here's the draft:\n\n---\n\n{drafted.text}"
+                    f"I've drafted an appeal letter. {note} Here's the draft -- "
+                    f"tell me what you'd like to change:\n\n---\n\n{drafted.text}"
                 )
             else:
                 await self._status_after_draft("Letter generation did not succeed.")

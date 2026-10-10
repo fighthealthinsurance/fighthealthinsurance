@@ -18,6 +18,7 @@ from .base_tool import (
     is_safe_tool_field,
     parse_anchored_json_payload,
     replace_anchored_call,
+    set_tool_field,
     settable_model_fields,
     strip_anchored_calls,
 )
@@ -163,8 +164,10 @@ class PriorAuthTool(BaseTool):
             logger.opt(exception=True).warning(
                 f"Error processing prior auth data: {type(e).__name__}"
             )
+            # Generic on purpose: the exception text can carry PHI (a
+            # database error quotes the failing row).
             await self.send_status_message(
-                f"Error processing prior auth data: {str(e)}"
+                "Error processing prior auth data. Please try again in a moment."
             )
             raise
 
@@ -219,7 +222,7 @@ class PriorAuthTool(BaseTool):
                 key = self.FIELD_MAPPINGS[key]
 
             if is_safe_tool_field(key, allowed):
-                setattr(prior_auth, key, value)
+                set_tool_field(prior_auth, key, value)
             else:
                 rejected_keys += 1
 
