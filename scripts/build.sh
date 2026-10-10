@@ -82,7 +82,7 @@ else
 fi
 
 # BUILDKIT_NO_CLIENT_TOKEN=true
-FHI_VERSION=v0.23.27a
+FHI_VERSION=v0.23.28a
 
 
 MYORG=${MYORG:-totallylegitco}
