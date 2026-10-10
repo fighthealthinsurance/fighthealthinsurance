@@ -35,9 +35,10 @@ does, by construction:
   than silently dropped. ``start_appeal`` hands back the intake link, where
   the person uploads their own letter and removes personal details before
   anything is sent.
-- It writes nothing, calls no model and makes no outbound network call. The
-  one database read (insurer appeal contacts) runs in a transaction that is
-  always rolled back. ``get_page`` asks this same Django app in-process for a
+- It writes nothing but a count of each request, by tool name or request
+  type and outcome only (mcp_call_counts.py, for the staff status page),
+  calls no model and makes no outbound network call. The one database read (insurer appeal contacts)
+  runs in a transaction that is always rolled back. ``get_page`` asks this same Django app in-process for a
   page's public markdown twin, which runs that page's view, so it refuses any
   page that has no twin and the twin pages whose view fetches from another
   site as it renders (``_FETCHES_ON_RENDER``: Other resources loads news
@@ -64,12 +65,14 @@ beautifulsoup4 and seleniumbase pins first.
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import time
 import os
 import re
 from collections.abc import Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from datetime import timezone as dt_timezone
 from typing import Annotated, Any, Literal, Optional
@@ -81,6 +84,7 @@ from django.db.models import Q
 from django.urls import Resolver404, ResolverMatch, resolve, reverse
 from django.views.generic.base import RedirectView
 
+from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from loguru import logger
 import mcp as mcp_sdk
@@ -101,6 +105,7 @@ from fighthealthinsurance import (
     assistant_drafts,
     assistant_handoff,
     glossary,
+    mcp_call_counts,
     microsites,
 )
 from fighthealthinsurance.agent_docs import CANONICAL_ORIGIN
@@ -1973,6 +1978,162 @@ TOOL_SECONDS = Histogram(
 )
 
 
+# Count writes in flight, held so none is collected before it runs. Past
+# the cap new counts are dropped, so a stuck database can't pile them up.
+_COUNT_TASKS: set[asyncio.Task[None]] = set()
+MAX_PENDING_COUNTS = 100
+
+
+# Count writes get their own thread, so a stuck one never holds up the
+# tools' database work on the shared thread.
+_COUNT_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mcp-call-count")
+
+
+async def _store_call_count_logged(tool: str, outcome: str, now: datetime) -> None:
+    try:
+        # Tests keep it on the shared thread: another thread's writes would
+        # escape the test's transaction.
+        if getattr(settings, "FHI_MCP_CALL_COUNT_OWN_THREAD", True):
+            store = database_sync_to_async(
+                mcp_call_counts.bump, thread_sensitive=False, executor=_COUNT_EXECUTOR
+            )
+        else:
+            store = database_sync_to_async(mcp_call_counts.bump)
+        await store(tool, outcome, now=now)
+    except Exception as e:
+        logger.warning(f"MCP call count not stored: {type(e).__name__}")
+
+
+def _count_call(tool: str, outcome: str) -> None:
+    """Add the call to the shared count for the staff status page, in the
+    background, so the answer never waits on it. The hour and last-call time
+    are the call's, however late the write runs. Never raises."""
+    now = datetime.now(dt_timezone.utc)
+    try:
+        if len(_COUNT_TASKS) >= MAX_PENDING_COUNTS:
+            logger.warning("MCP call count dropped: too many pending")
+            return
+        task = asyncio.get_running_loop().create_task(
+            _store_call_count_logged(tool, outcome, now)
+        )
+        _COUNT_TASKS.add(task)
+        task.add_done_callback(_COUNT_TASKS.discard)
+    except Exception as e:
+        logger.warning(f"MCP call count not started: {type(e).__name__}")
+
+
+# Requests other than a tool call are counted by type: a fixed set of labels,
+# never what the client sent. A tool call that reaches its tool is counted
+# there; one refused before it (malformed, or too large) counts here.
+PROTOCOL_LABELS = {
+    "initialize": mcp_call_counts.INITIALIZE,
+    "tools/list": mcp_call_counts.TOOLS_LIST,
+    "tools/call": mcp_call_counts.TOOLS_CALL,
+}
+OTHER_REQUEST = mcp_call_counts.OTHER_REQUEST
+# Enough of a body to read its method; a larger one is a tool call with a
+# letter, whose method comes first in the clients we know.
+_PEEK_BYTES = 64 * 1024
+_METHOD_RE = re.compile(rb'"method"\s*:\s*"([a-z/_]{1,40})"')
+
+
+def _request_label(body: bytes, complete: bool) -> str:
+    """The count label for a request: its JSON-RPC method mapped to
+    PROTOCOL_LABELS, or OTHER_REQUEST. Only the method is read."""
+    method: Optional[str] = None
+    if complete:
+        try:
+            message = json.loads(body)
+        except Exception:
+            # Not JSON, or nested too deep to parse (RecursionError).
+            message = None
+        if isinstance(message, dict) and isinstance(message.get("method"), str):
+            method = message["method"]
+    else:
+        found = _METHOD_RE.search(body[:4096])
+        method = found.group(1).decode("ascii") if found else None
+    return PROTOCOL_LABELS.get(method or "", OTHER_REQUEST)
+
+
+def _outcome_of_status(status: Optional[int]) -> str:
+    if status is not None and status < 400:
+        return "ok"
+    if status is not None and status < 500:
+        return "refused"
+    return "failed"
+
+
+# Set per /mcp request; call_tool marks it, so the request counter knows the
+# call reached its tool. Tasks the SDK starts copy it from the request.
+_REACHED_TOOL: contextvars.ContextVar[Optional[dict[str, bool]]] = (
+    contextvars.ContextVar("mcp_reached_tool", default=None)
+)
+
+
+def _count_request(label: str, status: Optional[int], reached_tool: bool) -> None:
+    """Count one /mcp request, unless it is a tool call its tool counted. A
+    tool call refused before its tool counts as refused, whatever the HTTP
+    status: the SDK answers some of those with 200 or 202."""
+    # Whatever its label: a large call's method can sit past the peek.
+    if reached_tool:
+        return
+    if label == mcp_call_counts.TOOLS_CALL:
+        outcome = "failed" if status is None or status >= 500 else "refused"
+    else:
+        outcome = _outcome_of_status(status)
+    _count_call(label, outcome)
+
+
+async def _counted_request(
+    app: ASGIApp, scope: Scope, receive: Receive, send: Send
+) -> None:
+    """Serve one /mcp request and count it by type and HTTP status, unless
+    it is a tool call that reached its tool (counted in call_tool)."""
+    reached = {"tool": False}
+    token = _REACHED_TOOL.set(reached)
+    body = bytearray()
+    seen = 0
+    complete = False
+    status: Optional[int] = None
+
+    async def peeking_receive() -> Message:
+        nonlocal seen, complete
+        message = await receive()
+        if message["type"] == "http.request":
+            chunk = message.get("body", b"")
+            seen += len(chunk)
+            if len(body) < _PEEK_BYTES:
+                body.extend(chunk[: _PEEK_BYTES - len(body)])
+            if not message.get("more_body", False):
+                complete = seen <= _PEEK_BYTES
+        return message
+
+    async def status_send(message: Message) -> None:
+        nonlocal status
+        if message["type"] == "http.response.start":
+            status = message["status"]
+        await send(message)
+
+    try:
+        await app(scope, peeking_receive, status_send)
+    finally:
+        _REACHED_TOOL.reset(token)
+        try:
+            _count_request(
+                _request_label(bytes(body), complete), status, reached["tool"]
+            )
+        except Exception as e:
+            logger.warning(f"MCP request not counted: {type(e).__name__}")
+        finally:
+            body.clear()
+
+
+async def flush_call_counts() -> None:
+    """Wait for the count writes in flight. Tests use it before reading."""
+    if _COUNT_TASKS:
+        await asyncio.gather(*list(_COUNT_TASKS), return_exceptions=True)
+
+
 class SiteFailure(ToolError):
     """A ToolError for something that broke on our side, counted as failed."""
 
@@ -2044,6 +2205,10 @@ class _StrictFastMCP(FastMCP):
         finally:
             TOOL_CALLS.labels(label, outcome).inc()
             TOOL_SECONDS.labels(label).observe(time.monotonic() - started)
+            _count_call(label, outcome)
+            reached = _REACHED_TOOL.get()
+            if reached is not None:
+                reached["tool"] = True
 
 
 def transport_security() -> TransportSecuritySettings:
@@ -3096,6 +3261,13 @@ async def _method_not_allowed(send: Send) -> None:
     await send({"type": "http.response.body", "body": b""})
 
 
+def registered_tool_names() -> list[str]:
+    """The tools a server built now lists, by name, for the staff status
+    page. Builds a server without starting it."""
+    server = build_mcp_server()
+    return sorted(tool.name for tool in async_to_sync(server.list_tools)())
+
+
 def mcp_asgi_routes(django_http_app: ASGIApp) -> dict[str, ASGIApp]:
     """The "http" and "lifespan" entries for asgi.py's ProtocolTypeRouter.
 
@@ -3136,6 +3308,7 @@ def mcp_asgi_routes(django_http_app: ASGIApp) -> dict[str, ASGIApp]:
             await django_http_app(scope, receive, send)
             return
         if scope.get("method") != "POST":
+            _count_call(OTHER_REQUEST, "refused")
             await _method_not_allowed(send)
             return
         scope = {
@@ -3148,6 +3321,6 @@ def mcp_asgi_routes(django_http_app: ASGIApp) -> dict[str, ASGIApp]:
                 if name.lower() != b"origin"
             ],
         }
-        await mcp_app(scope, receive, send)
+        await _counted_request(mcp_app, scope, receive, send)
 
     return {"http": http_app, "lifespan": mcp_app}

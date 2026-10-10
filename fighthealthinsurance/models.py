@@ -5319,6 +5319,29 @@ class AssistantAgreementCount(models.Model):
         return f"AssistantAgreementCount({self.day}, {self.count})"
 
 
+class McpToolCallCount(models.Model):
+    """MCP tool calls per UTC hour, tool and outcome, shared by every pod
+    (mcp_call_counts.py). Names and counts only: no arguments, no request
+    and no client."""
+
+    hour = models.DateTimeField()
+    tool = models.CharField(max_length=64)
+    outcome = models.CharField(max_length=16)
+    count = models.PositiveIntegerField(default=0)
+    last_call_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["hour", "tool", "outcome"],
+                name="mcp_tool_call_count_hour_tool_outcome",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"McpToolCallCount({self.hour:%Y-%m-%d %H}h {self.tool} {self.outcome}: {self.count})"
+
+
 class AssistantContinueLink(models.Model):
     """The emailed link back to letters drafted for an assistant
     (assistant_continue.py). Only the token's digest is kept."""

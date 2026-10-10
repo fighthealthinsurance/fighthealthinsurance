@@ -14,8 +14,12 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from fighthealthinsurance.ml import letter_quality
+from fighthealthinsurance import mcp_call_counts, mcp_server
+from fighthealthinsurance.ml import letter_quality, spend
 from fighthealthinsurance.models import (
+    AssistantDraft,
+    AssistantHandoff,
+    ConsentRecord,
     Denial,
     ExternalServiceHealth,
     FaxesToSend,
@@ -1052,6 +1056,166 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertContains(
             response, "1 eligible draft since the last score, none scored"
         )
+
+
+
+class AdminStatusMcpTest(TestCase):
+    """The MCP section: flags, the tools listed, calls per tool and window
+    from the shared count, and assistant activity. Counts only."""
+
+    def setUp(self):
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+        for target, value in (
+            (_MODELS, []),
+            (_ACTORS, {"alive_actors": 0, "total_actors": 0, "details": []}),
+            (_FAX, _ok_fax_backends()),
+        ):
+            patcher = mock.patch(target, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def page(self, **settings):
+        with override_settings(**settings):
+            response = self.client.get(reverse("admin_status"))
+        self.assertEqual(response.status_code, 200)
+        return response, response.context["mcp"]
+
+    def row(self, mcp, tool):
+        [row] = [r for r in mcp["calls"] if r.tool == tool]
+        return row
+
+    def test_off_says_so_and_builds_no_server(self):
+        with mock.patch.object(mcp_server, "registered_tool_names") as names:
+            response, mcp = self.page(MCP_SERVER_ENABLED=False)
+        names.assert_not_called()
+        self.assertTrue(mcp["ok"], mcp["error"])
+        self.assertFalse(mcp["on"])
+        self.assertEqual(mcp["tools"], [])
+        self.assertContains(response, "MCP is off")
+
+    def test_on_lists_the_tools_the_server_registers(self):
+        response, mcp = self.page(
+            MCP_SERVER_ENABLED=True, MCP_PREPARE_APPEAL_ENABLED=False
+        )
+        self.assertTrue(mcp["on"])
+        self.assertIn("get_state_help", mcp["tools"])
+        self.assertIn("start_appeal", mcp["tools"])
+        self.assertNotIn("prepare_appeal", mcp["tools"])
+        self.assertEqual([r.tool for r in mcp["calls"]], mcp["tools"])
+        self.assertContains(response, "<td>get_state_help</td>", html=True)
+
+    def test_calls_per_window_with_failures_marked(self):
+        now = timezone.now()
+        mcp_call_counts.bump("get_state_help", "ok", now=now)
+        mcp_call_counts.bump("get_state_help", "ok", now=now)
+        mcp_call_counts.bump(
+            "get_state_help", "failed", now=now - datetime.timedelta(days=3)
+        )
+        response, mcp = self.page(MCP_SERVER_ENABLED=True)
+        row = self.row(mcp, "get_state_help")
+        self.assertEqual(
+            [n for n, _ in row.cells], [2, 0, 0, 2, 0, 1, 2, 0, 1]
+        )
+        self.assertEqual(row.last_call_at, now)
+        self.assertContains(response, '<td class="num error-text">1</td>')
+
+    def test_unknown_and_unlisted_tools_with_calls_still_show(self):
+        mcp_call_counts.bump("unknown", "refused")
+        mcp_call_counts.bump("retired_tool", "ok")
+        _, mcp = self.page(MCP_SERVER_ENABLED=False)
+        self.assertEqual([r.tool for r in mcp["calls"]], ["retired_tool", "unknown"])
+
+    def test_a_server_that_cannot_list_its_tools_still_shows_the_counts(self):
+        mcp_call_counts.bump("get_state_help", "ok")
+        with mock.patch.object(
+            mcp_server, "registered_tool_names", side_effect=RuntimeError("x")
+        ):
+            response, mcp = self.page(MCP_SERVER_ENABLED=True)
+        self.assertEqual(mcp["tools_error"], "RuntimeError")
+        self.assertEqual([r.tool for r in mcp["calls"]], ["get_state_help"])
+        self.assertContains(response, "Could not list the tools (RuntimeError).")
+
+    def test_a_broken_read_costs_the_section_not_the_page(self):
+        with mock.patch.object(
+            mcp_call_counts, "summary", side_effect=RuntimeError("no table")
+        ):
+            response, mcp = self.page(MCP_SERVER_ENABLED=False)
+        self.assertFalse(mcp["ok"])
+        self.assertContains(response, "no table")
+        self.assertContains(response, "Ray Polling Actors")
+
+    def test_flags_say_on_or_off_and_the_key_only_set(self):
+        key = "kz-not-for-the-page-7781"
+        response, mcp = self.page(
+            MCP_SERVER_ENABLED=True,
+            MCP_DRAFT_IN_CHAT_PAUSED=False,
+            TEMPORAL_PAYLOAD_KEY=key,
+        )
+        flags = {name: label for name, _, label in mcp["flags"]}
+        self.assertEqual(flags["MCP_SERVER_ENABLED"], "on")
+        self.assertEqual(flags["MCP_DRAFT_IN_CHAT_PAUSED"], "off")
+        self.assertEqual(flags["TEMPORAL_PAYLOAD_KEY"], "set")
+        self.assertNotContains(response, key)
+
+    def _consent(self, client, days_ago, channel="assistant"):
+        denial = Denial.objects.create(semi_sekret="s", hashed_email="h")
+        record = ConsentRecord.objects.create(
+            denial=denial,
+            terms_version=datetime.date(2026, 1, 1),
+            privacy_version=datetime.date(2026, 1, 1),
+            boxes={},
+            channel=channel,
+            assistant_client=client,
+        )
+        ConsentRecord.objects.filter(pk=record.pk).update(
+            accepted_at=timezone.now() - datetime.timedelta(days=days_ago)
+        )
+
+    def test_assistant_activity_is_counts_only(self):
+        self._consent("crumpler-test-assistant", 1)
+        self._consent("crumpler-test-assistant", 2)
+        self._consent("other-test-assistant", 10)
+        self._consent("", 1, channel="site")
+        self._consent("oldest-test-assistant", 40)
+        later = timezone.now() + datetime.timedelta(hours=1)
+        for n, status in enumerate(("ready", "ready", "questions")):
+            AssistantDraft.objects.create(
+                draft_id_digest=f"d{n}", status=status, expires_at=later
+            )
+        earlier = timezone.now() - datetime.timedelta(hours=1)
+        for n, (bound, expires) in enumerate(
+            (("", later), ("b" * 64, later), ("", earlier))
+        ):
+            AssistantHandoff.objects.create(
+                lookup=f"l{n}", sealed=b"x", bound=bound, expires_at=expires
+            )
+        response, mcp = self.page(MCP_SERVER_ENABLED=True)
+        activity = mcp["assistant"]
+        self.assertEqual(
+            (activity["clients_7d"], activity["clients_30d"]), (1, 2)
+        )
+        self.assertEqual(
+            (activity["consents_7d"], activity["consents_30d"]), (2, 3)
+        )
+        drafts = dict(activity["drafts"])
+        self.assertEqual((drafts["ready"], drafts["questions"]), (2, 1))
+        self.assertEqual(drafts["drafting"], 0)
+        self.assertEqual([n for _, n in activity["handoffs"]], [1, 1, 1])
+        self.assertNotContains(response, "test-assistant")
+
+    def test_budget_is_unknown_until_the_spend_ledger_has_loaded(self):
+        with mock.patch.object(
+            spend._ledger, "wait_until_loaded", return_value=False
+        ):
+            response, mcp = self.page(MCP_SERVER_ENABLED=True)
+        self.assertIsNone(mcp["assistant"]["budget_left"])
+        self.assertContains(response, "spend ledger not loaded")
+
+    def test_budget_reads_the_assistant_budget(self):
+        with mock.patch.object(spend, "assistant_budget_left", return_value=False):
+            _, mcp = self.page(MCP_SERVER_ENABLED=True)
+        self.assertIs(mcp["assistant"]["budget_left"], False)
 
 
 class ComputeModelHealthDetailsTest(TestCase):
