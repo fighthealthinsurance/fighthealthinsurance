@@ -798,9 +798,9 @@
       "agency_url": "https://chfs.ky.gov/agencies/dms/Pages/default.aspx",
       "agency_phone": "800-635-2570",
       "managed_care_ombudsman": {
-        "name": "Kentucky Medicaid Ombudsman",
+        "name": "Kentucky Medicaid Member Services",
         "phone": "800-635-2570",
-        "url": "https://www.chfs.ky.gov/agencies/os/chfslistens/Pages/default.aspx"
+        "url": "https://www.chfs.ky.gov/agencies/dms/member/Pages/default.aspx"
       }
     },
     "external_review": {
