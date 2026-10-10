@@ -4610,7 +4610,8 @@ class ModelHealthAlertState(models.Model):
 
     Also reused as a general cross-pod one-per-window email throttle under
     other key prefixes (e.g. returning-lead signup notifications via
-    utils.should_notify_returning_lead).
+    utils.should_notify_returning_lead), and as the chooser's per-task-type
+    generation lease (chooser_tasks._claim_generation).
     """
 
     key = models.CharField(max_length=64, unique=True)

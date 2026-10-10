@@ -8,6 +8,8 @@ Covers two behaviors added alongside synthesis tracking:
 - ``_maybe_add_synthesized_candidate`` adds a single synthesized candidate
   combining the per-model drafts so the chooser can compare synthesis to the
   individual models.
+- ``_claim_generation`` lets one process at a time generate a task type, and
+  both the refill's batches and page prefills take it.
 """
 
 import contextlib
@@ -18,13 +20,13 @@ import pytest
 from django.utils import timezone
 
 from fighthealthinsurance.chooser_tasks import (
-    _claim_refill,
+    CHOOSER_GENERATION_CLAIM_SECONDS,
+    _claim_generation,
     _count_unscored_tasks,
     _generate_batch_tasks,
     _generate_appeal_candidates,
     _maybe_add_synthesized_candidate,
     _refill_reason,
-    _release_refill,
     _synthesize_appeal_candidate,
     _synthesize_chat_candidate,
     check_and_refill_task_pool,
@@ -51,6 +53,53 @@ async def _make_candidate(task, index=0, kind="appeal_letter", content="x"):
         model_name=f"model-{index}",
         content=content,
     )
+
+
+def _after_the_window():
+    """The clock once a generation claim taken now has lapsed."""
+    return patch(
+        "django.utils.timezone.now",
+        return_value=timezone.now()
+        + datetime.timedelta(seconds=CHOOSER_GENERATION_CLAIM_SECONDS + 1),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestGenerationClaim:
+    """One process at a time generates a task type, fleet-wide: the refill
+    actor's batches and every web worker's prefills take the same claim."""
+
+    async def test_a_second_claim_while_one_is_held_fails(self):
+        assert await _claim_generation("appeal") is not None
+
+        assert await _claim_generation("appeal") is None
+
+    async def test_a_claim_on_one_type_leaves_the_other_free(self):
+        await _claim_generation("appeal")
+
+        assert await _claim_generation("chat") is not None
+
+    async def test_a_claim_after_the_window_succeeds(self):
+        await _claim_generation("appeal")
+
+        with _after_the_window():
+            assert await _claim_generation("appeal") is not None
+
+    async def test_a_released_claim_can_be_taken_at_once(self):
+        claim = await _claim_generation("appeal")
+        await claim.release()
+
+        assert await _claim_generation("appeal") is not None
+
+    async def test_a_stale_owner_cannot_release_a_newer_claim(self):
+        stale = await _claim_generation("appeal")
+        with _after_the_window():
+            # The stale owner's claim lapsed and another process took it.
+            assert await _claim_generation("appeal") is not None
+            await stale.release()
+
+            assert await _claim_generation("appeal") is None
 
 
 @pytest.mark.asyncio
@@ -312,29 +361,106 @@ class TestCoverageRefill:
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
-class TestRefillGuard:
-    async def test_a_refill_in_progress_is_not_started_twice(self):
-        assert _claim_refill()
-        try:
-            with patch(
-                "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
-                new=AsyncMock(),
-            ) as mock_batch:
-                await check_and_refill_task_pool()
-        finally:
-            _release_refill()
+class TestRefillTakesTheGenerationClaim:
+    """The refill was kept apart only from itself, by a lock local to its
+    process, so a page prefill could generate a type alongside its batch.
+    Each type's batch now runs under that type's generation claim. (The
+    pool is empty, so both types need a batch.)"""
 
-        mock_batch.assert_not_awaited()
-
-    async def test_the_guard_is_released_after_a_refill(self):
+    async def _refill(self, **batch):
+        """(the patched batch, the refill's outcome)"""
         with patch(
             "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
-            new=AsyncMock(),
-        ):
-            await check_and_refill_task_pool()
+            new=AsyncMock(**batch),
+        ) as mock_batch:
+            outcome = await check_and_refill_task_pool()
+        return mock_batch, outcome
 
-        assert _claim_refill(), "the guard was still held after the refill"
-        _release_refill()
+    async def test_a_type_whose_claim_is_held_is_skipped(self):
+        await _claim_generation("appeal")
+
+        mock_batch, _ = await self._refill(return_value=1)
+
+        assert [call.args[0] for call in mock_batch.await_args_list] == ["chat"]
+
+    async def test_a_skipped_type_is_not_a_failed_refill(self):
+        # Another process is refilling it, so the actor must not count the
+        # tick against its health.
+        await _claim_generation("appeal")
+        await _claim_generation("chat")
+
+        _, outcome = await self._refill(return_value=0)
+
+        assert outcome is True
+
+    async def test_the_claim_is_held_for_the_batch(self):
+        seen = []
+
+        async def batch(task_type, size, claim):
+            seen.append(await _claim_generation(task_type))
+            return 1
+
+        await self._refill(side_effect=batch)
+
+        assert seen == [None, None]
+
+    async def test_the_claim_is_released_after_the_batch(self):
+        await self._refill(return_value=1)
+
+        assert await _claim_generation("appeal") is not None
+
+    async def test_the_claim_is_released_when_the_batch_raises(self):
+        with pytest.raises(RuntimeError):
+            await self._refill(side_effect=RuntimeError("boom"))
+
+        assert await _claim_generation("appeal") is not None
+
+    async def test_a_claim_that_cannot_be_checked_still_refills(self):
+        # The actor is the pool's main supplier, and prefills fail closed on
+        # the same error, so it fails open.
+        with patch(
+            "fighthealthinsurance.chooser_tasks._claim_generation",
+            new=AsyncMock(side_effect=RuntimeError("no table")),
+        ):
+            mock_batch, _ = await self._refill(return_value=1)
+
+        assert mock_batch.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestABatchRenewsItsClaim:
+    """A batch is a round of model calls per task and can outlast the
+    claim's window; a lapsed claim would let another process generate the
+    type alongside it."""
+
+    async def test_a_batch_longer_than_the_window_keeps_its_claim(self):
+        claim = await _claim_generation("appeal")
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_single_task",
+            new=AsyncMock(return_value=True),
+        ), _after_the_window():
+            await _generate_batch_tasks("appeal", 2, claim)
+
+            assert await _claim_generation("appeal") is None
+
+    async def test_a_batch_whose_claim_was_taken_stops(self):
+        claim = await _claim_generation("appeal")
+
+        async def task_then_claim_taken(task_type):
+            # Meanwhile the claim lapsed and another process took it.
+            with _after_the_window():
+                assert await _claim_generation(task_type) is not None
+            return True
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_single_task",
+            new=AsyncMock(side_effect=task_then_claim_taken),
+        ) as single:
+            await _generate_batch_tasks("appeal", 3, claim)
+
+        assert single.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -376,38 +502,91 @@ class TestRefillOutcome:
             assert await _generate_batch_tasks("appeal", 3) == 2
 
 
-async def _prefilled_types(exhausted=None):
+async def _run_in_place(work):
+    """fire_and_forget_in_new_threadpool without the thread: the work runs to
+    its end before the prefill goes on, and what it raises is dropped (the
+    real one logs it)."""
+    try:
+        await work
+    except Exception:
+        pass
+
+
+async def _prefilled_types(exhausted=None, generate=None):
     """The task types one prefill_if_needed(min_ready=1) pass generates."""
     with patch(
         "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
-        new=AsyncMock(),
+        new=_run_in_place,
     ), patch(
         "fighthealthinsurance.chooser_tasks._generate_single_task",
-        new=MagicMock(return_value=None),
+        new=generate or AsyncMock(return_value=True),
     ) as single:
         await prefill_if_needed(min_ready=1, exhausted=exhausted)
-    return [call.args[0] for call in single.call_args_list]
+    return [call.args[0] for call in single.await_args_list]
 
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
-class TestPrefillSkipsAGenerationUnderway:
+class TestPrefillTakesTheGenerationClaim:
     """The prefill throttle is per process, so each web worker could start a
-    generation while the pool was empty. A prefill now skips a type whose
-    task is already QUEUED, which every process can see."""
+    generation while the pool was empty, and looking for a QUEUED task first
+    still let two workers that looked at once both start one. A prefill now
+    generates only under the type's generation claim."""
 
-    async def test_a_generation_underway_is_not_started_again(self):
-        await _make_task("appeal", status="QUEUED")
+    async def test_a_type_whose_claim_is_held_is_not_generated(self):
+        await _claim_generation("appeal")
 
         assert await _prefilled_types() == ["chat"]
 
-    async def test_a_queued_task_left_behind_long_ago_holds_nothing_off(self):
-        task = await _make_task("appeal", status="QUEUED")
-        await ChooserTask.objects.filter(pk=task.pk).aupdate(
-            created_at=timezone.now() - datetime.timedelta(hours=1)
+    async def test_a_claim_left_behind_long_ago_holds_nothing_off(self):
+        await _claim_generation("appeal")
+
+        with _after_the_window():
+            assert await _prefilled_types() == ["appeal", "chat"]
+
+    async def test_the_claim_is_held_while_the_task_is_generated(self):
+        seen = []
+
+        async def generate(task_type):
+            seen.append(await _claim_generation(task_type))
+            return True
+
+        await _prefilled_types(generate=AsyncMock(side_effect=generate))
+
+        assert seen == [None, None]
+
+    async def test_the_claim_is_released_when_the_task_is_done(self):
+        await _prefilled_types()
+
+        assert await _claim_generation("appeal") is not None
+
+    async def test_the_claim_is_released_when_generation_raises(self):
+        await _prefilled_types(
+            generate=AsyncMock(side_effect=RuntimeError("backend down"))
         )
 
-        assert await _prefilled_types() == ["appeal", "chat"]
+        assert await _claim_generation("appeal") is not None
+
+    async def test_the_claim_is_released_when_no_thread_could_start(self):
+        with patch(
+            "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
+            new=AsyncMock(side_effect=RuntimeError("can't start new thread")),
+        ), patch(
+            "fighthealthinsurance.chooser_tasks._generate_single_task",
+            new=AsyncMock(return_value=True),
+        ):
+            with pytest.raises(RuntimeError):
+                await prefill_if_needed(min_ready=1)
+
+        assert await _claim_generation("appeal") is not None
+
+    async def test_a_claim_that_cannot_be_checked_generates_nothing(self):
+        # Fails closed: the refill actor still supplies the pool.
+        with patch(
+            "fighthealthinsurance.chooser_tasks._claim_generation",
+            new=AsyncMock(side_effect=RuntimeError("no table")),
+        ):
+            assert await _prefilled_types() == []
 
 
 @pytest.mark.asyncio
@@ -433,7 +612,7 @@ class TestPrefillForATypeASessionUsedUp:
 
     async def test_a_used_up_type_still_waits_for_a_generation_underway(self):
         await self._stocked_pool()
-        await _make_task("appeal", status="QUEUED")
+        await _claim_generation("appeal")
 
         assert await _prefilled_types(exhausted="appeal") == []
 

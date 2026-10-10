@@ -34,7 +34,11 @@ from fighthealthinsurance.ml.model_identity import (
     SYNTHESIZED_MODEL_NAME,
     canonical_model_name,
 )
-from fighthealthinsurance.models import ChooserCandidate, ChooserTask
+from fighthealthinsurance.models import (
+    ChooserCandidate,
+    ChooserTask,
+    ModelHealthAlertState,
+)
 from fighthealthinsurance.utils import fire_and_forget_in_new_threadpool
 
 # Configuration for auto-refill thresholds
@@ -69,9 +73,10 @@ CHOOSER_SCENARIO_WRITERS = getattr(settings, "CHOOSER_SCENARIO_WRITERS", 3)
 CHOOSER_PREFILL_THROTTLE_SECONDS = getattr(
     settings, "CHOOSER_PREFILL_THROTTLE_SECONDS", 60
 )
-# A QUEUED task younger than this marks a generation still running somewhere
-# (see _generation_underway); an older one was left behind by a process that
-# died mid-generation, and no longer holds prefills off.
+# How long a generation claim holds (see _claim_generation) before it lapses,
+# so one left behind by a process that died mid-generation stops holding the
+# type off. A batch renews its claim before each task, so this has to outlast
+# one task's round of model calls, not a whole batch.
 CHOOSER_GENERATION_CLAIM_SECONDS = getattr(
     settings, "CHOOSER_GENERATION_CLAIM_SECONDS", 15 * 60
 )
@@ -443,23 +448,132 @@ async def _fill_candidates(
     await _maybe_add_synthesized_candidate(task, kind)
 
 
-# Serialises refills within a process. A refill now awaits its whole batch,
-# so this is held for the batch's duration. The cache "lock" it replaces was
-# released the moment the batch had been handed to a background thread, and
-# was process-local anyway (Prod's cache is LocMemCache), so it never kept
-# two batches apart. Across processes the refill actor is one named Ray
-# actor, and its run loop is started once (see BaseActorRef.get).
-_refill_lock = threading.Lock()
+# What a released generation claim's timestamp is set to: older than any
+# window, so the next claim wins at once.
+_RELEASED_CLAIM = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
 
 
-def _claim_refill() -> bool:
-    # Never blocks: the holder awaits its batch, possibly on this same event
-    # loop, so waiting for it here would stall the loop it needs to finish.
-    return _refill_lock.acquire(blocking=False)
+def _generation_claim_key(task_type: str) -> str:
+    return f"chooser_generation:{task_type}"
 
 
-def _release_refill() -> None:
-    _refill_lock.release()
+class _GenerationClaim:
+    """One process's hold on generating ``task_type`` tasks (see
+    _claim_generation). Used as ``async with claim:``, which releases it
+    however the generation ends."""
+
+    def __init__(self, task_type: str, token: Optional[datetime.datetime]):
+        self.task_type = task_type
+        # The time the claim row was set to, and so the owner's proof: a
+        # renewal or release touches the row only while it still holds this.
+        # None for a refill generating without a claim (see
+        # _claim_for_refill): there is nothing to renew or release.
+        self.token = token
+
+    def _held(self, token: datetime.datetime) -> "QuerySet[ModelHealthAlertState]":
+        return ModelHealthAlertState.objects.filter(
+            key=_generation_claim_key(self.task_type), last_alert_sent=token
+        )
+
+    async def renew(self) -> bool:
+        """Restart the claim's window. False when it lapsed and another
+        process has taken it since, so this one must stop generating."""
+        if self.token is None:
+            return True
+        now = timezone.now()
+        try:
+            renewed = await self._held(self.token).aupdate(last_alert_sent=now)
+        except Exception as e:
+            # A database that can't answer is no sign another process took
+            # the claim, and the claim holds until its window ends anyway.
+            logger.warning(
+                f"Chooser: could not renew the {self.task_type} generation "
+                f"claim; carrying on: {e}"
+            )
+            return True
+        if renewed:
+            self.token = now
+        return bool(renewed)
+
+    async def release(self) -> None:
+        """Free the claim now rather than when it lapses. A claim that lapsed
+        and was taken by another process is that process's: the row no
+        longer holds our token, so this leaves it alone."""
+        if self.token is None:
+            return
+        try:
+            await self._held(self.token).aupdate(last_alert_sent=_RELEASED_CLAIM)
+        except Exception as e:
+            # Not raised: this runs on the way out of a generation, and the
+            # claim lapses on its own, so a failed release only holds the
+            # next generation of this type off until then.
+            logger.warning(
+                f"Chooser: could not release the {self.task_type} generation "
+                f"claim; it lapses within {CHOOSER_GENERATION_CLAIM_SECONDS}s: {e}"
+            )
+        self.token = None
+
+    async def __aenter__(self) -> "_GenerationClaim":
+        return self
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        await self.release()
+
+
+async def _claim_generation(task_type: str) -> Optional[_GenerationClaim]:
+    """Claim the generation of ``task_type`` tasks across every process, or
+    None while another process holds the claim.
+
+    Every generation path takes this first: the refill actor's batches, page
+    prefills and trigger_task_generation_sync. Each used to guard itself, the
+    actor with a process-local lock and a prefill by looking for a recent
+    QUEUED task. Neither saw the other, and two web workers could both look
+    before either had created its task, so overlapping generations each paid
+    for a round of outside model calls.
+
+    The claim is ModelHealthAlertState.try_claim's one-winner pattern on the
+    same table, under its own key: a conditional UPDATE that only moves a
+    timestamp older than the window, then get_or_create for a row not there
+    yet, each atomic on its own. try_claim itself is sync and hands back no
+    token to release with. The claim lapses CHOOSER_GENERATION_CLAIM_SECONDS
+    after it was taken or last renewed, so one left behind by a process that
+    died mid-generation holds nothing off for longer than that.
+
+    Raises on a database error: each caller decides whether to fail open.
+    """
+    key = _generation_claim_key(task_type)
+    now = timezone.now()
+    cutoff = now - datetime.timedelta(seconds=CHOOSER_GENERATION_CLAIM_SECONDS)
+    if await ModelHealthAlertState.objects.filter(
+        key=key, last_alert_sent__lte=cutoff
+    ).aupdate(last_alert_sent=now):
+        return _GenerationClaim(task_type, now)
+    _, created = await ModelHealthAlertState.objects.aget_or_create(
+        key=key, defaults={"last_alert_sent": now}
+    )
+    return _GenerationClaim(task_type, now) if created else None
+
+
+async def _claim_for_refill(task_type: str) -> Optional[_GenerationClaim]:
+    """The refill's claim on ``task_type``, or None while another process
+    holds it.
+
+    Fails open, unlike every other path: when the claim can't be checked the
+    refill generates without one. The refill actor is the pool's main
+    supplier, and one named actor whose loop awaits each tick, so it never
+    overlaps itself; prefills fail closed on the same error, so while claims
+    can't be checked the actor is the only process generating. Failing
+    closed here would let the pool drain for as long as the claim table is
+    unreachable, though the tasks table the refill just counted answers.
+    """
+    try:
+        return await _claim_generation(task_type)
+    except Exception as e:
+        logger.warning(
+            f"Chooser: could not check the {task_type} generation claim; "
+            f"refilling without it: {e}"
+        )
+        return _GenerationClaim(task_type, None)
 
 
 async def check_and_refill_task_pool() -> bool:
@@ -472,8 +586,10 @@ async def check_and_refill_task_pool() -> bool:
     (nothing moves a task out of it), so without it a pool bootstrapped before
     the provider existed never built a task for it.
 
-    Awaits the batch, so a second tick cannot start another batch while one
-    is still running; a tick that finds a refill in progress returns at once.
+    Each type's batch runs under that type's generation claim (see
+    _claim_generation), so it never overlaps a batch or prefill of the same
+    type in any process. A type another process is generating is skipped
+    until the next tick, and is not a failed refill: it is being refilled.
 
     Returns False when types needed a batch and none of those batches
     produced a READY task, else True. Generation errors are caught per task
@@ -482,35 +598,37 @@ async def check_and_refill_task_pool() -> bool:
     that is being refilled. One type failing while another refills is not a
     failed refill: it used to count as one, so the actor was reported
     unhealthy and replaced, which cannot fix a type whose backends are
-    failing, and could kill it mid-batch, leaving a QUEUED task that holds
-    page prefills off (see _generation_underway).
+    failing, and could kill it mid-batch, leaving its claim to lapse before
+    anything else could generate that type.
     """
-    if not _claim_refill():
-        logger.debug("A chooser refill is already running in this process; skipping")
-        return True
-    try:
-        needed = produced = 0
-        for task_type in ["appeal", "chat"]:
-            reason = await _refill_reason(task_type)
-            if reason is None:
-                continue
-            needed += 1
+    needed = produced = 0
+    for task_type in ["appeal", "chat"]:
+        reason = await _refill_reason(task_type)
+        if reason is None:
+            continue
+        claim = await _claim_for_refill(task_type)
+        if claim is None:
             logger.info(
-                f"Chooser {task_type} tasks need generating ({reason}). "
-                f"Generating {CHOOSER_GENERATION_BATCH_SIZE} tasks."
+                f"Chooser {task_type} tasks need generating ({reason}), but "
+                "another process is generating them; skipping this tick"
             )
+            continue
+        needed += 1
+        logger.info(
+            f"Chooser {task_type} tasks need generating ({reason}). "
+            f"Generating {CHOOSER_GENERATION_BATCH_SIZE} tasks."
+        )
+        async with claim:
             ready = await _generate_batch_tasks(
-                task_type, CHOOSER_GENERATION_BATCH_SIZE
+                task_type, CHOOSER_GENERATION_BATCH_SIZE, claim
             )
-            if ready:
-                produced += 1
-            else:
-                logger.warning(
-                    f"Chooser {task_type} refill ({reason}) produced no usable task"
-                )
-        return needed == 0 or produced > 0
-    finally:
-        _release_refill()
+        if ready:
+            produced += 1
+        else:
+            logger.warning(
+                f"Chooser {task_type} refill ({reason}) produced no usable task"
+            )
+    return needed == 0 or produced > 0
 
 
 async def _refill_reason(task_type: str) -> Optional[str]:
@@ -619,11 +737,26 @@ async def _count_unscored_tasks(task_type: str) -> int:
     return await _fresh_tasks(task_type).acount()
 
 
-async def _generate_batch_tasks(task_type: str, batch_size: int) -> int:
+async def _generate_batch_tasks(
+    task_type: str, batch_size: int, claim: Optional[_GenerationClaim] = None
+) -> int:
     """Generate a batch of chooser tasks with candidates; returns how many
-    came out READY."""
+    came out READY.
+
+    ``claim`` is renewed before each task after the first: a batch is a round
+    of model calls per task and can outlast one window, and a claim that
+    lapsed mid-batch would let another process generate this type alongside
+    it. When another process has taken the claim anyway, the batch stops and
+    leaves the type to it.
+    """
     ready = 0
-    for _ in range(batch_size):
+    for index in range(batch_size):
+        if index and claim is not None and not await claim.renew():
+            logger.warning(
+                f"Chooser {task_type} generation claim lapsed and another "
+                f"process took it; stopping the batch after {index} tasks"
+            )
+            break
         try:
             if await _generate_single_task(task_type):
                 ready += 1
@@ -1125,6 +1258,13 @@ async def prefill_if_needed(min_ready: int = 1, exhausted: Optional[str] = None)
             task of. The pool is not short, so the count alone would never
             generate one, and that session would see "No tasks available"
             until the refill actor next ran.
+
+    The prefill throttle lives in the cache, which is per process
+    (LocMemCache), so every web worker could start a generation while the
+    pool was empty, each paying for a round of outside model calls. A
+    prefill generates only under the type's generation claim (see
+    _claim_generation), which one process holds at a time, the refill
+    actor included; the claim is released when the task is done.
     """
 
     for task_type in ["appeal", "chat"]:
@@ -1135,36 +1275,44 @@ async def prefill_if_needed(min_ready: int = 1, exhausted: Optional[str] = None)
             reason = f"all {ready_count} used up by a session"
         else:
             continue
-        if await _generation_underway(task_type):
+        try:
+            claim = await _claim_generation(task_type)
+        except Exception as e:
+            # Fail closed: the refill actor still supplies the pool, while a
+            # prefill that can't tell whether another process is generating
+            # could pay for the same round twice. One warning per pass: the
+            # next type's claim would fail the same way.
+            logger.warning(
+                f"Chooser prefill skipped: could not check the {task_type} "
+                f"generation claim: {e}"
+            )
+            return
+        if claim is None:
             logger.debug(
-                f"Chooser {task_type} tasks {reason}, but one is already "
-                "being generated; not starting another"
+                f"Chooser {task_type} tasks {reason}, but another process is "
+                "generating them; not starting another"
             )
             continue
         logger.info(
             f"Chooser {task_type} tasks {reason}. Triggering generation of 1 task."
         )
         # Fire and forget - don't wait for completion
-        await fire_and_forget_in_new_threadpool(_generate_single_task(task_type))
+        work = _generate_under(claim)
+        try:
+            await fire_and_forget_in_new_threadpool(work)
+        except Exception:
+            # No thread runs ``work``, so nothing else would release the
+            # claim before it lapsed.
+            work.close()
+            await claim.release()
+            raise
 
 
-async def _generation_underway(task_type: str) -> bool:
-    """Whether a ``task_type`` task is being generated now, in any process.
-
-    The prefill throttle lives in the cache, which is per process
-    (LocMemCache), so every web worker could start its own generation while
-    the pool was empty, each one paying for a round of external calls. Every
-    generation creates its task QUEUED first and settles it READY or DISABLED
-    when done, so a recent QUEUED row is a sign every worker, and the refill
-    actor's batches, can see. It is a check, not a lock: two workers checking
-    in the same instant can both start one, but no longer every worker.
-    """
-    since = timezone.now() - datetime.timedelta(
-        seconds=CHOOSER_GENERATION_CLAIM_SECONDS
-    )
-    return await ChooserTask.objects.filter(
-        task_type=task_type, status="QUEUED", created_at__gte=since
-    ).aexists()
+async def _generate_under(claim: _GenerationClaim) -> bool:
+    """One task of the claim's type, then the claim released, however the
+    generation ended."""
+    async with claim:
+        return await _generate_single_task(claim.task_type)
 
 
 def trigger_prefill_async(exhausted: Optional[str] = None) -> bool:
@@ -1177,7 +1325,7 @@ def trigger_prefill_async(exhausted: Optional[str] = None) -> bool:
     prefill is a full task generation. A prefill for a type a session has
     used up (``exhausted``, see prefill_if_needed) has its own window, so a
     page load just before cannot hold it off. Across processes, a prefill
-    skips a type that is already being generated (see _generation_underway).
+    skips a type that is already being generated (see _claim_generation).
     Returns whether a prefill was started.
     """
     from django.core.cache import cache
@@ -1213,11 +1361,20 @@ def trigger_prefill_async(exhausted: Optional[str] = None) -> bool:
 def trigger_task_generation_sync(task_type: str, count: int = 1):
     """
     Synchronously trigger generation of chooser tasks.
-    Useful for testing or admin commands.
+    Useful for testing or admin commands. Generates nothing while another
+    process holds the type's generation claim (see _claim_generation).
     """
     from asgiref.sync import async_to_sync
 
     async def run_generation():
-        await _generate_batch_tasks(task_type, count)
+        claim = await _claim_generation(task_type)
+        if claim is None:
+            logger.warning(
+                f"Chooser {task_type} tasks are being generated by another "
+                "process; not generating more"
+            )
+            return
+        async with claim:
+            await _generate_batch_tasks(task_type, count, claim)
 
     async_to_sync(run_generation)()
