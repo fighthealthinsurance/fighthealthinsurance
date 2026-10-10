@@ -1116,12 +1116,42 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertEqual(hint("HTTP 503"), "TypeSafe server error")
         self.assertEqual(hint("OSError"), "")
 
+    def test_a_404_or_410_says_the_model_is_retired_or_unknown(self):
+        """A model TypeSafe no longer serves is a settings change, not a
+        server error or an unexplained failure."""
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        hint = AdminStatusView._scoring_failure_hint
+        self.assertIn("TYPESAFE_MODEL", hint("HTTP 404"))
+        # A wrong URL path answers 404 too.
+        self.assertIn("TYPESAFE_API_URL", hint("HTTP 404"))
+        self.assertEqual(
+            hint("HTTP 410"), "TYPESAFE_MODEL retired or unknown at TypeSafe"
+        )
+
+    def test_the_page_explains_a_retired_model(self):
+        self._health(
+            last_failure_at=timezone.now() - datetime.timedelta(minutes=2),
+            last_failure="HTTP 410",
+        )
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertIn("TYPESAFE_MODEL retired", status["last_failure_hint"])
+
     def test_a_request_refused_before_sending_points_at_the_settings(self):
         from fighthealthinsurance.staff_views import AdminStatusView
 
         phrase = AdminStatusView._scoring_failure_hint("TypeSafeError")
         self.assertIn("TYPESAFE_API_URL", phrase)
         self.assertIn("TYPESAFE_MODEL", phrase)
+
+    def test_a_cooldown_after_an_unreachable_typesafe_says_so(self):
+        """Not the settings hint: the request was held back because TypeSafe
+        could not be reached moments ago."""
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        phrase = AdminStatusView._scoring_failure_hint("TypeSafeCoolingDown")
+        self.assertIn("could not be reached", phrase)
 
     def test_the_page_explains_a_422(self):
         self._health(

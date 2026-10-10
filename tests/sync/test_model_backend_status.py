@@ -19,6 +19,7 @@ from fighthealthinsurance.ml import health_status as health_status_module
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml import model_health_check as mhc
 from fighthealthinsurance.ml import serving_registry
+from fighthealthinsurance.ml import spend
 from fighthealthinsurance.ml.health_status import _model_key, health_status
 from fighthealthinsurance.ml.ml_models import (
     AlphaRemoteInternal,
@@ -129,6 +130,7 @@ class StatusPageTestCase(TestCase):
         "Config",
         "Serving",
         "Last health check",
+        "Live (this pod)",
         "Last stored generation",
     )
 
@@ -912,7 +914,9 @@ class ModelBackendStatusFreshnessTest(StatusPageTestCase):
         )
         self.assertGreater(enabled, 1)
         self.assertContains(
-            response, f"1 of {enabled} enabled backends passed their latest check"
+            response,
+            f"1 of {enabled} enabled backends passed their latest check and are"
+            " not failing live on this pod.",
         )
 
     def test_a_failing_configuration_is_not_counted_as_enabled(self):
@@ -943,16 +947,69 @@ class ModelBackendStatusFreshnessTest(StatusPageTestCase):
         self.assertFalse(self.row(response, self.MODEL)["enabled"])
         self.assertEqual(response.context["healthy_count"], 0)
 
+    # The Live (this pod) column: what this pod's own calls have found since
+    # the deploy check, read from memory. A backend found dead is not
+    # counted healthy, whatever its check said.
+
+    def _passed_and_live(self, not_served=False):
+        """Sonnet configured with a passing check row; with ``not_served``,
+        its registered instance flagged the way a 404 or 410 flags it."""
+        self.configure(**ANTHROPIC)
+        self.check_row()
+        if not_served:
+            router = ml_router_module._get_ml_router()
+            sonnet = router.models_by_name[self.MODEL][0]
+            sonnet._note_missing_model(sonnet.api_base, sonnet.model, "test")
+
+    def test_nothing_flagged_reads_as_such(self):
+        self._passed_and_live()
+        live = self.cell(self.get_page(), self.MODEL, "Live (this pod)")
+        self.assertIn("nothing flagged", live)
+
+    def test_an_unregistered_backend_has_no_live_state(self):
+        self._passed_and_live()
+        live = self.cell(self.get_page(), "azure-openai/gpt-5.5", "Live (this pod)")
+        self.assertIn("not registered", live)
+
+    def test_a_model_not_served_shows_failing_live(self):
+        self._passed_and_live(not_served=True)
+        live = self.cell(self.get_page(), self.MODEL, "Live (this pod)")
+        self.assertIn('<span class="pill pill-fail">failing</span>', live)
+        self.assertIn("model not served", live)
+
+    def test_a_live_failure_is_not_counted_healthy(self):
+        self._passed_and_live(not_served=True)
+        response = self.get_page()
+        self.assertEqual(
+            (response.context["healthy_count"], response.context["live_failing_count"]),
+            (0, 1),
+        )
+
+    def test_the_summary_counts_live_failures(self):
+        self._passed_and_live(not_served=True)
+        self.assertContains(self.get_page(), "; 1 is failing live on this pod.")
+
+    def test_a_provider_paused_for_credit_shows_failing_live(self):
+        self._passed_and_live()
+        spend.pause(spend.ANTHROPIC, reason="test")
+        row = self.row(self.get_page(), self.MODEL)
+        self.assertIn("paused for credit or quota", row["live_problem"])
+
+    def test_a_live_failure_leaves_the_check_cell_as_it_was(self):
+        self._passed_and_live(not_served=True)
+        health = self.cell(self.get_page(), self.MODEL, "Last health check")
+        self.assertIn('<span class="pill pill-ok">PASS</span>', health)
+
 
 class ModelBackendStatusLayoutTest(StatusPageTestCase):
-    """Seven columns that fit a 1280px window, with every fact still shown."""
+    """Eight columns that fit a 1280px window, with every fact still shown."""
 
     TEMPLATE = (
         Path(__file__).resolve().parents[2]
         / "fighthealthinsurance/templates/model_backend_status.html"
     )
 
-    def test_seven_columns_inside_a_scroll_box(self):
+    def test_eight_columns_inside_a_scroll_box(self):
         response = self.get_page()
         html = response.content.decode()
         table = html[html.index('<div class="status-wrap">') :]
@@ -966,6 +1023,7 @@ class ModelBackendStatusLayoutTest(StatusPageTestCase):
                 "Config",
                 "Serving",
                 "Last health check",
+                "Live (this pod)",
                 "Last stored generation",
             ],
         )

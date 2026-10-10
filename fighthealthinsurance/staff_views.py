@@ -939,11 +939,15 @@ class AdminStatusView(generic.TemplateView):
     def _scoring_failure_hint(summary: str) -> str:
         """What a recorded scoring failure most likely means, for on-call.
         The statuses TypeSafe documents (401, 422, 429, 529) each get their
-        own phrase."""
+        own phrase, as do 404 and 410, which say the model is gone."""
         if summary == "HTTP 402":
             return "payment required: TypeSafe credits or billing"
         if summary in ("HTTP 401", "HTTP 403"):
             return "the API key was rejected"
+        if summary == "HTTP 404":
+            return "TYPESAFE_MODEL unknown or retired, or a wrong TYPESAFE_API_URL"
+        if summary == "HTTP 410":
+            return "TYPESAFE_MODEL retired or unknown at TypeSafe"
         if summary == "HTTP 422":
             return "the request failed validation: TYPESAFE_MODEL or request shape"
         if summary == "HTTP 429":
@@ -955,8 +959,18 @@ class AdminStatusView(generic.TemplateView):
         if summary == "timeout":
             return "no answer within TYPESAFE_TIMEOUT_SECONDS"
         if summary == "TypeSafeBudgetSpent":
+            # Also what every request reads after a credit refusal paused
+            # TypeSafe for the day (ml/spend.py).
             return (
-                "not sent: this month's TypeSafe budget is spent (FHI_SPEND_TYPESAFE_*)"
+                "not sent: TypeSafe's budget (FHI_SPEND_TYPESAFE_*) is spent, "
+                "or it refused for credit today"
+            )
+        if summary == "TypeSafeCoolingDown":
+            # Only a cooldown a connection failure started reads like this:
+            # one an HTTP refusal started carries that status.
+            return (
+                "not sent: TypeSafe could not be reached moments ago; asked "
+                "again after FHI_TYPESAFE_COOLDOWN_SECONDS"
             )
         if summary == "TypeSafeError":
             # ml/typesafe.py refuses before sending: a non-https URL or a
@@ -2241,22 +2255,54 @@ def _is_placeholder_model(name: str) -> bool:
     return name in PLACEHOLDER_MODEL_LABELS or name.startswith("legacy-")
 
 
+def _live_problem(instance: Any) -> Optional[str]:
+    """Why this pod's own signals say ``instance`` cannot answer now, or
+    None: the flags its calls left (not served, refused, unreachable; see
+    ``unavailable_reason``), or its provider paused for credit or quota
+    today. In memory only, never a model or the network. Never raises: a
+    backend without these accessors, or a test double, reads as None.
+
+    The deploy-time check row is all the pages had otherwise, so a model
+    retired or defunded since the deploy kept reading as healthy.
+    """
+    from fighthealthinsurance.ml import spend
+
+    try:
+        reason_of = getattr(instance, "unavailable_reason", None)
+        reason = reason_of() if callable(reason_of) else None
+        if isinstance(reason, str) and reason:
+            return reason
+    except Exception as e:
+        logger.debug(f"Live model flags not read: {type(e).__name__}")
+    try:
+        provider = getattr(instance, "SPEND_PROVIDER", None)
+        if isinstance(provider, str) and provider and spend.paused(provider, "*"):
+            return "provider paused for credit or quota until 00:00 UTC"
+    except Exception as e:
+        logger.debug(f"Spend pause not read: {type(e).__name__}")
+    return None
+
+
 def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
     """Each model's state today, for the tags on the usage tables.
 
     Reads only what is already in memory or stored: the backend catalog and
     configuration classification (``enumerate_backend_checks``, which builds
-    clients but never calls one), the router's registered instances for
-    internal/external/context-only, and the newest stored health-check row
-    per model. It never probes a backend, so the page stays cheap and cannot
-    wake a model.
+    clients but never calls one), the router's registered instances (chat-only
+    outside models included) for internal/external/context-only, the newest
+    stored health-check row per model, and this pod's live signals
+    (``_live_problem``). It never probes a backend, so the page stays cheap
+    and cannot wake a model.
 
     Returns ``{name: {"key": ..., "category": ...}}``. ``category`` is set
     only for "failing". A health row whose category is a configuration
     verdict (retired, not configured, disabled, missing credentials, client
     init) is
     ignored for a backend that is configured now: it describes the settings
-    at that run, not how the backend answered.
+    at that run, not how the backend answered. A live problem on every
+    instance of a model turns a state that is not already failing into
+    "failing" with the reason, marked "(live, this pod)"; it never replaces
+    a stored failure.
     """
     from fighthealthinsurance.ml import model_health_check as mhc
     from fighthealthinsurance.ml.ml_router import ml_router
@@ -2274,6 +2320,10 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
     try:
         static_results, checkable = mhc.enumerate_backend_checks()
         registered = ml_router.models_by_name
+        # Chat-only outside models are in no catalog and no general pool, so
+        # without these they read as retired and their live state went
+        # unseen.
+        chat_only = getattr(ml_router, "chat_outside_models_by_name", None) or {}
     except Exception:
         # The usage numbers do not depend on the router; a broken backend
         # config should cost the tags, not the page.
@@ -2313,7 +2363,9 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
     }
 
     for name in real:
-        instances = registered.get(name) or []
+        instances = registered.get(name) or (
+            [chat_only[name]] if name in chat_only else []
+        )
         instance = instances[0] if instances else probe_by_name.get(name)
         if instance is None:
             static = static_by_name.get(name)
@@ -2332,8 +2384,13 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
         if check is not None and check[1] in config_categories:
             check = None
         external = bool(getattr(instance, "external", True))
+        # Several instances can share a name; the model still answers while
+        # any one of them can.
+        live = [_live_problem(i) for i in (instances or [instance])]
         if check is not None and not check[0]:
             states[name] = {"key": "failing", "category": check[1]}
+        elif all(live):
+            states[name] = {"key": "failing", "category": f"{live[0]} (live, this pod)"}
         elif getattr(instance, "context_only", False):
             states[name] = {"key": "context_only"}
         elif check is None:
@@ -2467,15 +2524,14 @@ UsageWindow = Tuple[str, str, Optional[datetime.datetime], Optional[datetime.dat
 def _window_q(
     since: Optional[datetime.datetime],
     until: Optional[datetime.datetime],
-    field: str = "created_at",
 ) -> Q:
-    """``since <= field < until`` as a Q; a None bound is open. With both
-    open the Q is empty, and so falsy."""
+    """``since <= created_at < until`` as a Q; a None bound is open. With
+    both open the Q is empty, and so falsy."""
     bounds = Q()
     if since is not None:
-        bounds &= Q(**{f"{field}__gte": since})
+        bounds &= Q(created_at__gte=since)
     if until is not None:
-        bounds &= Q(**{f"{field}__lt": until})
+        bounds &= Q(created_at__lt=until)
     return bounds
 
 
@@ -2483,10 +2539,32 @@ def _within(
     qs: QuerySet,
     since: Optional[datetime.datetime],
     until: Optional[datetime.datetime],
-    field: str = "created_at",
 ) -> QuerySet:
-    """``qs`` limited to ``since <= field < until``; a None bound is open."""
-    return qs.filter(_window_q(since, until, field))
+    """``qs`` limited to ``since <= created_at < until``; a None bound is
+    open."""
+    return qs.filter(_window_q(since, until))
+
+
+def _span(
+    windows: List[Tuple[str, datetime.datetime, Optional[datetime.datetime]]],
+) -> Tuple[datetime.datetime, Optional[datetime.datetime]]:
+    """The bounds of one read covering every ``(slug, since, until)``
+    window: the earliest since, and the latest until, or None (open) when
+    any window runs to now."""
+    since = min(w_since for _slug, w_since, _until in windows)
+    untils = [w_until for _slug, _since, w_until in windows]
+    until = None if None in untils else max(u for u in untils if u is not None)
+    return since, until
+
+
+def _in_window(
+    at: datetime.datetime,
+    since: datetime.datetime,
+    until: Optional[datetime.datetime],
+) -> bool:
+    """``since <= at < until`` in Python, the same rule as ``_window_q``,
+    for rows one read fetched for several windows."""
+    return at >= since and (until is None or at < until)
 
 
 def _calendar_windows(
@@ -2584,17 +2662,22 @@ class ModelUsageDashboardView(generic.TemplateView):
     computed by the same helpers, so a calendar period and a rolling window
     count a pick or vote the same way.
 
-    Aggregates three signal sources across four time windows:
+    Aggregates three signal sources across each section's window:
       * ProposedAppeal.chosen=True  - implicit pick from real denial flow
       * ChooserVote (kind=appeal_letter) - synthetic chooser appeal vote
       * ChooserVote (kind=chat_response) - synthetic chooser chat vote
 
-    Time-window semantics (all timezone-aware, anchored on timezone.now()):
-      * Windows are rolling: "Last 1 Day" = the preceding 24 hours, "Last 7
-        Days" / "Last 30 Days" = the preceding 7/30 days. "All Time" has no
-        lower bound and additionally includes rows that predate timestamp
-        tracking (ProposedAppeal.created_at NULL, pre-migration-0182), which
-        no bounded window can include.
+    Time-window semantics (all timezone-aware; rolling windows are anchored
+    on timezone.now(), and calendar periods run from local midnight on the
+    first day of the month or quarter, the current one ending at now). Every
+    section filters the pick or vote time with the half-open bound
+    ``since <= t < until`` (see _window_q), so the bullets after the first
+    apply to calendar periods unchanged:
+      * In the rolling view, windows are rolling: "Last 1 Day" = the
+        preceding 24 hours, "Last 7 Days" / "Last 30 Days" = the preceding
+        7/30 days. "All Time" has no lower bound and additionally includes
+        rows that predate timestamp tracking (ProposedAppeal.created_at
+        NULL, pre-migration-0182), which no bounded window can include.
       * The event timestamp is the *selection* event: the chosen
         ProposedAppeal row's created_at (the pick), or ChooserVote.created_at
         (the vote). Presented counts use the same event set: for votes, the
@@ -2946,8 +3029,10 @@ class ModelUsageDashboardView(generic.TemplateView):
             "usable_percent": None,
             "order_rows": [],
             "spend_rows": [],
+            "paused_rows": [],
         }
         panel["spend_rows"] = ModelUsageDashboardView._spend_rows()
+        panel["paused_rows"] = ModelUsageDashboardView._paused_rows()
         row = chat_policy.newest_policy_row()
         if row is None:
             return panel
@@ -3009,6 +3094,22 @@ class ModelUsageDashboardView(generic.TemplateView):
             }
             for name, amount in summary.items()
         ]
+
+    @staticmethod
+    def _paused_rows() -> List[Dict[str, str]]:
+        """Today's provider pauses (ml/spend.py), one row each. A pause
+        follows a refusal for credit or quota and holds on every pod until
+        the next UTC day; month_summary leaves it out, so without these rows
+        the page showed a paused provider's spend and nothing else."""
+        from fighthealthinsurance.ml import spend
+
+        rows: List[Dict[str, str]] = []
+        for name in spend.active_pauses():
+            provider, _sep, use = name.partition(":")
+            rows.append(
+                {"provider": provider, "use": "every use" if use == "*" else use}
+            )
+        return rows
 
     @staticmethod
     def _earliest_usage() -> Optional[datetime.datetime]:
@@ -3505,8 +3606,9 @@ class ModelUsageDashboardView(generic.TemplateView):
         # historical rows) must not inflate the denominator. Counted per
         # DRAFT shown, as the page defines it: a model the refill seated
         # twice in one task is charged two presentations, which is what it
-        # got (the refill now asks the models still owed a candidate first,
-        # so that stays rare).
+        # got (the refill fills a failed slot from a backend not yet asked,
+        # and re-samples one that answered only to reach two candidates, so
+        # that stays rare).
         counter: Counter = Counter()
         for ids in chosen_qs.values_list(
             "presented_candidate_ids", flat=True
@@ -3670,9 +3772,7 @@ class ModelUsageDashboardView(generic.TemplateView):
     ) -> None:
         """Set each row's median ok-call duration for ``windows`` from one
         newest-first read of at most ``cap`` calls spanning them all."""
-        since = min(w_since for _slug, w_since, _until in windows)
-        untils = [w_until for _slug, _since, w_until in windows]
-        until = None if None in untils else max(u for u in untils if u is not None)
+        since, until = _span(windows)
         samples = list(
             _within(ok_calls, since, until)
             .order_by("-created_at")
@@ -3685,11 +3785,7 @@ class ModelUsageDashboardView(generic.TemplateView):
             for name, duration_ms, created_at in samples:
                 # duration_ms is never None here (filtered by the caller);
                 # the check is for the type checker.
-                if (
-                    duration_ms is not None
-                    and created_at >= w_since
-                    and (w_until is None or created_at < w_until)
-                ):
+                if duration_ms is not None and _in_window(created_at, w_since, w_until):
                     label = normalize_model_label(name) or ATTEMPT_UNKNOWN_MODEL
                     durations[label].append(duration_ms)
             for row in out[slug]["rows"]:
@@ -3727,9 +3823,7 @@ class ModelUsageDashboardView(generic.TemplateView):
         if not windows:
             return {}
         tallies = {slug: _ChatTally() for slug, _since, _until in windows}
-        widest = min(since for _slug, since, _until in windows)
-        untils = [until for _slug, _since, until in windows]
-        latest = None if None in untils else max(u for u in untils if u is not None)
+        widest, latest = _span(windows)
         rows = (
             _within(ChatTurn.objects.all(), widest, latest)
             .order_by()
@@ -3738,7 +3832,7 @@ class ModelUsageDashboardView(generic.TemplateView):
         for row in rows.iterator(chunk_size=500):
             created_at = row[0]
             for slug, since, until in windows:
-                if created_at >= since and (until is None or created_at < until):
+                if _in_window(created_at, since, until):
                     tallies[slug].add(row)
         return {slug: tally.result() for slug, tally in tallies.items()}
 
@@ -3752,8 +3846,11 @@ class ModelBackendStatusView(generic.TemplateView):
     role, whether it is configured, registered in the router and recognized
     by usage reporting, the latest health-check row (with the deploy and
     environment it ran under, flagged when it predates this deploy or the
-    configuration has changed since), and the last time the model produced a
-    stored generation (ProposedAppeal / ChooserCandidate rows).
+    configuration has changed since), what this pod's own calls have found
+    since (``_live_problem``: not served, refused, unreachable, or its
+    provider paused for credit; such a row is not counted healthy), and the
+    last time the model produced a stored generation (ProposedAppeal /
+    ChooserCandidate rows).
 
     A panel above the table lists each request path's models in order, with
     external models off and on. It comes from the router's own synchronous
@@ -3857,6 +3954,14 @@ class ModelBackendStatusView(generic.TemplateView):
             # so the page says "not checked" instead of showing it as a
             # failed check.
             show_check = check is not None and (check.enabled or r.enabled)
+            # The check row is from the deploy; this is what this pod's own
+            # calls have found since. Only an instance the router registered
+            # has calls behind it.
+            live_problem = (
+                _live_problem(r.router_instance)
+                if r.router_instance is not None
+                else None
+            )
             rows.append(
                 {
                     "provider": r.provider,
@@ -3890,6 +3995,8 @@ class ModelBackendStatusView(generic.TemplateView):
                     "stale_deployment": stale_deployment,
                     "stale_environment": stale_environment,
                     "config_changed": check is not None and check.enabled != r.enabled,
+                    "live_problem": live_problem,
+                    "live_known": r.router_instance is not None,
                     "last_generation": last_generation.get(r.model_name),
                     # Citations only: never a generation candidate, so its
                     # empty "Last stored generation" is not a symptom. Read
@@ -3918,10 +4025,17 @@ class ModelBackendStatusView(generic.TemplateView):
             row for row in rows if row["enabled"] and not row["config_failing"]
         ]
         ctx["enabled_count"] = len(enabled_rows)
+        # A backend this pod's calls have found dead since the deploy check
+        # is not healthy, whatever that check said.
         ctx["healthy_count"] = sum(
             1
             for row in enabled_rows
-            if row["last_check"] is not None and row["last_check"].ok
+            if row["last_check"] is not None
+            and row["last_check"].ok
+            and not row["live_problem"]
+        )
+        ctx["live_failing_count"] = sum(
+            1 for row in enabled_rows if row["live_problem"]
         )
         return ctx
 

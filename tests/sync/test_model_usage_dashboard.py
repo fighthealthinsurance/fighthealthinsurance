@@ -426,6 +426,13 @@ class ChooserStatsHelperMixin:
             session_key=session,
         )
 
+    def _vote_at(self, model_name, when, session):
+        """A one-candidate appeal vote for ``model_name``, cast at ``when``."""
+        task = self._make_task()
+        cand = self._make_candidate(task, 0, model_name)
+        vote = self._vote(task, cand, [cand], session=session)
+        ChooserVote.objects.filter(pk=vote.pk).update(created_at=when)
+
 
 class ModelUsageDashboardNormalizationTest(ChooserStatsHelperMixin, TestCase):
     """Object-repr model names must never leak into dashboard keys."""
@@ -980,12 +987,6 @@ class UsageStatsUpperBoundTest(ChooserStatsHelperMixin, TestCase):
             insurance_company="TestIns",
         )
 
-    def _vote_at(self, model_name, when, session):
-        task = self._make_task()
-        cand = self._make_candidate(task, 0, model_name)
-        vote = self._vote(task, cand, [cand], session=session)
-        ChooserVote.objects.filter(pk=vote.pk).update(created_at=when)
-
     def _pick_at(self, model_name, when):
         pick = ProposedAppeal.objects.create(
             for_denial=self.denial,
@@ -1074,12 +1075,6 @@ class ModelUsageDashboardCalendarViewTest(ChooserStatsHelperMixin, TestCase):
     def setUp(self):
         User.objects.create_user(username="staff", password="pw123", is_staff=True)
         self.client.login(username="staff", password="pw123")
-
-    def _vote_at(self, model_name, when, session):
-        task = self._make_task()
-        cand = self._make_candidate(task, 0, model_name)
-        vote = self._vote(task, cand, [cand], session=session)
-        ChooserVote.objects.filter(pk=vote.pk).update(created_at=when)
 
     def _get(self, view):
         return self.client.get(reverse("model_usage_dashboard"), {"view": view})
@@ -1737,7 +1732,7 @@ class WindowTotalsTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
     def setUp(self):
         self._login_staff()
 
-    def _vote_at(self, model_name, session, kind="appeal_letter", days_ago=0):
+    def _vote_days_ago(self, model_name, session, kind="appeal_letter", days_ago=0):
         task = self._make_task("chat" if kind == "chat_response" else "appeal")
         cand = self._make_candidate(task, 0, model_name, kind=kind)
         vote = self._vote(task, cand, [cand], session=session)
@@ -1760,9 +1755,9 @@ class WindowTotalsTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
         self._pick(today, "m1", text="draft")  # a re-submit counts as a pick
         self._pick(self._denial("today-2"), None)
         self._pick(self._denial("old"), "m1", days_ago=45)
-        self._vote_at("model-a", "session-key-1")
-        self._vote_at("chat-model", "session-key-2", kind="chat_response")
-        self._vote_at("model-a", "session-key-4", days_ago=45)
+        self._vote_days_ago("model-a", "session-key-1")
+        self._vote_days_ago("chat-model", "session-key-2", kind="chat_response")
+        self._vote_days_ago("model-a", "session-key-4", days_ago=45)
         self._skip_at("session-key-3")
         self._skip_at("session-key-1")  # voted and skipped: one session
         self._skip_at("session-key-5", days_ago=45)
@@ -2087,6 +2082,143 @@ class ModelStateMakesNoCallsTest(StaffClientMixin, ChooserStatsHelperMixin, Test
         self.assertEqual(response.status_code, 200)
         for patched in (probe, snapshot, details, network):
             self.assertFalse(patched.called, patched)
+
+
+def _live_backend(reason=None, spend_provider=None):
+    """A registered external instance whose live signals say ``reason``."""
+    return SimpleNamespace(
+        external=True,
+        context_only=False,
+        unavailable_reason=lambda: reason,
+        SPEND_PROVIDER=spend_provider,
+    )
+
+
+class ModelStateLiveSignalsTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
+    """A model this pod's own calls found dead since the deploy check reads
+    as failing, marked live, however that check went."""
+
+    NAME = "ext/model"
+
+    def setUp(self):
+        self._login_staff()
+
+    def _state(self, *instances, check=None):
+        """The model's state with ``instances`` registered under NAME and,
+        when given, a stored check row (category, ok)."""
+        if check is not None:
+            _check(self.NAME, *check)
+        checkable = [(_backend(self.NAME), instances[0])]
+        with mock.patch.object(
+            mhc, "enumerate_backend_checks", return_value=([], checkable)
+        ), mock.patch(
+            "fighthealthinsurance.ml.ml_router.ml_router",
+            SimpleNamespace(models_by_name={self.NAME: list(instances)}),
+        ):
+            return _model_states([self.NAME])[self.NAME]
+
+    def test_a_passed_check_is_downgraded_by_a_live_reason(self):
+        state = self._state(
+            _live_backend("model not served"), check=(mhc.CATEGORY_PASS, True)
+        )
+        self.assertEqual(
+            state,
+            {"key": "failing", "category": "model not served (live, this pod)"},
+        )
+
+    def test_an_unchecked_model_is_downgraded_by_a_live_reason(self):
+        state = self._state(_live_backend("refused (HTTP 401)"))
+        self.assertEqual(state["category"], "refused (HTTP 401) (live, this pod)")
+
+    def test_a_provider_paused_for_credit_reads_failing(self):
+        from fighthealthinsurance.ml import spend
+
+        spend.pause(spend.DEEPINFRA, reason="test")
+        state = self._state(
+            _live_backend(spend_provider=spend.DEEPINFRA),
+            check=(mhc.CATEGORY_PASS, True),
+        )
+        self.assertIn("paused for credit or quota", state["category"])
+
+    def test_a_pause_on_another_provider_changes_nothing(self):
+        from fighthealthinsurance.ml import spend
+
+        spend.pause(spend.AZURE, reason="test")
+        state = self._state(
+            _live_backend(spend_provider=spend.DEEPINFRA),
+            check=(mhc.CATEGORY_PASS, True),
+        )
+        self.assertEqual(state, {"key": "external_ok"})
+
+    def test_a_stored_failure_keeps_its_own_category(self):
+        state = self._state(
+            _live_backend("model not served"), check=(mhc.CATEGORY_TIMEOUT, False)
+        )
+        self.assertEqual(state, {"key": "failing", "category": mhc.CATEGORY_TIMEOUT})
+
+    def test_a_model_still_answers_while_one_instance_can(self):
+        state = self._state(
+            _live_backend("unreachable (connection refused)"),
+            _live_backend(None),
+            check=(mhc.CATEGORY_PASS, True),
+        )
+        self.assertEqual(state, {"key": "external_ok"})
+
+    def test_an_accessor_that_raises_reads_as_no_live_problem(self):
+        def broken():
+            raise RuntimeError("no flags here")
+
+        instance = SimpleNamespace(
+            external=True, context_only=False, unavailable_reason=broken
+        )
+        state = self._state(instance, check=(mhc.CATEGORY_PASS, True))
+        self.assertEqual(state, {"key": "external_ok"})
+
+    def test_a_mock_backend_reads_as_no_live_problem(self):
+        instance = mock.MagicMock(external=True, context_only=False)
+        state = self._state(instance, check=(mhc.CATEGORY_PASS, True))
+        self.assertEqual(state, {"key": "external_ok"})
+
+    def _chat_only_state(self, instance):
+        """The state of NAME registered only as a chat-only outside model,
+        which no catalog lists (DeepInfra's chat models)."""
+        router = SimpleNamespace(
+            models_by_name={}, chat_outside_models_by_name={self.NAME: instance}
+        )
+        with mock.patch.object(
+            mhc, "enumerate_backend_checks", return_value=([], [])
+        ), mock.patch("fighthealthinsurance.ml.ml_router.ml_router", router):
+            return _model_states([self.NAME])[self.NAME]
+
+    def test_a_chat_only_model_is_not_read_as_retired(self):
+        state = self._chat_only_state(_live_backend(None))
+        self.assertEqual(state, {"key": "external_unchecked"})
+
+    def test_a_dead_chat_only_model_reads_failing_live(self):
+        from fighthealthinsurance.ml import spend
+
+        spend.pause(spend.DEEPINFRA, reason="test")
+        state = self._chat_only_state(_live_backend(spend_provider=spend.DEEPINFRA))
+        self.assertEqual(state["key"], "failing")
+
+    def test_the_tag_names_the_live_reason(self):
+        _check(self.NAME, mhc.CATEGORY_PASS, True)
+        denial = self._denial()
+        self._draft(denial, self.NAME, "draft")
+        self._pick(denial, self.NAME, text="draft")
+        checkable = [(_backend(self.NAME), _live_backend("model not served"))]
+        with mock.patch.object(
+            mhc, "enumerate_backend_checks", return_value=([], checkable)
+        ), mock.patch(
+            "fighthealthinsurance.ml.ml_router.ml_router",
+            SimpleNamespace(models_by_name={self.NAME: [checkable[0][1]]}),
+        ):
+            response = self.client.get(reverse("model_usage_dashboard"))
+        self.assertContains(
+            response,
+            f'<a class="state-tag state-fail" href="{reverse("model_backend_status")}">'
+            "failing: model not served (live, this pod)</a>",
+        )
 
 
 class CallAttemptTableTest(StaffClientMixin, TestCase):
@@ -2965,6 +3097,28 @@ class ChatRoutingPolicyPanelTest(StaffClientMixin, TestCase):
         self.assertIn({"counter": "azure:chat", "amount": 7.0, "calls": True}, rows)
         self.assertContains(response, "Provider spend this month")
         self.assertContains(response, "7 calls")
+
+    def _page_with_deepinfra_paused(self):
+        from fighthealthinsurance.ml import spend
+
+        spend.pause(spend.DEEPINFRA, reason="test")
+        return self._page()
+
+    def test_todays_pauses_get_a_row_each(self):
+        response = self._page_with_deepinfra_paused()
+        self.assertEqual(
+            response.context["chat_policy"]["paused_rows"],
+            [{"provider": "deepinfra", "use": "every use"}],
+        )
+
+    def test_a_pause_is_shown_even_with_no_spend_counted(self):
+        response = self._page_with_deepinfra_paused()
+        self.assertEqual(response.context["chat_policy"]["spend_rows"], [])
+        self.assertContains(
+            response,
+            "<strong>deepinfra</strong> (every use): paused until 00:00 UTC"
+            " &mdash; the provider refused for credit or quota.",
+        )
 
     def test_the_panel_appears_once_in_the_all_time_section(self):
         _policy_row()

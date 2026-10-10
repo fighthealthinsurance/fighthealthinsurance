@@ -98,7 +98,8 @@
   </ul>
   <p class="summary-note">
     Each model row carries its state now, read from this deployment's model
-    settings and the stored health checks; this page never calls a model. The
+    settings, the stored health checks and this pod's live signals (what its
+    own calls have found since); this page never calls a model. The
     counts beside it are history, so a retired model can still have picks.
     Tags link to the <a href="{% url 'model_backend_status' %}">Model Backend Status</a> page.
   </p>
@@ -106,7 +107,7 @@
     <li><span class="state-tag state-ok">internal, healthy</span> <span class="state-tag state-ok">external, healthy</span> on our own servers (internal) or a paid provider (external), and the latest health check passed.</li>
     <li><span class="state-tag state-warn">internal, no health check yet</span> <span class="state-tag state-warn">external, no health check yet</span> configured now, with no health check stored since.</li>
     <li><span class="state-tag state-context">context only</span> used for context lookups, never to write letters.</li>
-    <li><span class="state-tag state-fail">failing: FAIL_TIMEOUT</span> the latest health check, or the configuration, failed with that category.</li>
+    <li><span class="state-tag state-fail">failing: FAIL_TIMEOUT</span> the latest health check, or the configuration, failed with that category. Marked &ldquo;(live, this pod)&rdquo;: this pod&rsquo;s own calls found it not served, refused or unreachable, or its provider is paused for credit or quota until 00:00 UTC.</li>
     <li><span class="state-tag state-off">not configured</span> <span class="state-tag state-off">disabled</span> its provider has no settings here, or ENABLED_REMOTE_MODELS leaves it out.</li>
     <li><span class="state-tag state-off">not in the code any more</span> no backend in this deployment's code or model settings has this name.</li>
     <li><span class="state-tag state-placeholder">placeholder bucket</span> not a model: one of the buckets above.</li>

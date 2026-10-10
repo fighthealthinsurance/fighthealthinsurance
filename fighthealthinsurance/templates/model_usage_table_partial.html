@@ -13,7 +13,7 @@ branch with a literal class so the contrast gate can measure every tag.
     <tr>
       <th>{{ label_header|default:"Model" }}</th>
       {% if show_state %}
-      <th title="The model's state today, not during the window">State now</th>
+      <th title="The model's state today, not during the window: the latest stored health check, plus this pod's live signals">State now</th>
       {% endif %}
       {% if kind == "picks" %}
       <th class="num" title="Picks of this model's draft">Chosen</th>

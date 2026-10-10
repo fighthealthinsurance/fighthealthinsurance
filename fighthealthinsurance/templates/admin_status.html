@@ -71,7 +71,7 @@
         {% for d in models.details %}
           <tr>
             <td>{{ d.name }}</td>
-            <td><span class="pill">{% if d.context_only %}context-only, not counted{% elif d.external %}external{% else %}internal{% endif %}</span></td>
+            <td><span class="pill">{% if d.chat_only %}chat-only, not counted{% elif d.context_only %}context-only, not counted{% elif d.external %}external{% else %}internal{% endif %}</span></td>
             <td class="endpoint">
               {{ d.url|default:"" }}
               {% if d.backup_url %}<div>backup: {{ d.backup_url }}{% if d.backup_model %} ({{ d.backup_model }}){% endif %}</div>{% endif %}

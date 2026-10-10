@@ -59,9 +59,17 @@ Shown once, in the All Time section: a policy is not tied to a window.
 {% endif %}
 {% endwith %}
 {% endif %}
-{% if panel.spend_rows %}
+{% if panel.spend_rows or panel.paused_rows %}
 <h3 id="provider-spend">Provider spend this month <span class="source-label">(SpendCounter, UTC)</span></h3>
 <p class="note">Budgets: TypeSafe $5 a month, of which chat may use $3 and $2 is kept for letters; DeepInfra $20 a month for chat. A provider that runs out of credit is paused for the rest of the UTC day.</p>
+{% if panel.paused_rows %}
+<ul class="intro-list">
+  {% for p in panel.paused_rows %}
+  <li><strong>{{ p.provider }}</strong> ({{ p.use }}): paused until 00:00 UTC &mdash; the provider refused for credit or quota.</li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% if panel.spend_rows %}
 <table class="usage">
   <thead><tr><th>Provider and use</th><th class="num">Spent</th></tr></thead>
   <tbody>
@@ -70,4 +78,5 @@ Shown once, in the All Time section: a policy is not tied to a window.
     {% endfor %}
   </tbody>
 </table>
+{% endif %}
 {% endif %}

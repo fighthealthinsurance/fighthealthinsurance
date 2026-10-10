@@ -50,11 +50,16 @@
     Every model backend this code knows about, configured or not: what kind
     of model it is, which request paths this pod routes to it, and its most
     recent health-check result.
-    {{ healthy_count }} of {{ enabled_count }} enabled backend{{ enabled_count|pluralize }} passed their latest check.
+    {{ healthy_count }} of {{ enabled_count }} enabled backend{{ enabled_count|pluralize }} passed their latest check and are not failing live on this pod{% if live_failing_count %}; {{ live_failing_count }} {{ live_failing_count|pluralize:"is,are" }} failing live on this pod{% endif %}.
     Health data is written by the once-per-deployment check (search deployment logs for
     <code>MODEL_BACKEND_HEALTH_SUMMARY</code>) and by manual runs of
     <code>python manage.py check_model_backends</code>. This page never
     invokes models itself.
+    The Live column is what this pod's own calls have found since: a model
+    not served, a key or account refused or an endpoint unreachable (held in
+    this pod's memory, so another pod can differ, and cleared on its own
+    after a while), or the provider paused on every pod for credit or quota
+    until 00:00 UTC.
     &ldquo;Registered in router&rdquo; means the router loaded the model; it
     does not mean any request path picks it, which the Routing column shows.
     &ldquo;In reporting&rdquo; means usage reporting records the name on
@@ -161,6 +166,7 @@
         <th>Config</th>
         <th>Serving</th>
         <th>Last health check</th>
+        <th>Live (this pod)</th>
         <th>Last stored generation</th>
       </tr>
     </thead>
@@ -236,13 +242,18 @@
           {% endif %}
         </td>
         <td>
+          {% if r.live_problem %}<span class="pill pill-fail">failing</span><div class="err">{{ r.live_problem }}</div>
+          {% elif r.live_known %}<span class="muted">nothing flagged</span>
+          {% else %}<span class="muted">not registered</span>{% endif %}
+        </td>
+        <td>
           {% if r.last_generation %}{{ r.last_generation|date:"Y-m-d H:i" }} UTC
           {% elif r.context_only %}<span class="muted">n/a (citations only)</span>
           {% else %}<span class="muted">none recorded</span>{% endif %}
         </td>
       </tr>
       {% empty %}
-      <tr><td colspan="7">No model backends found: every backend class's catalog came back empty. Check this pod's log for model_catalog() errors.</td></tr>
+      <tr><td colspan="8">No model backends found: every backend class's catalog came back empty. Check this pod's log for model_catalog() errors.</td></tr>
       {% endfor %}
     </tbody>
   </table>

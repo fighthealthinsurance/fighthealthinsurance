@@ -20,7 +20,8 @@ Design points:
   probed concurrently — a broken provider can't slow the deploy by more than
   the single per-model timeout.
 * **Categorized results** distinguish: not configured, missing credentials,
-  client-init failure, auth failure, unknown model name, rate limiting/quota,
+  client-init failure, auth failure, unknown or retired model, rate limiting,
+  credit or quota exhausted (billing: it will not recover on its own),
   timeout, network failure, malformed/empty response, success, and
   success-but-missing-from-registry.
 * **Sanitized errors**: provider error text passes through
@@ -55,6 +56,7 @@ from loguru import logger
 
 from fighthealthinsurance.env_utils import local_dotenv_values
 from fighthealthinsurance.ml import ml_router as ml_router_module
+from fighthealthinsurance.ml import spend
 from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
 from fighthealthinsurance.ml.ml_models import (
     ModelDescription,
@@ -62,7 +64,7 @@ from fighthealthinsurance.ml.ml_models import (
     RemoteModel,
     RemoteModelLike,
     _error_body_of,
-    _error_text_indicates_missing_model,
+    _http_error_indicates_retired_model,
     begin_probe_observations,
     candidate_model_backends,
 )
@@ -105,6 +107,8 @@ _OK_NEGATION_TOKENS = frozenset(
         "refuse",
         "isn't",
         "isnt",
+        "nope",
+        "false",
     }
 )
 # "OK, no problem" acknowledges: "no" before one of these is not a negation.
@@ -160,6 +164,10 @@ CATEGORY_CLIENT_INIT = "FAIL_CLIENT_INIT"
 CATEGORY_AUTH = "FAIL_AUTH"
 CATEGORY_MODEL_NOT_FOUND = "FAIL_MODEL_NOT_FOUND"
 CATEGORY_RATE_LIMITED = "FAIL_RATE_LIMITED"
+# Credit or quota exhausted (HTTP 402, or a quota message in the body). Unlike
+# a rate limit it will not recover on its own: someone has to pay or raise
+# the limit, so it must not read as a transient FAIL_RATE_LIMITED.
+CATEGORY_BILLING = "FAIL_BILLING"
 CATEGORY_TIMEOUT = "FAIL_TIMEOUT"
 CATEGORY_NETWORK = "FAIL_NETWORK"
 CATEGORY_MALFORMED_RESPONSE = "FAIL_MALFORMED_RESPONSE"
@@ -176,6 +184,7 @@ FAILURE_CATEGORIES = frozenset(
         CATEGORY_AUTH,
         CATEGORY_MODEL_NOT_FOUND,
         CATEGORY_RATE_LIMITED,
+        CATEGORY_BILLING,
         CATEGORY_TIMEOUT,
         CATEGORY_NETWORK,
         CATEGORY_MALFORMED_RESPONSE,
@@ -371,12 +380,13 @@ def _env_flag(name: str) -> Optional[bool]:
 
 
 def strict_mode_enabled() -> bool:
-    """Whether a failed backend should fail the deployment (default: no)."""
-    return os.getenv("FHI_MODEL_HEALTH_STRICT", "0").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    """Whether a failed backend should fail the deployment (default: no).
+
+    start-server.sh, which fails the deploy job, honours only ``1``, the
+    documented setting; another true spelling makes this command exit 2 and
+    the script then reports it as non-blocking.
+    """
+    return _env_flag("FHI_MODEL_HEALTH_STRICT") is True
 
 
 def alert_emails_enabled() -> bool:
@@ -384,10 +394,10 @@ def alert_emails_enabled() -> bool:
 
     ``FHI_MODEL_HEALTH_ALERT_EMAIL=1`` (or true/yes/on) forces on (even in
     dev/test), ``FHI_MODEL_HEALTH_ALERT_EMAIL=0`` (or false/no/off) forces
-    off; the strict-mode switch already accepted those spellings, and a
-    "false" here used to be ignored and keep emailing. Otherwise alerts are
-    disabled in test runs (``TESTING=True``) and DEBUG (local dev)
-    environments, and enabled elsewhere (production).
+    off (``_env_flag``, which strict mode reads too); a "false" here used to
+    be ignored and keep emailing. Otherwise alerts are disabled in test runs
+    (``TESTING=True``) and DEBUG (local dev) environments, and enabled
+    elsewhere (production).
     """
     override = _env_flag("FHI_MODEL_HEALTH_ALERT_EMAIL")
     if override is not None:
@@ -513,10 +523,7 @@ def enumerate_backend_checks(
             # A provider whose catalog cannot even be listed vanished from
             # the report (and from the router) without a row; give it one so
             # the failure is visible where the others are.
-            try:
-                provider = backend_cls.provider_label()
-            except Exception:
-                provider = backend_cls.__name__
+            provider = backend_cls.provider_label()
             # No backend_cls: with no catalog entry there is no model for the
             # status page to read traits off, and a stand-in of a class whose
             # catalog raises could raise there too.
@@ -646,15 +653,13 @@ def _categorize_http_error(e: aiohttp.ClientResponseError) -> Tuple[str, str]:
     the Anthropic API" -- the first is unactionable, the second names the fix.
     A real incident was diagnosed by hand for exactly this reason.
 
-    The body also repairs the 400 branch below. It matched
-    ``"model" in e.message``, but e.message is the reason phrase and never
-    contains "model", so the branch was unreachable: every provider that
-    rejects an unknown model id with a 400 rather than a 404 landed in
-    FAIL_OTHER. It now matches on the body via the shared
-    ``_error_text_indicates_missing_model``, which requires a not-found
-    phrasing as well as the word "model" -- so a body that merely mentions a
-    model in passing ("temperature is not supported for this model", or a
-    quota message) does not get mislabelled MODEL_NOT_FOUND.
+    The body also decides the category. A missing or retired model is read
+    with ``_http_error_indicates_retired_model``, the test the transport uses
+    to park the model, so the deploy check and runtime agree: 410, or a
+    400/404 naming a missing, retired or invalid model, but not one that
+    merely mentions a model ("temperature is deprecated for this model").
+    A credit or quota refusal is read with ``spend.quota_refusal``, the test
+    that pauses the provider.
     """
     body = _error_body_of(e)
     reason = e.message or ""
@@ -663,27 +668,32 @@ def _categorize_http_error(e: aiohttp.ClientResponseError) -> Tuple[str, str]:
     detail = sanitize_error(
         f"HTTP {e.status} {reason}" + (f" -- {body}" if body else "")
     )
+    # Before auth and rate limits: Perplexity says insufficient_quota with a
+    # 401 and OpenAI with a 429, and both point at billing, not the key or a
+    # wait.
+    if spend.quota_refusal(e.status, body):
+        return CATEGORY_BILLING, detail
     if e.status in (401, 403):
         return CATEGORY_AUTH, detail
+    # Before the 404 fallback below, so a retirement is never sent to the
+    # endpoint path.
+    if _http_error_indicates_retired_model(e.status, body):
+        return CATEGORY_MODEL_NOT_FOUND, detail
     if e.status == 404:
-        # A 404 whose body names the model or deployment is a missing model.
-        # One that does not (vLLM's {"detail": "Not Found"}, Azure's bare
-        # "Resource not found") is a wrong base URL: filing it as a missing
-        # model sent the operator to the deployment name instead of the
-        # endpoint path. No body at all stays a missing model, the common
-        # case for a bare 404 from a model-serving endpoint.
-        if not body or _error_text_indicates_missing_model(body):
+        # A 404 whose body says nothing about the model (vLLM's {"detail":
+        # "Not Found"}, Azure's bare "Resource not found") is a wrong base
+        # URL: filing it as a missing model sent the operator to the
+        # deployment name instead of the endpoint path. No body at all stays
+        # a missing model, the common case for a bare 404 from a
+        # model-serving endpoint.
+        if not body:
             return CATEGORY_MODEL_NOT_FOUND, detail
         return (
             CATEGORY_OTHER,
             f"{detail} (404 without a model error: check the endpoint path)",
         )
-    if e.status in (429, 402):
+    if e.status == 429:
         return CATEGORY_RATE_LIMITED, detail
-    if e.status == 400 and _error_text_indicates_missing_model(body):
-        # Providers that reject unknown model ids with a 400 naming the model
-        # (rather than a clean 404).
-        return CATEGORY_MODEL_NOT_FOUND, detail
     if 500 <= e.status < 600:
         return CATEGORY_NETWORK, detail
     return CATEGORY_OTHER, detail

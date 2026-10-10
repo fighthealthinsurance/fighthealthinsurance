@@ -66,6 +66,15 @@ class Command(BaseCommand):
             help="Do not write results to the ModelBackendHealthCheckResult table.",
         )
 
+    def _fail_deploy_if_strict(self, mhc: Any) -> None:
+        """Exit 2 under strict mode, the code start-server.sh fails the
+        deploy job on; otherwise return and let the caller carry on."""
+        if mhc.strict_mode_enabled():
+            self.stderr.write(
+                self.style.ERROR("FHI_MODEL_HEALTH_STRICT=1: failing the deploy hook.")
+            )
+            raise SystemExit(2)
+
     def handle(self, *args: str, **options: Any):
         from fighthealthinsurance.ml import model_health_check as mhc
 
@@ -107,13 +116,7 @@ class Command(BaseCommand):
                     self.stderr.write(
                         self.style.ERROR(f"Model backend health check {reason}.")
                     )
-                    if mhc.strict_mode_enabled():
-                        self.stderr.write(
-                            self.style.ERROR(
-                                "FHI_MODEL_HEALTH_STRICT=1: failing the deploy hook."
-                            )
-                        )
-                        raise SystemExit(2)
+                    self._fail_deploy_if_strict(mhc)
                     return
                 self.stdout.write(
                     "Model backend health check skipped (another process "
@@ -149,13 +152,7 @@ class Command(BaseCommand):
             if summary.email_sent:
                 self.stdout.write("Consolidated failure alert emailed to support.")
             if deploy_hook:
-                if mhc.strict_mode_enabled():
-                    self.stderr.write(
-                        self.style.ERROR(
-                            "FHI_MODEL_HEALTH_STRICT=1: failing the deploy hook."
-                        )
-                    )
-                    raise SystemExit(2)
+                self._fail_deploy_if_strict(mhc)
                 self.stdout.write(
                     "Non-strict mode: healthy backends remain available; not "
                     "failing the deployment."

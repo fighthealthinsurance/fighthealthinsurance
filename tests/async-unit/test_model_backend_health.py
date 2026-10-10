@@ -2,7 +2,7 @@
 
 Covers: backend enumeration (enabled/disabled/not-configured/missing
 credentials), invocation categorization (auth / model-not-found / rate-limit /
-timeout / network / malformed / success), error sanitization, once-per-
+billing / timeout / network / malformed / success), error sanitization, once-per-
 deployment leader election, the single consolidated alert email (and its
 suppression in test/dev environments and on healthy runs), result
 persistence, registry cross-checks (Claude registered for UI + reporting),
@@ -12,6 +12,7 @@ and the check_model_backends management command exit codes.
 import asyncio
 import contextvars
 import datetime
+import json
 import os
 from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -252,7 +253,7 @@ class TestCheckBackendCategorization:
                 body='{"error":{"message":"Your credit balance is too low"}}',
             )
         )
-        assert res.category == mhc.CATEGORY_OTHER
+        assert res.category == mhc.CATEGORY_BILLING
         assert "credit balance is too low" in res.error
 
     def test_400_quota_body_is_not_mistaken_for_a_missing_model(self):
@@ -267,9 +268,6 @@ class TestCheckBackendCategorization:
 
     def test_429_is_rate_limited(self):
         assert self._check(_http_error(429)).category == mhc.CATEGORY_RATE_LIMITED
-
-    def test_402_quota_is_rate_limited(self):
-        assert self._check(_http_error(402)).category == mhc.CATEGORY_RATE_LIMITED
 
     def test_5xx_is_network(self):
         assert self._check(_http_error(503)).category == mhc.CATEGORY_NETWORK
@@ -1120,6 +1118,12 @@ class TestOkAcknowledgement:
     def test_negations_status_lines_and_refusals_fail(self, reply):
         assert not mhc._looks_like_ok(reply)
 
+    @pytest.mark.parametrize("reply", ["Nope, OK", "nope ok", "false OK", "OK: false"])
+    def test_nope_and_false_contradict_an_ok(self, reply):
+        """Neither word was a negation, so "Nope, OK" passed as an
+        acknowledgement. Plain "OK" is among the passing replies above."""
+        assert not mhc._looks_like_ok(reply)
+
 
 class TestCategorize404:
     def test_a_404_naming_the_deployment_is_a_missing_model(self):
@@ -1146,6 +1150,122 @@ class TestCategorize404:
         assert category == mhc.CATEGORY_MODEL_NOT_FOUND
 
 
+# OpenAI's 404 for a retired model, without its model_not_found code, so only
+# the retirement sentence can match.
+_OPENAI_RETIRED_404 = (
+    '{"error":{"message":"The model `gpt-3.5-turbo-0301` has been deprecated",'
+    '"type":"invalid_request_error"}}'
+)
+
+
+class TestCategorizeRetiredModels:
+    """A retired model is a missing model, read with the test the transport
+    parks it on. It used to be FAIL_OTHER, and a 404 saying so was told to
+    check the endpoint path."""
+
+    @pytest.mark.parametrize(
+        "status, body",
+        [
+            (410, None),
+            (
+                400,
+                '{"error":{"code":"ModelDeprecated",'
+                '"message":"The model gpt-35-turbo version 0301 is deprecated."}}',
+            ),
+            (404, _OPENAI_RETIRED_404),
+            (
+                400,
+                json.dumps(
+                    {
+                        "error": {
+                            "message": "Invalid model 'llama-3.1-sonar-large-"
+                            "128k-online'. Permitted models can be found in "
+                            "the documentation.",
+                            "type": "invalid_model",
+                            "code": 400,
+                        }
+                    }
+                ),
+            ),
+        ],
+        ids=[
+            "410-gone",
+            "azure-400-model-deprecated",
+            "openai-404-deprecated",
+            "perplexity-400-invalid-model",
+        ],
+    )
+    def test_a_retired_model_is_a_missing_model(self, status, body):
+        category, _ = mhc._categorize_http_error(_http_error(status, body=body))
+        assert category == mhc.CATEGORY_MODEL_NOT_FOUND
+
+    def test_a_404_retirement_is_not_sent_to_the_endpoint_path(self):
+        _, detail = mhc._categorize_http_error(
+            _http_error(404, "Not Found", body=_OPENAI_RETIRED_404)
+        )
+        assert "endpoint path" not in detail
+
+    def test_a_deprecated_parameter_is_not_a_retired_model(self):
+        """The next request can drop the parameter; the model still works."""
+        category, _ = mhc._categorize_http_error(
+            _http_error(
+                400, "Bad Request", body="temperature is deprecated for this model"
+            )
+        )
+        assert category == mhc.CATEGORY_OTHER
+
+
+class TestCategorizeBilling:
+    """Credit or quota exhaustion will not recover on its own. It read as a
+    passing rate limit (402, OpenAI's 429), a generic failure (Anthropic's
+    400) or a bad key (Perplexity's 401)."""
+
+    @pytest.mark.parametrize(
+        "status, body",
+        [
+            (402, None),
+            (
+                400,
+                '{"type":"error","error":{"type":"invalid_request_error",'
+                '"message":"Your credit balance is too low to access the '
+                'Anthropic API."}}',
+            ),
+            (
+                401,
+                '{"error":{"message":"insufficient_quota",'
+                '"type":"insufficient_quota","code":401}}',
+            ),
+            (
+                429,
+                '{"error":{"message":"You exceeded your current quota",'
+                '"type":"insufficient_quota"}}',
+            ),
+        ],
+        ids=[
+            "402",
+            "anthropic-400-credit",
+            "perplexity-401-insufficient-quota",
+            "openai-429-insufficient-quota",
+        ],
+    )
+    def test_a_credit_or_quota_refusal_is_billing(self, status, body):
+        category, _ = mhc._categorize_http_error(_http_error(status, body=body))
+        assert category == mhc.CATEGORY_BILLING
+
+    def test_a_429_that_links_to_a_quota_increase_stays_rate_limited(self):
+        """Azure's passing rate limit mentions quota in a link only."""
+        body = (
+            "Requests have exceeded token rate limit of your current pricing "
+            "tier. Please retry after 6 seconds. Please go here: "
+            "https://aka.ms/oai/quotaincrease to increase the default rate limit."
+        )
+        category, _ = mhc._categorize_http_error(_http_error(429, body=body))
+        assert category == mhc.CATEGORY_RATE_LIMITED
+
+    def test_billing_counts_as_a_failure(self):
+        assert mhc.CATEGORY_BILLING in mhc.FAILURE_CATEGORIES
+
+
 class TestDeployHookOnACrashedCheck:
     """A crashed check and a lost leader claim both leave ran_checks False;
     the deploy hook used to exit 0 for either, so strict mode could not fail
@@ -1163,7 +1283,9 @@ class TestDeployHookOnACrashedCheck:
     def _call(self, summary):
         out = StringIO()
         with patch.object(mhc, "run_health_check", return_value=summary):
-            call_command("check_model_backends", "--deploy-hook", stdout=out, stderr=out)
+            call_command(
+                "check_model_backends", "--deploy-hook", stdout=out, stderr=out
+            )
         return out.getvalue()
 
     def test_a_crash_fails_a_strict_deploy(self, monkeypatch):
@@ -1208,6 +1330,11 @@ class TestEnvironmentSwitches:
         monkeypatch.setenv("FHI_MODEL_HEALTH_ALERT_EMAIL", value)
         assert mhc.alert_emails_enabled() is True
 
+    @pytest.mark.parametrize("value", ["true", "yes", "on", "TRUE"])
+    def test_strict_mode_reads_the_alert_switch_spellings(self, monkeypatch, value):
+        monkeypatch.setenv("FHI_MODEL_HEALTH_STRICT", value)
+        assert mhc.strict_mode_enabled() is True
+
     def test_deployment_id_ignores_the_unknown_build_default(self, monkeypatch):
         monkeypatch.delenv("FHI_DEPLOYMENT_ID", raising=False)
         monkeypatch.setenv("FHI_RELEASE", "unknown")
@@ -1216,20 +1343,10 @@ class TestEnvironmentSwitches:
 
 
 class TestCatalogFailureIsVisible:
-    def test_a_backend_whose_catalog_raises_gets_a_client_init_row(
-        self, monkeypatch
-    ):
+    def test_a_backend_whose_catalog_raises_gets_a_client_init_row(self, monkeypatch):
         """It used to vanish from the report with only a log warning, exactly
         as it vanishes from the router."""
-        from fighthealthinsurance.ml.ml_models import RemoteAzureOpenAI
-
-        _clear_provider_env(monkeypatch)
-        with patch.object(
-            RemoteAzureOpenAI, "model_catalog", side_effect=RuntimeError("bad list")
-        ):
-            static, _checkable = mhc.enumerate_backend_checks()
-
-        rows = [r for r in static if r.model_name == "RemoteAzureOpenAI"]
+        rows = self._catalog_rows(monkeypatch, None)
         assert len(rows) == 1
         assert rows[0].category == mhc.CATEGORY_CLIENT_INIT
         assert rows[0].provider == "Azure OpenAI"

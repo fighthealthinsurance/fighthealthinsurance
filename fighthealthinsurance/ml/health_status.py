@@ -48,6 +48,39 @@ def _model_key(model: Any) -> str:
     return f"{prefix}@{id(model):x}"
 
 
+def _sweep_candidates(router: Any) -> Tuple[List[Any], Set[int], Set[int]]:
+    """Every backend a health check covers, with the ids of the context-only
+    ones (citations) and of chat's own outside models. Those two sit in no
+    generation pool: they are checked so a dead one shows up, but neither can
+    draft an appeal, so neither counts as one that can.
+
+    all_models_by_cost is read first, so a router that cannot enumerate
+    raises its own error.
+    """
+    candidates = list(router.all_models_by_cost)
+    context_only = list(router.context_only_models_by_cost)
+    candidates += context_only
+    chat_only = [
+        m for m in router.chat_outside_models_by_name.values() if m not in candidates
+    ]
+    candidates += chat_only
+    return candidates, {id(m) for m in context_only}, {id(m) for m in chat_only}
+
+
+def _unavailable_reason(model: Any) -> Optional[str]:
+    """Why the backend recorded itself unusable on this pod (a retired model,
+    a refused key, an unreachable host), or None. In memory, never a call.
+    Staff-only: the reason can name our billing or key state, so it never
+    goes in the public snapshot."""
+    try:
+        reason = getattr(model, "unavailable_reason", None)
+        value = reason() if callable(reason) else None
+    except Exception:
+        logger.opt(exception=True).debug(f"unavailable_reason failed for {model}")
+        return None
+    return value if isinstance(value, str) and value else None
+
+
 @dataclass
 class BackendHealthDetail:
     name: str
@@ -232,26 +265,19 @@ class _HealthStatus:
         internal_failures: List[BackendHealthDetail] = []
 
         # Choose a small, representative set of backends
-        candidates = []
-        # ids of the context-only candidates: swept, never counted as alive.
-        context_only_ids: Set[int] = set()
+        candidates: List[Any] = []
+        # ids of the candidates that cannot draft (context-only and chat-only):
+        # swept, never counted as alive.
+        non_drafting_ids: Set[int] = set()
         enumeration_error: Optional[str] = None
         try:
             logger.debug("Starting to look up the models")
             router = ml_router_module.ml_router
-            # Context-only backends (citations) are swept too: they are in no
-            # generation pool, so nothing checked them between deploys.
-            context_only = list(getattr(router, "context_only_models_by_cost", []))
-            context_only_ids = {id(m) for m in context_only}
-            candidates = list(router.all_models_by_cost) + context_only
-            # Chat's own outside models live outside the general pools; the
-            # sweep checks them too, so one that stops answering loses its
-            # place in the chat roster.
-            candidates += [
-                m
-                for m in getattr(router, "chat_outside_models_by_name", {}).values()
-                if m not in candidates
-            ]
+            # Context-only backends (citations) are swept so a dead one shows
+            # up between deploys; chat's own outside models are swept so one
+            # that stops answering loses its place in the chat roster.
+            candidates, context_only_ids, chat_only_ids = _sweep_candidates(router)
+            non_drafting_ids = context_only_ids | chat_only_ids
             logger.debug(f"Considering candidates {candidates}")
         except Exception as e:
             enumeration_error = f"{type(e).__name__}: {e}"
@@ -308,30 +334,25 @@ class _HealthStatus:
                     new_health[_model_key(m)] = bool(ok)
                     if ok:
                         # alive_models is the public "a model is ready to
-                        # write your appeal" number, and a context-only
-                        # backend can't draft, so it never counts.
-                        if id(m) not in context_only_ids:
+                        # write your appeal" number, and a context-only or
+                        # chat-only backend can't draft, so it never counts.
+                        if id(m) not in non_drafting_ids:
                             alive_count += 1
                         if is_internal:
                             internal_alive += 1
-                    elif is_internal:
-                        internal_failures.append(
-                            BackendHealthDetail(
-                                name=name, ok=False, error=err or "not ok"
-                            )
-                        )
                     else:
                         # The public snapshot lists failing EXTERNAL backends,
-                        # timed out or not. Internal failures stay out of it
-                        # (their names are internal wire paths) and drive the
-                        # alert instead. It used to list only timeouts, of
-                        # either kind, so a hard-down external was absent and
-                        # a slow internal host was published.
-                        details.append(
-                            BackendHealthDetail(
-                                name=name, ok=False, error=err or "not ok"
-                            )
+                        # timed out or not, saying no more than it does today:
+                        # the recorded reason can name our billing or key
+                        # state. Internal failures stay out of it (their names
+                        # are internal wire paths) and drive the staff alert,
+                        # which carries that reason.
+                        if is_internal:
+                            err = err or _unavailable_reason(m)
+                        detail = BackendHealthDetail(
+                            name=name, ok=False, error=err or "not ok"
                         )
+                        (internal_failures if is_internal else details).append(detail)
             finally:
                 # Return at the deadline rather than blocking on stragglers: a
                 # `with` block's shutdown(wait=True) would join every probe, so
@@ -525,9 +546,14 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
     Unlike :meth:`_HealthStatus.get_snapshot`, which returns a cached summary
     (used by the public ``live_models_status`` endpoint and deliberately keeps
     internal failures out of ``details``), this returns a full per-backend
-    breakdown — ``{"name", "ok", "external", "context_only", "error"}`` — for
-    the staff-only system status dashboard. It does not send alerts or mutate
-    the cached snapshot.
+    breakdown — ``{"name", "ok", "external", "context_only", "chat_only",
+    "error", "ref"}`` — for the staff-only system status dashboard. It does
+    not send alerts or mutate the cached snapshot.
+
+    A backend that is down shows the reason it recorded on this pod (a
+    retired model, a refused key, an unreachable host) when it has one,
+    instead of a bare "not ok". That reason can name our billing or key
+    state, which is why it is here and not in the public snapshot.
 
     Each row also carries the backend's endpoint (``url``) with credentials,
     query and fragment stripped; its backup leg, when that differs from the
@@ -545,13 +571,10 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
     """
     try:
         router = ml_router_module.ml_router
-        # Context-only backends (citations) included: "every known backend"
-        # used to leave them out because they are in no generation pool.
-        # Their rows say so, and callers counting what can draft leave them
-        # out, as the public snapshot does.
-        context_only = list(getattr(router, "context_only_models_by_cost", []))
-        context_only_ids = {id(m) for m in context_only}
-        candidates = list(router.all_models_by_cost) + context_only
+        # Context-only backends (citations) and chat's own outside models are
+        # included: "every known backend" used to leave them out because they
+        # are in no generation pool.
+        candidates, context_only_ids, chat_only_ids = _sweep_candidates(router)
     except Exception:
         # Propagate rather than returning [] — an empty list is indistinguishable
         # from "no models registered" and would let the caller (_model_status)
@@ -604,7 +627,7 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
                 try:
                     ok = bool(future.result(timeout=0))
                     if not ok:
-                        err = "not ok"
+                        err = _unavailable_reason(m) or "not ok"
                 except Exception as e:
                     err = str(e)
             else:
@@ -621,12 +644,17 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
                 if backup_api_base != api_base or backup_model != wire_model
                 else None
             )
+            chat_only = id(m) in chat_only_ids
             results.append(
                 {
                     "name": name,
                     "ok": ok,
                     "external": is_external,
-                    "context_only": id(m) in context_only_ids,
+                    # Callers count what can draft by leaving context_only
+                    # rows out, so a chat-only row (it cannot draft either)
+                    # carries it too; chat_only says which kind it is.
+                    "context_only": id(m) in context_only_ids or chat_only,
+                    "chat_only": chat_only,
                     "error": err,
                     "ref": ref_by_id.get(id(m)),
                     "url": _display_url(api_base),

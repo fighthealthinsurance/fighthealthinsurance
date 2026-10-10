@@ -24,7 +24,10 @@ greppable summary block.
 | `RETIRED` | On the retired list (`fighthealthinsurance/ml/retired_models.py`); listed with its date and reason, never called, even with its host set. | No |
 | `NOT_CONFIGURED` | No configuration; listed, never called. | No |
 | `DISABLED` | Excluded by `ENABLED_REMOTE_MODELS` ([ml-backends.md](ml-backends.md)); listed, never called. | No |
-| `FAIL_MISSING_CREDENTIALS`, `FAIL_CLIENT_INIT`, `FAIL_AUTH`, `FAIL_MODEL_NOT_FOUND`, `FAIL_RATE_LIMITED`, `FAIL_TIMEOUT`, `FAIL_NETWORK`, `FAIL_MALFORMED_RESPONSE`, `FAIL_OTHER` | What went wrong. | Yes |
+| `FAIL_MODEL_NOT_FOUND` | The endpoint does not serve the model: unknown, retired or deprecated (HTTP 410, or a 400/404 whose body names the model). | Yes |
+| `FAIL_BILLING` | Credit or quota exhausted (HTTP 402, or a 400/401/403/429 with a quota message); will not recover on its own. | Yes |
+| `FAIL_RATE_LIMITED` | A passing rate limit: HTTP 429 without a quota message, or already in back-off from one. | Yes |
+| `FAIL_MISSING_CREDENTIALS`, `FAIL_CLIENT_INIT`, `FAIL_AUTH`, `FAIL_TIMEOUT`, `FAIL_NETWORK`, `FAIL_MALFORMED_RESPONSE`, `FAIL_OTHER` | What went wrong. | Yes |
 
 Only the `FAIL_*` categories trigger the alert email or strict mode.
 
@@ -124,8 +127,8 @@ or roll back a deploy today:
   holds the claim, so the retry runs the check.)
 - `scripts/build.sh` does not wait on this Job.
 - The shell test in `start-server.sh` honors only the exact value `1`. The
-  Python side also accepts `true` and `yes`, but then the command's exit code
-  2 is reported as non-blocking.
+  Python side also accepts `true`, `yes` and `on`, but then the command's
+  exit code 2 is reported as non-blocking.
 
 ## Where to inspect results
 

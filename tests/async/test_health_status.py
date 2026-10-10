@@ -68,6 +68,35 @@ class _ContextOnlyGood:
         return True
 
 
+class _InternalBadWithReason(_InternalBad):
+    """An internal backend that recorded why it is unusable on this pod."""
+
+    def unavailable_reason(self):
+        return "unreachable (connection refused)"
+
+
+class _ExternalOutOfCredit(_ExternalBad):
+    """An external backend whose recorded reason names our billing state."""
+
+    def unavailable_reason(self):
+        return "out of credit (HTTP 402)"
+
+
+class _ExternalReasonRaises(_ExternalBad):
+    def unavailable_reason(self):
+        raise RuntimeError("flags unreadable")
+
+
+class _ChatOnlyBad:
+    """One of chat's own outside models: in no generation pool."""
+
+    model = "zai-org/GLM-5.3-Flash"
+    external = True
+
+    def model_is_ok(self):
+        return False
+
+
 class TestHealthStatus(TestCase):
     """Tests for cached model health endpoint behavior."""
 
@@ -102,6 +131,45 @@ class TestHealthStatus(TestCase):
         _HealthStatus._refresh(health_status)
 
         assert health_status.get_snapshot()["alive_models"] == 0
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_a_chat_only_backend_never_counts_as_alive(self, fake_router):
+        """Chat's own outside models sit in no generation pool either, so a
+        healthy one says nothing about whether an appeal can be written."""
+        fake_router.all_models_by_cost = [_InternalBad()]
+        fake_router.context_only_models_by_cost = []
+        fake_router.chat_outside_models_by_name = {"chat-only": _ExternalGood()}
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+
+        assert health_status.get_snapshot()["alive_models"] == 0
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_the_alert_names_the_reason_an_internal_backend_recorded(self, fake_router):
+        """The staff alert says why the backend is down, not a bare
+        "not ok"."""
+        fake_router.all_models_by_cost = [_InternalBadWithReason()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+
+        alerts = [
+            m for m in mail.outbox if "internal models are dead" in m.subject.lower()
+        ]
+        assert "internal-bad: unreachable (connection refused)" in alerts[0].body
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_public_details_never_carry_the_recorded_reason(self, fake_router):
+        """The public snapshot must not reveal our billing or key state."""
+        fake_router.all_models_by_cost = [_InternalGood(), _ExternalOutOfCredit()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+
+        assert health_status.get_snapshot()["details"] == [
+            {"name": "external-bad", "ok": False, "error": "not ok"}
+        ]
 
     @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
     def test_details_list_failing_externals_and_no_internal_failures(
@@ -446,6 +514,61 @@ class TestHealthStatus(TestCase):
             m for m in mail.outbox if "internal models are dead" in m.subject.lower()
         ]
         assert len(alerts) == 1
+
+
+class TestComputeModelHealthDetails(TestCase):
+    """The staff System Status breakdown: why a backend is down, and chat's
+    own outside models listed but never counted as able to draft."""
+
+    def _router(self, models, chat_outside=None):
+        router = mock.MagicMock()
+        router.all_models_by_cost = models
+        router.context_only_models_by_cost = []
+        router.chat_outside_models_by_name = chat_outside or {}
+        return router
+
+    def _details(self, router):
+        from fighthealthinsurance.ml.health_status import compute_model_health_details
+
+        with mock.patch("fighthealthinsurance.ml.ml_router.ml_router", router):
+            return compute_model_health_details(timeout_seconds=2)
+
+    def _by_name(self, router):
+        return {d["name"]: d for d in self._details(router)}
+
+    def test_a_down_backend_shows_the_reason_it_recorded(self):
+        details = self._by_name(self._router([_ExternalOutOfCredit()]))
+        assert details["external-bad"]["error"] == "out of credit (HTTP 402)"
+
+    def test_a_down_backend_without_a_reason_reads_not_ok(self):
+        details = self._by_name(self._router([_ExternalBad()]))
+        assert details["external-bad"]["error"] == "not ok"
+
+    def test_a_reason_accessor_that_raises_reads_not_ok(self):
+        details = self._by_name(self._router([_ExternalReasonRaises()]))
+        assert details["external-bad"]["error"] == "not ok"
+
+    def test_a_chat_only_backend_is_listed_as_chat_only(self):
+        """So staff see a dead DeepInfra chat model."""
+        router = self._router([_InternalGood()], {"glm": _ChatOnlyBad()})
+        details = self._by_name(router)
+        assert {name: d["chat_only"] for name, d in details.items()} == {
+            "internal-good": False,
+            "zai-org/GLM-5.3-Flash": True,
+        }
+
+    def test_a_chat_only_row_is_left_out_of_drafting_counts(self):
+        """Callers count what can draft by leaving context_only rows out."""
+        router = self._router([_InternalGood()], {"glm": _ChatOnlyBad()})
+        details = self._by_name(router)
+        assert details["zai-org/GLM-5.3-Flash"]["context_only"] is True
+
+    def test_a_chat_model_already_in_a_generation_pool_is_listed_once(self):
+        shared = _ExternalGood()
+        details = self._details(self._router([shared], {"shared": shared}))
+        assert [(d["name"], d["chat_only"]) for d in details] == [
+            ("external-good", False)
+        ]
 
 
 class TestBackgroundSweepGate(TestCase):
