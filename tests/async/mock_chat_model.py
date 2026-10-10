@@ -56,6 +56,7 @@ class MockChatModel:
         is_logged_in: Optional[bool] = True,
         is_medicaid_related: Optional[bool] = None,
         allow_repeated_reply: bool = False,
+        raise_on_unavailable: bool = False,
     ) -> Tuple[str, str]:
         """
         Generate a mock response to a chat message.
@@ -79,6 +80,9 @@ class MockChatModel:
             allow_repeated_reply: True when the user explicitly asked for a
                 repeat (ignored by the mock; accepted because the call
                 builders always pass it)
+            raise_on_unavailable: Raise ProviderUnavailable when the provider
+                could not be asked (ignored by the mock, which is always
+                reachable; accepted because the call builders always pass it)
 
         Returns:
             A tuple of (response_text, updated_context)

@@ -1489,16 +1489,19 @@ def _log_fanout_task_error(e: Exception, where: str) -> None:
     The tasks these fan-outs run are ML backend calls, whose expected failure
     modes (backend down, unreachable, timed out, HTTP error) deserve a single
     classified line -- a stack trace of aiohttp/asyncio plumbing buries the
-    cause. Unexpected exceptions keep the full traceback.
+    cause. ProviderUnavailable is one of those modes already classified: the
+    live chat race's calls raise it for every outage and skip. Unexpected
+    exceptions keep the full traceback.
     """
     # Imported here to avoid a utils <-> ml.ml_models import cycle
     # (ml_models imports from utils at module load).
     from fighthealthinsurance.ml.ml_models import (
         MODEL_TRANSPORT_ERRORS,
+        ProviderUnavailable,
         describe_model_error,
     )
 
-    if isinstance(e, MODEL_TRANSPORT_ERRORS):
+    if isinstance(e, MODEL_TRANSPORT_ERRORS + (ProviderUnavailable,)):
         logger.warning(f"Task failed in {where} -- {describe_model_error(e)}")
     else:
         logger.opt(exception=True).warning(f"Task error in {where}: {e}")

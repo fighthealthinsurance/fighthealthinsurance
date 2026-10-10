@@ -37,6 +37,7 @@ class RecordingModel:
         is_logged_in=True,
         temperature=0.7,
         allow_repeated_reply=False,
+        raise_on_unavailable=False,
     ):
         self.calls.append(
             {

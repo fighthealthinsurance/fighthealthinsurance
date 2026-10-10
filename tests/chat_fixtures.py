@@ -111,6 +111,7 @@ class RecordingChatModel:
         is_professional=True,
         is_logged_in=True,
         allow_repeated_reply: bool = False,
+        raise_on_unavailable: bool = False,
     ):
         self.calls.append(
             {
