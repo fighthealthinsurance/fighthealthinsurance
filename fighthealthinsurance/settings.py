@@ -314,6 +314,25 @@ class Base(Configuration):
     # MCP call counts are written on their own thread (mcp_server.py); off in
     # tests, where that thread's writes would escape the test's transaction.
     FHI_MCP_CALL_COUNT_OWN_THREAD = True
+    # LLM usage metrics (ml/llm_usage.py, docs/llm-usage-metrics.md). The
+    # ledger's background writer (off in tests, like the spend ledger's);
+    # the database side as a whole; and the weekly keyed network rows alone.
+    FHI_LLM_USAGE_BACKGROUND = True
+    FHI_LLM_USAGE_DB = os.getenv("FHI_LLM_USAGE_DB", "true").lower() != "false"
+    FHI_LLM_USAGE_NETWORK_KEYS = (
+        os.getenv("FHI_LLM_USAGE_NETWORK_KEYS", "true").lower() != "false"
+    )
+    # Read with a fallback by llm_usage_ledger, so a bad value can't stop
+    # the app from starting.
+    FHI_LLM_USAGE_DAILY_RETENTION_DAYS = os.getenv(
+        "FHI_LLM_USAGE_DAILY_RETENTION_DAYS", "400"
+    )
+    FHI_LLM_USAGE_NETWORK_RETENTION_DAYS = os.getenv(
+        "FHI_LLM_USAGE_NETWORK_RETENTION_DAYS", "90"
+    )
+    # AI assistant platforms' outbound ranges beyond the published ones in
+    # client_network.AI_PLATFORM_NETWORKS (comma-separated CIDRs).
+    FHI_AI_PLATFORM_CIDRS = os.getenv("FHI_AI_PLATFORM_CIDRS", "")
     TYPESAFE_LETTER_RANKING_ENABLED = (
         os.getenv("TYPESAFE_LETTER_RANKING_ENABLED", "false").lower() == "true"
     )
@@ -1198,6 +1217,7 @@ class Test(_TestBase):
     SITE_BANNER_BACKGROUND_REFRESH = False
     FHI_SPEND_BACKGROUND = False
     FHI_MCP_CALL_COUNT_OWN_THREAD = False
+    FHI_LLM_USAGE_BACKGROUND = False
     # The chat roster is set per test; the default keeps the best externals.
     FHI_CHAT_OUTSIDE_MODELS: list = []
     FHI_CHAT_EXPLORE_RATE = 0.0
@@ -1260,6 +1280,7 @@ class TestSync(_TestBase):
     SITE_BANNER_BACKGROUND_REFRESH = False
     FHI_SPEND_BACKGROUND = False
     FHI_MCP_CALL_COUNT_OWN_THREAD = False
+    FHI_LLM_USAGE_BACKGROUND = False
     # The chat roster is set per test; the default keeps the best externals.
     FHI_CHAT_OUTSIDE_MODELS: list = []
     FHI_CHAT_EXPLORE_RATE = 0.0
@@ -1339,6 +1360,7 @@ class TestActor(_TestBase):
     SITE_BANNER_BACKGROUND_REFRESH = False
     FHI_SPEND_BACKGROUND = False
     FHI_MCP_CALL_COUNT_OWN_THREAD = False
+    FHI_LLM_USAGE_BACKGROUND = False
     # The chat roster is set per test; the default keeps the best externals.
     FHI_CHAT_OUTSIDE_MODELS: list = []
     FHI_CHAT_EXPLORE_RATE = 0.0

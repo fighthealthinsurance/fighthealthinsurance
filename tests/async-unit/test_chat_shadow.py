@@ -327,7 +327,7 @@ class TestScoreTurn:
     def test_the_request_goes_through_the_typesafe_client(self):
         seen = {}
 
-        async def fake_ask(state, questions, *, timeout_seconds, use):
+        async def fake_ask(state, questions, *, timeout_seconds, use, task="other"):
             seen["questions"] = questions
             seen["timeout"] = timeout_seconds
             seen["use"] = use

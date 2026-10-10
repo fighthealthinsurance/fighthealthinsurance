@@ -633,6 +633,42 @@ class TestAzureClaudeMessages(unittest.TestCase):
         asyncio.run(run())
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_messages_api_usage_is_counted_with_cache_tokens(self):
+        """The Messages transport reports usage as input/output tokens, with
+        cache reads and writes as input too; the LLM usage series read them
+        under the registry name, as an external model."""
+        from fighthealthinsurance.ml import llm_usage
+
+        async def run():
+            m = RemoteAzureClaude(model="claude-sonnet-4-6")
+            label = m._metric_identity(m.api_base)[0]
+            response = _FakeAiohttpResponse(
+                {
+                    "content": [{"type": "text", "text": "Dear insurer, fine."}],
+                    "usage": {
+                        "input_tokens": 100,
+                        "cache_read_input_tokens": 20,
+                        "cache_creation_input_tokens": 5,
+                        "output_tokens": 40,
+                    },
+                }
+            )
+            with (
+                patch.object(llm_usage, "record_llm_usage") as record,
+                patch.object(
+                    aiohttp, "ClientSession", return_value=_FakeAiohttpSession(response)
+                ),
+            ):
+                await m._infer(system_prompts=["x"], prompt="y")
+            record.assert_called_once()
+            kwargs = record.call_args.kwargs
+            self.assertEqual(kwargs["model"], label)
+            self.assertEqual(kwargs["tier"], "external")
+            self.assertEqual(llm_usage.parse_usage(kwargs["usage"]), (125, 40))
+
+        asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_messages_api_clamps_temperature(self):
         """Temperature is clamped to the Messages API's [0, 1] range so a shared
         router value that's valid on the OpenAI surface (up to 2.0) can't 400."""

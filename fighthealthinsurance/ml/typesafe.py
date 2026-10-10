@@ -21,7 +21,7 @@ from urllib.parse import urlsplit
 import aiohttp
 from django.conf import settings
 
-from fighthealthinsurance.ml import spend
+from fighthealthinsurance.ml import llm_usage, spend
 
 # The pinned Jev release, used when TYPESAFE_MODEL is unset or empty. A pinned
 # id rather than the "jev-latest" alias, because TypeSafe can repoint an alias
@@ -86,6 +86,7 @@ async def ask(
     *,
     timeout_seconds: float,
     use: str = spend.OTHER,
+    task: str = "other",
 ) -> typing.Any:
     """POST one state and a set of typed questions; return the raw JSON.
 
@@ -93,7 +94,8 @@ async def ask(
     spend.CHAT): the request is refused before sending when that use's
     TypeSafe budget is spent (ml/spend.py), and the input tokens the answer
     reports are counted against it. An HTTP 402 pauses TypeSafe for every
-    use until the next UTC day.
+    use until the next UTC day. ``task`` is what the LLM usage metrics count
+    the answer as (ml/llm_usage.py TASKS).
 
     Raises TypeSafeError on a non-200 or a spent budget, and lets
     aiohttp/asyncio errors propagate: callers decide what a failure means
@@ -137,4 +139,10 @@ async def ask(
         spend.record(
             spend.TYPESAFE, use, spend.typesafe_cost_micro(usage.get("input_tokens"))
         )
+    llm_usage.record_llm_usage(
+        model=f"typesafe/{reported_model(payload)}",
+        tier=llm_usage.EXTERNAL,
+        usage=usage,
+        task=task,
+    )
     return payload

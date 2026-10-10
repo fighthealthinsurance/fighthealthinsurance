@@ -496,6 +496,7 @@ async def _post(document: str, timeout_seconds: float) -> typing.Any:
         QUESTIONS,
         timeout_seconds=timeout_seconds,
         use=spend.typesafe_use(spend.LETTERS),
+        task="letter_scoring",
     )
 
 

@@ -31,7 +31,7 @@ def _is_verbose_logging() -> bool:
 
 
 from fighthealthinsurance.env_utils import get_env_variable
-from fighthealthinsurance.ml import spend
+from fighthealthinsurance.ml import llm_usage, spend
 from fighthealthinsurance.ml.ml_metrics import (
     labelled_ml_calls,
     record_ml_call,
@@ -2177,6 +2177,21 @@ class RemoteModel(RemoteModelLike):
         except Exception as e:
             logger.warning(f"Spend not counted: {type(e).__name__}")
 
+    def _record_usage(self, metric_model: str, result: Any) -> None:
+        """Count one answer and the tokens it reported (ml/llm_usage.py),
+        under the same registry name the fhi_ml_* series use. Never
+        raises."""
+        if not isinstance(result, dict) or result.get("object") == "error":
+            return
+        try:
+            llm_usage.record_llm_usage(
+                model=metric_model,
+                tier=llm_usage.EXTERNAL if self.external else llm_usage.INTERNAL,
+                usage=result.get("usage"),
+            )
+        except Exception as e:
+            logger.debug(f"LLM usage not counted: {type(e).__name__}")
+
     def _spend_allows(self) -> bool:
         """Whether this backend's provider may be asked for the current
         use (ml/spend.py). Never raises."""
@@ -3971,6 +3986,7 @@ class RemoteOpenLike(RemoteModel):
                             raise
                         json_result = await response.json()
                         self._record_spend(model, json_result)
+                        self._record_usage(metric_model, json_result)
                         if json_result.get("object") == "error":
                             # Some OpenAI-compatible servers report errors in
                             # a 200 body. Surface the message; a missing-model
@@ -5759,6 +5775,7 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                         _attach_error_body(e, response_body)
                         raise
                     json_result = await response.json()
+            self._record_usage(metric_model, json_result)
             return self._parse_messages_response(json_result)
 
         # This transport bypasses RemoteOpenLike.__timeout_infer, so it feeds

@@ -366,7 +366,7 @@ class TestCheckReply:
     async def test_the_request_carries_the_redacted_state_and_the_questions(self):
         sent = {}
 
-        async def fake_ask(state, questions, *, timeout_seconds, use):
+        async def fake_ask(state, questions, *, timeout_seconds, use, task="other"):
             sent.update(
                 state=state, questions=questions, timeout=timeout_seconds, use=use
             )

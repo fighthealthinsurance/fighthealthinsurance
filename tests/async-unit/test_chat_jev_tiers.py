@@ -173,7 +173,7 @@ class TestRankRequest:
     async def test_it_is_counted_against_the_chat_budget(self):
         sent = {}
 
-        async def fake_ask(state, questions, *, timeout_seconds, use):
+        async def fake_ask(state, questions, *, timeout_seconds, use, task="other"):
             sent["use"] = use
             return _rank_payload((0.9, 0.0), (0.8, 0.0))
 

@@ -4712,6 +4712,119 @@ class SpendCounter(models.Model):
         return f"{self.day} {self.name}: {self.amount}"
 
 
+class _LLMUsageAmounts(models.Model):
+    """The counts every LLM usage row keeps (ml/llm_usage.py)."""
+
+    calls = models.BigIntegerField(default=0)
+    usage_missing_calls = models.BigIntegerField(default=0)
+    prompt_tokens = models.BigIntegerField(default=0)
+    completion_tokens = models.BigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
+
+
+class LLMUsageDaily(_LLMUsageAmounts):
+    """Answered model requests and reported tokens per UTC day, by where
+    they came from (ml/llm_usage.py), shared by every pod and process.
+    Labels and counts only: no address, user, denial, chat or text."""
+
+    day = models.DateField()
+    surface = models.CharField(max_length=16)
+    task = models.CharField(max_length=24)
+    model = models.CharField(max_length=80)
+    tier = models.CharField(max_length=8)
+    network_class = models.CharField(max_length=16)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["day", "surface", "task", "model", "tier", "network_class"],
+                name="llm_usage_daily_unique",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"LLMUsageDaily({self.day} {self.surface}/{self.task} {self.model}: {self.calls})"
+
+
+class LLMUsageNetworkDaily(_LLMUsageAmounts):
+    """The same requests per UTC day by the client's network: its class,
+    ASN name and country. Kept apart from LLMUsageDaily so the ASN doesn't
+    multiply the model and task rows. No address."""
+
+    day = models.DateField()
+    surface = models.CharField(max_length=16)
+    network_class = models.CharField(max_length=16)
+    asn_name = models.CharField(max_length=80, blank=True, default="")
+    country = models.CharField(max_length=2, blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["day", "surface", "network_class", "asn_name", "country"],
+                name="llm_usage_network_daily_unique",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"LLMUsageNetworkDaily({self.day} {self.surface} {self.network_class} {self.asn_name}: {self.calls})"
+
+
+class LLMUsageNetworkWeek(_LLMUsageAmounts):
+    """This week's requests per client network, keyed by a digest of the
+    network's /24 or /48 under a key that changes every ISO week
+    (client_network.period_key). Never the address. A week's rows are
+    rolled up into LLMUsageNetworkWeekSummary and deleted about an hour
+    after it ends (llm_usage_ledger.rollup_and_sweep)."""
+
+    week_start = models.DateField()
+    key = models.CharField(max_length=64)
+    surface = models.CharField(max_length=16)
+    network_class = models.CharField(max_length=16)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["week_start", "key", "surface", "network_class"],
+                name="llm_usage_network_week_unique",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"LLMUsageNetworkWeek({self.week_start} {self.surface} {self.network_class}: {self.calls})"
+
+
+class LLMUsageNetworkWeekSummary(models.Model):
+    """How concentrated a past week's keyed requests were, with no key: how
+    many networks, and what the busiest one and ten made of the calls and
+    tokens. ``surface`` and ``network_class`` may be "all"."""
+
+    week_start = models.DateField()
+    surface = models.CharField(max_length=16)
+    network_class = models.CharField(max_length=16)
+    networks = models.PositiveIntegerField(default=0)
+    calls = models.BigIntegerField(default=0)
+    tokens = models.BigIntegerField(default=0)
+    top1_calls = models.BigIntegerField(default=0)
+    top10_calls = models.BigIntegerField(default=0)
+    top1_tokens = models.BigIntegerField(default=0)
+    top10_tokens = models.BigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["week_start", "surface", "network_class"],
+                name="llm_usage_network_week_summary_unique",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"LLMUsageNetworkWeekSummary({self.week_start} {self.surface} {self.network_class}: {self.networks} networks)"
+
+
 class SpendReservation(models.Model):
     """One generation taken from a day's count (ml/spend.py
     reserve_generation), so it can be given back exactly once."""

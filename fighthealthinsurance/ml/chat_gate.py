@@ -563,6 +563,7 @@ async def _post(
         QUESTIONS if questions is None else questions,
         timeout_seconds=timeout,
         use=spend.CHAT,
+        task="reply_gate",
     )
 
 

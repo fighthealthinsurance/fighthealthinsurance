@@ -350,6 +350,7 @@ async def _post(
         QUESTIONS if questions is None else questions,
         timeout_seconds=timeout_seconds,
         use=spend.CHAT,
+        task="reply_shadow",
     )
 
 

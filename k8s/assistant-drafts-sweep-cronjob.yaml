@@ -3,7 +3,9 @@ kind: CronJob
 metadata:
   # Assistant drafts sweep: hourly, delete expired AssistantDraft rows
   # (2 hours unagreed, a day once agreed), past per-address counts and
-  # expired continue links. Applied by scripts/build.sh.
+  # expired continue links; then roll up and delete the LLM usage metrics'
+  # keyed network rows for closed weeks (docs/llm-usage-metrics.md).
+  # Applied by scripts/build.sh.
   name: fhi-assistant-drafts-sweep
   namespace: totallylegitco
 spec:

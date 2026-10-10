@@ -94,3 +94,19 @@ def assistant_that_brought(denial: Any) -> Optional[str]:
     if latest is None or latest[0] != CHANNEL_ASSISTANT:
         return None
     return str(latest[1] or "")
+
+
+async def aassistant_that_brought(denial: Any) -> Optional[str]:
+    """assistant_that_brought for async code (native async ORM)."""
+    try:
+        latest = (
+            await denial.consent_records.order_by("-pk")
+            .values_list("channel", "assistant_client")
+            .afirst()
+        )
+    except Exception:
+        logger.opt(exception=True).warning("Could not read the earlier agreements")
+        return None
+    if latest is None or latest[0] != CHANNEL_ASSISTANT:
+        return None
+    return str(latest[1] or "")
