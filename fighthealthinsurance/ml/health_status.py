@@ -874,7 +874,9 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
     when this probe answered (``None`` if it hadn't by the deadline); and
     the hourly background sweep's last verdict for the same instance
     (``sweep_ok``, ``sweep_checked_at``), the cached result the router reads
-    for backends that have no live signal of their own.
+    for backends that have no live signal of their own (a down recheck
+    between sweeps can put one back in routing before the next sweep says
+    so; see ``_recheck_down``).
 
     Checks run in parallel with a shared deadline; a backend whose check has
     not finished by ``timeout_seconds`` is reported as not-ok with a timeout
