@@ -592,11 +592,10 @@ class TestChatCandidatesSignatureAndExternalModels:
         assert claude.chat_calls >= 1
 
 
-async def _candidate_names(task_type, backends):
-    """The model names, in slot order, of the candidates one ``task_type``
-    task gets when the chooser compares ``backends``. The externals keep
-    their order (no shuffle), so which backend is seated and which is spare
-    is fixed."""
+async def _generated_task(task_type, backends):
+    """One ``task_type`` task generated while the chooser compares
+    ``backends``. The externals keep their order (no shuffle), so which
+    backend is seated and which is spare is fixed."""
     task = await ChooserTask.objects.acreate(
         task_type=task_type, status="QUEUED", source="synthetic"
     )
@@ -616,11 +615,29 @@ async def _candidate_names(task_type, backends):
         chooser_tasks.random, "shuffle", lambda items: None
     ):
         await generate(task)
+    return task
+
+
+async def _candidate_names(task_type, backends):
+    """The model names, in slot order, of the candidates one ``task_type``
+    task gets when the chooser compares ``backends`` (see _generated_task)."""
+    task = await _generated_task(task_type, backends)
     return [
         name
         async for name in ChooserCandidate.objects.filter(task=task)
         .order_by("candidate_index")
         .values_list("model_name", flat=True)
+    ]
+
+
+async def _retry_tags(task_type, backends):
+    """``(model name, tagged retry)`` per candidate, in slot order."""
+    task = await _generated_task(task_type, backends)
+    return [
+        (candidate.model_name, bool((candidate.metadata or {}).get("retry")))
+        async for candidate in ChooserCandidate.objects.filter(task=task).order_by(
+            "candidate_index"
+        )
     ]
 
 
@@ -687,6 +704,72 @@ class TestRetryPassAfterAFailedBackend:
         await _candidate_names(task_type, backends)
 
         assert [_asked(m, task_type) for m in backends] == [1, 1]
+
+
+class PromptRecordingModel(FakeModel):
+    """Notes whether each appeal draft it was asked for carried the
+    re-sample's "different from previous attempts" instruction."""
+
+    def __init__(self, name, external=False):
+        super().__init__(name, external=external)
+        self.asked_to_differ = []
+
+    async def _infer_no_context(self, system_prompts, prompt, **kwargs):
+        self.asked_to_differ.append("previous attempts" in system_prompts[0])
+        return await super()._infer_no_context(system_prompts, prompt, **kwargs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestOnlyARealResampleCountsAsARetry:
+    """The retry pass tagged every draft it seated ``retry`` and asked for one
+    "different from previous attempts", though a spare backend there is
+    asked for the first time in the task."""
+
+    @pytest.mark.parametrize("task_type", ["appeal", "chat"])
+    async def test_a_spares_first_draft_is_not_tagged_retry(self, task_type):
+        backends = [
+            FakeModel("fhi-a"),
+            _dead("deepinfra/retired-model"),
+            FakeModel("fhi-b"),
+            FakeModel("anthropic/claude-sonnet-4-6", external=True),
+            FakeModel("fhi-c"),
+            FakeModel("azure-openai/gpt-5", external=True),
+        ]
+
+        tags = await _retry_tags(task_type, backends)
+
+        assert dict(tags)["azure-openai/gpt-5"] is False
+
+    @pytest.mark.parametrize("task_type", ["appeal", "chat"])
+    async def test_a_second_draft_from_the_same_model_is_tagged_retry(self, task_type):
+        backends = [FakeModel("fhi-a"), _dead("deepinfra/retired-model")]
+
+        tags = await _retry_tags(task_type, backends)
+
+        assert tags == [("fhi-a", False), ("fhi-a", True)]
+
+    async def test_a_spares_appeal_is_not_asked_to_differ(self):
+        spare = PromptRecordingModel("azure-openai/gpt-5", external=True)
+        backends = [
+            FakeModel("fhi-a"),
+            _dead("deepinfra/retired-model"),
+            FakeModel("fhi-b"),
+            FakeModel("anthropic/claude-sonnet-4-6", external=True),
+            FakeModel("fhi-c"),
+            spare,
+        ]
+
+        await _candidate_names("appeal", backends)
+
+        assert spare.asked_to_differ == [False]
+
+    async def test_a_resampled_appeal_is_asked_to_differ(self):
+        resampled = PromptRecordingModel("fhi-a")
+
+        await _candidate_names("appeal", [resampled, _dead("deepinfra/retired-model")])
+
+        assert resampled.asked_to_differ == [False, True]
 
 
 class ChatTurnLabelledModel(FakeModel):

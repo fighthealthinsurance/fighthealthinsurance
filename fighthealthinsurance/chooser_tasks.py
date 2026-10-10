@@ -19,7 +19,7 @@ import datetime
 import random
 import re
 import threading
-from typing import Any, List, Optional, Tuple, cast
+from typing import Any, Awaitable, Callable, List, Optional, Tuple, cast
 
 from django.conf import settings
 from django.db.models import Count, QuerySet
@@ -352,6 +352,97 @@ def _note_unusable_candidate(task: ChooserTask, model, kind: str, response) -> N
     )
 
 
+async def _fill_candidates(
+    task: ChooserTask,
+    task_type: str,
+    kind: str,
+    min_len: int,
+    ask: Callable[[Any, bool], Awaitable[Optional[str]]],
+    base_metadata: dict,
+) -> None:
+    """Seat up to ``CHOOSER_NUM_CANDIDATES`` ``kind`` candidates on ``task``,
+    then the synthesized one.
+
+    The appeal and chat generators differ only in how a draft is asked for,
+    so the bookkeeping that decides who is asked (and so which models the
+    votes can measure) lives here once. ``ask(model, resample)`` returns the
+    model's reply, or None; ``resample`` is set when the model already seated
+    a candidate in this task. Each selected backend is asked once, then the
+    open slots go to the backends _next_retry_model picks. A reply longer
+    than ``min_len`` is stored with ``base_metadata``, plus ``retry: True``
+    on a re-sample only: a spare backend's first draft is not a retry.
+    """
+    # Drawn from the same list the coverage refill checks, so the two agree.
+    comparable = _comparable_backends(task_type)
+    models = _select_candidate_models(comparable, CHOOSER_NUM_CANDIDATES)
+    if not models:
+        logger.warning(f"No models available for {task_type} candidate generation")
+        return
+    logger.debug(
+        f"Chooser {task_type} candidates for task {task.id} using models: "
+        f"{[_model_display_name(m) for m in models]}"
+    )
+
+    candidate_index = 0
+    # By id: the models that seated a candidate (in the order they did) and
+    # the ones that gave nothing usable or raised; see _next_retry_model.
+    produced: dict[int, Any] = {}
+    failed: set[int] = set()
+
+    async def attempt(model, resample: bool) -> None:
+        nonlocal candidate_index
+        try:
+            response = await ask(model, resample)
+            if response and len(response.strip()) > min_len:
+                metadata = dict(base_metadata)
+                if resample:
+                    metadata["retry"] = True
+                await ChooserCandidate.objects.acreate(
+                    task=task,
+                    candidate_index=candidate_index,
+                    kind=kind,
+                    # None only for a None model, which is never asked.
+                    model_name=canonical_model_name(model) or "",
+                    content=response.strip(),
+                    metadata=metadata,
+                )
+                produced[id(model)] = model
+                candidate_index += 1
+                task.num_candidates_generated = candidate_index
+            else:
+                _note_unusable_candidate(task, model, task_type, response)
+                failed.add(id(model))
+        except Exception as e:
+            retry = " (retry)" if resample else ""
+            logger.warning(
+                f"Error generating {task_type} candidate{retry} with model {model}: {e}"
+            )
+            failed.add(id(model))
+
+    # First pass: try each model once
+    for model in models:
+        await attempt(model, resample=False)
+
+    # If we don't have enough candidates, give the open slots to backends
+    # not asked yet, then (only to reach the READY minimum) re-sample one
+    # that answered.
+    spares = _spare_candidate_models(comparable, models)
+    for _ in range(CHOOSER_NUM_CANDIDATES * 2):  # Limit total retries
+        if candidate_index >= CHOOSER_NUM_CANDIDATES:
+            break
+        model = _next_retry_model(spares, produced, failed, candidate_index)
+        if model is None:
+            break
+        await attempt(model, resample=id(model) in produced)
+
+    # One save covers every candidate generated above; candidates are
+    # created durably as they complete, only the counter waits.
+    await task.asave()
+
+    # Add a synthesized candidate combining the per-model drafts.
+    await _maybe_add_synthesized_candidate(task, kind)
+
+
 # Serialises refills within a process. A refill now awaits its whole batch,
 # so this is held for the batch's duration. The cache "lock" it replaces was
 # released the moment the batch had been handed to a background thread, and
@@ -678,100 +769,29 @@ async def _generate_appeal_candidates(task: ChooserTask):
     # Generate candidates using different models. Synthetic context only, so
     # external backends (Anthropic/Azure/DeepInfra/...) participate — the chooser
     # is how they get compared and how they show up in usage reporting.
-    # Drawn from the same list the coverage refill checks, so the two agree.
-    comparable = _comparable_backends("appeal")
-    models = _select_candidate_models(comparable, CHOOSER_NUM_CANDIDATES)
-    if not models:
-        logger.warning("No models available for appeal candidate generation")
-        return
-    logger.debug(
-        f"Chooser appeal candidates for task {task.id} using models: "
-        f"{[_model_display_name(m) for m in models]}"
+    prompt = _build_appeal_prompt(task.context_json)
+    system_prompt = (
+        "You are an expert at writing health insurance appeal letters. "
+        "Write a professional, compelling appeal letter based on the given context."
     )
 
-    prompt = _build_appeal_prompt(task.context_json)
+    async def ask(model, resample: bool) -> Optional[str]:
+        # A second draft from the same model is asked to differ from its first.
+        creative = (
+            " Be creative and write a unique response different from previous attempts."
+            if resample
+            else ""
+        )
+        return cast(
+            Optional[str],
+            await model._infer_no_context(
+                system_prompts=[system_prompt + creative], prompt=prompt
+            ),
+        )
 
-    candidate_index = 0
-    # By id: the models that seated a candidate (in the order they did) and
-    # the ones that gave nothing usable or raised; see _next_retry_model.
-    produced: dict[int, Any] = {}
-    failed: set[int] = set()
-    # First pass: try each model once
-    for model in models:
-        try:
-            response = await model._infer_no_context(
-                system_prompts=[
-                    "You are an expert at writing health insurance appeal letters. "
-                    "Write a professional, compelling appeal letter based on the given context."
-                ],
-                prompt=prompt,
-            )
-            if response and len(response.strip()) > 100:
-                await database_sync_to_async(ChooserCandidate.objects.create)(
-                    task=task,
-                    candidate_index=candidate_index,
-                    kind="appeal_letter",
-                    model_name=canonical_model_name(model),
-                    content=response.strip(),
-                    metadata={"source": "synthetic"},
-                )
-                produced[id(model)] = model
-                candidate_index += 1
-                task.num_candidates_generated = candidate_index
-            else:
-                _note_unusable_candidate(task, model, "appeal", response)
-                failed.add(id(model))
-        except Exception as e:
-            logger.warning(f"Error generating appeal candidate with model {model}: {e}")
-            failed.add(id(model))
-
-    # If we don't have enough candidates, give the open slots to backends
-    # not asked yet, then (only to reach the READY minimum) re-sample one
-    # that answered.
-    spares = _spare_candidate_models(comparable, models)
-    retry_count = 0
-    max_retries = CHOOSER_NUM_CANDIDATES * 2  # Limit total retries
-    while candidate_index < CHOOSER_NUM_CANDIDATES and retry_count < max_retries:
-        model = _next_retry_model(spares, produced, failed, candidate_index)
-        if model is None:
-            break
-        retry_count += 1
-        try:
-            response = await model._infer_no_context(
-                system_prompts=[
-                    "You are an expert at writing health insurance appeal letters. "
-                    "Write a professional, compelling appeal letter based on the given context. "
-                    "Be creative and write a unique response different from previous attempts."
-                ],
-                prompt=prompt,
-            )
-            if response and len(response.strip()) > 100:
-                await database_sync_to_async(ChooserCandidate.objects.create)(
-                    task=task,
-                    candidate_index=candidate_index,
-                    kind="appeal_letter",
-                    model_name=canonical_model_name(model),
-                    content=response.strip(),
-                    metadata={"source": "synthetic", "retry": True},
-                )
-                produced[id(model)] = model
-                candidate_index += 1
-                task.num_candidates_generated = candidate_index
-            else:
-                _note_unusable_candidate(task, model, "appeal", response)
-                failed.add(id(model))
-        except Exception as e:
-            logger.warning(
-                f"Error generating appeal candidate (retry) with model {model}: {e}"
-            )
-            failed.add(id(model))
-
-    # One save covers every candidate generated above; candidates are
-    # created durably as they complete, only the counter waits.
-    await database_sync_to_async(task.save)()
-
-    # Add a synthesized candidate combining the per-model drafts.
-    await _maybe_add_synthesized_candidate(task, "appeal_letter")
+    await _fill_candidates(
+        task, "appeal", "appeal_letter", 100, ask, {"source": "synthetic"}
+    )
 
 
 async def _generate_chat_candidates(task: ChooserTask):
@@ -880,114 +900,35 @@ async def _generate_chat_candidates(task: ChooserTask):
 
     # Generate candidates using different models. Synthetic context only, so
     # external backends participate (they are what the chooser compares).
-    # Drawn from the same list the coverage refill checks, so the two agree.
-    comparable = _comparable_backends("chat")
-    models = _select_candidate_models(comparable, CHOOSER_NUM_CANDIDATES)
-    if not models:
-        logger.warning("No models available for chat candidate generation")
-        return
-    logger.debug(
-        f"Chooser chat candidates for task {task.id} using models: "
-        f"{[_model_display_name(m) for m in models]}"
-    )
-
-    # Extract history for the chat models
     chat_history = task.context_json.get("history", [])
     user_prompt = task.context_json.get("prompt", "")
 
-    candidate_index = 0
-    # Same bookkeeping as the appeal candidates (see _next_retry_model).
-    produced: dict[int, Any] = {}
-    failed: set[int] = set()
-    for model in models:
-        try:
-            # NOTE: the parameter is current_message_for_llm — passing
-            # current_message= raised TypeError for EVERY backend and silently
-            # produced zero chat candidates. Labelled "other" in the call
-            # metrics, like the appeal synthesis: this is not a user's chat
-            # turn, though generate_chat_response labels its calls "chat"
-            # (whose budget still pays for, and caps, them).
-            with ml_call_purpose_override("other"):
-                response, _ = await model.generate_chat_response(
-                    current_message_for_llm=user_prompt,
-                    previous_context_summary=None,
-                    history=chat_history,
-                    is_professional=True,
-                    is_logged_in=True,
-                )
-            if response and len(response.strip()) > 50:
-                await database_sync_to_async(ChooserCandidate.objects.create)(
-                    task=task,
-                    candidate_index=candidate_index,
-                    kind="chat_response",
-                    model_name=canonical_model_name(model),
-                    content=response.strip(),
-                    metadata={
-                        "source": "synthetic",
-                        "has_history": len(chat_history) > 0,
-                    },
-                )
-                produced[id(model)] = model
-                candidate_index += 1
-                task.num_candidates_generated = candidate_index
-            else:
-                _note_unusable_candidate(task, model, "chat", response)
-                failed.add(id(model))
-        except Exception as e:
-            logger.warning(f"Error generating chat candidate with model {model}: {e}")
-            failed.add(id(model))
-
-    # If we don't have enough candidates, give the open slots to backends
-    # not asked yet, then (only to reach the READY minimum) re-sample one
-    # that answered.
-    spares = _spare_candidate_models(comparable, models)
-    retry_count = 0
-    max_retries = CHOOSER_NUM_CANDIDATES * 2  # Limit total retries
-    while candidate_index < CHOOSER_NUM_CANDIDATES and retry_count < max_retries:
-        model = _next_retry_model(spares, produced, failed, candidate_index)
-        if model is None:
-            break
-        retry_count += 1
-        try:
-            with ml_call_purpose_override("other"):
-                response, _ = await model.generate_chat_response(
-                    current_message_for_llm=user_prompt,
-                    previous_context_summary=None,
-                    history=chat_history,
-                    is_professional=True,
-                    is_logged_in=True,
-                )
-            if response and len(response.strip()) > 50:
-                await database_sync_to_async(ChooserCandidate.objects.create)(
-                    task=task,
-                    candidate_index=candidate_index,
-                    kind="chat_response",
-                    model_name=canonical_model_name(model),
-                    content=response.strip(),
-                    metadata={
-                        "source": "synthetic",
-                        "has_history": len(chat_history) > 0,
-                        "retry": True,
-                    },
-                )
-                produced[id(model)] = model
-                candidate_index += 1
-                task.num_candidates_generated = candidate_index
-            else:
-                _note_unusable_candidate(task, model, "chat", response)
-                failed.add(id(model))
-        except Exception as e:
-            logger.warning(
-                f"Error generating chat candidate (retry) with model {model}: {e}"
+    async def ask(model, resample: bool) -> Optional[str]:
+        # Asked the same way on a re-sample. NOTE: the parameter is
+        # current_message_for_llm — passing current_message= raised TypeError
+        # for EVERY backend and silently produced zero chat candidates.
+        # Labelled "other" in the call metrics, like the appeal synthesis:
+        # this is not a user's chat turn, though generate_chat_response
+        # labels its calls "chat" (whose budget still pays for, and caps,
+        # them).
+        with ml_call_purpose_override("other"):
+            response, _ = await model.generate_chat_response(
+                current_message_for_llm=user_prompt,
+                previous_context_summary=None,
+                history=chat_history,
+                is_professional=True,
+                is_logged_in=True,
             )
-            failed.add(id(model))
+        return cast(Optional[str], response)
 
-    # One save covers every candidate generated above; candidates are
-    # created durably as they complete, only the counter waits.
-    await database_sync_to_async(task.save)()
-
-    # Add a synthesized candidate combining the per-model responses.
-    await _maybe_add_synthesized_candidate(task, "chat_response")
+    await _fill_candidates(
+        task,
+        "chat",
+        "chat_response",
+        50,
+        ask,
+        {"source": "synthetic", "has_history": len(chat_history) > 0},
+    )
 
 
 def _build_appeal_prompt(context: dict) -> str:
