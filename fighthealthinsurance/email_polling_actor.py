@@ -10,7 +10,7 @@ from django.utils import timezone
 import ray
 from channels.db import database_sync_to_async
 
-from fighthealthinsurance.base_actor_ref import RUN_ALREADY_STARTED
+from fighthealthinsurance.base_actor_ref import decline_second_run
 from fighthealthinsurance.utils import get_env_variable
 
 name = "EmailPollingActor"
@@ -60,14 +60,7 @@ class EmailPollingActor:
 
     async def run(self) -> Optional[str]:
         if getattr(self, "running", False):
-            # A fresh process attaching to this actor calls run() again (see
-            # BaseActorRef.get); async actors run calls concurrently, so
-            # without this it became a second polling loop.
-            self._logger.warning(
-                "EmailPollingActor.run called while its loop is running; "
-                "not starting a second loop"
-            )
-            return RUN_ALREADY_STARTED
+            return decline_second_run(self._logger, "EmailPollingActor")
         self._logger.info("Starting EmailPollingActor run")
         self.running = True
         error_count = 0

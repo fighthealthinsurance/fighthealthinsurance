@@ -4,7 +4,7 @@ from typing import Union
 
 import ray
 
-from fighthealthinsurance.base_actor_ref import RUN_ALREADY_STARTED
+from fighthealthinsurance.base_actor_ref import decline_second_run
 from fighthealthinsurance.fax_actor import FaxActor
 
 
@@ -36,14 +36,7 @@ class FaxPollingActor:
 
     async def run(self) -> Union[bool, str]:
         if getattr(self, "running", False):
-            # A fresh process attaching to this actor calls run() again (see
-            # BaseActorRef.get); async actors run calls concurrently, so
-            # without this it became a second polling loop.
-            self._logger.warning(
-                "FaxPollingActor.run called while its loop is running; "
-                "not starting a second loop"
-            )
-            return RUN_ALREADY_STARTED
+            return decline_second_run(self._logger, "FaxPollingActor")
         self._logger.info("Starting run")
         self.running = True
         while self.running:

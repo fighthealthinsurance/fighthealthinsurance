@@ -11,6 +11,7 @@ Covers:
 """
 
 import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -33,7 +34,10 @@ from fighthealthinsurance.ucr_helper import (
     dispatch_ucr_refresh,
     is_under_reimbursement_claim,
 )
-from fighthealthinsurance.ucr_refresh_actor_ref import UCRRefreshActorRef
+from fighthealthinsurance.ucr_refresh_actor_ref import (
+    UCRRefreshActorRef,
+    ucr_refresh_actor_ref,
+)
 
 
 def _make_rate(area, *, percentile, amount_cents, source=UCRSource.MEDICARE_PFS):
@@ -313,3 +317,34 @@ class DispatchAttachesToTheRunningActorTests(SimpleTestCase):
     def test_a_missing_actor_is_started_through_the_launcher_path(self):
         handle, launcher_get = self._dispatch(running=False)
         launcher_get.assert_called_once()
+
+    def _dispatch_with_a_stale_cached_handle(self):
+        """dispatch_ucr_refresh(42) with the actor absent, from a process
+        whose ``get`` cached a handle while starting it during an earlier
+        absence; the stale handle and the one a fresh creation returns."""
+        stale = MagicMock()
+        fresh = MagicMock()
+        actor_class = SimpleNamespace(
+            options=lambda **kwargs: SimpleNamespace(remote=lambda: fresh)
+        )
+        with patch.dict(
+            ucr_refresh_actor_ref.__dict__,
+            {"get": (stale, None), "_actor_instance": stale},
+        ), patch.object(UCRRefreshActorRef, "actor_class", actor_class), patch(
+            "fighthealthinsurance.base_actor_ref.ray_cluster_available",
+            return_value=True,
+        ), patch(
+            "ray.get_actor", side_effect=ValueError("not found")
+        ):
+            dispatch_ucr_refresh(42)
+        return stale, fresh
+
+    def test_a_handle_cached_by_an_earlier_absence_gets_no_work(self):
+        """The actor it points at is gone, and a call on a dead handle does
+        not raise, so the work used to be lost with nothing logged."""
+        stale, _ = self._dispatch_with_a_stale_cached_handle()
+        stale.refresh_denial.remote.assert_not_called()
+
+    def test_an_actor_missing_again_is_started_afresh(self):
+        _, fresh = self._dispatch_with_a_stale_cached_handle()
+        fresh.refresh_denial.remote.assert_called_once_with(42)

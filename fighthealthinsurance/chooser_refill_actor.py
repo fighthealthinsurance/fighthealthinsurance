@@ -5,7 +5,7 @@ from typing import Optional
 
 import ray
 
-from fighthealthinsurance.base_actor_ref import RUN_ALREADY_STARTED
+from fighthealthinsurance.base_actor_ref import decline_second_run
 from fighthealthinsurance.utils import get_env_variable
 
 # Consecutive failed ticks after which the actor stops reporting healthy.
@@ -43,21 +43,11 @@ class ChooserRefillActor:
         gets this actor replaced by the next reconcile or launch (see
         ``BaseActorRef._replace``).
         """
-        failures = getattr(self, "_consecutive_failures", 0)
-        return bool(getattr(self, "running", False)) and (
-            failures < UNHEALTHY_AFTER_FAILURES
-        )
+        return self.running and self._consecutive_failures < UNHEALTHY_AFTER_FAILURES
 
     async def run(self) -> Optional[str]:
-        if getattr(self, "running", False):
-            # A second run() lands here when a fresh process attaches to this
-            # actor (see BaseActorRef.get). Async actors run calls
-            # concurrently, so without this it became a second loop.
-            self._logger.warning(
-                "ChooserRefillActor.run called while its loop is running; "
-                "not starting a second loop"
-            )
-            return RUN_ALREADY_STARTED
+        if self.running:
+            return decline_second_run(self._logger, "ChooserRefillActor")
         self._logger.info("Starting ChooserRefillActor run")
         self.running = True
 
@@ -74,9 +64,7 @@ class ChooserRefillActor:
                 if await check_and_refill_task_pool():
                     self._consecutive_failures = 0
                 else:
-                    self._consecutive_failures = (
-                        getattr(self, "_consecutive_failures", 0) + 1
-                    )
+                    self._consecutive_failures += 1
                     self._logger.warning(
                         "Chooser task pool refill produced no usable task "
                         f"(consecutive failures: {self._consecutive_failures})"
@@ -85,9 +73,7 @@ class ChooserRefillActor:
                 # Sleep for 5 minutes between checks
                 await asyncio.sleep(300)
             except Exception:
-                self._consecutive_failures = (
-                    getattr(self, "_consecutive_failures", 0) + 1
-                )
+                self._consecutive_failures += 1
                 self._logger.opt(exception=True).error(
                     "Error while checking/refilling chooser task pool "
                     f"(consecutive failures: {self._consecutive_failures})"

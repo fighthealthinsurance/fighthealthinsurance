@@ -20,7 +20,7 @@ from typing import Optional, cast
 
 from channels.db import database_sync_to_async
 
-from fighthealthinsurance.base_actor_ref import RUN_ALREADY_STARTED
+from fighthealthinsurance.base_actor_ref import decline_second_run
 from fighthealthinsurance.utils import get_env_variable
 
 name = "UCRRefreshActor"
@@ -292,15 +292,10 @@ class UCRRefreshActor:
 
     async def run(self) -> Optional[str]:
         if self._controller.running:
-            # A fresh process attaching to this actor calls run() again (see
-            # BaseActorRef.get); async actors run calls concurrently, so
-            # without this it became a second pair of refresh loops, and its
-            # finally below would mark the first pair stopped.
-            self._controller._logger.warning(
-                "UCRRefreshActor.run called while its loops are running; "
-                "not starting a second pair"
+            # A second pair would also mark the first stopped in its finally.
+            return decline_second_run(
+                self._controller._logger, "UCRRefreshActor", what="pair of loops"
             )
-            return RUN_ALREADY_STARTED
         self._controller._logger.info("Starting UCRRefreshActor run")
         self._controller.running = True
         try:

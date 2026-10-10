@@ -10,6 +10,8 @@ In production that meant one bad websocket disconnect disabled the denied-items
 analysis for the whole life of that pod.
 """
 
+from types import SimpleNamespace
+
 from django.test import SimpleTestCase
 
 from fighthealthinsurance.base_actor_ref import BaseActorRef
@@ -54,19 +56,21 @@ class _FakeActorClass:
         return _Options(self)
 
 
+def _make_ref(*, has_run_method=False):
+    """A fresh ref over a fresh fake actor class, and that fake."""
+    fake = _FakeActorClass()
+
+    class Ref(BaseActorRef):
+        actor_class = fake  # type: ignore[assignment]
+        actor_name = "test_actor"
+
+    Ref.has_run_method = has_run_method
+    ref = Ref()
+    ref._actor_instance = None
+    return ref, fake
+
+
 class ARefThatFailedRetriesTest(SimpleTestCase):
-    def _ref(self, *, has_run_method=False):
-        fake = _FakeActorClass()
-
-        class Ref(BaseActorRef):
-            actor_class = fake  # type: ignore[assignment]
-            actor_name = "test_actor"
-
-        Ref.has_run_method = has_run_method
-        ref = Ref()
-        ref._actor_instance = None
-        return ref, fake
-
     def test_a_failed_creation_is_not_remembered(self):
         """Holds on the old code too, and is here so it keeps holding.
 
@@ -75,7 +79,7 @@ class ARefThatFailedRetriesTest(SimpleTestCase):
         slot before calling would break that quietly, which is what this
         pins. The test below is the one that fails on the old code.
         """
-        ref, fake = self._ref()
+        ref, fake = _make_ref()
         fake.fail_creations = True
 
         with self.assertRaises(RuntimeError):
@@ -93,7 +97,7 @@ class ARefThatFailedRetriesTest(SimpleTestCase):
         self.assertEqual(fake.creations, 2, "the second call did not retry")
 
     def test_a_successful_creation_is_reused(self):
-        ref, fake = self._ref()
+        ref, fake = _make_ref()
 
         first = ref.get
         second = ref.get
@@ -110,7 +114,7 @@ class ARefThatFailedRetriesTest(SimpleTestCase):
         This pins that, because clearing only one hands back the dead
         handle, which is the bug the kill path exists to avoid.
         """
-        ref, fake = self._ref()
+        ref, fake = _make_ref()
 
         first = ref.get
         self.assertEqual(fake.creations, 1)
@@ -146,7 +150,7 @@ class ARefThatFailedRetriesTest(SimpleTestCase):
         This is the shape the production failure actually took: creation
         appeared to succeed and the failure surfaced on the call after it.
         """
-        ref, fake = self._ref(has_run_method=True)
+        ref, fake = _make_ref(has_run_method=True)
         fake.fail_runs = True
 
         with self.assertRaises(AttributeError):
@@ -171,19 +175,8 @@ class TheFirstUseIsOutsideGetTest(SimpleTestCase):
     the shape the production failure took on the websocket disconnect path.
     """
 
-    def _ref(self):
-        fake = _FakeActorClass()
-
-        class Ref(BaseActorRef):
-            actor_class = fake  # type: ignore[assignment]
-            actor_name = "test_actor"
-
-        ref = Ref()
-        ref._actor_instance = None
-        return ref, fake
-
     def test_invalidate_clears_both_places(self):
-        ref, fake = self._ref()
+        ref, fake = _make_ref()
 
         first = ref.get
         self.assertEqual(fake.creations, 1)
@@ -200,13 +193,11 @@ class TheFirstUseIsOutsideGetTest(SimpleTestCase):
 
         from fighthealthinsurance import websockets
 
-        ref, fake = self._ref()
+        ref, fake = _make_ref()
         handle = ref.get
 
         def explode(**kwargs):
-            raise AttributeError(
-                "'InProgressSentinel' object has no attribute 'id'"
-            )
+            raise AttributeError("'InProgressSentinel' object has no attribute 'id'")
 
         handle.run_analysis = type("M", (), {"remote": staticmethod(explode)})()
 
@@ -307,28 +298,6 @@ class RaysOwnCacheIsClearedTest(SimpleTestCase):
         base_actor_ref.clear_poisoned_client_class(Klass)
 
 
-class _LiveHandle:
-    """A handle to an actor that already exists on the cluster."""
-
-    def __init__(self, owner, healthy):
-        self._owner = owner
-        self._healthy = healthy
-
-    @property
-    def health_check(self):
-        return self
-
-    @property
-    def run(self):
-        return self
-
-    def remote(self):
-        # health_check.remote() and run.remote() share this; the fake ray.get
-        # below turns the former into the health answer, and the owner counts
-        # the latter as a run only when it comes through the run path.
-        return self
-
-
 class AttachingToARunningActorTest(SimpleTestCase):
     """A fresh process attaching to a live loop actor must not start a
     second loop.
@@ -339,18 +308,6 @@ class AttachingToARunningActorTest(SimpleTestCase):
     reconcile run and every re-run of the launch job added one more
     concurrent loop inside the same actor.
     """
-
-    def _ref(self):
-        fake = _FakeActorClass()
-
-        class Ref(BaseActorRef):
-            actor_class = fake  # type: ignore[assignment]
-            actor_name = "test_actor"
-            has_run_method = True
-
-        ref = Ref()
-        ref._actor_instance = None
-        return ref, fake
 
     def _attach(self, ref, existing, health, kill_error=None):
         """Drive ``get`` with a cluster attached and ``existing`` on it. Each
@@ -364,18 +321,20 @@ class AttachingToARunningActorTest(SimpleTestCase):
         self.kills = []
         killed = []
 
-        class Handle(_LiveHandle):
-            @property
-            def run(self):
-                class Run:
-                    @staticmethod
-                    def remote():
-                        runs.append(1)
-                        return "task-handle"
+        def start_run():
+            runs.append(1)
+            return "task-handle"
 
-                return Run()
-
-        handle = Handle(None, health) if existing else None
+        # A handle to an actor that already exists on the cluster. The fake
+        # ray.get below answers its health check with ``health``.
+        handle = (
+            SimpleNamespace(
+                health_check=SimpleNamespace(remote=lambda: "health-ref"),
+                run=SimpleNamespace(remote=start_run),
+            )
+            if existing
+            else None
+        )
 
         def get_actor(name, namespace):
             if handle is None or killed:
@@ -397,14 +356,16 @@ class AttachingToARunningActorTest(SimpleTestCase):
             base_actor_ref, "ray_cluster_available", return_value=True
         ), patch.object(
             base_actor_ref.ray, "get_actor", side_effect=get_actor
-        ), patch.object(base_actor_ref.ray, "get", side_effect=ray_get), patch.object(
+        ), patch.object(
+            base_actor_ref.ray, "get", side_effect=ray_get
+        ), patch.object(
             base_actor_ref.ray, "kill", side_effect=kill
         ):
             result = ref.get
         return result, runs, handle
 
     def test_a_live_loop_is_attached_without_a_second_run(self):
-        ref, fake = self._ref()
+        ref, fake = _make_ref(has_run_method=True)
 
         (actor, task), runs, handle = self._attach(ref, existing=True, health=True)
 
@@ -418,7 +379,7 @@ class AttachingToARunningActorTest(SimpleTestCase):
         tick. run() on it would only get RUN_ALREADY_STARTED back from a
         failing loop, so a reconcile could never repair it. It is killed for
         good and a fresh actor is created and run."""
-        ref, fake = self._ref()
+        ref, fake = _make_ref(has_run_method=True)
 
         (actor, task), runs, handle = self._attach(ref, existing=True, health=False)
 
@@ -430,7 +391,7 @@ class AttachingToARunningActorTest(SimpleTestCase):
         self.assertEqual(runs, [], "run was sent to the actor being replaced")
 
     def test_a_healthy_actor_is_never_killed(self):
-        ref, _fake = self._ref()
+        ref, _fake = _make_ref(has_run_method=True)
 
         self._attach(ref, existing=True, health=True)
 
@@ -439,7 +400,7 @@ class AttachingToARunningActorTest(SimpleTestCase):
     def test_an_actor_that_cannot_be_killed_goes_to_the_creation_path(self):
         """Without the kill, ``get_if_exists`` finds the old actor and it is
         run as before; nothing raises out of ``get``."""
-        ref, fake = self._ref()
+        ref, fake = _make_ref(has_run_method=True)
 
         (actor, task), runs, handle = self._attach(
             ref, existing=True, health=False, kill_error=RuntimeError("no")
@@ -450,7 +411,7 @@ class AttachingToARunningActorTest(SimpleTestCase):
         self.assertEqual(task, "task-handle")
 
     def test_an_absent_actor_is_created_and_run(self):
-        ref, fake = self._ref()
+        ref, fake = _make_ref(has_run_method=True)
 
         (actor, task), runs, _handle = self._attach(ref, existing=False, health=True)
 
@@ -462,7 +423,7 @@ class AttachingToARunningActorTest(SimpleTestCase):
     def test_an_actor_that_does_not_answer_is_left_to_ray(self):
         """A dead or hung actor answers nothing; the creation path with
         ``get_if_exists`` decides what happens, as before."""
-        ref, fake = self._ref()
+        ref, fake = _make_ref(has_run_method=True)
 
         (actor, task), runs, _handle = self._attach(
             ref, existing=True, health=RuntimeError("actor died")
@@ -481,7 +442,7 @@ class AttachingToARunningActorTest(SimpleTestCase):
 
         from fighthealthinsurance import base_actor_ref
 
-        ref, fake = self._ref()
+        ref, fake = _make_ref(has_run_method=True)
         with patch.object(
             base_actor_ref, "ray_cluster_available", return_value=False
         ), patch.object(

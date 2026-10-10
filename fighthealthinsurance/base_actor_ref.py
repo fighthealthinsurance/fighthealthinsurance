@@ -96,6 +96,23 @@ def clear_poisoned_client_class(actor_class: Any) -> None:
 # except for this.
 RUN_ALREADY_STARTED = "run-already-started"
 
+
+def decline_second_run(log: Any, actor_label: str, what: str = "loop") -> str:
+    """Log a ``run`` call that found the actor's ``what`` already running, and
+    return RUN_ALREADY_STARTED for that ``run`` to hand back.
+
+    A fresh process attaching to a loop actor calls ``run`` again (see
+    ``BaseActorRef.get``). These are async actors, which run calls
+    concurrently, so each such call used to start one more loop inside the
+    same actor that nothing could see or stop.
+    """
+    log.warning(
+        f"{actor_label}.run called while its {what} is running; "
+        f"not starting a second {what}"
+    )
+    return RUN_ALREADY_STARTED
+
+
 # How long ``get`` waits for a killed actor's name to be released before it
 # creates the replacement.
 _NAME_RELEASE_WAIT_SECONDS = 30.0

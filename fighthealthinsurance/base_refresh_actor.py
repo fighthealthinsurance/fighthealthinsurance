@@ -25,7 +25,7 @@ import os
 import time
 from typing import Optional
 
-from fighthealthinsurance.base_actor_ref import RUN_ALREADY_STARTED
+from fighthealthinsurance.base_actor_ref import decline_second_run
 from fighthealthinsurance.utils import get_env_variable
 
 # How long to sleep after an unhandled exception in the run loop. Matches
@@ -90,14 +90,7 @@ class BaseRefreshActor:
 
     async def run(self) -> Optional[str]:
         if self.running:
-            # A fresh process attaching to this actor calls run() again (see
-            # BaseActorRef.get); async actors run calls concurrently, so
-            # without this it became a second refresh loop.
-            self._logger.warning(
-                f"{self.actor_log_name}.run called while its loop is running; "
-                "not starting a second loop"
-            )
-            return RUN_ALREADY_STARTED
+            return decline_second_run(self._logger, self.actor_log_name)
         self._logger.info(f"Starting {self.actor_log_name} run")
         self.running = True
 
