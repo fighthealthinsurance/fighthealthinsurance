@@ -6,8 +6,9 @@ It carries the API key and the redacted text, so it only ever goes over https
 and never follows a redirect. The one thing a caller may learn from a failed
 call is the HTTP status: the body is never surfaced, because an error body
 could quote the text back (it is read only to tell a credit or quota refusal).
-A refused key, an unknown model or an unreachable endpoint holds every use
-off the wire for a cooldown.
+A refused key, an unknown model, an unreachable endpoint or a streak of
+connect timeouts holds every use off the wire for a cooldown. A spent budget
+is a WARNING once per use and day.
 """
 
 import asyncio
@@ -23,7 +24,7 @@ import pytest
 from django.conf import settings
 from django.test import override_settings
 
-from fighthealthinsurance.ml import denial_triage, letter_quality, typesafe
+from fighthealthinsurance.ml import denial_triage, letter_quality, spend, typesafe
 
 SETTINGS = dict(
     TYPESAFE_API_KEY="test-key",
@@ -66,9 +67,11 @@ class _FakeSession:
         self.posted = []
         self.opened = 0
         self.post_kwargs = {}
+        self.session_kwargs = {}
 
     def __call__(self, *args, **kwargs):
         self.opened += 1
+        self.session_kwargs = kwargs
         return self
 
     async def __aenter__(self):
@@ -96,10 +99,10 @@ def _no_cooldown():
     typesafe.reset_cooldown_for_tests()
 
 
-def _ask(session, state="doc", **overrides):
+def _ask(session, state="doc", timeout_seconds=1, **overrides):
     conf = {**SETTINGS, **overrides}
     with override_settings(**conf), patch.object(typesafe.aiohttp, "ClientSession", session):
-        return asyncio.run(typesafe.ask(state, QUESTIONS, timeout_seconds=1))
+        return asyncio.run(typesafe.ask(state, QUESTIONS, timeout_seconds=timeout_seconds))
 
 
 @pytest.mark.parametrize(
@@ -220,6 +223,13 @@ def _connector_error(error_class, os_error):
     return error_class(key, os_error)
 
 
+def _connect_timeout():
+    """One request whose connect times out (a host dropping our packets)."""
+    error = aiohttp.ConnectionTimeoutError("Connection timeout to host")
+    with pytest.raises(aiohttp.ConnectionTimeoutError):
+        _ask(_FakeSession(error=error))
+
+
 class _Clock:
     """Stands in for the time module the cooldown reads."""
 
@@ -312,6 +322,69 @@ class TestCooldown:
             _ask(session)
         assert len(session.posted) == 1
 
+    def test_one_connect_timeout_starts_no_cooldown(self):
+        """Not definitive like a refusal: one lost packet can cause it."""
+        _connect_timeout()
+        session = _FakeSession()
+        _ask(session)
+        assert len(session.posted) == 1
+
+    def test_a_second_connect_timeout_in_a_row_holds_the_next_request_back(self):
+        """A host that drops our packets never completes the connect: nothing
+        reached TypeSafe, as with a refused connection."""
+        _connect_timeout()
+        _connect_timeout()
+        session = _FakeSession()
+        with pytest.raises(typesafe.TypeSafeCoolingDown):
+            _ask(session)
+        assert session.opened == 0 and session.posted == []
+
+    def test_an_answer_between_connect_timeouts_starts_the_streak_over(self):
+        """Any HTTP status shows the connect works."""
+        _connect_timeout()
+        with pytest.raises(typesafe.TypeSafeError):
+            _ask(_FakeSession(503))
+        _connect_timeout()
+        session = _FakeSession()
+        _ask(session)
+        assert len(session.posted) == 1
+
+    def test_connect_timeouts_further_apart_than_the_window_start_no_cooldown(self):
+        clock = _Clock()
+        with patch.object(typesafe, "time", clock):
+            _connect_timeout()
+            clock.now += typesafe.CONNECT_TIMEOUT_WINDOW_SECONDS + 1
+            _connect_timeout()
+            session = _FakeSession()
+            _ask(session)
+        assert len(session.posted) == 1
+
+    def test_a_connect_timeout_streak_cools_for_the_connect_window(self):
+        clock = _Clock()
+        with patch.object(typesafe, "time", clock):
+            _connect_timeout()
+            _connect_timeout()
+            clock.now += typesafe.CONNECT_COOLDOWN_SECONDS + 1
+            session = _FakeSession()
+            _ask(session)
+        assert len(session.posted) == 1
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            asyncio.TimeoutError(),
+            aiohttp.SocketTimeoutError("Timeout on reading data from socket"),
+        ],
+        ids=["request timeout", "read timeout"],
+    )
+    def test_a_timeout_after_connecting_starts_no_cooldown(self, error):
+        """A slow answer from a host we reached is no reason to stop asking."""
+        with pytest.raises(type(error)):
+            _ask(_FakeSession(error=error))
+        session = _FakeSession()
+        _ask(session)
+        assert len(session.posted) == 1
+
     def test_an_answer_ends_the_cooldown(self):
         """A request sent before the cooldown began that then gets a 200
         shows TypeSafe is back: the next request is sent."""
@@ -346,6 +419,102 @@ class TestCooldown:
             FHI_TYPESAFE_COOLDOWN_SECONDS=value
         ):
             assert typesafe.cooldown_seconds() == 900.0
+
+
+class TestConnectBound:
+    """The connect phase has its own bound inside the request's timeout, so a
+    host that never completes the connect fails as a connect timeout (and is
+    cooled down) before the request's timeout, or a caller's own wait_for of
+    the same length, cuts the request off."""
+
+    def _client_timeout(self, seconds):
+        session = _FakeSession()
+        _ask(session, timeout_seconds=seconds)
+        return session.session_kwargs["timeout"]
+
+    def test_a_short_request_timeout_leaves_room_after_the_connect(self):
+        # The chat gate's default: it waits the same 1.5s itself.
+        timeout = self._client_timeout(1.5)
+        assert 0 < timeout.sock_connect < timeout.total == 1.5
+
+    def test_a_long_request_timeout_caps_the_connect(self):
+        assert self._client_timeout(20).sock_connect == typesafe.CONNECT_TIMEOUT_SECONDS
+
+    def test_a_host_that_never_completes_the_connect_is_cooled_down(self):
+        """Through the real client: only the socket connect is replaced, by
+        one that never completes. The URL is an address literal, so nothing
+        is looked up, and were the patch to miss, the local refusal would
+        fail this test rather than reach out. Two in a row cool."""
+
+        async def never_connects(*args, **kwargs):
+            await asyncio.Event().wait()
+
+        conf = {**SETTINGS, "TYPESAFE_API_URL": "https://127.0.0.1:9/v1/systemone"}
+        never = patch("aiohappyeyeballs.start_connection", never_connects)
+        with override_settings(**conf), never:
+            for _ in range(typesafe.CONNECT_TIMEOUT_STREAK):
+                with pytest.raises(aiohttp.ConnectionTimeoutError):
+                    asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=0.4))
+        assert typesafe.cooling_down() is True
+
+
+class TestCoolingDownPredicate:
+    """typesafe.cooling_down(): whether ask() would refuse before sending, for
+    callers with work of their own to skip (the chat gate, shadow scoring)."""
+
+    def test_false_with_no_cooldown(self):
+        assert typesafe.cooling_down() is False
+
+    def test_true_after_a_refusal(self):
+        with pytest.raises(typesafe.TypeSafeError):
+            _ask(_FakeSession(401))
+        assert typesafe.cooling_down() is True
+
+    def test_false_once_the_window_ends(self):
+        clock = _Clock()
+        with patch.object(typesafe, "time", clock):
+            with pytest.raises(typesafe.TypeSafeError):
+                _ask(_FakeSession(401), FHI_TYPESAFE_COOLDOWN_SECONDS=60)
+            clock.now += 61
+            assert typesafe.cooling_down() is False
+
+
+class TestBudgetSpentLog:
+    """A spent or paused budget refuses every request for the rest of the day
+    or month: a WARNING once per use and UTC day, then debug lines."""
+
+    def _refuse(self, use, times):
+        with override_settings(**SETTINGS), patch.object(spend, "allows", return_value=False):
+            for _ in range(times):
+                with pytest.raises(typesafe.TypeSafeBudgetSpent):
+                    asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=1, use=use))
+
+    @staticmethod
+    def _warnings(cap):
+        return [m for m in cap.messages("WARNING") if "TypeSafe not asked" in m]
+
+    def test_the_first_refusal_for_a_use_is_the_one_warning(self, log_capture):
+        with log_capture() as cap:
+            self._refuse(spend.LETTERS, times=3)
+        assert len(self._warnings(cap)) == 1
+
+    def test_later_refusals_that_day_are_debug_lines(self, log_capture):
+        with log_capture() as cap:
+            self._refuse(spend.LETTERS, times=3)
+        assert len([m for m in cap.messages("DEBUG") if "TypeSafe not asked" in m]) == 2
+
+    def test_each_use_is_announced_on_its_own(self, log_capture):
+        with log_capture() as cap:
+            self._refuse(spend.LETTERS, times=2)
+            self._refuse(spend.TRIAGE, times=2)
+        assert len(self._warnings(cap)) == 2
+
+    def test_a_use_last_announced_yesterday_is_announced_again(self, log_capture):
+        today = datetime.datetime.now(datetime.timezone.utc).date()
+        typesafe._budget_spent_logged[spend.LETTERS] = today - datetime.timedelta(days=1)
+        with log_capture() as cap:
+            self._refuse(spend.LETTERS, times=1)
+        assert len(self._warnings(cap)) == 1
 
 
 class TestReportedModel:

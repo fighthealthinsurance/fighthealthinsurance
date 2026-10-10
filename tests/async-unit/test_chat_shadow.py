@@ -476,6 +476,18 @@ class TestStartGates:
             assert _run(go()) is None
         assert fake.states == []
 
+    def test_nothing_starts_while_typesafe_cools_down(self):
+        """The request would be refused before sending, so the identifier
+        lookup and the health note are not paid for either."""
+        with override_settings(FHI_TYPESAFE_COOLDOWN_SECONDS=900):
+            typesafe._start_cooldown("answered HTTP 401", 401)
+
+        async def go():
+            return _start()
+
+        with override_settings(**ENABLED):
+            assert _run(go()) is None
+
     def test_nothing_to_score_starts_nothing(self):
         async def go():
             return _start(reply="  ")

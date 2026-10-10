@@ -457,6 +457,13 @@ def _no_identifiers():
     return patch.object(reply_gate, "_aredactions", new=AsyncMock(return_value=[]))
 
 
+def _cool_typesafe_down():
+    """Start TypeSafe's process-wide cooldown the way a 401 does (the
+    conftest ends it after each test)."""
+    with override_settings(FHI_TYPESAFE_COOLDOWN_SECONDS=900):
+        typesafe._start_cooldown("answered HTTP 401", 401)
+
+
 class TestGateForTurn:
     def test_on_only_when_everything_holds(self):
         selectable = lambda: True  # noqa: E731
@@ -499,6 +506,23 @@ class TestGateForTurn:
                     external_allowed=external,
                     typed_message=typed,
                     ours_selectable=lambda: ours,
+                )
+                is None
+            )
+
+    def test_off_while_typesafe_cools_down(self):
+        """Every check would fail at once and start the outside calls: the
+        turn routes by the policy instead, as with a spent budget."""
+        _cool_typesafe_down()
+        with override_settings(**ENABLED), patch.object(
+            chat_gate, "budget_allows", return_value=True
+        ):
+            assert (
+                reply_gate.gate_for_turn(
+                    "c",
+                    external_allowed=True,
+                    typed_message=True,
+                    ours_selectable=lambda: True,
                 )
                 is None
             )
@@ -586,6 +610,29 @@ class TestReplyGate:
         assert gate.scorer == "typesafe/jev-1.13.0/chat-gate-rubric-3"
         assert gate.model == "fhi-local"
         assert isinstance(gate.ms, int)
+
+    @pytest.mark.asyncio
+    async def test_a_cooldown_skips_the_ranking(self):
+        """Nothing would be sent: skipped, not an error to note on health."""
+        gate = _gate()
+        with (
+            override_settings(**ENABLED),
+            _no_identifiers(),
+            patch.object(
+                chat_gate, "_post", new=AsyncMock(return_value=_payload(answers=0.8))
+            ),
+        ):
+            await gate.judge(MESSAGE, REPLY, "fhi-local")
+        _cool_typesafe_down()
+        rank = AsyncMock()
+        with (
+            override_settings(**ENABLED),
+            patch.object(chat_gate, "rank_replies", new=rank),
+            patch.object(chat_gate, "budget_allows", return_value=True),
+        ):
+            result = await gate.rank(MESSAGE, [REPLY, REPLY + " Anything else?"])
+        assert result.outcome == chat_gate.SKIPPED
+        rank.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_a_fail_is_false(self):

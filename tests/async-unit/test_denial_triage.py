@@ -334,6 +334,36 @@ class TestTriage:
         assert seen and all(secret not in m for m in seen)
 
 
+class TestBudgetSpent:
+    """A spent or paused TypeSafe budget is normal operation: the denial is
+    skipped quietly (it was announced once, by typesafe.ask or spend.pause)."""
+
+    def _triage(self, error):
+        async def fake_post(document, questions, timeout):
+            raise error
+
+        with override_settings(**ENABLED), patch.object(dt, "_post", fake_post):
+            return asyncio.run(dt.triage(LETTER, DENIAL_DATE))
+
+    def _counted(self, error):
+        before = dict(dt.outcomes)
+        self._triage(error)
+        return {k: dt.outcomes[k] - before.get(k, 0) for k in ("skipped", "failed")}
+
+    def test_it_counts_as_skipped_not_failed(self):
+        counted = self._counted(dt.typesafe.TypeSafeBudgetSpent("budget spent"))
+        assert counted == {"skipped": 1, "failed": 0}
+
+    def test_a_real_failure_still_counts_as_failed(self):
+        counted = self._counted(dt.typesafe.TypeSafeError("HTTP 503", status=503))
+        assert counted == {"skipped": 0, "failed": 1}
+
+    def test_it_logs_no_warning(self, log_capture):
+        with log_capture() as cap:
+            assert self._triage(dt.typesafe.TypeSafeBudgetSpent("budget spent")) is None
+        assert cap.messages("WARNING") == []
+
+
 class _DenialLike:
     def __init__(self, deadline, confidence, text="letter", stale=False, source=dt.SOURCE):
         self.appeal_deadline = deadline

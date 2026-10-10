@@ -234,6 +234,47 @@ class TestFailureHook:
         assert calls == []
 
 
+class TestBudgetSpent:
+    """A spent or paused TypeSafe budget is normal operation: the draft is
+    skipped quietly (it was announced once, by typesafe.ask or spend.pause),
+    and the status page still learns why."""
+
+    def _score(self, error, on_failure=None):
+        async def fake_post(document, timeout):
+            raise error
+
+        with override_settings(**ENABLED), patch.object(lq, "_post", fake_post):
+            return asyncio.run(lq.score_letter("d", "letter", on_failure=on_failure))
+
+    def _counted(self, error):
+        before = dict(lq.outcomes)
+        self._score(error)
+        return {k: lq.outcomes[k] - before.get(k, 0) for k in ("skipped", "failed")}
+
+    def test_it_counts_as_skipped_not_failed(self):
+        counted = self._counted(typesafe.TypeSafeBudgetSpent("budget spent"))
+        assert counted == {"skipped": 1, "failed": 0}
+
+    def test_a_real_failure_still_counts_as_failed(self):
+        counted = self._counted(typesafe.TypeSafeError("HTTP 503", status=503))
+        assert counted == {"skipped": 0, "failed": 1}
+
+    def test_it_logs_no_warning(self, log_capture):
+        with log_capture() as cap:
+            assert self._score(typesafe.TypeSafeBudgetSpent("budget spent")) is None
+        assert cap.messages("WARNING") == []
+
+    def test_it_still_reaches_the_failure_hook_by_name(self):
+        """staff_views._scoring_failure_hint explains this summary."""
+        seen = []
+
+        async def hook(summary):
+            seen.append(summary)
+
+        self._score(typesafe.TypeSafeBudgetSpent("budget spent"), on_failure=hook)
+        assert seen == ["TypeSafeBudgetSpent"]
+
+
 class TestFrames:
     def test_score_frame_is_keyed_by_row_id(self):
         score = lq.parse_answers(_payload(medical_necessity=0))

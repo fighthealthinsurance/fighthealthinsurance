@@ -42,7 +42,7 @@ from loguru import logger
 
 from fighthealthinsurance.chat import isolated_db
 from fighthealthinsurance.chat.redaction import chat_redactions
-from fighthealthinsurance.ml import chat_shadow
+from fighthealthinsurance.ml import chat_shadow, typesafe
 
 # Per process. Chat turns are slow and few next to this, so a full slot
 # table means TypeSafe or the database is slow; dropping a shadow score
@@ -231,11 +231,16 @@ def start(
 
     ``external_allowed`` must be the person's consent to outside models for
     this chat. Returns the task, or None when nothing was started (consent
-    off, the flag or key missing, nothing to score, or MAX_IN_FLIGHT tasks
-    or DB_THREAD_LIMIT database threads already running). Never awaits and never raises.
+    off, the flag or key missing, TypeSafe cooling down, nothing to score,
+    or MAX_IN_FLIGHT tasks or DB_THREAD_LIMIT database threads already
+    running). Never awaits and never raises.
     """
     try:
         if not external_allowed or not chat_shadow.enabled():
+            return None
+        if typesafe.cooling_down():
+            # The request would be refused before sending: skip the
+            # identifier lookup and the health note it would cost.
             return None
         if not (message or "").strip() or not (reply or "").strip():
             return None

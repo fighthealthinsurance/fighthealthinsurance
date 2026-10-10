@@ -20,6 +20,7 @@ reached fails every request the same way, so it starts a short cooldown
 than each denial, draft and chat turn paying for the same failure.
 """
 
+import datetime
 import math
 import re
 import threading
@@ -91,12 +92,34 @@ DEFAULT_COOLDOWN_SECONDS = 900.0
 # restart) than a refusal is, so it holds requests back for less: drafts made
 # meanwhile go unscored.
 CONNECT_COOLDOWN_SECONDS = 120.0
+# The longest the TCP and TLS connect may take, inside the request's own
+# timeout. A host that drops our packets then fails as a connect timeout,
+# which counts toward the cooldown, rather than as the request's timeout,
+# which does not (a slow answer from a reachable host is no reason to stop
+# asking).
+CONNECT_TIMEOUT_SECONDS = 10.0
+# A refused connection is definitive and cools at once; a connect timeout is
+# not (one lost packet can cause it inside the chat gate's ~1s connect
+# bound, and the cooldown stops letter scoring and triage too). So it starts
+# the cooldown only as the CONNECT_TIMEOUT_STREAK-th in a row, all within
+# CONNECT_TIMEOUT_WINDOW_SECONDS of the first. Any HTTP answer ends a streak.
+CONNECT_TIMEOUT_STREAK = 2
+CONNECT_TIMEOUT_WINDOW_SECONDS = 60.0
 
 # (monotonic deadline, the status that started it): one tuple, replaced
 # whole, so a reader never pairs one cooldown's deadline with another's
-# status. The lock only keeps the "started" WARNING to one per cooldown.
+# status. The lock keeps the "started" WARNING to one per cooldown, and the
+# spent-budget WARNING below to one per use and day.
 _cooldown: tuple[float, typing.Optional[int]] = (float("-inf"), None)
 _cooldown_lock = threading.Lock()
+
+# Each use's UTC day on which its spent budget was last logged as a WARNING;
+# later refusals that day go to debug. Guarded by _cooldown_lock.
+_budget_spent_logged: dict[str, datetime.date] = {}
+
+# (connect timeouts in a row, monotonic time of the first): the streak a
+# connect timeout needs before it cools. Guarded by _cooldown_lock.
+_connect_timeouts: tuple[int, float] = (0, float("-inf"))
 
 
 def cooldown_seconds() -> float:
@@ -146,10 +169,64 @@ def _refuse_while_cooling() -> None:
         raise TypeSafeCoolingDown("cooling down", status=status)
 
 
+def cooling_down() -> bool:
+    """Whether a cooldown is in force: ask() would refuse every request with
+    TypeSafeCoolingDown before anything is sent. For callers that would
+    otherwise do work of their own (a database lookup, holding a chat turn
+    back) before asking."""
+    return time.monotonic() < _cooldown[0]
+
+
+def _log_budget_spent(use: str) -> None:
+    """A spent or paused budget refuses every request for the rest of the
+    day or month, so it is a WARNING once per use and UTC day, then debug.
+    A credit pause was announced by spend.pause already; a monthly cap
+    running out is announced nowhere else."""
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    with _cooldown_lock:
+        first = _budget_spent_logged.get(use) != today
+        _budget_spent_logged[use] = today
+    if first:
+        logger.warning(
+            f"TypeSafe not asked for {use}: its budget is spent or paused, or "
+            "the spend ledger is unread (ml/spend.py); further refusals today "
+            "are logged at debug"
+        )
+    else:
+        logger.debug(f"TypeSafe not asked for {use}: budget spent or paused")
+
+
+def _connect_timed_out() -> bool:
+    """Count one connect timeout; True when it completes a streak (which
+    then starts over)."""
+    global _connect_timeouts
+    with _cooldown_lock:
+        now = time.monotonic()
+        count, first = _connect_timeouts
+        if now - first > CONNECT_TIMEOUT_WINDOW_SECONDS:
+            count, first = 0, now
+        count += 1
+        if count >= CONNECT_TIMEOUT_STREAK:
+            _connect_timeouts = (0, float("-inf"))
+            return True
+        _connect_timeouts = (count, first)
+        return False
+
+
+def _clear_connect_timeouts() -> None:
+    """TypeSafe answered (any HTTP status): the connect works, so a connect
+    timeout streak starts over."""
+    global _connect_timeouts
+    with _cooldown_lock:
+        _connect_timeouts = (0, float("-inf"))
+
+
 def reset_cooldown_for_tests() -> None:
-    global _cooldown
+    global _cooldown, _connect_timeouts
     with _cooldown_lock:
         _cooldown = (float("-inf"), None)
+        _budget_spent_logged.clear()
+        _connect_timeouts = (0, float("-inf"))
 
 
 async def _note_refusal(response: typing.Any) -> None:
@@ -208,15 +285,17 @@ async def ask(
     TypeSafe budget is spent (ml/spend.py), and the input tokens the answer
     reports are counted against it. A credit or quota refusal (an HTTP 402,
     or spend.quota_refusal) pauses TypeSafe for every use until the next UTC
-    day. An HTTP 401, 403, 404 or 410, or an endpoint that cannot be reached
-    (DNS, refused, TLS), starts the cooldown: until it ends every use is
-    refused with TypeSafeCoolingDown before anything is sent.
+    day. An HTTP 401, 403, 404 or 410, an endpoint that cannot be reached
+    (DNS, refused, TLS), or a connect that times out twice in a row
+    (CONNECT_TIMEOUT_STREAK) starts the cooldown: until it ends every use
+    is refused with TypeSafeCoolingDown before anything is sent.
 
     Raises TypeSafeError on a non-200, a spent budget or a cooldown, and
     lets aiohttp/asyncio errors propagate: callers decide what a failure
     means for their feature.
     """
     if not spend.allows(spend.TYPESAFE, use):
+        _log_budget_spent(use)
         raise TypeSafeBudgetSpent("budget spent")
     url = str(getattr(settings, "TYPESAFE_API_URL", "") or "")
     if urlsplit(url).scheme.lower() != "https":
@@ -238,7 +317,14 @@ async def ask(
         "Authorization": f"Bearer {settings.TYPESAFE_API_KEY}",
         "Content-Type": "application/json",
     }
-    client_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+    # The connect bound is kept well inside the total and inside a caller's
+    # own wait_for of the same length (the chat gate's), so a host that
+    # cannot be reached fails here as a connect timeout, which counts toward
+    # the cooldown, rather than being cut off by the caller's cancellation.
+    client_timeout = aiohttp.ClientTimeout(
+        total=timeout_seconds,
+        sock_connect=min(timeout_seconds * 0.75, CONNECT_TIMEOUT_SECONDS),
+    )
     try:
         async with aiohttp.ClientSession(timeout=client_timeout) as session:
             # No redirects: a 307 or 308 toward http would make aiohttp resend
@@ -246,6 +332,7 @@ async def ask(
             async with session.post(
                 url, json=body, headers=headers, allow_redirects=False
             ) as response:
+                _clear_connect_timeouts()
                 if response.status != 200:
                     await _note_refusal(response)
                     raise TypeSafeError(
@@ -261,6 +348,18 @@ async def ask(
             None,
             cap=CONNECT_COOLDOWN_SECONDS,
         )
+        raise
+    except aiohttp.ConnectionTimeoutError as e:
+        # No connection within the connect bound. aiohttp raises this for
+        # the connect phase only, so a slow answer after connecting (the
+        # request's own timeout) never gets here. Cools only on a streak.
+        if _connect_timed_out():
+            _start_cooldown(
+                f"could not be reached ({type(e).__name__}, "
+                f"{CONNECT_TIMEOUT_STREAK} in a row)",
+                None,
+                cap=CONNECT_COOLDOWN_SECONDS,
+            )
         raise
     usage = payload.get("usage") if isinstance(payload, dict) else None
     if isinstance(usage, dict):

@@ -607,11 +607,14 @@ async def triage(
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        _count("failed")
-        # A cooldown skip was announced once when the cooldown started.
+        # A spent or paused budget is normal operation, not a failure.
+        budget = isinstance(e, typesafe.TypeSafeBudgetSpent)
+        _count("skipped" if budget else "failed")
+        # A cooldown or a spent budget was announced once when it began
+        # (typesafe._start_cooldown, typesafe.ask, spend.pause).
         log = (
             logger.debug
-            if isinstance(e, typesafe.TypeSafeCoolingDown)
+            if budget or isinstance(e, typesafe.TypeSafeCoolingDown)
             else logger.warning
         )
         log(f"denial triage unavailable: {type(e).__name__}: {e}")

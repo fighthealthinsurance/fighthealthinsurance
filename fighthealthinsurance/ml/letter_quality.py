@@ -536,14 +536,19 @@ async def score_letter(
     except Exception as e:
         # The exception text never carries the document: _post raises on
         # status alone and aiohttp's own errors describe the connection.
-        _count("failed")
-        # A cooldown skip was announced once when the cooldown started.
+        # A spent or paused budget is normal operation, not a failure.
+        budget = isinstance(e, typesafe.TypeSafeBudgetSpent)
+        _count("skipped" if budget else "failed")
+        # A cooldown or a spent budget was announced once when it began
+        # (typesafe._start_cooldown, typesafe.ask, spend.pause).
         log = (
             logger.debug
-            if isinstance(e, typesafe.TypeSafeCoolingDown)
+            if budget or isinstance(e, typesafe.TypeSafeCoolingDown)
             else logger.warning
         )
         log(f"letter scoring unavailable: {type(e).__name__}: {e}")
+        # Still noted for a spent budget: the status page explains the
+        # "TypeSafeBudgetSpent" summary (staff_views._scoring_failure_hint).
         if on_failure is not None:
             try:
                 await on_failure(failure_summary(e))
