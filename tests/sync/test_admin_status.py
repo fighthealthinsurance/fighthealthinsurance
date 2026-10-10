@@ -188,6 +188,40 @@ class AdminStatusDeploymentAndModelRowsTest(TestCase):
         )
         self.assertContains(response, "not run on this pod yet")
 
+    def test_model_row_names_backup_model(self):
+        response = self._get(
+            [
+                {
+                    "name": "fhi-2025",
+                    "ok": True,
+                    "external": False,
+                    "error": None,
+                    "url": "http://primary.example.invalid:8000/v1",
+                    "backup_url": "http://primary.example.invalid:8000/v1",
+                    "backup_model": "fhi-2025-small",
+                }
+            ]
+        )
+        self.assertContains(
+            response, "backup: http://primary.example.invalid:8000/v1 (fhi-2025-small)"
+        )
+
+    def test_model_row_missing_from_last_sweep_says_so(self):
+        response = self._get(
+            [
+                {
+                    "name": "fhi-2025",
+                    "ok": True,
+                    "external": False,
+                    "error": None,
+                    "sweep_ok": None,
+                    "sweep_checked_at": timezone.now()
+                    - datetime.timedelta(minutes=5),
+                }
+            ]
+        )
+        self.assertContains(response, "not in the last sweep, 5\xa0minutes ago")
+
 
 class AdminStatusFaxQueueTest(TestCase):
     def setUp(self):
@@ -1372,6 +1406,36 @@ class ComputeModelHealthDetailsTest(TestCase):
                 return True
 
         self.assertIsNone(self._details_for(Remote())["remote"]["backup_url"])
+
+    def test_backup_serving_another_model_on_same_host_is_named(self):
+        class Remote:
+            model = "remote"
+            external = False
+            api_base = "http://primary.example.invalid:8000/v1"
+            backup_api_base = "http://primary.example.invalid:8000/v1"
+            backup_model = "remote-small"
+
+            def model_is_ok(self):
+                return True
+
+        row = self._details_for(Remote())["remote"]
+        self.assertEqual(
+            (row["backup_url"], row["backup_model"]),
+            ("http://primary.example.invalid:8000/v1", "remote-small"),
+        )
+
+    def test_backup_model_omitted_when_same_as_primary(self):
+        class Remote:
+            model = "remote"
+            external = False
+            api_base = "http://primary.example.invalid:8000/v1"
+            backup_api_base = "http://backup.example.invalid:8000/v1"
+            backup_model = "remote"
+
+            def model_is_ok(self):
+                return True
+
+        self.assertIsNone(self._details_for(Remote())["remote"]["backup_model"])
 
     def test_backend_without_endpoint_has_no_url(self):
         class Hosted:

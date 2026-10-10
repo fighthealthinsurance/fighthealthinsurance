@@ -74,7 +74,7 @@
             <td><span class="pill">{% if d.external %}external{% else %}internal{% endif %}</span></td>
             <td class="endpoint">
               {{ d.url|default:"" }}
-              {% if d.backup_url %}<div>backup: {{ d.backup_url }}</div>{% endif %}
+              {% if d.backup_url %}<div>backup: {{ d.backup_url }}{% if d.backup_model %} ({{ d.backup_model }}){% endif %}</div>{% endif %}
             </td>
             <td>{% if d.ok %}<span class="status-badge ok">up</span>{% else %}<span class="status-badge bad">down</span>{% endif %}</td>
             <td>
@@ -82,7 +82,7 @@
               <div class="sweep-note">
                 hourly sweep:
                 {% if d.sweep_checked_at %}
-                  <span title="{{ d.sweep_checked_at|date:"Y-m-d H:i:s T" }}">{% if d.sweep_ok %}up{% elif d.sweep_ok is False %}down{% else %}not checked{% endif %}, {{ d.sweep_checked_at|timesince }} ago</span>
+                  <span title="{{ d.sweep_checked_at|date:"Y-m-d H:i:s T" }}">{% if d.sweep_ok %}up{% elif d.sweep_ok is False %}down{% else %}not in the last sweep{% endif %}, {{ d.sweep_checked_at|timesince }} ago</span>
                 {% else %}
                   not run on this pod yet
                 {% endif %}

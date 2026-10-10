@@ -496,13 +496,14 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
     system status dashboard. It does not send alerts or mutate the cached
     snapshot.
 
-    Each row also carries the backend's endpoint (``url``, plus
-    ``backup_url`` when a different backup endpoint is configured) with
-    credentials, query and fragment stripped; ``checked_at``, when this
-    probe answered (``None`` if it hadn't by the deadline); and the hourly
-    background sweep's last verdict for the same instance (``sweep_ok``,
-    ``sweep_checked_at``), the cached result the router reads for backends
-    that have no live signal of their own.
+    Each row also carries the backend's endpoint (``url``) with credentials,
+    query and fragment stripped; its backup leg, when that differs from the
+    primary in endpoint or model, the same way (``backup_url``, plus
+    ``backup_model`` when the backup serves another model); ``checked_at``,
+    when this probe answered (``None`` if it hadn't by the deadline); and
+    the hourly background sweep's last verdict for the same instance
+    (``sweep_ok``, ``sweep_checked_at``), the cached result the router reads
+    for backends that have no live signal of their own.
 
     Checks run in parallel with a shared deadline; a backend whose check has
     not finished by ``timeout_seconds`` is reported as not-ok with a timeout
@@ -568,6 +569,15 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
             sweep_ok, sweep_at = health_status.last_sweep_result(m)
             api_base = getattr(m, "api_base", None)
             backup_api_base = getattr(m, "backup_api_base", None)
+            wire_model = getattr(m, "model", None)
+            backup_model = getattr(m, "backup_model", None) or wire_model
+            # The same rule as RemoteModelLike.backend_descriptor: a backup
+            # leg is worth naming when it differs in endpoint or in model.
+            backup_url = (
+                _display_url(backup_api_base)
+                if backup_api_base != api_base or backup_model != wire_model
+                else None
+            )
             results.append(
                 {
                     "name": name,
@@ -576,9 +586,10 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
                     "error": err,
                     "ref": ref_by_id.get(id(m)),
                     "url": _display_url(api_base),
-                    "backup_url": (
-                        _display_url(backup_api_base)
-                        if backup_api_base != api_base
+                    "backup_url": backup_url,
+                    "backup_model": (
+                        backup_model
+                        if backup_url and backup_model != wire_model
                         else None
                     ),
                     "checked_at": answered_at.get(id(m)) if future.done() else None,
