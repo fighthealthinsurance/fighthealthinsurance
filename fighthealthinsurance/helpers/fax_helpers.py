@@ -5,7 +5,10 @@ Provides utilities for staging and sending appeal faxes.
 """
 
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Optional
+
+from django.utils import timezone
 
 import ray
 
@@ -35,6 +38,22 @@ from fighthealthinsurance.temporal_client import (
 # Auto-initializing a local Ray cluster to send one fax is bad. Silently never
 # sending it is worse. If this becomes a real problem in the web tier, the fix is
 # a durable retry for FaxesToSend, not a gate here.
+
+# How long after a fax is staged the links that carry its (uuid,
+# hashed_email) pair still act on it. The follow-up link reaches the person
+# only in the email finalize_fax sends after each attempt, normally within an
+# hour or two of staging (a delayed send waits an hour, and one vendor attempt
+# can run 30 minutes). People answer a failed-fax or missing-number email
+# within days. 30 days leaves room for a few weeks away from email, and for a
+# few rounds of trying again, each of which emails the same link. Stripe's
+# success link (fax_views.SendFaxView) is opened when a payment finishes, and
+# a checkout stays open a day at most, so it is used well inside the window.
+# Past it, the pages point the person to support.
+FAX_RESEND_WINDOW = timedelta(days=30)
+
+# Why SendFaxHelper.resend_refusal turns a re-send down.
+RESEND_DELIVERED = "delivered"
+RESEND_EXPIRED = "expired"
 
 
 def _dispatch_or_ray_fax(
@@ -162,6 +181,28 @@ class SendFaxHelper:
         return c
 
     @classmethod
+    def resend_refusal(cls, fax: FaxesToSend) -> Optional[str]:
+        """
+        Why the follow-up link can't re-send this fax, or None when it can.
+
+        A fax that went through stays sent (RESEND_DELIVERED), and a fax
+        staged more than FAX_RESEND_WINDOW ago can't be re-sent from its
+        link (RESEND_EXPIRED). A failed fax, or one with no number, inside
+        the window can.
+        """
+        if fax.sent and fax.fax_success:
+            return RESEND_DELIVERED
+        if cls.link_expired(fax):
+            return RESEND_EXPIRED
+        return None
+
+    @classmethod
+    def link_expired(cls, fax: FaxesToSend) -> bool:
+        """Whether the fax was staged more than FAX_RESEND_WINDOW ago, so the
+        links that carry its pair no longer act on it."""
+        return timezone.now() - fax.date > FAX_RESEND_WINDOW
+
+    @classmethod
     def resend(cls, fax_phone: str, uuid: str, hashed_email: str) -> bool:
         """
         Resend a fax to a new phone number.
@@ -172,9 +213,14 @@ class SendFaxHelper:
             hashed_email: Hashed email for lookup
 
         Returns:
-            True if resend was initiated
+            True if resend was initiated, False when resend_refusal turns it
+            down (the fax was delivered, or is older than FAX_RESEND_WINDOW)
         """
         f = FaxesToSend.objects.filter(hashed_email=hashed_email, uuid=uuid).get()
+        refusal = cls.resend_refusal(f)
+        if refusal is not None:
+            logger.info(f"Fax uuid={uuid} not re-sent: {refusal}")
+            return False
         f.destination = fax_phone
         f.should_send = True
         f.sent = (

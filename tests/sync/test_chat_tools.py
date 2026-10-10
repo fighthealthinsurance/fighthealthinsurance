@@ -72,6 +72,48 @@ class TestToolPatterns(TestCase):
             with self.subTest(text=text):
                 self.assertIsNone(re.search(PUBMED_QUERY_REGEX, text, re.IGNORECASE))
 
+    def test_pubmed_query_pattern_keeps_the_previously_advertised_forms(self):
+        """The system prompt now shows one syntax (**pubmed_query: terms**),
+        but models trained or cached on the older prompts still emit the forms
+        it used to advertise. The parser must keep accepting every one."""
+        test_cases = [
+            ("**pubmedquery:[semaglutide]**", "semaglutide"),
+            (
+                "**pubmedquery:semaglutide 2023 weight loss**",
+                "semaglutide 2023 weight loss",
+            ),
+            ("pubmedquery:[metformin outcomes]", "metformin outcomes"),
+            ("[*pubmed query: metformin*]", "metformin"),
+            ("**pubmed_query: semaglutide**", "semaglutide"),
+        ]
+        for text, expected_query in test_cases:
+            with self.subTest(text=text):
+                match = re.search(PUBMED_QUERY_REGEX, text, re.IGNORECASE)
+                self.assertIsNotNone(match, f"Failed to match: {text}")
+                self.assertEqual(match.group(1).strip(), expected_query)
+
+    def test_clinical_trials_query_pattern_keeps_the_previously_advertised_forms(
+        self,
+    ):
+        """Same guarantee for ClinicalTrials.gov: the prompt shows
+        **clinical_trials_query: terms** only, the parser keeps the rest."""
+        test_cases = [
+            (
+                "**clinical_trials_query: your search terms here**",
+                "your search terms here",
+            ),
+            (
+                "[*clinical trials query: pembrolizumab melanoma*]",
+                "pembrolizumab melanoma",
+            ),
+            ("**clinical trials query: car-t lymphoma**", "car-t lymphoma"),
+        ]
+        for text, expected_query in test_cases:
+            with self.subTest(text=text):
+                match = re.search(CLINICAL_TRIALS_QUERY_REGEX, text, re.IGNORECASE)
+                self.assertIsNotNone(match, f"Failed to match: {text}")
+                self.assertEqual(match.group(1).strip(), expected_query)
+
     def test_count_tool_invocations_counts_distinct_tools(self):
         text = (
             "Let me look at a couple of things.\n"
@@ -1023,6 +1065,25 @@ class TestMedicaidTargetYear(TestCase):
         self.assertIn("whether their state has already started", info)
         self.assertIn(f"January 1, {WORK_REQUIREMENT_UNIVERSAL_YEAR}", info)
         self.assertNotIn("they may not be eligible for medicaid", info)
+
+    def test_a_transition_year_row_says_the_deadline_is_where_it_applies(self):
+        # CMS counts 43 states and DC with people the requirement covers, not
+        # all 50, so the row must not tell the model it applies everywhere.
+        current = current_eligibility_year()
+        info = self.tool._build_eligibility_info(
+            eligible_base=True,
+            eligible_target=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            target_year=current,
+            timeline=[
+                YearVerdict(current, True, [], work_requirement_conditional=True)
+            ],
+        )
+
+        self.assertIn("Where it applies, states generally must start it", info)
+        self.assertNotIn("every state", info)
 
     def test_a_conditional_row_does_not_swallow_the_work_requirement_note(self):
         # The shared explanation is attached once, to the first year the rule

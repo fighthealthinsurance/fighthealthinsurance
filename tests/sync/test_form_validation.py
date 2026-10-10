@@ -168,10 +168,36 @@ class TestShareAppealForm(TestCase):
             data={
                 "denial_id": 123,
                 "email": "test@example.com",
+                "semi_sekret": "sekret",
                 "appeal_text": "This is my appeal text.",
             }
         )
         self.assertTrue(form.is_valid())
+
+    def test_missing_semi_sekret(self):
+        """Missing semi_sekret should fail."""
+        form = ShareAppealForm(
+            data={
+                "denial_id": 123,
+                "email": "test@example.com",
+                "appeal_text": "This is my appeal text.",
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("semi_sekret", form.errors)
+
+    def test_appeal_text_over_the_cap(self):
+        """An appeal_text longer than APPEAL_TEXT_MAX_CHARS should fail."""
+        form = ShareAppealForm(
+            data={
+                "denial_id": 123,
+                "email": "test@example.com",
+                "semi_sekret": "sekret",
+                "appeal_text": "a" * (ShareAppealForm.APPEAL_TEXT_MAX_CHARS + 1),
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("appeal_text", form.errors)
 
     def test_missing_denial_id(self):
         """Missing denial_id should fail."""
@@ -282,7 +308,7 @@ class TestDenialForm(TestCase):
         self.assertFalse(form.is_valid())
         self.assertEqual(
             form.errors["personalonly"],
-            ["Please tick the box to confirm this is for your own appeal."],
+            ["Please tick the box to confirm this appeal is yours, or for someone you're helping who asked you to."],
         )
 
     def test_the_professional_form_does_not_ask_for_the_personal_use_box(self):
@@ -297,7 +323,7 @@ class TestDenialForm(TestCase):
             for name, messages in DenialForm.INTAKE_ERROR_MESSAGES.items()
         }
         expected["personalonly"] = [
-            "Please tick the box to confirm this is for your own appeal."
+            "Please tick the box to confirm this appeal is yours, or for someone you're helping who asked you to."
         ]
         self.assertEqual(dict(errors), expected)
 
@@ -443,28 +469,18 @@ class TestFaxResendForm(TestCase):
 
     def test_valid_form(self):
         """Valid data should pass."""
-        import uuid
-
         form = FaxResendForm(
-            data={
-                "fax_phone": "1-800-555-9999",
-                "uuid": str(uuid.uuid4()),
-                "hashed_email": "abc123hashed",
-            }
+            data={"fax_phone": "1-800-555-9999", "fax_ref": "a-session-ref"}
         )
         self.assertTrue(form.is_valid())
 
-    def test_invalid_uuid(self):
-        """Invalid UUID should fail."""
-        form = FaxResendForm(
-            data={
-                "fax_phone": "1-800-555-9999",
-                "uuid": "not-a-valid-uuid",
-                "hashed_email": "abc123hashed",
-            }
-        )
-        self.assertFalse(form.is_valid())
-        self.assertIn("uuid", form.errors)
+    def test_the_form_names_no_fax(self):
+        """The fax comes from the page's session, by a ref only that session
+        holds, so the form has no fields for its uuid or hashed email."""
+        self.assertEqual(list(FaxResendForm().fields), ["fax_phone", "fax_ref"])
+
+    def test_the_fax_ref_is_hidden(self):
+        self.assertTrue(FaxResendForm()["fax_ref"].is_hidden)
 
 
 class TestFollowUpForm(TestCase):

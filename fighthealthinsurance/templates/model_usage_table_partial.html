@@ -85,6 +85,7 @@ branch with a literal class so the contrast gate can measure every tag.
         {% elif r.state.key == "failing" %}<a class="state-tag state-fail" href="{{ status_url }}">failing: {{ r.state.category }}</a>
         {% elif r.state.key == "not_configured" %}<a class="state-tag state-off" href="{{ status_url }}">not configured</a>
         {% elif r.state.key == "disabled" %}<a class="state-tag state-off" href="{{ status_url }}">disabled</a>
+        {% elif r.state.key == "on_retired_list" %}<a class="state-tag state-off" href="{{ status_url }}">retired</a>
         {% elif r.state.key == "retired" %}<a class="state-tag state-off" href="{{ status_url }}">not in the code any more</a>
         {% elif r.state.key == "placeholder" %}<span class="state-tag state-placeholder">placeholder bucket</span>
         {% else %}<a class="state-tag state-off" href="{{ status_url }}">state unavailable</a>

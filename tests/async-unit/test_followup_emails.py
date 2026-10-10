@@ -49,7 +49,7 @@ def followup_types(db):
         name="followup_7day",
         defaults={
             "template_name": "followup_7day",
-            "subject": "Fight Health Insurance: Confirm Your Appeal Was Received",
+            "subject": "Fight Health Insurance: Checking in after a week",
             "text": "7-day check-in",
             "duration": datetime.timedelta(days=7),
         },
@@ -58,7 +58,7 @@ def followup_types(db):
         name="followup_30day",
         defaults={
             "template_name": "followup_30day",
-            "subject": "Fight Health Insurance: Have You Heard Back on Your Appeal?",
+            "subject": "Fight Health Insurance: Checking in after a month",
             "text": "30-day check-in",
             "duration": datetime.timedelta(days=30),
         },
@@ -67,7 +67,7 @@ def followup_types(db):
         name="followup_90day",
         defaults={
             "template_name": "followup_90day",
-            "subject": "Fight Health Insurance: 90-Day Appeal Check-In",
+            "subject": "Fight Health Insurance: One last check-in",
             "text": "90-day check-in",
             "duration": datetime.timedelta(days=90),
         },
@@ -544,7 +544,7 @@ class TestFollowUpEmailTemplates:
         }
         html_content = render_to_string("emails/followup.html", context)
 
-        assert "generated draft proposals" in html_content
+        assert "Did one of the appeal letters work for you?" in html_content
         assert "Thank you for trying Fight Health Insurance" in html_content
 
     def test_followup_html_shows_correct_message_for_no_proposals(self):
@@ -556,8 +556,9 @@ class TestFollowUpEmailTemplates:
         }
         html_content = render_to_string("emails/followup.html", context)
 
-        assert "didn't manage to generate a proposal" in html_content
-        assert "feedback on how we can improve" in html_content
+        # Someone who stopped partway is not told we failed to write one.
+        assert "didn't end up with an appeal letter" in html_content
+        assert "generate" not in html_content
 
     def test_fax_followup_success_message(self):
         """Test that the fax follow-up shows success message when fax succeeded."""
@@ -617,7 +618,7 @@ class TestFollowUpEmailTemplates:
         }
         html = render_to_string("emails/followup_7day.html", context)
 
-        assert "may not have generated an appeal that worked" in html
+        assert "didn't end up with an appeal letter" in html
 
     def test_followup_30day_html_content(self):
         """Test 30-day HTML template asks about hearing back."""

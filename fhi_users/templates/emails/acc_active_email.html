@@ -1,16 +1,20 @@
-{% extends "./base_email.html" %}
+{% extends "emails/fhi_base_email.html" %}
 {% block title %}Activate your account{% endblock %}
 {% block content %}
 <p>
-Dear {{ user.first_name }},
+{% if user.first_name %}Hello {{ user.first_name }},{% else %}Hello,{% endif %}
 </p>
 <p>
-Please activate your account by <a href="{{ activation_link }}">clicking the link below:
+Please activate your Fight Health Insurance account using the button below.
+</p>
+{% include "emails/partials/button.html" with href=activation_link label="Activate your account" %}
+<p>
+This link expires in 24 hours.
 </p>
 <p>
-{{ activation_link }}
+Best regards,
 </p>
-</a>
-Best regards,<br/>
-Fight Health Insurance Team<br/>
+<p>
+The Fight Health Insurance team
+</p>
 {% endblock %}

@@ -2393,6 +2393,14 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     raw_email = models.TextField(max_length=300, null=True, blank=True)
     created = models.DateTimeField(db_default=Now(), null=True)
     use_external = models.BooleanField(default=True)
+    # Where the denial came from: the site, or an AI assistant through the
+    # MCP server. Model spend for it is counted per channel (ml/spend.py).
+    channel = models.CharField(
+        max_length=16,
+        choices=[("site", "Site"), ("assistant", "AI assistant")],
+        default="site",
+        db_default="site",
+    )
     # Triage from ml/denial_triage.py (TypeSafe System One): the stated denial
     # reason, the kind of plan, pre-service and urgency probabilities, and the
     # appeal deadline the letter names. Every value carries the model's
@@ -2787,12 +2795,13 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     # this existed and for flows that cannot say (share, professional).
     presented_ids = models.JSONField(null=True, blank=True)
     # The appeal prompt version that wrote this draft, one of
-    # ml/appeal_prompt_versions.PROMPT_V1 / PROMPT_V2, stamped when a model
-    # writes a full letter and copied onto the chosen row. Null for rows from
-    # before versioning and for drafts no letter prompt wrote: templates,
-    # synthesized letters and medically-necessary templated drafts. Not
-    # indexed: the staff page reads it by draft id, and adding an index would
-    # mean a full scan of this large table while the migration holds its lock.
+    # ml/appeal_prompt_versions.PROMPT_V1 / PROMPT_V2 / PROMPT_V3, stamped
+    # when a model writes a full letter and copied onto the chosen row. Null
+    # for rows from before versioning and for drafts no letter prompt wrote:
+    # templates, synthesized letters and medically-necessary templated
+    # drafts. Not indexed: the staff page reads it by draft id, and adding an
+    # index would mean a full scan of this large table while the migration
+    # holds its lock.
     prompt_version = models.CharField(max_length=16, null=True, blank=True)
     # What the backend that wrote this draft was serving when it wrote it
     # (ml/serving_registry.py); for a synthesized letter, the backend whose
@@ -3031,11 +3040,13 @@ class IntakeJourneyEvent(models.Model):
     OUTCOME_SKIPPED_COMPLETED = "skipped_completed"
     OUTCOME_SENT = "sent"
     OUTCOME_SMTP_FAILED = "smtp_failed"
+    OUTCOME_NOT_BUILT = "not_built"
     OUTCOME_CHOICES = [
         (OUTCOME_CLAIMED, "Claimed"),
         (OUTCOME_SKIPPED_COMPLETED, "Skipped: form completed"),
         (OUTCOME_SENT, "Sent"),
         (OUTCOME_SMTP_FAILED, "SMTP failed"),
+        (OUTCOME_NOT_BUILT, "Not sent: the email could not be built"),
     ]
 
     denial = models.ForeignKey(
@@ -4701,6 +4712,16 @@ class SpendCounter(models.Model):
         return f"{self.day} {self.name}: {self.amount}"
 
 
+class SpendReservation(models.Model):
+    """One generation taken from a day's count (ml/spend.py
+    reserve_generation), so it can be given back exactly once."""
+
+    day = models.DateField()
+    name = models.CharField(max_length=80)
+    created_at = models.DateTimeField(auto_now_add=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+
+
 class ExternalServiceHealth(models.Model):
     """Last outcome of calls to one external service, shared across pods.
 
@@ -5197,6 +5218,306 @@ class AssistantHandoff(models.Model):
     sealed = models.BinaryField()
     expires_at = models.DateTimeField(db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # Digest of the browser's binder once a link is bound; empty until then.
+    bound = models.CharField(max_length=64, blank=True, default="")
 
     def __str__(self) -> str:
         return f"AssistantHandoff({self.pk}, expires {self.expires_at:%Y-%m-%d %H:%M})"
+
+
+class ConsentRecord(models.Model):
+    """What a person ticked before an appeal, and against which policy
+    versions (consent.py). Wording and ticks only; it goes with its denial."""
+
+    CHANNELS = (("site", "site"), ("assistant", "assistant"))
+    FINISH = (("site", "site"), ("chat", "chat"))
+
+    denial = models.ForeignKey(
+        Denial, on_delete=models.CASCADE, related_name="consent_records"
+    )
+    terms_version = models.DateField()
+    privacy_version = models.DateField()
+    boxes = models.JSONField()
+    accepted_at = models.DateTimeField(auto_now_add=True)
+    channel = models.CharField(max_length=16, choices=CHANNELS, default="site")
+    on_behalf = models.BooleanField(default=False)
+    finish_in = models.CharField(max_length=8, choices=FINISH, default="site")
+    assistant_client = models.CharField(max_length=80, blank=True, default="")
+
+    def __str__(self) -> str:
+        return f"ConsentRecord({self.pk}, denial {self.denial_id}, {self.channel})"
+
+
+class AssistantDraft(models.Model):
+    """Letters being drafted in the background for an AI assistant
+    (assistant_drafts.py). The assistant holds a random id; only its digest
+    is here. Status and the questions asked, no answers and no letter text;
+    it goes with its denial and is swept once it expires (or, once the
+    person's answers are in and until its letters are drafted, up to a day
+    after). The denial is empty until the person agrees on our site."""
+
+    STATUSES = (
+        ("waiting_for_agreement", "waiting_for_agreement"),
+        ("reading", "reading"),
+        ("questions", "questions"),
+        ("drafting", "drafting"),
+        ("ready", "ready"),
+        ("on_site", "on_site"),
+        ("stopped", "stopped"),
+        ("expired", "expired"),
+        ("site_only", "site_only"),
+    )
+
+    denial = models.ForeignKey(
+        Denial,
+        on_delete=models.CASCADE,
+        related_name="assistant_drafts",
+        null=True,
+        blank=True,
+    )
+    draft_id_digest = models.CharField(max_length=64, unique=True)
+    status = models.CharField(
+        max_length=24, choices=STATUSES, default="waiting_for_agreement"
+    )
+    status_at = models.DateTimeField(auto_now_add=True)
+    questions = models.JSONField(default=list, blank=True)
+    answers_at = models.DateTimeField(null=True, blank=True)
+    procedure = models.CharField(max_length=80, blank=True, default="")
+    condition = models.CharField(max_length=80, blank=True, default="")
+    expires_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # The generation taken on agree, given back if the run delivers no letters.
+    spend_reservation = models.ForeignKey(
+        SpendReservation,
+        on_delete=models.SET_NULL,
+        related_name="assistant_drafts",
+        null=True,
+        blank=True,
+    )
+
+    def __str__(self) -> str:
+        return f"AssistantDraft({self.pk}, denial {self.denial_id}, {self.status})"
+
+
+class AssistantAgreementCount(models.Model):
+    """Agreements on the assistant terms page per address per UTC day
+    (assistant_ip_limit.py). The address is kept only as a keyed digest that
+    changes every day; rows are swept after the day ends."""
+
+    day = models.DateField(db_index=True)
+    key = models.CharField(max_length=64)
+    count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["day", "key"], name="assistant_agreement_count_day_key"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"AssistantAgreementCount({self.day}, {self.count})"
+
+
+class AssistantContinueLink(models.Model):
+    """The emailed link back to letters drafted for an assistant
+    (assistant_continue.py). Only the token's digest is kept."""
+
+    denial = models.OneToOneField(
+        Denial, on_delete=models.CASCADE, related_name="assistant_continue_link"
+    )
+    token_digest = models.CharField(max_length=64, unique=True, null=True)
+    expires_at = models.DateTimeField(db_index=True)
+    wrong_email_attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"AssistantContinueLink({self.pk}, denial {self.denial_id})"
+
+
+# Staff letter review (letter_review.py, /timbit/help/letter_review/).
+#
+# Two staff readers label appeal letters from a model eval, blind, against a
+# fabrication rule. A packet arrives from the private eval repo through
+# `manage.py letter_review_import` and the labels leave through
+# `letter_review_export`. The letters are de-identified eval cases, never a
+# person's appeal, so these tables stand apart from the appeal data: nothing
+# here points at Denial or any patient row, none of it is in the admin, and
+# no Denial-based export or RemoveDataHelper reads it. No model name, judge
+# or score is ever stored, so the pages cannot show one.
+
+LETTER_REVIEW_VERDICTS = (
+    ("fabricates", "Fabricates"),
+    ("flag", "Flag"),
+    ("clean", "Clean"),
+)
+LETTER_REVIEW_NOTE_MAX = 2000
+
+
+class LetterReviewPacket(models.Model):
+    """One packet of eval letters and the rule they are read against."""
+
+    name = models.CharField(max_length=200, unique=True)
+    rule_version = models.CharField(max_length=100)
+    rule_text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"LetterReviewPacket({self.pk}, {self.name})"
+
+
+class LetterReviewReader(models.Model):
+    """A reader's handle on one packet, tied to the staff account that reads.
+
+    The account is SET_NULL rather than PROTECT: a review must never stop a
+    staff account from being deleted, and the export keys each label on the
+    handle, so the labels a reader already made keep their name. A reader
+    with no account matches no request, so nobody inherits their items.
+    """
+
+    packet = models.ForeignKey(
+        LetterReviewPacket, on_delete=models.CASCADE, related_name="readers"
+    )
+    handle = models.CharField(max_length=64)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["packet", "handle"], name="letter_review_reader_handle"
+            ),
+            models.UniqueConstraint(
+                fields=["packet", "user"], name="letter_review_reader_user"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"LetterReviewReader({self.pk}, {self.handle})"
+
+
+class LetterReviewItem(models.Model):
+    """One letter and the input its writer saw, in a stable reading order.
+
+    ``key`` is the eval repo's name for the item and only ever leaves through
+    the export. The pages address an item by ``slug``, minted at import and
+    meaningless, so a key that names a model or a case cannot reach a
+    reader's address bar.
+
+    prompt and letter are stored as plain text, not encrypted. The cases are
+    de-identified eval data, not anyone's appeal; encrypting them (the app's
+    Cryptographer, keyed by DEFF_SALT and DEFF_PASSWORD, could) is a choice
+    still open, not something the app lacks.
+    """
+
+    packet = models.ForeignKey(
+        LetterReviewPacket, on_delete=models.CASCADE, related_name="items"
+    )
+    key = models.CharField(max_length=64)
+    slug = models.CharField(max_length=32)
+    prompt = models.TextField()
+    letter = models.TextField()
+    position = models.PositiveIntegerField()
+    readers = models.ManyToManyField(LetterReviewReader, related_name="items")
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["packet", "key"], name="letter_review_item_key"
+            ),
+            models.UniqueConstraint(
+                fields=["packet", "position"], name="letter_review_item_position"
+            ),
+            models.UniqueConstraint(
+                fields=["packet", "slug"], name="letter_review_item_slug"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"LetterReviewItem({self.pk}, position {self.position})"
+
+
+class LetterReviewLabelsFrozen(Exception):
+    """A label changed after every reader finished its packet."""
+
+
+class LetterReviewLabel(models.Model):
+    """One reader's verdict on one letter. Only that reader ever sees it.
+
+    Once every reader has finished the packet the export can show readers
+    each other's marks, so from then on save() and delete() refuse to change
+    or remove a label: the export keeps each blind verdict as it was given.
+    Bulk QuerySet.update() and delete() skip these methods; nothing in the
+    app uses them on labels, and deleting a packet still cascades.
+    """
+
+    item = models.ForeignKey(
+        LetterReviewItem, on_delete=models.CASCADE, related_name="labels"
+    )
+    reader = models.ForeignKey(
+        LetterReviewReader, on_delete=models.CASCADE, related_name="labels"
+    )
+    verdict = models.CharField(max_length=16, choices=LETTER_REVIEW_VERDICTS)
+    note = models.TextField(max_length=LETTER_REVIEW_NOTE_MAX, blank=True, default="")
+    labeled_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["item", "reader"], name="letter_review_label_once"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"LetterReviewLabel({self.pk}, item {self.item_id})"
+
+    def _lock_and_refuse_if_frozen(self) -> None:
+        """Lock the packet, then refuse a change to a stored label once every
+        reader is done. Every label write takes the same lock, so the save
+        that finishes a packet can't slip between this check and the write.
+        A stored label is checked against its stored packet and, if it is
+        being moved to another letter, that letter's packet too."""
+        from fighthealthinsurance.letter_review import labels_frozen
+
+        # Lock the label's own row before reading its packet, so a move of
+        # the same label can't change the packet between the read and the
+        # packet locks. Packets are locked after the label, always.
+        stored = (
+            LetterReviewLabel.objects.select_for_update(of=("self",))
+            .filter(pk=self.pk)
+            .values_list("item__packet_id", flat=True)
+            .first()
+            if self.pk is not None
+            else None
+        )
+        packet_ids = sorted(
+            {self.item.packet_id} | ({stored} if stored is not None else set())
+        )
+        # In id order, so two writers never wait on each other's lock.
+        packets = list(
+            LetterReviewPacket.objects.select_for_update()
+            .filter(pk__in=packet_ids)
+            .order_by("pk")
+        )
+        if stored is not None and any(labels_frozen(packet) for packet in packets):
+            raise LetterReviewLabelsFrozen(
+                "Every reader has finished this packet, so its labels can no "
+                "longer change."
+            )
+
+    def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        with transaction.atomic():
+            self._lock_and_refuse_if_frozen()
+            super().save(*args, **kwargs)
+
+    def delete(self, *args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+        with transaction.atomic():
+            self._lock_and_refuse_if_frozen()
+            return super().delete(*args, **kwargs)

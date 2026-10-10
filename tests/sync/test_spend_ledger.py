@@ -2,11 +2,12 @@
 per UTC day and name, and a refresh reads this month back."""
 
 import datetime
+from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from fighthealthinsurance.ml import spend
-from fighthealthinsurance.models import SpendCounter
+from fighthealthinsurance.models import SpendCounter, SpendReservation
 
 
 class SpendLedgerTest(TestCase):
@@ -69,3 +70,169 @@ class SpendLedgerTest(TestCase):
             spend._ledger.flush_sync_for_tests()
         self.assertEqual(SpendCounter.objects.get(name="deepinfra:chat").amount, 150)
         self.assertEqual(spend._ledger._pending, {})
+
+
+class AssistantChannelTest(TestCase):
+    def test_a_denial_comes_from_the_site_unless_told_otherwise(self):
+        from fighthealthinsurance.models import Denial
+
+        denial = Denial.objects.create(hashed_email="h", denial_text="letter")
+        self.assertEqual(denial.channel, "site")
+        self.assertEqual(spend.channel_of(denial), spend.CHANNEL_SITE)
+        denial.channel = "assistant"
+        denial.save(update_fields=["channel"])
+        denial.refresh_from_db()
+        self.assertEqual(spend.channel_of(denial), spend.CHANNEL_ASSISTANT)
+
+
+TODAY = datetime.date(2026, 9, 10)
+TOMORROW = datetime.date(2026, 9, 11)
+NAME = spend.counter(spend.FHI, spend.ASSISTANT)
+
+
+class ReservationTest(TestCase):
+    """reserve_generation takes one of the day's generations against the
+    shared count in one conditional update; a reservation is given back once,
+    to its own day."""
+
+    def setUp(self):
+        spend._ledger.reset_for_tests()
+        self._today = patch.object(spend, "_today", return_value=TODAY)
+        self._today.start()
+
+    def tearDown(self):
+        self._today.stop()
+        spend._ledger.reset_for_tests()
+
+    def _count(self, day=TODAY):
+        row = SpendCounter.objects.filter(day=day, name=NAME).first()
+        return row.amount if row else 0
+
+    def test_reservations_count_in_the_shared_row_and_stop_at_the_cap(self):
+        with override_settings(FHI_SPEND_ASSISTANT_DAILY_APPEALS=2):
+            self.assertIsNotNone(spend.reserve_generation())
+            self.assertIsNotNone(spend.reserve_generation())
+            self.assertIsNone(spend.reserve_generation())
+        self.assertEqual(self._count(), 2)
+        self.assertEqual(SpendReservation.objects.count(), 2)
+
+    def test_a_pod_whose_copy_is_stale_cannot_take_a_generation_the_row_says_is_gone(
+        self,
+    ):
+        # This process has seen nothing today; the shared row is at the cap.
+        SpendCounter.objects.create(day=TODAY, name=NAME, amount=2)
+        with override_settings(FHI_SPEND_ASSISTANT_DAILY_APPEALS=2):
+            self.assertIsNone(spend.reserve_generation())
+        self.assertEqual(self._count(), 2)
+
+    def test_fifty_a_day_by_default_and_none_means_no_cap(self):
+        SpendCounter.objects.create(day=TODAY, name=NAME, amount=50)
+        self.assertIsNone(spend.reserve_generation())
+        with override_settings(FHI_SPEND_ASSISTANT_DAILY_APPEALS=None):
+            self.assertIsNotNone(spend.reserve_generation())
+        self.assertEqual(self._count(), 51)
+
+    def test_a_reservation_is_given_back_once(self):
+        with override_settings(FHI_SPEND_ASSISTANT_DAILY_APPEALS=1):
+            held = spend.reserve_generation()
+            self.assertIsNotNone(held)
+            self.assertIsNone(spend.reserve_generation())
+            self.assertTrue(spend.release_generation(held))
+            self.assertFalse(spend.release_generation(held))
+            self.assertEqual(self._count(), 0)
+            self.assertIsNotNone(spend.reserve_generation())
+        self.assertEqual(self._count(), 1)
+
+    def test_a_release_after_midnight_credits_the_day_it_was_taken_from(self):
+        held = spend.reserve_generation()
+        self.assertEqual(held.day, TODAY)
+        with patch.object(spend, "_today", return_value=TOMORROW):
+            self.assertTrue(spend.release_generation(held))
+        self.assertEqual(self._count(TODAY), 0)
+        self.assertEqual(self._count(TOMORROW), 0)
+
+    def test_a_reservation_that_is_not_ours_is_not_released(self):
+        stranger = spend.Reservation(id=987654, day=TODAY)
+        self.assertFalse(spend.release_generation(stranger))
+
+
+class ReservationRaceTest(TestCase):
+    """The day's row may be made by another pod between this pod's look and
+    its own insert; get_or_create settles that, and the generation is then
+    taken from that row with the same conditional update."""
+
+    def setUp(self):
+        spend._ledger.reset_for_tests()
+
+    def tearDown(self):
+        spend._ledger.reset_for_tests()
+
+    def test_a_row_another_pod_made_first_is_taken_from_not_duplicated(self):
+        from fighthealthinsurance import models as fhi_models
+
+        def another_pod_got_there_first(**kwargs):
+            row = SpendCounter.objects.create(day=TODAY, name=NAME, amount=1)
+            return row, False
+
+        with patch.object(spend, "_today", return_value=TODAY), override_settings(
+            FHI_SPEND_ASSISTANT_DAILY_APPEALS=5
+        ), patch.object(
+            fhi_models.SpendCounter.objects,
+            "get_or_create",
+            another_pod_got_there_first,
+        ):
+            held = spend.reserve_generation()
+        self.assertIsNotNone(held)
+        self.assertEqual(SpendCounter.objects.get(day=TODAY, name=NAME).amount, 2)
+        self.assertEqual(SpendCounter.objects.filter(name=NAME).count(), 1)
+        self.assertEqual(SpendReservation.objects.count(), 1)
+
+
+@override_settings(FHI_SPEND_BACKGROUND=True)
+class IdleLedgerTest(TestCase):
+    """A process with no traffic keeps its copy loaded, so the first assistant
+    request after a quiet spell isn't refused."""
+
+    def setUp(self):
+        spend._ledger.reset_for_tests()
+        self.addCleanup(spend._ledger.reset_for_tests)
+        self.enterContext(patch.object(spend._ledger, "_ensure_worker"))
+
+    def test_an_idle_process_refreshes_on_its_own_and_still_allows_assistant(self):
+        import time
+
+        from django.db import connections
+
+        spend._ledger._refreshed_at = time.monotonic() - spend.STALE_SECONDS - 1
+        self.assertFalse(spend.allows(spend.FHI, spend.ASSISTANT))
+        spend._ledger._refresh_wanted.clear()
+        with patch.object(connections, "close_all"):
+            spend._ledger._tick()
+        self.assertTrue(spend.allows(spend.FHI, spend.ASSISTANT))
+
+    def test_a_cold_process_waits_for_its_first_read(self):
+        import threading
+        import time
+
+        def land():
+            time.sleep(0.1)
+            spend._ledger._refreshed_at = time.monotonic()
+            spend._ledger._landed.set()
+
+        thread = threading.Thread(target=land)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.assertTrue(spend._ledger.wait_until_loaded(2.0))
+
+    def test_an_unreadable_ledger_still_refuses_after_the_wait(self):
+        self.assertFalse(spend._ledger.wait_until_loaded(0.05))
+        self.assertFalse(spend.allows(spend.FHI, spend.ASSISTANT))
+
+    def test_a_refresh_that_lands_before_the_wait_is_not_missed(self):
+        import time
+
+        spend._ledger._refreshed_at = time.monotonic()
+        spend._ledger._landed.set()
+        started = time.monotonic()
+        self.assertTrue(spend._ledger.wait_until_loaded(2.0))
+        self.assertLess(time.monotonic() - started, 0.5)

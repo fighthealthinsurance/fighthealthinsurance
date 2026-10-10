@@ -492,7 +492,10 @@ async def _post(document: str, timeout_seconds: float) -> typing.Any:
     # The document goes out as the request's state; the model comes from
     # TYPESAFE_MODEL (typesafe.model_name).
     return await typesafe.ask(
-        document, QUESTIONS, timeout_seconds=timeout_seconds, use=spend.LETTERS
+        document,
+        QUESTIONS,
+        timeout_seconds=timeout_seconds,
+        use=spend.typesafe_use(spend.LETTERS),
     )
 
 

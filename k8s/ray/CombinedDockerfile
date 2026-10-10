@@ -25,5 +25,10 @@ RUN mkdir -p ./fhi
 COPY fighthealthinsurance ./fhi/fighthealthinsurance
 COPY fhi_users ./fhi/fhi_users
 COPY  charts ./fhi/charts
+COPY data ./fhi/data
 COPY setup.py ./fhi/setup.py
+# The email logo. .dockerignore drops the app's static folder, so take it
+# from the collected static at STATIC_ROOT (BASE_DIR/static), where
+# utils._fhi_logo_paths looks for it.
+COPY static/images/better-logo-150.png ./fhi/static/images/better-logo-150.png
 RUN $HOME/anaconda3/bin/pip install -e ./fhi/

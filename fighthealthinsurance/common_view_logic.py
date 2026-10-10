@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import html
 import json
 import os
 import re
@@ -18,6 +19,7 @@ from typing import (
     Iterable,
     Iterator,
     List,
+    Mapping,
     Optional,
     Tuple,
     AsyncGenerator,
@@ -60,8 +62,8 @@ from fighthealthinsurance.denial_history_consent import (
     history_may_be_used,
 )
 from fighthealthinsurance.appeal_fingerprints import fingerprint_text
+from fighthealthinsurance.pdf_text import amerge_pdfs
 from loguru import logger
-from PyPDF2 import PdfMerger
 from stopit.utils import TimeoutException
 
 from fhi_users import emails as fhi_emails
@@ -92,11 +94,19 @@ from fighthealthinsurance.denials.algorithmic_review_detector import (
     render_template_blocks,
 )
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
+from fighthealthinsurance.letter_dates import (
+    date_the_letter,
+    format_letter_date,
+    letter_date,
+    letter_zone,
+    todays_letter_date,
+)
 from fighthealthinsurance.medical_code_extractor import (
     extract_icd10_codes,
     extract_procedure_codes,
 )
 from fighthealthinsurance.ml import denial_triage, letter_quality
+from fighthealthinsurance.ml import spend
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.ml.serving_registry import aserving_id_for
 from fighthealthinsurance.reliability_events import capture_reliability_event
@@ -139,6 +149,7 @@ from .nice_tools import NICETools
 from .email_utils import is_sendable_email
 from .utils import (
     _try_pandoc_engines,
+    pandoc_convert_command,
     check_call,
     execute_critical_optional_fireandforget,
     fire_and_forget_in_new_threadpool,
@@ -250,17 +261,16 @@ class NextStepInfo:
 
 
 class AppealAssemblyHelper:
+    # How long merging an appeal's parts into one PDF may take. The merge runs
+    # in a child process that is stopped at this limit (see pdf_text).
+    PDF_MERGE_TIMEOUT_SECS = 60.0
+
     async def _convert_input(self, input_path: str) -> Optional[str]:
         if input_path.endswith(".pdf"):
             return input_path
         else:
             await asyncio.sleep(0)
-            base_convert_command = [
-                "pandoc",
-                "--wrap=auto",
-                input_path,
-                f"-o{input_path}.pdf",
-            ]
+            base_convert_command = pandoc_convert_command(input_path)
             try:
                 await _try_pandoc_engines(base_convert_command)
                 return f"{input_path}.pdf"
@@ -297,16 +307,15 @@ class AppealAssemblyHelper:
         self, user_header: str, extra: str, input_paths: list[str], target: str
     ) -> str:
         """Assembles all the inputs into one output. Will need to be chunked."""
-        merger = PdfMerger()
         converted_paths = await asyncio.gather(
             *(self._convert_input(path) for path in input_paths)
         )
 
-        for pdf_path in filter(None, converted_paths):
-            merger.append(pdf_path)
-
-        merger.write(target)
-        merger.close()
+        await amerge_pdfs(
+            [pdf_path for pdf_path in converted_paths if pdf_path],
+            target,
+            self.PDF_MERGE_TIMEOUT_SECS,
+        )
         return target
 
     def create_or_update_appeal(
@@ -495,8 +504,13 @@ class AppealAssemblyHelper:
             cover_content: str = ""
             # Render the cover content
             if cover_template_string and len(cover_template_string) > 1:
+                # string.Template does no escaping, so HTML-escape the values
+                # the way Django's autoescape does in the branch below.
                 cover_content = Template(cover_template_string).substitute(
-                    cover_context
+                    {
+                        key: html.escape(value) if isinstance(value, str) else value
+                        for key, value in cover_context.items()
+                    }
                 )
                 logger.debug(
                     f"Rendered cover letter from string ({len(cover_content)} chars)"
@@ -611,10 +625,23 @@ async def _record_synthesis_attempt(
         logger.opt(exception=True).debug("Could not record the synthesis attempt")
 
 
-def substitute_appeal_fields(denial: Denial, content: str) -> str:
+def substitute_appeal_fields(
+    denial: Denial, content: str, set_date_line: bool = True
+) -> str:
     """Substitute the denial's own values (insurance company, claim id,
-    diagnosis, procedure, the patient's and professional's names, dates ...)
-    for the placeholders a draft carries.
+    diagnosis, procedure, the patient's and professional's names, the denial
+    date) for the placeholders a draft carries, and set the letter's own date
+    line to today's date where the case is (letter_dates.date_the_letter,
+    by the denial's state). ``set_date_line`` False leaves the date line as
+    it is.
+
+    Today's date goes on the date line and nowhere else: a date placeholder
+    there ("[Insert Date]", "[Date]", "[Today's Date]") is filled with it,
+    and one in the body is left for the person to fill, which the print and
+    fax check flags (letter_placeholders.json). "$DATE" is the date the plan
+    denied the claim (Denial.denial_date), and stays as it is when that is
+    not known: the one template that uses it writes "denied by
+    $insurance_company on $DATE".
 
     Every frame the browser receives goes through this while the stored draft
     keeps its placeholders, so text that comes back from the browser is
@@ -664,8 +691,6 @@ def substitute_appeal_fields(denial: Denial, content: str) -> str:
         "Dear Insurance Company": f"Dear {insurance_company}",
         "Dear Health Plan": f"Dear {insurance_company}",
         "Dear Sir/Madam": f"Dear {insurance_company}",
-        # Date
-        "[Insert Date]": denial.date or "{{date}}",
         # Claim/Case ID
         "{{CASEID}}": claim_id,
         "[Reference Number from Denial Letter]": claim_id,
@@ -681,12 +706,13 @@ def substitute_appeal_fields(denial: Denial, content: str) -> str:
         "{procedure}": procedure,
         # Legacy $-prefixed keys (used in fixture templates)
         "$insurance_company": insurance_company,
-        "$DATE": denial.date or "{{date}}",
         "$diagnosis": diagnosis,
         "$procedure": procedure,
         "$claim_id": claim_id,
         "$CASEID": claim_id,
     }
+    if isinstance(denial.denial_date, datetime.date):
+        subs["$DATE"] = format_letter_date(denial.denial_date)
     # Each lookup individually guarded: one failing relation (e.g. a
     # deleted professional profile) must not abort the LATER
     # substitutions too, leaving [Patient Name]-style placeholders in
@@ -756,11 +782,6 @@ def substitute_appeal_fields(denial: Denial, content: str) -> str:
             r"\[Health\s+Plan\s*(?:Name\s*)?(?:Placeholder)?\]",
             insurance_company,
         ),
-        # Date variants
-        (
-            r"\[(?:Insert\s+)?(?:Current\s+)?Date\s*(?:Placeholder)?\]",
-            denial.date or "{{date}}",
-        ),
         # Patient name variants
         (
             r"\[Patient(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
@@ -783,7 +804,41 @@ def substitute_appeal_fields(denial: Denial, content: str) -> str:
         str_value = str(value)
         escaped = str_value.replace("\\", r"\\")
         content = re.sub(pattern, escaped, content, flags=re.IGNORECASE)
-    return content
+    if not set_date_line:
+        return content
+    return date_the_letter(
+        content, todays_letter_date(denial.your_state or denial.state)
+    )
+
+
+def _same_but_the_date_line(text: str, other: str) -> bool:
+    """Whether two letters read the same once their date lines are blanked."""
+    undated = ProposedAppeal.fingerprint(date_the_letter(text, ""))
+    return undated is not None and undated == ProposedAppeal.fingerprint(
+        date_the_letter(other, "")
+    )
+
+
+def _dated_by_the_site(text: str, denial: Denial, original: ProposedAppeal) -> bool:
+    """Whether the letter's date line holds a date the site could have shown
+    it with: one from the day its draft was made (a day early, for the zone)
+    to today. Any other date there is the person's own edit."""
+    written = letter_date(text)
+    if written is None:
+        return True
+    zone = letter_zone(denial.your_state or denial.state)
+    today = timezone.localdate(timezone=zone)
+    made = original.created_at
+    first = (
+        timezone.localdate(made, timezone=zone)
+        if made is not None
+        else today - datetime.timedelta(days=30)
+    )
+    days = max((today - first).days, 0) + 1
+    return written in {
+        format_letter_date(today - datetime.timedelta(days=back))
+        for back in range(days + 1)
+    }
 
 
 def mark_proposal_chosen(
@@ -910,15 +965,20 @@ def mark_proposal_chosen(
         # denial's values substituted for the draft's placeholders -- so the
         # draft is compared after the same substitution. A matched chosen
         # copy (a re-pick) keeps its own answer when the text is unchanged.
+        # The draft's date line is set to the day the letter was shown, which
+        # need not be the day it is picked, so the two are also compared with
+        # their date lines blanked.
         if original is None:
             editted = True
         else:
+            substituted = substitute_appeal_fields(denial, original.appeal_text or "")
             unchanged = ProposedAppeal.fingerprint(appeal_text) in {
                 ProposedAppeal.fingerprint(original.appeal_text),
-                ProposedAppeal.fingerprint(
-                    substitute_appeal_fields(denial, original.appeal_text or "")
-                ),
-            }
+                ProposedAppeal.fingerprint(substituted),
+            } or (
+                _same_but_the_date_line(appeal_text, substituted)
+                and _dated_by_the_site(appeal_text, denial, original)
+            )
             if not unchanged:
                 editted = True
             else:
@@ -1416,7 +1476,105 @@ class FindNextStepsHelper:
                     " or ".join(how_to_parts) + ".",
                 )
             )
+        work_requirement_note = cls._medicaid_work_requirement_note(denial, state)
+        if work_requirement_note is not None:
+            outside_help_details.append(work_requirement_note)
         return outside_help_details
+
+    @classmethod
+    def _medicaid_work_requirement_note(
+        cls, denial: "Denial", state: Optional[str]
+    ) -> Optional[Tuple[str, str]]:
+        """A short note on the federal Medicaid work requirement, or None.
+
+        Only for a Medicaid plan in a state we recognise. Not for someone who
+        also named Medicare: the requirement leaves out people on Medicare.
+        The facts and their sources are in the comment above
+        ``medicaid_api.work_requirement_reach`` (checked 2026-10-08); change
+        the wording here and that comment together. Built with format_html
+        because outside_help.html renders these rows with autoescape off.
+        """
+        from fighthealthinsurance.escalation_addresses import sanitize_http_url
+        from fighthealthinsurance.medicaid_api import (
+            WORK_REQUIREMENT_UNIVERSAL_YEAR,
+            work_requirement_reach,
+        )
+        from fighthealthinsurance.regulatory_citations import (
+            MEDICAID,
+            MEDICARE,
+            MEDICARE_ADVANTAGE,
+            classify_plan,
+        )
+        from fighthealthinsurance.state_help import get_state_help_by_abbreviation
+
+        programs = classify_plan(denial.plan_source.values_list("name", flat=True))
+        if MEDICAID not in programs:
+            return None
+        if MEDICARE in programs or MEDICARE_ADVANTAGE in programs:
+            return None
+        reach = work_requirement_reach(state)
+        if reach is None:
+            return None
+
+        if reach.may_apply:
+            option = format_html(
+                "<strong>Medicaid work requirements may apply to you.</strong> "
+                "A new federal law says many adults ages 19 to 64 must show "
+                "work, school, job training, or community service to get or "
+                "keep Medicaid. Usually that means 80 hours a month. States "
+                "generally must start this no later than January 1, {}. Some "
+                "states started earlier. Under the new law, many people are "
+                "exempt, like those who are pregnant, have a disability, or "
+                "care for a child under 14.",
+                WORK_REQUIREMENT_UNIVERSAL_YEAR,
+            )
+        else:
+            option = format_html(
+                "<strong>Medicaid work requirements may not apply to you.</strong> "
+                "A new federal law says many adults ages 19 to 64 must show "
+                "work, school, job training, or community service to get or "
+                "keep Medicaid. It mainly covers states that expanded Medicaid "
+                "to more adults. {} has not expanded Medicaid.",
+                reach.state_name,
+            )
+
+        state_help = get_state_help_by_abbreviation(reach.state_code)
+        agency = state_help.medicaid if state_help else None
+        agency_name = (agency.agency_name if agency else "") or (
+            f"{reach.state_name} Medicaid"
+        )
+        agency_url = sanitize_http_url(agency.agency_url if agency else None)
+        # The phone goes beside the link, not instead of it: a state can move
+        # its pages and leave the link dead, and then the call is the only
+        # way through to someone who can say whether this applies to them.
+        agency_phone = ((agency.agency_phone if agency else None) or "").strip()
+        ask = (
+            "Your state Medicaid agency can tell you if this applies to you "
+            "and when it starts:"
+            if reach.may_apply
+            else "Your state Medicaid agency can tell you for sure:"
+        )
+        if agency_url:
+            contact = format_html(
+                "<a href='{}' target='_blank' rel='noopener'>{}</a>",
+                agency_url,
+                agency_name,
+            )
+            if agency_phone:
+                contact = format_html("{}, or call {}", contact, agency_phone)
+        elif agency_phone:
+            contact = format_html("call {} at {}", agency_name, agency_phone)
+        else:
+            contact = format_html("{}", agency_name)
+        # Exempt is not automatic everywhere: states ask people to keep
+        # reading and answering their notices (TennCare says so in as many
+        # words), so say that before pointing to the agency.
+        how_to = format_html(
+            "Watch for letters from your state and answer them. {} {}.",
+            ask,
+            contact,
+        )
+        return (option, how_to)
 
     @classmethod
     def _build_question_forms(
@@ -1948,9 +2106,9 @@ class PatientNotificationHelper:
     def send_signup_invitation(
         cls, email: str, professional_name: Optional[str], practice_number: str
     ):
-        subject = "Welcome to Fight Paperwork"
+        subject = "Welcome to Fight Health Insurance"
         if professional_name:
-            subject += " from {professional_name}"
+            subject += f" from {professional_name}"
         return send_fallback_email(
             subject=subject,
             template_name="new_patient",
@@ -1962,9 +2120,9 @@ class PatientNotificationHelper:
     def notify_of_draft_appeal(
         cls, email: str, professional_name: Optional[str], practice_number: str
     ):
-        subject = "Draft Appeal on Fight Paperwork"
+        subject = "Draft Appeal on Fight Health Insurance"
         if professional_name:
-            subject += " from {professional_name}"
+            subject += f" from {professional_name}"
         return send_fallback_email(
             subject=subject,
             template_name="draft_appeal",
@@ -1976,13 +2134,21 @@ class PatientNotificationHelper:
 class ProfessionalNotificationHelper:
     @classmethod
     def send_signup_invitation(
-        cls, email: str, professional_name: str, practice_number: str
+        cls,
+        email: str,
+        professional_name: str,
+        practice_number: str,
+        practice_name: Optional[str] = None,
     ):
+        """Invite a coworker who has no account yet. ``professional_name`` is
+        the inviting professional; the invitee's name isn't known, so the
+        email greets them without one."""
         return send_fallback_email(
-            subject="You are invited to join your coworker on Fight Paperwork",
+            subject="You are invited to join your coworker on Fight Health Insurance",
             template_name="invite_professional",
             context={
-                "professional_name": professional_name,
+                "inviter_name": professional_name,
+                "practice_name": practice_name,
                 "practice_number": practice_number,
             },
             to_email=email,
@@ -2189,14 +2355,50 @@ def served_reserve_for_another_state() -> Q:
     )
 
 
+def appeal_replay_queryset(denial) -> QuerySet:
+    """The stored drafts the appeal page replays for a denial, newest first."""
+    return (
+        ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
+        .exclude(served_reserve_for_another_state())
+        .order_by(F("created_at").desc(nulls_last=True), "-id")
+        .all()
+    )
+
+
+# Keys of a generation's parameters that a stored answer never supplies.
+_NOT_ANSWERS = frozenset(
+    {
+        "csrfmiddlewaretoken",
+        "denial_id",
+        "email",
+        "semi_sekret",
+        "questionnaire",
+        "professional_to_finish",
+        "reconnect",
+        "medical_context",
+        "misc",
+    }
+)
+
+
 class DenialCreatorHelper:
     regex_denial_processor = ProcessDenialRegex()
-    zip_engine = uszipcode.search.SearchEngine()
+    # Built on first use (_zip_engine). Creating a SearchEngine makes its data
+    # folder (~/.uszipcode), and a class-level one did that on import, so any
+    # management command that loads the URLs crashed on a read-only
+    # filesystem: the deploy-time prefetch Job never ran.
+    zip_engine: Any = None
     # Lazy load to avoid bootstrap problem w/new project
     _codes_denial_processor = None
     _regex_src = None
     _codes_src = None
     _all_denial_types = None
+
+    @classmethod
+    def _zip_engine(cls) -> Any:
+        if cls.zip_engine is None:
+            cls.zip_engine = uszipcode.search.SearchEngine()
+        return cls.zip_engine
 
     @classmethod
     def codes_denial_processor(cls):
@@ -2524,6 +2726,7 @@ class DenialCreatorHelper:
         referral_source: Optional[str] = None,
         referral_source_details: Optional[str] = None,
         tracking_info: Optional[TrackingInfo] = None,
+        channel: Optional[str] = None,
     ):
         """
         Create or update an existing denial.
@@ -2554,6 +2757,8 @@ class DenialCreatorHelper:
             referral_source: Optional referral source (e.g., "Search Engine", "Friend or Family").
             referral_source_details: Optional free-text details about the referral source.
             tracking_info: Optional TrackingInfo with user_agent, ASN, and IP (for professionals).
+            channel: Optional channel for a new denial ("assistant"), set before
+                     any background work starts so its spend is counted there.
 
         Returns:
             The created or updated Denial object.
@@ -2572,6 +2777,7 @@ class DenialCreatorHelper:
         professional_to_finish = creating_professional is not None
         # Build tracking kwargs
         tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
+        channel_kwargs = {"channel": channel} if channel else {}
 
         # If we don't have a denial we're making a new one
         is_new_denial = denial is None
@@ -2596,6 +2802,7 @@ class DenialCreatorHelper:
                     referral_source=referral_source,
                     referral_source_details=referral_source_details,
                     **tracking_kwargs,
+                    **channel_kwargs,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -2622,6 +2829,7 @@ class DenialCreatorHelper:
                     referral_source=referral_source,
                     referral_source_details=referral_source_details,
                     **tracking_kwargs,
+                    **channel_kwargs,
                 )
         else:
             # Captured before the overwrite: everything derived from the denial
@@ -2734,7 +2942,7 @@ class DenialCreatorHelper:
             else:
                 inferred_state = None
                 try:
-                    inferred_state = cls.zip_engine.by_zipcode(zip).state
+                    inferred_state = cls._zip_engine().by_zipcode(zip).state
                 except Exception as e:
                     logger.debug(f"Zip code lookup failed for {zip}: {e}")
                 if inferred_state:
@@ -4224,7 +4432,8 @@ class DenialCreatorHelper:
         if denial_triage.is_current(denial):
             return EXTRACTION_OUTCOME_CACHED
         text = denial.denial_text
-        result = await denial_triage.triage(text, denial.denial_date)
+        with spend.for_channel(spend.channel_of(denial)):
+            result = await denial_triage.triage(text, denial.denial_date)
         if result is None:
             return EXTRACTION_OUTCOME_NOTHING_FOUND
         values = denial_triage.row_values(result, timezone.now(), text)
@@ -4764,16 +4973,31 @@ class AppealsBackendHelper:
 
     @classmethod
     def generate_appeals_for_denial(
-        cls, denial, background: bool = True, lease_epoch: Optional[int] = None
+        cls,
+        denial,
+        background: bool = True,
+        lease_epoch: Optional[int] = None,
+        answers: Optional[Mapping[str, str]] = None,
     ):
         """Internal entry point: the caller already holds a loaded, authorized
         ``Denial``. Builds the parameters itself (including the private
         identity key), so internal dispatchers never construct the public
         parameter dict by hand -- and the public path never learns to accept
         a caller-supplied hash. ``background=True`` also keeps these runs
-        from consuming the user's interactive ``gen_attempts`` budget."""
+        from consuming the user's interactive ``gen_attempts`` budget.
+        ``answers`` are sent as the questions page sends its post (a
+        questionnaire submission), with no control key among them."""
+        parameters: dict[str, Any] = {}
+        if answers:
+            parameters.update(
+                (k, v)
+                for k, v in answers.items()
+                if k not in _NOT_ANSWERS and not k.startswith("_")
+            )
+            parameters["questionnaire"] = True
         return cls.generate_appeals(
             {
+                **parameters,
                 "denial_id": denial.denial_id,
                 "email": None,
                 "semi_sekret": denial.semi_sekret,
@@ -4798,8 +5022,10 @@ class AppealsBackendHelper:
             AsyncGenerator[str, None], cls._generate_appeals_body(parameters, lease_ref)
         )
         try:
-            async for chunk in agen:
-                yield chunk
+            # The body marks the channel once it has loaded the Denial.
+            with spend.channel_scope():
+                async for chunk in agen:
+                    yield chunk
         finally:
             await agen.aclose()
             extender = lease_ref.get("extender")
@@ -4926,6 +5152,7 @@ class AppealsBackendHelper:
             "creating_professional__user",
         )
         denial = await denial_query.aget()
+        spend.set_channel_of(denial)
         if not background:
             # Form completed: the durable intent is recorded the moment the
             # authenticated lookup succeeds -- before any yield, enrichment,
@@ -5041,14 +5268,18 @@ class AppealsBackendHelper:
             """
             return json.dumps(response) + "\n"
 
-        async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:
+        async def sub_in_appeals(
+            appeal: dict[str, str], set_date_line: bool = True
+        ) -> dict[str, str]:
             """
             Performs dynamic substitution of denial and appeal-related fields into an appeal template.
 
-            Replaces placeholders in the appeal's content with actual values from the associated denial, such as insurance company, claim ID, diagnosis, procedure, patient and professional names, and other context-specific information. Returns the appeal dictionary with the substituted content.
+            Replaces placeholders in the appeal's content with actual values from the associated denial, such as insurance company, claim ID, diagnosis, procedure, patient and professional names, and other context-specific information, and sets its date line to today's date unless ``set_date_line`` is False. Returns the appeal dictionary with the substituted content.
             """
             await asyncio.sleep(0)
-            appeal["content"] = substitute_appeal_fields(denial, appeal["content"])
+            appeal["content"] = substitute_appeal_fields(
+                denial, appeal["content"], set_date_line
+            )
             return appeal
 
         # If we've had a timeout on the initial call and we're on round 2
@@ -5060,12 +5291,7 @@ class AppealsBackendHelper:
         # whatever the database happened to return. created_at is null on legacy
         # rows, and Postgres sorts NULLs first on DESC, which would have handed
         # those rows the whole budget; nulls_last puts them where they belong.
-        existing_appeals = (
-            ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
-            .exclude(served_reserve_for_another_state())
-            .order_by(F("created_at").desc(nulls_last=True), "-id")
-            .all()
-        )
+        existing_appeals = appeal_replay_queryset(denial)
         # Everything already delivered to this client, by normalized raw text.
         # Grown by every path that ships an appeal (existing rows, streamed
         # drafts, the early reserve flush, synthesis, the end-of-flow
@@ -5116,12 +5342,13 @@ class AppealsBackendHelper:
             await ExternalServiceHealth.anote_failure(letter_quality.SERVICE, summary)
 
         async def _score_draft(proposed_id: str, draft_text: str) -> Optional[str]:
-            score = await letter_quality.score_letter(
-                denial.denial_text,
-                draft_text,
-                identifiers=scoring_identifiers,
-                on_failure=_note_scoring_failure,
-            )
+            with spend.for_channel(spend.channel_of(denial)):
+                score = await letter_quality.score_letter(
+                    denial.denial_text,
+                    draft_text,
+                    identifiers=scoring_identifiers,
+                    on_failure=_note_scoring_failure,
+                )
             if score is None:
                 return None
             # Same record, the other way: TypeSafe answered. Best effort.
@@ -5203,6 +5430,11 @@ class AppealsBackendHelper:
 
         old = 0
         new = 0
+        # Letters drafted for an assistant, reopened on the site: replayed
+        # without scoring, and with three of them no model is called at all.
+        assistant_reopen = (
+            not background and spend.channel_of(denial) == spend.CHANNEL_ASSISTANT
+        )
         # Stored drafts the cap keeps off the screen, by normalized text. They
         # are NOT served: a synthesis result or a live draft that lands on one
         # of them is new to this user and must be delivered (the uniqueness
@@ -5235,14 +5467,22 @@ class AppealsBackendHelper:
                 old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
                 served_keys.add(key)
-                if scoring_active and letter_quality.needs_scoring(appeal):
+                if (
+                    scoring_active
+                    and not assistant_reopen
+                    and letter_quality.needs_scoring(appeal)
+                ):
                     # An unscored (or older-rubric) draft must not sort
                     # below every fresh one just for being older.
                     _start_scoring(str(appeal.id), appeal.appeal_text)
                 existing_appeal_dict = await sub_in_appeals(
                     letter_quality.with_score_fields(
                         {"id": str(appeal.id), "content": appeal.appeal_text}, appeal
-                    )
+                    ),
+                    # A letter the person picked after editing it is theirs,
+                    # date line and all; an unedited pick is dated as its
+                    # draft is.
+                    set_date_line=not (appeal.chosen and appeal.editted),
                 )
                 yield await format_response(existing_appeal_dict)
             elif appeal.appeal_text is not None and str(appeal.appeal_text).strip():
@@ -5257,6 +5497,25 @@ class AppealsBackendHelper:
                 f"served {old} stored drafts (newest first), held back "
                 f"{len(held_back_keys)}"
             )
+
+        if assistant_reopen and old >= cls.ENOUGH_APPEALS:
+            yield json.dumps(
+                {
+                    "type": "status",
+                    "phase": "done",
+                    "message": f"Complete: 0 new and {old} existing appeals generated",
+                    "new_appeals": 0,
+                    "existing_appeals": old,
+                    "total_appeals": old,
+                    "generation_id": generation_id,
+                    "make_appeals_seconds": -1.0,
+                    "first_model": "none",
+                    "shed_tier": None,
+                    "models_tried": "none",
+                    "speculative_appeals": 0,
+                }
+            ) + "\n"
+            return
 
         # --- Early speculative fallback ---
         # What the precompute had ready before this run started. Logged here so

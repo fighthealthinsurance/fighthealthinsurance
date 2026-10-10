@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 {% block title %}
 {{ faq_title|default:"FAQ" }} - Fight Health Insurance
 {% endblock title %}
@@ -11,5 +12,5 @@
     </div>
 </section>
 
-<script src="{% static 'js/dist/blog_post.bundle.js' %}"></script>
+<script src="{% bundle 'blog_post' %}"></script>
 {% endblock content %}

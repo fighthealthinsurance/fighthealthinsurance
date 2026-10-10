@@ -36,6 +36,7 @@ import hashlib
 import json
 import re
 import secrets
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Iterable, Iterator, Optional
@@ -52,6 +53,7 @@ from prometheus_client.core import GaugeMetricFamily, Metric
 from prometheus_client.registry import Collector
 
 from fighthealthinsurance.models import AssistantHandoff
+from fighthealthinsurance.utils import strip_invisible_controls
 
 HANDOFF_TTL = timedelta(hours=2)
 # secrets.token_urlsafe(32): 256 bits, 43 URL-safe characters.
@@ -61,7 +63,23 @@ CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 # be turned into the other.
 _LOOKUP_LABEL = b"fhi-assistant-handoff-lookup-v1\x00"
 _KEY_LABEL = b"fhi-assistant-handoff-key-v1"
-PAYLOAD_VERSION = 1
+# A bound link is resealed under the code and the browser's binder together.
+_BOUND_KEY_LABEL = b"fhi-assistant-handoff-key-v2-bound"
+_BINDER_LABEL = b"fhi-assistant-handoff-binder-v2\x00"
+PAYLOAD_VERSION_V1 = 1
+PAYLOAD_VERSION_V2 = 2
+ACCEPTED_PAYLOAD_VERSIONS = (PAYLOAD_VERSION_V1, PAYLOAD_VERSION_V2)
+KINDS = ("site", "chat")
+BINDER_BYTES = 32
+CLIENT_LABEL_MAX = 40
+# Letters, digits and the punctuation a product name and version use, so a
+# User-Agent like "openai-mcp/1.0.0 (Codex)" keeps its shape.
+_CLIENT_LABEL_OK = re.compile(r"[^A-Za-z0-9 ._()/-]")
+# Control characters (Unicode Cc) other than tab and newline, and lone
+# surrogates (Cs), which a JSON body's "\ud800" escape can carry and UTF-8
+# can't encode: kept, one would break the page that shows the letter. Line
+# endings are made "\n" first, so a carriage return never reaches this.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\ud800-\udfff]")
 # Rows made in this window and still in the table count toward
 # MCP_PREPARE_APPEAL_MAX_PER_MINUTE. Opening a link deletes its row, so this
 # caps links made and not yet opened in the last minute, not every link made:
@@ -116,6 +134,10 @@ class HandoffContent:
     letter: str
     procedure: str
     condition: str
+    kind: str = "site"
+    client: str = ""
+    # The AssistantDraft a chat link was made for (its primary key), or None.
+    draft: Optional[int] = None
 
 
 def is_code(value: object) -> bool:
@@ -135,6 +157,57 @@ def _fernet(code: str) -> Fernet:
     return Fernet(base64.urlsafe_b64encode(key))
 
 
+def _bound_fernet(code: str, binder: str) -> Fernet:
+    """The key a bound row is sealed with: the code and the browser's binder."""
+    key = HKDF(
+        algorithm=hashes.SHA256(), length=32, salt=None, info=_BOUND_KEY_LABEL
+    ).derive(code.encode("ascii") + b"\x00" + binder.encode("ascii"))
+    return Fernet(base64.urlsafe_b64encode(key))
+
+
+def _binder_digest(binder: str) -> str:
+    return hashlib.sha256(_BINDER_LABEL + binder.encode("ascii")).hexdigest()
+
+
+def new_binder() -> str:
+    """A browser's secret for binding links, kept in its session."""
+    return secrets.token_urlsafe(BINDER_BYTES)
+
+
+def v2_enabled() -> bool:
+    return bool(getattr(settings, "MCP_HANDOFF_V2_ENABLED", False))
+
+
+def client_label(name: object) -> str:
+    """A short, plain label for the client that made a link, or "". What
+    the client said it was (mcp_server._client_name): analytics only, never
+    an identity, and nothing is allowed or trusted by it."""
+    if not isinstance(name, str):
+        return ""
+    return _CLIENT_LABEL_OK.sub("", name).strip()[:CLIENT_LABEL_MAX]
+
+
+def clean_text(text: str) -> str:
+    """Consistent line endings, no control characters but newline and tab,
+    no lone surrogates, and no leading or trailing space."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return _CONTROL_CHARS.sub("", text).strip()
+
+
+def one_line(text: str) -> str:
+    """A few words naming a treatment or a condition, the way prepare_appeal
+    and the chat path's terms page both keep them: clean_text, without
+    format characters (Unicode Cf) or utils.INVISIBLE_CONTROLS, and each run
+    of whitespace, a line break too, as one space.
+
+    Invisible characters such as U+202E, which reverses how the text after
+    it reads, have no place in a few words. prepare_appeal refuses a line
+    break before it gets here; a form field just has it as a space."""
+    text = strip_invisible_controls(clean_text(text))
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    return " ".join(text.split())
+
+
 def sweep_expired(now: Optional[datetime] = None) -> int:
     """Delete every row past its expiry. Returns how many went."""
     deleted, _ = AssistantHandoff.objects.filter(
@@ -149,12 +222,23 @@ def live_count() -> int:
     return AssistantHandoff.objects.filter(expires_at__gt=timezone.now()).count()
 
 
-def create_handoff(letter: str, procedure: str = "", condition: str = "") -> Handoff:
+def create_handoff(
+    letter: str,
+    procedure: str = "",
+    condition: str = "",
+    kind: str = "site",
+    client: str = "",
+    draft: Optional[int] = None,
+) -> Handoff:
     """Seal what the assistant sent and return the new link's code.
 
     Raises HandoffCapacityError at either cap. The arguments are already
-    cleaned and capped by the caller (mcp_server.prepare_appeal).
+    cleaned and capped by the caller (mcp_server.prepare_appeal). ``kind``
+    and ``client`` are kept only in a v2 payload (MCP_HANDOFF_V2_ENABLED),
+    as is ``draft``, the AssistantDraft a chat link belongs to.
     """
+    if kind not in KINDS:
+        raise ValueError(f"unknown handoff kind {kind!r}")
     now = timezone.now()
     sweep_expired(now)
     live = AssistantHandoff.objects.filter(expires_at__gt=now).count()
@@ -170,15 +254,17 @@ def create_handoff(letter: str, procedure: str = "", condition: str = "") -> Han
     # six bytes (twelve for an emoji), which made a 20,000-character letter
     # in Cyrillic about 160 KB sealed (54 KB as UTF-8). The caller strips
     # lone surrogates, which UTF-8 can't encode.
-    payload = json.dumps(
-        {
-            "v": PAYLOAD_VERSION,
-            "letter": letter,
-            "procedure": procedure,
-            "condition": condition,
-        },
-        ensure_ascii=False,
-    ).encode("utf-8")
+    fields: dict[str, object] = {
+        "v": PAYLOAD_VERSION_V1,
+        "letter": letter,
+        "procedure": procedure,
+        "condition": condition,
+    }
+    if v2_enabled():
+        fields.update(v=PAYLOAD_VERSION_V2, kind=kind, client=client_label(client))
+        if draft is not None:
+            fields["draft"] = int(draft)
+    payload = json.dumps(fields, ensure_ascii=False).encode("utf-8")
     expires_at = now + HANDOFF_TTL
     AssistantHandoff.objects.create(
         lookup=_lookup(code),
@@ -195,14 +281,58 @@ def _live_row(lookup: str) -> Optional[AssistantHandoff]:
     return (
         AssistantHandoff.objects.select_for_update()
         .filter(lookup=lookup, expires_at__gt=timezone.now())
-        .only("pk", "sealed")
+        .only("pk", "sealed", "bound")
         .first()
     )
 
 
-def claim_handoff(code: str) -> Optional[HandoffContent]:
-    """Open a link: delete its row and return what it held, or None when the
-    code is malformed, unknown, expired or already used."""
+def _unseal(sealed: bytes, fernet: Fernet) -> Optional[bytes]:
+    try:
+        return fernet.decrypt(sealed, ttl=int(HANDOFF_TTL.total_seconds()))
+    except (InvalidToken, ValueError):
+        return None
+
+
+def _content(plain: bytes) -> Optional[HandoffContent]:
+    try:
+        payload = json.loads(plain)
+    except ValueError:
+        return None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("v") not in ACCEPTED_PAYLOAD_VERSIONS
+    ):
+        return None
+    letter = payload.get("letter")
+    if not isinstance(letter, str) or not letter:
+        return None
+    procedure = payload.get("procedure")
+    condition = payload.get("condition")
+    kind = payload.get("kind")
+    draft = payload.get("draft")
+    return HandoffContent(
+        letter=letter,
+        procedure=procedure if isinstance(procedure, str) else "",
+        condition=condition if isinstance(condition, str) else "",
+        kind=kind if kind in KINDS else "site",
+        client=client_label(payload.get("client")),
+        draft=draft if isinstance(draft, int) and not isinstance(draft, bool) else None,
+    )
+
+
+def claim_handoff(
+    code: str, binder: Optional[str] = None, consume: bool = True
+) -> Optional[HandoffContent]:
+    """Open a link and return what it held, or None when the code is
+    malformed, unknown, expired, already used, or bound to another browser.
+
+    ``binder`` is the opening browser's secret (new_binder, kept in its
+    session). The first open with a binder reseals the row under the code
+    and the binder together and records the binder's digest, so from then on
+    only that browser can open it. ``consume`` deletes the row (the one-use
+    rule); with ``consume=False`` the bound row stays until it is consumed
+    or expires, for a flow that reads it more than once.
+    """
     if not is_code(code):
         DEAD_OPENS.inc()
         return None
@@ -211,34 +341,39 @@ def claim_handoff(code: str) -> Optional[HandoffContent]:
         if row is None:
             DEAD_OPENS.inc()
             return None
-        # Exactly one row deleted, or another request opened it first.
-        deleted, _ = AssistantHandoff.objects.filter(pk=row.pk).delete()
-        if deleted != 1:
+        sealed = bytes(row.sealed)
+        if row.bound:
+            if binder is None or _binder_digest(binder) != row.bound:
+                DEAD_OPENS.inc()
+                return None
+            plain = _unseal(sealed, _bound_fernet(code, binder))
+        else:
+            plain = _unseal(sealed, _fernet(code))
+        if plain is None:
             DEAD_OPENS.inc()
             return None
-        sealed = bytes(row.sealed)
-    try:
-        payload = json.loads(
-            _fernet(code).decrypt(sealed, ttl=int(HANDOFF_TTL.total_seconds()))
-        )
-    except (InvalidToken, ValueError):
+        if consume:
+            # Exactly one row deleted, or another request opened it first.
+            deleted, _ = AssistantHandoff.objects.filter(pk=row.pk).delete()
+            if deleted != 1:
+                DEAD_OPENS.inc()
+                return None
+        elif binder is not None and not row.bound:
+            # The first open binds: resealed so the code alone no longer opens it.
+            updated = AssistantHandoff.objects.filter(pk=row.pk, bound="").update(
+                sealed=_bound_fernet(code, binder).encrypt(plain),
+                bound=_binder_digest(binder),
+            )
+            if updated != 1:
+                DEAD_OPENS.inc()
+                return None
+    content = _content(plain)
+    if content is None:
         DEAD_OPENS.inc()
         return None
-    if not isinstance(payload, dict) or payload.get("v") != PAYLOAD_VERSION:
-        DEAD_OPENS.inc()
-        return None
-    letter = payload.get("letter")
-    if not isinstance(letter, str) or not letter:
-        DEAD_OPENS.inc()
-        return None
-    procedure = payload.get("procedure")
-    condition = payload.get("condition")
-    FORMS_OPENED.inc()
-    return HandoffContent(
-        letter=letter,
-        procedure=procedure if isinstance(procedure, str) else "",
-        condition=condition if isinstance(condition, str) else "",
-    )
+    if consume:
+        FORMS_OPENED.inc()
+    return content
 
 
 # ---------------------------------------------------------------------------

@@ -1,38 +1,34 @@
-{% extends './base_email.html' %}
+{% extends "emails/fhi_base_email.html" %}
+{% block title %}Your Fight Health Insurance account{% endblock %}
 {% block content %}
 <p>
-Hello {{ provider_name }},
+{% if professional_name %}Hello {{ professional_name }},{% else %}Hello,{% endif %}
 </p>
 <p>
-{{ inviter_name }} has created an account for you on Fight Health Insurance / Fight Paperwork to help manage insurance denial appeals for {{ practice_name }}.
+{{ inviter_name }} has created a Fight Health Insurance account for you to help manage insurance denial appeals for {{ practice_name }}.
 </p>
 <p>
-Our platform helps healthcare providers successfully appeal insurance denials and reduce administrative burden. Studies show that when providers appeal denials, they have a high success rate of overturning the initial decision.
+Fight Health Insurance helps healthcare providers successfully appeal insurance denials and reduce administrative burden. When prior authorization denials are appealed, many are overturned: in 2025, large insurers reversed about 2 in 3 appealed standard requests in Medicare Advantage and more than 4 in 10 in Medicaid managed care and HealthCare.gov plans (<a href="https://www.kff.org/patient-consumer-protections/prior-authorization-metrics-provide-new-insights-into-insurer-practices-but-gaps-remain/">KFF</a>).
 </p>
 <p>
-You can access your account by resetting your password at:
-</p>
-<p>
-<a href="https://www.fightpaperwork.com/auth/reset-password" class="button">Reset Password</a>
-</p>
-<p>
-To reset your password, you'll need:
+To get into your account, reset your password. You'll need:
 </p>
 <ul>
     <li>Email: {{ email }}</li>
     <li>Practice name: {{ practice_name }}</li>
-    <li>Practice Phone: {{ practice_phone }}</li>
+    <li>Practice phone: {{ practice_phone }}</li>
 </ul>
+{% include "emails/partials/button.html" with href="https://www.fightpaperwork.com/auth/reset-password" label="Reset your password" %}
 <p>
 After setting your password, you can log in with your email and the practice information above.
 </p>
 <p>
-If you have any questions, please feel free to reach out to us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
+If you have any questions, email us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
 </p>
 <p>
 Thank you,
 </p>
 <p>
-The Fight Paperwork team
+The Fight Health Insurance team
 </p>
 {% endblock %}

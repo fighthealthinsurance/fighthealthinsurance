@@ -82,7 +82,7 @@ else
 fi
 
 # BUILDKIT_NO_CLIENT_TOKEN=true
-FHI_VERSION=v0.23.19a
+FHI_VERSION=v0.23.27a
 
 
 MYORG=${MYORG:-totallylegitco}
@@ -340,6 +340,10 @@ kubectl delete raycluster -n totallylegitco raycluster-kuberay --ignore-not-foun
 envsubst < k8s/ray/cluster.yaml | kubectl apply -f -
 
 # Deploy a staging env
+# A Job's pod template can't change, and web-extralink-prefetch keeps its
+# finished run for an hour (ttlSecondsAfterFinished) so its log can be read.
+# Delete the last run first, or a deploy within that hour fails on the apply.
+kubectl delete job web-extralink-prefetch -n totallylegitco --ignore-not-found --timeout=2m
 envsubst < k8s/deploy.yaml | kubectl apply -f -
 
 # The Temporal fax worker (k8s/temporal/worker.yaml) runs the same app image as
@@ -382,6 +386,8 @@ envsubst < k8s/temporal/intake-outbox-cronjob.yaml | kubectl apply -f -
 # deletes prepare_appeal links past their 2 hours. Applied whatever the MCP
 # flags say, so turning the feature off still empties the table.
 envsubst < k8s/assistant-handoff-sweep-cronjob.yaml | kubectl apply -f -
+# ...and the drafts the chat path keeps for a day, swept hourly.
+envsubst < k8s/assistant-drafts-sweep-cronjob.yaml | kubectl apply -f -
 # ...and its alerts: prepare_appeal refusing at a cap, or live links near the
 # cap (docs/mcp-server.md). Applied whatever the flags say; with the tool off
 # the counts stay at zero and nothing fires.

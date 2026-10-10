@@ -183,12 +183,13 @@
         </td>
         <td>
           {% if r.config_failing %}<span class="pill pill-fail">{{ r.config_category }}</span>
+          {% elif r.retired %}<span class="pill pill-off">Retired</span><div class="sub">{{ r.config_detail }}</div>
           {% elif r.enabled %}<span class="pill pill-ok">enabled</span>
           {% else %}<span class="pill pill-off">{{ r.config_category|default:"disabled" }}</span>{% endif %}
           {% if not r.ui_registered and not r.reporting_registered %}<div class="sub muted">not registered in router or in reporting</div>
           {% elif not r.ui_registered %}<div class="sub muted">not registered in router</div>
           {% elif not r.reporting_registered %}<div class="sub muted">not in reporting</div>{% endif %}
-          {% if r.config_detail and r.config_detail != r.last_check.error %}<div class="err">{{ r.config_detail }}</div>{% endif %}
+          {% if r.config_detail and not r.retired and r.config_detail != r.last_check.error %}<div class="err">{{ r.config_detail }}</div>{% endif %}
         </td>
         <td>
           {% for leg in r.serving %}
@@ -205,8 +206,11 @@
           {% endif %}
         </td>
         <td>
-          {% if r.last_check %}
+          {% if r.retired %}
+            <span class="muted">not checked</span>
+          {% elif r.last_check %}
             {% if r.last_check.ok %}<span class="pill pill-ok">{{ r.last_check.category }}</span>
+            {% elif r.last_check_retired %}<span class="pill pill-off">{{ r.last_check.category }}</span>
             {% else %}<span class="pill pill-fail">{{ r.last_check.category }}</span>{% endif %}
             {% if r.last_check.latency_ms is not None %}<span class="sub">{{ r.last_check.latency_ms }} ms</span>{% endif %}
             <div class="sub">{{ r.last_check.created_at|date:"Y-m-d H:i" }} UTC</div>
@@ -218,7 +222,7 @@
               {% if r.config_changed %}<span class="pill pill-warn">config changed since</span>{% endif %}
             </div>
             {% endif %}
-            {% if r.last_check.error %}<div class="err">{{ r.last_check.error }}</div>{% endif %}
+            {% if r.last_check.error %}<div class="{% if r.last_check_retired %}sub{% else %}err{% endif %}">{{ r.last_check.error }}</div>{% endif %}
           {% elif r.config_category and not r.enabled %}
             <span class="muted">not checked</span>
           {% elif r.config_category %}

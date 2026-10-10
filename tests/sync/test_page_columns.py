@@ -27,6 +27,7 @@ ON_A_COLUMN = {
     "about_us.html": "fhi-page-wide",
     "other_resources.html": "fhi-page-wide",
     "how_to_help.html": "fhi-page-wide",
+    "ai_assistants.html": "fhi-page-wide",
     "media_references.html": "fhi-page-wide",
     "microsite_directory.html": "fhi-page-wide",
     "fax_thankyou.html": "fhi-page-wide",

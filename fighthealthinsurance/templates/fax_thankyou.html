@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block title %}
-Thank you for using Fight Health Insurance & Our Fax Service!
+{% if missing %}We couldn't find your fax{% else %}Thank you for using Fight Health Insurance & Our Fax Service!{% endif %}
 {% endblock title %}
 {% load static %}
 {% load absolute %}
@@ -10,6 +10,15 @@ Thank you for using Fight Health Insurance & Our Fax Service!
 {% block content %}
 <section id="contact">
   <div class="fhi-page-wide">
+  {% if missing %}
+  {% comment %} The sent page (FaxSentView) with nothing from the payment
+     link in the session. {% endcomment %}
+  {% include "partials/page_title.html" with title="We couldn't find your fax" %}
+  <div class="fhi-stack">
+  <p>This page shows after you pay to fax your appeal, in the browser you paid in.</p>
+  <p>If you paid and want to check on your fax, email <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> and we'll help.</p>
+  </div>
+  {% else %}
   {% if already_sent %}
   {% include "partials/page_title.html" with title="Already received" %}
   {% else %}
@@ -39,6 +48,7 @@ Thank you for using Fight Health Insurance & Our Fax Service!
 
   {% include 'partials/share_buttons.html' %}
   </div>
+  {% endif %}
   </div>
 </section>
 {% endblock content %}

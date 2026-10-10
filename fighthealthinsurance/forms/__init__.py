@@ -7,7 +7,11 @@ from django import forms
 from django.conf import settings
 from django.forms import CheckboxInput, ModelForm, Textarea
 
+from django.core.exceptions import ValidationError
+from loguru import logger
+from django_recaptcha import client as recaptcha_client
 from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox
+import http.client
 
 if TYPE_CHECKING:
     # Typing-only base so mypy knows ``self.fields`` exists. At runtime the
@@ -24,6 +28,8 @@ from fighthealthinsurance.letter_placeholders import (
     find_placeholders_as_written,
 )
 from fighthealthinsurance.models import (
+    LETTER_REVIEW_NOTE_MAX,
+    LETTER_REVIEW_VERDICTS,
     DenialTypes,
     InsuranceCompany,
     InsurancePlan,
@@ -44,6 +50,57 @@ REFERRAL_SOURCE_CHOICES = [
     ("News Article or Blog", "News Article or Blog"),
     ("Other", "Other"),
 ]
+
+
+# The error code a captcha tick Google calls "timeout-or-duplicate" gets: a
+# tick older than two minutes (say the person went back to their chat app and
+# returned), or the same tick sent twice by a double press. Neither says the
+# person is a bot, so a page can ask them to tick the box again.
+CAPTCHA_EXPIRED = "captcha_expired"
+
+
+class CheckboxReCaptchaField(ReCaptchaField):
+    """The "I'm not a robot" checkbox, with an expired or reused tick told
+    apart from a rejected one.
+
+    django-recaptcha raises captcha_invalid for every answer Google refuses
+    and only logs the reason, so this is its checkbox check with the reason
+    kept: an unticked box is "required", an expired or reused tick is
+    CAPTCHA_EXPIRED, Google out of reach is "captcha_error", and anything
+    else Google refuses is "captcha_invalid".
+    """
+
+    default_error_messages = {
+        CAPTCHA_EXPIRED: 'Your "I\'m not a robot" tick ran out or was already '
+        "used. Tick it again, then press the button.",
+    }
+
+    def validate(self, value):
+        forms.CharField.validate(self, value)
+        try:
+            check = recaptcha_client.submit(
+                recaptcha_response=value,
+                private_key=self.private_key,
+                remoteip=self.get_remote_ip(),
+            )
+        except (OSError, http.client.HTTPException, ValueError):
+            # Google unreachable, slow, erroring or answering nonsense: OSError
+            # covers URLError, HTTPError, timeouts, resets and SSL errors, and
+            # ValueError a reply that isn't JSON. django-recaptcha caught
+            # HTTPError only.
+            raise ValidationError(
+                self.error_messages["captcha_error"], code="captcha_error"
+            )
+        if not check.is_valid:
+            # As django-recaptcha logs it: Google's reason codes only.
+            logger.warning(f"ReCAPTCHA validation failed due to: {check.error_codes}")
+            if "timeout-or-duplicate" in (check.error_codes or []):
+                raise ValidationError(
+                    self.error_messages[CAPTCHA_EXPIRED], code=CAPTCHA_EXPIRED
+                )
+            raise ValidationError(
+                self.error_messages["captcha_invalid"], code="captcha_invalid"
+            )
 
 
 class ReCaptchaOptionalMixin(_ReCaptchaMixinBase):
@@ -73,7 +130,9 @@ class ReCaptchaOptionalMixin(_ReCaptchaMixinBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self._is_recaptcha_enabled():
-            self.fields["captcha"] = ReCaptchaField(widget=ReCaptchaV2Checkbox())
+            self.fields["captcha"] = CheckboxReCaptchaField(
+                widget=ReCaptchaV2Checkbox()
+            )
 
     @staticmethod
     def _is_recaptcha_enabled() -> bool:
@@ -200,9 +259,15 @@ class IntakeResumeForm(StyledWidgetsMixin, forms.Form):
 
 
 class ShareAppealForm(forms.Form):
+    # The same three fields as DenialRefForm: a case is found by its id, its
+    # email and its secret together, as ChooseAppealForm finds it.
     denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
     email = forms.CharField(required=True, widget=forms.HiddenInput())
-    appeal_text = forms.CharField(required=True)
+    semi_sekret = forms.CharField(required=True, widget=forms.HiddenInput())
+    # The most the assistant's prepare_appeal takes for a letter
+    # (mcp_server.LETTER_MAX_CHARS), well past any real appeal.
+    APPEAL_TEXT_MAX_CHARS = 20_000
+    appeal_text = forms.CharField(required=True, max_length=APPEAL_TEXT_MAX_CHARS)
 
 
 class BaseDenialForm(forms.Form):
@@ -224,7 +289,7 @@ class DenialForm(BaseDenialForm):
     personalonly = forms.BooleanField(
         required=True,
         error_messages={
-            "required": "Please tick the box to confirm this is for your own appeal."
+            "required": "Please tick the box to confirm this appeal is yours, or for someone you're helping who asked you to."
         },
     )
 
@@ -256,6 +321,28 @@ class DenialForm(BaseDenialForm):
         # The page's own label for it, so an error on it names the field the
         # way the page does.
         self.fields["zip"].label = "ZIP code"
+
+
+class AssistantTermsForm(ReCaptchaOptionalMixin, DenialForm):
+    """The terms page an assistant's chat link opens (assistant_terms_views.py):
+    the intake form's fields and boxes, who the appeal is for, and a bot check."""
+
+    ON_BEHALF_CHOICES = [
+        ("me", "Me"),
+        (
+            "helping",
+            "Someone I'm helping who asked me to and is fine with this site "
+            "keeping it as the privacy policy says",
+        ),
+    ]
+
+    on_behalf = forms.ChoiceField(
+        choices=ON_BEHALF_CHOICES,
+        required=True,
+        widget=forms.RadioSelect,
+        error_messages={"required": "Please say who this appeal is for."},
+    )
+    captcha = forms.CharField(required=False, widget=forms.HiddenInput())
 
 
 class ProDenialForm(BaseDenialForm):
@@ -522,9 +609,14 @@ class EntityExtractForm(DenialRefForm):
 
 
 class FaxResendForm(forms.Form):
-    fax_phone = forms.CharField(required=True)
-    uuid = forms.UUIDField(required=True, widget=forms.HiddenInput)
-    hashed_email = forms.CharField(required=True, widget=forms.HiddenInput)
+    """The fax follow-up page's form. fax_ref says which of the faxes the
+    session holds the form is for (fax_views.FaxFollowUpView): a random ref
+    that means nothing outside the session, so the form holds no fax ids."""
+
+    # No longer than FaxesToSend.destination, which it is saved into. The
+    # page fills it with the number on file.
+    fax_phone = forms.CharField(required=True, max_length=20, label="Fax number")
+    fax_ref = forms.CharField(required=True, widget=forms.HiddenInput)
 
 
 class BasePostInferedForm(DenialRefForm):
@@ -706,6 +798,16 @@ class FollowUpForm(forms.Form):
 # New form for activating pro users
 class ActivateProForm(forms.Form):
     phonenumber = forms.CharField(required=True)
+
+
+# One reader's label on one letter in the staff letter review
+# (letter_review.py). The template draws its own radios, with the rule's short
+# descriptions and keyboard shortcuts; this only checks what comes back.
+class LetterReviewLabelForm(forms.Form):
+    verdict = forms.ChoiceField(choices=LETTER_REVIEW_VERDICTS)
+    note = forms.CharField(
+        required=False, max_length=LETTER_REVIEW_NOTE_MAX, strip=True
+    )
 
 
 # Form for sending mailing list emails

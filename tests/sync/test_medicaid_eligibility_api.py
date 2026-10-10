@@ -25,6 +25,7 @@ from fighthealthinsurance.medicaid_api import (
     resolve_target_year,
     summarize_eligibility_inputs,
     timeline_years,
+    work_requirement_reach,
 )
 
 
@@ -911,6 +912,42 @@ class TestTerritoryShortCircuit(SimpleTestCase):
         self.assertTrue(medicare)
         self.assertEqual(missing, [])
         self.assertFalse(determination_made)
+
+
+class TestWorkRequirementReach(SimpleTestCase):
+    """Which states the federal work requirement can reach (next-steps note)."""
+
+    def test_expansion_state_may_apply(self):
+        self.assertTrue(work_requirement_reach("CA").may_apply)
+
+    def test_wisconsin_waiver_may_apply(self):
+        self.assertTrue(work_requirement_reach("wi").may_apply)
+
+    def test_georgia_waiver_may_apply(self):
+        self.assertTrue(work_requirement_reach("Georgia").may_apply)
+
+    def test_other_non_expansion_state_may_not_apply(self):
+        self.assertFalse(work_requirement_reach("TX").may_apply)
+
+    def test_tennessee_stays_may_not_apply(self):
+        # On CMS's June 2026 list, but on purpose: the only TennCare members
+        # it reaches meet it by income, and TennCare tells them they "will not
+        # experience an impact". See the comment above work_requirement_reach.
+        self.assertFalse(work_requirement_reach("TN").may_apply)
+
+    def test_territory_returns_none(self):
+        # The rule does not cover the territories, so there is nothing to say.
+        self.assertIsNone(work_requirement_reach("PR"))
+
+    def test_missing_or_unknown_state_returns_none(self):
+        for state in (None, "", "ZZ"):
+            with self.subTest(state=state):
+                self.assertIsNone(work_requirement_reach(state))
+
+    def test_returns_the_display_name(self):
+        self.assertEqual(
+            work_requirement_reach("dc").state_name, "District of Columbia"
+        )
 
 
 class TestAmbiguousStateInput(SimpleTestCase):

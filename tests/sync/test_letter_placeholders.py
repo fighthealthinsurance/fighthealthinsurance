@@ -32,6 +32,7 @@ from fighthealthinsurance.forms import FaxForm
 from fighthealthinsurance.letter_placeholders import (
     PATTERNS_FILE,
     describe_placeholders,
+    find_placeholder_spans,
     find_placeholders_as_written,
     find_unfilled_placeholders,
 )
@@ -64,6 +65,13 @@ CAUGHT = [
         ["{{FIRST_NAME}}", "{{LAST_NAME}}"],
     ),
     ("a bracketed name", "My name is [Your Name].", ["[Your Name]"]),
+    ("a bracketed ID, not the citation [Id.]", "Member ID: [ID]", ["[ID]"]),
+    (
+        "real fill-ins beside a quotation's bracketed words",
+        '"[It] is not medically necessary" [emphasis added]. '
+        "Seen on [Date of Service].\nSincerely,\n[Your Name]",
+        ["[Date of Service]", "[Your Name]"],
+    ),
     ("a bracketed name in capitals", "Date: [INSERT DATE]", ["[INSERT DATE]"]),
     (
         "bracketed snake_case names",
@@ -220,6 +228,16 @@ LEFT_ALONE = [
         "the brackets of legal quoting",
         '"[T]he plan shall [sic] pay" [emphasis added] [internal citations omitted]',
     ),
+    (
+        "ordinary words a quotation puts in brackets",
+        'The plan wrote "[It] is not covered" and "[w]e will not pay"; '
+        "[We] disagree, and [the] reviewer agreed with [her] doctor.",
+    ),
+    (
+        "more notes of legal quoting",
+        "[Ellipsis in original] [Brackets in original] [Alterations added] "
+        "[Capitalization altered] [Cleaned up] [Emphasis ours] [Ibid] [Id.]",
+    ),
     ("a bracketed link", "See the [CMS Guidance](https://www.cms.gov/guidance)."),
     (
         "bracketed links that read like blanks",
@@ -333,6 +351,15 @@ def test_every_bracketed_blank_in_the_apps_own_appeal_templates_is_caught(letter
 def test_each_blank_is_listed_once_in_the_order_it_first_appears():
     text = "Ref XXX. I am [Your Name], member {{SCSID}}.\nSincerely,\n[Your Name]"
     assert find_unfilled_placeholders(text) == ["XXX", "[Your Name]", "{{SCSID}}"]
+
+
+def test_each_blanks_place_is_where_the_letter_has_it_in_order():
+    """Every blank, each time, at its place in the letter as written: a
+    [sic] it ignores inside one is part of it there."""
+    text = "Dear [Your [sic] Name], claim XXX-XX-XXXX of MM/DD/YYYY.\n[Your Name]"
+    assert [
+        text[start:end] for start, end in find_placeholder_spans(text)
+    ] == ["[Your [sic] Name]", "XXX-XX-XXXX", "MM/DD/YYYY", "[Your Name]"]
 
 
 # Two lines to write on, of different lengths, and a third as long as the
@@ -802,6 +829,6 @@ def test_the_fake_page_uses_the_real_ids():
     appeal = (TEMPLATES / "appeal.html").read_text()
     assert 'id="id_completed_appeal_text"' in review
     assert 'id="print_appeal"' in review
-    assert "js/dist/escalation_packet_review.bundle.js" in review
+    assert '{% bundle "escalation_packet_review" %}' in review
     assert 'id="print_appeal"' in appeal
     assert 'id="fax_appeal"' in appeal

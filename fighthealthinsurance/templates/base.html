@@ -265,6 +265,7 @@
                 <a href="{% url 'root' %}">Home</a>
                 <a href="{% url 'about' %}">About Us</a>
                 <a href="{% url 'about-ai' %}">About Our AI</a>
+                {% if ai_assistants_on %}<a href="{% url 'ai-assistants' %}">Your AI Assistant</a>{% endif %}
                 <a href="{% url 'contact' %}">Contact</a>
                 <a href="{% url 'tos' %}">Terms of Service</a>
                 <a href="{% url 'remove_data' %}">Delete your Data</a>

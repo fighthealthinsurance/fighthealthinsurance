@@ -1,13 +1,13 @@
-{% if professional_name %}Hello {{ professional_name }},{% else %}Hello,{% endif %}
+{% autoescape off %}{% if professional_name %}Hello {{ professional_name }},{% else %}Hello,{% endif %}
 
-You have been invited by {{ inviter_name }} to join {{ practice_name }} on Fight Health Insurance / Fight Paperwork.
+{{ inviter_name }} has invited you to join {% if practice_name %}{{ practice_name }}{% else %}their practice{% endif %} on Fight Health Insurance.
 
-Our platform helps healthcare providers successfully appeal insurance denials and reduce administrative burden. Studies show that when providers appeal denials, they have a high success rate of overturning the initial decision.
+Fight Health Insurance helps healthcare providers successfully appeal insurance denials and reduce administrative burden. When prior authorization denials are appealed, many are overturned: in 2025, large insurers reversed about 2 in 3 appealed standard requests in Medicare Advantage and more than 4 in 10 in Medicaid managed care and HealthCare.gov plans (KFF: https://www.kff.org/patient-consumer-protections/prior-authorization-metrics-provide-new-insights-into-insurer-practices-but-gaps-remain/).
 
-To join {{ practice_name }}, ask {{ inviter_name }} (or another practice administrator) to add you from the Fight Paperwork dashboard. Once they do, you'll receive an email at this address with a link to set your password and finish activating your account.
+To join, ask {{ inviter_name }} (or another practice administrator) to add you from the Fight Health Insurance dashboard. Once they do, you'll get an email at this address with a link to set your password and finish activating your account.
 
-If you have any questions, please feel free to reach out to us at support42@fighthealthinsurance.com.
+If you have any questions, email us at support42@fighthealthinsurance.com.
 
 Thank you,
 
-The Fight Paperwork team
+The Fight Health Insurance team{% endautoescape %}

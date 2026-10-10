@@ -3,7 +3,7 @@
  * Handles localStorage persistence of user information with privacy scrubbing support.
  */
 
-import { typedValuePattern } from "./typed_value_pattern";
+import { takeOutTypedValues, typedValue, type TypedValue } from "./typed_value_pattern";
 
 // Storage key for user info
 const USER_INFO_KEY = "fhi_user_info";
@@ -90,51 +90,60 @@ export function getExternalModelsPreference(): boolean {
  * Scrub personal info from a message, replacing with placeholders. Each
  * value is found however the message spaces it: any run of whitespace
  * between its words (a line break in a pasted letter) counts as the one
- * space typed (typed_value_pattern.ts).
+ * space typed. A value of one word is found only where it stands whole, in
+ * any script with capitals: a first name "Ann" leaves "annual" alone, and
+ * "José" is found before a comma. A value of more words that runs on into
+ * a longer word comes out with all of it ("283 24th Street" for a typed
+ * "283 24th St"). Names in scripts without capitals are found anywhere
+ * (typed_value_pattern.ts).
  */
 export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): string {
   if (!userInfo || !message) return message;
 
-  let scrubbedMessage = message;
-  // A value with no words is not looked for.
-  const replaceValue = (value: string, wrap: (pattern: string) => string, placeholder: string): void => {
-    const pattern = typedValuePattern(value);
-    if (pattern !== null) {
-      scrubbedMessage = scrubbedMessage.replace(new RegExp(wrap(pattern), "gi"), placeholder);
+  // Each value with the placeholder it is replaced by. All are looked for in
+  // the message as it is, and taken out together at the end, so taking one
+  // out never hides another (typed_value_pattern.ts). Where one is found
+  // inside another, the outer one gives the placeholder, and where two are
+  // found in the same text, the one listed first. A value with no letter or
+  // digit is not looked for.
+  const values: [TypedValue, string][] = [];
+  const replaceValue = (value: string, placeholder: string): void => {
+    const typed = typedValue(value);
+    if (typed !== null) {
+      values.push([typed, placeholder]);
     }
   };
-  const asIs = (pattern: string): string => pattern;
-  const wholeWords = (pattern: string): string => `\\b${pattern}\\b`;
 
-  // Replace email first (before names) to avoid corrupting email addresses
-  // e.g., alice@example.com -> {{FIRST_NAME}}@example.com
+  // The email comes out whole: a name inside it is inside the email's match,
+  // so alice@example.com becomes {{Your Email Address}}, not
+  // {{FIRST_NAME}}@example.com.
   if (userInfo.email) {
-    replaceValue(userInfo.email, asIs, "{{Your Email Address}}");
+    replaceValue(userInfo.email, "{{Your Email Address}}");
   }
 
-  // Replace combined "firstName lastName" before individual names to avoid
-  // partial matches (e.g., replacing firstName first could prevent lastName match)
+  // The first and last name together are one placeholder where the message
+  // has them together; each name on its own is caught below.
   if (userInfo.firstName && userInfo.lastName) {
-    replaceValue(`${userInfo.firstName} ${userInfo.lastName}`, wholeWords, "{{PATIENT_NAME}}");
+    replaceValue(`${userInfo.firstName} ${userInfo.lastName}`, "{{PATIENT_NAME}}");
   }
 
   // Replace individual names (catches occurrences not part of the combined pattern)
   if (userInfo.firstName) {
-    replaceValue(userInfo.firstName, wholeWords, "{{FIRST_NAME}}");
+    replaceValue(userInfo.firstName, "{{FIRST_NAME}}");
   }
 
   if (userInfo.lastName) {
-    replaceValue(userInfo.lastName, wholeWords, "{{LAST_NAME}}");
+    replaceValue(userInfo.lastName, "{{LAST_NAME}}");
   }
 
   // Replace address
   if (userInfo.address) {
-    replaceValue(userInfo.address, asIs, "{{ADDRESS}}");
+    replaceValue(userInfo.address, "{{ADDRESS}}");
   }
 
   // Replace city
   if (userInfo.city) {
-    replaceValue(userInfo.city, wholeWords, "{{CITY}}");
+    replaceValue(userInfo.city, "{{CITY}}");
   }
 
   // State is deliberately NOT scrubbed. It is coarse (1 of 50), and the
@@ -145,10 +154,10 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
 
   // Replace zip code
   if (userInfo.zipCode) {
-    replaceValue(userInfo.zipCode, wholeWords, "{{ZIP_CODE}}");
+    replaceValue(userInfo.zipCode, "{{ZIP_CODE}}");
   }
 
-  return scrubbedMessage;
+  return takeOutTypedValues(message, values);
 }
 
 /**

@@ -86,7 +86,8 @@ async def precheck_appeal_journey(hashed_email: str, denial_uuid: str) -> str:
 
 @activity.defn
 async def generate_and_store_appeals(hashed_email: str, denial_uuid: str) -> int:
-    """Generate + persist drafts; returns the number stored this attempt."""
+    """Generate + persist drafts; returns the number stored this attempt, or
+    SITE_IS_GENERATING when the site's appeals page holds the lease."""
     beat = asyncio.create_task(_heartbeats())
     try:
         await _aclose_old_connections()

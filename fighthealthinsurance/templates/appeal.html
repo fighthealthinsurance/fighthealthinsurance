@@ -1,8 +1,9 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 {% block scriptmagic %}
 <script type="module">
-  import * as main from '{% static "js/dist/appeal.bundle.js" %}';
+  import * as main from '{% bundle "appeal" %}';
 </script>
 <script src="{% static 'js/pwyw.js' %}"></script>
 {# UET tracking for Stripe links handled by base.html #}
@@ -61,6 +62,7 @@ cancelling paid for nothing and stopped nothing. Say both plainly.
   {% csrf_token %}
   <input type="hidden" name="email" value="{{ user_email }}">
   <input type="hidden" name="denial_id" value="{{ denial_id }}">
+  {% if semi_sekret %}<input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">{% endif %}
   
   <textarea class="appeal_text fhi-field" name="appeal_text" id="scrubbed_appeal_text">
     {{appeal}}

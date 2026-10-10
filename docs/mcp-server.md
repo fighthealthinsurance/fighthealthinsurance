@@ -1,8 +1,25 @@
 # MCP server
 
-The read-only server for AI assistants at `/mcp` is described in the
-docstring of `fighthealthinsurance/mcp_server.py`. This page covers running
-it.
+The server for AI assistants at `/mcp` is described in the docstring of
+`fighthealthinsurance/mcp_server.py`. This page covers running it.
+
+It offers two ways to appeal, each behind its own flags. With them off, every
+tool is read-only and answers from the site's public information.
+
+- **On the site** (`MCP_PREPARE_APPEAL_ENABLED`): `prepare_appeal` takes the
+  denial letter the person chose to share and returns a link that opens the
+  site's appeal form with the letter filled in, for the person to check and
+  submit.
+- **In the chat** (`MCP_DRAFT_IN_CHAT_ENABLED` and `MCP_HANDOFF_V2_ENABLED`,
+  on top of `MCP_PREPARE_APPEAL_ENABLED`, `TEMPORAL_ENABLED`,
+  `TEMPORAL_APPEAL_JOURNEY_ENABLED` and `TEMPORAL_PAYLOAD_KEY`): `draft_appeal_in_chat` returns a link to a terms page.
+  Once the person agrees there, letters are drafted in the background, and
+  `get_appeal_drafts` and `answer_appeal_questions` bring the questions and
+  letters back to the chat. `MCP_DRAFT_IN_CHAT_PAUSED` keeps the tools listed
+  but sends people to the site's form instead.
+
+Nothing goes to an insurer on either path: the person sends the letter
+themselves.
 
 ## Which requests /mcp answers
 
@@ -23,15 +40,16 @@ it.
 If a connector fails to connect, a 421 in the access log means the host it
 called isn't in `ALLOWED_HOSTS`.
 
-## Alerts for prepare_appeal
+## Alerts for the appeal links
 
-`prepare_appeal` is the one tool that keeps anything: it holds the denial
-letter an assistant sends until the person opens the link, for at most 2
-hours (`fighthealthinsurance/assistant_handoff.py`). Two caps keep that table
-small, and both are global, while `/mcp` takes anonymous calls. So one
+`prepare_appeal` and `draft_appeal_in_chat` make the same kind of link: it
+holds the denial letter an assistant sends until the person uses it, for at
+most 2 hours (`fighthealthinsurance/assistant_handoff.py`). Two caps keep that
+table small, and both are global, while `/mcp` takes anonymous calls. So one
 caller, or a real burst, can fill them. Nothing errors when that happens:
 each refused assistant is told to send its person to start on the site and
-paste the letter there. The alerts are how we find out.
+paste the letter there. The alerts are how we find out. The counts and caps
+below cover both tools' links.
 
 ### What is counted
 
@@ -39,18 +57,18 @@ Counts only. No series carries a letter, a code or who called.
 
 | Series | Type | Moves when |
 |---|---|---|
-| `fhi_assistant_handoff_links_made_total` | counter | `prepare_appeal` makes a link |
-| `fhi_assistant_handoff_forms_opened_total` | counter | a link opens the filled-in form |
+| `fhi_assistant_handoff_links_made_total` | counter | either tool makes a link |
+| `fhi_assistant_handoff_forms_opened_total` | counter | a link is used: the form opens, or the person agrees on the terms page |
 | `fhi_assistant_handoff_links_expired_total` | counter | a web pod deletes links nobody opened (see below) |
 | `fhi_assistant_handoff_dead_opens_total` | counter | someone opens a used, expired or unknown link |
-| `fhi_assistant_handoff_refused_at_cap_total` | counter | `prepare_appeal` is refused at either cap |
+| `fhi_assistant_handoff_refused_at_cap_total` | counter | either tool is refused at either cap |
 | `fhi_assistant_handoff_live_links` | gauge | read from the table at each scrape |
 
 The counters are per web pod, so add them up with `sum()`. The gauge is
 counted from the table, so every pod reports the same number: take `max()`.
 
-`links_expired_total` counts what `prepare_appeal`'s own sweep deletes. The
-10-minute sweep CronJob is a separate process nothing scrapes, so what it
+`links_expired_total` counts what the sweep run as each link is made
+deletes. The 10-minute sweep CronJob is a separate process nothing scrapes, so what it
 deletes is in its log line instead. Read the counter as "at least". For
 "made and never opened" over a day, `made - opened` is the better number.
 
@@ -116,7 +134,7 @@ What it does and doesn't do:
 
 - It stops one address from flooding `/mcp` as a whole, read-only tools
   included.
-- It does not stop one address from filling `prepare_appeal`'s caps. The
+- It does not stop one address from filling the link caps. The
   server is stateless, so a script needs one POST per link: 60 a minute from
   one address is more than the 30-a-minute cap, and fills the 300 live links
   in about 10 minutes.
@@ -126,3 +144,16 @@ What it does and doesn't do:
 
 Keeping one caller from filling the caps for everyone needs a per-caller
 quota in the app, which is still to decide.
+
+## Link versions
+
+An appeal link's stored payload has a version. v1 holds the letter,
+treatment and condition. v2 (`MCP_HANDOFF_V2_ENABLED`) adds `kind` ("site";
+"chat" for `draft_appeal_in_chat`'s links) and `client`, a short label from the
+client's own name. Both versions open while any v1 link is live. With v2 on,
+the landing page binds the link to the first browser that loads it: its script
+sends a bind request before the button is enabled, the row is resealed under
+the code and a random secret that browser gets as its own cookie (HttpOnly, 2
+hours, this path only), and only a digest of the secret is stored, so the same
+link in another browser gets the used-link page. The one-use rule (the button
+uses the link up) and the 2-hour expiry are unchanged.

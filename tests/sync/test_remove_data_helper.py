@@ -15,6 +15,7 @@ from fighthealthinsurance.helpers import RemoveDataHelper
 from fighthealthinsurance.models import (
     Appeal,
     ChatLeads,
+    ConsentRecord,
     DemoRequests,
     Denial,
     FaxesToSend,
@@ -45,6 +46,12 @@ class TestRemoveDataHelper(TestCase):
             hashed_email=self.target_hash,
             for_denial=self.target_denial,
             appeal_text="target appeal",
+        )
+        ConsentRecord.objects.create(
+            denial=self.target_denial,
+            terms_version="2026-09-08",
+            privacy_version="2026-09-12",
+            boxes=[{"name": "tos", "label": "x", "ticked": True}],
         )
         FollowUp.objects.create(
             hashed_email=self.target_hash,
@@ -131,6 +138,10 @@ class TestRemoveDataHelper(TestCase):
                 email__iexact=self.target_email
             ).count(),
         }
+
+    def test_remove_data_deletes_the_consent_record_with_the_denial(self):
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertFalse(ConsentRecord.objects.filter(denial_id=1).exists())
 
     def test_remove_data_deletes_all_target_rows(self):
         pre = self._target_row_counts()

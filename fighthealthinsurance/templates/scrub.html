@@ -1,14 +1,16 @@
 {% extends 'base.html' %}
+{% load consent %}
+{% load bundles %}
 {% block title %}
 {% if form.errors %}Error: {% endif %}Upload your Health Insurance Denial
 {% endblock title %}
 
-{% load compress %}
+{% load compress consent %}
 {% load static %}
 
 {% block scriptmagic %}
 <script type="module">
-  import * as main from '{% static "js/dist/scrub.bundle.js" %}';
+  import * as main from '{% bundle "scrub" %}';
 </script>
 <script>
   // Track denial appeal start when form is submitted
@@ -69,11 +71,24 @@
 	<div class="main-form">
 	<form class="fhi-stack fhi-stack-loose" method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data" novalidate>
 		{% csrf_token %}
-		{% if default_procedure or default_condition %}
+		{% comment %} A form an assistant's link filled in always carries the
+		   treatment and condition, blank too, with defaults_given: blank then
+		   means none, not "keep what an earlier form left". Its assistant_form
+		   key (assistant_handoff_views.FORM_FIELD) is what lets /process name
+		   the assistant, for this form only; the flow's Back link to a case an
+		   assistant's link brought in renders one too, for that case alone.
+		   {% endcomment %}
+		{% if default_procedure or default_condition or defaults_given %}
 		<input type="hidden" name="default_procedure" value="{{ default_procedure }}">
 		<input type="hidden" name="default_condition" value="{{ default_condition }}">
 		<input type="hidden" name="microsite_slug" value="{{ microsite_slug }}">
 		<input type="hidden" name="microsite_title" value="{{ microsite_title }}">
+		{% endif %}
+		{% if defaults_given %}
+		<input type="hidden" name="defaults_given" value="1">
+		{% endif %}
+		{% if assistant_form %}
+		<input type="hidden" name="assistant_form" value="{{ assistant_form }}">
 		{% endif %}
 	{% comment %} A page the server sends back lists every error here, at the
 	   top, so the page says what went wrong where it opens, with or without
@@ -213,7 +228,7 @@
 		      Remove personal details
 		    </button>
 		</div>
-		<small class="fhi-hint">Takes the name, street and ZIP code above out of your letter, in your browser. Check the letter afterwards for anything it missed.</small>
+		<small class="fhi-hint">Takes the name, email, street and ZIP code above out of your letter, in your browser. Check the letter afterwards for anything it missed.</small>
 	    </div>
 	</section>
 	{% comment %} The four boxes the form needs ticked, as one group named by its
@@ -228,21 +243,19 @@
 		<p class="fhi-hint" id="agreements_hint">Tick all four boxes to go on.</p>
 		<div class="fhi-check-row">
 		<input type="checkbox" id="pii" name="pii" class="fhi-check"{% if form.pii.value %} checked{% endif %}{% if form.pii.errors %} aria-invalid="true" aria-describedby="pii_error"{% endif %}>
-		<label for="pii">I've taken my personal details out of the letter above.</label>
+		<label for="pii">{% consent_label "pii" %}</label>
 		</div>
 		<div class="fhi-check-row">
 		<input type="checkbox" id="privacy" name="privacy" class="fhi-check"{% if form.privacy.value %} checked{% endif %}{% if form.privacy.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
-		<label for="privacy">I have read and understand the <a class="link" href="{% url 'privacy_policy' %}">privacy
-		    policy.</a>
-		</label>
+		<label for="privacy">{% consent_label "privacy" %}</label>
 		</div>
 		<div class="fhi-check-row">
 		<input type="checkbox" id="tos" name="tos" class="fhi-check"{% if form.tos.value %} checked{% endif %}{% if form.tos.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
-		<label for="tos">I agree to the <a href="{% url 'tos' %}">terms of service</a>. I'll use this site only for my own insurance appeals, not to diagnose or treat any condition.</label>
+		<label for="tos">{% consent_label "tos" %}</label>
 		</div>
 		<div class="fhi-check-row">
 		<input type="checkbox" id="personalonly" name="personalonly" class="fhi-check"{% if form.personalonly.value %} checked{% endif %}{% if form.personalonly.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
-		<label for="personalonly">This is for <b>my own appeal</b>. (Doctors, therapists and offices: see our <a href="{% url 'pro_version' %}">professional version</a>.)</label>
+		<label for="personalonly">{% consent_label "personalonly" %}</label>
 		</div>
 		{% comment %} Both of the group's messages sit at its foot, under the last
 		   box, so taking one down never moves a box. firstof, not a chain of

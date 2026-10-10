@@ -22,17 +22,27 @@ from django.db.models import (
     Value,
 )
 from django.db.models.functions import Coalesce, Lower
-from django.http import HttpResponse, HttpResponseBase, StreamingHttpResponse
+from django.http import (
+    Http404,
+    HttpResponse,
+    HttpResponseBase,
+    HttpResponseForbidden,
+    StreamingHttpResponse,
+)
 from django.shortcuts import redirect, render
 from django.db.models import Q
 from django.utils import timezone
+from django.utils.decorators import method_decorator
 from django.views import View, generic
+from django.views.decorators.cache import never_cache
+from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
 
 import ray
 import requests
 from loguru import logger
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
+from fighthealthinsurance import letter_review
 from fighthealthinsurance.common_view_logic import schedule_follow_ups
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.followup_emails import (
@@ -67,6 +77,11 @@ from fighthealthinsurance.models import (
     Denial,
     FollowUpSched,
     InterestedProfessional,
+    LetterReviewItem,
+    LetterReviewLabel,
+    LetterReviewLabelsFrozen,
+    LetterReviewPacket,
+    LetterReviewReader,
     MailingListSubscriber,
     ModelBackendHealthCheckResult,
     ModelCallAttempt,
@@ -90,6 +105,7 @@ from fighthealthinsurance.ml.model_identity import (
     normalize_model_label,
 )
 from fighthealthinsurance.proconnector import (
+    NEW_SIGNUP_INTRO_OFF,
     PROCONNECTOR_INTRO_SUBJECT,
     address_max_length,
     address_problem,
@@ -102,13 +118,17 @@ from fighthealthinsurance.proconnector import (
     default_intro_cc_recipients,
     generate_intro_email,
     get_cofactor_cc_email,
+    get_cofactor_intro_contact,
     get_next_interested_professional,
     get_professional_cc_email,
+    intro_cc_problem,
     intro_wording_problem,
     mailable_interested_professionals,
     mark_email_queued,
     mark_email_sent,
     mark_email_skipped,
+    new_signup_body_problem,
+    new_signup_intro_cc_recipients,
     release_email_claim,
     non_spam_interested_professionals,
     queue_proconnector_intro_email,
@@ -2083,7 +2103,8 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
 
     Returns ``{name: {"key": ..., "category": ...}}``. ``category`` is set
     only for "failing". A health row whose category is a configuration
-    verdict (not configured, disabled, missing credentials, client init) is
+    verdict (retired, not configured, disabled, missing credentials, client
+    init) is
     ignored for a backend that is configured now: it describes the settings
     at that run, not how the backend answered.
     """
@@ -2116,6 +2137,7 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
     static_by_name = {r.model_name: r for r in static_results}
     probe_by_name = {r.model_name: instance for r, instance in checkable}
     config_categories = {
+        mhc.CATEGORY_RETIRED,
         mhc.CATEGORY_NOT_CONFIGURED,
         mhc.CATEGORY_DISABLED,
         mhc.CATEGORY_MISSING_CREDENTIALS,
@@ -2147,6 +2169,8 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
             static = static_by_name.get(name)
             if static is None:
                 states[name] = {"key": "retired"}
+            elif static.category == mhc.CATEGORY_RETIRED:
+                states[name] = {"key": "on_retired_list"}
             elif static.category == mhc.CATEGORY_NOT_CONFIGURED:
                 states[name] = {"key": "not_configured"}
             elif static.category == mhc.CATEGORY_DISABLED:
@@ -2394,13 +2418,14 @@ class ModelUsageDashboardView(generic.TemplateView):
 
     @staticmethod
     def _split_started(rows: List[Any]) -> Optional[datetime.datetime]:
-        """When the newest unbroken run of half-and-half rows began, or None
-        when the newest row is not half and half. ``rows`` is newest first."""
-        from fighthealthinsurance.ml.appeal_prompt_versions import MODE_SPLIT
+        """When the newest unbroken run of random-draw rows (half and half or
+        thirds) began, or None when the newest row draws no version at
+        random. ``rows`` is newest first."""
+        from fighthealthinsurance.ml.appeal_prompt_versions import RANDOM_MODES
 
         started = None
         for row in rows:
-            if row.mode != MODE_SPLIT:
+            if row.mode not in RANDOM_MODES:
                 break
             started = row.created_at
         return started
@@ -2408,7 +2433,7 @@ class ModelUsageDashboardView(generic.TemplateView):
     @classmethod
     def _letter_prompts_panel(cls) -> Dict[str, Any]:
         """The appeal prompt switch, its history, and the head-to-head of
-        the current half-and-half run (ml/appeal_prompt_stats.py)."""
+        the current random-draw run (ml/appeal_prompt_stats.py)."""
         from fighthealthinsurance.ml.appeal_prompt_stats import (
             MIN_MIXED_PICKS,
             head_to_head,
@@ -2416,20 +2441,33 @@ class ModelUsageDashboardView(generic.TemplateView):
         from fighthealthinsurance.ml.appeal_prompt_versions import (
             MODE_CHOICES,
             MODE_ORIGINAL,
+            MODE_VERSIONS,
             OUTPUT_CONTRACT,
             current_letter_prompt_mode,
         )
         from fighthealthinsurance.models import LetterPromptMode
 
         history = list(LetterPromptMode.objects.order_by("-created_at", "-id")[:200])
+        saved_mode = history[0].mode if history else MODE_ORIGINAL
         split_started = cls._split_started(history)
+        pairs = None
+        if split_started:
+            # The pairs the current mode draws, waiting for picks or not, and
+            # any other pair the run has picks for (from an earlier mode in
+            # the same run).
+            drawn = MODE_VERSIONS.get(saved_mode, ())
+            pairs = [
+                h2h
+                for h2h in head_to_head(split_started)
+                if h2h.picks or (h2h.first in drawn and h2h.second in drawn)
+            ]
         return {
             "mode_choices": MODE_CHOICES,
-            "saved_mode": history[0].mode if history else MODE_ORIGINAL,
+            "saved_mode": saved_mode,
             "this_pod_mode": current_letter_prompt_mode(),
             "history": history[:10],
             "split_started": split_started,
-            "head_to_head": head_to_head(split_started) if split_started else None,
+            "head_to_head": pairs,
             "min_mixed_picks": MIN_MIXED_PICKS,
             "output_contract": OUTPUT_CONTRACT,
         }
@@ -2444,7 +2482,10 @@ class ModelUsageDashboardView(generic.TemplateView):
 
         mode = (request.POST.get("mode") or "").strip()
         if mode not in {m for m, _label in MODE_CHOICES}:
-            return HttpResponse("Choose original, new or half and half.", status=400)
+            return HttpResponse(
+                "Choose original, new, half and half, sectioned or thirds.",
+                status=400,
+            )
         note = (request.POST.get("note") or "").strip()[:500]
         LetterPromptMode.objects.create(
             mode=mode,
@@ -2618,7 +2659,7 @@ class ModelUsageDashboardView(generic.TemplateView):
             {
                 "counter": name,
                 "amount": amount,
-                "calls": name.startswith(spend.AZURE + ":"),
+                "calls": spend.is_count(name),
             }
             for name, amount in summary.items()
         ]
@@ -3401,6 +3442,7 @@ class ModelBackendStatusView(generic.TemplateView):
                     "internal_name": r.internal_name,
                     "enabled": r.enabled,
                     "config_category": config_category,
+                    "retired": r.category == mhc.CATEGORY_RETIRED,
                     # Missing credentials and a failed client construction keep
                     # enabled=True, so they need their own flag or the page
                     # would call them enabled.
@@ -3419,6 +3461,9 @@ class ModelBackendStatusView(generic.TemplateView):
                     ),
                     "top_external_rank": rank,
                     "last_check": check,
+                    # Informational whatever the model is now: never a failure.
+                    "last_check_retired": check is not None
+                    and check.category == mhc.CATEGORY_RETIRED,
                     "stale_deployment": stale_deployment,
                     "stale_environment": stale_environment,
                     "config_changed": check is not None and check.enabled != r.enabled,
@@ -4012,7 +4057,7 @@ class ProConnectorProcessView(View):
 
 
 def _intro_send_problem(
-    pro: InterestedProfessional, body: str, subject: str
+    pro: InterestedProfessional, body: str, subject: str, *, new_signup: bool = False
 ) -> Optional[str]:
     """First problem blocking a *real* send/queue of the intro to ``pro``, or
     ``None``.
@@ -4025,13 +4070,20 @@ def _intro_send_problem(
     because a misconfigured CC makes the send helpers raise, and checking
     before the record is claimed means staff see the actual reason and the
     record stays in the queue for a retry once the setting is fixed.
+    ``new_signup`` also checks that the body mentions the Cofactor contact the
+    new-signup version CCs (:func:`new_signup_body_problem`) and that contact's
+    configuration.
     """
     problem = ProConnectorProcessView._intro_form_problem(body, subject)
     if problem is not None:
         return problem
     if not is_sendable_email(pro.email):
         return f"{pro.email} is not a sendable address; cannot send."
-    return cofactor_cc_problem()
+    if new_signup:
+        problem = new_signup_body_problem(body)
+        if problem is not None:
+            return problem
+    return intro_cc_problem(new_signup=new_signup)
 
 
 class ProConnectorLetterView(View):
@@ -4080,9 +4132,12 @@ class ProConnectorQuickIntroView(View):
     Linked (as a button) from the team notification email each new
     interested-professional signup sends: staff press it, land here behind the
     staff login, and confirm with a single press -- the intro email is drafted
-    automatically (AI-personalized, falling back to the approved base email)
-    and sent and recorded exactly like a send from the full processing
-    workflow (:class:`ProConnectorProcessView`). The GET only previews the
+    automatically (AI-personalized, falling back to the approved new-signup
+    email) and sent and recorded like a send from the full processing workflow
+    (:class:`ProConnectorProcessView`). Unlike that workflow, which re-engages
+    the signup backlog without involving Cofactor AI, this is the new-signup
+    version: it says "Let me introduce you to" the named Cofactor AI contact
+    and CCs them (``new_signup=True`` throughout). The GET only previews the
     draft; the send itself is a POST, so mail scanners prefetching the email's
     links can never trigger an introduction.
 
@@ -4113,16 +4168,19 @@ class ProConnectorQuickIntroView(View):
         draft.
         """
         block_reason = quick_intro_block_reason(pro)
-        if draft is None and block_reason is None:
-            draft = generate_intro_email(pro)
+        # Off: show why instead of the form, and skip the model call.
+        intro_off = get_cofactor_intro_contact() is None
+        if draft is None and block_reason is None and not intro_off:
+            draft = generate_intro_email(pro, new_signup=True)
         context = {
             "title": "Quick Cofactor AI Introduction",
             "pro": pro,
             "block_reason": block_reason,
+            "intro_off": NEW_SIGNUP_INTRO_OFF if intro_off else None,
             "email_body": draft,
             "subject": PROCONNECTOR_INTRO_SUBJECT,
-            "cc_emails": default_intro_cc_recipients(),
-            "cofactor_cc_problem": cofactor_cc_problem(),
+            "cc_emails": new_signup_intro_cc_recipients(),
+            "cofactor_cc_problem": intro_cc_problem(new_signup=True),
             "error": error,
             "notice": notice,
             "send_window_hint": describe_send_window(pro.phone_number),
@@ -4161,7 +4219,7 @@ class ProConnectorQuickIntroView(View):
         # rejected like the full workflow's -- never auto-drafted -- so content
         # nobody reviewed can never go out.
         subject = PROCONNECTOR_INTRO_SUBJECT
-        error = _intro_send_problem(pro, body, subject)
+        error = _intro_send_problem(pro, body, subject, new_signup=True)
         if error:
             return self._render(request, pro, draft=body, error=error, status=400)
 
@@ -4188,7 +4246,7 @@ class ProConnectorQuickIntroView(View):
                 ),
             )
         try:
-            deliver(pro, subject=subject, body=body)
+            deliver(pro, subject=subject, body=body, new_signup=True)
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Failed to {action} quick pro-connector intro to "
@@ -4400,4 +4458,257 @@ class TemporalUIProxyView(View):
             response["Location"] = (
                 location[len(upstream) :] if location.startswith(upstream) else location
             )
+        return response
+
+
+# ---------------------------------------------------------------------------
+# Letter review (letter_review.py): staff label eval appeal letters, blind.
+#
+# Every page below is scoped to the signed-in reader. A reader reaches only
+# the items assigned to them and only their own labels; anyone else, staff
+# included, gets a 404 that looks the same as a packet that is not there. No
+# page shows another reader's label, which other readers share a letter, a
+# model name or a score (the packet carries none of those), and the pages
+# address a letter by a random slug, never the eval repo's key. Labels leave
+# through the superuser-only export, which stays shut to a superuser who
+# reads the packet until every reader is done, or the letter_review_export
+# command. Sentry never sees these pages' verdicts or notes
+# (sentry_filters.py, LETTER_REVIEW_PATH_PREFIX), and neither does the ADMINS
+# error email: every view here is marked sensitive_variables(), so a report
+# blanks its frame and every frame under it, where letters, prompts and marks
+# sit (letter_review.py marks its helpers the same way).
+# ---------------------------------------------------------------------------
+
+
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
+class LetterReviewIndexView(View):
+    """The packets the signed-in staff member reads, with their own progress.
+
+    A packet they do not read shows its name and how many letters it holds,
+    and nothing else.
+    """
+
+    def get(self, request) -> HttpResponse:
+        mine = {
+            reader.packet_id: reader
+            for reader in LetterReviewReader.objects.filter(user=request.user)
+        }
+        reading = []
+        others = []
+        superuser = request.user.is_superuser
+        for packet in LetterReviewPacket.objects.order_by("-created_at", "-id"):
+            reader = mine.get(packet.pk)
+            if reader is None:
+                total = LetterReviewItem.objects.filter(packet=packet).count()
+                others.append({"packet": packet, "total": total})
+                continue
+            labeled, assigned = letter_review.progress(reader)
+            reading.append(
+                {
+                    "packet": packet,
+                    "labeled": labeled,
+                    "assigned": assigned,
+                    "started": labeled > 0,
+                    "finished": assigned > 0 and labeled >= assigned,
+                    # The export holds the other readers' labels too, so on a
+                    # packet a superuser reads it waits for everyone.
+                    "can_export": letter_review.export_open_to(request.user, packet),
+                }
+            )
+        return render(
+            request,
+            "letter_review_index.html",
+            {
+                "reading": reading,
+                "others": others,
+                "superuser": superuser,
+            },
+        )
+
+
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
+class LetterReviewNextView(View):
+    """Send the reader to their first unlabeled letter, or to the done page."""
+
+    def get(self, request, packet_id: int) -> HttpResponse:
+        reader = letter_review.reader_or_404(packet_id, request.user)
+        item = letter_review.next_unlabeled(reader)
+        if item is None:
+            return redirect("letter_review_done", packet_id=packet_id)
+        return redirect("letter_review_item", packet_id=packet_id, slug=item.slug)
+
+
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
+class LetterReviewMineView(View):
+    """The reader's own letters by number, each with their own mark or none.
+
+    The way back to any earlier letter in one click. It reads only this
+    reader's labels, so it is as blind as the letter pages.
+    """
+
+    def get(self, request, packet_id: int) -> HttpResponse:
+        reader = letter_review.reader_or_404(packet_id, request.user)
+        letters = letter_review.reader_letters(reader)
+        labeled = sum(1 for letter in letters if letter["verdict"])
+        return render(
+            request,
+            "letter_review_mine.html",
+            {
+                "packet": reader.packet,
+                "letters": letters,
+                "labeled": labeled,
+                "assigned": len(letters),
+            },
+        )
+
+
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
+class LetterReviewDoneView(View):
+    """Where a reader lands once every letter assigned to them has a label."""
+
+    def get(self, request, packet_id: int) -> HttpResponse:
+        reader = letter_review.reader_or_404(packet_id, request.user)
+        labeled, assigned = letter_review.progress(reader)
+        return render(
+            request,
+            "letter_review_done.html",
+            {
+                "packet": reader.packet,
+                "labeled": labeled,
+                "assigned": assigned,
+                "remaining": assigned - labeled,
+            },
+        )
+
+
+@method_decorator(never_cache, name="dispatch")
+# A reader's verdict and note never go into an error report: the ADMINS
+# email masks them in the POST and blanks every frame's variables, where the
+# note and the letter's text would otherwise sit.
+@method_decorator(sensitive_post_parameters("verdict", "note"), name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
+class LetterReviewItemView(View):
+    """One letter, the input its writer saw, the rule, and the reader's label.
+
+    GET shows the reader's own label pre-filled when there is one. POST saves
+    it (one label per reader per letter, so a second save changes the first)
+    and moves on to the reader's next unlabeled letter after this one, or to
+    the next-letter redirect when none is left after it. It never lands on a
+    letter already labeled, where an old mark would sit pre-checked.
+    """
+
+    template_name = "letter_review_item.html"
+
+    def _render(
+        self,
+        request,
+        reader: LetterReviewReader,
+        item: LetterReviewItem,
+        form: core_forms.LetterReviewLabelForm,
+        saved: Optional[LetterReviewLabel],
+        *,
+        status: int = 200,
+    ) -> HttpResponse:
+        place, previous_slug, next_slug = letter_review.neighbours(reader, item)
+        labeled, assigned = letter_review.progress(reader)
+        selected = form["verdict"].value()
+        context = {
+            "packet": reader.packet,
+            "item": item,
+            "form": form,
+            "selected": selected,
+            "saved_label": saved.get_verdict_display() if saved else None,
+            "note": form["note"].value() or "",
+            "note_max": letter_review.NOTE_MAX,
+            "verdicts": letter_review.verdict_choices(),
+            "place": place,
+            "assigned": assigned,
+            "labeled": labeled,
+            "previous_slug": previous_slug,
+            "next_slug": next_slug,
+            "frozen": letter_review.labels_frozen(reader.packet),
+        }
+        return render(request, self.template_name, context, status=status)
+
+    def get(self, request, packet_id: int, slug: str) -> HttpResponse:
+        reader = letter_review.reader_or_404(packet_id, request.user)
+        item = letter_review.item_or_404(reader, slug)
+        label = letter_review.own_label(reader, item)
+        initial = {"verdict": label.verdict, "note": label.note} if label else {}
+        form = core_forms.LetterReviewLabelForm(initial=initial)
+        return self._render(request, reader, item, form, label)
+
+    def post(self, request, packet_id: int, slug: str) -> HttpResponse:
+        reader = letter_review.reader_or_404(packet_id, request.user)
+        item = letter_review.item_or_404(reader, slug)
+        if letter_review.labels_frozen(reader.packet):
+            # Every reader is done: the marks are final as given.
+            saved = letter_review.own_label(reader, item)
+            initial = {"verdict": saved.verdict, "note": saved.note} if saved else {}
+            form = core_forms.LetterReviewLabelForm(initial=initial)
+            return self._render(request, reader, item, form, saved, status=409)
+        form = core_forms.LetterReviewLabelForm(request.POST)
+        if not form.is_valid():
+            saved = letter_review.own_label(reader, item)
+            return self._render(request, reader, item, form, saved, status=400)
+        try:
+            letter_review.save_label(
+                reader, item, form.cleaned_data["verdict"], form.cleaned_data["note"]
+            )
+        except LetterReviewLabelsFrozen:
+            # The last reader finished between the check above and this save.
+            saved = letter_review.own_label(reader, item)
+            initial = {"verdict": saved.verdict, "note": saved.note} if saved else {}
+            form = core_forms.LetterReviewLabelForm(initial=initial)
+            return self._render(request, reader, item, form, saved, status=409)
+        # The verdict stays out of the log: the review is blind, and staff
+        # read these logs. So does the eval key, which could name the writer.
+        logger.info(
+            f"Staff {request.user} saved a letter review label "
+            f"(packet {packet_id}, item {item.pk})"
+        )
+        following = letter_review.next_unlabeled_after(reader, item)
+        if following is not None:
+            return redirect(
+                "letter_review_item", packet_id=packet_id, slug=following.slug
+            )
+        return redirect("letter_review_next", packet_id=packet_id)
+
+
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(sensitive_variables(), name="dispatch")
+class LetterReviewExportView(View):
+    """Download a packet's labels JSON. Superusers only.
+
+    Every reader's labels are in it, so a superuser who is also a reader on
+    the packet is refused until every reader has finished: until then it
+    would show them the other reader's marks on the letters they share.
+    """
+
+    def get(self, request, packet_id: int) -> HttpResponse:
+        if not request.user.is_superuser:
+            return HttpResponseForbidden(
+                "Only a superuser can export letter review labels."
+            )
+        packet = LetterReviewPacket.objects.filter(pk=packet_id).first()
+        if packet is None:
+            raise Http404("No such letter review")
+        if not letter_review.export_open_to(request.user, packet):
+            return HttpResponseForbidden(
+                "You read this packet, and the labels hold every reader's "
+                "marks, so they open once every reader has finished."
+            )
+        body = json.dumps(letter_review.export_labels(packet), indent=2) + "\n"
+        response = HttpResponse(body, content_type="application/json")
+        response["Content-Disposition"] = (
+            f'attachment; filename="{letter_review.export_filename(packet)}"'
+        )
+        logger.info(
+            f"Staff {request.user} exported letter review labels for packet "
+            f"{packet.pk}"
+        )
         return response

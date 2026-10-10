@@ -136,6 +136,19 @@ def find_unfilled_placeholders(text: str) -> list[str]:
     return _once_each([spot.shown for spot in _find_spots(text)])
 
 
+def is_ignored(text: str) -> bool:
+    """Whether the whole of ``text`` is something the check leaves alone,
+    such as a quotation's bracketed word ([This]) or note ([Cleaned up])."""
+    return any(rule.regex.fullmatch(text) for rule in _IGNORE)
+
+
+def find_placeholder_spans(text: str) -> list[tuple[int, int]]:
+    """Where each blank in ``text`` is, as ``(start, end)``, in the order it
+    appears: what the fax form stops for, for a caller that lists the blanks
+    as the letter has them (assistant_drafts.placeholders_in)."""
+    return [(spot.at, spot.at + len(spot.written)) for spot in _find_spots(text)]
+
+
 def find_placeholders_as_written(text: str) -> list[str]:
     """Each blank in ``text`` exactly as the letter has it, once, in the
     order it first appears.

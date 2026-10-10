@@ -26,6 +26,17 @@ def _is_triage_refresh(kwargs) -> bool:
 class TriageLifecycleTest(TestCase):
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
+    def setUp(self):
+        # No live model call: unstubbed, an earlier test's leftover state could
+        # leave this async_to_sync waiting forever.
+        self.enterContext(
+            patch.object(
+                DenialCreatorHelper,
+                "generate_appeal_questions",
+                new=AsyncMock(return_value=[]),
+            )
+        )
+
     def _triaged(self, **overrides):
         values = dict(
             hashed_email=Denial.get_hashed_email("life@example.com"),

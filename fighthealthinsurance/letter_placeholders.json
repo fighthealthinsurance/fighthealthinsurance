@@ -30,9 +30,32 @@
     },
     {
       "name": "the brackets of quoting in legal writing",
-      "pattern": "\\[(?:sic|emphasis (?:added|supplied|mine|in original)|(?:internal )?(?:citations?|quotation marks|footnotes?) omitted|alterations? in original)\\.?\\]",
+      "pattern": "\\[(?:sic|cleaned up|ibid|id\\.|emphasis (?:added|supplied|mine|ours|in original)|(?:internal )?(?:citations?|quotation marks|quotations?|footnotes?|ellipses|ellipsis) omitted|(?:alterations?|ellipsis|ellipses|brackets|capitali[sz]ation|punctuation) in original|(?:alterations?|brackets|capitali[sz]ation|punctuation) (?:added|altered|mine))\\.?\\]",
       "flags": "i",
-      "examples": ["[sic]", "[Emphasis added]", "[internal citations omitted]"]
+      "examples": [
+        "[sic]",
+        "[Emphasis added]",
+        "[internal citations omitted]",
+        "[ellipsis in original]",
+        "[brackets in original]",
+        "[alterations added]",
+        "[capitalization altered]",
+        "[Cleaned up]",
+        "[Emphasis ours]",
+        "[Ibid]",
+        "[Id.]"
+      ]
+    },
+    {
+      "name": "a single ordinary word in brackets, as a quotation adjusts its first word",
+      "pattern": "\\[(?:a|an|and|are|as|at|be|but|by|for|he|her|his|i|in|is|it|its|me|my|of|on|or|our|she|that|the|their|them|these|they|this|those|to|us|was|we|were|which|who|with|you)\\](?!\\()",
+      "flags": "i",
+      "examples": [
+        "[It] is medically necessary.",
+        "[We] ask the plan to cover it.",
+        "the policy says [the] member may appeal",
+        "[This] treatment was recommended."
+      ]
     },
     {
       "name": "a number masked down to its last four digits, as a statement prints it",

@@ -51,7 +51,7 @@ if get_env_variable("FHI_WS_ENFORCE_ORIGIN", "true").lower() not in (
 
 
 def http_and_lifespan_routes(django_http_app: Any) -> dict[str, Any]:
-    """The "http" entry, plus "lifespan" when the read-only MCP server is on.
+    """The "http" entry, plus "lifespan" when the MCP server is on.
 
     With MCP_SERVER_ENABLED off (the default) this is Django alone, /mcp is
     an ordinary 404, and the MCP server is never mounted. With it on, a small
@@ -79,6 +79,11 @@ application = ProtocolTypeRouter(
 # Intentional import after the get_asgi_application is called.
 
 from django.conf import settings
+
+from fighthealthinsurance.ml import spend as _spend
+
+# Load the spend ledger at boot, not on the first request.
+_spend._ledger.start()
 
 # Sentry only fires from real (non-local) deployments. "endpoint set and
 # DEBUG off" is not enough: dev machines routinely carry the production

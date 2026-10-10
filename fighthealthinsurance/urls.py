@@ -33,6 +33,7 @@ from django.views.generic.base import RedirectView
 from fighthealthinsurance import (
     agent_docs,
     assistant_handoff_views,
+    assistant_terms_views,
     fax_views,
     intake_resume_views,
     staff_views,
@@ -180,6 +181,37 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         staff_member_required(staff_views.ProConnectorExtractCSVView.as_view()),
         name="proconnector_extract_csv",
     ),
+    # Letter review (letter_review.py): staff label eval letters, blind.
+    path(
+        "timbit/help/letter_review/",
+        staff_member_required(staff_views.LetterReviewIndexView.as_view()),
+        name="letter_review_index",
+    ),
+    path(
+        "timbit/help/letter_review/<int:packet_id>/next",
+        staff_member_required(staff_views.LetterReviewNextView.as_view()),
+        name="letter_review_next",
+    ),
+    path(
+        "timbit/help/letter_review/<int:packet_id>/done",
+        staff_member_required(staff_views.LetterReviewDoneView.as_view()),
+        name="letter_review_done",
+    ),
+    path(
+        "timbit/help/letter_review/<int:packet_id>/mine",
+        staff_member_required(staff_views.LetterReviewMineView.as_view()),
+        name="letter_review_mine",
+    ),
+    path(
+        "timbit/help/letter_review/<int:packet_id>/item/<slug:slug>",
+        staff_member_required(staff_views.LetterReviewItemView.as_view()),
+        name="letter_review_item",
+    ),
+    path(
+        "timbit/help/letter_review/<int:packet_id>/labels.json",
+        staff_member_required(staff_views.LetterReviewExportView.as_view()),
+        name="letter_review_export",
+    ),
     # Authentication
     path("v0/auth/", include("fhi_users.urls")),
     # stripe integration (TODO webhooks go here)
@@ -206,28 +238,40 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.UnsubscribeView.as_view(),
         name="unsubscribe",
     ),
-    # Fax follow up
+    # Fax follow up. The address in the email redirects to the page, whose
+    # address carries no ids (fax_views.FaxFollowUpLinkView).
     # So if there's an extra / or . at the end we ignore it.
     path(
         "v0/faxfollowup/<uuid:uuid>/<slug:hashed_email>",
-        fax_views.FaxFollowUpView.as_view(),
+        fax_views.FaxFollowUpLinkView.as_view(),
         name="fax-followup",
     ),
     path(
         "v0/faxfollowup/<uuid:uuid>/<slug:hashed_email>.",
-        fax_views.FaxFollowUpView.as_view(),
+        fax_views.FaxFollowUpLinkView.as_view(),
         name="fax-followup-with-a-period",
     ),
     path(
         "v0/faxfollowup/<uuid:uuid>/<slug:hashed_email>/",
-        fax_views.FaxFollowUpView.as_view(),
+        fax_views.FaxFollowUpLinkView.as_view(),
         name="fax-followup-with-trailing-slash",
     ),
-    # Back to normal stuff
+    path(
+        "v0/faxfollowup",
+        fax_views.FaxFollowUpView.as_view(),
+        name="fax-followup-page",
+    ),
+    # Stripe's success_url for a fax payment: sends the fax, then redirects
+    # to the sent page, whose address carries no ids.
     path(
         "v0/sendfax/<uuid:uuid>/<slug:hashed_email>/",
         fax_views.SendFaxView.as_view(),
         name="sendfaxview",
+    ),
+    path(
+        "v0/sendfax/sent",
+        fax_views.FaxSentView.as_view(),
+        name="fax-sent",
     ),
     path(
         "v0/stagefax",
@@ -279,6 +323,20 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         assistant_handoff_views.AssistantHandoffView.as_view(),
         name="assistant_handoff",
     ),
+    # The terms page's buttons, under the handoff page's path so the
+    # browser's binder cookie comes with them (assistant_terms_views.py).
+    path(
+        "from-your-assistant/agree",
+        assistant_terms_views.AssistantAgreeView.as_view(),
+        name="assistant_agree",
+    ),
+    # The emailed link back to an assistant's letters; its token rides
+    # after "#" (assistant_continue.py).
+    path(
+        "your-appeal-letters",
+        assistant_terms_views.AssistantContinueView.as_view(),
+        name="assistant_continue",
+    ),
     path(
         "about-us",
         views.AboutView.as_view(),
@@ -293,6 +351,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "how-to-help",
         views.HowToHelpView.as_view(),
         name="how-to-help",
+    ),
+    path(
+        "ai-assistants",
+        views.AiAssistantsView.as_view(),
+        name="ai-assistants",
     ),
     path(
         "coverage-changes",
@@ -314,7 +377,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     # Experimental page: always routed so reverse() works everywhere, but the
     # view serves 404 unless MEDICAID_ELIGIBILITY_PAGE_ENABLED is on (checked
-    # per-request, like NEW_PROFESSIONAL_SIGNUP_ENABLED).
+    # per-request, like FIGHT_PAPERWORK_ENABLED).
     path(
         "medicaid-eligibility",
         views.MedicaidEligibilityView.as_view(),

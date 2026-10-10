@@ -59,6 +59,37 @@ def _build_rxnorm_context(treatment: str, normalized: Any) -> str:
     return " ".join(parts)
 
 
+def _format_prompt_details(value: Any) -> str:
+    """Render intake data as plain ``label: value`` lines for the prompt.
+
+    ``qa_pairs`` and ``patient_info`` arrive as dicts / lists of pairs; their
+    Python reprs (``{'name': ...}``) used to be interpolated straight into the
+    prompt, which is noise for the model and leaks structure it may echo.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return "\n".join(f"- {k}: {v}" for k, v in value.items() if v not in (None, ""))
+    if isinstance(value, (list, tuple)):
+        lines: list[str] = []
+        for item in value:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                lines.append(f"- {item[0]}: {item[1]}")
+            elif isinstance(item, dict):
+                lines.append(
+                    "- "
+                    + "; ".join(
+                        f"{k}: {v}" for k, v in item.items() if v not in (None, "")
+                    )
+                )
+            else:
+                lines.append(f"- {item}")
+        return "\n".join(lines)
+    return str(value)
+
+
 class PriorAuthGenerator:
     """
     Generator for prior authorization proposals using ML models.
@@ -264,15 +295,17 @@ class PriorAuthGenerator:
         Returns:
             Formatted prompt string
         """
-        # Extract data from context
-        diagnosis = context.get("diagnosis", "")
-        treatment = context.get("treatment", "")
-        insurance_company = context.get("insurance_company", "")
+        # Extract data from context. Unknown treatment/diagnosis render as a
+        # description rather than the literal "None".
+        diagnosis = context.get("diagnosis") or "the stated diagnosis"
+        treatment = context.get("treatment") or "the requested treatment"
+        insurance_company = context.get("insurance_company") or "not stated"
         patient_health_history = context.get("patient_health_history", "")
         qa_pairs = context.get("qa_pairs", [])
         provider_info = context.get("provider_info", "")
         patient_info = context.get("patient_info", "")
         proposal_type = context.get("proposal_type", "letter")
+        urgent = bool(context.get("urgent"))
 
         what_to_gen = (
             "prior authorization request letter"
@@ -281,10 +314,16 @@ class PriorAuthGenerator:
         )
 
         # Build the prompt
-        prompt = f"""
-        Generate a {what_to_gen} for {treatment} to treat {diagnosis}.
-        Insurance Company: {insurance_company}
-        """
+        prompt = (
+            f"Generate a {what_to_gen} for {treatment} to treat {diagnosis}.\n"
+            f"Insurance company: {insurance_company}\n"
+        )
+        if urgent:
+            prompt += (
+                "\nThis request is URGENT. Ask for expedited review and state "
+                "briefly why waiting for a standard review would seriously "
+                "jeopardize the patient's health.\n"
+            )
 
         # The RxNorm hint is resolved once in ``generate_prior_auth_proposals``
         # and passed through ``context`` so concurrent proposal paths share
@@ -296,44 +335,54 @@ class PriorAuthGenerator:
         # Add Q&A information if available
         if qa_pairs:
             prompt += (
-                f"\n\nUse the following information from the patient's answers: "
-                f"{qa_pairs}"
+                "\n\nInformation from the patient's answers (use it in the "
+                f"justification):\n{_format_prompt_details(qa_pairs)}"
             )
         # Add patient history if available
         if patient_health_history:
-            prompt += f"\n\nAdditional Patient History:\n{patient_health_history}"
+            prompt += f"\n\nAdditional patient history:\n{patient_health_history}"
 
         if provider_info:
-            prompt += f"\n\nProvider Information:\n{provider_info}"
+            prompt += f"\n\nProvider information:\n{provider_info}"
 
         if patient_info:
-            prompt += f"\n\nPatient Information:\n{patient_info}"
+            prompt += (
+                f"\n\nPatient information:\n{_format_prompt_details(patient_info)}"
+            )
 
-        prompt += f"\n\n Today's date is {str(datetime.date.today())}.\n\n"
+        prompt += f"\n\nToday's date is {str(datetime.date.today())}.\n\n"
 
         # Add formatting instructions
         if proposal_type == "letter":
-            prompt += """
-        Format the prior authorization request as a formal {{what_to_gen}} with:
-        1. Date and header
-        2. Patient and provider information (use placeholders if unknown)
-        3. Clear statement of the requested treatment/procedure
-        4. Medical necessity justification
-        5. Supporting evidence and clinical rationale
-        6. Relevant billing codes if available
-        7. Closing with provider details
-
-        Use $placeholders for information that will be filled in later, such as:
-        - $patient_name, $patient_dob, $plan_id, $member_id
-        - $provider_name, $provider_npi, $provider_type, $provider_credentials
-        - $practice_name, $practice_phone, $practice_fax, $practice_address
-
-        But if the information is available, use it directly.
-
-        Make it persuasive, evidence-based, and compliant with insurance requirements.
-        """
+            prompt += (
+                f"Format the request as a formal {what_to_gen} with:\n"
+                "1. Date and header\n"
+                "2. Patient and provider information (use placeholders if unknown)\n"
+                "3. Clear statement of the requested treatment/procedure\n"
+                "4. Medical necessity justification\n"
+                "5. Supporting evidence and clinical rationale\n"
+                "6. Relevant billing codes if available\n"
+                "7. Closing with provider details\n"
+                "\n"
+                "Use $placeholders for information that will be filled in later, "
+                "such as:\n"
+                "- $patient_name, $patient_dob, $plan_id, $member_id\n"
+                "- $provider_name, $provider_npi, $provider_type, "
+                "$provider_credentials\n"
+                "- $practice_name, $practice_phone, $practice_fax, "
+                "$practice_address\n"
+                "\n"
+                "But if the information is available above, use it directly.\n"
+                "\n"
+                "Make it persuasive, evidence-based, and compliant with insurance "
+                "requirements. Output only the letter, with no preamble."
+            )
         else:
-            prompt += """Format the medical note as a concise summary written by the provider about the patient."""
+            prompt += (
+                "Format the medical note as a concise summary written by the "
+                "provider about the patient. Output only the note, with no "
+                "preamble."
+            )
 
         return prompt
 

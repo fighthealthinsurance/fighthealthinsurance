@@ -45,6 +45,13 @@ class LetterPromptModeSettingTest(TestCase):
         LetterPromptMode.objects.create(mode=apv.MODE_SPLIT)
         self.assertEqual(apv.current_letter_prompt_mode(), apv.MODE_SPLIT)
 
+    def test_the_new_modes_are_read_back(self):
+        for mode in (apv.MODE_SECTIONED, apv.MODE_THIRDS):
+            with self.subTest(mode=mode):
+                LetterPromptMode.objects.create(mode=mode)
+                apv.reset_letter_prompt_mode_cache()
+                self.assertEqual(apv.current_letter_prompt_mode(), mode)
+
     def test_an_unknown_value_means_original(self):
         LetterPromptMode.objects.create(mode="sideways")
         self.assertEqual(apv.current_letter_prompt_mode(), apv.MODE_ORIGINAL)
@@ -82,6 +89,11 @@ class PickedLetterVersionTest(TestCase):
         self.assertIsNone(pa.prompt_version)
 
 
+def _pair(pairs, first, second):
+    (h2h,) = [h for h in pairs if (h.first, h.second) == (first, second)]
+    return h2h
+
+
 class HeadToHeadTest(TestCase):
     def _draft(self, denial, version, model="model-x"):
         return ProposedAppeal.objects.create(
@@ -110,11 +122,11 @@ class HeadToHeadTest(TestCase):
         self._pick(mixed, a, [a, b, c])
         d = self._draft(one_version, apv.PROMPT_V2)
         self._pick(one_version, d, [d])
-        h2h = head_to_head()
+        h2h = _pair(head_to_head(), apv.PROMPT_V1, apv.PROMPT_V2)
         self.assertEqual(h2h.picks, 1)
-        self.assertEqual((h2h.v1_chosen, h2h.v2_chosen), (1, 0))
+        self.assertEqual((h2h.first_chosen, h2h.second_chosen), (1, 0))
         # Two of the three drafts on that page were v2.
-        self.assertAlmostEqual(h2h.v2_expected, 2 / 3)
+        self.assertAlmostEqual(h2h.second_expected, 2 / 3)
         self.assertFalse(h2h.enough)
 
     def test_a_pick_of_an_unversioned_letter_adds_no_expectation(self):
@@ -125,8 +137,10 @@ class HeadToHeadTest(TestCase):
             for_denial=denial, appeal_text="combined", model_name="synthesized"
         )
         self._pick(denial, synthesized, [a, b, synthesized])
-        h2h = head_to_head()
-        self.assertEqual((h2h.picks, h2h.other_chosen, h2h.v2_expected), (1, 1, 0.0))
+        h2h = _pair(head_to_head(), apv.PROMPT_V1, apv.PROMPT_V2)
+        self.assertEqual(
+            (h2h.picks, h2h.other_chosen, h2h.second_expected), (1, 1, 0.0)
+        )
 
     def test_a_pick_before_the_window_is_left_out(self):
         denial = _denial()
@@ -137,7 +151,57 @@ class HeadToHeadTest(TestCase):
             created_at=timezone.now() - datetime.timedelta(days=40)
         )
         since = timezone.now() - datetime.timedelta(days=30)
-        self.assertEqual(head_to_head(since).picks, 0)
+        self.assertEqual(
+            _pair(head_to_head(since), apv.PROMPT_V1, apv.PROMPT_V2).picks, 0
+        )
+
+    def test_every_pair_of_versions_is_reported(self):
+        self.assertEqual(
+            [(h.first, h.second) for h in head_to_head()],
+            [
+                (apv.PROMPT_V1, apv.PROMPT_V2),
+                (apv.PROMPT_V1, apv.PROMPT_V3),
+                (apv.PROMPT_V2, apv.PROMPT_V3),
+            ],
+        )
+
+    def test_a_page_with_all_three_versions_counts_for_each_pair(self):
+        denial = _denial()
+        a = self._draft(denial, apv.PROMPT_V1)
+        b = self._draft(denial, apv.PROMPT_V2)
+        c = self._draft(denial, apv.PROMPT_V3)
+        self._pick(denial, c, [a, b, c])
+        pairs = head_to_head()
+        v1_v2 = _pair(pairs, apv.PROMPT_V1, apv.PROMPT_V2)
+        # A v3 pick says nothing about v1 against v2.
+        self.assertEqual(
+            (v1_v2.picks, v1_v2.other_chosen, v1_v2.second_expected), (1, 1, 0.0)
+        )
+        for first in (apv.PROMPT_V1, apv.PROMPT_V2):
+            h2h = _pair(pairs, first, apv.PROMPT_V3)
+            self.assertEqual(
+                (h2h.picks, h2h.first_chosen, h2h.second_chosen, h2h.other_chosen),
+                (1, 0, 1, 0),
+            )
+            # One draft of each of the two: blind chance is a half.
+            self.assertAlmostEqual(h2h.second_expected, 0.5)
+
+    def test_a_third_version_on_the_page_leaves_the_pairs_numbers_alone(self):
+        # The v1-v2 numbers for a page are what they were before v3 existed:
+        # the v3 draft beside them is not part of that pair's chance.
+        denial = _denial()
+        a = self._draft(denial, apv.PROMPT_V1)
+        b = self._draft(denial, apv.PROMPT_V2)
+        c = self._draft(denial, apv.PROMPT_V2, model="model-y")
+        d = self._draft(denial, apv.PROMPT_V3)
+        self._pick(denial, a, [a, b, c, d])
+        v1_v2 = _pair(head_to_head(), apv.PROMPT_V1, apv.PROMPT_V2)
+        self.assertEqual((v1_v2.picks, v1_v2.first_chosen), (1, 1))
+        self.assertAlmostEqual(v1_v2.second_expected, 2 / 3)
+        v1_v3 = _pair(head_to_head(), apv.PROMPT_V1, apv.PROMPT_V3)
+        self.assertEqual((v1_v3.first_chosen, v1_v3.second_chosen), (1, 0))
+        # One v1 and one v3 on the page.
+        self.assertAlmostEqual(v1_v3.second_expected, 0.5)
 
 
 class DashboardPromptVersionTableTest(TestCase):
@@ -172,6 +236,40 @@ class DashboardPromptVersionTableTest(TestCase):
         self.assertEqual(versions, {apv.PROMPT_V1: (0, 1), apv.PROMPT_V2: (1, 1)})
         models = {r["model_name"]: r["chosen"] for r in stats["models"]}
         self.assertEqual(models["model-x · v2"], 1)
+
+    def test_v3_drafts_get_their_own_rows(self):
+        denial = _denial()
+        a = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="a",
+            model_name="model-x",
+            prompt_version=apv.PROMPT_V2,
+        )
+        b = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="b",
+            model_name="model-y",
+            prompt_version=apv.PROMPT_V3,
+        )
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="b",
+            chosen=True,
+            model_name="model-y",
+            prompt_version=apv.PROMPT_V3,
+            presented_ids=[a.id, b.id],
+        )
+        stats = ModelUsageDashboardView._prompt_version_stats(None)
+        rows = {r["model_name"]: r for r in stats["versions"]}
+        self.assertEqual(
+            (rows[apv.PROMPT_V3]["chosen"], rows[apv.PROMPT_V3]["presented"]), (1, 1)
+        )
+        self.assertEqual(
+            rows[apv.PROMPT_V3]["label"],
+            "v3: sectioned prompt plus the output contract",
+        )
+        models = {r["model_name"]: r["chosen"] for r in stats["models"]}
+        self.assertEqual(models["model-y · v3"], 1)
 
 
 class DashboardPromptSwitchTest(TestCase):
@@ -221,10 +319,32 @@ class DashboardPromptSwitchTest(TestCase):
         )
         self.assertEqual(apv.current_letter_prompt_mode(), apv.MODE_SPLIT)
 
+    def test_the_new_modes_can_be_saved(self):
+        self._staff()
+        for mode in (apv.MODE_SECTIONED, apv.MODE_THIRDS):
+            with self.subTest(mode=mode):
+                response = self.client.post(self.url, {"mode": mode})
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(LetterPromptMode.objects.first().mode, mode)
+                self.assertEqual(apv.current_letter_prompt_mode(), mode)
+
+    def test_the_switch_offers_every_mode(self):
+        self._staff()
+        response = self.client.get(self.url)
+        for mode, label in apv.MODE_CHOICES:
+            with self.subTest(mode=mode):
+                self.assertContains(response, f'value="{mode}"')
+                self.assertContains(response, label)
+
     def test_an_unknown_mode_is_refused(self):
         self._staff()
         response = self.client.post(self.url, {"mode": "everything"})
         self.assertEqual(response.status_code, 400)
+        self.assertContains(
+            response,
+            "Choose original, new, half and half, sectioned or thirds.",
+            status_code=400,
+        )
         self.assertFalse(LetterPromptMode.objects.exists())
 
     def test_the_head_to_head_starts_when_half_and_half_began(self):
@@ -233,6 +353,48 @@ class DashboardPromptSwitchTest(TestCase):
         response = self.client.get(self.url)
         self.assertIsNotNone(response.context["letter_prompts"]["head_to_head"])
         self.assertContains(response, "Pages that showed both versions")
+
+    def _shown_pairs(self, response):
+        return [
+            (h.first, h.second)
+            for h in response.context["letter_prompts"]["head_to_head"]
+        ]
+
+    def test_half_and_half_shows_only_the_v1_v2_pair(self):
+        self._staff()
+        LetterPromptMode.objects.create(mode=apv.MODE_SPLIT)
+        response = self.client.get(self.url)
+        self.assertEqual(self._shown_pairs(response), [(apv.PROMPT_V1, apv.PROMPT_V2)])
+
+    def test_thirds_shows_every_pair(self):
+        self._staff()
+        LetterPromptMode.objects.create(mode=apv.MODE_THIRDS)
+        response = self.client.get(self.url)
+        self.assertEqual(
+            self._shown_pairs(response),
+            [
+                (apv.PROMPT_V1, apv.PROMPT_V2),
+                (apv.PROMPT_V1, apv.PROMPT_V3),
+                (apv.PROMPT_V2, apv.PROMPT_V3),
+            ],
+        )
+        self.assertContains(response, "v2 and v3")
+        self.assertContains(response, "v3 picked ÷ chance")
+
+    def test_moving_from_half_and_half_to_thirds_keeps_the_run(self):
+        self._staff()
+        split = LetterPromptMode.objects.create(mode=apv.MODE_SPLIT)
+        LetterPromptMode.objects.create(mode=apv.MODE_THIRDS)
+        response = self.client.get(self.url)
+        self.assertEqual(
+            response.context["letter_prompts"]["split_started"], split.created_at
+        )
+
+    def test_v3_for_every_letter_has_no_head_to_head(self):
+        self._staff()
+        LetterPromptMode.objects.create(mode=apv.MODE_SECTIONED)
+        response = self.client.get(self.url)
+        self.assertIsNone(response.context["letter_prompts"]["head_to_head"])
 
     def test_without_half_and_half_there_is_no_head_to_head(self):
         self._staff()

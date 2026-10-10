@@ -1,13 +1,14 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 
 {% block title %}Explain My Denial - Fight Health Insurance{% endblock title %}
 {% block metatitle %}Explain My Denial - Fight Health Insurance{% endblock metatitle %}
 {% block metadescription %}Paste your health insurance denial letter and get a plain English explanation from our AI assistant.{% endblock metadescription %}
 
 {% block scriptmagic %}
-<script src="{% static 'js/dist/user_info_storage.bundle.js' %}"></script>
-<script src="{% static 'js/dist/explain_denial.bundle.js' %}" type="module"></script>
+<script src="{% bundle 'user_info_storage' %}"></script>
+<script src="{% bundle 'explain_denial' %}" type="module"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     if (window.userInfoStorage) {

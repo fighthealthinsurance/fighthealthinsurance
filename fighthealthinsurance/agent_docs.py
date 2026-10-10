@@ -64,6 +64,11 @@ PAGE_NOTES: dict[str, tuple[str, str]] = {
     "about": ("About us", "who makes this and why it exists"),
     "about-ai": ("About our AI", "how the models are used and what they cannot do"),
     "how-to-help": ("How to help", "ways to support the project"),
+    "ai-assistants": (
+        "Use it with your AI assistant",
+        "how to connect an AI assistant to the MCP server, what it can look up, "
+        "how it can help start an appeal from the chat, and what to keep out",
+    ),
     "faq": ("FAQ", "common questions about appeals and about using the tool"),
     "medicaid-faq": ("Medicaid work requirements FAQ", ""),
     "smtp-domain-faq": (
@@ -521,9 +526,9 @@ def build_llms_txt() -> str:
     ]
     if settings.MCP_SERVER_ENABLED:  # mcp_server.py, served from asgi.py
         lines.append(
-            f"- [MCP server]({CANONICAL_ORIGIN}/mcp): read-only tools for AI "
-            "assistants over streamable HTTP, no sign-in, the same public "
-            "information as these pages"
+            f"- [MCP server]({CANONICAL_ORIGIN}/mcp): "
+            + _mcp_summary()
+            + f"; setup at {CANONICAL_ORIGIN}/ai-assistants"
         )
     lines += [
         "- [Source code](https://github.com/orgs/fighthealthinsurance/repositories): "
@@ -534,6 +539,28 @@ def build_llms_txt() -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def _mcp_summary() -> str:
+    """The llms.txt line for /mcp, naming only the tools that are listed."""
+    from fighthealthinsurance import mcp_server
+
+    reads = (
+        "tools for AI assistants over streamable HTTP, no sign-in, that "
+        "answer from the same public information as these pages"
+    )
+    if mcp_server.chat_path_enabled():
+        return (
+            reads + ". With the person's agreement, they can also load a "
+            "denial letter into the site's appeal form, or have appeal "
+            "letters drafted and brought back to the chat"
+        )
+    if mcp_server.prepare_appeal_enabled():
+        return (
+            reads + ". With the person's agreement, they can also load a "
+            "denial letter into the site's appeal form"
+        )
+    return "read-only " + reads
 
 
 @cache_control(public=True)

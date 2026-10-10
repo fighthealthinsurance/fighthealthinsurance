@@ -21,6 +21,7 @@ greppable summary block.
 | --- | --- | --- |
 | `PASS` | Answered. | No |
 | `PASS_UNREGISTERED` | Answered, but the router did not register it. | No |
+| `RETIRED` | On the retired list (`fighthealthinsurance/ml/retired_models.py`); listed with its date and reason, never called, even with its host set. | No |
 | `NOT_CONFIGURED` | No configuration; listed, never called. | No |
 | `DISABLED` | Excluded by `ENABLED_REMOTE_MODELS` ([ml-backends.md](ml-backends.md)); listed, never called. | No |
 | `FAIL_MISSING_CREDENTIALS`, `FAIL_CLIENT_INIT`, `FAIL_AUTH`, `FAIL_MODEL_NOT_FOUND`, `FAIL_RATE_LIMITED`, `FAIL_TIMEOUT`, `FAIL_NETWORK`, `FAIL_MALFORMED_RESPONSE`, `FAIL_OTHER` | What went wrong. | Yes |

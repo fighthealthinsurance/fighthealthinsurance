@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
+{% load bundles %}
 
 {% block title %}FightHealthInsurance Chat{% endblock %}
 
@@ -17,5 +18,5 @@
      data-initial-message="{{ initial_message|default:''|escapejs }}"
      data-enable-voice-intake="{{ enable_voice_intake|yesno:'true,false' }}"
      data-enable-local-stt="{{ enable_local_stt|yesno:'true,false' }}"></div>
-<script src="{% static 'js/dist/chat_interface.bundle.js' %}"></script>
+<script src="{% bundle 'chat_interface' %}"></script>
 {% endblock %}

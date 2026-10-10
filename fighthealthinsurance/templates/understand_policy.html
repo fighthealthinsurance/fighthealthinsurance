@@ -1,12 +1,13 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 
 {% block title %}Understand My Policy - Fight Health Insurance{% endblock title %}
 {% block metatitle %}Understand My Policy - Fight Health Insurance{% endblock metatitle %}
 {% block metadescription %}Upload your insurance policy document and get AI-powered analysis of coverage, exclusions, and appeal-relevant clauses.{% endblock metadescription %}
 
 {% block scriptmagic %}
-<script src="{% static 'js/dist/user_info_storage.bundle.js' %}"></script>
+<script src="{% bundle 'user_info_storage' %}"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     if (window.userInfoStorage) {

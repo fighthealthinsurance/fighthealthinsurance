@@ -153,37 +153,56 @@ class Base(Configuration):
     PRO_VERSION_AVAILABLE = (
         os.getenv("PRO_VERSION_AVAILABLE", "false").lower() == "true"
     )
-    # New self-serve Fight Paperwork professional signups are closed (connector
-    # agreement in place); professionals request a demo instead and the team
-    # onboards them. Off by default; Dev/Test enable it so the signup flow and
-    # its tests stay exercised.
-    NEW_PROFESSIONAL_SIGNUP_ENABLED = (
-        os.getenv("NEW_PROFESSIONAL_SIGNUP_ENABLED", "false").lower() == "true"
-    )
+    # Fight Paperwork's account endpoints (sign-up, login, invites, password
+    # reset, patient notices, the professional checkout) and so their emails.
+    # Off in every configuration, Dev included; tests turn it on per test.
+    FIGHT_PAPERWORK_ENABLED = _env_flag("FIGHT_PAPERWORK_ENABLED")
     # Experimental Medicaid eligibility landing page. Off by default: while
     # the page is still cooking it serves 404 (and stays out of the sitemap),
     # so the URL is invisible in production. Dev/Test enable it so the page
     # and its tests stay exercised.
     MEDICAID_ELIGIBILITY_PAGE_ENABLED = _env_flag("MEDICAID_ELIGIBILITY_PAGE_ENABLED")
-    # Read-only MCP server for AI assistants at /mcp (mcp_server.py, wired in
-    # asgi.py). Off by default: /mcp is then an ordinary 404 from Django and
-    # the MCP server is never mounted. Read once, when asgi.py builds the app,
-    # so changing it needs a restart. Dev turns it on.
+    # MCP server for AI assistants at /mcp (mcp_server.py, wired in asgi.py):
+    # read-only tools, plus the appeal tools behind the flags below. Off by
+    # default: /mcp is then an ordinary 404 from Django and the MCP server is
+    # never mounted. Read once, when asgi.py builds the app, so changing it
+    # needs a restart. Dev turns it on.
     MCP_SERVER_ENABLED = _env_flag("MCP_SERVER_ENABLED")
-    # The one MCP tool that stores anything, prepare_appeal, and the page its
-    # links open, /from-your-assistant (assistant_handoff.py). Off in every
+    # prepare_appeal, the MCP tool that takes a denial letter for the site's
+    # form, and the page its links open, /from-your-assistant
+    # (assistant_handoff.py). The chat path needs it too. Off in every
     # configuration, Dev included: a local server shouldn't take letters
     # unless asked. It needs MCP_SERVER_ENABLED as well. asgi.py reads it when
     # it builds the MCP server (so the tool needs a restart to change); the
     # page reads it on every request, so turning it off stops outstanding
     # links at once.
     MCP_PREPARE_APPEAL_ENABLED = _env_flag("MCP_PREPARE_APPEAL_ENABLED")
-    # prepare_appeal's caps, counted from the table so they hold across pods
-    # (soft at the edge: two pods can pass the check together): links live
-    # at once, and links made in the last minute and not yet opened (opening
-    # one deletes its row). Both are guesses; look again after a week of
-    # counts. Both are global and /mcp is anonymous, so one caller can fill
-    # them and turn prepare_appeal away for everyone until links expire;
+    # Handoff links v2 (assistant_handoff.py): the payload says what kind of
+    # link it is and which client made it, and a link binds to the first
+    # browser that opens it. Links made before the flag still open.
+    MCP_HANDOFF_V2_ENABLED = _env_flag("MCP_HANDOFF_V2_ENABLED")
+    # The chat path: letters drafted in the background for an assistant to
+    # bring back (assistant_drafts.py, workflows/assistant_appeal.py). Off by
+    # default, on in Dev; it counts as on only with MCP_SERVER_ENABLED,
+    # MCP_PREPARE_APPEAL_ENABLED, TEMPORAL_ENABLED and
+    # TEMPORAL_APPEAL_JOURNEY_ENABLED as well (assistant_drafts.draft_in_chat_enabled).
+    MCP_DRAFT_IN_CHAT_ENABLED = _env_flag("MCP_DRAFT_IN_CHAT_ENABLED")
+    # Pauses the chat path without taking its tools away (clients cache tool
+    # lists): draft_appeal_in_chat then answers site_only with a form link.
+    MCP_DRAFT_IN_CHAT_PAUSED = _env_flag("MCP_DRAFT_IN_CHAT_PAUSED")
+    # Agreements on the chat path's terms page per address per UTC day
+    # (assistant_ip_limit.py); IPv6 counts by /64. Past it the person gets
+    # the site's form instead. FHI_SPEND_ASSISTANT_DAILY_APPEALS stays the
+    # global limit.
+    MCP_ASSISTANT_PER_IP_DAILY = _env_int(
+        "MCP_ASSISTANT_PER_IP_DAILY", 5, minimum=1, maximum=10_000
+    )
+    # The appeal link caps, shared by prepare_appeal and draft_appeal_in_chat,
+    # counted from the table so they hold across pods (soft at the edge: two
+    # pods can pass the check together): links live at once, and links made
+    # in the last minute and not yet opened (opening one deletes its row).
+    # Both are guesses; look again after a week of counts. Both are global
+    # and /mcp is anonymous, so one caller can fill them until links expire;
     # alert on fhi_assistant_handoff_refused_at_cap_total.
     MCP_PREPARE_APPEAL_MAX_LIVE = _env_int(
         "MCP_PREPARE_APPEAL_MAX_LIVE", 300, minimum=1, maximum=100_000
@@ -262,6 +281,16 @@ class Base(Configuration):
     # Sponsored Azure GPT-5.5 calls per UTC day for chat; unset means no cap.
     FHI_SPEND_AZURE_CHAT_DAILY_CALLS = (
         _env_int("FHI_SPEND_AZURE_CHAT_DAILY_CALLS", 0, minimum=0, maximum=10_000_000)
+        or None
+    )
+    # Appeals that come through an AI assistant (Denial.channel "assistant"):
+    # DeepInfra dollars a month, spread by day, and generations a day.
+    # Setting either to 0 removes that cap.
+    FHI_SPEND_DEEPINFRA_ASSISTANT_MONTHLY_USD = _env_float(
+        "FHI_SPEND_DEEPINFRA_ASSISTANT_MONTHLY_USD", 5.0, minimum=0.0, maximum=10000.0
+    )
+    FHI_SPEND_ASSISTANT_DAILY_APPEALS = (
+        _env_int("FHI_SPEND_ASSISTANT_DAILY_APPEALS", 50, minimum=0, maximum=10_000_000)
         or None
     )
     # Chat's outside models, in order (MLRouter.chat_outside_models): at most
@@ -474,6 +503,14 @@ class Base(Configuration):
     # explicit off).
     COFACTOR_CC_EMAIL = os.getenv("COFACTOR_CC_EMAIL", "")
 
+    # The Cofactor AI person that *new-signup* intros (the one-press button in
+    # the signup notification email) introduce the professional to by name and
+    # CC, in "Name <address>" form. Blank (or "none") turns new-signup intros
+    # off. The backlog re-engagement intros from the processing queue
+    # never use it: those don't involve Cofactor unless the professional replies
+    # to us.
+    COFACTOR_INTRO_CONTACT = os.getenv("COFACTOR_INTRO_CONTACT", "")
+
     # Demo-request notifications always go to support42@; additional recipients
     # can be configured via the DEMO_REQUEST_EXTRA_NOTIFICATION_EMAILS env var
     # (comma-separated).
@@ -674,6 +711,7 @@ class Base(Configuration):
                     "fighthealthinsurance.context_processors.canonical_url_context",
                     "fighthealthinsurance.context_processors.site_banner_context",
                     "fighthealthinsurance.context_processors.advanced_ocr_context",
+                    "fighthealthinsurance.context_processors.feature_pages_context",
                 ],
             },
         },
@@ -940,16 +978,15 @@ class Base(Configuration):
 
 
 class Dev(Base):
-    # Keep the (production-closed) professional signup flow testable locally
-    # and in the Test* configurations that subclass Dev.
-    NEW_PROFESSIONAL_SIGNUP_ENABLED = True
     # Keep the (production-hidden) experimental Medicaid eligibility landing
     # page routable locally and in the Test* configurations.
     MEDICAID_ELIGIBILITY_PAGE_ENABLED = True
-    # The read-only MCP server at /mcp, on locally unless
+    # The MCP server at /mcp, on locally unless
     # MCP_SERVER_ENABLED=0 (only uvicorn serves it; runserver never loads
     # asgi.py).
     MCP_SERVER_ENABLED = _env_flag("MCP_SERVER_ENABLED", "1")
+    MCP_HANDOFF_V2_ENABLED = _env_flag("MCP_HANDOFF_V2_ENABLED", "1")
+    MCP_DRAFT_IN_CHAT_ENABLED = _env_flag("MCP_DRAFT_IN_CHAT_ENABLED", "1")
     CSRF_TRUSTED_ORIGINS = [
         "https://fightpaperwork.com",
         "https://localhost:3000",

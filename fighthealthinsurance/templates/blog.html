@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 {% block title %}
 Blog - Fight Health Insurance
 {% endblock title %}
@@ -12,5 +13,5 @@ Blog - Fight Health Insurance
 <script>
     window.blogSlugs = {{ blog_slugs|safe }};
 </script>
-<script src="{% static 'js/dist/blog.bundle.js' %}"></script>
+<script src="{% bundle 'blog' %}"></script>
 {% endblock content %}

@@ -7,9 +7,11 @@ payload is Fernet-encrypted client-side so Temporal's database and UI hold
 ciphertext until namespace retention (720h) expires it.
 """
 
+import base64
 import dataclasses
 
 import pytest
+from temporalio import workflow
 from cryptography.fernet import Fernet, InvalidToken
 
 from temporalio.api.common.v1 import Payload
@@ -66,6 +68,7 @@ _CHECKED_INPUTS = (
     "SendFaxInput",
     "GenerateAppealInput",
     "IntakeJourneyInput",
+    "AssistantAppealInput",
     "ChatRoutingPolicyInput",
 )
 
@@ -146,3 +149,53 @@ def test_data_converter_encodes_failure_attributes():
 
     conv = _encrypting_data_converter(Fernet.generate_key().decode())
     assert conv.failure_converter_class is DefaultFailureConverterWithEncodedAttributes
+
+
+@workflow.defn(name="EchoForCodecTest", sandboxed=False)
+class Echo:
+    @workflow.run
+    async def run(self, value: str) -> str:
+        return value
+
+
+@pytest.mark.asyncio
+async def test_an_encrypted_history_export_decodes_to_plaintext():
+    import base64
+    import json
+    import uuid
+
+    from temporalio.converter import DataConverter
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Worker
+
+    from fighthealthinsurance.temporal_codec import decode_history_json
+
+    key = Fernet.generate_key().decode()
+    converter = dataclasses.replace(
+        DataConverter.default, payload_codec=EncryptionCodec(key)
+    )
+    async with await WorkflowEnvironment.start_time_skipping(
+        data_converter=converter
+    ) as env:
+        queue = str(uuid.uuid4())
+        async with Worker(env.client, task_queue=queue, workflows=[Echo]):
+            handle = await env.client.start_workflow(
+                Echo.run, "denial-uuid-1234", id=queue, task_queue=queue
+            )
+            await handle.result()
+        raw = json.loads((await handle.fetch_history()).to_json())
+    value = base64.b64encode(b'"denial-uuid-1234"').decode()
+    marker = base64.b64encode(ENCODING).decode()
+    assert value not in json.dumps(raw) and marker in json.dumps(raw)
+    plain = json.dumps(decode_history_json(raw, key))
+    assert value in plain and marker not in plain
+
+
+def test_a_plaintext_history_needs_no_key_and_an_encrypted_one_does():
+    from fighthealthinsurance.temporal_codec import decode_history_json
+
+    plain = {"events": [{"payloads": [{"metadata": {"encoding": "anNvbi9wbGFpbg=="}, "data": "IngiIg=="}]}]}
+    assert decode_history_json(plain, "") == plain
+    encrypted = {"payloads": [{"metadata": {"encoding": base64.b64encode(ENCODING).decode()}, "data": "eA=="}]}
+    with pytest.raises(ValueError, match="TEMPORAL_PAYLOAD_KEY"):
+        decode_history_json(encrypted, "")
