@@ -26,6 +26,7 @@ from fighthealthinsurance.ml import model_health_check as mhc
 from fighthealthinsurance.ml.ml_metrics import ML_CALL_PURPOSE
 from fighthealthinsurance.ml import retired_models
 from fighthealthinsurance.ml.ml_models import (
+    DeepInfra,
     NewRemoteInternal,
     _attach_error_body,
     _note_probe_transport_error,
@@ -611,6 +612,124 @@ class TestRetiredModels:
         retired = {r.model_name for r in static if r.category == mhc.CATEGORY_RETIRED}
         assert "anthropic/claude-haiku-4-5" in retired
 
+    def _backup_only_on_may_row(self, monkeypatch):
+        """The legacy slot with only a backup host, serving the retired May
+        model: a stale HEALTH_BACKUP_BACKEND_* pair."""
+        self._legacy_with_backup(monkeypatch, f"/models/{MAY}", primary=False)
+        static, _checkable = mhc.enumerate_backend_checks()
+        [row] = [r for r in static if r.model_name == "fhi-legacy"]
+        return row
+
+    def test_a_slot_whose_only_endpoint_is_retired_is_listed_as_retired(
+        self, monkeypatch, fresh_router
+    ):
+        """It used to be FAIL_CLIENT_INIT: in the alert email and failing a
+        strict deploy on every deploy, for the operator's own retirement."""
+        row = self._backup_only_on_may_row(monkeypatch)
+        assert (row.category, row.failed) == (mhc.CATEGORY_RETIRED, False)
+
+    def test_the_retired_endpoint_row_names_the_retirement(
+        self, monkeypatch, fresh_router
+    ):
+        row = self._backup_only_on_may_row(monkeypatch)
+        assert MAY_REASON in row.error
+
+    def test_an_outside_model_ending_like_a_retired_tail_is_not_retired(
+        self, monkeypatch
+    ):
+        """Retiring one of ours served at /models/<name> by its tail must not
+        retire a hosted "org/<name>" that ends the same way."""
+        monkeypatch.setitem(
+            retired_models.RETIRED_MODELS,
+            "gemma-4-26B-A4B-it",
+            Retirement(datetime.date(2026, 10, 10), "internal gemma retired"),
+        )
+        assert retirement(GENERALIST, GENERALIST) is None
+
+    def test_our_served_path_is_still_retired_by_its_tail(self, monkeypatch):
+        monkeypatch.setitem(
+            retired_models.RETIRED_MODELS,
+            "gemma-4-26B-A4B-it",
+            Retirement(datetime.date(2026, 10, 10), "internal gemma retired"),
+        )
+        assert retirement(None, "/models/gemma-4-26B-A4B-it") is not None
+
+    def test_the_router_keeps_the_outside_generalist_when_our_tail_is_retired(
+        self, monkeypatch, fresh_router
+    ):
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("DEEPINFRA_API", "test-deepinfra-key")
+        monkeypatch.setitem(
+            retired_models.RETIRED_MODELS,
+            "gemma-4-26B-A4B-it",
+            Retirement(datetime.date(2026, 10, 10), "internal gemma retired"),
+        )
+        assert GENERALIST in MLRouter().models_by_name
+
+
+GENERALIST = "google/gemma-4-26B-A4B-it"
+KIMI = "moonshotai/Kimi-K3"
+
+
+class TestChatOnlyModels:
+    """The outside models a backend serves to chat only (DeepInfra's
+    chat_models) are in no catalog. They used to be neither probed at deploy
+    nor listed on Model Backend Status, though they are the models most
+    likely to be retired or refused under us."""
+
+    def _deepinfra(self, monkeypatch, **env):
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("DEEPINFRA_API", "test-deepinfra-key")
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        return mhc.enumerate_backend_checks()
+
+    def test_every_chat_model_is_checked(self, monkeypatch, fresh_router):
+        _static, checkable = self._deepinfra(monkeypatch)
+        assert set(DeepInfra.CHAT_MODELS) <= {r.model_name for r, _ in checkable}
+
+    def test_a_chat_model_is_checked_through_the_routers_chat_instance(
+        self, monkeypatch, fresh_router
+    ):
+        _static, checkable = self._deepinfra(monkeypatch)
+        [instance] = [i for r, i in checkable if r.model_name == KIMI]
+        assert instance is ml_router_module.ml_router.chat_outside_models_by_name[KIMI]
+
+    def test_a_chat_model_row_is_tagged_chat_only(self, monkeypatch, fresh_router):
+        _static, checkable = self._deepinfra(monkeypatch)
+        tags = {r.model_name: r.chat_only for r, _ in checkable}
+        assert (tags[KIMI], tags[GENERALIST]) == (True, False)
+
+    def test_a_chat_model_that_answers_is_a_plain_pass(self, monkeypatch, fresh_router):
+        """Not PASS_UNREGISTERED: the chat roster is where it is registered."""
+        _static, checkable = self._deepinfra(monkeypatch)
+        [pending] = [r for r, _ in checkable if r.model_name == KIMI]
+        result = asyncio.run(mhc.check_backend(pending, _StubBackend("OK")))
+        assert result.category == mhc.CATEGORY_PASS
+
+    def test_a_chat_model_can_be_checked_by_name(self, monkeypatch, fresh_router):
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("DEEPINFRA_API", "test-deepinfra-key")
+        _static, checkable = mhc.enumerate_backend_checks(only_models=[KIMI])
+        assert [r.model_name for r, _ in checkable] == [KIMI]
+
+    def test_a_chat_model_left_off_the_allow_list_is_disabled(
+        self, monkeypatch, fresh_router
+    ):
+        static, _checkable = self._deepinfra(
+            monkeypatch, ENABLED_REMOTE_MODELS=GENERALIST
+        )
+        [row] = [r for r in static if r.model_name == KIMI]
+        assert row.category == mhc.CATEGORY_DISABLED
+
+    def test_chat_models_without_the_key_are_not_configured(
+        self, monkeypatch, fresh_router
+    ):
+        _clear_provider_env(monkeypatch)
+        static, _checkable = mhc.enumerate_backend_checks()
+        [row] = [r for r in static if r.model_name == KIMI]
+        assert row.category == mhc.CATEGORY_NOT_CONFIGURED
+
 
 def _fake_results(*categories):
     out = []
@@ -871,6 +990,62 @@ class TestCheckModelBackendsCommand:
         assert run_mock.call_args.kwargs["only_models"] == [
             "anthropic/claude-sonnet-4-6"
         ]
+
+    def _call_recording_syncs(self, summary, *args, sync_error=None):
+        """Run the command, recording spend syncs and the check in order."""
+        from fighthealthinsurance.ml import spend
+
+        events = []
+
+        def sync_now():
+            events.append("sync")
+            if sync_error is not None:
+                raise sync_error
+
+        def run_health_check(**kwargs):
+            events.append("check")
+            return summary
+
+        out = StringIO()
+        with patch.object(spend, "sync_now", side_effect=sync_now), patch.object(
+            mhc, "run_health_check", side_effect=run_health_check
+        ):
+            try:
+                call_command("check_model_backends", *args, stdout=out, stderr=out)
+            except SystemExit as e:
+                return events, e.code
+        return events, 0
+
+    def test_the_spend_ledger_is_synced_before_and_after_the_check(self):
+        """A short-lived process: read the ledger so a paused provider reads
+        paused here, and store a pause a passing probe lifted before exit."""
+        events, _code = self._call_recording_syncs(
+            self._summary(_fake_results(mhc.CATEGORY_PASS)), "--deploy-hook"
+        )
+        assert events == ["sync", "check", "sync"]
+
+    def test_the_spend_ledger_is_synced_before_a_strict_deploy_fails(self, monkeypatch):
+        monkeypatch.setenv("FHI_MODEL_HEALTH_STRICT", "1")
+        events, code = self._call_recording_syncs(
+            self._summary(_fake_results(mhc.CATEGORY_AUTH)), "--deploy-hook"
+        )
+        assert (events, code) == (["sync", "check", "sync"], 2)
+
+    def test_a_failing_sync_leaves_a_healthy_run_passing(self):
+        _events, code = self._call_recording_syncs(
+            self._summary(_fake_results(mhc.CATEGORY_PASS)),
+            sync_error=RuntimeError("database unreachable"),
+        )
+        assert code == 0
+
+    def test_a_failing_sync_leaves_a_strict_failure_failing(self, monkeypatch):
+        monkeypatch.setenv("FHI_MODEL_HEALTH_STRICT", "1")
+        _events, code = self._call_recording_syncs(
+            self._summary(_fake_results(mhc.CATEGORY_AUTH)),
+            "--deploy-hook",
+            sync_error=RuntimeError("database unreachable"),
+        )
+        assert code == 2
 
 
 class TestRealTransportPlumbing:

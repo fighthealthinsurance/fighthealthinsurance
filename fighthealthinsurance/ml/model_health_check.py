@@ -63,6 +63,7 @@ from fighthealthinsurance.ml.ml_models import (
     RateLimitedRemoteOpenLike,
     RemoteModel,
     RemoteModelLike,
+    RetiredEndpointError,
     _error_body_of,
     _http_error_indicates_retired_model,
     begin_probe_observations,
@@ -280,6 +281,10 @@ class BackendCheckResult:
     # Reserved for building context (citations); never a generation candidate,
     # so it can never produce a stored draft or a chooser candidate.
     context_only: bool = False
+    # Served to chat only (the backend's chat_models(), the router's
+    # chat_outside_models_by_name), outside every general pool, so it can
+    # never produce a stored draft either. Not persisted.
+    chat_only: bool = False
     started_at: Optional[datetime] = None
     # Not persisted. The staff status page reads the model's routing traits
     # from these: the instance the router registered, or, when there is none,
@@ -446,6 +451,22 @@ def _registered_instance(
     return None
 
 
+def _registered_chat_instance(
+    backend_cls: Type[RemoteModel], desc: ModelDescription
+) -> Optional[RemoteModelLike]:
+    """The instance the router registered for a chat-only model
+    (``chat_outside_models_by_name``), if it built one."""
+    try:
+        instance = _router().chat_outside_models_by_name.get(desc.name)
+    except Exception:
+        logger.opt(exception=True).warning(
+            "Could not consult ml_router.chat_outside_models_by_name; treating "
+            f"{desc.name} as unregistered"
+        )
+        return None
+    return instance if isinstance(instance, backend_cls) else None
+
+
 def _registry_flags(
     desc: ModelDescription, instance: Optional[RemoteModelLike]
 ) -> Tuple[bool, bool, bool]:
@@ -495,6 +516,10 @@ def enumerate_backend_checks(
     * ``checkable`` — ``(pending_result, instance)`` pairs for enabled,
       constructable backends that should actually be invoked.
 
+    A backend's chat-only models (``chat_models()``) get rows too, tagged
+    ``chat_only``, checked through the instance the router's chat roster
+    holds.
+
     ``only_models`` (friendly or internal names, case-sensitive) restricts
     enumeration for the manual single-model mode.
     """
@@ -506,6 +531,111 @@ def enumerate_backend_checks(
         if not only_models:
             return True
         return desc.name in only_models or desc.internal_name in only_models
+
+    def _not_allowed(desc: ModelDescription) -> bool:
+        return (
+            enabled_names is not None
+            and desc.name not in enabled_names
+            and desc.internal_name not in enabled_names
+        )
+
+    def _classify(
+        backend_cls: Type[RemoteModel],
+        provider: str,
+        status: str,
+        detail: Optional[str],
+        desc: ModelDescription,
+        chat_only: bool,
+    ) -> None:
+        base = BackendCheckResult(
+            provider=provider,
+            model_name=desc.name,
+            internal_name=desc.internal_name,
+            category=CATEGORY_OTHER,
+            backend_cls=backend_cls,
+            chat_only=chat_only,
+        )
+
+        retired = retirement(desc.name, desc.internal_name)
+        if retired is not None:
+            base.category = CATEGORY_RETIRED
+            base.enabled = False
+            base.error = retired.describe()
+            static_results.append(base)
+            return
+        if status == "not_configured":
+            base.category = CATEGORY_NOT_CONFIGURED
+            base.enabled = False
+            base.error = sanitize_error(detail)
+            static_results.append(base)
+            return
+        if status == "missing_credentials":
+            base.category = CATEGORY_MISSING_CREDENTIALS
+            base.error = sanitize_error(detail)
+            static_results.append(base)
+            return
+
+        if chat_only:
+            # The router keeps these in its chat roster, outside every general
+            # pool, and builds one only when the allow-list names it
+            # (MLRouter._register_chat_outside_models). Registered there is
+            # all "registered" means for them, so one that answers is a PASS.
+            if _not_allowed(desc):
+                base.category = CATEGORY_DISABLED
+                base.enabled = False
+                base.error = "excluded by ENABLED_REMOTE_MODELS"
+                static_results.append(base)
+                return
+            instance = _registered_chat_instance(backend_cls, desc)
+            base.ui_registered = base.reporting_registered = instance is not None
+        else:
+            instance = _registered_instance(backend_cls, desc)
+            base.ui_registered, base.reporting_registered, base.context_only = (
+                _registry_flags(desc, instance)
+            )
+        base.router_instance = instance
+
+        probe_instance: Optional[RemoteModelLike] = instance
+        if probe_instance is None:
+            try:
+                probe_instance = backend_cls(model=desc.internal_name)
+            except RetiredEndpointError as e:
+                # Every endpoint it was given serves a retired model: the
+                # operator's own retirement, shown like one, not a failure
+                # that pages support and fails a strict deploy. Unsanitized,
+                # like the other retirement details: it names only models,
+                # which the sanitizer would redact.
+                base.category = CATEGORY_RETIRED
+                base.enabled = False
+                base.error = str(e)
+                static_results.append(base)
+                return
+            except EnvironmentError as e:
+                base.category = CATEGORY_MISSING_CREDENTIALS
+                base.error = sanitize_error(str(e))
+                static_results.append(base)
+                return
+            except Exception as e:
+                base.category = CATEGORY_CLIENT_INIT
+                base.error = sanitize_error(f"{type(e).__name__}: {e}")
+                static_results.append(base)
+                return
+
+        # The ENABLED_REMOTE_MODELS allow-list only gates remote
+        # generation models (mirrors MLRouter registration).
+        if (
+            not chat_only
+            and probe_instance.external
+            and not probe_instance.context_only
+            and _not_allowed(desc)
+        ):
+            base.category = CATEGORY_DISABLED
+            base.enabled = False
+            base.error = "excluded by ENABLED_REMOTE_MODELS"
+            static_results.append(base)
+            return
+
+        checkable.append((base, probe_instance))
 
     for backend_cls in candidate_model_backends:
         try:
@@ -537,7 +667,18 @@ def enumerate_backend_checks(
                 )
             )
             continue
-        if not catalog:
+        # The outside models the backend serves to chat only. They are in no
+        # catalog, so without these the deploy check never probed them and
+        # the status page had no row for them, though they are the models
+        # most likely to be retired or refused under us.
+        try:
+            chat_catalog = backend_cls.chat_models()
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"chat_models() failed for {backend_cls.__name__}: {e}"
+            )
+            chat_catalog = []
+        if not catalog and not chat_catalog:
             continue  # abstract/intermediate class or nothing to expose
 
         provider = backend_cls.provider_label()
@@ -550,72 +691,14 @@ def enumerate_backend_checks(
             )
 
         for desc in catalog:
-            if not _wanted(desc):
-                continue
-            base = BackendCheckResult(
-                provider=provider,
-                model_name=desc.name,
-                internal_name=desc.internal_name,
-                category=CATEGORY_OTHER,
-                backend_cls=backend_cls,
-            )
-
-            retired = retirement(desc.name, desc.internal_name)
-            if retired is not None:
-                base.category = CATEGORY_RETIRED
-                base.enabled = False
-                base.error = retired.describe()
-                static_results.append(base)
-                continue
-            if status == "not_configured":
-                base.category = CATEGORY_NOT_CONFIGURED
-                base.enabled = False
-                base.error = sanitize_error(detail)
-                static_results.append(base)
-                continue
-            if status == "missing_credentials":
-                base.category = CATEGORY_MISSING_CREDENTIALS
-                base.error = sanitize_error(detail)
-                static_results.append(base)
-                continue
-
-            instance = _registered_instance(backend_cls, desc)
-            base.router_instance = instance
-            base.ui_registered, base.reporting_registered, base.context_only = (
-                _registry_flags(desc, instance)
-            )
-
-            # The ENABLED_REMOTE_MODELS allow-list only gates remote
-            # generation models (mirrors MLRouter registration).
-            probe_instance: Optional[RemoteModelLike] = instance
-            if probe_instance is None:
-                try:
-                    probe_instance = backend_cls(model=desc.internal_name)
-                except EnvironmentError as e:
-                    base.category = CATEGORY_MISSING_CREDENTIALS
-                    base.error = sanitize_error(str(e))
-                    static_results.append(base)
-                    continue
-                except Exception as e:
-                    base.category = CATEGORY_CLIENT_INIT
-                    base.error = sanitize_error(f"{type(e).__name__}: {e}")
-                    static_results.append(base)
-                    continue
-
-            if (
-                enabled_names is not None
-                and probe_instance.external
-                and not probe_instance.context_only
-                and desc.name not in enabled_names
-                and desc.internal_name not in enabled_names
+            if _wanted(desc):
+                _classify(backend_cls, provider, status, detail, desc, False)
+        cataloged = {d.name for d in catalog} | {d.internal_name for d in catalog}
+        for desc in chat_catalog:
+            if _wanted(desc) and not (
+                desc.name in cataloged or desc.internal_name in cataloged
             ):
-                base.category = CATEGORY_DISABLED
-                base.enabled = False
-                base.error = "excluded by ENABLED_REMOTE_MODELS"
-                static_results.append(base)
-                continue
-
-            checkable.append((base, probe_instance))
+                _classify(backend_cls, provider, status, detail, desc, True)
 
     return static_results, checkable
 

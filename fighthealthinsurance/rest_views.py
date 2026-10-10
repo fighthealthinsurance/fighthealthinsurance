@@ -49,6 +49,11 @@ from fighthealthinsurance.external_review import (
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.log_redaction import session_key_prefix_for_log
 from fighthealthinsurance.ml.health_status import health_status
+from fighthealthinsurance.ml.ml_models import (
+    MODEL_TRANSPORT_ERRORS,
+    ProviderUnavailable,
+    describe_model_error,
+)
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     Appeal,
@@ -89,6 +94,11 @@ from fighthealthinsurance.chat.chat_persistence import iter_visible_history
 
 appeal_assembly_helper = AppealAssemblyHelper()
 pubmed_tools = PubMedTools()
+# A reader that could not be asked or reached, as opposed to one that ran and
+# found nothing (see extract_patient_fields).
+_UNREACHED_MODEL_ERRORS: typing.Tuple[typing.Type[BaseException], ...] = (
+    ProviderUnavailable,
+) + MODEL_TRANSPORT_ERRORS
 
 
 class ChatViewSet(viewsets.ViewSet):
@@ -1921,19 +1931,43 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        # Get the first available model
-        model = entity_backends[0]
-
         # Call entity extraction asynchronously for each field
-        async def extract_fields():
-            """Extract all required fields from the text asynchronously."""
+        async def extract_fields() -> tuple[dict, bool]:
+            """Extract all required fields from the text asynchronously.
+
+            Returns the fields read and whether any model answered at all.
+            Each field goes to the backends in the router's order: one that
+            cannot be reached (down, 5xx, timeout) is skipped for the rest
+            of this request and its fields go to the next. Asking only the
+            first backend let one failing model empty the form, with an
+            ERROR per field and nothing telling the person the read failed.
+            """
+            # Backend index -> why it could not read, for the one log line.
+            failed: dict[int, str] = {}
+            answered = False
+
+            async def read_field(entity_type: str) -> Optional[str]:
+                nonlocal answered
+                for idx, model in enumerate(entity_backends):
+                    if idx in failed:
+                        continue
+                    try:
+                        value: Optional[str] = await model.get_entity(text, entity_type)
+                    except _UNREACHED_MODEL_ERRORS as e:
+                        failed.setdefault(idx, f"{model}: {describe_model_error(e)}")
+                        continue
+                    # Reached: None now means "not in the text".
+                    answered = True
+                    return value
+                return None
+
             # Create tasks for parallel execution
             tasks = [
-                model.get_entity(text, "patient_name"),
-                model.get_entity(text, "member_id"),
-                model.get_entity(text, "date_of_birth"),
-                model.get_entity(text, "plan_id"),
-                model.get_entity(text, "insurance_company"),
+                read_field("patient_name"),
+                read_field("member_id"),
+                read_field("date_of_birth"),
+                read_field("plan_id"),
+                read_field("insurance_company"),
                 # Remove diagnosis as it's not available from patient biographics
             ]
 
@@ -1970,13 +2004,35 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
                             continue
                         results[field] = value
                     elif isinstance(value, Exception):
+                        # Not a model that could not be reached (read_field
+                        # moves on from those): likely a code bug.
                         logger.error(f"Error extracting {field}: {value}")
 
-            return results
+            if failed:
+                reasons = "; ".join(failed.values())
+                if answered:
+                    logger.debug(f"PA prefill: skipped failing models -- {reasons}")
+                else:
+                    logger.warning(
+                        f"PA prefill: no entity model could read the document "
+                        f"({len(entity_backends)} tried) -- {reasons}"
+                    )
+            return results, answered
 
         # Run the extraction and get the results
         try:
-            extracted_fields = async_to_sync(extract_fields)()
+            extracted_fields, answered = async_to_sync(extract_fields)()
+            if not answered:
+                # Every model failed, so an empty form would say the
+                # document holds none of these fields. Say the read failed,
+                # as for no model at all.
+                return Response(
+                    {
+                        "error": "Could not read the document right now; "
+                        "please fill in the fields by hand or try again"
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
 
             # Compute confidence notes BEFORE parsing the DOB so the raw
             # string the LLM emitted can be checked against the source text.

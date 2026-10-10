@@ -375,6 +375,8 @@ def _letter_router(*chat_backends, external_models=()):
         get_chat_backends=MagicMock(return_value=list(chat_backends)),
         external_models_by_cost=list(external_models),
         chat_outside_models_by_name={},
+        chat_outside_models=MagicMock(return_value=[]),
+        best_external_models=MagicMock(return_value=[]),
     )
 
 

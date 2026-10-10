@@ -30,6 +30,7 @@ from fighthealthinsurance.escalation_addresses import (
     EscalationRecipient,
 )
 from fighthealthinsurance.context_utils import truncate_at_boundary
+from fighthealthinsurance.env_utils import get_env_variable
 from fighthealthinsurance.ml.ml_models import RemoteModelLike, attempt_deadline
 from fighthealthinsurance.ml.ml_router import ml_router
 
@@ -265,13 +266,20 @@ def _letter_backends(use_external: bool) -> list[RemoteModelLike]:
     and one outside model and never reached our other models: a dead outside
     model (out of credit, retired) then failed the letter while a healthy
     model of ours sat further down the list.
+
+    Ours come from that list asked without outside models, and the outside
+    one is chosen by _letter_outside_models: asking the chat list for its
+    outside models judged them by chat's budget and spent chat's hourly
+    "every outside chat model is down" warning, though a letter is not chat.
+    A FORCE_MODEL naming an outside model still picks it, as for chat.
     """
     outside_ids = {id(m) for m in ml_router.external_models_by_cost}
     outside_ids.update(id(m) for m in ml_router.chat_outside_models_by_name.values())
     seen: set[int] = set()
     internal: list[RemoteModelLike] = []
     external: list[RemoteModelLike] = []
-    for model in ml_router.get_chat_backends(use_external=use_external):
+    forced = use_external and bool(get_env_variable("FORCE_MODEL"))
+    for model in ml_router.get_chat_backends(use_external=forced):
         if id(model) in seen:
             continue
         seen.add(id(model))
@@ -281,8 +289,31 @@ def _letter_backends(use_external: bool) -> list[RemoteModelLike]:
             internal.append(model)
     chosen = internal[:MAX_INTERNAL_ATTEMPTS]
     if use_external:
-        chosen += external[:MAX_EXTERNAL_ATTEMPTS]
+        chosen += (external or _letter_outside_models())[:MAX_EXTERNAL_ATTEMPTS]
     return chosen
+
+
+def _letter_outside_models() -> list[RemoteModelLike]:
+    """The outside models a letter may ask, first choice first: chat's
+    roster as it stands, else the best hosted models.
+
+    The roster can be empty for reasons that are chat's alone: its
+    provider's chat budget is spent, or every roster model is down while
+    ours are up. A letter spends under its own use ("other", or "assistant"),
+    and best_external_models judges each provider's spend for that use, so a
+    healthy hosted model still gets the letter's last attempt. The roster is
+    read without chat's hourly warning, and never fails open onto a model
+    known to be down: the hosted models are the fallback here.
+    """
+    roster: list[RemoteModelLike] = ml_router.chat_outside_models(
+        limit=MAX_EXTERNAL_ATTEMPTS, warn_if_down=False, fail_open=False
+    )
+    if roster:
+        return roster
+    best: list[RemoteModelLike] = ml_router.best_external_models(
+        limit=MAX_EXTERNAL_ATTEMPTS
+    )
+    return best
 
 
 async def generate_regulator_letter(
