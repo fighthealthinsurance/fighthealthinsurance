@@ -34,7 +34,7 @@ from fighthealthinsurance.denial_context import (
     question_field_name,
     question_text_for_field,
 )
-from fighthealthinsurance.letter_placeholders import find_placeholder_spans
+from fighthealthinsurance.letter_placeholders import find_placeholder_spans, is_ignored
 from fighthealthinsurance.models import AssistantDraft, Denial
 from fighthealthinsurance.utils import is_real_appeal, strip_invisible_controls
 
@@ -686,6 +686,8 @@ def placeholders_in(text: str) -> list[str]:
         match.span()
         for match in _PLACEHOLDER.finditer(text)
         if not _is_bracketed_citation(match.group(0))
+        # What the fax check leaves alone ([This], [Their]) isn't asked for.
+        and not is_ignored(match.group(0))
     ]
     spans += [match.span() for match in _LONG_INSTRUCTION.finditer(text)]
     spans += [

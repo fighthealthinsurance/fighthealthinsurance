@@ -65,6 +65,13 @@ CAUGHT = [
         ["{{FIRST_NAME}}", "{{LAST_NAME}}"],
     ),
     ("a bracketed name", "My name is [Your Name].", ["[Your Name]"]),
+    ("a bracketed ID, not the citation [Id.]", "Member ID: [ID]", ["[ID]"]),
+    (
+        "real fill-ins beside a quotation's bracketed words",
+        '"[It] is not medically necessary" [emphasis added]. '
+        "Seen on [Date of Service].\nSincerely,\n[Your Name]",
+        ["[Date of Service]", "[Your Name]"],
+    ),
     ("a bracketed name in capitals", "Date: [INSERT DATE]", ["[INSERT DATE]"]),
     (
         "bracketed snake_case names",
@@ -220,6 +227,16 @@ LEFT_ALONE = [
     (
         "the brackets of legal quoting",
         '"[T]he plan shall [sic] pay" [emphasis added] [internal citations omitted]',
+    ),
+    (
+        "ordinary words a quotation puts in brackets",
+        'The plan wrote "[It] is not covered" and "[w]e will not pay"; '
+        "[We] disagree, and [the] reviewer agreed with [her] doctor.",
+    ),
+    (
+        "more notes of legal quoting",
+        "[Ellipsis in original] [Brackets in original] [Alterations added] "
+        "[Capitalization altered] [Cleaned up] [Emphasis ours] [Ibid] [Id.]",
     ),
     ("a bracketed link", "See the [CMS Guidance](https://www.cms.gov/guidance)."),
     (

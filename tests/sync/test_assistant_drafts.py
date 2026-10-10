@@ -243,8 +243,6 @@ NEVER_LISTED = (
 # capital) that the site's fax check stops a letter for, so they are listed
 # now: the assistant fills them in before a fax would stop.
 FAX_CHECK_BLOCKS = (
-    "[It]",
-    "[We]",
     "[National Comprehensive Cancer Network Clinical Practice Guidelines]",
     "[doctor name]",
     "[doctor's name]",
@@ -878,12 +876,28 @@ class PlaceholdersTest(SimpleTestCase):
             ["[ Your {{SCSID}} ]", "[Claim #: ________]", "[DOB: MM/DD/YYYY]"],
         )
 
-    def test_a_quotation_note_the_fax_check_blocks_is_still_not_listed(self):
-        for note in ("[Cleaned up]", "[Emphasis ours]", "[Brackets in original]", "[Ibid]"):
+    def test_quotation_notes_and_bracketed_words_are_neither_blocked_nor_listed(self):
+        for note in (
+            "[Cleaned up]",
+            "[Emphasis ours]",
+            "[Brackets in original]",
+            "[Ibid]",
+            "[It]",
+            "[We]",
+            "[This]",
+            "[Their]",
+            "[Which]",
+        ):
             letter = f"The plan must cover it {note}."
             with self.subTest(note=note):
-                self.assertTrue(find_unfilled_placeholders(letter))
+                self.assertEqual(find_unfilled_placeholders(letter), [])
                 self.assertEqual(drafts.placeholders_in(letter), [])
+
+    def test_brackets_main_listed_that_the_fax_check_passes_are_still_listed(self):
+        self.assertEqual(
+            drafts.placeholders_in("Signed [Dr. Name] for [ICD-10 Code] on [Claim Number: ]."),
+            ["[Claim Number: ]", "[Dr. Name]", "[ICD-10 Code]"],
+        )
 
     def test_each_fill_in_is_listed_once_sorted(self):
         self.assertEqual(
