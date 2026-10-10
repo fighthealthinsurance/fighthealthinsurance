@@ -2327,6 +2327,20 @@ class TestAnchoredCallRemoval(TestCase):
         result = remove_anchored_call(text, tool.detect(text))
         self.assertEqual(result, "Noted.\n\n" + letter)
 
+    def test_malformed_call_removal_takes_the_junk_on_its_line(self):
+        """Text after the broken object that closes the call's line with a
+        brace can be more of the payload; the line after it is not."""
+        from fighthealthinsurance.chat.tools.base_tool import remove_anchored_call
+
+        tool = self._tool()
+        text = (
+            '**create_or_update_appeal**{"procedure": "MRI", oops} '
+            '"diagnosis": "back pain"}\n'
+            "Anything else?"
+        )
+        result = remove_anchored_call(text, tool.detect(text))
+        self.assertEqual(result, "\nAnything else?")
+
     def test_unbalanced_payload_removal_ends_at_its_line(self):
         """An unpaired quote leaves the braces unbalanced: the removal ends
         at the first brace that closes a line, the call's own."""

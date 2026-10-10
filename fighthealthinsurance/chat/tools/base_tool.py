@@ -229,8 +229,9 @@ def remove_anchored_call(text: str, match: re.Match[str]) -> str:
     """Remove ONE anchored ``**tool**{...}`` call from ``text`` precisely.
 
     Uses the parsed span when the payload parses. When it does NOT parse,
-    the removal ends at the malformed object's own closing brace (and its
-    JSONL continuations), found by brace matching. Ending at the last ``}``
+    the removal ends at the malformed object's own closing brace, found by
+    brace matching -- or at a later brace that closes the same line -- plus
+    its JSONL continuations. Ending at the last ``}``
     before the next call instead deleted any prose in between that held a
     brace, or most of a letter with ``{placeholder}`` fields; cutting at
     the first newline left the rest of a pretty-printed payload behind,
@@ -250,6 +251,15 @@ def remove_anchored_call(text: str, match: re.Match[str]) -> str:
     limit = following if following is not None else len(text)
     end = _balanced_object_end(text, body_start, limit)
     if end is not None:
+        # Junk after the object on its own line still belongs to the call
+        # when the line closes with a brace -- the pattern's own shape for
+        # where a call ends -- since it can be more of the payload:
+        # {"procedure": "MRI", oops} "diagnosis": "back pain"}
+        line_end = text.find("\n", end)
+        line_end = min(line_end if line_end != -1 else len(text), limit)
+        tail_brace = text.rfind("}", end, line_end)
+        if tail_brace != -1 and _CALL_LINE_END_RE.match(text, tail_brace + 1):
+            end = tail_brace + 1
         while (continuation := _jsonl_continuation(text, end)) is not None:
             end = continuation[1]
     else:
