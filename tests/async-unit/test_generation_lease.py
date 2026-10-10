@@ -61,6 +61,7 @@ class TestLeaseApi(TransactionTestCase):
         generation_lease.acquire(denial, "journey:a")
         second = generation_lease.acquire(denial, "journey:b")
         assert not second.acquired and second.epoch == 1
+        assert second.holder == "journey:a"
 
     def test_steal_takes_a_held_lease_and_bumps_the_epoch(self):
         denial = _make_denial(9203)
@@ -177,9 +178,54 @@ class TestLeaseGovernsGenerators(_JourneyTestBase):
         assert generation_lease.current_epoch(denial) == 2
 
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_lease_the_site_holds_is_reported_not_retried(self, mock_gen):
+        """The person is on the site's appeals page: the journey reports the
+        site is generating instead of retrying until it fails."""
+        denial = _make_denial(9210)
+        generation_lease.acquire(denial, "interactive:user")
+        mock_gen.make_appeals.return_value = iter(_drafts(LETTERS))
+        assert (
+            appeal_journey_core.generate_and_store_appeals(denial)
+            == appeal_journey_core.SITE_IS_GENERATING
+        )
+        assert not mock_gen.make_appeals.called
+        # The site's lease is untouched.
+        lease = AppealGenerationLease.objects.get(for_denial=denial)
+        assert (lease.holder, lease.epoch) == ("interactive:user", 1)
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_the_activity_reports_the_site_holding_the_lease(self, mock_gen):
+        """The Temporal activity reports it rather than failing its attempt,
+        so the generation workflow can wait instead of failing."""
+        from fighthealthinsurance.activities import appeal_journey
+
+        denial = _make_denial(9211)
+        generation_lease.acquire(denial, "interactive:user")
+        stored = async_to_sync(appeal_journey.generate_and_store_appeals)(
+            denial.hashed_email, str(denial.uuid)
+        )
+        assert stored == appeal_journey_core.SITE_IS_GENERATING
+        assert not mock_gen.make_appeals.called
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_the_activity_still_retries_a_lease_another_journey_holds(self, mock_gen):
+        from temporalio.exceptions import ApplicationError
+
+        from fighthealthinsurance.activities import appeal_journey
+
+        denial = _make_denial(9212)
+        generation_lease.acquire(denial, "journey:other")
+        with pytest.raises(ApplicationError) as exc_info:
+            async_to_sync(appeal_journey.generate_and_store_appeals)(
+                denial.hashed_email, str(denial.uuid)
+            )
+        assert not exc_info.value.non_retryable
+        assert not mock_gen.make_appeals.called
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_held_lease_is_a_retryable_refusal(self, mock_gen):
         denial = _make_denial(9208)
-        generation_lease.acquire(denial, "interactive:user")
+        generation_lease.acquire(denial, "journey:other")
         mock_gen.make_appeals.return_value = iter(_drafts(LETTERS))
         with pytest.raises(appeal_journey_core.LeaseHeld):
             appeal_journey_core.generate_and_store_appeals(denial)

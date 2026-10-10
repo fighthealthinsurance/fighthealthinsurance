@@ -35,6 +35,10 @@ STATUS_NOT_FOUND = "not_found"
 STATUS_NO_DENIAL_TEXT = "no_denial_text"
 STATUS_ALREADY_HAS_APPEALS = "already_has_appeals"
 
+# What a generation attempt returns, in place of a count, when the site's own
+# appeals page holds the denial's lease: the workflow waits and looks again.
+SITE_IS_GENERATING = -1
+
 # How many drafts one journey run aims to persist, and how long the generation
 # step may spend before returning with whatever it has. The activity's
 # start_to_close is set above this so a full budget is never cut short.
@@ -201,6 +205,14 @@ async def agenerate_and_store_appeals(denial) -> int:
         denial, holder=generation_lease.new_holder("journey")
     )
     if not lease.acquired:
+        if generation_lease.is_interactive(lease.holder):
+            # The person is on the site's appeals page, which is writing
+            # the letters now: the workflow waits rather than retrying.
+            logger.info(
+                f"Appeal journey: the site is generating for denial {denial.uuid}; "
+                "waiting for it to finish"
+            )
+            return SITE_IS_GENERATING
         raise LeaseHeld(
             f"generation lease held for denial {denial.uuid} (epoch {lease.epoch})"
         )

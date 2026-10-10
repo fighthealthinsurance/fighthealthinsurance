@@ -751,6 +751,7 @@ def letters_status(denial: Denial, finished: bool) -> str:
 def site_took_generation(denial: Denial) -> bool:
     """Whether the last generation lease on this denial went to the site's
     own page rather than to a background run."""
+    from fighthealthinsurance import generation_lease
     from fighthealthinsurance.models import AppealGenerationLease
 
     holder = (
@@ -758,7 +759,7 @@ def site_took_generation(denial: Denial) -> bool:
         .values_list("holder", flat=True)
         .first()
     )
-    return bool(holder and holder.startswith("interactive:"))
+    return generation_lease.is_interactive(holder)
 
 
 def answers_for_generation(denial: Denial) -> Optional[dict[str, str]]:

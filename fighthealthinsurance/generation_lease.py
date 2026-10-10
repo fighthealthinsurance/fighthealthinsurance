@@ -137,6 +137,13 @@ class Lease:
     acquired: bool
     epoch: int
     deadline: Optional[datetime]
+    # Who holds it, when the acquire was refused.
+    holder: Optional[str] = None
+
+
+def is_interactive(holder: Optional[str]) -> bool:
+    """Whether ``holder`` is the site's own appeals page."""
+    return bool(holder and holder.startswith("interactive:"))
 
 
 def new_holder(kind: str) -> str:
@@ -193,7 +200,7 @@ def acquire(
                 now = _now()
                 until = now + timedelta(seconds=ttl_seconds)
         if row.expires_at > now and not steal:
-            return Lease(False, row.epoch, row.deadline)
+            return Lease(False, row.epoch, row.deadline, row.holder)
         row.holder = holder
         row.expires_at = until
         row.deadline = until
