@@ -1702,6 +1702,55 @@ class ComputeModelHealthDetailsTest(TestCase):
             release.set()
 
 
+class _ListedAnthropic:
+    """An outside model whose check passes whatever its provider's credit."""
+
+    model = "claude-haiku-4-5"
+    external = True
+    SPEND_PROVIDER = spend.ANTHROPIC
+
+    def model_is_ok(self):
+        return True
+
+
+class _ListedButRefused:
+    """An outside model still listed while its key is refused."""
+
+    model = "google/gemma-4-26B-A4B-it"
+    external = True
+
+    def model_is_ok(self):
+        return True
+
+    def unavailable_reason(self):
+        return "refused (HTTP 401)"
+
+
+class AdminStatusLiveProblemsTest(TestCase):
+    """The System Status model counts: a backend whose check passes but
+    that this pod's calls found refused, or whose provider is paused for
+    credit, is not counted as responding, and its row says why."""
+
+    def _model_status(self, *models):
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        fake_router = mock.MagicMock()
+        fake_router.all_models_by_cost = list(models)
+        fake_router.context_only_models_by_cost = []
+        fake_router.chat_outside_models_by_name = {}
+        with mock.patch("fighthealthinsurance.ml.ml_router.ml_router", fake_router):
+            return AdminStatusView._model_status()
+
+    def test_a_credit_paused_backend_is_not_counted_responding(self):
+        spend.pause(spend.ANTHROPIC, reason="test")
+        status = self._model_status(_ListedAnthropic())
+        self.assertEqual((status["alive"], status["total"]), (0, 1))
+
+    def test_a_refused_backend_row_says_why(self):
+        status = self._model_status(_ListedButRefused())
+        self.assertEqual(status["details"][0]["error"], "refused (HTTP 401)")
+
+
 class FaxBackendsHealthTest(TestCase):
     @mock.patch.dict(
         os.environ,

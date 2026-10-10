@@ -6,7 +6,11 @@ What & why:
 - Starts on the first selection or status request (there is no startup hook),
   caches results, and refreshes periodically (hourly) in the background; until
   the first sweep lands every backend reads as unchecked and selection fails open.
-- Avoids heavy checks per request; endpoint simply returns the cached snapshot.
+- Between sweeps, rechecks only the backends the last one marked down (every
+  few minutes), so one failed probe does not keep a backend out of routing
+  for the hour.
+- Avoids heavy checks per request; endpoint simply returns the cached snapshot,
+  with this pod's live signals (``live_problem``) read on top at each read.
 
 Trade-offs:
 - Uses a simple ping inference with short timeout; does not validate output quality.
@@ -25,9 +29,20 @@ from loguru import logger
 
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.utils import sanitize_url_for_display
+from fighthealthinsurance.ml import spend
 
 REFRESH_INTERVAL_SECONDS = 60 * 60  # hourly
+# How soon a backend the sweep marked down is probed again. Routing leaves it
+# out until a probe passes, and a routed-out backend gets no calls that could
+# bring it back, so without this one failed probe (a restart, a slow /models)
+# cost it the hour. Doubled after each recheck that leaves one down, so a
+# backend that stays dead is not probed (and warned about) every few minutes.
+DOWN_RECHECK_SECONDS = 3 * 60
 ALERT_THROTTLE_SECONDS = 60 * 60  # at most one alert email per hour
+# How long a sweep (or a recheck) waits for its probes. Each probe has its own
+# worker and a 7s budget (MODEL_PROBE_BUDGET_SECONDS), so all of them fit.
+SWEEP_TIMEOUT_SECONDS = 10
+PAUSED_FOR_CREDIT = "provider paused for credit or quota until 00:00 UTC"
 
 
 def _model_key(model: Any) -> str:
@@ -81,6 +96,63 @@ def _unavailable_reason(model: Any) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
+def live_problem(instance: Any) -> Optional[str]:
+    """Why this pod's own signals say ``instance`` cannot answer now, or
+    None: the flags its calls left (not served, refused, unreachable; see
+    ``unavailable_reason``), or its provider paused for credit or quota
+    today. In memory only, never a model or the network. Never raises: a
+    backend without these accessors, or a test double, reads as None.
+
+    A /models probe passes through all of these (listing models is free and
+    needs no credit), so the probe result alone read such a backend as
+    healthy. Staff pages show the reason; the public snapshot only says
+    "not ok". Read at display time and never written into the sweep's map,
+    so it clears when the refusal or pause does, not an hour later.
+    """
+    reason = _unavailable_reason(instance)
+    if reason:
+        return reason
+    try:
+        # Every use ("*"), the pause a credit or quota refusal sets. A spent
+        # per-use budget is not a dead provider.
+        provider = getattr(instance, "SPEND_PROVIDER", None)
+        if isinstance(provider, str) and provider and spend.paused(provider, "*"):
+            return PAUSED_FOR_CREDIT
+    except Exception as e:
+        logger.debug(f"Spend pause not read: {type(e).__name__}")
+    return None
+
+
+def _note_reachable(model: Any) -> None:
+    """A /models probe just heard ``model``'s endpoint list it, so that host
+    is reachable again: a connect-failure cooldown on it (an outside one
+    escalates up to an hour while the host stays gone) no longer holds, and
+    its next outage starts from the short cooldown. Only reachability:
+    /models can list a model a key is refused for, so the refused and
+    missing flags stay until a call is served. In memory; never raises.
+    """
+    try:
+        note_reachable = getattr(model, "_note_reachable", None)
+        if not callable(note_reachable):
+            return
+        legs = model.serving_legs()
+        if len(legs) == 1:
+            pairs = [(legs[0][1], legs[0][2])]
+        else:
+            # The probe records a card on each leg that answered; one that
+            # did not was not heard from.
+            cards = ("last_model_card", "last_backup_model_card")
+            pairs = [
+                (base, wire)
+                for (_leg, base, wire), card in zip(legs, cards)
+                if getattr(model, card, None)
+            ]
+        for pair in pairs:
+            note_reachable(*pair)
+    except Exception:
+        logger.opt(exception=True).debug(f"Reachability not noted for {model}")
+
+
 @dataclass
 class BackendHealthDetail:
     name: str
@@ -89,10 +161,23 @@ class BackendHealthDetail:
 
 
 @dataclass
+class PassedProbe:
+    """A backend whose probe passed in the sweep. The snapshot re-reads it
+    for live problems at each read (see ``live_problem``)."""
+
+    model: Any
+    name: str
+    # Counts in alive_models: it can draft (not context-only or chat-only).
+    drafting: bool
+    external: bool
+
+
+@dataclass
 class HealthSnapshot:
     alive_models: int = 0
     last_checked: float = field(default_factory=lambda: time.time())
     details: List[BackendHealthDetail] = field(default_factory=list)
+    passed: List[PassedProbe] = field(default_factory=list)
 
 
 class _HealthStatus:
@@ -107,6 +192,13 @@ class _HealthStatus:
         # one tuple so a reader never pairs one sweep's verdicts with another
         # sweep's time. None before the first sweep on this process.
         self._last_sweep: Optional[Tuple[Dict[str, bool], float]] = None
+        # The last sweep's candidates (the serving registry and the down
+        # recheck read them), when it started (monotonic; the hourly cadence
+        # counts from it), and the wait before the next recheck of the ones it
+        # marked down.
+        self._last_candidates: List[Any] = []
+        self._last_sweep_at: Optional[float] = None
+        self._recheck_seconds: float = DOWN_RECHECK_SECONDS
         self._timer: Optional[threading.Timer] = None
         self._initialized = False
         # Whether the recurring background sweep has been kicked off. Kept
@@ -147,13 +239,28 @@ class _HealthStatus:
             # would point at nothing until the next round an hour later.
             self._record_serving()
 
+        snapshot = self._snapshot
+        # A backend whose probe passed can still be unable to answer: a key
+        # refused, a model not served, a host cooling down, or its provider
+        # paused for credit. Read now rather than at the sweep, so one that
+        # starts after the sweep is not counted for up to an hour, and one
+        # that clears is counted again at once. Listed with no reason: it can
+        # name our billing or key state.
+        live_down = [p for p in snapshot.passed if live_problem(p.model)]
+        details = [
+            {"name": d.name, "ok": d.ok, "error": d.error} for d in snapshot.details
+        ]
+        # Internal backends stay out of the list, as their probe failures do.
+        details += [
+            {"name": p.name, "ok": False, "error": "not ok"}
+            for p in live_down
+            if p.external
+        ]
         return {
-            "alive_models": self._snapshot.alive_models,
-            "last_checked": self._snapshot.last_checked,
-            "details": [
-                {"name": d.name, "ok": d.ok, "error": d.error}
-                for d in self._snapshot.details
-            ],
+            "alive_models": snapshot.alive_models
+            - sum(1 for p in live_down if p.drafting),
+            "last_checked": snapshot.last_checked,
+            "details": details,
         }
 
     def model_ok(self, model: Any) -> Optional[bool]:
@@ -238,12 +345,101 @@ class _HealthStatus:
         if not self._background_sweep_enabled():
             return
         try:
-            interval = 5 if self._fast_mode else REFRESH_INTERVAL_SECONDS
-            self._timer = threading.Timer(interval, self._refresh)
+            self._timer = threading.Timer(self._next_tick_seconds(), self._tick)
             self._timer.daemon = True
             self._timer.start()
         except Exception as e:
             logger.warning(f"Failed to schedule health refresh: {e}")
+
+    def _seconds_to_full_sweep(self) -> float:
+        """How long until the next full sweep is due; 0 before the first."""
+        if self._last_sweep_at is None:
+            return 0.0
+        interval = 5 if self._fast_mode else REFRESH_INTERVAL_SECONDS
+        return max(0.0, self._last_sweep_at + interval - time.monotonic())
+
+    def _next_tick_seconds(self) -> float:
+        """When the one timer chain fires next: at the full sweep, or sooner
+        to recheck the backends the last sweep left out of routing. The
+        rechecks do not move the hourly sweep."""
+        wait = self._seconds_to_full_sweep()
+        if self._down_for_routing():
+            wait = min(wait, self._recheck_seconds)
+        # Never a zero wait, so nothing can make the chain spin.
+        return max(1.0, wait)
+
+    def _tick(self) -> None:
+        """The timer chain's callback: the full sweep when it is due, else a
+        recheck of just the backends the last sweep marked down."""
+        # Within a second counts as due: a timer can fire a hair early.
+        if self._seconds_to_full_sweep() <= 1.0:
+            self._refresh()  # re-arms the chain itself
+            return
+        try:
+            self._recheck_down()
+        except Exception:
+            logger.opt(exception=True).warning("Recheck of down model backends failed")
+        finally:
+            self._schedule_refresh()
+
+    def _down_for_routing(self) -> List[Any]:
+        """The last sweep's backends that routing leaves out on its result:
+        marked down, with no live signal of their own (health_checked_live),
+        so only another probe can bring them back."""
+        health = self._health_map
+        return [
+            m
+            for m in self._last_candidates
+            if health.get(_model_key(m)) is False
+            and not getattr(m, "health_checked_live", False)
+        ]
+
+    def _recheck_down(self) -> None:
+        """Probe again only the backends the last sweep marked down, and put
+        each that passes back into routing now rather than at the next
+        sweep. Never marks one down: the hourly sweep stays the only source
+        of that, of the alert and of the serving cards. Probes run outside
+        the sweep lock, which only guards rebinding the map."""
+        down = self._down_for_routing()
+        if not down:
+            return
+        recovered: List[Any] = []
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=len(down))
+        try:
+            future_map = {ex.submit(m.model_is_ok): m for m in down}
+            concurrent.futures.wait(future_map, timeout=SWEEP_TIMEOUT_SECONDS)
+            for future, m in future_map.items():
+                if not future.done():
+                    continue
+                try:
+                    if future.result(timeout=0):
+                        recovered.append(m)
+                except Exception as e:
+                    logger.debug(f"Recheck error for {_model_key(m)}: {e}")
+        finally:
+            # As in the sweep: return at the deadline, not after stragglers.
+            ex.shutdown(wait=False, cancel_futures=True)
+        if len(recovered) < len(down):
+            self._recheck_seconds = min(
+                self._recheck_seconds * 2, REFRESH_INTERVAL_SECONDS
+            )
+        if not recovered:
+            return
+        for m in recovered:
+            _note_reachable(m)
+        with self._lock:
+            # Copied and rebound, so model_ok's lock-free reads see one map
+            # or the other. Only entries still False change: a sweep that
+            # ran meanwhile has the newer word on the rest.
+            health = dict(self._health_map)
+            for m in recovered:
+                if health.get(_model_key(m)) is False:
+                    health[_model_key(m)] = True
+            self._health_map = health
+        logger.info(
+            "Back in routing after a recheck: "
+            + ", ".join(_model_key(m) for m in recovered)
+        )
 
     def _refresh_unlocked(
         self,
@@ -259,10 +455,14 @@ class _HealthStatus:
         the lock — ``send_mail`` can block on SMTP and we don't want any
         concurrent ``get_snapshot()`` reader stuck behind it.
         """
+        # Set first, so a sweep that fails still counts as this hour's.
+        self._last_sweep_at = time.monotonic()
+        self._recheck_seconds = DOWN_RECHECK_SECONDS
         alive_count = 0
         internal_total = 0
         internal_alive = 0
         internal_failures: List[BackendHealthDetail] = []
+        passed: List[PassedProbe] = []
 
         # Choose a small, representative set of backends
         candidates: List[Any] = []
@@ -305,11 +505,12 @@ class _HealthStatus:
         # internal models are dead" page for a slow-but-healthy backend.
         details: List[BackendHealthDetail] = []
         new_health: Dict[str, bool] = {}
-        timeout_seconds = 10
+        timeout_seconds = SWEEP_TIMEOUT_SECONDS
         if candidates:
-            ex = concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(8, len(candidates))
-            )
+            # A worker per candidate, so every probe starts at once and its
+            # own budget fits the deadline. With fewer, a probe still queued
+            # behind slow ones at the deadline was marked down for the hour.
+            ex = concurrent.futures.ThreadPoolExecutor(max_workers=len(candidates))
             try:
                 future_map = {ex.submit(m.model_is_ok): m for m in candidates}
                 # Block until all checks finish or the deadline elapses.
@@ -329,17 +530,41 @@ class _HealthStatus:
                         except Exception as e:
                             err = str(e)
                             logger.debug(f"Health check error for {name}: {e}")
+                    elif future.cancel():
+                        # Never started, so it measured nothing this round:
+                        # the backend keeps last round's result (or stays
+                        # unchecked) rather than reading down for an hour.
+                        previous = self._health_map.get(_model_key(m))
+                        if previous is not None:
+                            new_health[_model_key(m)] = previous
+                        continue
                     else:
                         err = f"timeout>{timeout_seconds}s"
+                    # Routing's input: the probe alone. Live problems are
+                    # read on top where the status is shown (get_snapshot),
+                    # so this map never holds a refusal or a pause past the
+                    # moment it clears.
                     new_health[_model_key(m)] = bool(ok)
                     if ok:
                         # alive_models is the public "a model is ready to
                         # write your appeal" number, and a context-only or
                         # chat-only backend can't draft, so it never counts.
-                        if id(m) not in non_drafting_ids:
+                        drafting = id(m) not in non_drafting_ids
+                        if drafting:
                             alive_count += 1
                         if is_internal:
                             internal_alive += 1
+                        passed.append(
+                            PassedProbe(
+                                model=m,
+                                name=name,
+                                drafting=drafting,
+                                external=not is_internal,
+                            )
+                        )
+                        if not getattr(m, "health_checked_live", False):
+                            # Its /models answered: the host is reachable.
+                            _note_reachable(m)
                     else:
                         # The public snapshot lists failing EXTERNAL backends,
                         # timed out or not, saying no more than it does today:
@@ -366,6 +591,7 @@ class _HealthStatus:
             alive_models=alive_count,
             last_checked=time.time(),
             details=details,
+            passed=passed,
         )
 
         self._snapshot = snapshot
@@ -551,9 +777,11 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
     not send alerts or mutate the cached snapshot.
 
     A backend that is down shows the reason it recorded on this pod (a
-    retired model, a refused key, an unreachable host) when it has one,
-    instead of a bare "not ok". That reason can name our billing or key
-    state, which is why it is here and not in the public snapshot.
+    retired model, a refused key, an unreachable host, its provider paused
+    for credit; see ``live_problem``) when it has one, instead of a bare
+    "not ok". Such a reason takes the row down even when the probe passed.
+    That reason can name our billing or key state, which is why it is here
+    and not in the public snapshot.
 
     Each row also carries the backend's endpoint (``url``) with credentials,
     query and fragment stripped; its backup leg, when that differs from the
@@ -609,7 +837,9 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
         finally:
             answered_at[id(m)] = datetime.datetime.now(datetime.timezone.utc)
 
-    ex = concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(candidates)))
+    # A worker per candidate, as in the sweep, so none waits in a queue past
+    # the deadline.
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=len(candidates))
     try:
         future_map = {ex.submit(probe, m): m for m in candidates}
         concurrent.futures.wait(future_map, timeout=timeout_seconds)
@@ -626,8 +856,6 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
             if done:
                 try:
                     ok = bool(future.result(timeout=0))
-                    if not ok:
-                        err = _unavailable_reason(m) or "not ok"
                 except Exception as e:
                     err = str(e)
             else:
@@ -644,6 +872,14 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
                 if backup_api_base != api_base or backup_model != wire_model
                 else None
             )
+            # A passing /models probe says nothing of a refused key or a
+            # credit pause, so this pod's live signals can still take the
+            # backend down, and their reason beats the probe's own.
+            live = live_problem(m)
+            if live:
+                ok = False
+            if not ok:
+                err = live or err or "not ok"
             chat_only = id(m) in chat_only_ids
             results.append(
                 {

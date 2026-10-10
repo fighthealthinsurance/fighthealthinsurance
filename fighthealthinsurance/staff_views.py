@@ -97,6 +97,7 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.email_utils import is_sendable_email
 from fighthealthinsurance.business_hours import describe_send_window
 from fighthealthinsurance.ml import chat_gate, chat_shadow, letter_quality, model_query
+from fighthealthinsurance.ml.health_status import live_problem
 from fighthealthinsurance.context_utils import (
     CONTEXT_LEVEL_CHOICES,
     CONTEXT_LEVEL_TEMPLATE,
@@ -2255,34 +2256,6 @@ def _is_placeholder_model(name: str) -> bool:
     return name in PLACEHOLDER_MODEL_LABELS or name.startswith("legacy-")
 
 
-def _live_problem(instance: Any) -> Optional[str]:
-    """Why this pod's own signals say ``instance`` cannot answer now, or
-    None: the flags its calls left (not served, refused, unreachable; see
-    ``unavailable_reason``), or its provider paused for credit or quota
-    today. In memory only, never a model or the network. Never raises: a
-    backend without these accessors, or a test double, reads as None.
-
-    The deploy-time check row is all the pages had otherwise, so a model
-    retired or defunded since the deploy kept reading as healthy.
-    """
-    from fighthealthinsurance.ml import spend
-
-    try:
-        reason_of = getattr(instance, "unavailable_reason", None)
-        reason = reason_of() if callable(reason_of) else None
-        if isinstance(reason, str) and reason:
-            return reason
-    except Exception as e:
-        logger.debug(f"Live model flags not read: {type(e).__name__}")
-    try:
-        provider = getattr(instance, "SPEND_PROVIDER", None)
-        if isinstance(provider, str) and provider and spend.paused(provider, "*"):
-            return "provider paused for credit or quota until 00:00 UTC"
-    except Exception as e:
-        logger.debug(f"Spend pause not read: {type(e).__name__}")
-    return None
-
-
 def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
     """Each model's state today, for the tags on the usage tables.
 
@@ -2291,8 +2264,8 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
     clients but never calls one), the router's registered instances (chat-only
     outside models included) for internal/external/context-only, the newest
     stored health-check row per model, and this pod's live signals
-    (``_live_problem``). It never probes a backend, so the page stays cheap
-    and cannot wake a model.
+    (``health_status.live_problem``). It never probes a backend, so the page
+    stays cheap and cannot wake a model.
 
     Returns ``{name: {"key": ..., "category": ...}}``. ``category`` is set
     only for "failing". A health row whose category is a configuration
@@ -2386,7 +2359,7 @@ def _model_states(names: Iterable[str]) -> Dict[str, Dict[str, str]]:
         external = bool(getattr(instance, "external", True))
         # Several instances can share a name; the model still answers while
         # any one of them can.
-        live = [_live_problem(i) for i in (instances or [instance])]
+        live = [live_problem(i) for i in (instances or [instance])]
         if check is not None and not check[0]:
             states[name] = {"key": "failing", "category": check[1]}
         elif all(live):
@@ -3847,10 +3820,10 @@ class ModelBackendStatusView(generic.TemplateView):
     by usage reporting, the latest health-check row (with the deploy and
     environment it ran under, flagged when it predates this deploy or the
     configuration has changed since), what this pod's own calls have found
-    since (``_live_problem``: not served, refused, unreachable, or its
-    provider paused for credit; such a row is not counted healthy), and the
-    last time the model produced a stored generation (ProposedAppeal /
-    ChooserCandidate rows).
+    since (``health_status.live_problem``: not served, refused, unreachable,
+    or its provider paused for credit; such a row is not counted healthy),
+    and the last time the model produced a stored generation
+    (ProposedAppeal / ChooserCandidate rows).
 
     A panel above the table lists each request path's models in order, with
     external models off and on. It comes from the router's own synchronous
@@ -3957,8 +3930,8 @@ class ModelBackendStatusView(generic.TemplateView):
             # The check row is from the deploy; this is what this pod's own
             # calls have found since. Only an instance the router registered
             # has calls behind it.
-            live_problem = (
-                _live_problem(r.router_instance)
+            live_now = (
+                live_problem(r.router_instance)
                 if r.router_instance is not None
                 else None
             )
@@ -3995,7 +3968,7 @@ class ModelBackendStatusView(generic.TemplateView):
                     "stale_deployment": stale_deployment,
                     "stale_environment": stale_environment,
                     "config_changed": check is not None and check.enabled != r.enabled,
-                    "live_problem": live_problem,
+                    "live_problem": live_now,
                     "live_known": r.router_instance is not None,
                     "last_generation": last_generation.get(r.model_name),
                     # Citations only: never a generation candidate, so its
@@ -4005,6 +3978,9 @@ class ModelBackendStatusView(generic.TemplateView):
                     "context_only": (
                         t.kind == ro.KIND_CONTEXT_ONLY if t else r.context_only
                     ),
+                    # One of chat's own outside models: never drafts either,
+                    # so it has no stored generation to show.
+                    "chat_only": r.chat_only,
                     "has_traits": t is not None,
                     **self._serving_cell(labels.get(id(r)), newest_per_leg, rows_by_id),
                 }

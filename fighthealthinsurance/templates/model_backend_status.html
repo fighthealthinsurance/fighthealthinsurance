@@ -249,6 +249,7 @@
         <td>
           {% if r.last_generation %}{{ r.last_generation|date:"Y-m-d H:i" }} UTC
           {% elif r.context_only %}<span class="muted">n/a (citations only)</span>
+          {% elif r.chat_only %}<span class="muted">n/a (chat only)</span>
           {% else %}<span class="muted">none recorded</span>{% endif %}
         </td>
       </tr>

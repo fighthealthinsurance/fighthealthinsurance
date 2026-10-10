@@ -65,7 +65,7 @@ Shown once, in the All Time section: a policy is not tied to a window.
 {% if panel.paused_rows %}
 <ul class="intro-list">
   {% for p in panel.paused_rows %}
-  <li><strong>{{ p.provider }}</strong> ({{ p.use }}): paused until 00:00 UTC &mdash; the provider refused for credit or quota.</li>
+  <li><strong>{{ p.provider }}</strong> ({{ p.use }}): paused until 00:00 UTC &mdash; the provider refused for credit or quota. Topped up? Lift it on every pod now with <code>python manage.py unpause_spend {{ p.provider }}{% if p.use != "every use" %} --use {{ p.use }}{% endif %}</code>.</li>
   {% endfor %}
 </ul>
 {% endif %}

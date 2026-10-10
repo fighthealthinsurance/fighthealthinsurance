@@ -446,6 +446,15 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
             self.cell(response, "sonar", "Last stored generation"),
         )
 
+    def test_a_chat_only_model_has_no_generations_to_record(self):
+        """Chat's own outside models never draft, so their empty "Last
+        stored generation" says so instead of reading "none recorded"."""
+        self.configure(**DEEPINFRA)
+        cell = self.cell(
+            self.get_page(), "moonshotai/Kimi-K3", "Last stored generation"
+        )
+        self.assertIn("n/a (chat only)", cell)
+
     def test_context_only_is_known_when_routing_fails(self):
         """Read off the registered instance when the traits are unavailable."""
         self.configure(**PERPLEXITY)
@@ -613,6 +622,13 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 # Other registered externals: quality, then provider.
                 "anthropic/claude-sonnet-4-6",
                 DEEPSEEK,
+                # DeepInfra's chat-only models (quality 82, the default for
+                # a model it does not list), then by name.
+                "Qwen/Qwen3.8-2.4T-A95B",
+                "deepseek-ai/DeepSeek-V4.1-Flash",
+                "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
+                "moonshotai/Kimi-K3",
+                "zai-org/GLM-5.3-Flash",
                 "anthropic/claude-haiku-4-5",
                 GEMMA,
                 # Context only.
@@ -1232,3 +1248,33 @@ class ServingColumnTest(StatusPageTestCase):
         history = html[html.index("<summary><h2>Serving history</h2></summary>") :]
         self.assertIn("<th>Endpoint</th>", history)
         self.assertIn('<td class="mono">alpha.example.invalid:8000</td>', history)
+
+
+class PausedProviderHintTest(TestCase):
+    """Each of today's provider pauses on the usage dashboard names the
+    command that lifts it early, after a top-up."""
+
+    def _rendered(self):
+        from django.template.loader import render_to_string
+
+        from fighthealthinsurance.staff_views import ModelUsageDashboardView
+
+        panel = {
+            "state": "none",
+            "spend_rows": [],
+            "paused_rows": ModelUsageDashboardView._paused_rows(),
+        }
+        return render_to_string("model_usage_policy_partial.html", {"panel": panel})
+
+    def test_an_every_use_pause_names_the_unpause_command(self):
+        spend.pause(spend.DEEPINFRA, reason="test")
+        self.assertIn(
+            "<code>python manage.py unpause_spend deepinfra</code>", self._rendered()
+        )
+
+    def test_a_pause_on_one_use_names_that_use(self):
+        spend.pause(spend.TYPESAFE, spend.CHAT, reason="test")
+        self.assertIn(
+            "<code>python manage.py unpause_spend typesafe --use chat</code>",
+            self._rendered(),
+        )
