@@ -19,3 +19,9 @@ daphne
 pytest-asyncio
 types-python-dateutil
 setuptools<80
+# from here down, added as part of the state_resources feature
+pydantic
+openai
+instructor
+ddgs
+python-dotenv
