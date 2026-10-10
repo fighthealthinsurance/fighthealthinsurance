@@ -322,17 +322,26 @@ class TestUnpause:
         spend.unpause(spend.DEEPINFRA)
         assert spend.active_pauses() == []
 
-    def test_unpause_queues_the_shared_count_to_be_set_back_to_zero(self):
-        _load(**{spend.counter(spend.PAUSED, "anthropic:*"): {TODAY: 1}})
+    def test_unpause_queues_taking_back_the_pause_count_it_read(self):
+        # Not the whole row: a pause stored after this read is not its to take.
+        _load(**{spend.counter(spend.PAUSED, "anthropic:*"): {TODAY: 2}})
         spend.unpause(spend.ANTHROPIC)
-        assert spend._ledger._clears == {("paused:anthropic:*", TODAY)}
+        assert spend._ledger._clears == {("paused:anthropic:*", TODAY): 2}
 
-    def test_a_pause_after_an_unpause_drops_the_queued_lift(self):
-        # The pause came later, so the shared count must stay set.
+    def test_unpause_of_a_pause_never_stored_queues_nothing_to_take_back(self):
+        _load()
+        spend.pause(spend.ANTHROPIC)
+        spend.unpause(spend.ANTHROPIC)
+        assert (spend._ledger._clears, spend._ledger._pending) == ({}, {})
+
+    def test_a_pause_after_an_unpause_is_stored_on_top_of_the_queued_lift(self):
+        # The lift takes back only the count before it; the later pause's
+        # count is still stored, so the shared count stays set.
+        key = ("paused:anthropic:*", TODAY)
         _load(**{spend.counter(spend.PAUSED, "anthropic:*"): {TODAY: 1}})
         spend.unpause(spend.ANTHROPIC)
         spend.pause(spend.ANTHROPIC)
-        assert spend._ledger._clears == set()
+        assert (spend._ledger._clears, spend._ledger._pending) == ({key: 1}, {key: 1})
 
     def test_unpause_logs_one_warning_with_its_reason(self, log_capture):
         _load()

@@ -99,6 +99,12 @@ class UnpauseLedgerTest(TestCase):
         spend._ledger.reset_for_tests()
         spend._ledger.flush_sync_for_tests()
 
+    def _another_pod_pauses(self):
+        """A new refusal on another pod, stored there with its own ledger."""
+        pod = spend._Ledger()
+        pod.pause("deepinfra:*")
+        pod.flush()
+
     def test_an_unpause_stores_the_days_pause_count_back_at_zero(self):
         spend.pause(spend.DEEPINFRA)
         spend._ledger.flush_sync_for_tests()
@@ -157,16 +163,58 @@ class UnpauseLedgerTest(TestCase):
         real_clear = spend._Ledger._clear
         calls = []
 
-        def failing_once(ledger, name, day):
+        def failing_once(ledger, name, day, seen):
             calls.append(name)
             if len(calls) == 1:
                 raise RuntimeError("database away")
-            return real_clear(ledger, name, day)
+            return real_clear(ledger, name, day, seen)
 
         with patch.object(spend._Ledger, "_clear", failing_once):
             with self.assertRaises(RuntimeError):
                 spend._ledger.flush_sync_for_tests()
             spend._ledger.flush_sync_for_tests()
+        self.assertEqual(self._stored(), 0)
+
+    def test_a_lift_with_no_newer_pause_stores_the_count_back_at_zero(self):
+        self._paused_elsewhere()
+        spend.unpause(spend.DEEPINFRA)
+        spend._ledger.flush_sync_for_tests()
+        self.assertEqual(self._stored(), 0)
+
+    def test_a_pause_another_pod_stores_while_the_lift_is_queued_survives_it(self):
+        """The lift takes back only the count this pod read, not the row: a
+        refusal another pod stored after the unpause keeps the provider
+        paused everywhere."""
+        self._paused_elsewhere()
+        spend.unpause(spend.DEEPINFRA)
+        self._another_pod_pauses()
+        spend._ledger.flush_sync_for_tests()
+        self._as_another_pod()
+        self.assertFalse(spend.allows(spend.DEEPINFRA, spend.CHAT))
+
+    def test_a_refresh_before_the_lift_is_stored_still_reads_a_newer_pause(self):
+        self._paused_elsewhere()
+        spend.unpause(spend.DEEPINFRA)
+        self._another_pod_pauses()
+        # The rows hold the lifted count and the newer one; only the first
+        # is the lift's to discount.
+        spend._ledger._refresh()
+        self.assertFalse(spend.allows(spend.DEEPINFRA, spend.CHAT))
+
+    def test_a_pause_being_stored_when_the_unpause_lands_is_lifted_with_it(self):
+        """The unpause drops the count from pending, but it is already on its
+        way to the database and not yet in the view: once it lands, the lift
+        takes it back out too."""
+        spend.pause(spend.DEEPINFRA)
+        real_store = spend._Ledger._store
+
+        def unpause_mid_store(ledger, name, day, amount):
+            real_store(ledger, name, day, amount)
+            spend.unpause(spend.DEEPINFRA)
+
+        with patch.object(spend._Ledger, "_store", unpause_mid_store):
+            spend._ledger.flush_sync_for_tests()
+        spend._ledger.flush_sync_for_tests()
         self.assertEqual(self._stored(), 0)
 
 
