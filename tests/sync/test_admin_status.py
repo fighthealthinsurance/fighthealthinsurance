@@ -136,6 +136,12 @@ class AdminStatusDeploymentAndModelRowsTest(TestCase):
             response = self._get()
         self.assertContains(response, "no release id set")
 
+    def test_header_flags_dockerfile_placeholder_release(self):
+        with mock.patch.dict(os.environ, {"FHI_RELEASE": "unknown"}):
+            os.environ.pop("FHI_DEPLOYMENT_ID", None)
+            response = self._get()
+        self.assertContains(response, "no release id set")
+
     def test_model_row_shows_url_and_backup_url(self):
         response = self._get(
             [
@@ -1499,9 +1505,9 @@ class ComputeModelHealthDetailsTest(TestCase):
         backend = Good()
         swept = timezone.now() - datetime.timedelta(minutes=30)
         with mock.patch.object(
-            health_status, "_health_map", {_model_key(backend): False}
-        ), mock.patch.object(
-            health_status, "_health_map_checked_at", swept.timestamp()
+            health_status,
+            "_last_sweep",
+            ({_model_key(backend): False}, swept.timestamp()),
         ):
             row = self._details_for(backend)["good"]
         self.assertEqual((row["sweep_ok"], row["sweep_checked_at"]), (False, swept))
@@ -1516,9 +1522,7 @@ class ComputeModelHealthDetailsTest(TestCase):
             def model_is_ok(self):
                 return True
 
-        with mock.patch.object(health_status, "_health_map", {}), mock.patch.object(
-            health_status, "_health_map_checked_at", None
-        ):
+        with mock.patch.object(health_status, "_last_sweep", None):
             row = self._details_for(Good())["good"]
         self.assertEqual((row["sweep_ok"], row["sweep_checked_at"]), (None, None))
 

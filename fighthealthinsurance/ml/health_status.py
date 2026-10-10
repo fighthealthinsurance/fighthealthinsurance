@@ -68,9 +68,10 @@ class _HealthStatus:
         # router can consult it on the request path without ever blocking on the
         # sweep lock.
         self._health_map: Dict[str, bool] = {}
-        # When the sweep that produced ``_health_map`` ran (epoch seconds), or
-        # None before the first one on this process.
-        self._health_map_checked_at: Optional[float] = None
+        # The last sweep's map and when it ran (epoch seconds), published as
+        # one tuple so a reader never pairs one sweep's verdicts with another
+        # sweep's time. None before the first sweep on this process.
+        self._last_sweep: Optional[Tuple[Dict[str, bool], float]] = None
         self._timer: Optional[threading.Timer] = None
         self._initialized = False
         # Whether the recurring background sweep has been kicked off. Kept
@@ -139,7 +140,11 @@ class _HealthStatus:
         A read for the staff status page. Unlike :meth:`model_ok` it never
         starts the sweep, so looking at the page has no side effects.
         """
-        return self._health_map.get(_model_key(model)), self._health_map_checked_at
+        last = self._last_sweep
+        if last is None:
+            return None, None
+        health, checked_at = last
+        return health.get(_model_key(model)), checked_at
 
     def ensure_started(self) -> None:
         """Start the periodic health sweep once, in the background, so cached
@@ -327,7 +332,7 @@ class _HealthStatus:
             # sweep; on an enumeration failure (no candidates) keep the last
             # known-good map rather than wiping it to "unknown".
             self._health_map = new_health
-            self._health_map_checked_at = snapshot.last_checked
+            self._last_sweep = (new_health, snapshot.last_checked)
 
         return internal_total, internal_alive, internal_failures, enumeration_error
 
@@ -557,7 +562,10 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
             is_external = bool(getattr(m, "external", True))
             ok = False
             err: Optional[str] = None
-            if future.done():
+            # Read once: a probe that finishes after this point is still a
+            # timeout, in its status and in its answer time alike.
+            done = future.done()
+            if done:
                 try:
                     ok = bool(future.result(timeout=0))
                     if not ok:
@@ -592,7 +600,7 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
                         if backup_url and backup_model != wire_model
                         else None
                     ),
-                    "checked_at": answered_at.get(id(m)) if future.done() else None,
+                    "checked_at": answered_at.get(id(m)) if done else None,
                     "sweep_ok": sweep_ok,
                     "sweep_checked_at": (
                         datetime.datetime.fromtimestamp(

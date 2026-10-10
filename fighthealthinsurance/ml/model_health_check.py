@@ -257,6 +257,9 @@ class HealthCheckRunSummary:
 
 # Prefix of the deployment id used when no release variable is set.
 _UNVERSIONED_PREFIX = "unversioned-"
+# What k8s/Dockerfile bakes into FHI_RELEASE when an image is built without a
+# RELEASE build arg: set, but naming no release.
+_UNSET_RELEASE = "unknown"
 
 
 def deployment_id() -> str:
@@ -276,12 +279,14 @@ def deployment_id() -> str:
 
 def is_versioned_deployment_id(value: str) -> bool:
     """Whether ``value`` names a real release rather than the hourly
-    fallback stamp.
+    fallback stamp or the Dockerfile's ``unknown`` placeholder.
 
     Only a real release id says which deploy a health row belongs to. The
-    fallback changes every hour, so comparing it would call every row stale.
+    fallback changes every hour, so comparing it would call every row stale;
+    the placeholder is the same for every image built without a release, so
+    comparing it would call none stale.
     """
-    return not value.startswith(_UNVERSIONED_PREFIX)
+    return not value.startswith(_UNVERSIONED_PREFIX) and value != _UNSET_RELEASE
 
 
 def environment_name() -> str:
