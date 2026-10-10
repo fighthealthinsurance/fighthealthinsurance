@@ -12,13 +12,11 @@ Verifies end-to-end (through the WebSocket consumer) that:
 5. A normal short message still takes the original/primary path unchanged.
 """
 
-import itertools
-import typing
+import asyncio
 from itertools import pairwise
 from unittest.mock import AsyncMock, patch
 
 from channels.testing import WebsocketCommunicator
-from django.contrib.auth import get_user_model
 from prometheus_client import REGISTRY
 from rest_framework.test import APITestCase
 
@@ -27,20 +25,14 @@ from fighthealthinsurance.chat.message_preprocessor import (
     DIRECT_CHAT_SOFT_LIMIT_CHARS,
     build_long_paste_marker,
 )
-from fighthealthinsurance.models import (
-    ChatDocument,
-    ChatTurn,
-    OngoingChat,
-    ProfessionalUser,
-)
+from fighthealthinsurance.models import ChatDocument, ChatTurn
 from fighthealthinsurance.websockets import OngoingChatConsumer
-from tests.chat_fixtures import RecordingChatModel
+from tests.chat_fixtures import (
+    RecordingChatModel,
+    discard_background_task,
+    make_professional_chat,
+)
 from tests.sync.mock_chat_model import MockChatModel
-
-if typing.TYPE_CHECKING:
-    from django.contrib.auth.models import User
-else:
-    User = get_user_model()
 
 
 GUIDANCE_REPLY = "Here is some guidance about your denial and next steps."
@@ -82,36 +74,8 @@ def _unsaved_document(chat, document_name, full_text, **_):
     )
 
 
-async def _discard_background_task(coro):
-    """Stand-in for fire_and_forget_in_new_threadpool: drop the background
-    coroutine instead of running it (closed, so it can't warn that it was
-    never awaited)."""
-    coro.close()
-
-
 def _counter(name: str, **labels) -> float:
     return REGISTRY.get_sample_value(name, labels) or 0.0
-
-
-_user_numbers = itertools.count(1)
-
-
-async def _make_professional_chat():
-    n = next(_user_numbers)
-    user = await User.objects.acreate_user(
-        username=f"longpaste{n}",
-        password="testpass",
-        email=f"longpaste{n}@example.com",
-    )
-    professional = await ProfessionalUser.objects.acreate(
-        user=user, active=True, npi_number=f"99999{n:05d}"
-    )
-    chat = await OngoingChat.objects.acreate(
-        professional_user=professional,
-        chat_history=[],
-        summary_for_next_call=[],
-    )
-    return user, chat
 
 
 async def _drain_to_content(communicator):
@@ -126,6 +90,8 @@ class ChatTurnTestCase(APITestCase):
     ``self.model`` (reassign it before the first turn to swap the backend).
     Background work -- turn summaries, document analysis -- is handed to
     mocks that discard it, so no ML work ever runs."""
+
+    BIG = ""  # The long paste a subclass sends with paste_big().
 
     def setUp(self):
         super().setUp()
@@ -145,13 +111,13 @@ class ChatTurnTestCase(APITestCase):
         self.enterContext(
             patch(
                 "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
-                new=AsyncMock(side_effect=_discard_background_task),
+                new=AsyncMock(side_effect=discard_background_task),
             )
         )
-        self.summarization_dispatch = self.enterContext(
+        self.enterContext(
             patch(
                 "fighthealthinsurance.chat.document_processor.fire_and_forget_in_new_threadpool",
-                new=AsyncMock(side_effect=_discard_background_task),
+                new=AsyncMock(side_effect=discard_background_task),
             )
         )
 
@@ -164,11 +130,10 @@ class ChatTurnTestCase(APITestCase):
             )
         )
 
-    def dispatched_background_tasks(self) -> list[str]:
-        """Names of the document-analysis coroutines dispatched so far."""
-        return [
-            call.args[0].__name__ for call in self.summarization_dispatch.call_args_list
-        ]
+    async def new_chat(self):
+        """A professional user and their empty chat (one per test: each
+        test's rows are rolled back)."""
+        return await make_professional_chat("longpaste", "9999950001")
 
     async def run_turns(self, user, *payloads) -> list[dict]:
         """Send each payload over one connection, returning the first
@@ -195,6 +160,14 @@ class ChatTurnTestCase(APITestCase):
         )
         return response
 
+    async def paste_big(self, **extra):
+        """Paste ``BIG`` as the first turn of a new chat; return the
+        refreshed chat and the turn's response frame."""
+        user, chat = await self.new_chat()
+        response = await self.send(user, chat, self.BIG, **extra)
+        await chat.arefresh_from_db()
+        return chat, response
+
 
 class LongPasteChatTest(ChatTurnTestCase):
     """One huge paste, storage mocked out: what reaches storage, chat
@@ -207,14 +180,8 @@ class LongPasteChatTest(ChatTurnTestCase):
 
     def setUp(self):
         super().setUp()
-        self.mock_store = self.mock_document_storage()
-
-    async def paste_big(self):
         self.assertGreater(len(self.BIG), DIRECT_CHAT_HARD_LIMIT_CHARS)
-        user, chat = await _make_professional_chat()
-        response = await self.send(user, chat, self.BIG)
-        await chat.arefresh_from_db()
-        return chat, response
+        self.mock_store = self.mock_document_storage()
 
     async def test_paste_turn_delivers_the_model_reply(self):
         _, response = await self.paste_big()
@@ -267,12 +234,6 @@ class LongPasteAllModelsFailTest(ChatTurnTestCase):
         super().setUp()
         self.model = _failing_model()
 
-    async def paste_big(self):
-        user, chat = await _make_professional_chat()
-        response = await self.send(user, chat, self.BIG)
-        await chat.arefresh_from_db()
-        return chat, response
-
     async def test_total_model_failure_yields_acknowledgment_not_error(self):
         _, response = await self.paste_big()
         self.assertNotIn("error", response)
@@ -301,7 +262,7 @@ class LongPasteAllModelsFailTest(ChatTurnTestCase):
     async def test_total_model_failure_on_short_message_still_errors(self):
         # The acknowledgment fallback is only for turns whose content was
         # diverted to storage; an ordinary failed turn keeps the error frame.
-        user, chat = await _make_professional_chat()
+        user, chat = await self.new_chat()
         response = await self.send(user, chat, "Why was my claim denied?")
         self.assertIn("error", response)
 
@@ -322,11 +283,7 @@ class LongPasteMarkerEchoTest(ChatTurnTestCase):
         )
 
     async def paste_big(self):
-        user, chat = await _make_professional_chat()
-        response = await self.send(
-            user, chat, self.BIG, document_name=self.DOCUMENT_NAME
-        )
-        return chat, response
+        return await super().paste_big(document_name=self.DOCUMENT_NAME)
 
     async def test_marker_echo_is_replaced_by_acknowledgment(self):
         _, response = await self.paste_big()
@@ -366,11 +323,10 @@ class LongPasteMarkerEchoTest(ChatTurnTestCase):
 
 
 class LongPasteCrashedTurnTest(ChatTurnTestCase):
-    async def test_setup_failure_after_storage_still_arms_summarization(self):
-        # A raise between storage and the LLM pass (here: history prep) exits
-        # the turn before the deferred kickoff in its finally block. The
-        # document must survive as PENDING with the storage-time watchdog
-        # armed to rescue it -- not be stranded unanalyzed.
+    async def test_setup_failure_after_storage_still_releases_summarization(self):
+        # A raise between storage and the LLM pass (here: history prep) ends
+        # the turn early. The stored paste's worker must still be released
+        # -- however the turn ends -- not left waiting with it unanalyzed.
         big = "Denial letter contents pasted just before a setup crash. " * 400
         self.enterContext(
             patch(
@@ -378,27 +334,31 @@ class LongPasteCrashedTurnTest(ChatTurnTestCase):
                 side_effect=RuntimeError("boom after storage"),
             )
         )
-        user, chat = await _make_professional_chat()
+        worker = self.enterContext(
+            patch(
+                "fighthealthinsurance.chat.document_processor._summarize_when_released",
+                side_effect=lambda *args: asyncio.sleep(0),
+            )
+        )
+        user, chat = await self.new_chat()
         response = await self.send(user, chat, big)
 
         # The turn itself failed (consumer-level error frame)...
         self.assertIn("error", response)
 
-        # ...but the document was stored, is still PENDING, and the watchdog
-        # was armed at storage time to start summarization -- with no
-        # summarization worker dispatched mid-crash.
-        docs = [d async for d in ChatDocument.objects.filter(chat_id=chat.id)]
-        self.assertEqual(len(docs), 1)
-        self.assertEqual(docs[0].processing_status, ChatDocument.Status.PENDING)
-        self.assertEqual(
-            self.dispatched_background_tasks(), ["_deferred_summarization_watchdog"]
-        )
+        # ...but its paste was stored with one worker, which it released.
+        doc = await ChatDocument.objects.aget(chat_id=chat.id)
+        ((doc_id, _, release),) = [call.args for call in worker.call_args_list]
+        self.assertEqual(doc_id, doc.id)
+        self.assertTrue(release.is_set())
 
 
 class LongPasteDedupTest(ChatTurnTestCase):
     """Re-pasting the same long message (say, after a failed turn) must not
-    create a second stored document or a second analysis, and the marker in
-    history must keep referencing the document that actually exists."""
+    create a second stored document, and the marker in history must keep
+    referencing the document that actually exists. (That it is never
+    analyzed twice at once is the claim's job; test_document_processing
+    covers it.)"""
 
     # ~20k chars: over the soft limit that triggers long-paste storage (like
     # the ~19k production failure) though under the hard cap.
@@ -410,7 +370,7 @@ class LongPasteDedupTest(ChatTurnTestCase):
 
     async def paste_big_twice(self):
         self.assertGreater(len(self.BIG), DIRECT_CHAT_SOFT_LIMIT_CHARS)
-        user, chat = await _make_professional_chat()
+        user, chat = await self.new_chat()
         payload = {"chat_id": str(chat.id), "content": self.BIG}
         await self.run_turns(user, payload, payload)
         await chat.arefresh_from_db()
@@ -419,12 +379,6 @@ class LongPasteDedupTest(ChatTurnTestCase):
     async def test_repaste_reuses_the_stored_document(self):
         chat = await self.paste_big_twice()
         self.assertEqual(await ChatDocument.objects.filter(chat=chat).acount(), 1)
-
-    async def test_repaste_does_not_reanalyze(self):
-        await self.paste_big_twice()
-        self.assertEqual(
-            self.dispatched_background_tasks().count("summarize_chunks"), 1
-        )
 
     async def test_every_marker_names_the_stored_document(self):
         chat = await self.paste_big_twice()
@@ -446,7 +400,7 @@ class LongPasteNameAdoptionDoesNotCorruptContentTest(ChatTurnTestCase):
         big = "The claim was denied because it was denied again. " * 500
         self.assertGreater(len(big), DIRECT_CHAT_SOFT_LIMIT_CHARS)
         self.model = VaryingChatModel()
-        user, chat = await _make_professional_chat()
+        user, chat = await self.new_chat()
         await self.run_turns(
             user,
             # First paste stores the document under its own name.
@@ -477,12 +431,12 @@ class NormalMessagePrimaryPathTest(ChatTurnTestCase):
         self.mock_store = self.mock_document_storage()
 
     async def test_short_message_is_not_routed_to_storage(self):
-        user, chat = await _make_professional_chat()
+        user, chat = await self.new_chat()
         await self.send(user, chat, self.MESSAGE)
         self.mock_store.assert_not_awaited()
 
     async def test_short_message_is_stored_verbatim(self):
-        user, chat = await _make_professional_chat()
+        user, chat = await self.new_chat()
         response = await self.send(user, chat, self.MESSAGE)
         self.assertIn("content", response)
         await chat.arefresh_from_db()

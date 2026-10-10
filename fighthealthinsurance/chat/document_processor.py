@@ -8,6 +8,7 @@ so that the full document text doesn't need to sit in the chat history.
 import asyncio
 import math
 import re
+import threading
 from datetime import timedelta
 from typing import Dict, List, Optional
 
@@ -269,19 +270,6 @@ async def summarize_chunks(
             logger.debug(f"Could not persist failed status: {type(save_err).__name__}")
 
 
-def summarization_needed(doc: ChatDocument) -> bool:
-    """Whether ``doc`` still needs (re)summarization kicked off.
-
-    PENDING covers both a fresh document and one whose deferred kickoff never
-    ran (rescued by the watchdog below); FAILED documents get another try on
-    resubmission. PROCESSING/COMPLETED are left alone.
-    """
-    return doc.processing_status in (
-        ChatDocument.Status.PENDING,
-        ChatDocument.Status.FAILED,
-    )
-
-
 def max_summarization_seconds(full_text: str) -> float:
     """Hard upper bound on how long one summarize_chunks run can take.
 
@@ -296,46 +284,43 @@ def max_summarization_seconds(full_text: str) -> float:
     )
 
 
-# A caller that defers summarization (see process_uploaded_document) states
-# when it will kick it off; that deadline is clamped to this, and the
-# watchdog steps in WATCHDOG_GRACE_SECONDS after it.
-MAX_SUMMARIZATION_DEFERRAL_SECONDS = 600.0
-WATCHDOG_GRACE_SECONDS = 60.0
+# Statuses a summarization worker may claim a document from: fresh, or its
+# last analysis failed (resubmitting the content retries it). Never
+# PROCESSING -- see _claim_document_for_processing.
+_CLAIMABLE_STATUSES = (ChatDocument.Status.PENDING, ChatDocument.Status.FAILED)
+
+# How long a worker waits for its release (see process_uploaded_document)
+# before summarizing anyway: a backstop for a turn wedged far past its
+# budget, not the normal path.
+MAX_SUMMARIZATION_WAIT_SECONDS = 600.0
 
 
 def _abandonment_window_seconds(full_text: str) -> float:
-    """Age past which a document that never COMPLETED has no live worker.
+    """Age past which a PROCESSING document has no live worker.
 
-    A document's first summarization worker starts no later than the longest
-    allowed deferral plus the watchdog grace after the document is created,
-    and no worker runs longer than max_summarization_seconds. A document
-    older than that sum which still has not COMPLETED was abandoned --
-    typically its worker died with a pod restart, which takes fire-and-forget
-    threads with it -- so reusing it would pin every re-paste to a document
-    nothing will ever analyze.
+    A document's worker claims it no later than MAX_SUMMARIZATION_WAIT_SECONDS
+    after it is stored, then runs no longer than max_summarization_seconds,
+    so one still PROCESSING past their sum (plus a minute of slack for the
+    database work around the model calls) was abandoned -- typically its
+    worker died with a pod restart, which takes fire-and-forget threads with
+    it. Reusing it would pin every re-paste to a document nothing will ever
+    analyze.
 
-    One case can outlive the window: a FAILED document retried by a re-paste
-    just before the window closes. A further re-paste during that retry then
-    stores a fresh copy -- one duplicate summarization, which is what every
+    One case outlives the window: a FAILED document retried by a re-paste
+    long after it was first stored. A further re-paste during that retry
+    stores a fresh copy -- one duplicate analysis, which is what every
     re-paste did before documents were deduplicated at all.
     """
-    return (
-        MAX_SUMMARIZATION_DEFERRAL_SECONDS
-        + WATCHDOG_GRACE_SECONDS
-        + max_summarization_seconds(full_text)
-        + WATCHDOG_GRACE_SECONDS
-    )
+    return MAX_SUMMARIZATION_WAIT_SECONDS + max_summarization_seconds(full_text) + 60
 
 
-async def _claim_document_for_processing(
-    doc_id: int,
-    from_statuses: List[str],
-) -> bool:
+async def _claim_document_for_processing(doc_id: int) -> bool:
     """Atomically claim ``doc_id`` for summarization (-> PROCESSING).
 
-    A conditional UPDATE, so of any number of concurrent callers (the turn's
-    deferred kickoff, the storage watchdog, a resubmission) exactly one wins
-    and dispatches a worker; the in-memory status checks alone raced.
+    A conditional UPDATE, so of the workers waiting on one document (its
+    content was resubmitted while the first still waited) only one runs at a
+    time: a later one finds it claimed and exits, unless the earlier analysis
+    FAILED, which it then retries.
 
     Never claim FROM PROCESSING: PROCESSING -> PROCESSING changes nothing but
     still MATCHES, so the database reports a successful claim to every caller
@@ -343,104 +328,39 @@ async def _claim_document_for_processing(
     deduplication stores a fresh copy instead (see _reusable_copy).
     """
     updated = await ChatDocument.objects.filter(
-        id=doc_id, processing_status__in=from_statuses
+        id=doc_id, processing_status__in=_CLAIMABLE_STATUSES
     ).aupdate(processing_status=ChatDocument.Status.PROCESSING)
     return bool(updated)
 
 
-async def _claim_and_dispatch_summarization(
-    doc: ChatDocument,
-    denial_context: Optional[str],
-) -> bool:
-    """Claim ``doc`` and dispatch its worker; release the claim on failure."""
-    if not await _claim_document_for_processing(
-        doc.id,
-        [ChatDocument.Status.PENDING, ChatDocument.Status.FAILED],
-    ):
-        return False
-    doc.processing_status = ChatDocument.Status.PROCESSING
-    try:
-        await fire_and_forget_in_new_threadpool(
-            summarize_chunks(doc.id, denial_context=denial_context)
-        )
-    except Exception:
-        doc.processing_status = ChatDocument.Status.FAILED
-        await ChatDocument.objects.filter(
-            id=doc.id, processing_status=ChatDocument.Status.PROCESSING
-        ).aupdate(processing_status=ChatDocument.Status.FAILED)
-        raise
-    return True
-
-
-async def start_document_summarization(
-    doc: ChatDocument,
-    denial_context: Optional[str] = None,
-) -> bool:
-    """Fire background summarization for ``doc`` if it still needs it.
-
-    Safe to call repeatedly and concurrently: after the cheap in-memory
-    pre-filter, the document is claimed with an atomic conditional UPDATE, so
-    only one caller dispatches a worker per PENDING/FAILED state. Returns
-    True when this call dispatched the background task. If dispatch itself
-    fails, the claim is released back to FAILED so a later attempt can retry.
-
-    Shielded against caller cancellation: the turn's finally-block kickoff
-    can be cancelled mid-await (consumer disconnect), and without the shield
-    the claim's UPDATE could commit in its worker thread while the awaiting
-    coroutine died between claim and dispatch -- stranding the row PROCESSING
-    with no worker and nothing left that may claim it. The shielded task runs
-    to completion detached; a cancelled caller still sees its CancelledError.
-    """
-    if not summarization_needed(doc):
-        return False
-    return await asyncio.shield(_claim_and_dispatch_summarization(doc, denial_context))
-
-
-async def _deferred_summarization_watchdog(
+async def _summarize_when_released(
     doc_id: int,
     denial_context: Optional[str],
-    delay: float,
-    claim_statuses: Optional[List[str]] = None,
+    release: Optional[threading.Event],
 ) -> None:
-    """Backstop for deferred summarization: rescue a stranded document.
+    """Background worker: once ``release`` is set (at once when None), claim
+    the document and summarize it.
 
-    The turn that stored the document is supposed to kick summarization off
-    after its LLM pass, but anything between storage and that kickoff -- a
-    raise in history prep, the WebSocket consumer being cancelled on
-    disconnect -- skips it. This runs in its own fire-and-forget thread, so
-    it survives the consumer coroutine, waits out the turn, and claims the
-    document only if it still sits in ``claim_statuses`` -- the status it had
-    when the watchdog was armed (default PENDING). A fresh document whose
-    fast path already ran therefore is not re-touched, while a FAILED
-    document the user explicitly resubmitted still gets its retry even if
-    the resubmitting turn dies. (For that resubmitted-FAILED case, a turn
-    whose own retry ran and failed again may get one extra watchdog retry --
-    bounded to one per resubmission and accepted.)
+    Runs alone on the private event loop of its own fire-and-forget thread,
+    so the blocking wait stalls nothing else.
     """
-    if claim_statuses is None:
-        claim_statuses = [ChatDocument.Status.PENDING]
-    await asyncio.sleep(delay)
-    # Straight to the claim: it is filtered by id, so a document deleted
-    # while this was parked matches nothing and simply loses the claim --
-    # no separate existence check (which would also drag the whole
-    # full_text back out of the database just to throw it away).
-    if not await _claim_document_for_processing(doc_id, claim_statuses):
-        return
-    logger.warning(
-        f"ChatDocument {doc_id} was still {'/'.join(claim_statuses)} "
-        f"{delay:.0f}s after (re)submission -- its turn never started "
-        f"summarization; watchdog starting it"
-    )
-    await summarize_chunks(doc_id, denial_context=denial_context)
+    if release is not None and not release.wait(MAX_SUMMARIZATION_WAIT_SECONDS):
+        logger.warning(
+            f"ChatDocument {doc_id} was not released within "
+            f"{MAX_SUMMARIZATION_WAIT_SECONDS:.0f}s; summarizing it anyway"
+        )
+    # Filtered by id, so a document deleted meanwhile just loses the claim.
+    if await _claim_document_for_processing(doc_id):
+        await summarize_chunks(doc_id, denial_context=denial_context)
 
 
 async def _reusable_copy(chat, full_text: str) -> Optional[ChatDocument]:
     """The newest stored copy of ``full_text`` in ``chat`` worth reusing.
 
-    A copy is reusable once its analysis is done (COMPLETED), or while it is
-    young enough that its analysis could still be in flight. An older copy
-    that never completed was abandoned (see _abandonment_window_seconds) and
-    is skipped, so the caller stores and analyzes a fresh one.
+    Every copy is, except one abandoned mid-analysis: still PROCESSING past
+    its abandonment window (see _abandonment_window_seconds), which no worker
+    will ever finish, so the caller stores and analyzes a fresh copy instead.
+    A PENDING or FAILED copy is reused and handed a new worker.
 
     One query, compared in the database: only the bookkeeping columns come
     back, never the (possibly multi-megabyte) text the caller already holds.
@@ -454,9 +374,8 @@ async def _reusable_copy(chat, full_text: str) -> Optional[ChatDocument]:
         )
         .only("id", "chat_id", "document_name", "processing_status", "created_at")
         .order_by("-created_at")
-        .aiterator()
     ):
-        if candidate.processing_status == ChatDocument.Status.COMPLETED:
+        if candidate.processing_status != ChatDocument.Status.PROCESSING:
             return candidate
         if window is None:
             window = _abandonment_window_seconds(full_text)
@@ -464,8 +383,8 @@ async def _reusable_copy(chat, full_text: str) -> Optional[ChatDocument]:
             return candidate
         logger.warning(
             f"Not reusing ChatDocument {candidate.id} for chat {chat.id}: still "
-            f"{candidate.processing_status} past its {window:.0f}s abandonment "
-            f"window -- storing a fresh copy"
+            f"processing past its {window:.0f}s abandonment window -- storing "
+            f"a fresh copy"
         )
     return None
 
@@ -475,9 +394,9 @@ async def process_uploaded_document(
     document_name: str,
     full_text: str,
     denial_context: Optional[str] = None,
-    defer_summarization_for: Optional[float] = None,
+    summarize_after: Optional[threading.Event] = None,
 ) -> ChatDocument:
-    """Store ``full_text`` as a ChatDocument and (by default) fire background
+    """Store ``full_text`` as a ChatDocument and dispatch its background
     summarization. Returns the ChatDocument so the caller can reference it.
 
     Identical content re-submitted to the same chat (the user re-pasting a
@@ -486,23 +405,16 @@ async def process_uploaded_document(
     creating a duplicate row and a second summarization storm, unless that
     document was abandoned mid-analysis (see _reusable_copy).
 
-    With ``defer_summarization_for=N`` no summarization worker is dispatched
-    here: the caller promises to call :func:`start_document_summarization`
-    within N seconds (the chat turn does so after its own LLM pass, so the
-    batch summarization doesn't compete with the interactive calls for the
-    same backends). A watchdog thread is armed at storage time to step in
-    WATCHDOG_GRACE_SECONDS after that deadline if the caller dies first
-    (disconnect, setup error); the atomic claim keeps the two from ever
-    both dispatching.
+    The worker starts summarizing once ``summarize_after`` is set, or at once
+    without one. The chat turn passes an event it sets when the turn is over,
+    however it ends, so the chunk summaries don't compete with the turn's own
+    model calls for the same backends.
 
-    Shielded against caller cancellation, like the claim itself: once the
-    row is being written, a disconnect must not leave it committed with no
-    summarization dispatched and no watchdog armed.
+    Shielded against caller cancellation: once the row is being written, a
+    disconnect must not leave it committed with no worker dispatched.
     """
     return await asyncio.shield(
-        _store_document(
-            chat, document_name, full_text, denial_context, defer_summarization_for
-        )
+        _store_document(chat, document_name, full_text, denial_context, summarize_after)
     )
 
 
@@ -511,7 +423,7 @@ async def _store_document(
     document_name: str,
     full_text: str,
     denial_context: Optional[str],
-    defer_summarization_for: Optional[float],
+    summarize_after: Optional[threading.Event],
 ) -> ChatDocument:
     doc = await _reusable_copy(chat, full_text)
     if doc is not None:
@@ -533,31 +445,9 @@ async def _store_document(
             f"({len(full_text)} chars)"
         )
 
-    if defer_summarization_for is None:
-        await start_document_summarization(doc, denial_context=denial_context)
-    elif summarization_needed(doc):
-        deferral = defer_summarization_for
-        if deferral > MAX_SUMMARIZATION_DEFERRAL_SECONDS:
-            logger.warning(
-                f"Summarization deferral of {deferral:.0f}s exceeds the "
-                f"{MAX_SUMMARIZATION_DEFERRAL_SECONDS:.0f}s maximum; the "
-                f"watchdog for ChatDocument {doc.id} may fire mid-turn"
-            )
-            deferral = MAX_SUMMARIZATION_DEFERRAL_SECONDS
-        # The watchdog may only claim from the status observed NOW: a fresh
-        # PENDING doc must not be re-touched once its fast path has run,
-        # while a resubmitted FAILED doc must still get its retry if this
-        # turn dies. A re-paste while an earlier watchdog is still parked
-        # arms a second one; that is deliberate -- the atomic claim lets at
-        # most one dispatch, so extras are harmless no-ops, and deduping the
-        # threads themselves would need persisted watchdog state.
+    # A reused copy that is being (or has been) analyzed needs no worker.
+    if doc.processing_status in _CLAIMABLE_STATUSES:
         await fire_and_forget_in_new_threadpool(
-            _deferred_summarization_watchdog(
-                doc.id,
-                denial_context,
-                deferral + WATCHDOG_GRACE_SECONDS,
-                claim_statuses=[doc.processing_status],
-            )
+            _summarize_when_released(doc.id, denial_context, summarize_after)
         )
-
     return doc

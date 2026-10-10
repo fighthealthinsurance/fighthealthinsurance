@@ -546,31 +546,33 @@ a ChatDocument BEFORE the message variants are built, and from then on
 history and scoring use a one-line marker ("You pasted a long message
 (~N chars). It has been stored for reference as NAME."). The models get a
 preferred head+tail preview variant plus a lower-scored last resort
-truncated to DIRECT_CHAT_HARD_LIMIT_CHARS (24000), so a huge paste is never
-fanned out whole; later turns reach the stored text through document
+truncated to DIRECT_CHAT_HARD_LIMIT_CHARS (24000): a paste over that limit
+is never sent whole, though one between the two limits still is, in the
+last-resort variant. Later turns reach the stored text through document
 search. Explicit uploads take the same storage path under their own marker.
 
 * **Dedupe.** Identical content re-submitted to the same chat (the user
-  re-pasting after a failed turn) reuses the newest stored copy that either
-  COMPLETED or is still younger than its abandonment window -- compared in
-  the database, returning only bookkeeping columns. The window is the
-  longest allowed deferral (600s) + watchdog grace (60s) +
-  max_summarization_seconds(text) + grace; a never-completed copy older
-  than that has no live worker (typically a pod restart took its
-  fire-and-forget thread), so a fresh copy is stored and analyzed instead
-  -- never worse than no dedupe.
-* **Deferred analysis.** Uploads start chunk summarization immediately
-  (several paths return before the LLM pass). Long pastes defer it to the
-  turn's `finally` block, after the LLM pass, so the chunk-summary fan-out
-  doesn't compete with the user's own turn for the same backends. A
-  watchdog thread armed at storage time steps in WATCHDOG_GRACE_SECONDS
-  after the turn's deadline (HISTORY_SUMMARY_TIMEOUT_SECONDS +
-  FHI_CHAT_TURN_BUDGET, clamped to 600s) if the turn died first. Every
-  dispatch goes through one atomic claim (a conditional UPDATE from
-  PENDING/FAILED to PROCESSING), so the kickoff, the watchdog and a
-  resubmission can never both dispatch; storage and claim+dispatch are
-  `asyncio.shield`-ed so a consumer cancelled on disconnect can't strand a
-  claimed row with no worker. A worker's runtime is bounded by
+  re-pasting after a failed turn) reuses the newest stored copy -- compared
+  in the database, returning only bookkeeping columns -- unless that copy
+  was abandoned mid-analysis: still PROCESSING past its abandonment window
+  (the longest a worker waits for its release, 600s, +
+  max_summarization_seconds(text) + a minute of slack), it has no live
+  worker (typically a pod restart took its fire-and-forget thread), so a
+  fresh copy is stored and analyzed instead. A PENDING or FAILED copy is
+  reused and handed a new worker.
+* **Analysis after the turn.** Storing a document dispatches a background
+  worker (`_summarize_when_released`), unless the copy it reused is
+  already being, or done being, analyzed. A long paste's worker waits for
+  its turn to be over before summarizing, so the chunk-summary fan-out
+  never competes with the user's own turn for the same backends:
+  handle_chat_message sets a `threading.Event` in its outermost `finally`,
+  which every ending of the turn passes through, and after 600s the
+  worker starts regardless. Uploads and fetched documents start at once,
+  as before. The worker then claims the document atomically (a
+  conditional UPDATE from PENDING/FAILED to PROCESSING), so the workers of
+  a re-submitted document never summarize it twice at once. Storage is
+  `asyncio.shield`-ed, so a consumer cancelled on disconnect can't leave a
+  stored row with no worker. A worker's runtime is bounded by
   max_summarization_seconds: SUMMARY_MODEL_ATTEMPTS x (batches x
   SUMMARIZE_TIMEOUT + OVERALL_SUMMARY_TIMEOUT).
 * **No reply is not an error.** When every model fails -- or the ladder's
@@ -686,7 +688,7 @@ Three levels, in increasing detail:
   and send nothing, so a reply they reject fails even when Jev is
   unreachable. Only its numbers, outcome, scorer, time and the judged
   model's label are kept.
-* Document summarization is dispatched only through the atomic claim
+* A document is summarized only by a worker holding its atomic claim
   (`_claim_document_for_processing`), and nothing ever claims FROM
   PROCESSING: a PROCESSING -> PROCESSING UPDATE still MATCHES, so the
   database reports a successful claim to every concurrent caller. An

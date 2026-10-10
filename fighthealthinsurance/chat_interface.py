@@ -1,6 +1,7 @@
 import asyncio
 import math
 import re
+import threading
 import time
 from dataclasses import replace
 from typing import (
@@ -33,7 +34,6 @@ from fighthealthinsurance.chat.chat_persistence import (
     visible_history,
 )
 from fighthealthinsurance.chat.context_manager import (
-    HISTORY_SUMMARY_TIMEOUT_SECONDS,
     MOST_RECENT_SUMMARY_WRAPPER_LABEL,
     PREVIOUS_SUMMARY_WRAPPER_LABEL,
     background_generate_summary,
@@ -59,16 +59,12 @@ from fighthealthinsurance.chat.llm_client import (
 )
 from fighthealthinsurance.chat.message_preprocessor import (
     MessageVariant,
-    build_long_paste_marker,
     is_long_paste,
     paste_document_name,
     prepare_user_message_variants,
     sanitize_document_name,
 )
-from fighthealthinsurance.chat.document_processor import (
-    process_uploaded_document,
-    start_document_summarization,
-)
+from fighthealthinsurance.chat.document_processor import process_uploaded_document
 from fighthealthinsurance.chat.document_search import get_document_context_for_message
 from fighthealthinsurance.chat.reply_gate import ReplyGate, gate_for_turn
 from fighthealthinsurance.chat.retry_handler import (
@@ -140,7 +136,6 @@ from fighthealthinsurance.ml import chat_shadow
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     Appeal,
-    ChatDocument,
     ChatTurn,
     ChatType,
     OngoingChat,
@@ -182,11 +177,6 @@ def _detect_policy_analysis_request(text: str) -> bool:
 # the terse-reply bridge note (see handle_chat_message): terse answers are
 # where models historically looped by re-asking instead of using the answer.
 TERSE_REPLY_MAX_CHARS = 60
-
-
-def _chat_turn_budget() -> float:
-    """Wall-clock budget (seconds) for one turn's LLM + tool work."""
-    return _env_float("FHI_CHAT_TURN_BUDGET", 150.0)
 
 
 def _clean_reply(text: str) -> str:
@@ -1561,6 +1551,9 @@ class ChatInterface:
         in fhi_chat_turns_total leaves its ChatTurn row with the counted
         outcome (chat/turn_record.py describes each ending).
         """
+        # Set once the turn is over, however it ends: a long paste stored
+        # during the turn starts its background analysis only then.
+        turn_over = threading.Event()
         try:
             await self._run_chat_turn(
                 user_message,
@@ -1569,6 +1562,7 @@ class ChatInterface:
                 user=user,
                 is_document=is_document,
                 document_name=document_name,
+                turn_over=turn_over,
             )
         except asyncio.CancelledError:
             await self._end_cancelled_turn()
@@ -1577,6 +1571,7 @@ class ChatInterface:
             await self._end_turn_after_exception()
             raise
         finally:
+            turn_over.set()
             # The runner-up text is kept for this turn's shadow scoring only,
             # however the turn ends.
             self._shadow_runner_up = None
@@ -1589,6 +1584,7 @@ class ChatInterface:
         user: Optional[User] = None,
         is_document: bool = False,
         document_name: Optional[str] = None,
+        turn_over: Optional[threading.Event] = None,
     ):
         """The turn itself; see handle_chat_message."""
         chat = self.chat
@@ -1654,14 +1650,10 @@ class ChatInterface:
             return
 
         # Set when this turn's full text was diverted to document storage (an
-        # explicit upload here, or a long paste further down). Used to (a)
-        # kick the long paste's deferred background summarization after the
-        # LLM pass and (b) fall back to a useful acknowledgment instead of an
-        # error frame when every model fails -- the content is stored and
-        # being analyzed, so "all models are experiencing issues, try again"
-        # would be both unhelpful and misleading.
-        stored_content_doc: Optional[ChatDocument] = None
-        stored_content_denial_context: Optional[str] = None
+        # explicit upload here, or a long paste further down): if every model
+        # fails, the turn answers with it instead of an error frame. The
+        # content is stored and being analyzed, so "all models are
+        # experiencing issues, try again" would be unhelpful and misleading.
         stored_content_ack: Optional[str] = None
 
         # Handle document uploads: store separately and replace with marker in chat
@@ -1670,17 +1662,13 @@ class ChatInterface:
             # can't break the single-line marker built around it below.
             doc_name = sanitize_document_name(document_name) or "uploaded_document"
             char_count = len(user_message)
-            # str(): document_name is raw client JSON and need not be a string.
             logger.info(
                 f"Document uploaded in chat {chat.id} "
-                f"(name_chars={len(str(doc_name))}, {char_count} chars)"
+                f"(name_chars={len(doc_name)}, {char_count} chars)"
             )
 
             denial_context = await self._denial_context_for_chat(chat)
 
-            # Summarization starts inside (not deferred): several paths below
-            # can return before the LLM pass, and the upload must get analyzed
-            # regardless of which one this turn takes.
             uploaded_doc = await process_uploaded_document(
                 chat=chat,
                 document_name=doc_name,
@@ -1967,13 +1955,10 @@ class ChatInterface:
         # preserve the full original in document storage and switch
         # history/scoring to a compact marker, so we neither bloat
         # chat_history nor fan the huge text out to every backend. Stored
-        # BEFORE the variants are built, so they are built once, around the
-        # name storage actually resolved to: re-pasting identical content
-        # dedupes to the earlier document, and the marker must name the
-        # document that exists. (Never string-replace a name through built
-        # variants instead: the truncated variant's text IS the user's raw
-        # paste, and a client-supplied name occurring in it would be
-        # rewritten inside the message sent to the model.)
+        # BEFORE the variants are built, so the marker names the document
+        # storage resolved to (an identical re-paste reuses the earlier one).
+        # Never patch the name into built variants instead: the truncated
+        # variant's text IS the raw paste, which may contain that name.
         if is_long_paste(user_message, is_document=is_document):
             paste_name = paste_document_name(document_name)
             # Sizes only: the name is client-supplied and may identify the
@@ -1983,28 +1968,19 @@ class ChatInterface:
                 f"{len(user_message)} chars for reference "
                 f"(name_chars={len(paste_name)})"
             )
-            denial_context = await self._denial_context_for_chat(chat)
-            # Summarization is deferred until after this turn's LLM pass (the
-            # kickoff in the finally block below): fanning out the chunk
-            # summaries now would compete with the user's own turn for the
-            # same backends -- on internal-only deployments that
+            # Analyzed only once this turn is over: fanning the chunk
+            # summaries out now would compete with the user's own turn for
+            # the same backends -- on internal-only deployments that
             # self-inflicted contention helped time out exactly the turns
-            # that deliver a long paste. The deadline covers everything
-            # between here and that kickoff: history summarization, then the
-            # whole turn budget. If the turn dies first (a raise in the setup
-            # below, the consumer cancelled on disconnect), the watchdog
-            # process_uploaded_document arms rescues the document.
-            stored_content_doc = await process_uploaded_document(
+            # that deliver a long paste.
+            stored = await process_uploaded_document(
                 chat=chat,
                 document_name=paste_name,
                 full_text=user_message,
-                denial_context=denial_context,
-                defer_summarization_for=(
-                    HISTORY_SUMMARY_TIMEOUT_SECONDS + _chat_turn_budget()
-                ),
+                denial_context=await self._denial_context_for_chat(chat),
+                summarize_after=turn_over,
             )
-            stored_content_denial_context = denial_context
-            document_name = stored_content_doc.document_name
+            document_name = stored.document_name
 
         # Build message variants: the original/primary path plus lower-scored
         # long-message and weird-Unicode alternatives. A normal short message
@@ -2027,19 +2003,20 @@ class ChatInterface:
         # upload or a stored long paste leaves only a marker naming the
         # stored document, so those turns are never shadow scored.
         shadow_message_ok = not is_document and long_paste_variant is None
-        if stored_content_doc is not None and long_paste_variant is not None:
+        if long_paste_variant is not None and not is_document:
             char_count = long_paste_variant.metadata.get(
                 "char_count", len(user_message)
             )
-            doc_name = str(long_paste_variant.metadata.get("document_name", ""))
+            doc_name = long_paste_variant.metadata.get(
+                "document_name",
+                f"pasted_message_{int(timezone.now().timestamp())}.txt",
+            )
             await self.send_status_message(
                 f"Long message received ({char_count:,} chars). "
                 f"Stored for reference and analyzing in background..."
             )
             # From here on, history + scoring use the compact marker.
-            user_message = long_paste_variant.display_text or build_long_paste_marker(
-                char_count, doc_name
-            )
+            user_message = long_paste_variant.display_text or user_message
             stored_content_ack = (
                 f"I've received your message — it's a long one (~{char_count:,} "
                 f"characters), so I saved the full text as {doc_name} and I'm "
@@ -2263,7 +2240,7 @@ class ChatInterface:
         # traffic while a long turn is still working. Without the budget a
         # wedged backend chain could hold the turn open indefinitely with the
         # client showing a spinner forever.
-        turn_budget = _chat_turn_budget()
+        turn_budget = _env_float("FHI_CHAT_TURN_BUDGET", 150.0)
         turn_timed_out = False
         # The live Jev check on our first usable reply (chat/reply_gate.py):
         # only with the person's consent to outside models, for a typed
@@ -2325,42 +2302,37 @@ class ChatInterface:
                 # reply that STILL repeats a recent reply means every rung
                 # (hard rejection, anti-repeat retry) produced only repeats.
                 # Should stay rare -- alert on this counter growing.
-                if (
+                repeats = bool(
                     final_response_text
                     and not user_requested_repeat(user_message)
                     and find_repeated_reply(
                         final_response_text, chat.chat_history, user_message
                     )
-                ):
-                    if stored_content_ack:
-                        # A stored-content turn has a better last resort than
-                        # a repeat: its acknowledgment (the content is stored
-                        # and being analyzed). The retry's finite repeat
-                        # penalty exists because a repeat beats an error
-                        # frame -- here the repeat would be the user's own
-                        # marker, or our previous reply, echoed back. The
-                        # acknowledgment then goes out as the turn's reply:
-                        # the models did answer, so the turn is counted "ok"
-                        # like any delivered reply, not as a failure.
-                        record_chat_repeat("replaced_by_stored_content_ack")
-                        logger.warning(
-                            f"Chat {chat.id}: every anti-repeat rung produced "
-                            f"only repeats on a stored-content turn; sending "
-                            f"the stored-content acknowledgment instead"
-                        )
-                        final_response_text = stored_content_ack
-                        final_context_part = None
-                        # No model answer may sit beside the acknowledgment
-                        # as a side-by-side "alternate".
-                        self._candidate_alternate = None
-                    else:
-                        record_chat_repeat("delivered_repeat")
-                        if self._turn is not None:
-                            self._turn.delivered_repeat = True
-                        logger.warning(
-                            f"Chat {chat.id}: delivering a reply that repeats "
-                            f"a recent reply (all anti-repeat rungs exhausted)"
-                        )
+                )
+                if repeats and stored_content_ack:
+                    # A stored-content turn has a better last resort than a
+                    # repeat (which here would be the user's own marker, or
+                    # our previous reply, echoed back): its acknowledgment.
+                    # It goes out as the turn's reply -- the models did
+                    # answer, so the turn counts "ok", not as a failure.
+                    record_chat_repeat("replaced_by_stored_content_ack")
+                    logger.warning(
+                        f"Chat {chat.id}: every anti-repeat rung produced only "
+                        f"repeats on a stored-content turn; sending the "
+                        f"stored-content acknowledgment instead"
+                    )
+                    final_response_text = stored_content_ack
+                    final_context_part = None
+                    # No model answer may sit beside it as an "alternate".
+                    self._candidate_alternate = None
+                elif repeats:
+                    record_chat_repeat("delivered_repeat")
+                    if self._turn is not None:
+                        self._turn.delivered_repeat = True
+                    logger.warning(
+                        f"Chat {chat.id}: delivering a reply that repeats a "
+                        f"recent reply (all anti-repeat rungs exhausted)"
+                    )
         except asyncio.TimeoutError:
             if self._client_gone:
                 # The heartbeat saw the user leave, then the model ran out
@@ -2415,27 +2387,6 @@ class ChatInterface:
             # repeats. The helper clears its own flag, so this no-ops
             # whenever the turn already recorded.
             self._record_turn_repeat_metric(0)
-            # Deferred long-paste summarization: started only now, after the
-            # interactive LLM pass, so the chunk-summary fan-out doesn't
-            # compete with the user's own turn for the same backends. This is
-            # the best-effort fast path -- the atomic claim inside means at
-            # most one dispatcher wins, and the watchdog armed at storage
-            # time rescues the document if this block never runs or is
-            # cancelled mid-await (its DB claim can yield), so the document
-            # cannot be stranded unanalyzed either way. It runs AFTER the
-            # synchronous metric backstop above: this await can be
-            # interrupted by cancellation, which must not skip the metric.
-            if stored_content_doc is not None:
-                try:
-                    await start_document_summarization(
-                        stored_content_doc,
-                        denial_context=stored_content_denial_context,
-                    )
-                except Exception:
-                    logger.opt(exception=True).warning(
-                        f"Could not start deferred document summarization for "
-                        f"chat {chat.id}"
-                    )
 
         if final_response_text:
             if should_store_summary(chat.summary_for_next_call, final_context_part):
@@ -2764,13 +2715,11 @@ class ChatInterface:
             # As above, a send that raises or is cancelled still leaves the
             # row: handle_chat_message writes it.
             if stored_content_ack:
-                # The user's content IS safely stored and queued for analysis,
-                # so tell them that and how to proceed instead of erroring:
-                # "models are experiencing issues, try again" reads as "your
-                # paste was lost, send it again", which just duplicates the
-                # failure (and the storage). Persisted here, where it is sent
-                # -- not with the user's message above -- so a turn the
-                # letter fallback rescued never shows it beside the letter.
+                # The content IS stored and queued for analysis, so say so
+                # instead of erroring: "try again" reads as "your paste was
+                # lost", and re-sending it only repeats the failure.
+                # Persisted here, where it is sent, so a turn the letter
+                # fallback rescued never shows it beside the letter.
                 try:
                     self.chat = chat = await apersist_chat_turn(
                         chat,

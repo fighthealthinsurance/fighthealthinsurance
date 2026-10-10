@@ -8,9 +8,10 @@ change to ``RemoteModelLike.generate_chat_response`` only has to be mirrored
 in one place -- the mock signature is what guards against real TypeErrors.
 
 Also home to the failed-turn plumbing (``llm_call_fails``,
-``make_professional_chat``, ``FrameRecorder``): ``tests/async`` is not an
-importable package name (``async`` is a keyword), so helpers shared between
-its modules have to live outside it.
+``make_professional_chat``, ``FrameRecorder``) and
+``discard_background_task``: ``tests/async`` is not an importable package
+name (``async`` is a keyword), so helpers shared between its modules have
+to live outside it.
 """
 
 import contextlib
@@ -186,6 +187,13 @@ async def make_professional_chat(username, npi):
         summary_for_next_call=[],
     )
     return user, chat
+
+
+async def discard_background_task(coro):
+    """Stand-in for fire_and_forget_in_new_threadpool: drop the background
+    coroutine instead of running it (closed, so it can't warn that it was
+    never awaited)."""
+    coro.close()
 
 
 class FrameRecorder:

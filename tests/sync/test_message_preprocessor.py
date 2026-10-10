@@ -129,6 +129,28 @@ class PrepareLongMessageTest(SimpleTestCase):
         for v in variants:
             self.assertNotIn(self.big, v.text_for_llm)
 
+    def _reference_variant(self, document_name):
+        variants = prepare_user_message_variants(
+            self.big, is_document=False, document_name=document_name
+        )
+        return next(
+            v for v in variants if v.kind == "long_message_document_reference"
+        )
+
+    def test_reference_sanitizes_provided_document_name(self):
+        ref = self._reference_variant("weird\nname.txt")
+        self.assertEqual(ref.metadata.get("document_name"), "weird name.txt")
+
+    def test_marker_is_single_line_despite_newline_in_name(self):
+        ref = self._reference_variant("weird\nname.txt")
+        self.assertNotIn("\n", ref.display_text)
+
+    def test_marker_is_built_by_the_shared_builder(self):
+        ref = self._reference_variant("letter.txt")
+        self.assertEqual(
+            ref.display_text, build_long_paste_marker(len(self.big), "letter.txt")
+        )
+
     def test_long_message_reference_signals_storage_and_compact_marker(self):
         variants = prepare_user_message_variants(self.big, is_document=False)
         ref = next(v for v in variants if v.kind == "long_message_document_reference")
@@ -264,31 +286,6 @@ class DocumentNameTest(SimpleTestCase):
 
     def test_paste_document_name_defaults_when_client_sends_none(self):
         self.assertRegex(paste_document_name(None), r"^pasted_message_\d+\.txt$")
-
-    LONG_PASTE = "Denied as not medically necessary. " * 600
-
-    def _long_paste_reference_variant(self, document_name):
-        variants = prepare_user_message_variants(
-            self.LONG_PASTE, is_document=False, document_name=document_name
-        )
-        return next(
-            v for v in variants if v.kind == "long_message_document_reference"
-        )
-
-    def test_long_paste_variants_sanitize_provided_document_name(self):
-        ref = self._long_paste_reference_variant("weird\nname.txt")
-        self.assertEqual(ref.metadata.get("document_name"), "weird name.txt")
-
-    def test_long_paste_marker_is_single_line_despite_newline_in_name(self):
-        ref = self._long_paste_reference_variant("weird\nname.txt")
-        self.assertNotIn("\n", ref.display_text)
-
-    def test_long_paste_marker_is_built_by_the_shared_builder(self):
-        ref = self._long_paste_reference_variant("letter.txt")
-        self.assertEqual(
-            ref.display_text,
-            build_long_paste_marker(len(self.LONG_PASTE), "letter.txt"),
-        )
 
 
 class IsLongPasteTest(SimpleTestCase):
