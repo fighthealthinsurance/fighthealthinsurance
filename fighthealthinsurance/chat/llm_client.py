@@ -639,6 +639,13 @@ def build_llm_calls(
     """
     Build parallel LLM calls for multiple model backends.
 
+    Every call is made with raise_on_unavailable, so a provider that could
+    not be asked (an outage, a local skip) raises ProviderUnavailable instead
+    of returning (None, None). The race already drops a call that raises,
+    and the CallLog files it as an error, so its time stays out of the
+    dashboard's median call times. A model that answered with no text still
+    returns (None, None) and is filed as empty.
+
     Args:
         model_backends: List of model backends to call
         current_message: Current message to send
@@ -678,6 +685,7 @@ def build_llm_calls(
             is_professional=is_professional,
             is_logged_in=is_logged_in,
             allow_repeated_reply=allow_repeated_reply,
+            raise_on_unavailable=True,
         )
         if call_log is not None:
             call = call_log.observe(call, model_backend, "truncated")
@@ -701,6 +709,7 @@ def build_llm_calls(
                     is_professional=is_professional,
                     is_logged_in=is_logged_in,
                     allow_repeated_reply=allow_repeated_reply,
+                    raise_on_unavailable=True,
                 )
                 if call_log is not None:
                     full_history_call = call_log.observe(
@@ -811,6 +820,9 @@ def build_retry_calls(
     """
     Build retry LLM calls with shortened context and fallback backends.
 
+    Like build_llm_calls, every call is made with raise_on_unavailable, so
+    a provider that could not be asked is filed as an error, not as empty.
+
     Args:
         model_backends: Primary model backends to retry
         current_message: Current message to send
@@ -858,6 +870,7 @@ def build_retry_calls(
             is_logged_in=is_logged_in,
             temperature=temperature,
             allow_repeated_reply=allow_repeated_reply,
+            raise_on_unavailable=True,
         )
         call = _observe(call, model_backend, "retry_short")
         _label(call, model_backend)
@@ -875,6 +888,7 @@ def build_retry_calls(
             is_logged_in=is_logged_in,
             temperature=temperature,
             allow_repeated_reply=allow_repeated_reply,
+            raise_on_unavailable=True,
         )
         call = _observe(call, model_backend, "retry_full")
         _label(call, model_backend)
@@ -893,6 +907,7 @@ def build_retry_calls(
                 is_logged_in=is_logged_in,
                 temperature=temperature,
                 allow_repeated_reply=allow_repeated_reply,
+                raise_on_unavailable=True,
             )
             call = _observe(call, model_backend, "retry_short")
             _label(call, model_backend)
@@ -908,6 +923,7 @@ def build_retry_calls(
                 is_logged_in=is_logged_in,
                 temperature=temperature,
                 allow_repeated_reply=allow_repeated_reply,
+                raise_on_unavailable=True,
             )
             call = _observe(call, model_backend, "retry_full")
             _label(call, model_backend)

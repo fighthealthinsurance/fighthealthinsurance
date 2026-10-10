@@ -998,6 +998,20 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertEqual(status["level"], "not_scoring")
         self.assertEqual(status["unscored"], 1)
 
+    def test_a_chosen_copy_is_not_an_eligible_draft(self):
+        """Picking a draft inserts an unscored chosen=True copy stamped with
+        the pick time. It read as an eligible draft the scorer had missed and
+        flipped the badge to NOT SCORING while scoring worked."""
+        denial = self._denial()
+        self._draft(denial, scored=True)
+        copy = self._draft(denial, minutes_ago=1)
+        ProposedAppeal.objects.filter(pk=copy.pk).update(chosen=True)
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertEqual(status["level"], "scoring")
+        self.assertEqual(status["unscored"], 0)
+        self.assertEqual(status["stalled"], 0)
+
     def test_drafts_that_were_never_eligible_do_not_count_as_unscored(self):
         """Still in flight (younger than the drain window), speculative, or
         from a denial that did not allow external models."""
@@ -1102,12 +1116,50 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertEqual(hint("HTTP 503"), "TypeSafe server error")
         self.assertEqual(hint("OSError"), "")
 
+    def test_a_404_or_410_says_the_model_is_retired_or_unknown(self):
+        """A model TypeSafe no longer serves is a settings change, not a
+        server error or an unexplained failure."""
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        hint = AdminStatusView._scoring_failure_hint
+        self.assertIn("TYPESAFE_MODEL", hint("HTTP 404"))
+        # A wrong URL path answers 404 too.
+        self.assertIn("TYPESAFE_API_URL", hint("HTTP 404"))
+        self.assertEqual(
+            hint("HTTP 410"), "TYPESAFE_MODEL retired or unknown at TypeSafe"
+        )
+
+    def test_the_page_explains_a_retired_model(self):
+        self._health(
+            last_failure_at=timezone.now() - datetime.timedelta(minutes=2),
+            last_failure="HTTP 410",
+        )
+        with override_settings(**_SCORING_ON):
+            status = self._status()
+        self.assertIn("TYPESAFE_MODEL retired", status["last_failure_hint"])
+
     def test_a_request_refused_before_sending_points_at_the_settings(self):
         from fighthealthinsurance.staff_views import AdminStatusView
 
         phrase = AdminStatusView._scoring_failure_hint("TypeSafeError")
         self.assertIn("TYPESAFE_API_URL", phrase)
         self.assertIn("TYPESAFE_MODEL", phrase)
+
+    def test_a_cooldown_after_an_unreachable_typesafe_says_so(self):
+        """Not the settings hint: the request was held back because TypeSafe
+        could not be reached moments ago."""
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        phrase = AdminStatusView._scoring_failure_hint("TypeSafeCoolingDown")
+        self.assertIn("could not be reached", phrase)
+
+    def test_the_cooldown_hint_names_the_connect_cap(self):
+        """A connect cooldown lasts at most CONNECT_COOLDOWN_SECONDS (2
+        minutes), not the 15-minute FHI_TYPESAFE_COOLDOWN_SECONDS default."""
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        phrase = AdminStatusView._scoring_failure_hint("TypeSafeCoolingDown")
+        self.assertIn("CONNECT_COOLDOWN_SECONDS", phrase)
 
     def test_the_page_explains_a_422(self):
         self._health(
@@ -1174,7 +1226,6 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertContains(
             response, "1 eligible draft since the last score, none scored"
         )
-
 
 
 class AdminStatusMcpTest(TestCase):
@@ -1336,7 +1387,73 @@ class AdminStatusMcpTest(TestCase):
         self.assertIs(mcp["assistant"]["budget_left"], False)
 
 
+class AdminStatusCountsOnlyDraftingModelsTest(TestCase):
+    """A context-only backend (citations) is listed but not counted.
+    Perplexity's check always passes, so with every generation backend down
+    the page read DEGRADED, "1 / 2 backends responding", instead of DOWN."""
+
+    def setUp(self):
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+
+    def _get(self):
+        details = [
+            {
+                "name": "fhi-2025",
+                "ok": False,
+                "external": False,
+                "context_only": False,
+                "error": "not ok",
+            },
+            {
+                "name": "sonar",
+                "ok": True,
+                "external": True,
+                "context_only": True,
+                "error": None,
+            },
+        ]
+        with mock.patch(_MODELS, return_value=details), mock.patch(
+            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
+        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+            return self.client.get(reverse("admin_status"))
+
+    def test_a_generation_outage_reads_down_with_a_citation_backend_up(self):
+        self.assertContains(self._get(), '<span class="status-badge bad">DOWN</span>')
+
+    def test_the_context_only_backend_is_still_listed(self):
+        self.assertContains(self._get(), "context-only, not counted")
+
+
 class ComputeModelHealthDetailsTest(TestCase):
+    def test_a_context_only_backend_is_marked_as_such(self):
+        from fighthealthinsurance.ml.health_status import compute_model_health_details
+
+        class Drafts:
+            model = "fhi-2025"
+            external = False
+
+            def model_is_ok(self):
+                return True
+
+        class Cites:
+            model = "sonar"
+            external = True
+
+            def model_is_ok(self):
+                return True
+
+        fake_router = mock.MagicMock()
+        fake_router.all_models_by_cost = [Drafts()]
+        fake_router.context_only_models_by_cost = [Cites()]
+        with mock.patch("fighthealthinsurance.ml.ml_router.ml_router", fake_router):
+            details = compute_model_health_details(timeout_seconds=2)
+
+        self.assertEqual(
+            {d["name"]: d["context_only"] for d in details},
+            {"fhi-2025": False, "sonar": True},
+        )
+
     def test_classifies_and_sorts_problems_first(self):
         from fighthealthinsurance.ml.health_status import compute_model_health_details
 
@@ -1591,6 +1708,55 @@ class ComputeModelHealthDetailsTest(TestCase):
         finally:
             # Let the orphaned probe thread finish so it doesn't linger.
             release.set()
+
+
+class _ListedAnthropic:
+    """An outside model whose check passes whatever its provider's credit."""
+
+    model = "claude-haiku-4-5"
+    external = True
+    SPEND_PROVIDER = spend.ANTHROPIC
+
+    def model_is_ok(self):
+        return True
+
+
+class _ListedButRefused:
+    """An outside model still listed while its key is refused."""
+
+    model = "google/gemma-4-26B-A4B-it"
+    external = True
+
+    def model_is_ok(self):
+        return True
+
+    def unavailable_reason(self):
+        return "refused (HTTP 401)"
+
+
+class AdminStatusLiveProblemsTest(TestCase):
+    """The System Status model counts: a backend whose check passes but
+    that this pod's calls found refused, or whose provider is paused for
+    credit, is not counted as responding, and its row says why."""
+
+    def _model_status(self, *models):
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        fake_router = mock.MagicMock()
+        fake_router.all_models_by_cost = list(models)
+        fake_router.context_only_models_by_cost = []
+        fake_router.chat_outside_models_by_name = {}
+        with mock.patch("fighthealthinsurance.ml.ml_router.ml_router", fake_router):
+            return AdminStatusView._model_status()
+
+    def test_a_credit_paused_backend_is_not_counted_responding(self):
+        spend.pause(spend.ANTHROPIC, reason="test")
+        status = self._model_status(_ListedAnthropic())
+        self.assertEqual((status["alive"], status["total"]), (0, 1))
+
+    def test_a_refused_backend_row_says_why(self):
+        status = self._model_status(_ListedButRefused())
+        self.assertEqual(status["details"][0]["error"], "refused (HTTP 401)")
 
 
 class FaxBackendsHealthTest(TestCase):

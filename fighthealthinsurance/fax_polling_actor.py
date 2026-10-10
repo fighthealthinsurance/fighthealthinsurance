@@ -1,8 +1,10 @@
 import asyncio
 import time
+from typing import Union
 
 import ray
 
+from fighthealthinsurance.base_actor_ref import decline_second_run
 from fighthealthinsurance.fax_actor import FaxActor
 
 
@@ -32,7 +34,9 @@ class FaxPollingActor:
         """Check if the actor is healthy and running."""
         return getattr(self, "running", False)
 
-    async def run(self) -> bool:
+    async def run(self) -> Union[bool, str]:
+        if getattr(self, "running", False):
+            return decline_second_run(self._logger, "FaxPollingActor")
         self._logger.info("Starting run")
         self.running = True
         while self.running:

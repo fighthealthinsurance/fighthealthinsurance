@@ -1,7 +1,8 @@
 import asyncio
 import random
 import threading
-from typing import List, Optional, Sequence, Tuple
+import time
+from typing import Any, List, Optional, Sequence, Tuple
 
 from loguru import logger
 
@@ -18,6 +19,44 @@ from fighthealthinsurance.ml.retired_models import retirement
 # The hosted model that backs up our own models for summaries and appeal
 # questions (DeepInfra's Gemma). Named once so the two paths can't drift apart.
 _EXTERNAL_GENERALIST = "google/gemma-4-26B-A4B-it"
+
+# When the "every outside chat model is down" warning last went out: once an
+# hour (the health sweep's cadence) says it, a line per chat turn would not.
+_ROSTER_DOWN_WARN_SECONDS = 3600.0
+_roster_down_warned_at = float("-inf")
+
+
+def _warn_roster_down(names: list[str]) -> None:
+    global _roster_down_warned_at
+    now = time.monotonic()
+    if now - _roster_down_warned_at < _ROSTER_DOWN_WARN_SECONDS:
+        return
+    _roster_down_warned_at = now
+    logger.warning(
+        f"MLRouter: every outside chat model ({names}) is down or out of "
+        f"budget; chat is answered by our own models alone"
+    )
+
+
+# When each pool last logged its fail-open ERROR. The pools are read on every
+# request, so while a whole pool is down one ERROR per pool every ten minutes
+# says it; one per request buried everything else in the log.
+_FAIL_OPEN_ERROR_SECONDS = 600.0
+_fail_open_logged_at: dict[str, float] = {}
+
+
+def _log_fail_open(context: str, names: list[str]) -> None:
+    now = time.monotonic()
+    last = _fail_open_logged_at.get(context)
+    message = (
+        f"MLRouter: every candidate for {context} ({names}) is marked "
+        f"unavailable; failing open with the full list"
+    )
+    if last is not None and now - last < _FAIL_OPEN_ERROR_SECONDS:
+        logger.debug(message)
+        return
+    _fail_open_logged_at[context] = now
+    logger.error(message)
 
 
 class MLRouter(object):
@@ -208,14 +247,21 @@ class MLRouter(object):
                     )
 
     def chat_outside_models(
-        self, names: Optional[Sequence[str]] = None, limit: int = 3
+        self,
+        names: Optional[Sequence[str]] = None,
+        limit: int = 3,
+        fail_open: bool = True,
     ) -> list[RemoteModelLike]:
         """The outside models chat asks, in ``names`` order (default
         FHI_CHAT_OUTSIDE_MODELS): the chat-only models, or any registered
         external model by name (Azure's GPT-5.5). Models that are down are
-        left out (failing open like the other filters), and so is any model
-        whose provider's chat budget is spent (never failing open: a spent
-        budget means no call)."""
+        left out, so the next ones on the roster take their places; and so
+        is any model whose provider's chat budget is spent (a spent budget
+        means no call). Only when every roster model is down and none of
+        ours can answer either does this fail open like the other filters,
+        so a wrong health signal cannot leave a turn with no one to ask.
+        ``fail_open=False`` never does: for a lookup of one optional model,
+        where down means none."""
         from django.conf import settings
 
         from fighthealthinsurance.ml import spend
@@ -232,7 +278,18 @@ class MLRouter(object):
                 )
             if model is not None and model not in found:
                 found.append(model)
-        available = self._filter_available(found, "chat-outside") if found else []
+        available = [m for m in found if self._selectable(m)]
+        if found and not available:
+            if not fail_open:
+                return []
+            if self.chat_internal_selectable():
+                # Expected once outside models are retired or out of credit:
+                # ours answer, and the roster is optional.
+                _warn_roster_down([str(m) for m in found])
+                return []
+            # No one else can answer: fail open, as _filter_available would.
+            _log_fail_open("chat-outside", [str(m) for m in found])
+            available = list(found)
         within_budget = [
             m
             for m in available
@@ -251,7 +308,12 @@ class MLRouter(object):
         name = str(getattr(settings, "FHI_CHAT_SIDE_BY_SIDE_MODEL", "") or "").strip()
         if not name:
             return None
-        found = self.chat_outside_models([name], limit=1)
+        # One model, not the roster, and fail_open=False: a comparison with a
+        # dead model is no comparison (the turn has its own fan-out to answer
+        # it), and returning before the roster check means its being down
+        # neither warns nor spends the hourly warning, since it says nothing
+        # about the others.
+        found = self.chat_outside_models([name], limit=1, fail_open=False)
         return found[0] if found else None
 
     @staticmethod
@@ -300,6 +362,9 @@ class MLRouter(object):
 
         * ``is_available()`` — the model's own in-memory signal (paid providers
           report config + rate-limit back-off; others fail open).
+        * its provider's spend (ml/spend.py) — a budget for this use that is
+          spent, or a pause after a credit or quota refusal, leaves it out.
+          These two are ``can_be_asked``, the test _checked_infer makes.
         * the last cached ``health_status`` sweep — consulted only for models
           that lack a live signal (``health_checked_live`` is False, e.g.
           DeepInfra and the INTERNAL vLLM backends, which the sweep probes over
@@ -311,7 +376,12 @@ class MLRouter(object):
         vLLM the sweep already marked down used to be fanned out to anyway,
         burning its whole timeout on every request between sweeps.
         """
-        if not model.is_available():
+        # A model parked, refused or cooling down, or whose provider's budget
+        # for this use is spent or that refused for credit or quota today
+        # (ml/spend.py), would answer nothing: its slot goes to a model that
+        # can. The send checks it again (__infer), for a model chosen before
+        # the budget ran out.
+        if not can_be_asked(model):
             return False
         if not model.health_checked_live:
             # Imported lazily to avoid a circular import (health_status imports
@@ -328,25 +398,30 @@ class MLRouter(object):
         return self._selectable(model)
 
     def _filter_available(
-        self, models: Sequence[RemoteModelLike], context: str
+        self,
+        models: Sequence[RemoteModelLike],
+        context: str,
+        *,
+        fail_open: bool = True,
     ) -> list[RemoteModelLike]:
         """Filter ``models`` down to the currently-selectable ones.
 
         FAIL OPEN when the filter would empty a non-empty list: a stale or
         wrong health cache must never zero out generation entirely -- in that
-        case every candidate is returned (with an ERROR logged) and the
-        per-call timeouts bound the damage.
+        case every candidate is returned (with an ERROR logged, at most once
+        per ``context`` every ten minutes) and the per-call timeouts bound
+        the damage.
+
+        ``fail_open=False`` is for a pool that is not the only answerer (a
+        healthy outside model is in the same request): the result may then
+        be empty, with nothing logged, since the outside model answers.
         """
         candidates = list(models)
         if not candidates:
             return candidates
         available = [m for m in candidates if self._selectable(m)]
-        if not available:
-            logger.error(
-                f"MLRouter: every candidate for {context} "
-                f"({[str(m) for m in candidates]}) is marked unavailable; "
-                f"failing open with the full list"
-            )
+        if not available and fail_open:
+            _log_fail_open(context, [str(m) for m in candidates])
             return candidates
         return available
 
@@ -496,12 +571,16 @@ class MLRouter(object):
         # Filter BEFORE slicing so healthy backends past the slice boundary
         # can step up when the cheapest ones are marked down.
         models: list[RemoteModelLike] = []
+        # Fail open only when no outside model can answer: beside one that
+        # can, internals marked down would only hang for their full timeout.
+        externals = self.best_external_models() if use_external else []
         if self.internal_models_by_cost:
             models += self._filter_available(
-                self.internal_models_by_cost, "generate-text-internal"
+                self.internal_models_by_cost,
+                "generate-text-internal",
+                fail_open=not externals,
             )[:6]
-        if use_external:
-            models += self.best_external_models()
+        models += externals
         # Only fall back to all_models if use_external is True
         if not models and use_external:
             # Keep the availability gate authoritative: don't re-introduce
@@ -514,7 +593,9 @@ class MLRouter(object):
             ][:6]
         return models
 
-    def generate_text_backend_names(self, use_external: bool = False) -> list[str]:
+    def generate_text_backend_names(
+        self, use_external: bool = False, fail_open: bool = True
+    ) -> list[str]:
         """
         Return model NAMES for text generation, preserving multi-backend support.
 
@@ -529,12 +610,21 @@ class MLRouter(object):
         servers are available.
 
         FLOW:
-        1. Router returns ["fhi-2025", "sonar"]
+        1. Router returns ["fhi-2025", "deepseek-ai/DeepSeek-V4-Pro"]
         2. Caller looks up models_by_name["fhi-2025"] → [server1, server2, server3]
-        3. Caller tries server1, if fails → server2, if fails → server3
+        3. Caller submits to the first server that accepts the submission and
+           moves to the next only when a submission fails (get_model_result);
+           an inference-time failure is that server's failure.
+        Context-only backends (Perplexity "sonar") are never returned: they
+        build citations and do not draft.
 
         Args:
             use_external: Whether to include external models
+            fail_open: With every internal model marked down, list them all
+                anyway (the last resort when nothing else can answer). False
+                lists only selectable internals, possibly none, for a caller
+                that has an outside backup of its own. With use_external the
+                internals fail open only when no external is selectable.
 
         Returns:
             List of model names (not instances) to use for text generation
@@ -579,16 +669,30 @@ class MLRouter(object):
                 return True
             return False
 
+        # Same availability gate as generate_text_backends: this is the list
+        # make_appeals fans every appeal out to, and without the gate a
+        # backend the sweep had already marked down was called on every run,
+        # holding the end of each stream open for its full timeout.
+        # Filtered before the slice so healthy backends past the boundary
+        # can step up. Fails open when everything is marked down, but not
+        # while a healthy external is in the same list: known-down internals
+        # would hang for their full timeout ahead of a model that can answer.
+        externals = self.best_external_models() if use_external else []
+        internal = self._filter_available(
+            self.internal_models_by_cost,
+            "generate-text-names",
+            fail_open=fail_open and not externals,
+        )
         if use_external:
             # Internal + external: take internal first, then the best
             # available external models.
-            for model in self.internal_models_by_cost[:6]:
+            for model in internal[:6]:
                 add_model_name(model)
-            for model in self.best_external_models():
+            for model in externals:
                 add_model_name(model)
         else:
             # Internal only
-            for model in self.internal_models_by_cost:
+            for model in internal:
                 add_model_name(model)
 
         return names
@@ -598,7 +702,7 @@ class MLRouter(object):
         Return models for handling question-answer pairs for appeal generation.
         Always includes up to three internal FHI models, strongest first.
         When use_external is True, also includes Perplexity for web-informed
-        questions, plus the cheap external generalist
+        questions when it looks healthy, plus the cheap external generalist
         (google/gemma-4-26B-A4B-it) when none of the chosen internals is a
         healthy general-purpose model.
 
@@ -612,37 +716,40 @@ class MLRouter(object):
         if forced:
             return forced
 
-        models: list[RemoteModelLike] = []
-        # Always include internal FHI models for question generation. Sorted
-        # strongest first BEFORE the slice, so a deployment with more than
-        # three internals keeps its best three, not its cheapest three. The
-        # sort is stable over the cost order, so ties stay cheapest-first.
-        internal = self._general_purpose_only(
-            self._filter_available(self.internal_models_by_cost, "full-qa"), "full-qa"
-        )
-        models += sorted(internal, key=lambda m: -m.quality())[:3]
-
+        outside: list[RemoteModelLike] = []
         if use_external:
             # The cheap external generalist stands in for our own models; it
             # doesn't join them. Question scoring mostly rewards the number
             # and shape of the questions, not model quality, so beside a
             # healthy internal it could win on formatting alone, and the
             # fan-out waits on every task, so it would only add latency and a
-            # paid call. So it is added only when none of the internals chosen
-            # above is healthy and general-purpose. _external_generalist()
-            # skips an instance the health sweep marked down, which would
-            # stall the fan-out for the full model timeout. One instance is
-            # enough for a concurrent fan-out, as before.
-            if not any(
-                m.supports_general_instructions() and self._selectable(m)
-                for m in models
-            ):
-                models += self._external_generalist()[:1]
-            # Add Perplexity for web-informed questions
+            # paid call. So it is added only when none of our internals is
+            # healthy and general-purpose. _external_generalist() skips an
+            # instance the health sweep marked down, which would stall the
+            # fan-out for the full model timeout. One instance is enough for
+            # a concurrent fan-out, as before.
+            if not self._healthy_general_internal():
+                outside += self._external_generalist()[:1]
+            # Add Perplexity for web-informed questions. Gated like the
+            # generalist above: question generation waits on every
+            # fanned-out task, so a backed-off Perplexity stalled it for the
+            # full timeout.
             if "sonar" in self.models_by_name:
-                models += self.cheapest("sonar")
+                outside += [m for m in self.cheapest("sonar") if self._selectable(m)]
 
-        return models
+        # Always include internal FHI models for question generation. Sorted
+        # strongest first BEFORE the slice, so a deployment with more than
+        # three internals keeps its best three, not its cheapest three. The
+        # sort is stable over the cost order, so ties stay cheapest-first.
+        # They fail open only when no outside model is asked: beside one that
+        # can answer, internals marked down would only hold the fan-out open.
+        internal = self._general_purpose_only(
+            self._filter_available(
+                self.internal_models_by_cost, "full-qa", fail_open=not outside
+            ),
+            "full-qa",
+        )
+        return sorted(internal, key=lambda m: -m.quality())[:3] + outside
 
     def partial_qa_backends(self) -> list[RemoteModelLike]:
         """
@@ -676,14 +783,7 @@ class MLRouter(object):
         """
         if not use_external:
             return []
-
-        # Only use Perplexity models for citations
-        if "sonar-reasoning" in self.models_by_name:
-            return self.cheapest("sonar-reasoning")
-        if "sonar" in self.models_by_name:
-            return self.cheapest("sonar")
-
-        return []
+        return self._citation_backend()
 
     def partial_find_citation_backends(self) -> list[RemoteModelLike]:
         """
@@ -694,12 +794,18 @@ class MLRouter(object):
         Returns:
             List of RemoteModelLike models suitable for citation finding with partial context
         """
-        # Only use Perplexity models for citations
-        if "sonar-reasoning" in self.models_by_name:
-            return self.cheapest("sonar-reasoning")
-        if "sonar" in self.models_by_name:
-            return self.cheapest("sonar")
+        return self._citation_backend()
 
+    def _citation_backend(self) -> list[RemoteModelLike]:
+        """The Perplexity model citations are found with, or nothing while
+        it is down (retired, refused, out of credit, unreachable). Never
+        fails open: the citation helpers fall back to the supplemental
+        sources, which beats asking a model that cannot answer on every
+        appeal."""
+        for name in ("sonar-reasoning", "sonar"):
+            up = [m for m in self.cheapest(name) if self._selectable(m)]
+            if up:
+                return up
         return []
 
     def get_prior_auth_backends(self) -> list[RemoteModelLike]:
@@ -742,7 +848,9 @@ class MLRouter(object):
         in_force = self.chat_policy_in_force(policy)
         return in_force.external_delay_seconds if in_force is not None else 0.0
 
-    def _chat_externals(self, policy: Optional[ChatPolicy]) -> list[RemoteModelLike]:
+    def _chat_externals(
+        self, policy: Optional[ChatPolicy], explore: bool = True
+    ) -> list[RemoteModelLike]:
         """The outside models for a chat turn: the FHI_CHAT_OUTSIDE_MODELS
         roster when it is set (else best_external_models, as before),
         narrowed by the policy when one is in force. The policy never adds
@@ -758,7 +866,8 @@ class MLRouter(object):
             if in_force is not None and in_force.outside_order:
                 learned = [n for n in in_force.outside_order if n in roster]
                 names = learned + [n for n in roster if n not in learned]
-            externals = self._explore(self.chat_outside_models(names, limit=50))
+            candidates = self.chat_outside_models(names, limit=50)
+            externals = self._explore(candidates) if explore else candidates
         else:
             externals = self.best_external_models()
         if in_force is None:
@@ -780,7 +889,7 @@ class MLRouter(object):
             chosen[1] = further[int(_explore_draw() * len(further)) % len(further)]
         return chosen
 
-    def _chat_lead(self) -> list[RemoteModelLike]:
+    def _chat_lead(self, fail_open: bool = True) -> list[RemoteModelLike]:
         """The fhi backend instance(s) that lead the chat fan-out.
 
         The strongest fhi backend that follows instructions and looks
@@ -790,7 +899,8 @@ class MLRouter(object):
         ``_filter_available``: with no general-purpose fhi backend the
         appeal fine-tune can still lead, and with every candidate marked
         down the strongest one still leads, because a doubled slot on a long
-        shot beats no fhi call at all.
+        shot beats no fhi call at all. ``fail_open=False`` (a healthy outside
+        model is in the turn) leaves a marked-down lead out instead.
 
         Chosen per INSTANCE, not per name: two backends can share a registry
         name (alpha and the May fine-tune set to the same model path both
@@ -808,7 +918,9 @@ class MLRouter(object):
                     registry_name[id(m)] = name
                     fhi.append(m)
         candidates = self._filter_available(
-            self._general_purpose_only(fhi, "chat-fhi"), "chat-fhi"
+            self._general_purpose_only(fhi, "chat-fhi"),
+            "chat-fhi",
+            fail_open=fail_open,
         )
         if not candidates:
             return []
@@ -823,7 +935,11 @@ class MLRouter(object):
         ]
 
     def get_chat_backends(
-        self, use_external=False, policy: Optional[ChatPolicy] = None
+        self,
+        use_external=False,
+        policy: Optional[ChatPolicy] = None,
+        explore: bool = True,
+        fail_open: Optional[bool] = None,
     ) -> list[RemoteModelLike]:
         """
         Return models for handling chat interactions.
@@ -832,6 +948,18 @@ class MLRouter(object):
             policy: Optional chat routing policy (ml/chat_policy.py). It can
                 only narrow the external models, and only when use_external
                 is on; see chat_policy_in_force for when it is set aside.
+            explore: True for a chat turn: CHAT_OUTSIDE_LIMIT roster models,
+                one of them sometimes swapped for one further down (see
+                _explore). False for the chooser, which compares them all:
+                every roster model that can be asked, in order, the same
+                answer each time it asks.
+            fail_open: Whether our own models fail open when every one of
+                them is marked down. None (the default) decides it here: only
+                when no outside model in this list can answer. A caller that
+                adds its own outside model after this list (a regulator
+                letter) passes False while that model can answer, so ours
+                marked down are left out rather than asked ahead of it.
+                A FORCE_MODEL is returned whatever this says.
 
         Returns:
             List of RemoteModelLike models suitable for chat tasks
@@ -842,13 +970,21 @@ class MLRouter(object):
             return forced_models
 
         models = []
+        externals = (
+            self._chat_externals(policy, explore=explore) if use_external else []
+        )
+        # Our own models fail open only when they are the turn's only
+        # answerers. Judged on selectable outside models, not on a non-empty
+        # list: chat_outside_models fails open itself when the roster and
+        # ours are all down, and then ours must fail open too.
+        if fail_open is None:
+            fail_open = not any(self._selectable(m) for m in externals)
         # The lead fhi backend is asked twice, for redundancy against a slow
         # pod. It is picked by quality (see _chat_lead), so the doubled slot
         # goes to our strongest model rather than whichever name sorts first.
-        lead = self._chat_lead()
+        lead = self._chat_lead(fail_open=fail_open)
         models += lead * 2
-        if use_external:
-            models += self._chat_externals(policy)
+        models += externals
         # Strongest available internals, not cheapest: the cost ordering was
         # picking the 6 CHEAPEST internal backends for chat, which is the
         # wrong end of the list when strong and weak internals coexist. The
@@ -860,7 +996,11 @@ class MLRouter(object):
         internal_available = [
             m
             for m in self._general_purpose_only(
-                self._filter_available(self.internal_models_by_cost, "chat-internal"),
+                self._filter_available(
+                    self.internal_models_by_cost,
+                    "chat-internal",
+                    fail_open=fail_open,
+                ),
                 "chat-internal",
             )
             if id(m) not in lead_ids
@@ -1040,13 +1180,41 @@ class MLRouter(object):
         which is what every instruction-following caller wants. Appeal and
         prior-auth GENERATION must pass ``general_only=False`` -- there the
         fine-tune is the point.
+
+        A parked, refused or marked-down model gives its place to the
+        strongest one that looks healthy, as in generate_text_backend_names.
+        Only when none looks healthy is the strongest returned anyway, with
+        no ERROR of its own: the request's other lists already log one.
         """
         if not self.internal_models_by_cost:
             return None
         candidates: Sequence[RemoteModelLike] = self.internal_models_by_cost
         if general_only:
             candidates = self._general_purpose_only(candidates, "best-internal")
-        return max(candidates, key=lambda m: m.quality())
+        healthy = self._filter_available(candidates, "best-internal", fail_open=False)
+        return max(healthy or candidates, key=lambda m: m.quality())
+
+    def healthy_first(
+        self, instances: Sequence[RemoteModelLike]
+    ) -> list[RemoteModelLike]:
+        """``instances`` with those that look healthy first (their order
+        otherwise kept), so a call by name goes to one that can answer
+        before one the health signals have down. Every instance stays
+        listed, since a healthy one may still fail, and one whose signals
+        cannot be read counts as healthy.
+
+        It takes the instances, not a name: callers look the name up through
+        their own ``ml_router`` reference, which is where tests patch
+        ``models_by_name``, and a lookup here would read the router's own
+        registry and miss the patch."""
+
+        def down(model: RemoteModelLike) -> bool:
+            try:
+                return not self._selectable(model)
+            except Exception:
+                return False
+
+        return sorted(instances, key=down)
 
     def cheapest(self, name: str) -> list[RemoteModelLike]:
         try:
@@ -1061,7 +1229,9 @@ class MLRouter(object):
         strongest first. The cheap external generalist comes next, only when
         ``use_external`` allows it. Last comes the same fail-open internal
         pool ``summarize`` has always used, minus what is already listed, so
-        a stale health signal can't leave a summary with nothing to try.
+        a stale health signal can't leave a summary with nothing to try. It
+        fails open only without the generalist: while that can answer,
+        internals marked down are left out.
 
         Never calls a model, so a staff page can show the order without
         spending an inference. It reads only cached health signals: each
@@ -1081,10 +1251,14 @@ class MLRouter(object):
         # would quietly return None. It stays behind use_external so a caller
         # summarizing patient data for an opt-out denial never sends it out.
         external = self._external_generalist() if use_external else []
-        # Last resort: internals the health signals marked down, or the
-        # appeal-only fine-tune when it is all we have.
+        # Last resort: the appeal-only fine-tune when it is all we have, or
+        # internals the health signals marked down, but those only when the
+        # generalist isn't listed to answer instead (each would cost a full
+        # timeout, once per article, for an answer it most likely can't give).
         fallback = self._general_purpose_only(
-            self._filter_available(self.internal_models_by_cost, "summarize"),
+            self._filter_available(
+                self.internal_models_by_cost, "summarize", fail_open=not external
+            ),
             "summarize",
         )
         listed = {id(m) for m in head}
@@ -1113,10 +1287,10 @@ class MLRouter(object):
         """
         # Our strongest healthy internal first, then the cheap DeepInfra
         # generalist (only when use_external allows it and it looks healthy),
-        # then the internals marked down. A DeepInfra-only deployment has an
-        # empty internal pool, so there the generalist is the only model and
-        # summarize() still works rather than silently returning None. See
-        # summarize_backends().
+        # then, without it, the internals marked down. A DeepInfra-only
+        # deployment has an empty internal pool, so there the generalist is
+        # the only model and summarize() still works rather than silently
+        # returning None. See summarize_backends().
         models = self.summarize_backends(use_external)
         abstract_optional = ""
         text_optional = ""
@@ -1310,6 +1484,55 @@ class MLRouter(object):
                 f"Model startup probe complete: all {ok_count} backends responded"
             )
         return results
+
+
+def appeal_backup_names(
+    candidates: Sequence[str], primary_names: Sequence[str]
+) -> List[str]:
+    """The names the appeals backup pass calls, in order.
+
+    ``candidates`` is what ``generate_text_backend_names`` returns for the
+    denial's ``use_external``, and ``primary_names`` is the internal-only list
+    the primary pass already called. The backup never repeats one of those.
+    So for an opt-out denial it is empty and ``make_appeals`` skips the stage,
+    and for an opt-in one it holds the external backends. ``make_appeals``
+    and the staff routing overview both use this, so the page lists the
+    backup pass requests actually run.
+    """
+    already = set(primary_names)
+    return [name for name in candidates if name not in already]
+
+
+def appeal_pass_names(
+    router: Any, use_external: bool
+) -> Tuple[List[str], List[str], bool]:
+    """The names the appeals primary and backup passes call, in order, and
+    whether a hosted model can answer in the backup.
+
+    The primary pass is internal only, whatever the person chose. Opted in,
+    with a hosted model the router can select in the backup, the primary pass
+    lists only our models that are up, possibly none: failing open to ones
+    known down would hang for their whole timeout and leave the hosted backup
+    no time to answer. With no hosted model to fall back on, ours fail open
+    as the last resort, as always. The hosted-backup flag is returned so
+    callers skip the best-internal hint on the same test when the primary
+    pass is empty, rather than each repeating it. ``router`` is passed in
+    (not ``self``) so ``make_appeals`` and the staff routing overview read the
+    same router their callers (and tests) hand them.
+    """
+    candidates = router.generate_text_backend_names(use_external=use_external)
+    hosted_backup = use_external and any(
+        getattr(m, "external", False)
+        for name in candidates
+        for m in router.models_by_name.get(name, [])
+    )
+    if hosted_backup:
+        primary = router.generate_text_backend_names(
+            use_external=False, fail_open=False
+        )
+    else:
+        primary = router.generate_text_backend_names(use_external=False)
+    return primary, appeal_backup_names(candidates, primary), hosted_backup
 
 
 # Lazy singleton - initialized on first access

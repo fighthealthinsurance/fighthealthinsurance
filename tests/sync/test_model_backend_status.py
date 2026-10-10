@@ -19,6 +19,7 @@ from fighthealthinsurance.ml import health_status as health_status_module
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml import model_health_check as mhc
 from fighthealthinsurance.ml import serving_registry
+from fighthealthinsurance.ml import spend
 from fighthealthinsurance.ml.health_status import _model_key, health_status
 from fighthealthinsurance.ml.ml_models import (
     AlphaRemoteInternal,
@@ -121,6 +122,24 @@ class StatusPageTestCase(TestCase):
         rows = [r for r in response.context["rows"] if r["model_name"] == name]
         self.assertEqual(len(rows), 1, name)
         return rows[0]
+
+    # The table's columns after Model, where a row search starts.
+    COLUMNS = (
+        "Kind",
+        "Routing on this pod",
+        "Config",
+        "Serving",
+        "Last health check",
+        "Live (this pod)",
+        "Last stored generation",
+    )
+
+    def cell(self, response, name, column):
+        """The HTML of one cell in the table row of the model ``name``."""
+        html = response.content.decode()
+        row = html[html.index(f'<div class="mono">{name}</div>') :]
+        row = row[: row.index("</tr>")]
+        return row.split("<td>")[1 + self.COLUMNS.index(column)]
 
     @staticmethod
     def labels(row):
@@ -251,6 +270,31 @@ class ModelBackendStatusContentTest(StatusPageTestCase):
         ]
         self.assertEqual(len(rows), 1)
         self.assertIsNone(rows[0]["last_generation"])
+
+    def test_a_still_unconfigured_backends_classification_is_not_a_check(self):
+        """The deploy check persists its static classifications too. While the
+        backend is still unconfigured, its NOT_CONFIGURED row is not a failed
+        health check, and the Config column keeps the detail."""
+        name = "anthropic/claude-sonnet-4-6"
+        ModelBackendHealthCheckResult.objects.create(
+            run_id="run-static",
+            model_name=name,
+            internal_name="claude-sonnet-4-6",
+            provider="Anthropic",
+            category="NOT_CONFIGURED",
+            enabled=False,
+            ok=False,
+            error="ANTHROPIC_API_KEY not set",
+            started_at=timezone.now(),
+        )
+        response = self.get_page()
+        self.assertFalse(self.row(response, name)["show_check"])
+        health = self.cell(response, name, "Last health check")
+        self.assertIn("not checked", health)
+        self.assertNotIn("NOT_CONFIGURED", health)
+        self.assertIn(
+            "ANTHROPIC_API_KEY not set", self.cell(response, name, "Config")
+        )
 
 
 MAY = "fhi-2025-may-0.3-float16-q8-vllm-compressed"
@@ -391,6 +435,39 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         )
         self.assertEqual(self.labels(sonar), ["Questions: fan-out (external allowed)"])
 
+    def test_a_context_only_backend_has_no_generations_to_record(self):
+        """sonar builds citations and never drafts, so its empty "Last stored
+        generation" says so instead of reading "none recorded"."""
+        self.configure(**PERPLEXITY)
+        response = self.get_page()
+        self.assertTrue(self.row(response, "sonar")["context_only"])
+        self.assertIn(
+            "n/a (citations only)",
+            self.cell(response, "sonar", "Last stored generation"),
+        )
+
+    def test_a_chat_only_model_has_no_generations_to_record(self):
+        """Chat's own outside models never draft, so their empty "Last
+        stored generation" says so instead of reading "none recorded"."""
+        self.configure(**DEEPINFRA)
+        cell = self.cell(
+            self.get_page(), "moonshotai/Kimi-K3", "Last stored generation"
+        )
+        self.assertIn("n/a (chat only)", cell)
+
+    def test_context_only_is_known_when_routing_fails(self):
+        """Read off the registered instance when the traits are unavailable."""
+        self.configure(**PERPLEXITY)
+        with patch.object(
+            MLRouter,
+            "get_chat_backends_with_fallback",
+            side_effect=RuntimeError("router broke"),
+        ):
+            response = self.get_page()
+        sonar = self.row(response, "sonar")
+        self.assertFalse(sonar["has_traits"])
+        self.assertTrue(sonar["context_only"])
+
     def test_internal_backends(self):
         self.configure(**ALPHA, **LEGACY)
         response = self.get_page()
@@ -422,7 +499,8 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         self.assertEqual(
             (legacy["quality"], legacy["kind"]), (101, "appeal-only fine-tune")
         )
-        self.assertEqual(self.labels(legacy), ["Appeals: primary", "Appeals: backup"])
+        # The backup pass never repeats a model the primary pass asked.
+        self.assertEqual(self.labels(legacy), ["Appeals: primary"])
         self.assertContains(response, "appeal-only fine-tune")
 
     def test_backends_sharing_a_name_show_only_their_own_roles(self):
@@ -544,6 +622,13 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 # Other registered externals: quality, then provider.
                 "anthropic/claude-sonnet-4-6",
                 DEEPSEEK,
+                # DeepInfra's chat-only models (quality 82, the default for
+                # a model it does not list), then by name.
+                "Qwen/Qwen3.8-2.4T-A95B",
+                "deepseek-ai/DeepSeek-V4.1-Flash",
+                "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
+                "moonshotai/Kimi-K3",
+                "zai-org/GLM-5.3-Flash",
                 "anthropic/claude-haiku-4-5",
                 GEMMA,
                 # Context only.
@@ -577,6 +662,20 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         self.assertContains(response, "use only it, whether or")
         self.assertNotContains(response, "No model by that name")
         self.assertNotContains(response, "It is an external model.")
+
+    def test_a_forced_internal_model_leaves_the_backup_pass_empty(self):
+        """The primary pass already asks the forced model, and the backup
+        pass never repeats one, so the banner and the lists say it gets
+        nothing."""
+        self.configure(**ALPHA, FORCE_MODEL="fhi-local")
+        response = self.get_page()
+        self.assertContains(response, "The backup pass gets no model")
+        backup = self.plan(response, "Appeals, backup pass")
+        self.assertEqual((backup.internal_only, backup.external_allowed), ([], []))
+        self.assertEqual(
+            self.names(self.plan(response, "Appeals, primary pass").internal_only),
+            ["fhi-local"],
+        )
 
     def test_force_model_banner_names_an_unregistered_model(self):
         self.configure(**ALPHA, FORCE_MODEL="no-such-model")
@@ -771,6 +870,16 @@ class ModelBackendStatusFreshnessTest(StatusPageTestCase):
         self.assertTrue(self.row(response, self.MODEL)["config_changed"])
         self.assertContains(response, "config changed since")
 
+    def test_a_classification_row_is_not_shown_as_a_failure(self):
+        """Checked while not configured, configured now: the row still shows,
+        flagged, as the classification it was rather than a failed check."""
+        self.configure(**ANTHROPIC, FHI_DEPLOYMENT_ID="v-old")
+        self.check_row(enabled=False, ok=False, category="NOT_CONFIGURED")
+        health = self.cell(self.get_page(), self.MODEL, "Last health check")
+        self.assertIn('<span class="pill pill-off">NOT_CONFIGURED</span>', health)
+        self.assertNotIn("pill-fail", health)
+        self.assertIn("config changed since", health)
+
     def test_matching_enabled_state_is_not_flagged(self):
         self.configure(**ANTHROPIC, FHI_DEPLOYMENT_ID="v-old")
         self.check_row()
@@ -815,21 +924,108 @@ class ModelBackendStatusFreshnessTest(StatusPageTestCase):
         self.check_row()
         response = self.get_page()
         self.assertEqual(response.context["healthy_count"], 1)
+        enabled = response.context["enabled_count"]
+        self.assertEqual(
+            enabled, sum(1 for r in response.context["rows"] if r["enabled"])
+        )
+        self.assertGreater(enabled, 1)
         self.assertContains(
             response,
-            f"1 of {len(response.context['rows'])} passed their latest check",
+            f"1 of {enabled} enabled backends passed their latest check and are"
+            " not failing live on this pod.",
         )
+
+    def test_a_failing_configuration_is_not_counted_as_enabled(self):
+        """Missing credentials keep enabled=True, but the Config column shows
+        a failing pill rather than "enabled", and the summary agrees, even
+        when the check before the credentials broke had passed."""
+        gpt = "azure-openai/gpt-5.5"
+        self.configure(**ANTHROPIC, AZURE_OPENAI_API_KEY="test-azure-openai-key")
+        self.check_row(model_name=gpt, internal_name="gpt-5.5", provider="Azure OpenAI")
+        response = self.get_page()
+        row = self.row(response, gpt)
+        self.assertTrue(row["enabled"] and row["config_failing"])
+        self.assertEqual(
+            response.context["enabled_count"],
+            sum(
+                1
+                for r in response.context["rows"]
+                if r["enabled"] and not r["config_failing"]
+            ),
+        )
+        self.assertEqual(response.context["healthy_count"], 0)
+
+    def test_a_pass_from_before_a_backend_was_turned_off_is_not_healthy(self):
+        """The count is of the backends this pod has enabled: an old PASS for
+        one that is now unconfigured is not health."""
+        self.check_row()
+        response = self.get_page()
+        self.assertFalse(self.row(response, self.MODEL)["enabled"])
+        self.assertEqual(response.context["healthy_count"], 0)
+
+    # The Live (this pod) column: what this pod's own calls have found since
+    # the deploy check, read from memory. A backend found dead is not
+    # counted healthy, whatever its check said.
+
+    def _passed_and_live(self, not_served=False):
+        """Sonnet configured with a passing check row; with ``not_served``,
+        its registered instance flagged the way a 404 or 410 flags it."""
+        self.configure(**ANTHROPIC)
+        self.check_row()
+        if not_served:
+            router = ml_router_module._get_ml_router()
+            sonnet = router.models_by_name[self.MODEL][0]
+            sonnet._note_missing_model(sonnet.api_base, sonnet.model, "test")
+
+    def test_nothing_flagged_reads_as_such(self):
+        self._passed_and_live()
+        live = self.cell(self.get_page(), self.MODEL, "Live (this pod)")
+        self.assertIn("nothing flagged", live)
+
+    def test_an_unregistered_backend_has_no_live_state(self):
+        self._passed_and_live()
+        live = self.cell(self.get_page(), "azure-openai/gpt-5.5", "Live (this pod)")
+        self.assertIn("not registered", live)
+
+    def test_a_model_not_served_shows_failing_live(self):
+        self._passed_and_live(not_served=True)
+        live = self.cell(self.get_page(), self.MODEL, "Live (this pod)")
+        self.assertIn('<span class="pill pill-fail">failing</span>', live)
+        self.assertIn("model not served", live)
+
+    def test_a_live_failure_is_not_counted_healthy(self):
+        self._passed_and_live(not_served=True)
+        response = self.get_page()
+        self.assertEqual(
+            (response.context["healthy_count"], response.context["live_failing_count"]),
+            (0, 1),
+        )
+
+    def test_the_summary_counts_live_failures(self):
+        self._passed_and_live(not_served=True)
+        self.assertContains(self.get_page(), "; 1 is failing live on this pod.")
+
+    def test_a_provider_paused_for_credit_shows_failing_live(self):
+        self._passed_and_live()
+        spend.pause(spend.ANTHROPIC, reason="test")
+        row = self.row(self.get_page(), self.MODEL)
+        self.assertIn("paused for credit or quota", row["live_problem"])
+
+    def test_a_live_failure_leaves_the_check_cell_as_it_was(self):
+        self._passed_and_live(not_served=True)
+        health = self.cell(self.get_page(), self.MODEL, "Last health check")
+        self.assertIn('<span class="pill pill-ok">PASS</span>', health)
 
 
 class ModelBackendStatusLayoutTest(StatusPageTestCase):
-    """Seven columns that fit a 1280px window, with every fact still shown."""
+    """Eight columns that fit a 1280px window, with every fact still shown."""
 
     TEMPLATE = (
         Path(__file__).resolve().parents[2]
         / "fighthealthinsurance/templates/model_backend_status.html"
     )
 
-    def test_seven_columns_inside_a_scroll_box(self):
+    def test_eight_columns_inside_a_scroll_box(self):
         response = self.get_page()
         html = response.content.decode()
         table = html[html.index('<div class="status-wrap">') :]
@@ -843,6 +1039,7 @@ class ModelBackendStatusLayoutTest(StatusPageTestCase):
                 "Config",
                 "Serving",
                 "Last health check",
+                "Live (this pod)",
                 "Last stored generation",
             ],
         )
@@ -873,12 +1070,9 @@ class ModelBackendStatusLayoutTest(StatusPageTestCase):
             enabled=True,
             started_at=timezone.now(),
         )
-        html = self.get_page().content.decode()
-        row = html[html.index("anthropic/claude-sonnet-4-6</div>") :]
-        row = row[: row.index("</tr>")]
-        # The rest of the Model cell, then Kind, Routing, Config and Serving,
-        # then the health check cell.
-        cell = row.split("<td>")[5]
+        cell = self.cell(
+            self.get_page(), "anthropic/claude-sonnet-4-6", "Last health check"
+        )
         for fact in (
             "FAIL_TIMEOUT",
             "842 ms",
@@ -1054,3 +1248,33 @@ class ServingColumnTest(StatusPageTestCase):
         history = html[html.index("<summary><h2>Serving history</h2></summary>") :]
         self.assertIn("<th>Endpoint</th>", history)
         self.assertIn('<td class="mono">alpha.example.invalid:8000</td>', history)
+
+
+class PausedProviderHintTest(TestCase):
+    """Each of today's provider pauses on the usage dashboard names the
+    command that lifts it early, after a top-up."""
+
+    def _rendered(self):
+        from django.template.loader import render_to_string
+
+        from fighthealthinsurance.staff_views import ModelUsageDashboardView
+
+        panel = {
+            "state": "none",
+            "spend_rows": [],
+            "paused_rows": ModelUsageDashboardView._paused_rows(),
+        }
+        return render_to_string("model_usage_policy_partial.html", {"panel": panel})
+
+    def test_an_every_use_pause_names_the_unpause_command(self):
+        spend.pause(spend.DEEPINFRA, reason="test")
+        self.assertIn(
+            "<code>python manage.py unpause_spend deepinfra</code>", self._rendered()
+        )
+
+    def test_a_pause_on_one_use_names_that_use(self):
+        spend.pause(spend.TYPESAFE, spend.CHAT, reason="test")
+        self.assertIn(
+            "<code>python manage.py unpause_spend typesafe --use chat</code>",
+            self._rendered(),
+        )

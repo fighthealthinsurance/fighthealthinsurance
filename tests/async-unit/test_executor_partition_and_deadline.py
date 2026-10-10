@@ -16,7 +16,8 @@ from unittest.mock import patch
 import pytest
 
 from fighthealthinsurance import exec as fhi_exec
-from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
+from fighthealthinsurance.ml import ml_models
+from fighthealthinsurance.ml.ml_models import DeadlineSkipped, RemoteFullOpenLike
 from fighthealthinsurance.utils import (
     fire_and_forget_in_new_threadpool,
     join_fire_and_forget_threads,
@@ -116,29 +117,32 @@ class TestCheckedInferDeadline:
 
         with patch.object(m, "_infer_no_context", side_effect=fake_infer_no_context):
             start = time.monotonic()
-            result = await m._checked_infer(
-                prompt="p",
-                patient_context=None,
-                plan_context=None,
-                infer_type="full",
-                pubmed_context=None,
-                system_prompt="sys",
-                temperature=0.7,
-                deadline=time.monotonic() - 1.0,
-            )
-        assert result == []
+            with pytest.raises(DeadlineSkipped):
+                await m._checked_infer(
+                    prompt="p",
+                    patient_context=None,
+                    plan_context=None,
+                    infer_type="full",
+                    pubmed_context=None,
+                    system_prompt="sys",
+                    temperature=0.7,
+                    deadline=time.monotonic() - 1.0,
+                )
         assert calls == []
         assert time.monotonic() - start < 1.0
 
     @pytest.mark.asyncio
-    async def test_deadline_expiry_skips_the_bad_result_retry(self):
+    async def test_deadline_expiry_skips_the_bad_result_retry(self, monkeypatch):
         m = RemoteFullOpenLike("http://dl.test/v1", "tok", "dl-model")
         calls = []
-        deadline = time.monotonic() + 0.05
+        # No call is made with less than this left; shrunk so that a short
+        # first call uses up the time a letter would need.
+        monkeypatch.setattr(ml_models, "MIN_RETRY_WINDOW_SECONDS", 0.2)
+        deadline = time.monotonic() + 0.4
 
         async def slow_bad_result(**kwargs):
             calls.append(kwargs)
-            await asyncio.sleep(0.1)  # pushes past the deadline
+            await asyncio.sleep(0.3)  # leaves less than the window
             return "x"  # bad (too short) for infer_type=full
 
         with patch.object(m, "_infer_no_context", side_effect=slow_bad_result):
@@ -153,7 +157,7 @@ class TestCheckedInferDeadline:
                 deadline=deadline,
             )
         assert result == []
-        # Initial call happened; the one-retry was skipped by the deadline.
+        # Initial call happened; the one-retry was skipped for lack of time.
         assert len(calls) == 1
 
 

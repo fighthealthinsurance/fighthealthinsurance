@@ -8,7 +8,11 @@ import asyncio
 from typing import Optional
 
 from fighthealthinsurance import env_utils
-from fighthealthinsurance.ml.ml_router import MLRouter, _EXTERNAL_GENERALIST
+from fighthealthinsurance.ml.ml_router import (
+    MLRouter,
+    _EXTERNAL_GENERALIST,
+    appeal_backup_names,
+)
 from fighthealthinsurance.ml.ml_models import (
     DeepInfra,
     ModelDescription,
@@ -222,6 +226,22 @@ class TestMLRouterGenerateTextBackendNames(unittest.TestCase):
                 f"Name '{name}' returned by generate_text_backend_names cannot be "
                 f"looked up in models_by_name. This would cause 'No backend for {name}' errors.",
             )
+
+
+class TestAppealBackupNames(unittest.TestCase):
+    """The appeals backup pass never repeats a name the primary pass called."""
+
+    def test_keeps_only_names_the_primary_did_not_call_in_order(self):
+        self.assertEqual(
+            appeal_backup_names(
+                ["fhi-a", "fhi-b", "ext-2", "ext-1"], ["fhi-b", "fhi-a"]
+            ),
+            ["ext-2", "ext-1"],
+        )
+
+    def test_is_empty_when_the_backup_list_is_the_primary_list(self):
+        """An opt-out denial: both lists are the internal names."""
+        self.assertEqual(appeal_backup_names(["fhi-a", "fhi-b"], ["fhi-a", "fhi-b"]), [])
 
 
 class TestMLRouterChatBackends(unittest.TestCase):
@@ -921,9 +941,10 @@ class TestMLRouterSummarize(unittest.TestCase):
     def test_appeal_only_internal_waits_behind_gemma(self):
         asyncio.run(self.async_test_appeal_only_internal_waits_behind_gemma())
 
-    async def async_test_marked_down_internals_go_after_gemma(self):
-        """Internals the health signals marked down are still tried, since the
-        signal can be stale, but only after Gemma."""
+    async def async_test_marked_down_internals_are_not_asked_beside_gemma(self):
+        """Internals the health signals marked down are left out while a
+        healthy Gemma can answer: each would cost a full timeout per article
+        for an answer it most likely can't give."""
         down_a = make_routed_mock(200, available=False)
         down_b = make_routed_mock(210, available=False)
         gemma = make_routed_mock(80, external=True)
@@ -939,11 +960,10 @@ class TestMLRouterSummarize(unittest.TestCase):
         result = await self.router.summarize("article", "text", use_external=True)
 
         self.assertIsNone(result)
-        self.assertEqual(asked[0], "gemma")
-        self.assertCountEqual(asked[1:], ["a", "b"])
+        self.assertEqual(asked, ["gemma"])
 
-    def test_marked_down_internals_go_after_gemma(self):
-        asyncio.run(self.async_test_marked_down_internals_go_after_gemma())
+    def test_marked_down_internals_are_not_asked_beside_gemma(self):
+        asyncio.run(self.async_test_marked_down_internals_are_not_asked_beside_gemma())
 
     async def async_test_use_external_false_with_everything_down_stays_internal(
         self,
@@ -1102,15 +1122,25 @@ class TestMLRouterSummarizeBackends(unittest.TestCase):
             [self.gemma, self.legacy],
         )
 
-    def test_marked_down_internals_go_after_gemma(self):
+    def test_marked_down_internals_are_left_out_beside_gemma(self):
         self.new.is_available.return_value = False
         self.alpha.is_available.return_value = False
         install_models(self.router, [self.new, self.alpha], {GEMMA: [self.gemma]})
 
         result = self.router.summarize_backends(use_external=True)
 
-        self.assertEqual(result[0], self.gemma)
-        self.assertCountEqual(result[1:], [self.new, self.alpha])
+        self.assertEqual(result, [self.gemma])
+
+    def test_marked_down_internals_are_the_last_resort_without_gemma(self):
+        """With Gemma down too, ours are all there is: they fail open."""
+        self.new.is_available.return_value = False
+        self.alpha.is_available.return_value = False
+        self.gemma.is_available.return_value = False
+        install_models(self.router, [self.new, self.alpha], {GEMMA: [self.gemma]})
+
+        result = self.router.summarize_backends(use_external=True)
+
+        self.assertCountEqual(result, [self.new, self.alpha])
 
     def test_a_healthy_internal_leads_when_the_stronger_one_is_down(self):
         self.alpha.is_available.return_value = False
@@ -1159,7 +1189,8 @@ class TestMLRouterSummarizeBackends(unittest.TestCase):
     def test_reads_the_cached_health_sweep_and_never_infers(self):
         """Our own vLLM backends and DeepInfra have no live health signal
         (``health_checked_live`` is False), so the order comes from the last
-        cached health sweep: an internal it marked down moves behind Gemma.
+        cached health sweep: an internal it marked down is left out while
+        Gemma can answer.
         No inference method is ever called or awaited. On a real pod the
         first read may also start the background sweep, as any routed request
         does; ``model_ok`` is patched here, so none starts."""
@@ -1185,7 +1216,7 @@ class TestMLRouterSummarizeBackends(unittest.TestCase):
 
                 # is_available() is True either way, so only the cached sweep
                 # result can have moved alpha.
-                self.assertEqual(listed, [alpha, gemma] if alpha_ok else [gemma, alpha])
+                self.assertEqual(listed, [alpha, gemma] if alpha_ok else [gemma])
                 model_ok.assert_any_call(alpha)
                 model_ok.assert_any_call(gemma)
                 for model in (alpha, gemma):
@@ -1223,13 +1254,26 @@ class TestMLRouterFullQABackends(unittest.TestCase):
         )
 
     def test_gemma_stands_in_when_the_internals_are_down(self):
+        """The internals marked down are left out beside the outside models
+        that can answer: the fan-out waits on every task it starts."""
         self.new.is_available.return_value = False
         self.alpha.is_available.return_value = False
         install_models(self.router, [self.new, self.alpha], self.externals)
 
         self.assertEqual(
             self.router.full_qa_backends(use_external=True),
-            [self.alpha, self.new, self.gemma, self.sonar],
+            [self.gemma, self.sonar],
+        )
+
+    def test_down_internals_fail_open_when_no_outside_model_is_up(self):
+        self.new.is_available.return_value = False
+        self.alpha.is_available.return_value = False
+        self.gemma.is_available.return_value = False
+        self.sonar.is_available.return_value = False
+        install_models(self.router, [self.new, self.alpha], self.externals)
+
+        self.assertEqual(
+            self.router.full_qa_backends(use_external=True), [self.alpha, self.new]
         )
 
     def test_gemma_stands_in_beside_an_appeal_only_internal(self):

@@ -184,8 +184,12 @@ get_chat_backends_with_fallback builds the fan-out:
   every pod picks the same one. The lead is chosen per backend, not per
   name: when two backends share a name (alpha and the May fine-tune set to
   the same model path), only the stronger leads and the other takes an
-  ordinary internal slot. Each step fails open like the other
-  filters: with every fhi backend marked down the strongest still leads.
+  ordinary internal slot. With every fhi backend marked down, the
+  strongest still leads only when no outside model in the turn can
+  answer (outside models off, or every roster model down or out of
+  budget). Otherwise our marked-down backends are left out of the lead
+  and the internal slots, and the outside models answer
+  (`MLRouter.get_chat_backends`, `fail_open`).
   With alpha and the May fine-tune both registered, alpha leads with two
   calls and the May fine-tune gets one. The lead used to be whichever fhi
   name sorted first, which put the May fine-tune in front of the stronger
@@ -295,9 +299,14 @@ rule.
   key is set, the person allowed outside models (Jev reads the text), the
   message was typed (not a document upload or a stored long paste), one of
   our models is selectable, TypeSafe's chat budget (`ml/spend.py`) allows a
-  request, and the pass has outside calls to hold back and calls of ours to
-  start first. With the budget spent the turn routes by our own rules, as
-  with the check off. It does not depend on
+  request, TypeSafe is not cooling down, and the pass has outside calls to
+  hold back and calls of ours to start first. TypeSafe cools down
+  (`ml/typesafe.py`) after an HTTP 401, 403, 404 or 410, or after its
+  endpoint cannot be reached (a refused or failed connect, or two connect
+  timeouts in a row within 60s). For `FHI_TYPESAFE_COOLDOWN_SECONDS` (900s;
+  at most 120s after a connect failure) every TypeSafe use in the process
+  is then held back. With the budget spent or TypeSafe cooling down, the
+  turn routes by our own rules, as with the check off. It does not depend on
   `FHI_CHAT_POLICY_APPLY`. Tool passes and the retry pass are never
   checked.
 * **The hold.** The outside calls wait until our first usable reply is
@@ -497,7 +506,9 @@ the four into one composite score for the agreement table.
   (the model that answered and the rubric version) and an outcome (scored,
   failed, timeout) are stored; the texts are never stored or logged.
 * Nothing starts for a document upload or a stored long paste, for a reply
-  a tool rewrote, or for the canned data-deletion reply.
+  a tool rewrote, for the canned data-deletion reply, or while TypeSafe is
+  cooling down (see the reply check above): no score, outcome or health
+  note is written for those turns.
 * It fails closed: any error, timeout or unexpected answer stores no
   scores, and the outcome goes on the `typesafe-chat` ExternalServiceHealth
   row.
@@ -550,7 +561,9 @@ Three levels, in increasing detail:
    (scored, repeat or empty) or, when its pass stopped comparing answers
    first, is unscored; either way it keeps its time. Only a call still
    running when its pass stopped waiting is late, with no time, and a
-   held-back outside call that was never sent is skipped. An exception
+   held-back outside call that was never sent is skipped. A call to a
+   provider that could not be asked or reached (an outage, a refused key,
+   a cooldown) is an error, and its time stays out of the medians. An exception
    escaping a turn after the models were asked counts it failed, in the row
    and the metric alike; a turn cancelled before it was counted gets
    neither.

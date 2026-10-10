@@ -4,14 +4,21 @@ from contextlib import contextmanager
 from unittest.mock import MagicMock, AsyncMock, patch
 import pytest
 from loguru import logger as loguru_logger
-from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
+from fighthealthinsurance.ml.ml_models import (
+    DeadlineSkipped,
+    ProviderUnavailable,
+    RemoteFullOpenLike,
+)
 from fighthealthinsurance.ml.model_attempt_log import ModelAttemptRecorder
 from fighthealthinsurance.generate_appeal import (
     backend_label,
     AppealGenerator,
     AppealTemplateGenerator,
+    ExtractionUnavailable,
     GeneratedAppeal,
+    MentalHealthParityAppeal,
     _add_proactive_shed_variants,
+    _calls_worth_shedding,
     _generated_to_appeals_text,
     _calls_over_context_budget,
     _DUAL_CALL_CONTEXT_RATIO,
@@ -326,7 +333,7 @@ def _name_spy():
     Calls list records each `use_external` value passed in."""
     calls: list[bool] = []
 
-    def spy(use_external=False):
+    def spy(use_external=False, fail_open=True):
         calls.append(use_external)
         return ["nonexistent-model"]
 
@@ -1077,6 +1084,50 @@ class TestMakeAppealsRouterCallPattern:
         ), f"Expected 2 router calls (primary + backup), got {len(calls)}: {calls}"
 
 
+class TestBackupStageRunsOnlyWhatPrimaryDidNot:
+    """The backup stage re-ran the internal calls primary had just run, so an
+    opt-out denial waited for the same calls to fail the same way before the
+    shed ladder started, and the zero-appeal note claimed an external
+    fallback whenever consent was given, whether or not one existed."""
+
+    @staticmethod
+    def _spy(internal, external):
+        def spy(use_external=False, fail_open=True):
+            return list(internal) + (list(external) if use_external else [])
+
+        return spy
+
+    def test_opt_in_backup_is_the_externals_only(self):
+        with _loguru_capture() as sink:
+            _drain_make_appeals(
+                _mock_denial(use_external=True),
+                self._spy(["fhi-a"], ["ext-b"]),
+                {},
+            )
+        output = sink.getvalue()
+        assert "trying backup_calls" in output
+        assert "models=['ext-b']" in output
+        assert "external backup tried: ['ext-b']" in output
+
+    def test_opt_out_skips_the_backup_stage(self):
+        with _loguru_capture() as sink:
+            _drain_make_appeals(
+                _mock_denial(use_external=False), self._spy(["fhi-a"], []), {}
+            )
+        output = sink.getvalue()
+        assert "trying backup_calls" not in output
+        assert "NO EXTERNAL FALLBACK PERMITTED" in output
+
+    def test_opt_in_without_a_selectable_external_says_so(self):
+        with _loguru_capture() as sink:
+            _drain_make_appeals(
+                _mock_denial(use_external=True), self._spy(["fhi-a"], []), {}
+            )
+        output = sink.getvalue()
+        assert "trying backup_calls" not in output
+        assert "no external backend was selectable" in output
+
+
 # --- get_model_result WARNING-log tests ------------------------------------
 
 
@@ -1210,6 +1261,63 @@ class TestGeneratedToAppealsTextRecording:
         (record,) = recorder._records
         assert record.outcome == "abandoned"
         assert "deadline" in record.error_detail
+
+    def test_call_skipped_for_time_is_abandoned(self):
+        """_checked_infer raises DeadlineSkipped without asking the model once
+        the requester's deadline (or the attempt's budget) has passed; that is
+        a budget skip, not a model that failed or answered with nothing."""
+        recorder = self._recorder()
+        future = MagicMock()
+        future.done.return_value = True
+        future.result.side_effect = DeadlineSkipped("requester deadline passed")
+
+        self._drain(recorder, future)
+
+        (record,) = recorder._records
+        assert (record.outcome, record.error_detail) == (
+            "abandoned",
+            "skipped: requester deadline passed",
+        )
+
+    def test_empty_answer_read_after_the_deadline_is_still_no_output(self):
+        """The model was asked and answered with nothing; that its result is
+        read after the deadline doesn't make it a skip."""
+        recorder = self._recorder()
+        future = MagicMock()
+        future.done.return_value = True
+        future.result.return_value = []
+
+        self._drain(recorder, future, deadline=time.monotonic() - 1)
+
+        (record,) = recorder._records
+        assert record.outcome == "no_output"
+
+    def test_empty_answer_before_the_deadline_is_still_no_output(self):
+        recorder = self._recorder()
+        future = MagicMock()
+        future.done.return_value = True
+        future.result.return_value = []
+
+        self._drain(recorder, future, deadline=time.monotonic() + 300)
+
+        (record,) = recorder._records
+        assert record.outcome == "no_output"
+
+    def test_model_unreached_on_both_tries_records_error_unavailable(self):
+        """_checked_infer raises ProviderUnavailable when the first call and
+        the retry both fail in transport: the row names the outage instead of
+        reading as a model that answered nothing."""
+        recorder = self._recorder()
+        future = MagicMock()
+        future.result.side_effect = ProviderUnavailable("HTTP 503 Service Unavailable")
+
+        self._drain(recorder, future)
+
+        (record,) = recorder._records
+        assert (record.outcome, record.error_detail) == (
+            "error",
+            "unavailable: HTTP 503 Service Unavailable",
+        )
 
 
 class TestBackendLabel:
@@ -1376,6 +1484,34 @@ class TestMakeAppealsDiagnosticsSink:
             )
         assert "ghost-model:not_registered" in sink.get("models_tried", "")
 
+    def test_sink_counts_a_proactive_tier1_shed_win_as_a_shed_rescue(self):
+        """A call over its model's context window gets a tier-1 shed sibling
+        in the primary stage. When only that sibling answers, the context
+        shed is what rescued the appeal, so the sink says tier 1 rather than
+        reporting a plain primary win."""
+        backend = _fake_backend(external=False)
+        # A small window, so the full call is over budget and gets a sibling.
+        backend.get_max_context.return_value = 2000
+
+        def infer(**kwargs):
+            # The full call still carries pubmed_context and gives nothing;
+            # the tier-1 sibling has it shed and writes the letter.
+            if kwargs.get("pubmed_context"):
+                return []
+            return [("full", _REAL_APPEAL)]
+
+        backend.infer.side_effect = infer
+        names, _calls = _names_by_role(["fhi-a"], [], [])
+
+        sink = _run_make_appeals(
+            _mock_denial(use_external=False),
+            names,
+            {"fhi-a": [backend]},
+            pubmed_context="x" * (2000 * 4),
+        )
+
+        assert (sink["winning_stage"], sink["shed_tier"]) == ("primary", 1)
+
 
 class TestDenialTextOverride:
     """denial_text_override substitutes a summary for the raw denial text in
@@ -1515,3 +1651,329 @@ class TestPeekRealOrNone:
             stage="primary",
         )
         assert first is None
+
+
+# --- failing models: first pass, shed ladder, extraction -------------------
+
+_REAL_APPEAL = "Dear insurer, " + "this claim is medically necessary. " * 20
+
+
+def _fake_backend(*, external, available=True, infer_result=None, infer_error=None):
+    """A backend reached through make_appeals' sync ``infer`` seam, with the
+    in-memory signals the router and the shed ladder read."""
+    backend = MagicMock()
+    backend.external = external
+    backend.is_available.return_value = available
+    backend._spend_allows.return_value = True
+    backend.get_max_context.return_value = 128000
+    if infer_error is not None:
+        backend.infer.side_effect = infer_error
+    else:
+        backend.infer.return_value = (
+            infer_result if infer_result is not None else [("full", _REAL_APPEAL)]
+        )
+    return backend
+
+
+def _names_by_role(internal_up, internal_all, hosted):
+    """A generate_text_backend_names stand-in following the router's rules:
+    internals fail open only when asked to, and with use_external only when
+    no hosted model is selectable. Returns (fn, calls) where calls records
+    each (use_external, fail_open) asked for."""
+    calls: list[tuple] = []
+
+    def names(use_external=False, fail_open=True):
+        calls.append((use_external, fail_open))
+        if use_external:
+            internal = internal_up or ([] if hosted else internal_all)
+            return list(internal)[:6] + list(hosted)
+        return list(internal_up or (internal_all if fail_open else []))
+
+    return names, calls
+
+
+def _run_make_appeals(denial, names_fn, models_by_name, **kwargs):
+    """Drive make_appeals to the end. Returns its diagnostics sink."""
+    sink: dict = {}
+    gen = AppealGenerator()
+    tmpl = AppealTemplateGenerator(prefaces=["P"], main=["M"], footer=["F"])
+    with patch(
+        "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+        side_effect=names_fn,
+    ), patch(
+        "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+        new=models_by_name,
+    ), patch(
+        "fighthealthinsurance.generate_appeal.time.sleep"
+    ):
+        list(
+            gen.make_appeals(
+                denial,
+                tmpl,
+                medical_reasons=[],
+                non_ai_appeals=[],
+                diagnostics_sink=sink,
+                **kwargs,
+            )
+        )
+    return sink
+
+
+class TestOptInFirstPassSkipsDownInternals:
+    """With every internal model known down and a hosted model up, an opted-in
+    appeal's first pass used to fail open to the dead internals: they hung for
+    their whole timeout and the hosted backup was abandoned at the deadline
+    before it could answer."""
+
+    def _all_internals_down(self):
+        internal = _fake_backend(external=False)
+        hosted = _fake_backend(external=True)
+        names, calls = _names_by_role([], ["fhi-a"], ["ext-b"])
+        return internal, hosted, names, calls, {"fhi-a": [internal], "ext-b": [hosted]}
+
+    def test_first_pass_asks_for_internals_without_failing_open(self):
+        _internal, _hosted, names, calls, models = self._all_internals_down()
+
+        _run_make_appeals(_mock_denial(use_external=True), names, models)
+
+        assert [fail_open for use_ext, fail_open in calls if not use_ext] == [False]
+
+    def test_down_internal_is_never_asked(self):
+        internal, _hosted, names, _calls, models = self._all_internals_down()
+
+        _run_make_appeals(_mock_denial(use_external=True), names, models)
+
+        assert not internal.infer.called
+
+    def test_hosted_backup_writes_the_letter(self):
+        _internal, _hosted, names, _calls, models = self._all_internals_down()
+
+        sink = _run_make_appeals(_mock_denial(use_external=True), names, models)
+
+        assert sink["winning_stage"] == "backup"
+
+    def test_empty_first_pass_is_not_logged_as_an_error(self):
+        _internal, _hosted, names, _calls, models = self._all_internals_down()
+
+        with _loguru_capture(level="ERROR") as log:
+            _run_make_appeals(_mock_denial(use_external=True), names, models)
+
+        assert "zero internal model names" not in log.getvalue()
+
+    def test_specialized_hint_call_is_not_sent_to_a_down_internal(self):
+        """The hint call goes to the strongest internal model, which the
+        router still names (its last resort) when every internal is down."""
+        internal, _hosted, names, _calls, models = self._all_internals_down()
+
+        with patch.object(
+            AppealGenerator, "_best_internal_model_name", return_value="fhi-a"
+        ), patch.object(
+            AppealGenerator, "_build_specialized_hint_block", return_value="HINTS"
+        ):
+            _run_make_appeals(
+                _mock_denial(use_external=True),
+                names,
+                models,
+                specialized_templates=[MentalHealthParityAppeal],
+            )
+
+        assert not internal.infer.called
+
+    def test_without_a_hosted_model_down_internals_stay_the_last_resort(self):
+        internal = _fake_backend(external=False)
+        names, _calls = _names_by_role([], ["fhi-a"], [])
+
+        _run_make_appeals(_mock_denial(use_external=True), names, {"fhi-a": [internal]})
+
+        assert internal.infer.called
+
+    def test_opt_out_keeps_the_fail_open_first_pass(self):
+        internal = _fake_backend(external=False)
+        names, calls = _names_by_role([], ["fhi-a"], [])
+
+        _run_make_appeals(
+            _mock_denial(use_external=False), names, {"fhi-a": [internal]}
+        )
+
+        assert all(fail_open for _use_ext, fail_open in calls)
+
+
+class TestCallsWorthShedding:
+    """Shedding context can rescue a model that overflowed it, never one that
+    could not be asked: the ladder used to re-ask unavailable models at both
+    tiers on every appeal for the length of an outage."""
+
+    def _keep(self, models_by_name, names=("fhi-a",)):
+        calls = [_make_call(model_name=name) for name in names]
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new=models_by_name,
+        ):
+            return [c["model_name"] for c in _calls_worth_shedding(calls)]
+
+    def test_drops_a_model_with_no_instance_that_can_be_asked(self):
+        parked = _fake_backend(external=False, available=False)
+
+        assert self._keep({"fhi-a": [parked]}) == []
+
+    def test_drops_a_model_whose_provider_is_out_of_budget(self):
+        paused = _fake_backend(external=False)
+        paused._spend_allows.return_value = False
+
+        assert self._keep({"fhi-a": [paused]}) == []
+
+    def test_keeps_a_model_that_can_still_be_asked(self):
+        backend = _fake_backend(external=False)
+
+        assert self._keep({"fhi-a": [backend]}) == ["fhi-a"]
+
+    def test_keeps_a_model_whose_signal_cannot_be_read(self):
+        backend = _fake_backend(external=False)
+        backend.is_available.side_effect = RuntimeError("boom")
+
+        assert self._keep({"fhi-a": [backend]}) == ["fhi-a"]
+
+    def test_keeps_only_the_models_that_could_still_answer(self):
+        parked = _fake_backend(external=False, available=False)
+        up = _fake_backend(external=False)
+
+        kept = self._keep({"fhi-a": [parked], "fhi-b": [up]}, names=("fhi-a", "fhi-b"))
+
+        assert kept == ["fhi-b"]
+
+
+class TestShedLadderSkipsUnavailableModels:
+    """make_appeals runs the context-shed ladder only over primary models that
+    could still answer, and skips the ladder (and its sleep) when none can."""
+
+    def _run(self, models_by_name):
+        names, _calls = _names_by_role(list(models_by_name), [], [])
+        return _run_make_appeals(
+            _mock_denial(use_external=False), names, models_by_name
+        )
+
+    @staticmethod
+    def _stages(sink):
+        return {r.stage for r in sink["attempt_recorder"]._records}
+
+    def test_parked_pool_skips_the_retry_and_its_sleep(self):
+        """Read from the log rather than the sleep mock: patching time.sleep
+        patches it process-wide, and background threads sleep too."""
+        parked = _fake_backend(
+            external=False,
+            available=False,
+            infer_error=ProviderUnavailable("not served here"),
+        )
+
+        with _loguru_capture() as log:
+            self._run({"fhi-a": [parked]})
+
+        assert "retrying primary" not in log.getvalue()
+
+    def test_parked_pool_records_no_retry_rows(self):
+        parked = _fake_backend(
+            external=False,
+            available=False,
+            infer_error=ProviderUnavailable("not served here"),
+        )
+
+        sink = self._run({"fhi-a": [parked]})
+
+        assert self._stages(sink) == {"primary"}
+
+    def test_model_parked_by_its_refusal_is_not_retried(self):
+        refused = _fake_backend(external=False)
+
+        def refuse(*_args, **_kwargs):
+            refused.is_available.return_value = False
+            raise ProviderUnavailable("refused recently (key or account)")
+
+        refused.infer.side_effect = refuse
+
+        sink = self._run({"fhi-a": [refused]})
+
+        assert self._stages(sink) == {"primary"}
+
+    def test_askable_model_whose_every_row_says_unavailable_is_retried(self):
+        """A primary that overflowed its context beside a backup leg cooling
+        down reports "unavailable:" on every try, yet was reached: shedding
+        context is what rescues it, so its rows must not drop it."""
+        overflowed = _fake_backend(
+            external=False,
+            infer_error=ProviderUnavailable("fhi-a via backup: cooling down"),
+        )
+
+        sink = self._run({"fhi-a": [overflowed]})
+
+        assert {"retry_tier_1", "retry_tier_2"} <= self._stages(sink)
+
+    def test_ladder_still_retries_the_model_that_answered_a_runt(self):
+        parked = _fake_backend(
+            external=False,
+            available=False,
+            infer_error=ProviderUnavailable("not served here"),
+        )
+        runty = _fake_backend(external=False, infer_result=[("full", "no.")])
+
+        sink = self._run({"fhi-a": [parked], "fhi-b": [runty]})
+
+        retried = {
+            r.model_name
+            for r in sink["attempt_recorder"]._records
+            if r.stage.startswith("retry_tier_")
+        }
+        assert retried == {"fhi-b"}
+
+
+class TestProcedureDiagnosisUnavailableModel:
+    """A model that cannot be asked used to reach the fan-out as an unexpected
+    error, logging a WARNING with a full traceback per model per denial."""
+
+    def _generator(self, model):
+        gen = AppealGenerator()
+        regex = MagicMock()
+        regex.get_procedure_and_diagnosis = AsyncMock(return_value=(None, None))
+        gen.regex_denial_processor = regex
+        model.get_procedure_and_diagnosis = AsyncMock(
+            side_effect=ProviderUnavailable("refused recently (key or account)")
+        )
+        return gen
+
+    async def _extract(self, gen, backends):
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.entity_extract_backends",
+            return_value=backends,
+        ):
+            return await gen.get_procedure_and_diagnosis("denial text")
+
+    @pytest.mark.asyncio
+    async def test_unavailable_model_logs_no_fanout_traceback(self):
+        model = MagicMock()
+        gen = self._generator(model)
+
+        with _loguru_capture() as log:
+            try:
+                await self._extract(gen, [model])
+            except ExtractionUnavailable:
+                pass
+
+        assert "Task error" not in log.getvalue()
+
+    @pytest.mark.asyncio
+    async def test_unavailable_model_alone_still_raises_extraction_unavailable(self):
+        model = MagicMock()
+        gen = self._generator(model)
+
+        with pytest.raises(ExtractionUnavailable):
+            await self._extract(gen, [model])
+
+    @pytest.mark.asyncio
+    async def test_another_models_answer_is_still_used(self):
+        down = MagicMock()
+        gen = self._generator(down)
+        up = MagicMock()
+        up.get_procedure_and_diagnosis = AsyncMock(return_value=("MRI", "back pain"))
+
+        result = await self._extract(gen, [down, up])
+
+        assert result == ("MRI", "back pain")

@@ -2,7 +2,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 import asyncio
 import io
 import json
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 import pytest
 from types import SimpleNamespace
@@ -10,6 +10,7 @@ from loguru import logger as loguru_logger
 
 from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
+from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 
 
 @contextmanager
@@ -28,9 +29,9 @@ def _ga(text: str, model_name: str = "test-model"):
     return GeneratedAppeal(text=text, model_name=model_name)
 
 
-def _collect_appeal_contents(chunks):
-    """Extract the ``content`` field from every appeal JSON chunk."""
-    contents = []
+def _json_frames(chunks):
+    """Every chunk that parses as a JSON object."""
+    frames = []
     for c in chunks:
         stripped = c.strip()
         if not stripped:
@@ -39,9 +40,14 @@ def _collect_appeal_contents(chunks):
             parsed = json.loads(stripped)
         except json.JSONDecodeError:
             continue
-        if isinstance(parsed, dict) and "content" in parsed:
-            contents.append(parsed["content"])
-    return contents
+        if isinstance(parsed, dict):
+            frames.append(parsed)
+    return frames
+
+
+def _collect_appeal_contents(chunks):
+    """Extract the ``content`` field from every appeal JSON chunk."""
+    return [f["content"] for f in _json_frames(chunks) if "content" in f]
 
 
 async def passthrough_interleave(iterator):
@@ -209,15 +215,21 @@ def _sync_to_async_router(pa_wrapper, make_appeals_wrapper, uspstf_wrapper=None)
     return route
 
 
-async def _run_generate_appeals_over_saved(saved_texts, synthesized=None):
+async def _run_generate_appeals_over_saved(
+    saved_texts, synthesized=None, denial=None, stub_citations=True
+):
     """Drive ``generate_appeals`` with ``saved_texts`` already in the DB and
     no newly generated appeals, with the synthesis step returning
     ``synthesized``.
 
+    ``denial`` replaces the default mock denial. ``stub_citations=False``
+    runs the real citation helper instead of a stub, for a test that
+    patches what lies under it.
+
     Returns ``(chunks, warning_log_output)`` so callers can assert on both
     what was delivered and what was logged.
     """
-    mock_denial = _make_mock_denial()
+    mock_denial = denial if denial is not None else _make_mock_denial()
     parameters = {
         "denial_id": "12345",
         "email": "test@example.com",
@@ -234,10 +246,14 @@ async def _run_generate_appeals_over_saved(saved_texts, synthesized=None):
             return_value="hashed",
         ),
         patch.object(AppealsBackendHelper, "regex_denial_processor") as mock_regex,
-        patch(
-            "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
-            new_callable=AsyncMock,
-            return_value="",
+        (
+            patch(
+                "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
+                new_callable=AsyncMock,
+                return_value="",
+            )
+            if stub_citations
+            else nullcontext()
         ),
         # generate_appeals awaits the RAG service (default http://localhost:8001)
         # under a 30s wait_for; stub it so this unit test does no network I/O.
@@ -1055,3 +1071,90 @@ async def test_existing_wordless_appeal_is_skipped():
     assert "a valid existing appeal body" in contents
     assert "unusable appeal -- not-words" in output
     assert "saved appeal id=" in output
+
+
+async def _context_barrier_calls():
+    """Drive ``generate_appeals`` with ``warm_then_fetch`` replaced by a
+    recorder that keeps each call's keyword arguments and still runs the
+    fetch, and return the recorded calls.
+
+    The test settings set FHI_CONTEXT_BARRIER_TIMEOUT_S to 0, so the real
+    barrier never waits there: a test that times the flow cannot tell which
+    readiness check a barrier was given. These read it from the call itself.
+    """
+    calls = []
+
+    async def recording_warm_then_fetch(denial, **kwargs):
+        calls.append(kwargs)
+        return await kwargs["fetch"]()
+
+    with patch(
+        "fighthealthinsurance.common_view_logic.warm_then_fetch",
+        new=recording_warm_then_fetch,
+    ):
+        await _run_generate_appeals_over_saved([])
+    return calls
+
+
+def _barrier_call_watching(calls, field):
+    """The one recorded barrier call whose readiness fields include ``field``."""
+    matches = [c for c in calls if field in c["readiness_fields"]]
+    assert len(matches) == 1, f"expected one barrier watching {field}: {calls}"
+    return matches[0]
+
+
+@pytest.mark.asyncio
+async def test_citation_barrier_counts_an_empty_citation_list_as_done():
+    """A finished citation run that found nothing stores [] (every run does
+    while the citation backend is paused, refused or retired), and only None
+    means not run yet. The appeal flow's citation barrier must stop waiting
+    on [], or every appeal waits out the whole barrier timeout."""
+    calls = await _context_barrier_calls()
+
+    citations = _barrier_call_watching(calls, "candidate_ml_citation_context")
+    is_ready = citations.get("is_ready")
+    assert is_ready is not None, "the citation barrier needs its own check"
+    assert is_ready([]) is True
+    assert is_ready(None) is False
+
+
+@pytest.mark.asyncio
+async def test_pubmed_barrier_keeps_the_default_readiness_check():
+    """PubMed stores its context only when it found some, never a "found
+    nothing" value, so its barrier keeps the default check (a non-empty
+    value) rather than the citation barrier's."""
+    calls = await _context_barrier_calls()
+
+    pubmed = _barrier_call_watching(calls, "pubmed_context")
+    assert pubmed.get("is_ready") is None
+
+
+@pytest.mark.asyncio
+async def test_appeal_step_takes_an_empty_speculative_run_as_its_citations():
+    """The speculative run found nothing and stored [] for the same
+    procedure and diagnosis. The citation barrier releases on that [] and
+    then calls the real citation helper, which must hand the [] back rather
+    than run the whole generation again."""
+    denial = _make_mock_denial()
+    denial.candidate_ml_citation_context = []
+    denial.candidate_procedure = denial.procedure
+    denial.candidate_diagnosis = denial.diagnosis
+
+    with patch.object(
+        MLCitationsHelper,
+        "_generate_citations_for_denial",
+        new_callable=AsyncMock,
+        return_value=["Generated again"],
+    ) as generation:
+        chunks, _ = await _run_generate_appeals_over_saved(
+            [], denial=denial, stub_citations=False
+        )
+
+    # The substep's "done" shows the helper was reached and returned, so the
+    # zero count is not a flow that never got to the citations.
+    citation_states = [
+        frame["state"]
+        for frame in _json_frames(chunks)
+        if frame.get("substep") == "citations"
+    ]
+    assert (citation_states, generation.await_count) == (["done"], 0)

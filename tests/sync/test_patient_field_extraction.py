@@ -1,5 +1,6 @@
 """Test the patient field extraction functionality."""
 
+import asyncio
 import json
 from datetime import datetime
 from unittest.mock import patch, MagicMock
@@ -8,15 +9,18 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from loguru import logger
+
 from fighthealthinsurance.models import ProfessionalUser, UserDomain
 from fhi_users.models import ProfessionalDomainRelation
+from fighthealthinsurance.ml.ml_models import ProviderUnavailable
 from fighthealthinsurance.ml.ml_router import ml_router
 
 User = get_user_model()
 
 
-class PatientFieldExtractionTest(APITestCase):
-    """Test the patient field extraction from PDF documents."""
+class _ExtractionTestCase(APITestCase):
+    """A logged-in professional and a sample of PDF text."""
 
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
@@ -81,6 +85,10 @@ class PatientFieldExtractionTest(APITestCase):
         Phone: (555) 123-4567
         Email: john.smith@example.com
         """
+
+
+class PatientFieldExtractionTest(_ExtractionTestCase):
+    """Test the patient field extraction from PDF documents."""
 
     @patch("fighthealthinsurance.ml.ml_router.ml_router.entity_extract_backends")
     def test_extract_patient_fields_success(self, mock_extract_backends):
@@ -249,3 +257,89 @@ class PatientFieldExtractionTest(APITestCase):
         self.assertEqual(
             response.data["error"], "No entity extraction models available"
         )
+
+
+_PATIENT_ENTITIES = {
+    "patient_name": "John Smith",
+    "member_id": "ABC123456789",
+    "date_of_birth": "01/15/1980",
+    "plan_id": "PLAN987654",
+    "insurance_company": "Blue Cross Blue Shield",
+}
+
+
+def _reader(error=None, entities=None):
+    """An entity backend that raises ``error`` for every field, or answers
+    from ``entities`` (None for a field it finds nothing for)."""
+    model = MagicMock()
+    answers = entities or {}
+
+    async def get_entity(text, entity_type):
+        if error is not None:
+            raise error
+        return answers.get(entity_type)
+
+    model.get_entity.side_effect = get_entity
+    return model
+
+
+class PatientFieldExtractionFallthroughTest(_ExtractionTestCase):
+    """One entity model that cannot be reached no longer empties the form:
+    each field goes on to the next model, and when none can read the
+    document the person is told so instead of getting an empty form."""
+
+    def _post(self, *backends):
+        with patch(
+            "fighthealthinsurance.ml.ml_router.ml_router.entity_extract_backends",
+            return_value=list(backends),
+        ):
+            return self.client.post(
+                self.extract_fields_url,
+                {"text": self.sample_patient_text},
+                format="json",
+            )
+
+    def test_an_unavailable_first_model_falls_through_to_the_next(self):
+        response = self._post(
+            _reader(error=ProviderUnavailable("HTTP 503")),
+            _reader(entities=_PATIENT_ENTITIES),
+        )
+        self.assertEqual(
+            (response.status_code, response.data.get("member_id")),
+            (status.HTTP_200_OK, "ABC123456789"),
+        )
+
+    def test_a_transport_error_on_the_first_model_falls_through_to_the_next(self):
+        response = self._post(
+            _reader(error=asyncio.TimeoutError()),
+            _reader(entities=_PATIENT_ENTITIES),
+        )
+        self.assertEqual(response.data.get("patient_name"), "John Smith")
+
+    def test_no_model_able_to_read_is_a_503_not_an_empty_form(self):
+        response = self._post(
+            _reader(error=ProviderUnavailable("HTTP 503")),
+            _reader(error=ProviderUnavailable("in transport-failure cooldown")),
+        )
+        self.assertEqual(
+            (response.status_code, "error" in response.data),
+            (status.HTTP_503_SERVICE_UNAVAILABLE, True),
+        )
+
+    def test_no_model_able_to_read_logs_one_warning_and_no_errors(self):
+        records = []
+        sink = logger.add(lambda m: records.append(m.record), level="DEBUG")
+        try:
+            self._post(_reader(error=ProviderUnavailable("HTTP 503")))
+        finally:
+            logger.remove(sink)
+        levels = [
+            r["level"].name
+            for r in records
+            if r["level"].name in ("WARNING", "ERROR") and "rest_views" in r["name"]
+        ]
+        self.assertEqual(levels, ["WARNING"])
+
+    def test_a_model_that_finds_nothing_is_still_an_answer(self):
+        response = self._post(_reader(entities={}))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)

@@ -10,13 +10,24 @@ zero out generation.
 
 import io
 from typing import Optional
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import pytest
 from loguru import logger as loguru_logger
 
 from fighthealthinsurance.chooser_tasks import _select_candidate_models
-from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
+from fighthealthinsurance.ml import ml_router as ml_router_module
+from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike, RemoteModelLike
 from fighthealthinsurance.ml.ml_router import MLRouter
+
+
+@pytest.fixture(autouse=True)
+def _fail_open_error_not_yet_logged():
+    """The fail-open ERROR goes out once per pool every ten minutes per
+    process; start each test as if none had gone out yet, so the tests
+    that look for it see it whatever ran before them."""
+    with patch.dict(ml_router_module._fail_open_logged_at, clear=True):
+        yield
 
 
 def _bare_router() -> MLRouter:
@@ -36,6 +47,18 @@ def _internal_model(name: str, quality: Optional[int] = None) -> RemoteFullOpenL
     if quality is not None:
         # RemoteFullOpenLike reports 100; the chat lead is picked by quality.
         m.quality = lambda: quality
+    return m
+
+
+def _external_model(name: str) -> MagicMock:
+    """A hosted model the router can select. It has a live signal of its
+    own, so the sweep is never read for it."""
+    m = MagicMock(spec=RemoteModelLike)
+    m.name = name
+    m.external = True
+    m.quality.return_value = 80
+    m.is_available.return_value = True
+    m.health_checked_live = True
     return m
 
 
@@ -73,6 +96,37 @@ class TestInternalHealthGating:
             models = router.generate_text_backends(use_external=False)
 
         assert unknown in models
+
+    def test_generate_text_backend_names_gates_internal_models(self):
+        """The names list is what make_appeals fans every appeal out to; it
+        used to skip the sweep gate its instance-returning sibling applied,
+        so a marked-down backend was called on every run."""
+        router = _bare_router()
+        up = _internal_model("up-model")
+        down = _internal_model("down-model")
+        router.internal_models_by_cost = [down, up]
+        router.models_by_name = {"up-model": [up], "down-model": [down]}
+
+        with _health_map({"up-model": True, "down-model": False}):
+            names = router.generate_text_backend_names(use_external=False)
+            names_with_external = router.generate_text_backend_names(
+                use_external=True
+            )
+
+        assert names == ["up-model"]
+        assert "down-model" not in names_with_external
+
+    def test_generate_text_backend_names_fails_open_when_all_are_down(self):
+        router = _bare_router()
+        a = _internal_model("a-model")
+        b = _internal_model("b-model")
+        router.internal_models_by_cost = [a, b]
+        router.models_by_name = {"a-model": [a], "b-model": [b]}
+
+        with _health_map({"a-model": False, "b-model": False}):
+            names = router.generate_text_backend_names(use_external=False)
+
+        assert names == ["a-model", "b-model"]
 
     def test_all_down_fails_open_with_error_log(self):
         router = _bare_router()
@@ -134,6 +188,53 @@ class TestInternalHealthGating:
             )[:2]
 
         assert pool == [up]
+
+
+class TestGenerateTextBackendsBesideAnOutsideModel:
+    """generate_text_backends with use_external (the chooser's list). With
+    every internal marked down, the internals used to fail open ahead of a
+    healthy outside model, each hanging for its full timeout first, and the
+    pool's fail-open ERROR went out from the chooser alone."""
+
+    @staticmethod
+    def _all_internals_down_router():
+        router = _bare_router()
+        router.internal_models_by_cost = [
+            _internal_model("a-model"),
+            _internal_model("b-model"),
+        ]
+        outside = _external_model("outside")
+        router.external_models_by_cost = [outside]
+        router.all_models_by_cost = router.internal_models_by_cost + [outside]
+        return router, outside
+
+    @staticmethod
+    def _backends(router: MLRouter):
+        """(the opted-in list, ERROR text) with every internal marked down."""
+        sink = io.StringIO()
+        handler = loguru_logger.add(sink, level="ERROR")
+        try:
+            with _health_map({"a-model": False, "b-model": False}):
+                models = router.generate_text_backends(use_external=True)
+        finally:
+            loguru_logger.remove(handler)
+        return models, sink.getvalue()
+
+    def test_down_internals_are_left_out_beside_a_selectable_external(self):
+        router, outside = self._all_internals_down_router()
+        models, _ = self._backends(router)
+        assert models == [outside]
+
+    def test_no_failing_open_error_is_logged_beside_a_selectable_external(self):
+        router, _outside = self._all_internals_down_router()
+        _, errors = self._backends(router)
+        assert "failing open" not in errors
+
+    def test_down_internals_still_fail_open_when_no_external_can_answer(self):
+        router, outside = self._all_internals_down_router()
+        outside.is_available.return_value = False
+        models, _ = self._backends(router)
+        assert models == router.internal_models_by_cost
 
 
 class TestChatFhiDeterminism:
@@ -294,3 +395,67 @@ class TestChatLeadSharingAName:
             models = router.get_chat_backends(use_external=False)
 
         assert models == [first, second, first, second, weaker]
+
+
+class TestFailOpenError:
+    """Every request reads the pools, so while a whole pool is down one
+    ERROR per pool every ten minutes says so; one per request buried the
+    rest of the log. A pool that is not the only answerer (fail_open=False)
+    doesn't fail open at all, and logs nothing."""
+
+    @staticmethod
+    def _all_down_router() -> MLRouter:
+        router = _bare_router()
+        router.internal_models_by_cost = [
+            _internal_model("a-model"),
+            _internal_model("b-model"),
+        ]
+        return router
+
+    @staticmethod
+    def _filter(router: MLRouter, *contexts: str, fail_open: bool = True):
+        """Filter the pool once per context; return (last result, ERROR text)."""
+        sink = io.StringIO()
+        handler = loguru_logger.add(sink, level="ERROR")
+        result = None
+        try:
+            with _health_map({"a-model": False, "b-model": False}):
+                for context in contexts:
+                    result = router._filter_available(
+                        router.internal_models_by_cost, context, fail_open=fail_open
+                    )
+        finally:
+            loguru_logger.remove(handler)
+        return result, sink.getvalue()
+
+    def test_a_pool_logs_its_error_once_within_ten_minutes(self):
+        _, errors = self._filter(self._all_down_router(), "pool", "pool")
+        assert errors.count("failing open") == 1
+
+    def test_each_pool_logs_its_own_error(self):
+        _, errors = self._filter(self._all_down_router(), "pool-a", "pool-b")
+        assert errors.count("failing open") == 2
+
+    def test_a_pool_logs_again_after_ten_minutes(self):
+        router = self._all_down_router()
+        self._filter(router, "pool")
+        # As if ten minutes had passed since the first ERROR.
+        ml_router_module._fail_open_logged_at["pool"] -= (
+            ml_router_module._FAIL_OPEN_ERROR_SECONDS + 1
+        )
+        _, errors = self._filter(router, "pool")
+        assert errors.count("failing open") == 1
+
+    def test_a_quiet_pool_still_fails_open(self):
+        """The throttle quiets the log only: the full pool still comes back."""
+        router = self._all_down_router()
+        result, _ = self._filter(router, "pool", "pool")
+        assert result == router.internal_models_by_cost
+
+    def test_without_fail_open_nothing_is_returned_when_all_are_down(self):
+        result, _ = self._filter(self._all_down_router(), "pool", fail_open=False)
+        assert result == []
+
+    def test_without_fail_open_no_error_is_logged(self):
+        _, errors = self._filter(self._all_down_router(), "pool", fail_open=False)
+        assert errors == ""

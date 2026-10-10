@@ -7,7 +7,9 @@ Each test pins one property of the text that reaches a model:
 - the prior-auth prompt no longer sends a literal ``{{what_to_gen}}`` and
   honours the urgent flag;
 - the regulator cover letter is written in the patient's voice unless the
-  denial is being finished by a professional, with its own system prompt;
+  denial is being finished by a professional, with its own system prompt,
+  and asks distinct models of ours before at most one outside model (none
+  without use_external), sharing one budget between them;
 - the denial-letter summarizer uses a denial-letter prompt, not the
   PubMed-article one;
 - the citation parser strips ``[1]``-style numbering;
@@ -17,8 +19,9 @@ Each test pins one property of the text that reaches a model:
   Medicaid shows up anywhere in the chat.
 """
 
+import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -346,6 +349,136 @@ class TestRegulatorLetterPrompt:
         assert kwargs["system_prompt"] == REGULATOR_LETTER_SYSTEM_PROMPT
         assert kwargs["system_prompt"] != PRIOR_AUTH_SYSTEM_PROMPT
         assert kwargs["prof_pov"] is False
+
+
+_LETTER = "Dear Commissioner, " * 10
+
+
+def _letter_model(external=None, reply=None, error=None) -> AsyncMock:
+    """A backend for the regulator letter. ``external`` None leaves the
+    attribute a mock (neither True nor False), so only the router's own
+    lists can mark it outside."""
+    model = AsyncMock(spec=RemoteModelLike)
+    if external is not None:
+        model.external = external
+    if error is not None:
+        model.generate_prior_auth_response.side_effect = error
+    else:
+        model.generate_prior_auth_response.return_value = reply
+    return model
+
+
+def _letter_router(*chat_backends, external_models=()):
+    """Stands in for ml_router: get_chat_backends returns ``chat_backends``
+    as given (duplicates included, as the real one doubles the lead)."""
+    return SimpleNamespace(
+        get_chat_backends=MagicMock(return_value=list(chat_backends)),
+        external_models_by_cost=list(external_models),
+        chat_outside_models_by_name={},
+        chat_outside_models=MagicMock(return_value=[]),
+        best_external_models=MagicMock(return_value=[]),
+    )
+
+
+async def _letter_with(router, use_external=True):
+    with patch("fighthealthinsurance.generate_regulator_letter.ml_router", router):
+        return await generate_regulator_letter(
+            _denial(), _recipient(), use_external=use_external
+        )
+
+
+class TestRegulatorLetterModelChoice:
+    @pytest.mark.asyncio
+    async def test_second_internal_writes_the_letter_when_lead_and_outside_fail(
+        self,
+    ):
+        lead = _letter_model(external=False, reply="Too short.")
+        outside = _letter_model(external=True, error=RuntimeError("no credit"))
+        second = _letter_model(external=False, reply=_LETTER)
+        text = await _letter_with(_letter_router(lead, lead, outside, second))
+        assert text == _LETTER
+
+    @pytest.mark.asyncio
+    async def test_lead_is_asked_once_though_chat_lists_it_twice(self):
+        lead = _letter_model(external=False, reply="Too short.")
+        second = _letter_model(external=False, reply=_LETTER)
+        await _letter_with(_letter_router(lead, lead, second))
+        assert lead.generate_prior_auth_response.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_outside_model_waits_until_an_internal_one_has_answered(self):
+        lead = _letter_model(external=False, reply=None)
+        outside = _letter_model(external=True, reply=_LETTER)
+        second = _letter_model(external=False, reply=_LETTER)
+        await _letter_with(_letter_router(lead, lead, outside, second))
+        outside.generate_prior_auth_response.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_outside_model_is_the_last_resort(self):
+        lead = _letter_model(external=False, reply=None)
+        outside = _letter_model(external=True, reply=_LETTER)
+        second = _letter_model(external=False, error=RuntimeError("down"))
+        text = await _letter_with(_letter_router(lead, lead, outside, second))
+        assert text == _LETTER
+
+    @pytest.mark.asyncio
+    async def test_outside_model_is_never_asked_without_use_external(self):
+        lead = _letter_model(external=False, reply=None)
+        outside = _letter_model(external=True, reply=_LETTER)
+        await _letter_with(_letter_router(lead, outside), use_external=False)
+        outside.generate_prior_auth_response.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_model_the_router_files_as_external_counts_as_outside(self):
+        lead = _letter_model(external=False, reply=None)
+        registered = _letter_model(reply=_LETTER)
+        router = _letter_router(lead, registered, external_models=[registered])
+        await _letter_with(router, use_external=False)
+        registered.generate_prior_auth_response.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_at_most_three_internal_and_one_outside_model_are_asked(self):
+        internals = [_letter_model(external=False, reply=None) for _ in range(4)]
+        outsides = [_letter_model(external=True, reply=None) for _ in range(2)]
+        await _letter_with(_letter_router(*internals, *outsides))
+        asked = [
+            m
+            for m in internals + outsides
+            if m.generate_prior_auth_response.await_count
+        ]
+        assert asked == internals[:3] + outsides[:1]
+
+    @pytest.mark.asyncio
+    async def test_a_hung_model_gets_its_share_and_the_next_one_is_asked(self):
+        """The budget is shared out per model: a model that hangs past its
+        share is left behind, not the whole letter."""
+
+        async def _hang(*args, **kwargs):
+            await asyncio.sleep(10)
+
+        slow = _letter_model(external=False)
+        slow.generate_prior_auth_response.side_effect = _hang
+        second = _letter_model(external=False, reply=_LETTER)
+        module = "fighthealthinsurance.generate_regulator_letter"
+        with patch(f"{module}.LETTER_BUDGET_SECONDS", 0.2), patch(
+            f"{module}.LETTER_GRACE_SECONDS", 0.0
+        ):
+            text = await _letter_with(_letter_router(slow, second))
+        assert text == _LETTER
+
+    @pytest.mark.asyncio
+    async def test_gives_up_once_the_budget_is_spent(self):
+        async def _hang(*args, **kwargs):
+            await asyncio.sleep(10)
+
+        slow = _letter_model(external=False)
+        slow.generate_prior_auth_response.side_effect = _hang
+        module = "fighthealthinsurance.generate_regulator_letter"
+        with patch(f"{module}.LETTER_BUDGET_SECONDS", 0.05), patch(
+            f"{module}.LETTER_GRACE_SECONDS", 0.0
+        ):
+            text = await _letter_with(_letter_router(slow))
+        assert text is None
 
 
 # --- denial-letter summarizer ---------------------------------------------

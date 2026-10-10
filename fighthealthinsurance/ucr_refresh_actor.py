@@ -16,10 +16,11 @@ import random
 import time
 
 import ray
-from typing import cast
+from typing import Optional, cast
 
 from channels.db import database_sync_to_async
 
+from fighthealthinsurance.base_actor_ref import decline_second_run
 from fighthealthinsurance.utils import get_env_variable
 
 name = "UCRRefreshActor"
@@ -289,7 +290,12 @@ class UCRRefreshActor:
     async def health_check(self) -> bool:
         return self._controller.running
 
-    async def run(self) -> None:
+    async def run(self) -> Optional[str]:
+        if self._controller.running:
+            # A second pair would also mark the first stopped in its finally.
+            return decline_second_run(
+                self._controller._logger, "UCRRefreshActor", what="pair of loops"
+            )
         self._controller._logger.info("Starting UCRRefreshActor run")
         self._controller.running = True
         try:
@@ -300,6 +306,7 @@ class UCRRefreshActor:
         finally:
             self._controller.running = False
             self._controller._logger.warning("UCRRefreshActor stopped running")
+        return None
 
     async def refresh_denial(self, denial_id: int) -> bool:
         return await self._controller.refresh_denial(denial_id)

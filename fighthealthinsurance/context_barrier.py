@@ -18,12 +18,16 @@ background task actually writes — for citations that is
 ``ml_citation_context``.  After refresh we always run the inline fetch,
 which reuses the helper's own freshness/promotion logic rather than
 duplicating it here.
+
+"Ready" means non-empty by default.  A caller whose background task also
+records a finished-but-empty run (citations store ``[]``) passes its own
+``is_ready`` so that run releases the wait instead of timing it out.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Sequence
+from typing import Any, Awaitable, Callable, Optional, Sequence
 
 from loguru import logger
 
@@ -38,8 +42,13 @@ def _is_populated(value: Any) -> bool:
     return bool(value)
 
 
-async def _any_field_populated(denial_id: int, fields: Sequence[str]) -> bool:
-    """True if any of ``fields`` on the Denial row is non-empty.
+async def _any_field_populated(
+    denial_id: int,
+    fields: Sequence[str],
+    is_ready: Callable[[Any], bool] = _is_populated,
+) -> bool:
+    """True if any of ``fields`` on the Denial row passes ``is_ready``
+    (non-empty, by default).
 
     One ``values()`` query covers all fields so a multi-field readiness
     check is a single round-trip.
@@ -51,7 +60,7 @@ async def _any_field_populated(denial_id: int, fields: Sequence[str]) -> bool:
     row = await Denial.objects.filter(denial_id=denial_id).values(*fields).afirst()
     if not row:
         return False
-    return any(_is_populated(row.get(f)) for f in fields)
+    return any(is_ready(row.get(f)) for f in fields)
 
 
 async def wait_for_warm_cache(
@@ -61,9 +70,13 @@ async def wait_for_warm_cache(
     refresh_fields: Sequence[str],
     barrier_timeout: float,
     poll_interval: float = 1.0,
+    is_ready: Optional[Callable[[Any], bool]] = None,
 ) -> bool:
     """Wait up to ``barrier_timeout`` for an in-flight background task to
     populate any of ``readiness_fields`` on the denial's DB row.
+
+    ``is_ready`` decides what counts as populated for one column's value;
+    None keeps the default non-empty check.
 
     On readiness, refresh ``refresh_fields`` onto the in-memory ``denial``
     so a subsequent cache-aware fetch short-circuits.  Returns ``True`` on
@@ -77,9 +90,12 @@ async def wait_for_warm_cache(
     # Clamp to a positive minimum so a 0/negative poll_interval can't
     # hot-loop or raise from asyncio.sleep.
     safe_poll = max(0.01, poll_interval)
+    ready_check = is_ready or _is_populated
     hit = False
     try:
-        hit = await _any_field_populated(denial_id, readiness_fields)
+        hit = await _any_field_populated(
+            denial_id, readiness_fields, is_ready=ready_check
+        )
         while not hit:
             # Cap each sleep to the time left so the total wait stays
             # bounded by barrier_timeout instead of overshooting by up to
@@ -88,7 +104,9 @@ async def wait_for_warm_cache(
             if remaining <= 0:
                 break
             await asyncio.sleep(min(safe_poll, remaining))
-            hit = await _any_field_populated(denial_id, readiness_fields)
+            hit = await _any_field_populated(
+                denial_id, readiness_fields, is_ready=ready_check
+            )
     except Exception as e:
         logger.opt(exception=True).debug(
             f"Cache barrier poll failed for denial {denial_id} "
@@ -119,13 +137,15 @@ async def warm_then_fetch(
     barrier_timeout: float,
     fetch: Callable[[], Awaitable[Any]],
     poll_interval: float = 1.0,
+    is_ready: Optional[Callable[[Any], bool]] = None,
 ) -> Any:
     """Wait briefly for the background cache to warm, then run ``fetch``.
 
     ``fetch`` is the cache-aware inline fetcher (wrapped in the caller's
     ``tracked_awaitable`` so it still streams its own FE status frame).  On
     a warm cache it short-circuits and returns instantly; on a cold cache
-    (barrier timed out) it regenerates as before.
+    (barrier timed out) it regenerates as before.  ``is_ready`` is passed
+    to ``wait_for_warm_cache``.
     """
     await wait_for_warm_cache(
         denial,
@@ -133,5 +153,6 @@ async def warm_then_fetch(
         refresh_fields=refresh_fields,
         barrier_timeout=barrier_timeout,
         poll_interval=poll_interval,
+        is_ready=is_ready,
     )
     return await fetch()

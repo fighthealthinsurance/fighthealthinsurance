@@ -79,15 +79,17 @@ from fighthealthinsurance.denial_base import DenialBase
 from .exec import background_executor, executor
 from .ml.ml_models import (
     MODEL_TRANSPORT_ERRORS,
+    DeadlineSkipped,
     ProviderUnavailable,
     RemoteFullOpenLike,
     RemoteModelLike,
+    can_be_asked,
     context_already_in_prompt,
     describe_model_error,
     render_citations_context,
     repetition_penalty,
 )
-from .ml.ml_router import ml_router
+from .ml.ml_router import appeal_pass_names, ml_router
 
 
 class ExtractionUnavailable(Exception):
@@ -1046,6 +1048,39 @@ def _shed_context(
     return new_calls, sorted(changed)
 
 
+def _model_can_be_asked(model_name: Optional[str]) -> bool:
+    """Whether any instance of ``model_name`` could be asked right now:
+    ``can_be_asked``, the in-memory test _checked_infer makes before raising
+    ProviderUnavailable (not parked, refused or cooling down, and its
+    provider not out of budget). Deliberately not the router's health-sweep
+    view: a model the sweep marked down may have been asked on the router's
+    fail-open and overflowed its context, which is what the shed ladder is
+    for."""
+    for model in ml_router.models_by_name.get(model_name, []):
+        try:
+            if can_be_asked(model):
+                return True
+        except Exception:
+            # An unreadable signal keeps the call, as healthy_first does.
+            return True
+    return False
+
+
+def _calls_worth_shedding(calls: List[dict]) -> List[dict]:
+    """The primary calls the context-shed ladder should retry.
+
+    Shedding context helps a model that overflowed it or answered with
+    nothing; it cannot help one that could not be asked. So a call is dropped
+    only when its model can no longer be asked (``_model_can_be_asked``).
+
+    The attempt rows are deliberately not read: an "unavailable:" row says
+    the model was not reached on that call, not that it cannot be asked now
+    (a model that was reached, with an overflow or an empty answer, reads
+    no_completion whatever its other leg did).
+    """
+    return [c for c in calls if _model_can_be_asked(c.get("model_name"))]
+
+
 # Proactive dual-call threshold. When a call's estimated token footprint
 # exceeds this fraction of a model's advertised context window, we fan out a
 # context-shed variant alongside the full call on the FIRST iteration. The
@@ -1114,7 +1149,7 @@ def _model_context_limit(model_name: Optional[str]) -> Optional[int]:
     """
     if not model_name:
         return None
-    backends = ml_router.models_by_name.get(model_name)
+    backends = ml_router.healthy_first(ml_router.models_by_name.get(model_name, []))
     if not backends:
         return None
     for backend in backends:
@@ -1332,6 +1367,18 @@ def _generated_to_appeals_text(
                     )
                     return
             model_results = k_text_future.result()
+        except DeadlineSkipped:
+            # _checked_infer asked the model nothing: too little of the
+            # requester's deadline (or the attempt's budget) was left for a
+            # letter when the worker started, as when the pool is saturated. A skip for time is a budget problem,
+            # filed like a call the deadline cut off, not as a failed model.
+            abandoned = True
+            error_detail = "skipped: requester deadline passed"
+            logger.debug(
+                f"Appeal generation via {model_name} skipped -- "
+                f"requester deadline passed"
+            )
+            return
         except Exception as e:
             # Same split as _log_fanout_task_error: expected transport failures
             # get one concise classified line, but an unexpected exception (a
@@ -1340,7 +1387,16 @@ def _generated_to_appeals_text(
             # from ordinary backend downtime.
             failed = True
             error_detail = describe_model_error(e)
-            if isinstance(e, MODEL_TRANSPORT_ERRORS):
+            if isinstance(e, ProviderUnavailable):
+                # Known gone, refused, out of credit or cooling down, or not
+                # reached on the first call or the retry (a 5xx, refused,
+                # timeout): the transport logged the cause, and the attempt
+                # row carries it as "unavailable: ...".
+                logger.debug(
+                    f"Appeal generation via {model_name} not answered -- "
+                    f"{error_detail}"
+                )
+            elif isinstance(e, MODEL_TRANSPORT_ERRORS):
                 logger.warning(
                     f"Appeal generation via {model_name} failed -- {error_detail}"
                 )
@@ -2182,7 +2238,23 @@ class AppealGenerator(object):
         async def ask(
             model: DenialBase,
         ) -> Optional[Tuple[Optional[str], Optional[str]]]:
-            result = await model.get_procedure_and_diagnosis(denial_text)
+            try:
+                result = await model.get_procedure_and_diagnosis(denial_text)
+            except Exception as e:
+                if not isinstance(e, (*MODEL_TRANSPORT_ERRORS, ProviderUnavailable)):
+                    # Unexpected = likely a code bug: the fan-out logs it
+                    # with its traceback.
+                    raise
+                # One quiet line, as attempt_model does: the transport layer
+                # already logged the cause (once, when it parked the model),
+                # and the fan-out would otherwise log a traceback per model
+                # per denial. Not an answer, so ExtractionUnavailable still
+                # fires when no model was reached.
+                logger.debug(
+                    f"Procedure/diagnosis via {model} failed -- "
+                    f"{describe_model_error(e)}"
+                )
+                return None
             if model is not self.regex_denial_processor:
                 answered.append(type(model).__name__)
             return result
@@ -3109,7 +3181,9 @@ class AppealGenerator(object):
                     )
                 )
                 return [], ""
-            model_backends = ml_router.models_by_name[model_name]
+            model_backends = ml_router.healthy_first(
+                ml_router.models_by_name[model_name]
+            )
             if prompt is None:
                 logger.debug(f"get_model_result: no prompt for {model_name}, skipping")
                 recorder.record(
@@ -3251,8 +3325,18 @@ class AppealGenerator(object):
         # Primary is internal-only (fast, local); backup picks up external
         # models only if the user opted in. The privacy boundary lives here:
         # use_external=False means no external model name ever reaches a call.
-        model_names = ml_router.generate_text_backend_names(use_external=False)
-        if not model_names:
+        use_ext = bool(denial.use_external)
+        # Opted in, with a hosted model to fall back on, the first pass lists
+        # only our models that are up, possibly none (see appeal_pass_names).
+        model_names, backup_model_names, hosted_backup = appeal_pass_names(
+            ml_router, use_ext
+        )
+        if not model_names and hosted_backup:
+            logger.info(
+                f"make_appeals: no internal model is up for denial "
+                f"{denial.denial_id}; the hosted backup answers"
+            )
+        elif not model_names:
             logger.error(
                 f"make_appeals: zero internal model names available for "
                 f"denial {denial.denial_id}"
@@ -3303,9 +3387,12 @@ class AppealGenerator(object):
 
         calls = [full_letter_call(model_name) for model_name in model_names]
 
-        backup_model_names = ml_router.generate_text_backend_names(
-            use_external=denial.use_external
-        )
+        # Backup: only backends the primary did not already run. For an
+        # opt-out denial that is nothing (the internal names ARE the primary
+        # list) and the stage is skipped, so the shed ladder no longer waits
+        # for a round of the same calls to fail the same way; for an opt-in
+        # denial it is the external backends. The privacy boundary is
+        # unchanged: use_external=False never yields an external name here.
         backup_calls = [
             full_letter_call(model_name) for model_name in backup_model_names
         ]
@@ -3315,8 +3402,15 @@ class AppealGenerator(object):
         # model with the specialized citation hints embedded in the prompt.
         # Hints are NOT broadcast to every model — only the best internal
         # one — to keep cost down and let the strongest model use the
-        # additional structure.
-        if specialized_templates and open_prompt is not None:
+        # additional structure. Not when the first pass was left empty for
+        # the hosted backup: no internal model is up then, and the router's
+        # last-resort pick would hold the first pass open for its whole
+        # timeout before the backup could start.
+        if (
+            specialized_templates
+            and open_prompt is not None
+            and (model_names or not hosted_backup)
+        ):
             best_model_name = self._best_internal_model_name()
             if best_model_name is not None:
                 hint_block = self._build_specialized_hint_block(specialized_templates)
@@ -3489,7 +3583,6 @@ class AppealGenerator(object):
         # use_external=True) is enforced at call-list construction; the
         # retry path reuses `calls` (internal-only), so it's opt-out-safe.
         denial_id = denial.denial_id
-        use_ext = denial.use_external
         # Correlation prefix so this ML cascade lines up with the generating
         # phase trace (init/done frames + ReportClientError) sharing this id.
         gen_prefix = f"[gen_id={generation_id}] " if generation_id else ""
@@ -3500,11 +3593,17 @@ class AppealGenerator(object):
         # report whether the primary won or a shed-tier retry rescued it.
         winning_stage: Optional[str] = "primary" if first is not None else None
         shed_tier_used: Optional[int] = None
+        if first is not None and first.context_level == CONTEXT_LEVEL_TIER1_SHED:
+            # A proactive shed sibling, submitted under the primary stage,
+            # won: that is a context-overflow rescue, and the diagnostic that
+            # counts rescues used to miss exactly this case.
+            shed_tier_used = 1
 
         if first is None and backup_calls:
             logger.warning(
                 f"{gen_prefix}Primary empty for denial {denial_id}; trying "
-                f"backup_calls (n={len(backup_calls)}, use_external={use_ext})"
+                f"backup_calls (n={len(backup_calls)}, use_external={use_ext}, "
+                f"models={backup_model_names})"
             )
             appeals = make_async_model_calls(backup_calls, stage="backup")
             first, appeals = _peek_real_or_none(appeals, denial_id, "backup", recorder)
@@ -3512,50 +3611,78 @@ class AppealGenerator(object):
                 winning_stage = "backup"
 
         if first is None:
-            ext_note = (
-                "external models WERE included in backup_calls"
-                if use_ext
-                else "use_external=False — NO EXTERNAL FALLBACK PERMITTED "
-                "(user opt-out respected)"
-            )
-            logger.error(
-                f"{gen_prefix}make_appeals: primary+backup both produced 0 for "
-                f"denial {denial_id} ({ext_note}); retrying primary internal-only"
-            )
-            time.sleep(1.0)
-            for tier in (1, 2):
-                shed_calls, changed = _shed_context(
-                    calls,
-                    tier=tier,
-                    open_prompt_kwargs=open_prompt_kwargs,
-                    rebuild_prompt=self.make_open_prompt,
-                    original_open_prompt=open_prompt,
-                    other_open_prompts=other_open_prompts,
+            # Named from the list that actually ran, not from the consent
+            # flag: with consent given but every external unconfigured or
+            # marked down, the old note claimed an external fallback that
+            # never happened.
+            if not use_ext:
+                ext_note = (
+                    "use_external=False — NO EXTERNAL FALLBACK PERMITTED "
+                    "(user opt-out respected)"
                 )
-                logger.warning(
-                    f"{gen_prefix}make_appeals: retrying primary for denial "
-                    f"{denial_id} with context shed (tier={tier}, changed={changed})"
+            elif backup_model_names:
+                ext_note = f"external backup tried: {backup_model_names}"
+            else:
+                ext_note = (
+                    "use_external=True but no external backend was selectable "
+                    "for the backup"
                 )
-                appeals = make_async_model_calls(shed_calls, stage=f"retry_tier_{tier}")
-                first, appeals = _peek_real_or_none(
-                    appeals, denial_id, f"retry_tier_{tier}", recorder
-                )
-                if first is not None:
-                    logger.warning(
-                        f"{gen_prefix}make_appeals: tier {tier} retry succeeded "
-                        f"for denial {denial_id}"
-                    )
-                    winning_stage = f"retry_tier_{tier}"
-                    shed_tier_used = tier
-                    break
-            if first is None:
+            ladder_calls = _calls_worth_shedding(calls)
+            if not ladder_calls:
+                # No primary call, or no instance of any primary model can be
+                # asked (parked, refused, cooling down, out of budget): one
+                # line, and no sleep or retry rows per appeal while that
+                # lasts.
                 logger.error(
-                    f"{gen_prefix}make_appeals: all context-shed retries "
-                    f"(tiers 1-2) produced 0 for denial {denial_id}; giving up. "
-                    f"({ext_note})"
+                    f"{gen_prefix}make_appeals: primary+backup both produced 0 "
+                    f"for denial {denial_id} ({ext_note}); no primary model "
+                    f"left that shedding context could help, so no shed retry"
                 )
                 winning_stage = "none"
                 appeals = iter([])
+            else:
+                logger.error(
+                    f"{gen_prefix}make_appeals: primary+backup both produced 0 "
+                    f"for denial {denial_id} ({ext_note}); retrying primary "
+                    f"internal-only"
+                )
+                time.sleep(1.0)
+                for tier in (1, 2):
+                    shed_calls, changed = _shed_context(
+                        ladder_calls,
+                        tier=tier,
+                        open_prompt_kwargs=open_prompt_kwargs,
+                        rebuild_prompt=self.make_open_prompt,
+                        original_open_prompt=open_prompt,
+                        other_open_prompts=other_open_prompts,
+                    )
+                    logger.warning(
+                        f"{gen_prefix}make_appeals: retrying primary for denial "
+                        f"{denial_id} with context shed (tier={tier}, "
+                        f"changed={changed})"
+                    )
+                    appeals = make_async_model_calls(
+                        shed_calls, stage=f"retry_tier_{tier}"
+                    )
+                    first, appeals = _peek_real_or_none(
+                        appeals, denial_id, f"retry_tier_{tier}", recorder
+                    )
+                    if first is not None:
+                        logger.warning(
+                            f"{gen_prefix}make_appeals: tier {tier} retry "
+                            f"succeeded for denial {denial_id}"
+                        )
+                        winning_stage = f"retry_tier_{tier}"
+                        shed_tier_used = tier
+                        break
+                if first is None:
+                    logger.error(
+                        f"{gen_prefix}make_appeals: all context-shed retries "
+                        f"(tiers 1-2) produced 0 for denial {denial_id}; giving "
+                        f"up. ({ext_note})"
+                    )
+                    winning_stage = "none"
+                    appeals = iter([])
 
         if diagnostics_sink is not None:
             diagnostics_sink["winning_stage"] = winning_stage

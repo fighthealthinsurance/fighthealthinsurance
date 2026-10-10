@@ -4,6 +4,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.contrib.auth import get_user_model
+from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 
 from rest_framework import status
@@ -266,24 +267,6 @@ class ChooserNextTaskAPITest(APITestCase):
         self.assertEqual(len(synthesized), 1)
         self.assertTrue(synthesized[0]["synthesized"])
 
-    def test_get_next_task_no_tasks_available(self):
-        """Test getting next task when none are available and generation fails."""
-        # Delete all tasks
-        ChooserTask.objects.all().delete()
-
-        # Mock the task generation to simulate failure (no models available)
-        with patch(
-            "fighthealthinsurance.chooser_tasks._generate_single_task"
-        ) as mock_generate:
-            # Make generation not create any tasks
-            mock_generate.return_value = None
-
-            url = reverse("chooser-next-appeal")
-            response = self.client.get(url)
-
-            self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-            self.assertIn("No tasks available", response.json()["message"])
-
     def test_session_exclusion(self):
         """Test that tasks already voted on are excluded."""
         # Force session creation first
@@ -298,17 +281,54 @@ class ChooserNextTaskAPITest(APITestCase):
             session_key=session_key,
         )
 
-        # Mock the task generation to prevent on-demand generation
+        # Keep the background prefill from starting a real generation
         with patch(
-            "fighthealthinsurance.chooser_tasks._generate_single_task"
-        ) as mock_generate:
-            mock_generate.return_value = None
-
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async"
+        ) as mock_prefill:
             # Since we only have one task and already voted, should get 404
             url = reverse("chooser-next-appeal")
             response = self.client.get(url)
 
             self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        # The pool is not empty, so the prefill has to be told this session
+        # used the appeals up or it would never make another.
+        mock_prefill.assert_called_once_with(exhausted="appeal")
+
+
+class ChooserNextTaskDoesNotGenerateInlineTest(APITestCase):
+    """An empty pool hands generation to the throttled background prefill.
+
+    The endpoint is anonymous and unthrottled; generating a task inside the
+    request held a worker for minutes and drove paid provider calls on demand.
+    """
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def test_empty_pool_triggers_prefill_and_returns_404(self):
+        ChooserTask.objects.all().delete()
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async"
+        ) as mock_prefill, patch(
+            "fighthealthinsurance.chooser_tasks._generate_single_task"
+        ) as mock_generate:
+            response = self.client.get(reverse("chooser-next-appeal"))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn("No tasks available", response.json()["message"])
+        mock_prefill.assert_called_once()
+        mock_generate.assert_not_called()
+
+    def test_a_failing_prefill_trigger_still_answers_404(self):
+        ChooserTask.objects.all().delete()
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async",
+            side_effect=RuntimeError("no threads"),
+        ):
+            response = self.client.get(reverse("chooser-next-appeal"))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
 class ChooserTaskSelectionOrderingTest(APITestCase):
@@ -657,6 +677,42 @@ class ChooserPrefillTest(APITestCase):
             mock_prefill.assert_called_once()
 
 
+@override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "chooser-prefill-throttle-test",
+        }
+    }
+)
+class ChooserPrefillThrottleTest(SimpleTestCase):
+    """Page loads and empty next-task fetches share the prefill throttle, but
+    a fetch from a session that used a type up must not be swallowed by a
+    page load's prefill a moment before: that prefill found the pool stocked
+    and made nothing."""
+
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+        # No background prefill thread: only the throttle is under test.
+        thread = patch("fighthealthinsurance.chooser_tasks.threading.Thread")
+        thread.start()
+        self.addCleanup(thread.stop)
+
+    def test_a_page_load_prefill_does_not_hold_off_a_used_up_type(self):
+        from fighthealthinsurance.chooser_tasks import trigger_prefill_async
+
+        trigger_prefill_async()
+        self.assertTrue(trigger_prefill_async(exhausted="appeal"))
+
+    def test_a_used_up_type_is_still_throttled(self):
+        from fighthealthinsurance.chooser_tasks import trigger_prefill_async
+
+        trigger_prefill_async(exhausted="appeal")
+        self.assertFalse(trigger_prefill_async(exhausted="appeal"))
+
+
 class ChooserSkipModelTest(APITestCase):
     """Test ChooserSkip model."""
 
@@ -873,3 +929,65 @@ class ChooserTaskContextTest(APITestCase):
         self.assertEqual(context["prompt"], "How do I appeal a prior auth denial?")
         self.assertIn("history", context)
         self.assertEqual(len(context["history"]), 2)
+
+
+class ChooserVoteIntegrityTest(APITestCase):
+    """Presented ids are the usage dashboard's denominator, so they must be
+    this task's active candidates."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        self.task = ChooserTask.objects.create(
+            task_type="appeal", status="READY", context_json={"procedure": "MRI"}
+        )
+        self.mine = [
+            ChooserCandidate.objects.create(
+                task=self.task,
+                candidate_index=i,
+                kind="appeal_letter",
+                model_name=f"model-{i}",
+                content=f"Candidate {i} content long enough to matter.",
+            )
+            for i in range(3)
+        ]
+        other_task = ChooserTask.objects.create(
+            task_type="appeal", status="READY", context_json={"procedure": "CT"}
+        )
+        self.foreign = ChooserCandidate.objects.create(
+            task=other_task,
+            candidate_index=0,
+            kind="appeal_letter",
+            model_name="model-elsewhere",
+            content="A candidate that belongs to another task.",
+        )
+
+    def test_presented_ids_from_another_task_are_rejected(self):
+        data = {
+            "task_id": self.task.id,
+            "chosen_candidate_id": self.mine[0].id,
+            "presented_candidate_ids": [self.mine[0].id, self.foreign.id],
+        }
+        response = self.client.post(
+            reverse("chooser-vote"), json.dumps(data), content_type="application/json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("belong", response.json()["error"])
+        self.assertEqual(ChooserVote.objects.count(), 0)
+
+    def test_a_presented_candidate_out_of_rotation_is_rejected(self):
+        """The next-task endpoint serves active candidates only, so an
+        inactive one in the report was never on anyone's screen."""
+        retired = self.mine[2]
+        retired.is_active = False
+        retired.save()
+        data = {
+            "task_id": self.task.id,
+            "chosen_candidate_id": self.mine[0].id,
+            "presented_candidate_ids": [self.mine[0].id, retired.id],
+        }
+        response = self.client.post(
+            reverse("chooser-vote"), json.dumps(data), content_type="application/json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(ChooserVote.objects.count(), 0)

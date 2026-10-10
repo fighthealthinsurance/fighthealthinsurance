@@ -5995,7 +5995,12 @@ class AppealsBackendHelper:
             # inline generate_citations call a warm in-memory denial, and
             # that helper applies its own candidate->main freshness/promotion.
             def warmed_context(
-                readiness_fields, refresh_fields, substep, done_msg, inline_coro
+                readiness_fields,
+                refresh_fields,
+                substep,
+                done_msg,
+                inline_coro,
+                is_ready=None,
             ):
                 return warm_then_fetch(
                     denial,
@@ -6007,6 +6012,7 @@ class AppealsBackendHelper:
                         substep=substep,
                         done_msg=done_msg,
                     ),
+                    is_ready=is_ready,
                 )
 
             pubmed_context_awaitable = warmed_context(
@@ -6033,6 +6039,10 @@ class AppealsBackendHelper:
                 inline_coro=lambda: MLCitationsHelper.generate_citations_for_denial(
                     denial, speculative=False
                 ),
+                # A finished run that found nothing stores [] (None means not
+                # run yet), so stop waiting on it; with the citation backend
+                # down that is every run, and the wait would be the timeout.
+                is_ready=lambda v: v is not None,
             )
 
             # Extract procedure (CPT + HCPCS) and ICD-10 codes from the

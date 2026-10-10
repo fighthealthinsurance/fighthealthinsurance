@@ -407,7 +407,9 @@ async def score_turn(
         raise
     except Exception as e:
         timed_out = isinstance(e, (TimeoutError, asyncio.TimeoutError))
-        logger.warning(f"chat shadow scoring unavailable: {type(e).__name__}")
+        (logger.debug if typesafe.announced(e) else logger.warning)(
+            f"chat shadow scoring unavailable: {type(e).__name__}"
+        )
         return ShadowResult(
             outcome=TIMEOUT if timed_out else FAILED,
             failure=letter_quality.failure_summary(e),

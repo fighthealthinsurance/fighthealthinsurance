@@ -50,17 +50,24 @@
     Every model backend this code knows about, configured or not: what kind
     of model it is, which request paths this pod routes to it, and its most
     recent health-check result.
-    {{ healthy_count }} of {{ rows|length }} passed their latest check.
+    {{ healthy_count }} of {{ enabled_count }} enabled backend{{ enabled_count|pluralize }} passed their latest check and are not failing live on this pod{% if live_failing_count %}; {{ live_failing_count }} {{ live_failing_count|pluralize:"is,are" }} failing live on this pod{% endif %}.
     Health data is written by the once-per-deployment check (search deployment logs for
     <code>MODEL_BACKEND_HEALTH_SUMMARY</code>) and by manual runs of
     <code>python manage.py check_model_backends</code>. This page never
     invokes models itself.
+    The Live column is what this pod's own calls have found since: a model
+    not served, a key or account refused or an endpoint unreachable (held in
+    this pod's memory, so another pod can differ, and cleared on its own
+    after a while), or the provider paused on every pod for credit or quota
+    until 00:00 UTC.
     &ldquo;Registered in router&rdquo; means the router loaded the model; it
     does not mean any request path picks it, which the Routing column shows.
     &ldquo;In reporting&rdquo; means usage reporting records the name on
     generations. The Config column notes a model that is not registered in
     router or not in reporting. Blue chips apply only when the person
-    allowed external models.
+    allowed external models. &ldquo;Last stored generation&rdquo; is the
+    newest draft or chooser candidate the model wrote, not the copy made
+    when a user picks a draft.
     The Serving column shows what each backend's model server reported in
     this pod's latest health sweep; a backend that did not report then shows
     its last recorded answer, marked as history.
@@ -93,8 +100,9 @@
         they did not, chat and appeal questions skip it and route as normal,
         and the backup pass gets no model either.
         {% else %}
-        Both appeal passes, chat and appeal questions use only it, whether or
-        not the person allowed external models.
+        The appeals primary pass, chat and appeal questions use only it, whether or
+        not the person allowed external models. The backup pass gets no model,
+        since it never repeats a model the primary pass asked.
         {% endif %}
         Summaries and the best-internal hint ignore it. The lists below
         already reflect all of this.
@@ -158,6 +166,7 @@
         <th>Config</th>
         <th>Serving</th>
         <th>Last health check</th>
+        <th>Live (this pod)</th>
         <th>Last stored generation</th>
       </tr>
     </thead>
@@ -189,7 +198,7 @@
           {% if not r.ui_registered and not r.reporting_registered %}<div class="sub muted">not registered in router or in reporting</div>
           {% elif not r.ui_registered %}<div class="sub muted">not registered in router</div>
           {% elif not r.reporting_registered %}<div class="sub muted">not in reporting</div>{% endif %}
-          {% if r.config_detail and not r.retired and r.config_detail != r.last_check.error %}<div class="err">{{ r.config_detail }}</div>{% endif %}
+          {% if r.config_detail and not r.retired %}{% if not r.show_check or r.config_detail != r.last_check.error %}<div class="err">{{ r.config_detail }}</div>{% endif %}{% endif %}
         </td>
         <td>
           {% for leg in r.serving %}
@@ -208,10 +217,11 @@
         <td>
           {% if r.retired %}
             <span class="muted">not checked</span>
-          {% elif r.last_check %}
+          {% elif r.show_check %}
+            {# A row the check run wrote without probing (the backend was off or retired then) is a classification, not a failure. #}
             {% if r.last_check.ok %}<span class="pill pill-ok">{{ r.last_check.category }}</span>
-            {% elif r.last_check_retired %}<span class="pill pill-off">{{ r.last_check.category }}</span>
-            {% else %}<span class="pill pill-fail">{{ r.last_check.category }}</span>{% endif %}
+            {% elif r.last_check.enabled and not r.last_check_retired %}<span class="pill pill-fail">{{ r.last_check.category }}</span>
+            {% else %}<span class="pill pill-off">{{ r.last_check.category }}</span>{% endif %}
             {% if r.last_check.latency_ms is not None %}<span class="sub">{{ r.last_check.latency_ms }} ms</span>{% endif %}
             <div class="sub">{{ r.last_check.created_at|date:"Y-m-d H:i" }} UTC</div>
             <div class="sub muted">deploy <span class="mono">{{ r.last_check.deployment_id|default:"unknown" }}</span>, env <span class="mono">{{ r.last_check.environment|default:"unknown" }}</span></div>
@@ -223,7 +233,7 @@
             </div>
             {% endif %}
             {% if r.last_check.error %}<div class="{% if r.last_check_retired %}sub{% else %}err{% endif %}">{{ r.last_check.error }}</div>{% endif %}
-          {% elif r.config_category and not r.enabled %}
+          {% elif not r.enabled %}
             <span class="muted">not checked</span>
           {% elif r.config_category %}
             <span class="pill pill-warn">{{ r.config_category }}</span>
@@ -231,10 +241,20 @@
             <span class="muted">never checked</span>
           {% endif %}
         </td>
-        <td>{% if r.last_generation %}{{ r.last_generation|date:"Y-m-d H:i" }} UTC{% else %}<span class="muted">none recorded</span>{% endif %}</td>
+        <td>
+          {% if r.live_problem %}<span class="pill pill-fail">failing</span><div class="err">{{ r.live_problem }}</div>
+          {% elif r.live_known %}<span class="muted">nothing flagged</span>
+          {% else %}<span class="muted">not registered</span>{% endif %}
+        </td>
+        <td>
+          {% if r.last_generation %}{{ r.last_generation|date:"Y-m-d H:i" }} UTC
+          {% elif r.context_only %}<span class="muted">n/a (citations only)</span>
+          {% elif r.chat_only %}<span class="muted">n/a (chat only)</span>
+          {% else %}<span class="muted">none recorded</span>{% endif %}
+        </td>
       </tr>
       {% empty %}
-      <tr><td colspan="7">No model backends found: every backend class's catalog came back empty. Check this pod's log for model_catalog() errors.</td></tr>
+      <tr><td colspan="8">No model backends found: every backend class's catalog came back empty. Check this pod's log for model_catalog() errors.</td></tr>
       {% endfor %}
     </tbody>
   </table>

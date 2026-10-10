@@ -73,7 +73,7 @@ from fighthealthinsurance.chat import isolated_db
 from fighthealthinsurance.chat.redaction import chat_redactions
 from fighthealthinsurance.chat.safety_filters import llm_requested_delete_handoff
 from fighthealthinsurance.chat.tools.patterns import contains_tool_call
-from fighthealthinsurance.ml import chat_gate
+from fighthealthinsurance.ml import chat_gate, typesafe
 from fighthealthinsurance.utils import CheckVerdict
 
 # The judged model's label is stored in a column this wide.
@@ -146,8 +146,11 @@ def gate_for_turn(
 
     ``external_allowed`` must be the person's consent to outside models for
     this chat. ``typed_message`` is False for a document upload or a stored
-    long paste. TypeSafe's chat budget must allow a request: when it is
-    spent the turn routes by our own rules, as with the check off.
+    long paste. TypeSafe's chat budget must allow a request and TypeSafe
+    must not be cooling down (a refused key, an unknown model or an
+    unreachable endpoint moments ago): otherwise the turn routes by our own
+    rules (the routing policy's hold), as with the check off, rather than
+    every turn's check failing at once and starting the outside calls.
     ``ours_selectable`` says whether the router has one of our own models it
     would pick (asked last, only when everything else holds): with none,
     holding the outside models back would only delay the answer, the same
@@ -155,7 +158,7 @@ def gate_for_turn(
     """
     if not (external_allowed and typed_message and chat_gate.enabled()):
         return None
-    if not chat_gate.budget_allows():
+    if not chat_gate.budget_allows() or typesafe.cooling_down():
         return None
     if not ours_selectable():
         return None
@@ -320,7 +323,8 @@ class ReplyGate:
         started = time.monotonic()
         self.rank_count = len(replies)
         try:
-            if not chat_gate.budget_allows():
+            if not chat_gate.budget_allows() or typesafe.cooling_down():
+                # Nothing would be sent: skipped, not an error to note.
                 result = chat_gate.RankResult(outcome=chat_gate.SKIPPED)
             else:
                 result = await chat_gate.rank_replies(

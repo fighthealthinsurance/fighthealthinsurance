@@ -122,7 +122,6 @@ class TestRoles(_NoRoutingEnv):
             _labels(overview, router, "fhi-local"),
             [
                 "Appeals: primary",
-                "Appeals: backup",
                 "Appeals: best-internal hint",
                 "Chat: lead, 2 calls",
                 "Questions: fan-out",
@@ -131,7 +130,7 @@ class TestRoles(_NoRoutingEnv):
         )
         self.assertEqual(
             _labels(overview, router, "fhi-legacy"),
-            ["Appeals: primary", "Appeals: backup"],
+            ["Appeals: primary"],
         )
         # With a healthy internal, the hosted generalist only backs up
         # summaries, and only when external models are allowed.
@@ -167,7 +166,7 @@ class TestRoles(_NoRoutingEnv):
         backup = _plan(overview, "Appeals, backup pass")
         self.assertEqual(
             [e.name for e in backup.external_allowed],
-            ["fhi-legacy", "fhi-local", "azure-openai/gpt-5.5", GEMMA],
+            ["azure-openai/gpt-5.5", GEMMA],
         )
         chat = _plan(overview, "Chat")
         # The lead is listed twice up front and not again among the internals.
@@ -178,16 +177,60 @@ class TestRoles(_NoRoutingEnv):
             [e.name for e in summaries.external_allowed], ["fhi-local", GEMMA]
         )
 
-    def test_a_marked_down_internal_moves_behind_the_generalist(self):
+    def test_the_backup_pass_never_repeats_the_primary(self):
+        """make_appeals backs up only with names the primary pass did not
+        call, so with external models off the backup has nothing left, and
+        the internals carry no backup role."""
+        router = self._production_like()
+        overview = ro.build_routing_overview(router)
+        self.assertEqual(_plan(overview, "Appeals, backup pass").internal_only, [])
+        for name in ("fhi-local", "fhi-legacy"):
+            self.assertFalse(
+                [
+                    label
+                    for label in _labels(overview, router, name)
+                    if "backup" in label
+                ]
+            )
+
+    def test_a_marked_down_internal_is_left_out_beside_the_generalist(self):
         router = _bare_router()
         _register(router, "fhi-local", _backend("fhi-local", 210, available=False))
         _register(router, GEMMA, _backend(GEMMA, 80, external=True))
         overview = ro.build_routing_overview(router)
-        # First when only internals may answer (the fail-open fallback), second
-        # behind the generalist when external models are allowed.
+        # First when only internals may answer (the fail-open fallback), and
+        # not asked at all when the healthy generalist can answer instead.
         local = _labels(overview, router, "fhi-local")
         self.assertIn("Summaries: 1st (internal only)", local)
-        self.assertIn("Summaries: 2nd (external allowed)", local)
+        self.assertNotIn("Summaries: 2nd (external allowed)", local)
+
+    def test_a_marked_down_internal_is_no_opted_in_primary_beside_a_hosted_backup(
+        self,
+    ):
+        """make_appeals leaves a down model of ours out of an opted-in
+        appeal's first pass while a hosted model can answer the backup, so
+        the page lists it as a primary only when external models are off."""
+        router = _bare_router()
+        _register(router, "fhi-local", _backend("fhi-local", 210, available=False))
+        _register(router, GEMMA, _backend(GEMMA, 80, external=True))
+        overview = ro.build_routing_overview(router)
+        self.assertIn(
+            "Appeals: primary (internal only)",
+            _labels(overview, router, "fhi-local"),
+        )
+
+    def test_the_hint_is_not_sent_to_a_down_internal_beside_a_hosted_backup(self):
+        """make_appeals skips the hint call when the first pass was left
+        empty for the hosted backup, so it is listed for opted-out appeals
+        only."""
+        router = _bare_router()
+        _register(router, "fhi-local", _backend("fhi-local", 210, available=False))
+        _register(router, GEMMA, _backend(GEMMA, 80, external=True))
+        overview = ro.build_routing_overview(router)
+        self.assertIn(
+            "Appeals: best-internal hint (internal only)",
+            _labels(overview, router, "fhi-local"),
+        )
         self.assertIn(
             "Summaries: 1st (external allowed)", _labels(overview, router, GEMMA)
         )
@@ -209,7 +252,6 @@ class TestRoles(_NoRoutingEnv):
             _labels(overview, router, "fhi-local", 0),
             [
                 "Appeals: primary",
-                "Appeals: backup",
                 "Appeals: best-internal hint",
                 "Chat: lead, 2 calls",
                 "Questions: fan-out",
@@ -218,7 +260,7 @@ class TestRoles(_NoRoutingEnv):
         )
         self.assertEqual(
             _labels(overview, router, "fhi-local", 1),
-            ["Appeals: primary", "Appeals: backup", "Appeals: best-internal hint"],
+            ["Appeals: primary", "Appeals: best-internal hint"],
         )
         # The lists that route to instances say which of the two it is, and
         # the lists that route by name say both are tried.

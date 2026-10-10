@@ -2,6 +2,11 @@
 
 Retiring by model name, not by backend class, leaves the backend's slot free
 for the next model. To bring a model back, remove its entry and set its host.
+
+An entry may be keyed by the last part of a served path ("/models/<name>"),
+which is how our own vLLM slots are named. Outside providers' "org/name" ids
+are matched only in full, so retiring one of ours never retires a hosted
+model that happens to end the same way.
 """
 
 import datetime
@@ -31,8 +36,9 @@ def retirement(
     """The entry for a model, matched on its name, its wire name, or the last
     part of a wire path ("/models/<name>")."""
     candidates = [name, internal_name]
-    if internal_name:
-        candidates.append(internal_name.rsplit("/", 1)[-1])
+    # Only a served path's tail: an outside "google/<name>" id is not ours.
+    if internal_name and internal_name.startswith("/"):
+        candidates.append(internal_name.rstrip("/").rsplit("/", 1)[-1])
     for candidate in candidates:
         if candidate and candidate in RETIRED_MODELS:
             return RETIRED_MODELS[candidate]

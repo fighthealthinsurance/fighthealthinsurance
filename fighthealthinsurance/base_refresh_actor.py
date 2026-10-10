@@ -25,6 +25,7 @@ import os
 import time
 from typing import Optional
 
+from fighthealthinsurance.base_actor_ref import decline_second_run
 from fighthealthinsurance.utils import get_env_variable
 
 # How long to sleep after an unhandled exception in the run loop. Matches
@@ -87,7 +88,9 @@ class BaseRefreshActor:
     async def health_check(self) -> bool:
         return self.running
 
-    async def run(self) -> None:
+    async def run(self) -> Optional[str]:
+        if self.running:
+            return decline_second_run(self._logger, self.actor_log_name)
         self._logger.info(f"Starting {self.actor_log_name} run")
         self.running = True
 
@@ -105,6 +108,7 @@ class BaseRefreshActor:
                 await asyncio.sleep(self.error_backoff_seconds)
 
         self._logger.warning(f"{self.actor_log_name} stopped running")
+        return None
 
     def stop(self) -> None:
         self.running = False

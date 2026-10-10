@@ -260,6 +260,39 @@ MODEL_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
 )
 
 
+def _connect_failed(exc: BaseException) -> bool:
+    """Whether a transport error means the endpoint could not be reached
+    at all (DNS, refused, TLS, a connect that never completed), as opposed
+    to one that answered slowly or dropped mid-response."""
+    return isinstance(
+        exc,
+        (
+            aiohttp.ClientConnectorError,
+            getattr(aiohttp, "ConnectionTimeoutError", aiohttp.ClientConnectorError),
+            ConnectionRefusedError,
+            socket.gaierror,
+        ),
+    )
+
+
+def _log_account_refusal(backend: Any, e: aiohttp.ClientResponseError) -> None:
+    """Log a provider's quota, auth or rate-limit refusal concisely: a
+    WARNING, unless the transport filed it (RemoteOpenLike._note_http_refusal
+    logged it once and the backend now reads as unavailable or paused), when
+    a line per refused call adds nothing."""
+    filed = False
+    if e.status != 429 or spend.quota_refusal(e.status, _error_body_of(e)):
+        try:
+            filed = not can_be_asked(backend)
+        except Exception:
+            filed = False
+    log = logger.debug if filed else logger.warning
+    log(
+        f"{backend}: skipping backend -- {backend.api_base} returned "
+        f"HTTP {e.status} ({e.message}); check quota/billing/API key."
+    )
+
+
 class ProviderUnavailable(Exception):
     """The provider could not be asked: transport, timeout or an HTTP error.
 
@@ -268,6 +301,71 @@ class ProviderUnavailable(Exception):
     the next model"; entity extraction needs the difference between a model
     that answered and found nothing and a model that was never reached.
     """
+
+
+class NoAnswerText(ProviderUnavailable):
+    """At least one endpoint was reached and answered, and none of them with
+    any text it could use (a reasoning model that spent its budget thinking,
+    a tool-calls-only reply, a prompt too long for its context window),
+    whatever became of the others.
+
+    A ProviderUnavailable, so entity extraction reads it as a failed read
+    rather than as a letter without the field. The appeal path reads it as a
+    model that answered nothing (no_completion), not as an outage.
+    """
+
+
+class DeadlineSkipped(ProviderUnavailable):
+    """The call was never made: too little of the requester's deadline or
+    the attempt's budget was left for a letter to fit
+    (MIN_RETRY_WINDOW_SECONDS). A ProviderUnavailable, so every caller that
+    moves on from a model it could not ask moves on from this too; the
+    appeal path can tell it apart from a model that answered nothing."""
+
+
+def can_be_asked(model: Any) -> bool:
+    """Whether this model may be asked right now, in memory only: not
+    parked, refused or cooling (is_available), and its provider's budget for
+    the current use not spent (_spend_allows). The test _checked_infer
+    applies before re-raising ProviderUnavailable; the router and the shed
+    ladder share it, so they agree with it. getattr, so a backend or test
+    double without a spend check is judged on is_available alone."""
+    if not model.is_available():
+        return False
+    spend_allows = getattr(model, "_spend_allows", None)
+    return spend_allows is None or bool(spend_allows())
+
+
+class _EmptyAnswerNote(str):
+    """A ``transport_failures`` entry for an endpoint that was reached and
+    answered without any text to use (a 2xx with none, or a prompt it
+    refused as too long for its context window), as opposed to one that
+    could not be reached or answered an error."""
+
+
+class _TimeoutNote(str):
+    """A ``transport_failures`` entry for a call that got no answer within
+    its window."""
+
+
+def _unavailable_from(failures: List[str]) -> ProviderUnavailable:
+    """What a raise_on_unavailable caller gets when no endpoint gave text:
+    NoAnswerText when at least one of them was reached and answered with
+    nothing (an _EmptyAnswerNote), whatever became of the others, else
+    ProviderUnavailable. A model that was reached is not an outage, even
+    beside a backup endpoint that is down."""
+    detail = "; ".join(failures)
+    if any(isinstance(f, _EmptyAnswerNote) for f in failures):
+        return NoAnswerText(detail)
+    return ProviderUnavailable(detail)
+
+
+class RetiredEndpointError(ValueError):
+    """A backend left with no endpoint: the only one it was given serves a
+    retired model (ml/retired_models.py). Still a ValueError, so code that
+    constructs backends keeps working; its own class so the deploy check can
+    show the operator's own retirement as Retired rather than as a backend
+    that failed to construct."""
 
 
 def describe_model_error(exc: BaseException) -> str:
@@ -281,6 +379,8 @@ def describe_model_error(exc: BaseException) -> str:
     (could not reach backend)" or "HTTP 503 Service Unavailable" instead.
     Unrecognized exceptions fall back to ``ExcType: message``.
     """
+    if isinstance(exc, ProviderUnavailable):
+        return f"unavailable: {exc}"
     if isinstance(exc, aiohttp.ContentTypeError):
         return "unexpected (non-JSON) content type in response -- often a missing model"
     if isinstance(exc, aiohttp.ClientResponseError):
@@ -420,22 +520,83 @@ def _error_text_indicates_missing_model(text: Optional[str]) -> bool:
 
     Matches the OpenAI-compatible local servers we point at: vLLM ("The model
     `X` does not exist.", type NotFoundError), llama.cpp ("model not found"),
-    Ollama ("model 'X' not found, try pulling it first"), and OpenAI/LM Studio
-    ("model_not_found"). Requiring the word "model" keeps a wrong-URL 404
-    (e.g. vLLM's {"detail": "Not Found"}) from matching -- that's a config
-    problem, not a missing model.
+    Ollama ("model 'X' not found, try pulling it first"), OpenAI/LM Studio
+    ("model_not_found"), Azure OpenAI ("The API deployment for this resource
+    does not exist", code DeploymentNotFound) and Anthropic's not_found_error
+    whose message names the model ("model: claude-x"). Requiring the word
+    "model" or "deployment" keeps a wrong-URL 404 (vLLM's {"detail": "Not
+    Found"}, Anthropic's not_found_error "Not Found") from matching -- that's
+    a config problem, not a missing model.
     """
     if not text:
         return False
     lowered = text.lower()
-    if "model" not in lowered:
+    if "model" not in lowered and "deployment" not in lowered:
         return False
     return (
         "does not exist" in lowered
         or "not found" in lowered
         or "model_not_found" in lowered
         or "unknown model" in lowered
+        or "not_found_error" in lowered
+        or "deploymentnotfound" in lowered
     )
+
+
+# What may sit between "model" and the verb: a name such as `gpt-3.5-turbo`
+# (dots inside a word are fine, a sentence end is not), on one line.
+_MODEL_SUBJECT = r"(?P<subject>(?:[^.\n]|\.(?=\S)){0,80}?)"
+# How providers say a model was retired, as opposed to a request that named
+# a deprecated parameter: an error code (OpenAI's model_decommissioned,
+# Azure's ModelDeprecated, Perplexity's invalid_model), or a sentence whose
+# subject is the model. "temperature is deprecated for this model" and "the
+# model parameter `max_tokens` is deprecated" are parameter problems that the
+# next request avoids, and filing them would park a working model for an hour.
+_RETIRED_MODEL_RE = re.compile(
+    r"model_decommissioned|model_deprecated|modeldeprecated"
+    r"|\binvalid[ _]model\b(?![ _-]*(?:param|field|arg|option|setting))"
+    r"|\bmodel\b" + _MODEL_SUBJECT + r"\b(?:"
+    r"(?:has been|is now|is|was)\s+"
+    r"(?:deprecated|decommissioned|retired|removed|discontinued)"
+    r"|no longer (?:available|supported|served))",
+    re.IGNORECASE,
+)
+# A 404 already says the thing asked for is not there, so there "the model
+# is not available" means it is gone; on a 400 it can be passing or regional.
+_MODEL_NOT_AVAILABLE_RE = re.compile(
+    r"\bmodel\b" + _MODEL_SUBJECT + r"\bnot available\b", re.IGNORECASE
+)
+_PARAMETER_WORD_RE = re.compile(
+    r"\b(?:param(?:eter)?s?|field|argument|option|setting)\b", re.IGNORECASE
+)
+
+
+def _http_error_indicates_retired_model(
+    status: Optional[int], body: Optional[str]
+) -> bool:
+    """True when an HTTP error says the endpoint will not serve the model
+    again: 410 Gone, or a 400/404 whose body names a missing, retired or
+    invalid model. Providers retire models in all of these shapes (OpenAI
+    404 "has been deprecated", Azure 400 ModelDeprecated, Perplexity 400
+    invalid_model, Anthropic 404 not_found_error), and only the 404 "does
+    not exist" one used to start the backoff.
+    """
+    if status == 410:
+        return True
+    if status not in (400, 404):
+        return False
+    if _error_text_indicates_missing_model(body):
+        return True
+    patterns = [_RETIRED_MODEL_RE]
+    if status == 404:
+        patterns.append(_MODEL_NOT_AVAILABLE_RE)
+    for pattern in patterns:
+        for match in pattern.finditer(body or ""):
+            # The subject is what the sentence says is deprecated: "the model
+            # parameter `max_tokens` is deprecated" is about a parameter.
+            if not _PARAMETER_WORD_RE.search(match.groupdict().get("subject") or ""):
+                return True
+    return False
 
 
 def _http_error_indicates_context_overflow(status: int, body: Optional[str]) -> bool:
@@ -472,12 +633,12 @@ def _http_error_indicates_context_overflow(status: int, body: Optional[str]) -> 
 # (``claude-opus-4-8-20260115``) are covered.
 #
 # This ENUMERATES the released model ids that behave this way rather than
-# deriving them from a version rule -- there is no Sonnet/Haiku 4.7 or Haiku 5
-# to list, and guessing a rule for ids that do not exist yet would be a
-# fiction. A model missing from this table is not stranded: the transports
-# classify a rejection at runtime (see
-# ``_http_error_indicates_unsupported_temperature``) and drop the field from
-# then on. Add new ids here so that costs one 400 instead of nothing.
+# deriving them from a version rule -- there is no Sonnet/Haiku 4.7 to list,
+# and guessing a rule for ids that do not exist yet would be a fiction. A
+# model missing from this table is not stranded: the transports classify a
+# rejection at runtime (see ``_http_error_indicates_unsupported_temperature``)
+# and drop the field from then on. Add new ids here so that costs one 400
+# instead of nothing.
 _CLAUDE_NO_SAMPLING_PREFIXES: tuple[str, ...] = (
     "claude-fable-5",
     "claude-mythos-5",
@@ -485,6 +646,8 @@ _CLAUDE_NO_SAMPLING_PREFIXES: tuple[str, ...] = (
     "claude-sonnet-5",
     "claude-opus-4-7",
     "claude-opus-4-8",
+    # Haiku 5.5 rejects a non-default temperature too.
+    "claude-haiku-5",
 )
 
 
@@ -498,12 +661,14 @@ def _http_error_indicates_unsupported_temperature(status: int, body: str) -> boo
     "appeals-fable"), so the transports use this to fall back at runtime:
     retry the request once without the field and remember the deployment.
 
-    Matched loosely, because the two surfaces word it differently: OpenAI and
+    Matched loosely, because the surfaces word it differently: OpenAI and
     Azure OpenAI say "Unsupported value: 'temperature' ... Only the default
-    (1) value is supported.", while the Anthropic Messages API rejects a
-    removed field as an ``invalid_request_error`` reading "temperature: Extra
-    inputs are not permitted". Matching only the OpenAI phrasing would leave
-    the fallback dead on the Messages transport.
+    (1) value is supported.", while Anthropic says "`temperature` is
+    deprecated for this model." (and has also said "temperature: Extra
+    inputs are not permitted"). Matching only the OpenAI phrasing would leave
+    the fallback dead on the Messages transport. "Deprecated" here names the
+    parameter, never the model: _http_error_indicates_retired_model reads
+    this wording as a parameter problem, so it cannot park the model.
     """
     if status != 400 or not body:
         return False
@@ -517,6 +682,7 @@ def _http_error_indicates_unsupported_temperature(status: int, body: str) -> boo
         or "not permitted" in lowered
         or "extra input" in lowered
         or "unexpected" in lowered
+        or "deprecated" in lowered
     )
 
 
@@ -1008,6 +1174,11 @@ _ATTEMPT_DEADLINE: contextvars.ContextVar[Optional[float]] = contextvars.Context
 # unclamped behaviour this exists to fix.
 MIN_TASK_TIMEOUT_SECONDS = 1.0
 
+# The appeal path makes no call, the first or its retry, when less than this
+# is left of the requester's or the attempt's budget: a letter does not fit
+# in it.
+MIN_RETRY_WINDOW_SECONDS = 15.0
+
 
 @contextlib.contextmanager
 def attempt_deadline(seconds: float):
@@ -1483,6 +1654,7 @@ class RemoteModelLike(DenialBase):
         is_logged_in: bool = True,
         is_medicaid_related: Optional[bool] = None,
         allow_repeated_reply: bool = False,
+        raise_on_unavailable: bool = False,
     ) -> tuple[Optional[str], Optional[str]]:
         """
         Generate a chat response from the model.
@@ -1501,6 +1673,13 @@ class RemoteModelLike(DenialBase):
                 wrapping -- the wrapped prompt contains system-injected text
                 that says "repeat" and can't be tested here). Disables the
                 repeat-of-last-reply retry so the model may actually repeat.
+            raise_on_unavailable: Raise ProviderUnavailable when the model
+                could not be asked or reached (an HTTP error, a transport
+                failure, a skip), so the caller can record an outage rather
+                than a model that answered with nothing. A model that was
+                reached and gave no text (NoAnswerText) is asked again, as
+                without it; an outage on that second try keeps the first
+                try's answer.
 
         Returns:
             Generated response or None
@@ -1894,6 +2073,9 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
             )
 
         result: Optional[str] = None
+        # True once a try reached the model (it answered, even with no text):
+        # an outage on a later try is then not an outage of this call.
+        reached = False
         # Evaluated once per iteration and reused by the loop condition and
         # the corrective-feedback branch (the comparison is not free).
         repeats_last = False
@@ -1927,13 +2109,28 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
                 temperature = min(1.0, temperature + 0.15)
             elif result and len(result) > 0 and "🐼" not in result:
                 result_extra = f"Your previous answer -- {result} -- was missing the panda emoji 🐼 and the context information. Please try again.\n\n"
-            raw_result = await self._infer(
-                system_prompts=[base_system_prompt],
-                prompt=f"{result_extra}{previous_context_extra}{current_message}",
-                history=history,
-                temperature=temperature,
-                timeout=chat_timeout,
-            )
+            try:
+                raw_result = await self._infer(
+                    system_prompts=[base_system_prompt],
+                    prompt=f"{result_extra}{previous_context_extra}{current_message}",
+                    history=history,
+                    temperature=temperature,
+                    timeout=chat_timeout,
+                    raise_on_unavailable=raise_on_unavailable,
+                )
+                reached = True
+            except NoAnswerText:
+                # Reached, and it answered with no text: a real empty answer,
+                # asked again like one returned as None.
+                reached = True
+                raw_result = None
+            except ProviderUnavailable:
+                if reached:
+                    # An earlier try reached the model: keep what it gave (an
+                    # answer, or nothing, filed as empty), as a retry that
+                    # returned None would, rather than call it an outage.
+                    break
+                raise
             if raw_result:
                 result = raw_result[0]
             repeats_last = _repeats_last_reply(result)
@@ -2189,14 +2386,49 @@ class RemoteModel(RemoteModelLike):
             logger.debug(f"Spend check failed: {type(e).__name__}")
             return not spend.assistant_work()
 
-    def _note_spend_refusal(self, status: int, body: str) -> None:
-        """Pause this provider for the day when it refuses for credit or
-        quota, so it is not asked again on every turn. Never raises."""
+    def _note_spend_refusal(self, status: int, body: str) -> bool:
+        """Pause this provider for every use for the rest of the day when it
+        refuses for credit or quota, so it is not asked again on every turn:
+        credit is account-wide, so a chat refusal holds for appeals too.
+        Returns whether it paused. Never raises."""
         try:
             if self.SPEND_PROVIDER is not None and spend.quota_refusal(status, body):
-                spend.pause(self.SPEND_PROVIDER, spend.current_use())
+                spend.pause(
+                    self.SPEND_PROVIDER,
+                    reason=f"{self} refused for credit or quota, HTTP {status}",
+                )
+                return True
         except Exception as e:
             logger.debug(f"Spend refusal not noted: {type(e).__name__}")
+        return False
+
+    def _credit_paused(self) -> bool:
+        """Whether this backend's provider is paused for every use after a
+        credit or quota refusal (ml/spend.py). In memory; never raises."""
+        provider = self.SPEND_PROVIDER
+        if provider is None:
+            return False
+        try:
+            return spend.paused(provider, "*")
+        except Exception as e:
+            logger.debug(f"Spend pause check failed: {type(e).__name__}")
+            return False
+
+    def _lift_credit_pause(self, model: str) -> None:
+        """A generation sent while the provider was paused for credit or
+        quota came back 2xx. Other calls are skipped while it is paused, so
+        this is a probe, in practice the deploy check after a top-up: the
+        account has credit again, so lift the pause on every pod now rather
+        than at 00:00 UTC. Never for a /models listing, which proves nothing
+        about credit. In memory (spend's worker stores the lift for the other
+        pods); never raises."""
+        provider = self.SPEND_PROVIDER
+        if provider is None or not self._credit_paused():
+            return
+        try:
+            spend.unpause(provider, reason=f"{self} answered {model} (HTTP 2xx)")
+        except Exception as e:
+            logger.warning(f"Spend pause not lifted: {type(e).__name__}")
 
     def __init__(self, model: str):
         pass
@@ -2319,6 +2551,18 @@ class RemoteOpenLike(RemoteModel):
     # cadence (model_is_ok's /models check) while still self-healing on its own
     # after a redeploy brings the model back.
     MODEL_MISSING_BACKOFF_SECONDS: ClassVar[float] = 3600.0
+    # Time model_is_ok's /models requests get in all, shared between the
+    # endpoints it asks, with each endpoint's share split between connecting
+    # and reading: requests times the two separately, so a plain timeout of
+    # the share let a hung primary and backup take twice the budget. Under
+    # the 10s the health sweep and the 8s the staff status page wait for a
+    # backend, so a primary that hangs rather than refusing still leaves the
+    # backup time to answer; an endpoint that is up answers in milliseconds.
+    MODEL_PROBE_BUDGET_SECONDS: ClassVar[float] = 7.0
+    # The most of a share that connecting gets. A host that is up connects in
+    # milliseconds; the read is the slow part, a provider's long /models list
+    # (DeepInfra's), so it gets the rest.
+    MODEL_PROBE_CONNECT_SECONDS: ClassVar[float] = 2.0
 
     def __init__(
         self,
@@ -2359,15 +2603,17 @@ class RemoteOpenLike(RemoteModel):
             else None
         )
         if retired_backup is not None:
+            dropped = self.backup_model
             logger.info(
-                f"Dropping backup {self.backup_model} for {model}: "
+                f"Dropping backup {dropped} for {model}: "
                 f"{retired_backup.describe()}"
             )
             self.backup_api_base = None
             self.backup_model = model
             if not api_base:
-                raise ValueError(
-                    f"The only endpoint for {model} serves a retired model"
+                raise RetiredEndpointError(
+                    f"The only endpoint for {model} serves a retired model "
+                    f"({dropped}: {retired_backup.describe()})"
                 )
         self._expensive = expensive
         self.dual_mode = dual_mode
@@ -2383,11 +2629,22 @@ class RemoteOpenLike(RemoteModel):
         # different endpoints/models.
         self._missing_models: dict[tuple[str, str], float] = {}
         # Short cooldown for repeated TRANSPORT failures (refused/DNS/timeout)
-        # between health sweeps: recent strike timestamps per (api_base,
-        # model), and pairs currently cooling down. See
+        # between health sweeps: when each recent strike stops counting, per
+        # (api_base, model), and pairs currently cooling down. See
         # _note_transport_failure.
         self._transport_strikes: dict[tuple[str, str], list[float]] = {}
         self._transport_cooldowns: dict[tuple[str, str], float] = {}
+        # Cooldowns a pair has gone through for connect-phase failures since
+        # it last answered: an external endpoint that is gone (DNS, refused,
+        # TLS) cools for longer each time. See _note_transport_failure.
+        self._transport_recools: dict[tuple[str, str], int] = {}
+        # Pairs that refused us outright (a revoked key or disabled account,
+        # HTTP 401/403), mapped to when they may be asked again. See
+        # _note_http_refusal.
+        self._refused_pairs: dict[tuple[str, str], float] = {}
+        # Why each pair was last filed as missing, refused or cooling, for
+        # unavailable_reason(): a status or error class, never request text.
+        self._pair_reasons: dict[tuple[str, str], str] = {}
         # Last generous-window TIMEOUT strike per (api_base, model): budget
         # timeouts are deduped to one strike per window so parallel legs of
         # one slow inference can't trip the cooldown together (see
@@ -2399,21 +2656,46 @@ class RemoteOpenLike(RemoteModel):
         self._strike_lock = threading.Lock()
 
     def model_is_ok(self):
-        """Check that the backend supports this model, returns true if found in list.
-        Return false if not found. Logs supported models from the backend."""
-        # A backup-only configuration (e.g. HEALTH_BACKUP_BACKEND_HOST set
-        # without HEALTH_BACKEND_HOST) leaves api_base None while inference
-        # would still be served by the backup — probe whichever exists.
-        probe_base = self.api_base or self.backup_api_base
-        probe_model = self.model if self.api_base else self.backup_model
+        """Check that an endpoint this backend infers against serves its
+        model: the primary, or else the backup. Logs what a failing endpoint
+        serves instead.
+
+        Inference falls back to the backup when the primary fails, and the
+        router drops a backend this sweep marks down, so probing the primary
+        alone took a backend whose backup was still answering out of the
+        appeal fan-out.
+        """
         # The serving registry reads these after the sweep; a card must only
         # ever describe a probe that succeeded this round, so clear them
         # before anything can fail.
         self.last_model_card = None
         self.last_backup_model_card = None
-        if not probe_base:
+        # The legs in the registry's order, so a card lands on its own leg. A
+        # backup-only configuration (e.g. HEALTH_BACKUP_BACKEND_HOST set
+        # without HEALTH_BACKEND_HOST) leaves api_base None while inference
+        # would still be served by the backup.
+        endpoints = [(base, model) for _leg, base, model in self.serving_legs()]
+        if not endpoints:
             raise RuntimeError("No api_base configured for RemoteOpenLike.")
+        share = self.MODEL_PROBE_BUDGET_SECONDS / len(endpoints)
+        # (connect, read): see MODEL_PROBE_BUDGET_SECONDS.
+        connect = min(self.MODEL_PROBE_CONNECT_SECONDS, share / 2)
+        timeout = (connect, share - connect)
+        return any(
+            self._endpoint_serves(base, model, timeout, leg)
+            for leg, (base, model) in enumerate(endpoints)
+        )
 
+    def _endpoint_serves(
+        self,
+        probe_base: str,
+        probe_model: str,
+        timeout: tuple[float, float],
+        leg: int = 0,
+    ) -> bool:
+        """Whether ``probe_base`` lists ``probe_model`` among its /models.
+        ``leg`` is the endpoint's place in serving_legs(), whose card it
+        records."""
         url = f"{probe_base}/models"
 
         headers = {}
@@ -2421,23 +2703,30 @@ class RemoteOpenLike(RemoteModel):
             headers["Authorization"] = f"Bearer {self.token}"
 
         try:
-            resp = requests.get(url, headers=headers, timeout=10)
+            resp = requests.get(url, headers=headers, timeout=timeout)
         except requests.RequestException as exc:
-            logger.warning(f"Unable to contact model backend at {url}")
+            logger.warning(
+                f"Unable to contact model backend at {url} for {probe_model} "
+                f"({type(exc).__name__})"
+            )
             return False
 
+        # WARNING, not DEBUG: this is the health sweep taking the model out
+        # of routing, and a revoked key (401/403) or an account out of credit
+        # (402) reads here first. Sweep cadence, so it cannot spam.
         if resp.status_code != 200:
-            logger.debug(
+            logger.warning(
                 f"Backend {probe_base} returned status {resp.status_code} "
-                f"for /models request."
+                f"for /models while checking {probe_model}."
             )
             return False
 
         try:
             payload = resp.json()
-        except ValueError as exc:
-            logger.debug(
-                f"Backend {probe_base} returned non-JSON response for /models."
+        except ValueError:
+            logger.warning(
+                f"Backend {probe_base} returned a non-JSON /models response "
+                f"while checking {probe_model}."
             )
             return False
 
@@ -2472,19 +2761,25 @@ class RemoteOpenLike(RemoteModel):
         if probe_model not in model_ids:
             available_sorted = sorted(model_ids)
             preview = available_sorted[:15]
-            # INFO, not DEBUG: this is the health sweep disabling the backend,
-            # and "why is this model not being used" should be answerable
-            # without debug logging. Sweep-frequency only, so it can't spam.
+            # INFO, not DEBUG: this is the health sweep disabling the backend
+            # (unless its other endpoint serves the model), and "why is this
+            # model not being used" should be answerable without debug
+            # logging. Sweep-frequency only, so it can't spam.
             logger.info(
-                f"Model '{probe_model}' is not served at {probe_base}; "
-                f"marking backend unhealthy. Backend serves "
-                f"{len(available_sorted)} model(s), e.g. {preview}"
+                f"Model '{probe_model}' is not served at {probe_base}. "
+                f"Backend serves {len(available_sorted)} model(s), e.g. {preview}"
             )
             return False
 
         # Kept for the serving registry, which the health sweep feeds after
-        # each round (ml/health_status.py).
-        self.last_model_card = _model_card(payload, probe_model, probe_base)
+        # each round (ml/health_status.py). The card goes on the leg that
+        # answered: a backup answering for a down primary must not be
+        # recorded as what the primary serves.
+        card = _model_card(payload, probe_model, probe_base)
+        if leg:
+            self.last_backup_model_card = card
+            return True
+        self.last_model_card = card
         legs = self.serving_legs()
         if len(legs) > 1 and legs[1][1] == probe_base:
             # A backup leg on the same server answers from the same list.
@@ -2708,9 +3003,12 @@ class RemoteOpenLike(RemoteModel):
 
         ``submit_executor`` selects the pool (interactive by default;
         background precompute passes its own so it can't starve waiting
-        users). ``deadline`` (time.monotonic()-based) makes each submitted
-        call exit almost immediately once the requester's budget has passed:
-        threads can't be cancelled, so this cooperative check is what keeps
+        users). It must be one of exec.py's ContextThreadPoolExecutors: a
+        plain pool would not carry the attempt deadline (a ContextVar) into
+        the worker, and every call would run on the full configured timeout.
+        ``deadline`` (time.monotonic()-based) makes each submitted call exit
+        almost immediately once the requester's budget has passed: threads
+        can't be cancelled, so this cooperative check is what keeps
         abandoned generations from holding pool threads for minutes.
         """
         logger.debug(f"Running inference on {self} of type {infer_type}")
@@ -2749,8 +3047,7 @@ class RemoteOpenLike(RemoteModel):
             )
         )  # type: Iterable[Tuple[Callable[..., Tuple[str, Optional[str]]], dict[str, Union[Optional[str], float, Optional[List[str]]]]]]
         pool = submit_executor if submit_executor is not None else executor
-        futures = list(map(lambda x: pool.submit(x[0], **x[1]), calls))
-        return futures
+        return [pool.submit(fn, **kwargs) for fn, kwargs in calls]
 
     def _blocking_checked_infer(
         self,
@@ -2813,10 +3110,21 @@ class RemoteOpenLike(RemoteModel):
                 pa,
                 deadline,
             )
+        except ProviderUnavailable:
+            # Never reached, or known gone, refused or out of budget: not a
+            # completion this path rejected, nor a bug.
+            record_ml_result(metric_model, infer_type, "unavailable")
+            raise
         except Exception:
             record_ml_result(metric_model, infer_type, "error")
             raise
         record_ml_result(metric_model, infer_type, outcome)
+        if outcome == "skipped_deadline":
+            # Never asked (see _checked_infer_outcome): say so, rather than
+            # an empty result that reads as a model that answered nothing.
+            raise DeadlineSkipped(
+                f"{self}: not asked, too little of the deadline left for a letter"
+            )
         return results
 
     async def _checked_infer_outcome(
@@ -2834,21 +3142,51 @@ class RemoteOpenLike(RemoteModel):
         deadline: Optional[float],
     ) -> Tuple[str, List[Tuple[str, Optional[str]]]]:
         """_checked_infer's work: the results, and what became of the
-        completion (an ML_RESULTS_TOTAL result) for the wrapper to record."""
+        completion (an ML_RESULTS_TOTAL result) for the wrapper to record.
+        "skipped_deadline" means no call was made."""
 
-        def _past_deadline() -> bool:
-            # Cooperative deadline: threads can't be cancelled, so once the
-            # requester's budget has passed we bail out instead of making
-            # further model calls nobody will read.
-            if deadline is not None and time.monotonic() > deadline:
+        def _call_timeout() -> float:
+            # ml_task_timeout clamps only to the attempt budget; the WS path
+            # sets no attempt_deadline, just the requester's `deadline`. An
+            # answer that lands after it is never read, so no call may
+            # outlive it. (A window under 120s never strikes the backend,
+            # see _note_budget_timeout.)
+            timeout = ml_task_timeout("appeal")
+            if deadline is not None:
+                timeout = min(
+                    timeout,
+                    max(MIN_TASK_TIMEOUT_SECONDS, deadline - time.monotonic()),
+                )
+            return timeout
+
+        def _no_time_for_a_letter() -> bool:
+            # Cooperative deadline: threads can't be cancelled, so with only
+            # seconds left of the requester's budget (or the attempt's, see
+            # attempt_deadline) no further model call is made, the first one
+            # included. A letter does not fit in that: the call would spend a
+            # request (a paid one, on a hosted model) nobody reads, and its
+            # timeout would be filed as a healthy model's outage.
+            # (ml_task_timeout floors a spent attempt budget at
+            # MIN_TASK_TIMEOUT_SECONDS, which would otherwise still send one.)
+            lefts = [
+                left
+                for left in (
+                    None if deadline is None else deadline - time.monotonic(),
+                    remaining_attempt_budget(),
+                )
+                if left is not None
+            ]
+            if lefts and min(lefts) < MIN_RETRY_WINDOW_SECONDS:
                 logger.debug(
-                    f"{self}: skipping {infer_type} work -- requester deadline passed"
+                    f"{self}: skipping {infer_type} work -- {min(lefts):.0f}s "
+                    f"left of the deadline, too little for a letter"
                 )
                 return True
             return False
 
-        if _past_deadline():
+        if _no_time_for_a_letter():
             return "skipped_deadline", []
+
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
         if prompt and isinstance(prompt, str):
@@ -2866,25 +3204,12 @@ class RemoteOpenLike(RemoteModel):
         if pubmed_context and isinstance(pubmed_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(pubmed_context))
 
-        result = await self._infer_no_context(
-            prompt=prompt,
-            patient_context=patient_context,
-            plan_context=plan_context,
-            system_prompts=[system_prompt],
-            pubmed_context=pubmed_context,
-            temperature=temperature,
-            ml_citations_context=ml_citations_context,
-        )
-        if _is_verbose_logging():
-            logger.debug(f"Got result from {self}: {result}")
-        else:
-            logger.debug(
-                f"Got result ({len(result) if result else 0} chars) from {self}"
-            )
-        # One retry
-        if self.bad_result(result, infer_type):
-            if _past_deadline():
-                return "skipped_deadline", []
+        # The first call's outage (a 5xx, refused, a timeout); None when it
+        # reached the model. Raised below when there is no time left to retry
+        # it, or when the retry is not reached either: only a model unreached
+        # on every try it got is "unavailable".
+        first_failure: Optional[ProviderUnavailable] = None
+        try:
             result = await self._infer_no_context(
                 prompt=prompt,
                 patient_context=patient_context,
@@ -2893,11 +3218,84 @@ class RemoteOpenLike(RemoteModel):
                 pubmed_context=pubmed_context,
                 temperature=temperature,
                 ml_citations_context=ml_citations_context,
+                # What is left of the attempt's and the requester's budget,
+                # re-read per call: these calls once ran on the instance
+                # default, outside the clamp.
+                timeout=_call_timeout(),
+                raise_on_unavailable=True,
             )
-            # Ok just an empty list, we failed. Nothing back at all is an
-            # outage (the call series classify it), not a content rejection.
-            if self.bad_result(result, infer_type):
+        except ProviderUnavailable as e:
+            # A provider now known to be unusable (gone, refused, out of
+            # credit or budget, cooling down) raises, so the attempt is
+            # recorded with that reason rather than as a model that answered
+            # with nothing, and the retry is not spent on it. A passing
+            # failure (a 5xx, a timeout) gets the retry, as it always has.
+            if not can_be_asked(self):
+                if isinstance(e, NoAnswerText):
+                    # Reached, so not an outage; the retry would only be
+                    # skipped.
+                    return "no_completion", []
+                raise
+            # Reached and answered no text (NoAnswerText) is a no_completion,
+            # not an outage.
+            if not isinstance(e, NoAnswerText):
+                first_failure = e
+            result = None
+        if _is_verbose_logging():
+            logger.debug(f"Got result from {self}: {result}")
+        else:
+            logger.debug(
+                f"Got result ({len(result) if result else 0} chars) from {self}"
+            )
+        # One retry
+        if self.bad_result(result, infer_type):
+            if _no_time_for_a_letter():
+                # Asked once, too late for a second try: the outcome is what
+                # that call gave. "skipped_deadline" is kept for a model that
+                # was never asked (DeadlineSkipped).
+                if result is None and first_failure is not None:
+                    # It was not reached: an outage ("unavailable: <cause>"),
+                    # as when both tries fail, not a model that answered
+                    # nothing.
+                    raise first_failure
                 return ("rejected_bad_result" if result else "no_completion"), []
+            # What the first try gave, so a rejected answer is still filed as
+            # one when the retry gives nothing.
+            first_result = result
+            try:
+                result = await self._infer_no_context(
+                    prompt=prompt,
+                    patient_context=patient_context,
+                    plan_context=plan_context,
+                    system_prompts=[system_prompt],
+                    pubmed_context=pubmed_context,
+                    temperature=temperature,
+                    ml_citations_context=ml_citations_context,
+                    timeout=_call_timeout(),
+                    raise_on_unavailable=True,
+                )
+            except NoAnswerText:
+                # Reached, and it answered with no text: no_completion.
+                result = None
+            except ProviderUnavailable:
+                if first_failure is not None:
+                    # Unreached on both tries (a 5xx, refused, a timeout, an
+                    # internal 401/403 we never park): raise, so the attempt
+                    # reads "error / unavailable: HTTP 503" instead of as a
+                    # model that answered nothing.
+                    raise
+                # Reached on the first try: the retry's outage does not make
+                # it a model that could not be reached.
+                result = None
+            # Ok just an empty list, we failed: the model was reached but
+            # nothing usable came back (no text on either try is
+            # no_completion; a refusal or runt on either is a rejection).
+            if self.bad_result(result, infer_type):
+                return (
+                    "rejected_bad_result"
+                    if (result or first_result)
+                    else "no_completion"
+                ), []
 
         # If professional_to_finish then check if the result is a professional response | One retry
         if prof_pov or pa:
@@ -2913,7 +3311,7 @@ class RemoteOpenLike(RemoteModel):
                 not self.check_is_ok(result, infer_type, prof_pov)
                 and c < 2
                 and time.monotonic() - pov_loop_start < pov_budget
-                and not _past_deadline()
+                and not _no_time_for_a_letter()
             ):
                 c = c + 1
                 result = await self._infer_no_context(
@@ -2924,6 +3322,7 @@ class RemoteOpenLike(RemoteModel):
                     pubmed_context=pubmed_context,
                     temperature=temperature,
                     ml_citations_context=ml_citations_context,
+                    timeout=_call_timeout(),
                 )
                 if self.bad_result(result, infer_type):
                     result = last_okish
@@ -3003,17 +3402,22 @@ class RemoteOpenLike(RemoteModel):
         Returns:
             Generated response or None
         """
-        result = await self._checked_infer(
-            system_prompt=system_prompt or PRIOR_AUTH_SYSTEM_PROMPT,
-            prompt=prompt,
-            pubmed_context=None,  # TODO: Add
-            ml_citations_context=None,  # TODO: Add
-            patient_context=None,  # TODO: Add
-            plan_context=None,
-            temperature=0.7,
-            infer_type="prior_auth",
-            prof_pov=prof_pov,
-        )
+        try:
+            result = await self._checked_infer(
+                system_prompt=system_prompt or PRIOR_AUTH_SYSTEM_PROMPT,
+                prompt=prompt,
+                pubmed_context=None,  # TODO: Add
+                ml_citations_context=None,  # TODO: Add
+                patient_context=None,  # TODO: Add
+                plan_context=None,
+                temperature=0.7,
+                infer_type="prior_auth",
+                prof_pov=prof_pov,
+            )
+        except ProviderUnavailable as e:
+            # The caller moves on to its next model, as for no answer.
+            logger.debug(f"{self}: prior auth not generated -- {e}")
+            return None
         if result and len(result) > 0:
             return result[0][1]
         return None
@@ -3113,12 +3517,16 @@ class RemoteOpenLike(RemoteModel):
         logger.debug(
             f"Getting procedure and diagnosis for {self} ({len(prompt)} chars)"
         )
-        model_response = await self._infer_no_context(
-            system_prompts=self.get_system_prompts("procedure"),
-            prompt=prompt,
-            timeout=ml_task_timeout("entity"),
-            raise_on_unavailable=True,
-        )
+        try:
+            model_response = await self._infer_no_context(
+                system_prompts=self.get_system_prompts("procedure"),
+                prompt=prompt,
+                timeout=ml_task_timeout("entity"),
+                raise_on_unavailable=True,
+            )
+        except NoAnswerText:
+            # Reached, but it answered with nothing: worth the one retry.
+            model_response = None
         if model_response is None or "Diagnosis" not in model_response:
             logger.debug(
                 "Retrying procedure/diagnosis query (no Diagnosis in response)"
@@ -3187,6 +3595,19 @@ class RemoteOpenLike(RemoteModel):
                 # First HTTP error swallowed by the dual-mode race for this
                 # prompt; surfaced after all fallbacks fail (see below).
                 first_http_error: Optional[aiohttp.ClientResponseError] = None
+                # The primary's HTTP error in sequential mode, held while the
+                # backup gets its turn and raised afterwards if it did not
+                # rescue the call.
+                primary_http_error: Optional[aiohttp.ClientResponseError] = None
+                # How the race's backup leg ended (dual mode): one that failed
+                # is not asked again in this call, which only doubled its
+                # requests, its strikes and the wait for its timeout.
+                backup_leg_error: Optional[BaseException] = None
+                backup_leg_failed = False
+                # The sequential primary timed out, and the backup names that
+                # very pair: asking it again would only wait out a second full
+                # window (twice the clamp). A reset or a 502 is still retried.
+                primary_hung_same_pair = False
                 if self.dual_mode and self.backup_api_base:
                     # In dual mode, run primary and backup concurrently and return the first result
                     primary_task = asyncio.create_task(
@@ -3206,6 +3627,8 @@ class RemoteOpenLike(RemoteModel):
                         )
                     )
 
+                    # Its own list, so it can be told apart from the primary.
+                    backup_leg_failures: list[str] = []
                     backup_task = asyncio.create_task(
                         self.__timeout_infer(
                             system_prompt=system_prompt,
@@ -3219,15 +3642,33 @@ class RemoteOpenLike(RemoteModel):
                             model=self.backup_model,
                             api_base=self.backup_api_base,
                             raise_http_errors=raise_http_errors,
-                            transport_failures=transport_failures,
+                            transport_failures=backup_leg_failures,
                             timeout=timeout,
                         )
                     )
 
+                    legs = (primary_task, backup_task)
+
+                    def _abandon_legs() -> None:
+                        # The caller was cancelled (a probe's or a chat turn's
+                        # wait_for). Cancelling this coroutine did not cancel
+                        # the legs it created, so both ran on to their own
+                        # timeout holding sockets and a GPU slot, and a leg
+                        # that then raised logged "Task exception was never
+                        # retrieved".
+                        for leg in legs:
+                            if not leg.done():
+                                leg.cancel()
+                                leg.add_done_callback(_log_abandoned_task_quietly)
+
                     # Wait for the first task to complete
-                    done, pending = await asyncio.wait(
-                        [primary_task, backup_task], return_when=asyncio.FIRST_COMPLETED
-                    )
+                    try:
+                        done, pending = await asyncio.wait(
+                            legs, return_when=asyncio.FIRST_COMPLETED
+                        )
+                    except asyncio.CancelledError:
+                        _abandon_legs()
+                        raise
 
                     # Get the result from the completed task(s). Every done
                     # task is retrieved (they have already finished, so this
@@ -3265,6 +3706,9 @@ class RemoteOpenLike(RemoteModel):
                                 if result and result[0]:
                                     raw_response = result
                                     break
+                            except asyncio.CancelledError:
+                                _abandon_legs()
+                                raise
                             except Exception as e:
                                 if (
                                     isinstance(e, aiohttp.ClientResponseError)
@@ -3276,33 +3720,74 @@ class RemoteOpenLike(RemoteModel):
                                     f"{describe_model_error(e)}"
                                 )
                     else:
-                        for task in pending:
-                            task.cancel()
-                            task.add_done_callback(_log_abandoned_task_quietly)
+                        _abandon_legs()
+                    transport_failures.extend(backup_leg_failures)
+                    if backup_task.done() and not backup_task.cancelled():
+                        backup_leg_error = backup_task.exception()
+                    # An empty answer is asked again below, as before; an
+                    # HTTP error, a timeout, a refused connect or a skip is not.
+                    backup_leg_failed = backup_leg_error is not None or any(
+                        not isinstance(f, _EmptyAnswerNote) for f in backup_leg_failures
+                    )
                 else:
-                    raw_response = await self.__timeout_infer(
-                        system_prompt=system_prompt,
-                        prompt=prompt,
-                        patient_context=patient_context,
-                        plan_context=plan_context,
-                        pubmed_context=pubmed_context,
-                        ml_citations_context=ml_citations_context,
-                        temperature=temperature,
-                        history=history,
-                        model=self.model,
-                        raise_http_errors=raise_http_errors,
-                        transport_failures=transport_failures,
-                        timeout=timeout,
+                    notes_from = len(transport_failures)
+                    try:
+                        raw_response = await self.__timeout_infer(
+                            system_prompt=system_prompt,
+                            prompt=prompt,
+                            patient_context=patient_context,
+                            plan_context=plan_context,
+                            pubmed_context=pubmed_context,
+                            ml_citations_context=ml_citations_context,
+                            temperature=temperature,
+                            history=history,
+                            model=self.model,
+                            raise_http_errors=raise_http_errors,
+                            transport_failures=transport_failures,
+                            timeout=timeout,
+                        )
+                    except aiohttp.ClientResponseError as e:
+                        # An HTTP error from the primary used to escape the
+                        # whole prompt loop, so the backup endpoint below was
+                        # never tried and the legacy backend's "a retry against
+                        # the same endpoint still rescues a single 502" did not
+                        # hold. Hold it while the backup answers; if the backup
+                        # does not, it is raised below and handled exactly as
+                        # before (logged by status, or re-raised for callers
+                        # that asked for HTTP errors).
+                        primary_http_error = e
+                        if self.backup_api_base:
+                            logger.debug(
+                                f"{self}: {self.model} at {self.api_base} failed "
+                                f"-- {describe_model_error(e)}; trying the backup"
+                            )
+                        raw_response = None
+                    primary_hung_same_pair = (
+                        self.backup_api_base,
+                        self.backup_model,
+                    ) == (self.api_base, self.model) and any(
+                        isinstance(note, _TimeoutNote)
+                        for note in transport_failures[notes_from:]
                     )
                 if raw_response and raw_response[0]:
                     return raw_response
 
-                # Try backup API if primary failed (even in dual mode).
+                if backup_leg_error is not None:
+                    # The race's backup leg raised (an HTTP error): asking it
+                    # again would raise the same, so this is the outcome the
+                    # second ask used to end in.
+                    raise backup_leg_error
+                # Try backup API if primary failed (even in dual mode, when
+                # the race's backup leg answered empty rather than failed).
                 # Same kwargs as the primary call: this fallback used to omit
                 # ml_citations_context and history, so an appeal served by the
                 # backup silently lost its citations context and a chat turn
                 # served by the backup lost the whole conversation history.
-                if self.backup_api_base:
+                if (
+                    self.backup_api_base
+                    and not backup_leg_failed
+                    and not primary_hung_same_pair
+                ):
                     backup_response = await self.__timeout_infer(
                         system_prompt=system_prompt,
                         prompt=prompt,
@@ -3320,6 +3805,10 @@ class RemoteOpenLike(RemoteModel):
                     )
                     if backup_response and backup_response[0]:
                         return backup_response
+                if primary_http_error is not None:
+                    # The backup did not rescue it: the primary's HTTP error
+                    # is the outcome of this call.
+                    raise primary_http_error
                 # Every fallback for this prompt struck out. If the dual-mode
                 # race swallowed an HTTP error above, surface it now to
                 # callers that opted in -- the startup probe reports the real
@@ -3341,16 +3830,15 @@ class RemoteOpenLike(RemoteModel):
             # original contract of returning None on transport errors.
             if self._propagate_http_errors or raise_http_errors:
                 raise
-            if _http_status_is_expected(e.status):
+            if _http_status_is_expected(e.status) or spend.quota_refusal(
+                e.status, _error_body_of(e)
+            ):
                 # Quota/auth/rate-limit conditions are an operational state of
-                # the provider account, not an application error. Emit a single
-                # concise line without a stack trace so it doesn't read like a
-                # crash (e.g. Perplexity returning 401 insufficient_quota).
-                logger.warning(
-                    f"{self}: skipping backend -- {self.api_base} returned "
-                    f"HTTP {e.status} ({e.message}); "
-                    f"check quota/billing/API key."
-                )
+                # the provider account, not an application error: one concise
+                # line, no stack trace. A refusal that __infer filed (key,
+                # account, credit) logged once when it was filed, and the
+                # pair is skipped until it may have changed.
+                _log_account_refusal(self, e)
             else:
                 # NOTE: context-length overflows are detected and handled in
                 # __infer (where the response body is available) and never
@@ -3364,7 +3852,9 @@ class RemoteOpenLike(RemoteModel):
                     f"{describe_model_error(e)}"
                 )
             if raise_on_unavailable:
-                raise ProviderUnavailable(describe_model_error(e)) from e
+                raise _unavailable_from(
+                    transport_failures + [describe_model_error(e)]
+                ) from e
         except MODEL_TRANSPORT_ERRORS as e:
             # Transport failures are logged (classified) per-attempt in
             # __infer; anything landing here was raised outside that wrapper.
@@ -3372,7 +3862,11 @@ class RemoteOpenLike(RemoteModel):
                 f"{self}: giving up on {self.api_base} -- {describe_model_error(e)}"
             )
             if raise_on_unavailable:
-                raise ProviderUnavailable(describe_model_error(e)) from e
+                # With the other endpoint's notes, so a model reached there
+                # (it answered with nothing) is NoAnswerText, not an outage.
+                raise _unavailable_from(
+                    transport_failures + [describe_model_error(e)]
+                ) from e
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Unexpected error calling {self.api_base} for {self}"
@@ -3381,7 +3875,7 @@ class RemoteOpenLike(RemoteModel):
                 raise ProviderUnavailable(f"{type(e).__name__}: {e}") from e
 
         if raise_on_unavailable and transport_failures:
-            raise ProviderUnavailable("; ".join(transport_failures))
+            raise _unavailable_from(transport_failures)
         return None
 
     def _supports_custom_temperature(self, model: str) -> bool:
@@ -3455,16 +3949,106 @@ class RemoteOpenLike(RemoteModel):
         self._missing_models[(api_base, model)] = (
             time.monotonic() + self.MODEL_MISSING_BACKOFF_SECONDS
         )
+        self._pair_reasons[(api_base, model)] = "model not served"
+
+    def _pair_refused(self, api_base: str, model: str) -> bool:
+        """Whether the pair is inside a refusal cooldown (see
+        _note_http_refusal). Expired entries are dropped so the next call
+        asks the provider live again (a rotated key, a reinstated account)."""
+        deadline = self._refused_pairs.get((api_base, model))
+        if deadline is None:
+            return False
+        if time.monotonic() >= deadline:
+            self._refused_pairs.pop((api_base, model), None)
+            return False
+        return True
+
+    def _note_http_refusal(
+        self, api_base: str, model: str, status: int, body: str, probe: bool
+    ) -> Optional[str]:
+        """File an HTTP error that will repeat on every call, so the pair is
+        skipped, and left out of routing, instead of asked again per request.
+
+        Returns how it was filed: "missing_model" for a retired or unknown
+        model (the MODEL_MISSING_BACKOFF_SECONDS backoff), "credit" for a
+        credit or quota refusal (the provider is paused for the day in the
+        spend ledger, on every pod), "refused" for a revoked key or disabled
+        account (HTTP 401/403, a FHI_AUTH_REFUSAL_COOLDOWN_SECONDS backoff),
+        or None for an error that says nothing lasting. A probe files the
+        first two, which are facts about the provider, but never starts a
+        refusal cooldown, so the deploy check keeps reporting what it sees.
+        Only outside providers are put in a refusal cooldown or struck for
+        an HTTP error.
+        """
+        external = bool(getattr(self, "external", False))
+        # A 400 from our own servers can quote the request back (vLLM's
+        # validation errors do), so only a provider's 400 is read for a
+        # retirement; ours say "does not exist" with a 404.
+        if (status != 400 or external) and _http_error_indicates_retired_model(
+            status, body
+        ):
+            self._note_missing_model(api_base, model, f"HTTP {status}: {body[:200]}")
+            return "missing_model"
+        if self._note_spend_refusal(status, body):
+            return "credit"
+        if probe or not external:
+            # Our own servers are asked again at once: a 401 there is a
+            # setting to fix, and parking them would hide it.
+            return None
+        if status in (404, 405) or status >= 500:
+            # An outside endpoint that answers but cannot serve (a removed
+            # route, a provider outage) strikes like one that cannot be
+            # reached, so it cools down instead of failing every request.
+            self._note_transport_failure(api_base, model, f"HTTP {status}")
+            return None
+        if status not in (401, 403) and not spend.quota_refusal(status, body):
+            return None
+        window = _env_float("FHI_AUTH_REFUSAL_COOLDOWN_SECONDS", 900.0)
+        if not self._pair_refused(api_base, model):
+            logger.warning(
+                f"{self}: {model} at {api_base} refused the request "
+                f"(HTTP {status}); skipping it for the next {window:.0f}s. "
+                f"Check the API key and the account."
+            )
+        self._refused_pairs[(api_base, model)] = time.monotonic() + window
+        self._pair_reasons[(api_base, model)] = f"refused (HTTP {status})"
+        return "refused"
+
+    def _local_skip(self, api_base: str, model: str) -> Optional[Tuple[str, str]]:
+        """Why a call to the pair should stay off the wire now, as (failure
+        metric reason, what the caller is told), or None. In-memory only.
+        Callers skip it for probes, which always ask the provider live."""
+        if self._model_marked_missing(api_base, model):
+            return "skipped_missing_model", "not served here"
+        if self._pair_refused(api_base, model):
+            return "skipped_refused", "refused recently (key or account)"
+        # A provider whose budget for this use is spent, or that refused for
+        # credit or quota today (ml/spend.py). Checked at the send too, so a
+        # model chosen before the budget ran out (a retry reusing the turn's
+        # models, say) is stopped.
+        if not self._spend_allows():
+            return "skipped_budget", "budget spent"
+        if self._transport_cooling(api_base, model):
+            # Skipped because the provider was unreachable moments ago: for
+            # the caller that asked, that is still "unreachable".
+            return "skipped_cooling", "in transport-failure cooldown"
+        return None
 
     # Transport-failure cooldown: the hourly health sweep can leave a dead
     # backend routable for up to an hour, and every request fanned to it
     # burns its whole timeout. Three transport-classified failures inside a
-    # minute put the (api_base, model) pair on a short cooldown so the next
-    # requests skip it instantly; the pair is re-probed when the cooldown
-    # expires. The startup probe path (raise_http_errors=True) neither counts
-    # strikes nor honors the skip, so probes always see current reality.
+    # minute (budget timeouts: inside TIMEOUT_STRIKE_KEEP_SECONDS) put the
+    # (api_base, model) pair on a short cooldown so the next requests skip it
+    # instantly; the pair is re-probed when the cooldown expires. The startup
+    # probe path (raise_http_errors=True) neither counts strikes nor honors
+    # the skip, so probes always see current reality.
     TRANSPORT_STRIKE_WINDOW_SECONDS: ClassVar[float] = 60.0
     TRANSPORT_STRIKES_TO_COOL: ClassVar[int] = 3
+    # How long a budget-timeout strike counts. Those are deduped to one per
+    # strike window (see _note_budget_timeout), so while they counted for
+    # only that window no two ever counted at once, and a backend that only
+    # hangs never cooled down.
+    TIMEOUT_STRIKE_KEEP_SECONDS: ClassVar[float] = 600.0
 
     def _transport_cooling(self, api_base: str, model: str) -> bool:
         """Whether the pair is inside a transport-failure cooldown.
@@ -3480,48 +4064,194 @@ class RemoteOpenLike(RemoteModel):
             return False
         return True
 
-    def _note_transport_failure(self, api_base: str, model: str, detail: str) -> None:
+    def _note_transport_failure(
+        self,
+        api_base: str,
+        model: str,
+        detail: str,
+        keep_for: Optional[float] = None,
+        connect_failed: bool = False,
+    ) -> None:
         """Record a transport failure; start a cooldown on repeated strikes.
 
-        Locked: callers run on parallel executor threads, and the strike
-        list is a read-modify-write.
+        The strike counts for ``keep_for`` seconds, by default
+        TRANSPORT_STRIKE_WINDOW_SECONDS, so the list holds when each strike
+        stops counting. Locked: callers run on parallel executor threads, and
+        the strike list is a read-modify-write.
+
+        ``connect_failed`` marks a failure to connect at all (DNS, refused,
+        TLS). For an external endpoint each cooldown those start since it
+        last answered is four times the one before, up to an hour: a host
+        that is gone stops costing a failed connect and a WARNING on every
+        request every two minutes. Our own servers keep the flat cooldown,
+        so one back from a restart is asked again soon.
+
+        A failure while the pair is already cooling comes from a call sent
+        before the cooldown began, so it is not counted: a burst of calls in
+        flight during one short blip would otherwise restart the cooldown
+        and escalate it every three failures.
         """
         now = time.monotonic()
         key = (api_base, model)
+        keep = self.TRANSPORT_STRIKE_WINDOW_SECONDS if keep_for is None else keep_for
+        cooldown = _env_float("FHI_TRANSPORT_COOLDOWN_SECONDS", 120.0)
+        escalate = connect_failed and bool(getattr(self, "external", False))
         with self._strike_lock:
+            if self._transport_cooldowns.get(key, 0.0) > now:
+                # A call sent before this cooldown began: its failure is the
+                # same outage, so it neither restarts nor escalates it.
+                return
             strikes = [
-                t
-                for t in self._transport_strikes.get(key, [])
-                if now - t < self.TRANSPORT_STRIKE_WINDOW_SECONDS
+                expires
+                for expires in self._transport_strikes.get(key, [])
+                if expires > now
             ]
-            strikes.append(now)
+            strikes.append(now + keep)
             cooled = len(strikes) >= self.TRANSPORT_STRIKES_TO_COOL
             if cooled:
-                cooldown = _env_float("FHI_TRANSPORT_COOLDOWN_SECONDS", 120.0)
+                recools = self._transport_recools.get(key, 0)
+                if escalate:
+                    cooldown = min(cooldown * 4**recools, 3600.0)
+                    # Held where the cap is reached: a host gone for weeks
+                    # would otherwise count past what a float can hold.
+                    self._transport_recools[key] = min(recools + 1, 8)
                 self._transport_cooldowns[key] = now + cooldown
                 self._transport_strikes.pop(key, None)
+                self._pair_reasons[key] = f"unreachable ({detail})"
             else:
                 self._transport_strikes[key] = strikes
         if cooled:
             logger.warning(
-                f"{self}: {model} at {api_base} hit {len(strikes)} transport "
-                f"failures within {self.TRANSPORT_STRIKE_WINDOW_SECONDS:.0f}s "
-                f"({detail}); cooling down for {cooldown:.0f}s"
+                f"{self}: {model} at {api_base} hit {len(strikes)} recent "
+                f"transport failures ({detail}); cooling down for {cooldown:.0f}s"
             )
 
-    def is_available(self) -> bool:
-        """False while EVERY endpoint this instance can serve is inside a
-        transport-failure cooldown, so the router stops selecting it for
-        fan-out; fail-open otherwise. The router's own fail-open guard
-        (_filter_available) still keeps a last resort if this empties a pool.
+    def _note_answered(self, api_base: str, model: str) -> None:
+        """The pair answered, with any status: an outage that was escalating
+        its cooldowns is over, so the next one starts from the short
+        cooldown again."""
+        self._transport_recools.pop((api_base, model), None)
+
+    def _note_reachable(self, api_base: str, model: str) -> None:
+        """A /models request to the pair's endpoint answered and listed the
+        model (the health sweep): the host is up. An outside endpoint
+        cooling down after failed connects (an escalated cooldown, see
+        _note_transport_failure) is asked again now, its strikes dropped and
+        its escalation reset. A cooldown started by 5xx or timeout strikes
+        stays, since an answer to /models says nothing about generation. The
+        refused flag always stays: /models can list a model whose key is
+        refused. The missing flag stays only for an outside provider, which
+        can list a model its chat endpoint still refuses; our own servers
+        say "does not exist" from the very list /models just showed the
+        model in, so theirs is cleared. Never raises."""
+        key = (api_base, model)
+        try:
+            with self._strike_lock:
+                # Only a connect-failure cooldown leaves the pair here: any
+                # HTTP answer since then would have cleared it.
+                if key in self._transport_recools:
+                    self._transport_cooldowns.pop(key, None)
+                    self._transport_strikes.pop(key, None)
+            if not getattr(self, "external", False):
+                # A call would now be served; an outside provider's flag
+                # waits for a served call or the backoff.
+                self._missing_models.pop(key, None)
+            self._note_answered(api_base, model)
+        except Exception as e:
+            logger.debug(f"{self}: reachability not noted: {type(e).__name__}")
+
+    def _note_served(self, api_base: str, model: str) -> None:
+        """The pair answered a request with a 2xx: whatever had it parked
+        (missing, refused, cooling) no longer holds, so it is routed to
+        again at once rather than when the backoff runs out."""
+        key = (api_base, model)
+        self._transport_recools.pop(key, None)
+        self._transport_cooldowns.pop(key, None)
+        self._refused_pairs.pop(key, None)
+        self._missing_models.pop(key, None)
+        # Nor do its pending strikes: a pair that answers is busy, not hung,
+        # and a budget-timeout strike counts for TIMEOUT_STRIKE_KEEP_SECONDS,
+        # so three timeouts between answers cooled a serving backend down.
+        # Locked: _note_transport_failure and _note_budget_timeout update
+        # these from executor threads.
+        with self._strike_lock:
+            self._transport_strikes.pop(key, None)
+            self._timeout_strike_last.pop(key, None)
+
+    def _note_budget_timeout(
+        self, api_base: Optional[str], model: str, timeout: float
+    ) -> None:
+        """Strike a call that got no answer within its whole budget, when the
+        budget says something about the backend.
+
+        Budget timeouts strike ONLY when (a) the backend had a GENEROUS
+        window (>=120s of nothing is a wedged backend, not deadline pressure
+        -- tight windows near a requester deadline must never strike a
+        healthy-but-busy backend) and (b) at most once per endpoint per
+        strike-window: the appeal path fires 4 near-simultaneous legs (2
+        temperatures x dual-mode), so per-leg strikes let ONE slow long-prompt
+        inference trip the whole 120s cooldown at once and zero generation
+        right when the backend was merely busy (a self-amplifying brownout).
+        Deduped, one busy episode is one strike (harmless, decays), while an
+        accept-then-hang backend keeps striking across requests and cools down
+        instead of burning every caller's full budget until the hourly health
+        sweep: each strike counts for TIMEOUT_STRIKE_KEEP_SECONDS, well past
+        the dedup window, so the strikes of separate hung calls add up.
+        Genuinely-unreachable hosts still strike within seconds via the
+        connect-phase handler.
+        """
+        if timeout < 120.0 or not api_base:
+            return
+        now = time.monotonic()
+        pair = (api_base, model)
+        # Locked check-then-set: the parallel legs live on separate executor
+        # threads and expire together, so an unguarded check would let them
+        # all strike at once.
+        with self._strike_lock:
+            last = self._timeout_strike_last.get(pair, float("-inf"))
+            should_strike = now - last >= self.TRANSPORT_STRIKE_WINDOW_SECONDS
+            if should_strike:
+                self._timeout_strike_last[pair] = now
+        if should_strike:
+            self._note_transport_failure(
+                api_base,
+                model,
+                f"no answer within a generous {timeout:.0f}s window",
+                keep_for=self.TIMEOUT_STRIKE_KEEP_SECONDS,
+            )
+
+    def unavailable_reason(self) -> Optional[str]:
+        """Why this instance cannot be asked now, or None when it can: every
+        endpoint it serves from is flagged as not serving the model, as
+        having refused us (key or account), or as cooling down after
+        transport failures. In-memory only, never a network call, so it is
+        safe on the request path. These flags live in this process.
         """
         pairs = [(self.api_base, self.model)]
         if self.backup_api_base:
             pairs.append((self.backup_api_base, self.backup_model))
-        live_pairs = [(a, m) for a, m in pairs if a]
-        if live_pairs and all(self._transport_cooling(a, m) for a, m in live_pairs):
-            return False
-        return True
+        reasons: list[str] = []
+        for api_base, model in pairs:
+            if not api_base:
+                continue
+            if not (
+                self._model_marked_missing(api_base, model)
+                or self._pair_refused(api_base, model)
+                or self._transport_cooling(api_base, model)
+            ):
+                return None
+            reason = self._pair_reasons.get((api_base, model), "unavailable")
+            if reason not in reasons:
+                reasons.append(reason)
+        return "; ".join(reasons) or None
+
+    def is_available(self) -> bool:
+        """False while EVERY endpoint this instance can serve is flagged (see
+        unavailable_reason), so the router stops selecting it for fan-out;
+        fail-open otherwise. The router's own fail-open guard
+        (_filter_available) still keeps a last resort if this empties a pool.
+        """
+        return self.unavailable_reason() is None
 
     async def __timeout_infer(
         self,
@@ -3572,44 +4302,20 @@ class RemoteOpenLike(RemoteModel):
                 failures = kwargs.get("transport_failures")
                 if failures is not None:
                     failures.append(
-                        f"{call_model}: no answer within {effective_timeout:.0f}s"
+                        _TimeoutNote(
+                            f"{call_model}: no answer within {effective_timeout:.0f}s"
+                        )
                     )
-                # Budget timeouts strike ONLY when (a) the backend had a
-                # GENEROUS window (>=120s of nothing is a wedged backend, not
-                # deadline pressure -- tight windows near a requester
-                # deadline must never strike a healthy-but-busy backend) and
-                # (b) at most once per endpoint per strike-window: the
-                # appeal path fires 4 near-simultaneous legs (2 temperatures
-                # x dual-mode), so per-leg strikes let ONE slow long-prompt
-                # inference trip the whole 120s cooldown at once and zero
-                # generation right when the backend was merely busy (a
-                # self-amplifying brownout). Deduped, one busy episode is one
-                # strike (harmless, decays), while an accept-then-hang
-                # backend keeps striking across requests and cools down
-                # instead of burning every caller's full budget until the
-                # hourly health sweep. Genuinely-unreachable hosts still
-                # strike within seconds via the connect-phase handler.
-                strike_base = kwargs.get("api_base") or self.api_base
-                if effective_timeout >= 120.0 and strike_base:
-                    now = time.monotonic()
-                    pair = (strike_base, call_model)
-                    # Locked check-then-set: the parallel legs live on
-                    # separate executor threads and expire together, so an
-                    # unguarded check would let them all strike at once.
-                    with self._strike_lock:
-                        last = self._timeout_strike_last.get(pair, float("-inf"))
-                        should_strike = (
-                            now - last >= self.TRANSPORT_STRIKE_WINDOW_SECONDS
-                        )
-                        if should_strike:
-                            self._timeout_strike_last[pair] = now
-                    if should_strike:
-                        self._note_transport_failure(
-                            strike_base,
-                            call_model,
-                            f"no answer within a generous "
-                            f"{effective_timeout:.0f}s window",
-                        )
+                # Strikes only when the window was generous, once per strike
+                # window (see _note_budget_timeout), and never for a probe:
+                # probes do not count strikes (see the comment above
+                # TRANSPORT_STRIKE_WINDOW_SECONDS).
+                if not kwargs.get("raise_http_errors"):
+                    self._note_budget_timeout(
+                        kwargs.get("api_base") or self.api_base,
+                        call_model,
+                        effective_timeout,
+                    )
                 return None
             except Exception:
                 # __infer re-raises HTTP errors so _infer and the opted-in
@@ -3701,53 +4407,20 @@ class RemoteOpenLike(RemoteModel):
             f"Calling {model} at {api_base} (prompt_len={len(prompt) if prompt else 0}, "
             f"system_prompt_len={len(system_prompt) if system_prompt else 0})"
         )
-        # Recently answered "model does not exist" here: skip quietly until
-        # the cooldown expires instead of re-hitting (and re-logging) on
-        # every call. The startup probe (raise_http_errors) always probes
-        # live so it reports current reality.
-        if not raise_http_errors and self._model_marked_missing(api_base, model):
-            logger.debug(
-                f"{self}: skipping {model} at {api_base} -- flagged as not served here"
-            )
+        # Recently answered "model does not exist", refused us, spent its
+        # budget or failed to connect: skip quietly until that passes instead
+        # of re-hitting (and re-logging) it on every call. The startup probe
+        # (raise_http_errors) always asks live so it reports current reality.
+        skip = None if raise_http_errors else self._local_skip(api_base, model)
+        if skip is not None:
+            reason, why = skip
+            logger.debug(f"{self}: skipping {model} at {api_base} -- {why}")
             if transport_failures is not None:
-                transport_failures.append(f"{model} via {api_base}: not served here")
+                transport_failures.append(f"{model} via {api_base}: {why}")
             # Nothing went on the wire, but __timeout_infer still files this
-            # as outcome=none; give that "none" its reason.
-            record_ml_failure(
-                metric_model, "skipped_missing_model", leg=leg, endpoint=endpoint
-            )
-            return None
-        # A provider whose budget for this use is spent, or that refused for
-        # credit or quota today (ml/spend.py), is not asked: checked here,
-        # at the send, so a model chosen before the budget ran out (a retry
-        # reusing the turn's models, say) is stopped too.
-        if not raise_http_errors and not self._spend_allows():
-            logger.debug(f"{self}: not asking {model} -- budget spent or paused")
-            if transport_failures is not None:
-                transport_failures.append(f"{model} via {api_base}: budget spent")
-            record_ml_failure(
-                metric_model, "skipped_budget", leg=leg, endpoint=endpoint
-            )
-            return None
-        # Same idea for repeated transport failures (refused/DNS/timeout):
-        # skip quietly while the short cooldown lasts; probes bypass this so
-        # they always report current reality.
-        if not raise_http_errors and self._transport_cooling(api_base, model):
-            logger.debug(
-                f"{self}: skipping {model} at {api_base} -- transport-failure cooldown"
-            )
-            if transport_failures is not None:
-                # Skipped because the provider was unreachable moments ago:
-                # for the caller that asked, that is still "unreachable".
-                transport_failures.append(
-                    f"{model} via {api_base}: in transport-failure cooldown"
-                )
-            # Counted like the missing-model skip above: as a bare
-            # outcome=none call it pulled failures / calls toward zero for
-            # as long as the outage that started the cooldown lasted.
-            record_ml_failure(
-                metric_model, "skipped_cooling", leg=leg, endpoint=endpoint
-            )
+            # as outcome=none; give that "none" its reason, so the failure
+            # rate does not fall during the outage that started the skip.
+            record_ml_failure(metric_model, reason, leg=leg, endpoint=endpoint)
             return None
         if self.token is None:
             logger.warning(f"No token provided for {model}")
@@ -3839,6 +4512,10 @@ class RemoteOpenLike(RemoteModel):
                 if sent_temperature:
                     request_body["temperature"] = temperature
                 request_body.update(self._request_extras(model))
+                # Calls are skipped while the provider is paused for credit,
+                # so one sent now is a probe (a deploy check after a top-up):
+                # a 2xx to it lifts the pause (see _lift_credit_pause).
+                paused_at_send = self._credit_paused()
                 while True:
                     async with s.post(
                         url,
@@ -3850,11 +4527,15 @@ class RemoteOpenLike(RemoteModel):
                         # being read as "nothing answered" when another leg
                         # did (see _PROBE_OBSERVATIONS).
                         _note_probe_endpoint_answered()
+                        # Reachable, whatever the status: an outage that was
+                        # lengthening its cooldowns is over.
+                        self._note_answered(api_base, model)
                         response_body = await _read_error_body(response)
                         # Raise ClientResponseError for HTTP error status codes (4xx, 5xx)
                         # This allows subclasses to catch and handle specific errors like 429
                         try:
                             response.raise_for_status()
+                            self._note_served(api_base, model)
                         except aiohttp.ClientResponseError as e:
                             # Carry the provider's body on the exception before
                             # any of the branches below re-raise it. Without
@@ -3920,21 +4601,34 @@ class RemoteOpenLike(RemoteModel):
                                 if raise_http_errors:
                                     setattr(e, _REASON_RECORDED_ATTR, True)
                                     raise
+                                if transport_failures is not None:
+                                    # Reached: a caller that asked gets
+                                    # NoAnswerText (no_completion on the
+                                    # appeal path), not an outage, whatever
+                                    # became of the other endpoint.
+                                    transport_failures.append(
+                                        _EmptyAnswerNote(
+                                            f"{model} via {api_base}: prompt "
+                                            f"exceeds the context window"
+                                        )
+                                    )
                                 return None
 
-                            if e.status == 404 and _error_text_indicates_missing_model(
-                                response_body
-                            ):
+                            filed = self._note_http_refusal(
+                                api_base,
+                                model,
+                                e.status,
+                                response_body,
+                                probe=raise_http_errors,
+                            )
+                            if filed == "missing_model":
                                 # The endpoint is up but doesn't serve this
-                                # model (e.g. a local vLLM redeployed with a
-                                # different --model). Flag the pair so
-                                # follow-up calls skip it for the cooldown,
-                                # with one warning instead of a log line per
-                                # inference. The probe still gets the raw
-                                # status so startup reports the real cause.
-                                self._note_missing_model(
-                                    api_base, model, response_body[:200]
-                                )
+                                # model (a local vLLM redeployed with another
+                                # --model, a provider that retired it). The
+                                # pair is skipped for the backoff, with one
+                                # warning instead of a log line per inference.
+                                # The probe still gets the raw status so
+                                # startup reports the real cause.
                                 record_ml_failure(
                                     metric_model,
                                     "missing_model",
@@ -3949,14 +4643,14 @@ class RemoteOpenLike(RemoteModel):
                                         f"{model} via {api_base}: not served here"
                                     )
                                 return None
-
-                            self._note_spend_refusal(e.status, response_body)
                             response_body_preview = response_body[:2000]
-                            # Expected operational errors (quota/auth/rate-limit)
-                            # are summarized concisely by _infer; keep their body
-                            # preview at debug so they don't double-warn. Real
-                            # failures stay at WARNING so the body aids debugging.
-                            if _http_status_is_expected(e.status):
+                            # Expected operational errors (quota/auth/rate-limit,
+                            # and a credit refusal whatever its status) are
+                            # summarized by _infer or were just logged by the
+                            # refusal note; keep their body preview at debug so
+                            # they don't double-warn. Real failures stay at
+                            # WARNING so the body aids debugging.
+                            if filed or _http_status_is_expected(e.status):
                                 logger.debug(
                                     f"HTTP {e.status} (expected) from {api_base} for "
                                     f"model {model}. Body preview (truncated): "
@@ -3973,13 +4667,13 @@ class RemoteOpenLike(RemoteModel):
                         self._record_spend(model, json_result)
                         if json_result.get("object") == "error":
                             # Some OpenAI-compatible servers report errors in
-                            # a 200 body. Surface the message; a missing-model
-                            # error additionally flags the pair for cooldown
-                            # like the HTTP 404 path.
+                            # a 200 body. Surface the message; a missing or
+                            # retired model additionally flags the pair for
+                            # cooldown like the HTTP 404 path.
                             error_message = str(
                                 json_result.get("message") or json_result
                             )[:300]
-                            if _error_text_indicates_missing_model(error_message):
+                            if _http_error_indicates_retired_model(404, error_message):
                                 self._note_missing_model(api_base, model, error_message)
                                 record_ml_failure(
                                     metric_model,
@@ -4001,11 +4695,19 @@ class RemoteOpenLike(RemoteModel):
                                     )
                                     setattr(missing, _REASON_RECORDED_ATTR, True)
                                     raise missing
+                                # As the HTTP 404 branch: a caller that asked
+                                # gets ProviderUnavailable on this call too.
+                                if transport_failures is not None:
+                                    transport_failures.append(
+                                        f"{model} via {api_base}: not served here"
+                                    )
                                 return None
                             logger.warning(
                                 f"Bad response from {self} with {model}: "
                                 f"{error_message}"
                             )
+                        elif paused_at_send:
+                            self._lift_credit_pause(model)
                     break
         except aiohttp.ContentTypeError as e:
             # Raised by response.json() when the body isn't JSON (e.g. an HTML
@@ -4018,6 +4720,10 @@ class RemoteOpenLike(RemoteModel):
                 # status-handling subclasses get it (with its status) exactly
                 # as they did before the concise-logging rework.
                 raise
+            # An odd 200 is a failed call, not an answer: a caller that asked
+            # (entity extraction) must not read it as "nothing found".
+            if transport_failures is not None:
+                transport_failures.append(f"{model} via {api_base}: unreadable body")
             return None
         except aiohttp.ClientResponseError as e:
             # Already logged with a body preview above; keep this at debug to
@@ -4039,7 +4745,14 @@ class RemoteOpenLike(RemoteModel):
             # to pace, callers (e.g. the extraction loop) do their own pacing,
             # and a stall would only slow failover to the backup backend.
             described = describe_model_error(e)
-            logger.warning(f"{self}: {model} via {api_base} failed -- {described}")
+            # Once an outage has cooled the pair down, its cooldown warnings
+            # say it is still going; a line per failed call adds nothing.
+            log = (
+                logger.debug
+                if self._transport_recools.get((api_base, model))
+                else logger.warning
+            )
+            log(f"{self}: {model} via {api_base} failed -- {described}")
             record_ml_failure(
                 metric_model, "transport_error", leg=leg, endpoint=endpoint
             )
@@ -4054,7 +4767,9 @@ class RemoteOpenLike(RemoteModel):
             # push a backend into the production cooldown.
             _note_probe_transport_error(described)
             if not raise_http_errors:
-                self._note_transport_failure(api_base, model, described)
+                self._note_transport_failure(
+                    api_base, model, described, connect_failed=_connect_failed(e)
+                )
             if transport_failures is not None:
                 # For _infer: returning None here is what lets it try the
                 # backup; it needs to know afterwards that this was a failure
@@ -4083,6 +4798,8 @@ class RemoteOpenLike(RemoteModel):
                     f"body starts: {body_snippet}"
                 )
                 record_ml_failure(metric_model, "bad_body", leg=leg, endpoint=endpoint)
+                if transport_failures is not None:
+                    transport_failures.append(f"{model} via {api_base}: no choices")
                 return None
 
             # Extract message content
@@ -4109,6 +4826,44 @@ class RemoteOpenLike(RemoteModel):
             else:
                 # Simple string response
                 r = str(response_message)
+
+            if isinstance(r, list):
+                # Content parts (newer APIs): keep the text parts.
+                # Only string text: a null one coerced to "None" passed as
+                # model output.
+                r = (
+                    "".join(
+                        part["text"]
+                        for part in r
+                        if isinstance(part, dict)
+                        and part.get("type", "text") == "text"
+                        and isinstance(part.get("text"), str)
+                    )
+                    or None
+                )
+            if r is None or (isinstance(r, str) and not r.strip()):
+                # No text at all: a tool-calls-only reply, or a reasoning model
+                # that spent its budget thinking (reasoning_content set,
+                # content null, "" or just whitespace). A provider-side
+                # condition, not a bug: one line, no traceback, and the caller
+                # moves to the next backend. It used to raise into the
+                # catch-all below, which logged two ERROR lines and a
+                # traceback on the appeal path. "" and whitespace used to pass
+                # as an answer, so entity extraction filed them as a letter
+                # without the field; no caller uses whitespace as text.
+                finish = json_result["choices"][0].get("finish_reason")
+                logger.warning(
+                    f"{self}: {model} via {api_base} returned no text content "
+                    f"(finish_reason={finish!r})"
+                )
+                record_ml_failure(metric_model, "no_text", leg=leg, endpoint=endpoint)
+                if transport_failures is not None:
+                    # Reached, and it answered nothing: the caller that asked
+                    # gets NoAnswerText, not an outage (see _unavailable_from).
+                    transport_failures.append(
+                        _EmptyAnswerNote(f"{model} via {api_base}: no text")
+                    )
+                return None
 
             # Check if the response is valid text using LLMResponseUtils
             if not LLMResponseUtils.is_valid_text(r):
@@ -4546,6 +5301,14 @@ class RemoteFullOpenLike(RemoteOpenLike):
         return citations
 
 
+def _internal_model_name(model_path: str) -> str:
+    """The friendly registry name for an internal model path: its last path
+    segment. A trailing "/" used to yield a model named "", which the router
+    then registered and reported under that empty name."""
+    name = model_path.rstrip("/").split("/")[-1]
+    return name or model_path
+
+
 class RemoteHealthInsurance(RemoteFullOpenLike):
     PROVIDER_LABEL: ClassVar[str] = "FHI Internal (legacy)"
 
@@ -4617,8 +5380,11 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_name = get_env_variable(
-            "HEALTH_BACKEND_MODEL", "totallylegitco/fighthealthinsurance_model_v0.5"
+        # `or`, like the host and port: a templated empty string is "unset",
+        # and a blank wire model sent model "" on every request.
+        model_name = (
+            get_env_variable("HEALTH_BACKEND_MODEL")
+            or "totallylegitco/fighthealthinsurance_model_v0.5"
         )
         return [
             ModelDescription(cost=1, name="fhi-legacy", internal_name=model_name),
@@ -4685,14 +5451,16 @@ class NewRemoteInternal(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_path = get_env_variable(
-            "NEW_HEALTH_BACKEND_MODEL",
-            "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed",
+        model_path = (
+            get_env_variable("NEW_HEALTH_BACKEND_MODEL")
+            or "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed"
         )
-        # Extract a friendly name from the model path
-        model_name = model_path.split("/")[-1] if "/" in model_path else model_path
         return [
-            ModelDescription(cost=2, name=model_name, internal_name=model_path),
+            ModelDescription(
+                cost=2,
+                name=_internal_model_name(model_path),
+                internal_name=model_path,
+            ),
         ]
 
 
@@ -4713,19 +5481,23 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
         # these as empty strings, which must mean "unset".
         self.port = get_env_variable("ALPHA_HEALTH_BACKEND_PORT") or "8000"
         self.host = get_env_variable("ALPHA_HEALTH_BACKEND_HOST") or None
-        self.backup_port = get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_PORT") or None
+        # Like the legacy backend: the backup port defaults to the primary's
+        # (a backup host set alone used to be silently discarded) and the
+        # backup model to the primary's (it used to be the literal
+        # "/app/model", which 404ed unless that box loaded its weights there).
+        self.backup_port = (
+            get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_PORT") or self.port
+        )
         self.backup_host = get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_HOST") or None
-        backup_model = "/app/model"
+        backup_model = get_env_variable("ALPHA_HEALTH_BACKUP_BACKEND_MODEL") or model
         if self.host is None:
-            raise Exception("Can not construct New FHI backend without a host")
-        self.url = None
-        if self.port is not None and self.host is not None:
-            self.url = f"http://{self.host}:{self.port}/v1"
-        else:
-            logger.debug(f"Error setting up remote health {self.host}:{self.port}")
-        self.backup_url = None
-        if self.backup_port is not None and self.backup_host is not None:
-            self.backup_url = f"http://{self.backup_host}:{self.backup_port}/v1"
+            raise Exception("Can not construct alpha FHI backend without a host")
+        self.url = f"http://{self.host}:{self.port}/v1"
+        self.backup_url = (
+            f"http://{self.backup_host}:{self.backup_port}/v1"
+            if self.backup_host
+            else None
+        )
         super().__init__(
             self.url,
             backup_api_base=self.backup_url,
@@ -4750,14 +5522,16 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_path = get_env_variable(
-            "ALPHA_HEALTH_BACKEND_MODEL",
-            "/models/fhi-2025-nov-q8-vllm-compressed",
+        model_path = (
+            get_env_variable("ALPHA_HEALTH_BACKEND_MODEL")
+            or "/models/fhi-2025-nov-q8-vllm-compressed"
         )
-        # Extract a friendly name from the model path
-        model_name = model_path.split("/")[-1] if "/" in model_path else model_path
         return [
-            ModelDescription(cost=3, name=model_name, internal_name=model_path),
+            ModelDescription(
+                cost=3,
+                name=_internal_model_name(model_path),
+                internal_name=model_path,
+            ),
         ]
 
 
@@ -4797,8 +5571,18 @@ class RemotePerplexity(RemoteFullOpenLike):
             ),
         ]
 
+    SPEND_PROVIDER: ClassVar[Optional[str]] = spend.PERPLEXITY
+
     def model_is_ok(self):
-        # Hack: perplexity doesn't list models so we're assuming it's up.
+        # Perplexity doesn't list models, so its health is what inference
+        # recorded: up until it answers that the model is gone, refuses the
+        # key or account, or cannot be reached.
+        return self.is_available()
+
+    @property
+    def health_checked_live(self) -> bool:
+        """is_available() is the whole signal (see model_is_ok), so the router
+        reads it directly rather than an hourly copy of it."""
         return True
 
 
@@ -5005,13 +5789,37 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         """Routing quality derived from the model's tier (see ``_TIER_QUALITY``)."""
         return self._TIER_QUALITY.get(self.get_tier(), 85)
 
-    def is_available(self) -> bool:
-        """Available when configured, not currently backing off, and not in a
-        transport-failure cooldown (super()). The paid providers' health
-        signal is already in-memory (API key/endpoint presence + rate-limit
-        state) and never hits the network, so it is safe to consult on the
-        request path."""
-        return super().is_available() and bool(self.model_is_ok())
+    def _configured_and_not_limited(self) -> bool:
+        """Whether the provider is configured and not backing off after a
+        429. Subclasses add their own configuration checks."""
+        return self.rate_limiter.can_request()
+
+    def unavailable_reason(self) -> Optional[str]:
+        """super()'s flags (missing, refused, cooling), else this provider's
+        own: a 429 back-off or a key or endpoint that is not set. The staff
+        pages and the health sweep read it, so a model out of routing says
+        why, and the inherited is_available() is True only while it is None.
+        In memory only, never the network, so it is safe on the request
+        path."""
+        reason = super().unavailable_reason()
+        if reason is not None:
+            return reason
+        status = self.rate_limiter.get_status()
+        if status.get("exhausted"):
+            return (
+                "rate limited, backing off "
+                f"({status.get('seconds_remaining') or 0:.0f}s left)"
+            )
+        if not self._configured_and_not_limited():
+            return "not configured"
+        return None
+
+    def model_is_ok(self) -> bool:
+        """The same in-memory signal as is_available(): these providers are
+        not probed over the network (fail fast on inference instead), so the
+        health sweep and status pages see a retired model, a refused key or
+        an unreachable endpoint only through what inference recorded."""
+        return self.is_available()
 
     @property
     def health_checked_live(self) -> bool:
@@ -5038,6 +5846,15 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
     def rate_limiter(self) -> RateLimiter:
         """Get the rate limiter for this model instance."""
         return self._rate_limiters[self.model]
+
+    def _count_skipped_call(self, reason: str) -> None:
+        """Count a call a skip kept off the wire as the shared transport does:
+        outcome=none, with the skip as its failure reason. Uncounted, the
+        failure rate would fall during the very outage that started the
+        cooldown."""
+        metric_model, leg, endpoint = self._metric_identity(self.api_base)
+        record_ml_call(metric_model, "none", 0.0, leg=leg, endpoint=endpoint)
+        record_ml_failure(metric_model, reason, leg=leg, endpoint=endpoint)
 
     def _retry_after_seconds(
         self, e: aiohttp.ClientResponseError, default: float = 60.0
@@ -5075,8 +5892,9 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         """Inference with rate-limit gating and 429 back-off.
 
         Skips (returns None) when backing off; on a 429 marks the limiter
-        exhausted honoring Retry-After so other backends can take over; other
-        HTTP errors propagate.
+        exhausted honoring Retry-After so other backends can take over. Other
+        HTTP errors return None, as on the shared transport, or raise
+        ProviderUnavailable with ``raise_on_unavailable``.
 
         ``raise_http_errors=True`` (used by the startup probe) re-raises any
         HTTP error -- including 429/quota/auth -- so the probe can report the
@@ -5086,8 +5904,9 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
             logger.debug(
                 f"{type(self).__name__}._infer: Skipping {self.model} - backing off"
             )
+            self._count_skipped_call("skipped_rate_limited")
             if raise_on_unavailable:
-                raise ProviderUnavailable("backing off after a 429")
+                raise ProviderUnavailable("backing off after a rate limit")
             return None
         try:
             return await self._do_infer(
@@ -5106,10 +5925,11 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         except aiohttp.ClientResponseError as e:
             if raise_http_errors:
                 raise
-            if e.status == 429:
+            if e.status == 429 and not spend.quota_refusal(e.status, _error_body_of(e)):
                 retry_after = self._retry_after_seconds(e)
+                # mark_exhausted logs the one WARNING for this 429.
                 self.rate_limiter.mark_exhausted(retry_after)
-                logger.warning(
+                logger.info(
                     f"{type(self).__name__}._infer: 429 from {self.PROVIDER_LABEL} "
                     f"for {self.model}, backing off for {retry_after}s"
                 )
@@ -5118,18 +5938,32 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                         f"HTTP 429, backing off {retry_after}s"
                     ) from e
                 return None
-            if _http_status_is_expected(e.status):
+            if _http_status_is_expected(e.status) or spend.quota_refusal(
+                e.status, _error_body_of(e)
+            ):
                 # Quota/auth/billing conditions are operational, not bugs:
-                # degrade to the next backend with a concise warning rather
-                # than raising a scary error up the generation path.
-                logger.warning(
-                    f"{self}: skipping backend -- {self.api_base} returned "
-                    f"HTTP {e.status} ({e.message}); check quota/billing/API key."
-                )
+                # degrade to the next backend rather than raising a scary
+                # error up the generation path. A credit refusal is one
+                # whatever its status (Anthropic answers an empty balance
+                # with a 400), and the transport has paused the provider.
+                _log_account_refusal(self, e)
                 if raise_on_unavailable:
                     raise ProviderUnavailable(f"HTTP {e.status}") from e
                 return None
-            raise
+            if raise_on_unavailable:
+                # The shared transport raises this for any HTTP error, so the
+                # same failure reads the same whichever provider answered.
+                raise ProviderUnavailable(describe_model_error(e)) from e
+            # And a caller that did not ask to raise gets None, as from the
+            # shared transport (RemoteOpenLike._infer), so it moves on to the
+            # next model instead of counting a provider's 5xx as a bug. The
+            # transport already logged the status with a body preview and
+            # struck the pair.
+            logger.debug(
+                f"{type(self).__name__}._infer: {self.model} failed -- "
+                f"{describe_model_error(e)}"
+            )
+            return None
         except ProviderUnavailable:
             if raise_on_unavailable:
                 raise
@@ -5141,9 +5975,16 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                 # transport (the Messages API) lands here, not in
                 # RemoteOpenLike.__infer.
                 raise ProviderUnavailable(described) from e
-            logger.warning(
-                f"{type(self).__name__}._infer: {self.model} failed -- {described}"
+            # Once an outage has cooled the pair down, its cooldown warnings
+            # say it is still going; a line per failed connect adds nothing
+            # (as in __infer).
+            log = (
+                logger.debug
+                if isinstance(e, MODEL_TRANSPORT_ERRORS)
+                and self._transport_recools.get((self.api_base, self.model))
+                else logger.warning
             )
+            log(f"{type(self).__name__}._infer: {self.model} failed -- {described}")
             # Backends that override the transport (RemoteAzureClaude speaks
             # the native Messages API, not /chat/completions) never reach
             # RemoteOpenLike.__infer, so their connection failures land here
@@ -5238,6 +6079,7 @@ class RemoteAnthropic(RateLimitedRemoteOpenLike):
     _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
     _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
     PROVIDER_LABEL: ClassVar[str] = "Anthropic"
+    SPEND_PROVIDER: ClassVar[Optional[str]] = spend.ANTHROPIC
 
     def __init__(self, model: str, dual_mode: bool = False):
         """
@@ -5319,9 +6161,8 @@ class RemoteAnthropic(RateLimitedRemoteOpenLike):
             return []
         return cls.model_catalog()
 
-    def model_is_ok(self) -> bool:
-        """
-        Check if the model is available (API key set and not rate limited).
+    def _configured_and_not_limited(self) -> bool:
+        """API key set and not rate limited.
 
         Note: We don't query the /models endpoint because Anthropic's
         OpenAI-compatibility layer historically has limited support for it,
@@ -5405,10 +6246,22 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
     @classmethod
     def _configured_deployments(cls) -> List[Tuple[str, int, str]]:
         """(deployment, cost, tier) list, honoring the optional ``MODELS_ENV``
-        override (overrides inherit incrementing costs and a ``custom`` tier)."""
+        override.
+
+        A deployment the override names that is also in ``DEFAULT_MODELS``
+        keeps its default cost and tier; only a name the table does not know
+        gets an incrementing cost and the ``custom`` tier. Every override
+        used to be ``custom`` (quality 88), so listing the sponsored frontier
+        deployment, which the comments above DEFAULT_MODELS tell operators
+        to do, demoted it below DeepInfra in the external fan-out and put the
+        paid provider first. Repeated names are dropped: two descriptions of
+        one deployment registered two instances and doubled its calls.
+        """
         override = get_env_variable(cls.MODELS_ENV) if cls.MODELS_ENV else None
         if override and override.strip():
-            names = [n.strip() for n in override.split(",") if n.strip()]
+            names = list(
+                dict.fromkeys(n.strip() for n in override.split(",") if n.strip())
+            )
             if not names:
                 # e.g. AZURE_*_MODELS="," — separators only, no real names.
                 # Fall back to defaults rather than silently disabling the
@@ -5420,7 +6273,15 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
                 )
                 return list(cls.DEFAULT_MODELS)
             base_cost = cls.DEFAULT_MODELS[0][1] if cls.DEFAULT_MODELS else 60
-            return [(n, base_cost + i * 10, "custom") for i, n in enumerate(names)]
+            known = {
+                deployment: (cost, tier)
+                for deployment, cost, tier in cls.DEFAULT_MODELS
+            }
+            configured: List[Tuple[str, int, str]] = []
+            for i, name in enumerate(names):
+                cost, tier = known.get(name, (base_cost + i * 10, "custom"))
+                configured.append((name, cost, tier))
+            return configured
         return list(cls.DEFAULT_MODELS)
 
     @property
@@ -5481,9 +6342,9 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
             return []
         return cls.model_catalog()
 
-    def model_is_ok(self) -> bool:
-        """Available if env is configured and not rate limited. (No ``/models``
-        query — Azure's compat-layer support varies; fail fast on inference.)"""
+    def _configured_and_not_limited(self) -> bool:
+        """Env configured and not rate limited. (No ``/models`` query —
+        Azure's compat-layer support varies; fail fast on inference.)"""
         if self.API_KEY_ENV and not get_env_variable(self.API_KEY_ENV):
             return False
         if self.ENDPOINT_ENV and not get_env_variable(self.ENDPOINT_ENV):
@@ -5549,6 +6410,9 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
     MODELS_ENV: ClassVar[str] = "AZURE_ANTHROPIC_MODELS"
     NAME_PREFIX: ClassVar[str] = "azure-anthropic"
     PROVIDER_LABEL: ClassVar[str] = "Azure AI Foundry (Claude)"
+    # Its own: a Claude credit refusal must not pause the sponsored Azure
+    # OpenAI deployments.
+    SPEND_PROVIDER: ClassVar[Optional[str]] = spend.AZURE_ANTHROPIC
     ENDPOINT_EXAMPLE: ClassVar[str] = (
         "https://my-resource.services.ai.azure.com/anthropic"
     )
@@ -5589,10 +6453,18 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         endpoint with or without a trailing ``/v1/messages``, and appends the
         ``/anthropic`` segment when only the bare resource host was supplied."""
         e = endpoint.strip().rstrip("/")
-        suffix = "/v1/messages"
-        if e.endswith(suffix):
-            e = e[: -len(suffix)].rstrip("/")
-        if not e.endswith("/anthropic"):
+        lowered = e.lower()
+        # A pasted target URI, or the sibling provider's ``/chat/completions``
+        # form, is trimmed back to the base; so is a ``…/anthropic/v1`` base,
+        # the natural analogue of the ``/openai/v1`` the README gives for
+        # Azure OpenAI. Each used to have ``/anthropic`` appended, doubling
+        # the path so every call 404ed while the config-only liveness check
+        # kept the deployment selected.
+        for suffix in ("/v1/messages", "/chat/completions", "/v1"):
+            if lowered.endswith(suffix):
+                e = e[: -len(suffix)].rstrip("/")
+                lowered = e.lower()
+        if not lowered.endswith("/anthropic"):
             e = f"{e}/anthropic"
         return e
 
@@ -5608,9 +6480,10 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         temperature: float = 0.7,
         raise_http_errors: bool = False,
         timeout: Optional[float] = None,
-        # Accepted for the shared signature. This provider speaks the
-        # Messages API and raises its HTTP errors; what it swallows into
-        # None it still swallows.
+        # HTTP and transport errors propagate to _infer, which converts
+        # them. The calls this transport never makes or never hears back
+        # from (a missing-model or cooldown skip, a timeout) raise
+        # ProviderUnavailable here when asked, as the shared transport's do.
         raise_on_unavailable: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Inference via the Anthropic Messages API exposed by Azure AI Foundry.
@@ -5619,13 +6492,29 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         error statuses raise ``aiohttp.ClientResponseError`` (so the caller's
         429 back-off applies); transport/parse failures return ``None``.
 
-        ``raise_http_errors`` is accepted for signature compatibility with the
-        base ``_do_infer`` but needs no handling here: this transport already
-        raises ``ClientResponseError`` on every HTTP error status, which is
-        exactly what the probe wants surfaced.
+        ``raise_http_errors`` marks a probe: it bypasses the skips below, and
+        an HTTP error status, a retired deployment's included, reaches it as
+        ``ClientResponseError`` rather than None, so it reports the real cause.
         """
         if prompt is None:
             logger.debug("No prompt supplied; skipping inference")
+            return None
+        # The same skips as the shared transport. The router trusts this
+        # backend's in-memory signal over the sweep, so without them a dead
+        # or misdeployed Foundry endpoint kept its fan-out slot until the
+        # process restarted. Probes bypass them so they report reality. A
+        # skipped call is counted the way the shared transport counts one,
+        # and entity extraction, which asks for raise_on_unavailable, must
+        # not read it as a model that answered and found nothing.
+        skip = (
+            None if raise_http_errors else self._local_skip(self.api_base, self.model)
+        )
+        if skip is not None:
+            reason, why = skip
+            logger.debug(f"{self}: skipping {self.model} at {self.api_base} -- {why}")
+            self._count_skipped_call(reason)
+            if raise_on_unavailable:
+                raise ProviderUnavailable(f"{self.model}: {why}")
             return None
         # The native Anthropic Messages API caps temperature at 1.0 (vs the
         # OpenAI surface's 2.0); clamp so a shared router temperature that's
@@ -5639,6 +6528,9 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             prompt=prompt,
         )
         url = f"{self.api_base}/v1/messages"
+        # Filled in by _messages_post for an attempt that got no answer in
+        # time, so a caller that asked for it gets ProviderUnavailable.
+        transport_failures: List[str] = []
         headers = {
             "x-api-key": self.token or "",
             "anthropic-version": self.ANTHROPIC_VERSION,
@@ -5687,7 +6579,12 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             started = time.monotonic()
             try:
                 result = await self._messages_request(
-                    url, headers, body, timeout=attempt_timeout
+                    url,
+                    headers,
+                    body,
+                    timeout=attempt_timeout,
+                    note_failures=not raise_http_errors,
+                    transport_failures=transport_failures,
                 )
             except aiohttp.ClientResponseError as e:
                 if send_temperature and _http_error_indicates_unsupported_temperature(
@@ -5719,12 +6616,23 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                             )
                             return None
                     result = await self._messages_request(
-                        url, headers, body, timeout=retry_timeout
+                        url,
+                        headers,
+                        body,
+                        timeout=retry_timeout,
+                        note_failures=not raise_http_errors,
+                        transport_failures=transport_failures,
                     )
                 else:
                     raise
             if result and result[0]:
                 return result
+            if self._local_skip(self.api_base, self.model) is not None:
+                # Filed as gone or refused by this attempt: the remaining
+                # system prompts would only be refused the same way.
+                break
+        if raise_on_unavailable and transport_failures:
+            raise _unavailable_from(transport_failures)
         return None
 
     async def _messages_request(
@@ -5733,12 +6641,97 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         headers: dict,
         body: dict,
         timeout: Optional[float] = None,
+        note_failures: bool = True,
+        transport_failures: Optional[List[str]] = None,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """POST a single Messages API request (honoring ``timeout`` /
         ``self._timeout``) and parse the response. ``raise_for_status``
         surfaces HTTP errors as ``aiohttp.ClientResponseError`` so 429s reach
-        the shared back-off."""
+        the shared back-off.
+
+        Keeps the shared transport's bookkeeping too: a transport-failure
+        strike (``note_failures``, off for probes) and the refusals of
+        ``_note_http_refusal`` (a retired model, a refused key, a credit
+        refusal). Without them the provider never entered a cooldown. A
+        retired model or a prompt too long for the context window returns
+        None, as on the shared transport, except to a probe.
+        ``_messages_post`` records the call metrics.
+        """
         effective_timeout = timeout if timeout is not None else self._timeout
+        try:
+            return await self._messages_post(
+                url,
+                headers,
+                body,
+                effective_timeout,
+                transport_failures,
+                note_failures=note_failures,
+            )
+        except aiohttp.ClientResponseError as e:
+            body_text = _error_body_of(e)
+            if _http_error_indicates_unsupported_temperature(e.status, body_text):
+                # _do_infer retries without the field; nothing to file.
+                raise
+            if _http_error_indicates_context_overflow(e.status, body_text):
+                # As on the shared transport (__infer): the prompt outran the
+                # model's context window, a per-request condition rather
+                # than a broken deployment. One WARNING quoting the provider
+                # (it carries the token counts), then None so the caller
+                # moves on; a probe still gets the raw error.
+                logger.warning(
+                    f"{self}: prompt exceeds {self.model}'s context window at "
+                    f"{self.api_base} -- {body_text[:300]}"
+                )
+                if not note_failures:
+                    raise
+                if transport_failures is not None:
+                    # Reached: NoAnswerText to a caller that asked, as on the
+                    # shared transport.
+                    transport_failures.append(
+                        _EmptyAnswerNote(
+                            f"{self.model} via {self.api_base}: prompt exceeds "
+                            f"the context window"
+                        )
+                    )
+                return None
+            filed = self._note_http_refusal(
+                self.api_base, self.model, e.status, body_text, probe=not note_failures
+            )
+            if filed == "missing_model" and note_failures:
+                if transport_failures is not None:
+                    transport_failures.append(f"{self.model}: not served here")
+                return None
+            if not filed and not _http_status_is_expected(e.status):
+                # The shared transport logs the provider's body for an error
+                # it cannot classify; without it a log said only "HTTP 400".
+                logger.warning(
+                    f"HTTP {e.status} error from {self.api_base} for model "
+                    f"{self.model}. Body preview (truncated): {body_text[:2000]}"
+                )
+            raise
+        except MODEL_TRANSPORT_ERRORS as e:
+            if note_failures:
+                self._note_transport_failure(
+                    self.api_base,
+                    self.model,
+                    describe_model_error(e),
+                    connect_failed=_connect_failed(e),
+                )
+            raise
+
+    async def _messages_post(
+        self,
+        url: str,
+        headers: dict,
+        body: dict,
+        effective_timeout: Optional[float],
+        transport_failures: Optional[List[str]] = None,
+        note_failures: bool = True,
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """The request itself and its fhi_ml_* call metrics; None on a
+        timeout, which is added to ``transport_failures`` when given and,
+        unless ``note_failures`` is off (probes), strikes the endpoint as the
+        shared transport would."""
 
         async def _post() -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
             # Same rationale as RemoteOpenLike.__infer: fail fast on
@@ -5748,18 +6741,25 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                 total=effective_timeout,
                 sock_connect=_env_float("FHI_ML_SOCK_CONNECT", 10.0),
             )
+            # As on the shared transport: a call sent while the provider is
+            # paused for credit is a probe, and a 2xx to it lifts the pause.
+            paused_at_send = self._credit_paused()
             async with aiohttp.ClientSession(timeout=client_timeout) as session:
                 async with session.post(url, headers=headers, json=body) as response:
+                    self._note_answered(self.api_base, self.model)
                     response_body = await _read_error_body(response)
                     try:
                         response.raise_for_status()
+                        self._note_served(self.api_base, self.model)
                     except aiohttp.ClientResponseError as e:
                         # Carry the body alongside the reason phrase (never
                         # over it) so _do_infer can classify a rejection.
                         _attach_error_body(e, response_body)
                         raise
                     json_result = await response.json()
-            return self._parse_messages_response(json_result)
+                    if paused_at_send:
+                        self._lift_credit_pause(self.model)
+            return self._parse_messages_response(json_result, transport_failures)
 
         # This transport bypasses RemoteOpenLike.__timeout_infer, so it feeds
         # the fhi_ml_* series itself: without this the priciest external
@@ -5781,11 +6781,32 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                 try:
                     async with async_timeout(effective_timeout):
                         result = await _post()
-                except asyncio.TimeoutError:
+                except asyncio.TimeoutError as e:
+                    if isinstance(e, aiohttp.ClientError):
+                        # aiohttp's ConnectionTimeoutError (sock_connect; no
+                        # read timeout is set): the host was never reached,
+                        # not slow. Handled below and in _messages_request as
+                        # a transport error (transport_error, outcome none, a
+                        # connect_failed strike), as on the shared transport.
+                        raise
                     logger.warning(
                         f"Timed out querying {self} after {effective_timeout:.0f}s"
                     )
                     _count("timeout")
+                    no_answer = (
+                        f"{self.model}: no answer within {effective_timeout:.0f}s"
+                    )
+                    if transport_failures is not None:
+                        transport_failures.append(no_answer)
+                    # For a probe: nothing answered the socket, which is not a
+                    # malformed response (see _PROBE_OBSERVATIONS).
+                    _note_probe_transport_error(no_answer)
+                    # Without a strike, an endpoint that keeps timing out
+                    # never cooled down and every call waited out its budget.
+                    if note_failures:
+                        self._note_budget_timeout(
+                            self.api_base, self.model, effective_timeout
+                        )
                     return None
             else:
                 result = await _post()
@@ -5796,15 +6817,27 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             record_ml_failure(metric_model, "bad_body", leg=leg, endpoint=endpoint)
             _count("error")
             raise
-        except aiohttp.ClientResponseError:
-            record_ml_failure(metric_model, "http_error", leg=leg, endpoint=endpoint)
+        except aiohttp.ClientResponseError as e:
+            # Filed under "missing_model" when the deployment is gone and
+            # "context_overflow" when the prompt is too long, as the shared
+            # transport files them, so neither is hidden among bad requests.
+            error_body = _error_body_of(e)
+            if _http_error_indicates_retired_model(e.status, error_body):
+                reason = "missing_model"
+            elif _http_error_indicates_context_overflow(e.status, error_body):
+                reason = "context_overflow"
+            else:
+                reason = "http_error"
+            record_ml_failure(metric_model, reason, leg=leg, endpoint=endpoint)
             _count("error")
             raise
         except MODEL_TRANSPORT_ERRORS:
             record_ml_failure(
                 metric_model, "transport_error", leg=leg, endpoint=endpoint
             )
-            _count("error")
+            # "none", as the shared transport counts a call that could not
+            # reach its endpoint (__infer returns None for it).
+            _count("none")
             raise
         except Exception:
             record_ml_failure(
@@ -5816,11 +6849,13 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         return result
 
     def _parse_messages_response(
-        self, json_result: dict
+        self, json_result: dict, transport_failures: Optional[List[str]] = None
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Extract text from a Messages API response by concatenating its
         ``text`` content blocks, then apply the same validity check and
-        reasoning-answer extraction as the OpenAI path."""
+        reasoning-answer extraction as the OpenAI path. A 2xx with no text is
+        logged, counted and noted in ``transport_failures`` as the shared
+        transport does it."""
         blocks = json_result.get("content") or []
         if json_result.get("stop_reason") == "max_tokens":
             # The letter is cut off mid-sentence but still reads as valid text,
@@ -5832,12 +6867,37 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                 f"budget; the response is truncated."
             )
         text = "".join(
-            block.get("text", "")
+            block["text"]
             for block in blocks
-            if isinstance(block, dict) and block.get("type") == "text"
+            if isinstance(block, dict)
+            and block.get("type") == "text"
+            and isinstance(block.get("text"), str)
         )
-        if not text:
-            logger.debug(f"Messages response from {self.model} had no text content")
+        if not text.strip():
+            # A provider-side failure worth seeing, as on the shared
+            # transport: at DEBUG, a deployment that answered every call
+            # empty was asked on every call, silently. Whitespace is no text
+            # here too, as it is on the shared transport.
+            logger.warning(
+                f"{self}: {self.model} via {self.api_base} returned no text "
+                f"content (stop_reason={json_result.get('stop_reason')!r})"
+            )
+            # Content blocks with no text in them answered nothing; a body
+            # with no content list is not in Messages format at all (as a
+            # body with no "choices" is on the shared transport).
+            answered = isinstance(json_result.get("content"), list)
+            metric_model, leg, endpoint = self._metric_identity(self.api_base)
+            record_ml_failure(
+                metric_model,
+                "no_text" if answered else "bad_body",
+                leg=leg,
+                endpoint=endpoint,
+            )
+            if transport_failures is not None:
+                note = f"{self.model} via {self.api_base}: " + (
+                    "no text" if answered else "no content"
+                )
+                transport_failures.append(_EmptyAnswerNote(note) if answered else note)
             return None
         if not LLMResponseUtils.is_valid_text(text):
             logger.error(f"Received non-text response from {self.model}")

@@ -16,7 +16,9 @@ own system prompt and point of view, since the letter is from the
 patient unless the denial is being finished by a professional.
 """
 
+import asyncio
 import datetime
+import time
 from typing import Any, Optional
 
 from loguru import logger
@@ -28,7 +30,22 @@ from fighthealthinsurance.escalation_addresses import (
     EscalationRecipient,
 )
 from fighthealthinsurance.context_utils import truncate_at_boundary
+from fighthealthinsurance.env_utils import get_env_variable
+from fighthealthinsurance.ml.ml_models import RemoteModelLike, attempt_deadline
 from fighthealthinsurance.ml.ml_router import ml_router
+
+# How many distinct models one letter may ask: ours first, then (only when
+# the user allows outside models) one outside model as a last resort.
+MAX_INTERNAL_ATTEMPTS = 3
+MAX_EXTERNAL_ATTEMPTS = 1
+# One budget for the whole letter, shared out so each model still asked gets
+# its turn: a slow first model used to hold the letter for its whole 300s
+# timeout, and cutting the letter off at one deadline would instead give up
+# before asking the others. Each call is bounded by its share (the attempt
+# deadline clamps the model's own timeout); the grace is a backstop for a
+# backend that does not honour it.
+LETTER_BUDGET_SECONDS = 300.0
+LETTER_GRACE_SECONDS = 10.0
 
 # System prompt for this path. The prior-auth one it used to inherit
 # ("helping a healthcare professional") pushed every letter toward the
@@ -239,6 +256,79 @@ explanation, no markdown headings.
     return prompt
 
 
+def _letter_backends(use_external: bool) -> list[RemoteModelLike]:
+    """The models to ask for a letter, in order: up to MAX_INTERNAL_ATTEMPTS
+    distinct models of ours, then, only with ``use_external``, up to
+    MAX_EXTERNAL_ATTEMPTS outside ones.
+
+    get_chat_backends is the chat fan-out's list (the lead twice, the outside
+    models, then our others), so taking its first three asked the lead twice
+    and one outside model and never reached our other models: a dead outside
+    model (out of credit, retired) then failed the letter while a healthy
+    model of ours sat further down the list.
+
+    Ours come from that list asked without outside models, and the outside
+    one is chosen by _letter_outside_models: asking the chat list for its
+    outside models judged them by chat's budget and spent chat's hourly
+    "every outside chat model is down" warning, though a letter is not chat.
+    A FORCE_MODEL naming an outside model still picks it, as for chat.
+
+    The outside model is chosen first, because it decides whether ours fail
+    open. With one that can answer, ours marked down are left out, as they
+    are for chat: a dead model of ours ahead of it would hold the letter for
+    its whole share of the budget, and log the router's fail-open ERROR.
+    Without one (or without ``use_external``), ours are the letter's only
+    answerers and fail open as before.
+    """
+    outside_ids = {id(m) for m in ml_router.external_models_by_cost}
+    outside_ids.update(id(m) for m in ml_router.chat_outside_models_by_name.values())
+    seen: set[int] = set()
+    internal: list[RemoteModelLike] = []
+    external: list[RemoteModelLike] = []
+    forced = use_external and bool(get_env_variable("FORCE_MODEL"))
+    # _letter_outside_models only returns models that can answer, so a
+    # non-empty list means ours need not fail open.
+    outside = _letter_outside_models() if use_external else []
+    for model in ml_router.get_chat_backends(
+        use_external=forced, fail_open=not outside
+    ):
+        if id(model) in seen:
+            continue
+        seen.add(id(model))
+        if id(model) in outside_ids or getattr(model, "external", False) is True:
+            external.append(model)
+        else:
+            internal.append(model)
+    chosen = internal[:MAX_INTERNAL_ATTEMPTS]
+    if use_external:
+        chosen += (external or outside)[:MAX_EXTERNAL_ATTEMPTS]
+    return chosen
+
+
+def _letter_outside_models() -> list[RemoteModelLike]:
+    """The outside models a letter may ask, first choice first: chat's
+    roster as it stands, else the best hosted models.
+
+    The roster can be empty for reasons that are chat's alone: its
+    provider's chat budget is spent, or every roster model is down while
+    ours are up. A letter spends under its own use ("other", or "assistant"),
+    and best_external_models judges each provider's spend for that use, so a
+    healthy hosted model still gets the letter's last attempt. The roster is
+    read with fail_open=False, so it never fails open onto a model known to
+    be down (the hosted models are the fallback here) and never sets off
+    chat's hourly warning.
+    """
+    roster: list[RemoteModelLike] = ml_router.chat_outside_models(
+        limit=MAX_EXTERNAL_ATTEMPTS, fail_open=False
+    )
+    if roster:
+        return roster
+    best: list[RemoteModelLike] = ml_router.best_external_models(
+        limit=MAX_EXTERNAL_ATTEMPTS
+    )
+    return best
+
+
 async def generate_regulator_letter(
     denial: Any,
     recipient: EscalationRecipient,
@@ -257,19 +347,31 @@ async def generate_regulator_letter(
     """
     professional = _letter_is_from_professional(denial, professional)
     prompt = make_regulator_letter_prompt(denial, recipient, professional=professional)
-    models = ml_router.get_chat_backends(use_external=use_external)
+    models = _letter_backends(use_external)
     if not models:
         logger.warning("No chat backends available for regulator letter generation")
         return None
 
     last_error: Optional[Exception] = None
-    for model in models[:3]:
-        try:
-            text: Optional[str] = await model.generate_prior_auth_response(
-                prompt,
-                system_prompt=REGULATOR_LETTER_SYSTEM_PROMPT,
-                prof_pov=professional,
+    ends_at = time.monotonic() + LETTER_BUDGET_SECONDS
+    for left_to_ask, model in zip(range(len(models), 0, -1), models):
+        share = (ends_at - time.monotonic()) / left_to_ask
+        if share <= 0:
+            logger.warning(
+                f"Regulator letter for recipient {recipient.recipient_type} "
+                f"used its {LETTER_BUDGET_SECONDS:.0f}s budget; giving up"
             )
+            return None
+        try:
+            with attempt_deadline(share):
+                text: Optional[str] = await asyncio.wait_for(
+                    model.generate_prior_auth_response(
+                        prompt,
+                        system_prompt=REGULATOR_LETTER_SYSTEM_PROMPT,
+                        prof_pov=professional,
+                    ),
+                    timeout=share + LETTER_GRACE_SECONDS,
+                )
             if text and len(text.strip()) > 50:
                 return text
         except Exception as e:

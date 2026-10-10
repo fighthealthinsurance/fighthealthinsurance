@@ -16,6 +16,7 @@ import aiohttp
 import pytest
 
 from fighthealthinsurance.ml.ml_models import (
+    ProviderUnavailable,
     RemoteFullOpenLike,
     _error_text_indicates_missing_model,
 )
@@ -92,7 +93,7 @@ class TestMissingModelCooldown:
         # No ERROR-level noise for this operational condition.
         assert cap.messages("ERROR") == []
         # The skip is visible at DEBUG for traceability.
-        assert any("flagged as not served" in m for m in cap.messages("DEBUG"))
+        assert any("not served here" in m for m in cap.messages("DEBUG"))
 
     @pytest.mark.asyncio
     async def test_cooldown_expiry_probes_endpoint_again(
@@ -160,6 +161,21 @@ class TestMissingModelCooldown:
         assert "not served" in warnings[0]
 
     @pytest.mark.asyncio
+    async def test_error_object_in_200_body_raises_provider_unavailable_when_asked(
+        self, monkeypatch, missing_model_200_post
+    ):
+        """As for the HTTP 404: a caller that asked (entity extraction, the
+        appeal path's first try) learns it on the call that found it out,
+        not as a model that answered and found nothing."""
+        model = _model("http://missing.example/v1")
+        monkeypatch.setattr(aiohttp.ClientSession, "post", missing_model_200_post)
+
+        with pytest.raises(ProviderUnavailable, match="not served here"):
+            await model._infer(
+                system_prompts=["sys"], prompt="hi", raise_on_unavailable=True
+            )
+
+    @pytest.mark.asyncio
     async def test_error_object_in_200_body_still_raises_for_probe(
         self, monkeypatch, missing_model_200_post
     ):
@@ -202,3 +218,26 @@ class TestMissingModelCooldown:
                 system_prompts=["sys"], prompt="hi", raise_http_errors=True
             )
         assert fake_post.calls == 2
+
+
+class TestHostedProviderMissingModelBodies:
+    """Azure OpenAI and Anthropic phrase a missing deployment or model without
+    the local servers' wording; both used to miss the cooldown and were
+    re-hit and re-logged on every request."""
+
+    def test_azure_deployment_not_found_matches(self):
+        assert _error_text_indicates_missing_model(
+            '{"error":{"code":"DeploymentNotFound","message":'
+            '"The API deployment for this resource does not exist."}}'
+        )
+
+    def test_anthropic_not_found_error_naming_the_model_matches(self):
+        assert _error_text_indicates_missing_model(
+            '{"type":"error","error":{"type":"not_found_error",'
+            '"message":"model: claude-nope"}}'
+        )
+
+    def test_anthropic_not_found_error_for_a_wrong_path_does_not_match(self):
+        assert not _error_text_indicates_missing_model(
+            '{"type":"error","error":{"type":"not_found_error","message":"Not Found"}}'
+        )

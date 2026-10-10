@@ -255,3 +255,167 @@ class TestMLCitationsHelper:
             diagnosis="totally unmatched diagnosis",
         )
         assert result == []
+
+
+async def _denial_on_the_row(**fields):
+    return await Denial.objects.acreate(
+        hashed_email=Denial.get_hashed_email("empty-citations@example.com"),
+        denial_text="Denied an MRI.",
+        **fields,
+    )
+
+
+async def _column(denial, field):
+    return (
+        await Denial.objects.filter(denial_id=denial.denial_id)
+        .values_list(field, flat=True)
+        .aget()
+    )
+
+
+def _generation(**behaviour):
+    """Stand in for the generation run (the ML backends and CMS lookup)."""
+    return patch.object(
+        MLCitationsHelper,
+        "_generate_citations_for_denial",
+        AsyncMock(**behaviour),
+    )
+
+
+class TestAFinishedEmptyRunIsRecorded:
+    """A run that finished and found nothing stores [] rather than leaving
+    the column at None, so the appeal step's barrier can tell "done, nothing
+    found" (with the citation backend down, every run) from "still running"
+    instead of waiting out its timeout. The store keeps the same guards as a
+    non-empty one, and never replaces citations another run stored."""
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_empty_run_stores_an_empty_list(self):
+        denial = await _denial_on_the_row()
+        with _generation(return_value=[]):
+            await MLCitationsHelper.generate_citations_for_denial(
+                denial=denial, speculative=False
+            )
+        assert await _column(denial, "ml_citation_context") == []
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_empty_speculative_run_stores_an_empty_candidate_list(self):
+        denial = await _denial_on_the_row()
+        with _generation(return_value=[]):
+            await MLCitationsHelper.generate_citations_for_denial(
+                denial=denial, speculative=True
+            )
+        assert await _column(denial, "candidate_ml_citation_context") == []
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_empty_run_keeps_citations_another_run_stored(self):
+        denial = await _denial_on_the_row()
+        await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+            ml_citation_context=["Stored by another run"]
+        )
+        with _generation(return_value=[]):
+            await MLCitationsHelper.generate_citations_for_denial(
+                denial=denial, speculative=False
+            )
+        assert await _column(denial, "ml_citation_context") == ["Stored by another run"]
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_empty_run_for_a_replaced_letter_stores_nothing(self):
+        denial = await _denial_on_the_row()
+        await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+            denial_text="A different letter."
+        )
+        with _generation(return_value=[]):
+            await MLCitationsHelper.generate_citations_for_denial(
+                denial=denial, speculative=False
+            )
+        assert await _column(denial, "ml_citation_context") is None
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_empty_run_after_consent_was_withdrawn_stores_nothing(self):
+        denial = await _denial_on_the_row(
+            health_history="Tried two preventives.", health_history_consent=True
+        )
+
+        async def _uses_history_then_refused(denial, timeout, used_history_sink):
+            used_history_sink["used"] = True
+            await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                health_history_consent=False
+            )
+            return []
+
+        with _generation(side_effect=_uses_history_then_refused):
+            await MLCitationsHelper.generate_citations_for_denial(
+                denial=denial, speculative=False
+            )
+        assert await _column(denial, "ml_citation_context") is None
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_run_that_raised_stores_nothing(self):
+        denial = await _denial_on_the_row()
+        with _generation(side_effect=RuntimeError("backend down")):
+            await MLCitationsHelper.generate_citations_for_denial(
+                denial=denial, speculative=False
+            )
+        assert await _column(denial, "ml_citation_context") is None
+
+
+class TestAFinishedEmptyRunIsTheAnswer:
+    """A stored [] is a finished run that found nothing, so the next call
+    hands it back rather than generating again. The appeal step's barrier
+    releases on that [] and then calls the helper; going again there cost
+    the appeal a second full run, which with the backend down found nothing
+    again. A speculative [] counts only while it was found for the live
+    procedure and diagnosis, like a non-empty one."""
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_stored_empty_list_is_returned_without_generating(self):
+        denial = await _denial_on_the_row(ml_citation_context=[])
+        with _generation(return_value=["Generated again"]) as generation:
+            result = await MLCitationsHelper.generate_citations_for_denial(
+                denial=denial, speculative=False
+            )
+        assert (result, generation.await_count) == ([], 0)
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_empty_candidate_list_for_the_same_details_is_used_without_generating(
+        self,
+    ):
+        denial = await _denial_on_the_row(
+            procedure="MRI",
+            diagnosis="Migraine",
+            candidate_procedure="MRI",
+            candidate_diagnosis="Migraine",
+            candidate_ml_citation_context=[],
+        )
+        with _generation(return_value=["Generated again"]) as generation:
+            result = await MLCitationsHelper.generate_citations_for_denial(
+                denial=denial, speculative=False
+            )
+        assert (result, generation.await_count) == ([], 0)
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_empty_candidate_list_for_another_procedure_is_generated_again(
+        self,
+    ):
+        denial = await _denial_on_the_row(
+            procedure="Knee MRI",
+            diagnosis="Migraine",
+            candidate_procedure="MRI",
+            candidate_diagnosis="Migraine",
+            candidate_ml_citation_context=[],
+        )
+        with _generation(return_value=["Cited for the knee MRI"]) as generation:
+            result = await MLCitationsHelper.generate_citations_for_denial(
+                denial=denial, speculative=False
+            )
+        assert (result, generation.await_count) == (["Cited for the knee MRI"], 1)

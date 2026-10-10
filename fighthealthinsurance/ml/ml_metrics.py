@@ -29,6 +29,7 @@ from typing import (
     Coroutine,
     Iterable,
     Iterator,
+    Optional,
     ParamSpec,
     TypeVar,
 )
@@ -65,11 +66,12 @@ ML_CALLS_TOTAL = Counter(
 # Failure *reasons* observed inside the transport layer. Deliberately a
 # separate counter from ML_CALLS_TOTAL: a failed call shows up once there
 # (outcome=none/timeout/error) and once here with its classified reason
-# (transport_error, http_error, bad_body, context_overflow, missing_model,
-# skipped_missing_model, skipped_cooling, unexpected_error). The two skips are
-# calls not made because the pair failed moments ago; counting them as plain
-# outcome=none would let the failure rate fall during the very outage that
-# started the cooldown.
+# (transport_error, http_error, bad_body, no_text, context_overflow, missing_model,
+# skipped_missing_model, skipped_refused, skipped_budget, skipped_cooling,
+# skipped_rate_limited, unexpected_error). The skips are calls not made
+# because the pair failed moments ago (or its provider's budget is spent, or
+# it is backing off after a 429); counting them as plain outcome=none would
+# let the failure rate fall during the very outage that started the cooldown.
 ML_CALL_FAILURES_TOTAL = Counter(
     "fhi_ml_call_failures_total",
     "Classified model call failures (transport, http, bad body...).",
@@ -89,16 +91,20 @@ ML_CALL_SECONDS = Histogram(
 # runt or runaway repetition read as 100% ok there while every draft it
 # produced was rejected and filed as a no_output attempt, so the failure
 # rate the call series exists to alert on never moved. Results: accepted;
-# rejected_bad_result (a refusal / severe repetition / runt, after the one
-# retry); no_completion (nothing came back to judge -- an outage, which the
-# call series already classifies, not a content rejection); error (the
-# inference raised); rejected_repetition (the cleaners removed everything);
-# skipped_deadline (the requester's budget had passed).
+# rejected_bad_result (a refusal / severe repetition / runt on either try,
+# and nothing usable after the one retry); no_completion (the model was
+# reached -- one of its endpoints answered, on at least one try -- and gave
+# nothing to judge, not a content rejection); error (the inference raised);
+# rejected_repetition (the cleaners removed everything); skipped_deadline
+# (never asked: too little of the requester's or the attempt's budget was
+# left for a letter to fit, MIN_RETRY_WINDOW_SECONDS); unavailable (not
+# asked because it is known gone, refused, out of credit or cooling, or not
+# reached on either try, or on the only try there was time for).
 ML_RESULTS_TOTAL = Counter(
     "fhi_ml_results_total",
     "Checked appeal inferences by what became of the completion (accepted, "
     "rejected_bad_result, no_completion, error, rejected_repetition, "
-    "skipped_deadline).",
+    "skipped_deadline, unavailable).",
     labelnames=("model", "infer_type", "result"),
 )
 _RESULTS = frozenset(
@@ -109,6 +115,7 @@ _RESULTS = frozenset(
         "error",
         "rejected_repetition",
         "skipped_deadline",
+        "unavailable",
     }
 )
 
@@ -193,6 +200,33 @@ def ml_call_purpose(purpose: str) -> Iterator[None]:
         ML_CALL_PURPOSE.reset(token)
 
 
+# A purpose for the metric labels only, which the labelled entry points
+# awaited inside cannot replace: generate_chat_response sets "chat" for its
+# own calls, so the chooser's synthetic chat candidates were counted as
+# failing user chat turns. ML_CALL_PURPOSE is left as the entry point set
+# it, so spend.current_use still charges (and caps) those calls by it.
+ML_CALL_PURPOSE_OVERRIDE: contextvars.ContextVar[Optional[str]] = (
+    contextvars.ContextVar("fhi_ml_call_purpose_override", default=None)
+)
+
+
+@contextlib.contextmanager
+def ml_call_purpose_override(purpose: str) -> Iterator[None]:
+    """Label every model call made inside this block ``purpose`` in the
+    metrics, whatever purpose the entry points it goes through set."""
+    token = ML_CALL_PURPOSE_OVERRIDE.set(_purpose_label(purpose))
+    try:
+        yield
+    finally:
+        ML_CALL_PURPOSE_OVERRIDE.reset(token)
+
+
+def _metric_purpose() -> str:
+    """The purpose label for a call recorded now (see ML_CALL_PURPOSE_OVERRIDE)."""
+    override = ML_CALL_PURPOSE_OVERRIDE.get()
+    return override if override is not None else ML_CALL_PURPOSE.get()
+
+
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
 
@@ -226,13 +260,13 @@ def record_ml_call(
     """Record one completed model call. ``model`` is the registry name when the
     router stamped one and ``endpoint`` the host[:port] it went to
     (RemoteModelLike._metric_identity), ``leg`` the side of a primary/backup
-    pair; the purpose comes from the ML_CALL_PURPOSE in scope. Never
-    raises."""
+    pair; the purpose comes from the ML_CALL_PURPOSE in scope (or its
+    override, see ML_CALL_PURPOSE_OVERRIDE). Never raises."""
     try:
         name = _safe_label(model)
         where = _safe_label(endpoint)
         leg = _leg_label(leg)
-        purpose = ML_CALL_PURPOSE.get()
+        purpose = _metric_purpose()
         ML_CALLS_TOTAL.labels(
             model=name, endpoint=where, leg=leg, purpose=purpose, outcome=outcome
         ).inc()
@@ -252,7 +286,7 @@ def record_ml_failure(
             model=_safe_label(model),
             endpoint=_safe_label(endpoint),
             leg=_leg_label(leg),
-            purpose=ML_CALL_PURPOSE.get(),
+            purpose=_metric_purpose(),
             reason=reason,
         ).inc()
     except Exception:  # pragma: no cover

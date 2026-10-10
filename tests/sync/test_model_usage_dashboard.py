@@ -5,10 +5,12 @@ import json
 import re
 from types import SimpleNamespace
 from unittest import mock
+from zoneinfo import ZoneInfo
 
+from dateutil.relativedelta import relativedelta
 from django.contrib.auth import get_user_model
 from django.db import connection
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
@@ -34,11 +36,14 @@ from fighthealthinsurance.models import (
     OngoingChat,
     ProposedAppeal,
 )
+from fighthealthinsurance.ml import letter_quality
 from fighthealthinsurance.staff_views import (
+    MODEL_USAGE_VIEWS,
     NO_CONTEXT_LEVEL_LABEL,
     SHARED_APPEAL_LABEL,
     TEMPLATE_PICK_LABEL,
     UNKNOWN_MODEL_LABEL,
+    _calendar_windows,
     _merge_stats,
     _model_states,
     ModelUsageDashboardView,
@@ -420,6 +425,13 @@ class ChooserStatsHelperMixin:
             presented_candidate_ids=[c.id for c in presented],
             session_key=session,
         )
+
+    def _vote_at(self, model_name, when, session):
+        """A one-candidate appeal vote for ``model_name``, cast at ``when``."""
+        task = self._make_task()
+        cand = self._make_candidate(task, 0, model_name)
+        vote = self._vote(task, cand, [cand], session=session)
+        ChooserVote.objects.filter(pk=vote.pk).update(created_at=when)
 
 
 class ModelUsageDashboardNormalizationTest(ChooserStatsHelperMixin, TestCase):
@@ -880,6 +892,454 @@ class DraftQualityColumnsTest(TestCase):
         self.assertEqual(rows[0]["quality_scored"], 0)
 
 
+def _utc(*args):
+    return datetime.datetime(*args, tzinfo=datetime.timezone.utc)
+
+
+class CalendarWindowsTest(SimpleTestCase):
+    """The period arithmetic behind the monthly and quarterly views."""
+
+    NOW = _utc(2026, 2, 10, 12)
+
+    def test_months_run_newest_first_across_a_year_boundary(self):
+        windows = _calendar_windows("monthly", self.NOW, _utc(2025, 11, 3), 12)
+        self.assertEqual(
+            [w[0] for w in windows],
+            ["m-2026-02", "m-2026-01", "m-2025-12", "m-2025-11"],
+        )
+
+    def test_the_current_month_is_labelled_to_date(self):
+        windows = _calendar_windows("monthly", self.NOW, _utc(2025, 11, 3), 12)
+        self.assertEqual(
+            [w[1] for w in windows[:2]], ["February 2026 (to date)", "January 2026"]
+        )
+
+    def test_a_month_runs_from_its_first_midnight_to_the_next(self):
+        windows = _calendar_windows("monthly", self.NOW, _utc(2025, 11, 3), 12)
+        december = {w[0]: w for w in windows}["m-2025-12"]
+        self.assertEqual(december[2:], (_utc(2025, 12, 1), _utc(2026, 1, 1)))
+
+    def test_quarters_run_newest_first_across_a_year_boundary(self):
+        windows = _calendar_windows("quarterly", self.NOW, _utc(2025, 5, 20), 8)
+        self.assertEqual(
+            [w[0] for w in windows],
+            ["q-2026-1", "q-2025-4", "q-2025-3", "q-2025-2"],
+        )
+
+    def test_quarter_labels_name_their_months(self):
+        windows = _calendar_windows("quarterly", self.NOW, _utc(2025, 5, 20), 8)
+        self.assertEqual(
+            [w[1] for w in windows[:2]],
+            ["2026 Q1 (Jan\u2013Mar, to date)", "2025 Q4 (Oct\u2013Dec)"],
+        )
+
+    def test_a_quarter_runs_from_its_first_midnight_to_the_next(self):
+        windows = _calendar_windows("quarterly", self.NOW, _utc(2025, 5, 20), 8)
+        self.assertEqual(windows[1][2:], (_utc(2025, 10, 1), _utc(2026, 1, 1)))
+
+    def test_the_current_period_ends_now(self):
+        """A period labelled "to date" ends now, not at the boundary ahead."""
+        windows = _calendar_windows("quarterly", self.NOW, _utc(2025, 5, 20), 8)
+        self.assertEqual(windows[0][2:], (_utc(2026, 1, 1), self.NOW))
+
+    def test_the_view_is_capped_at_max_periods(self):
+        windows = _calendar_windows("monthly", self.NOW, _utc(2020, 1, 1), 12)
+        self.assertEqual(len(windows), 12)
+
+    def test_with_nothing_stored_only_the_current_period_is_listed(self):
+        windows = _calendar_windows("quarterly", self.NOW, None, 8)
+        self.assertEqual([w[0] for w in windows], ["q-2026-1"])
+
+    def test_a_future_earliest_still_lists_the_current_period(self):
+        windows = _calendar_windows("monthly", self.NOW, _utc(2026, 5, 1), 12)
+        self.assertEqual([w[0] for w in windows], ["m-2026-02"])
+
+    def test_boundaries_follow_the_current_timezone(self):
+        """Late on the last day of February in New York it is already March
+        in UTC; the view must still call it February, starting at a New York
+        midnight, with January between two of them."""
+        now = _utc(2026, 3, 1, 3)
+        with timezone.override(ZoneInfo("America/New_York")):
+            windows = _calendar_windows("monthly", now, _utc(2026, 1, 5), 12)
+        self.assertEqual(
+            [(w[0], w[2], w[3]) for w in windows],
+            [
+                ("m-2026-02", _utc(2026, 2, 1, 5), now),
+                ("m-2026-01", _utc(2026, 1, 1, 5), _utc(2026, 2, 1, 5)),
+            ],
+        )
+
+
+class UsageStatsUpperBoundTest(ChooserStatsHelperMixin, TestCase):
+    """A calendar period closes at ``until``: a pick or vote at that instant
+    belongs to the next period, one just before it to this one."""
+
+    SINCE = _utc(2026, 8, 1)
+    UNTIL = _utc(2026, 9, 1)
+    JUST_BEFORE_UNTIL = UNTIL - datetime.timedelta(seconds=1)
+
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            hashed_email="hash",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+
+    def _pick_at(self, model_name, when):
+        pick = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text=f"pick-{model_name}",
+            chosen=True,
+            model_name=model_name,
+            context_level="full",
+        )
+        ProposedAppeal.objects.filter(pk=pick.pk).update(created_at=when)
+
+    def test_chooser_votes_are_bounded_on_both_sides(self):
+        self._vote_at("before", self.SINCE - datetime.timedelta(seconds=1), "s1")
+        self._vote_at("first-instant", self.SINCE, "s2")
+        self._vote_at("last-instant", self.JUST_BEFORE_UNTIL, "s3")
+        self._vote_at("next-period", self.UNTIL, "s4")
+        rows = ModelUsageDashboardView._chooser_stats(
+            "appeal_letter", self.SINCE, self.UNTIL
+        )
+        self.assertEqual(
+            {r["model_name"] for r in rows}, {"first-instant", "last-instant"}
+        )
+
+    def test_denial_flow_picks_stop_at_the_period_end(self):
+        self._pick_at("in-period", self.JUST_BEFORE_UNTIL)
+        self._pick_at("next-period", self.UNTIL)
+        rows = ModelUsageDashboardView._proposed_appeal_stats(self.SINCE, self.UNTIL)
+        self.assertEqual({r["model_name"] for r in rows}, {"in-period"})
+
+    def test_context_levels_stop_at_the_period_end(self):
+        self._pick_at("in-period", self.JUST_BEFORE_UNTIL)
+        self._pick_at("next-period", self.UNTIL)
+        rows = ModelUsageDashboardView._context_level_stats(self.SINCE, self.UNTIL)
+        self.assertEqual(sum(r["chosen"] for r in rows), 1)
+
+    def test_draft_quality_stops_at_the_period_end(self):
+        for name, when in (
+            ("in-period", self.JUST_BEFORE_UNTIL),
+            ("next-period", self.UNTIL),
+        ):
+            draft = ProposedAppeal.objects.create(
+                for_denial=self.denial, appeal_text=f"draft-{name}", model_name=name
+            )
+            ProposedAppeal.objects.filter(pk=draft.pk).update(
+                created_at=when,
+                quality_score=0.5,
+                grounding_score=2.0,
+                quality_scorer=letter_quality.SCORER,
+                quality_scored_at=when,
+            )
+        stats = ModelUsageDashboardView._draft_quality_stats(self.SINCE, self.UNTIL)
+        self.assertEqual(set(stats), {"in-period"})
+
+    def test_call_outcomes_and_medians_stop_at_the_period_end(self):
+        for when, duration_ms in ((self.JUST_BEFORE_UNTIL, 100), (self.UNTIL, 900)):
+            call = ModelCallAttempt.objects.create(
+                for_denial=self.denial,
+                model_name="m1",
+                outcome="ok",
+                stage="primary",
+                run_kind="live",
+                duration_ms=duration_ms,
+            )
+            ModelCallAttempt.objects.filter(pk=call.pk).update(created_at=when)
+        stats = ModelUsageDashboardView._call_attempt_stats(
+            [("aug", self.SINCE, self.UNTIL)]
+        )
+        [row] = stats["aug"]["rows"]
+        self.assertEqual((row["calls"], row["median_ms"]), (1, 100))
+
+    def test_chooser_skips_and_sessions_stop_at_the_period_end(self):
+        self._vote_at("in-period", self.JUST_BEFORE_UNTIL, "s1")
+        self._vote_at("next-period", self.UNTIL, "s2")
+        for session, when in (("s3", self.JUST_BEFORE_UNTIL), ("s4", self.UNTIL)):
+            skip = ChooserSkip.objects.create(task=self._make_task(), session_key=session)
+            ChooserSkip.objects.filter(pk=skip.pk).update(created_at=when)
+        participation = ModelUsageDashboardView._chooser_participation(
+            [("m-2026-08", "August 2026", self.SINCE, self.UNTIL)]
+        )
+        self.assertEqual(participation["m-2026-08"], {"skips": 1, "sessions": 2})
+
+
+class ModelUsageDashboardCalendarViewTest(ChooserStatsHelperMixin, TestCase):
+    """The View dropdown: rolling windows by default, or calendar months or
+    quarters."""
+
+    def setUp(self):
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+
+    def _get(self, view):
+        return self.client.get(reverse("model_usage_dashboard"), {"view": view})
+
+    @staticmethod
+    def _sections(response):
+        return [
+            (w["slug"], {r["model_name"] for r in w["chooser_appeal"]})
+            for w in response.context["windows"]
+        ]
+
+    def test_the_dropdown_offers_every_view(self):
+        response = self.client.get(reverse("model_usage_dashboard"))
+        for value, label in MODEL_USAGE_VIEWS:
+            self.assertContains(response, f'<option value="{value}"')
+
+    def test_the_dropdown_marks_the_selected_view(self):
+        response = self._get("quarterly")
+        self.assertContains(response, '<option value="quarterly" selected>')
+
+    def test_an_unknown_view_falls_back_to_the_rolling_windows(self):
+        response = self._get("weekly")
+        self.assertEqual(
+            [w["slug"] for w in response.context["windows"]],
+            ["global", "1d", "7d", "30d"],
+        )
+
+    def test_the_monthly_view_puts_each_vote_in_its_calendar_month(self):
+        this_month = self._this_month()
+        last_month = this_month - relativedelta(months=1)
+        self._vote_at("this-month", timezone.now(), "s1")
+        self._vote_at("last-month", last_month + datetime.timedelta(days=1), "s2")
+
+        response = self._get("monthly")
+
+        self.assertEqual(
+            self._sections(response),
+            [
+                (f"m-{this_month:%Y-%m}", {"this-month"}),
+                (f"m-{last_month:%Y-%m}", {"last-month"}),
+            ],
+        )
+
+    def test_the_quarterly_view_puts_each_vote_in_its_calendar_quarter(self):
+        now = timezone.localtime()
+        this_quarter = now.replace(
+            month=(now.month - 1) // 3 * 3 + 1,
+            day=1,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        last_quarter = this_quarter - relativedelta(months=3)
+        self._vote_at("this-quarter", timezone.now(), "s1")
+        self._vote_at("last-quarter", last_quarter + datetime.timedelta(days=1), "s2")
+
+        response = self._get("quarterly")
+
+        def slug(start):
+            return f"q-{start.year}-{(start.month - 1) // 3 + 1}"
+
+        self.assertEqual(
+            self._sections(response),
+            [
+                (slug(this_quarter), {"this-quarter"}),
+                (slug(last_quarter), {"last-quarter"}),
+            ],
+        )
+
+    def test_the_current_period_is_labelled_to_date(self):
+        response = self._get("monthly")
+        self.assertTrue(response.context["windows"][0]["label"].endswith("(to date)"))
+
+    def test_the_note_describes_the_calendar_view(self):
+        response = self._get("quarterly")
+        self.assertContains(response, "<strong>Periods</strong> are calendar quarters")
+
+    def test_the_staff_dashboard_link_mentions_the_calendar_views(self):
+        response = self.client.get(reverse("staff_dashboard"))
+        self.assertContains(response, "or all of it by calendar month or quarter")
+
+    @staticmethod
+    def _this_month():
+        return timezone.localtime().replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+
+    def _call_at(self, when, duration_ms=None):
+        denial = Denial.objects.create(
+            hashed_email="hash",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+        call = ModelCallAttempt.objects.create(
+            for_denial=denial,
+            model_name="m1",
+            outcome="ok",
+            stage="primary",
+            run_kind="live",
+            duration_ms=duration_ms,
+        )
+        ModelCallAttempt.objects.filter(pk=call.pk).update(created_at=when)
+
+    def _three_months_with_calls_from_last_month(self):
+        """A monthly view listing this month, last month and the one before
+        (a vote there sets the earliest period), with the first stored call
+        record a day into last month."""
+        this_month = self._this_month()
+        last_month = this_month - relativedelta(months=1)
+        self._vote_at("m", this_month - relativedelta(months=2), "s1")
+        self._call_at(last_month + datetime.timedelta(days=1))
+        self._call_at(timezone.now())
+        return self._get("monthly")
+
+    def test_call_tables_start_at_the_first_stored_call_record(self):
+        response = self._three_months_with_calls_from_last_month()
+        self.assertEqual(
+            [
+                (w["call_attempts"] is not None, w["calls_start"] is not None)
+                for w in response.context["windows"]
+            ],
+            # This month: a whole table. Last month: a table flagged as
+            # starting partway. The month before: no table.
+            [(True, False), (True, True), (False, False)],
+        )
+
+    def test_periods_around_the_first_call_record_say_so(self):
+        response = self._three_months_with_calls_from_last_month()
+        self.assertContains(response, "partway through this period")
+        self.assertContains(
+            response,
+            "Not shown: this period ended before the first stored call record",
+        )
+
+    def _busy_month_after_a_quiet_one(self):
+        """This month holds more ok calls than its share of the duration
+        cap (4 between two periods: 2 each); last month holds one."""
+        this_month = self._this_month()
+        last_month = this_month - relativedelta(months=1)
+        self._vote_at("m", last_month + datetime.timedelta(days=1), "s1")
+        self._call_at(last_month + datetime.timedelta(days=2), duration_ms=900)
+        for seconds_ago, duration_ms in ((1, 100), (2, 200), (3, 300), (4, 400)):
+            self._call_at(
+                timezone.now() - datetime.timedelta(seconds=seconds_ago),
+                duration_ms=duration_ms,
+            )
+        with mock.patch("fighthealthinsurance.staff_views.CALL_DURATION_SAMPLE_CAP", 4):
+            response = self._get("monthly")
+        return response, [w["call_attempts"] for w in response.context["windows"]]
+
+    def test_an_older_period_keeps_its_median_when_a_newer_one_fills_the_cap(
+        self,
+    ):
+        """Periods don't nest: one newest-first read spent the whole cap on
+        the newest period, and the older ones showed no medians at all."""
+        _, (_, last_month) = self._busy_month_after_a_quiet_one()
+        self.assertEqual(last_month["rows"][0]["median_ms"], 900)
+
+    def test_a_period_the_cap_cut_says_so_with_its_own_share(self):
+        response, (this_month, _) = self._busy_month_after_a_quiet_one()
+        # Its two newest calls, 100 and 200 ms.
+        self.assertEqual(this_month["rows"][0]["median_ms"], 150)
+        self.assertContains(
+            response, "Medians here use only the newest 2 OK calls of this period"
+        )
+
+    def test_with_no_call_records_no_period_gets_a_call_table(self):
+        response = self._get("monthly")
+        self.assertIsNone(response.context["windows"][0]["call_attempts"])
+        self.assertContains(response, "Not shown: no call records are stored yet.")
+
+    def _turn_at(self, when):
+        turn = ChatTurn.objects.create(
+            chat=OngoingChat.objects.create(),
+            outcome="ok",
+            use_external=False,
+            backends=["m1"],
+            winner_model="m1",
+        )
+        ChatTurn.objects.filter(pk=turn.pk).update(created_at=when)
+
+    def _three_months_with_turns_from_last_month(self):
+        """As with the call records: this month, last month and the one
+        before, with the first stored chat turn a day into last month."""
+        this_month = self._this_month()
+        last_month = this_month - relativedelta(months=1)
+        self._vote_at("m", this_month - relativedelta(months=2), "s1")
+        self._turn_at(last_month + datetime.timedelta(days=1))
+        self._turn_at(timezone.now())
+        return self._get("monthly")
+
+    def test_live_chat_tables_start_at_the_first_stored_turn(self):
+        response = self._three_months_with_turns_from_last_month()
+        self.assertEqual(
+            [
+                (w["live_chat"] is not None, w["chat_start"] is not None)
+                for w in response.context["windows"]
+            ],
+            [(True, False), (True, True), (False, False)],
+        )
+
+    def test_each_period_counts_only_its_own_chat_turns(self):
+        response = self._three_months_with_turns_from_last_month()
+        self.assertEqual(
+            [
+                w["live_chat"]["summary"]["turns"]
+                for w in response.context["windows"]
+                if w["live_chat"]
+            ],
+            [1, 1],
+        )
+
+    def test_periods_around_the_first_turn_record_say_so(self):
+        response = self._three_months_with_turns_from_last_month()
+        self.assertContains(response, "its chat turns before then are not counted")
+        self.assertContains(
+            response,
+            "Not shown: this period ended before the first stored turn record",
+        )
+
+    def test_the_chat_routing_policy_shows_once_in_the_current_period(self):
+        response = self._three_months_with_turns_from_last_month()
+        self.assertContains(response, 'id="chat-routing-policy"', count=1)
+
+    def _three_months_with_one_month_of_chat_tables(self):
+        with mock.patch.dict(
+            "fighthealthinsurance.staff_views.MODEL_USAGE_CHAT_PERIODS_SHOWN",
+            {"monthly": 1},
+        ):
+            return self._three_months_with_turns_from_last_month()
+
+    def test_live_chat_tables_cover_only_the_newest_periods(self):
+        """Chat turns are read row by row, and every listed period used to
+        be read on each load: up to two years of them."""
+        response = self._three_months_with_one_month_of_chat_tables()
+        self.assertEqual(
+            [
+                (w["live_chat"] is not None, w["chat_cut"])
+                for w in response.context["windows"]
+            ],
+            # This month: a table. Last month: turns stored, but past the
+            # limit. The month before: before the first stored turn.
+            [(True, False), (False, True), (False, False)],
+        )
+
+    def test_a_period_past_the_chat_table_limit_says_so(self):
+        response = self._three_months_with_one_month_of_chat_tables()
+        self.assertContains(
+            response, "Not shown: live chat tables cover only the periods from"
+        )
+
+    def test_calendar_totals_count_only_their_period(self):
+        last_month = self._this_month() - relativedelta(months=1)
+        self._vote_at("a", timezone.now(), "s1")
+        self._vote_at("b", last_month + datetime.timedelta(days=1), "s2")
+        response = self._get("monthly")
+        self.assertEqual(
+            [w["totals"]["chooser_sessions"] for w in response.context["windows"]],
+            [1, 1],
+        )
+
+
 class _StaffDashboardCase(TestCase):
     def setUp(self):
         User.objects.create_user(username="staff", password="pw123", is_staff=True)
@@ -1272,7 +1732,7 @@ class WindowTotalsTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
     def setUp(self):
         self._login_staff()
 
-    def _vote_at(self, model_name, session, kind="appeal_letter", days_ago=0):
+    def _vote_days_ago(self, model_name, session, kind="appeal_letter", days_ago=0):
         task = self._make_task("chat" if kind == "chat_response" else "appeal")
         cand = self._make_candidate(task, 0, model_name, kind=kind)
         vote = self._vote(task, cand, [cand], session=session)
@@ -1295,9 +1755,9 @@ class WindowTotalsTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
         self._pick(today, "m1", text="draft")  # a re-submit counts as a pick
         self._pick(self._denial("today-2"), None)
         self._pick(self._denial("old"), "m1", days_ago=45)
-        self._vote_at("model-a", "session-key-1")
-        self._vote_at("chat-model", "session-key-2", kind="chat_response")
-        self._vote_at("model-a", "session-key-4", days_ago=45)
+        self._vote_days_ago("model-a", "session-key-1")
+        self._vote_days_ago("chat-model", "session-key-2", kind="chat_response")
+        self._vote_days_ago("model-a", "session-key-4", days_ago=45)
         self._skip_at("session-key-3")
         self._skip_at("session-key-1")  # voted and skipped: one session
         self._skip_at("session-key-5", days_ago=45)
@@ -1622,6 +2082,147 @@ class ModelStateMakesNoCallsTest(StaffClientMixin, ChooserStatsHelperMixin, Test
         self.assertEqual(response.status_code, 200)
         for patched in (probe, snapshot, details, network):
             self.assertFalse(patched.called, patched)
+
+
+def _live_backend(reason=None, spend_provider=None):
+    """A registered external instance whose live signals say ``reason``."""
+    return SimpleNamespace(
+        external=True,
+        context_only=False,
+        unavailable_reason=lambda: reason,
+        SPEND_PROVIDER=spend_provider,
+    )
+
+
+class ModelStateLiveSignalsTest(StaffClientMixin, ChooserStatsHelperMixin, TestCase):
+    """A model this pod's own calls found dead since the deploy check reads
+    as failing, marked live, however that check went."""
+
+    NAME = "ext/model"
+
+    def setUp(self):
+        self._login_staff()
+
+    def _state(self, *instances, check=None):
+        """The model's state with ``instances`` registered under NAME and,
+        when given, a stored check row (category, ok)."""
+        if check is not None:
+            _check(self.NAME, *check)
+        checkable = [(_backend(self.NAME), instances[0])]
+        with mock.patch.object(
+            mhc, "enumerate_backend_checks", return_value=([], checkable)
+        ), mock.patch(
+            "fighthealthinsurance.ml.ml_router.ml_router",
+            SimpleNamespace(models_by_name={self.NAME: list(instances)}),
+        ):
+            return _model_states([self.NAME])[self.NAME]
+
+    def test_a_passed_check_is_downgraded_by_a_live_reason(self):
+        state = self._state(
+            _live_backend("model not served"), check=(mhc.CATEGORY_PASS, True)
+        )
+        self.assertEqual(
+            state,
+            {"key": "failing", "category": "model not served (live, this pod)"},
+        )
+
+    def test_an_unchecked_model_is_downgraded_by_a_live_reason(self):
+        state = self._state(_live_backend("refused (HTTP 401)"))
+        self.assertEqual(state["category"], "refused (HTTP 401) (live, this pod)")
+
+    def test_a_provider_paused_for_credit_reads_failing(self):
+        from fighthealthinsurance.ml import spend
+
+        spend.pause(spend.DEEPINFRA, reason="test")
+        state = self._state(
+            _live_backend(spend_provider=spend.DEEPINFRA),
+            check=(mhc.CATEGORY_PASS, True),
+        )
+        self.assertIn("paused for credit or quota", state["category"])
+
+    def test_a_pause_on_another_provider_changes_nothing(self):
+        from fighthealthinsurance.ml import spend
+
+        spend.pause(spend.AZURE, reason="test")
+        state = self._state(
+            _live_backend(spend_provider=spend.DEEPINFRA),
+            check=(mhc.CATEGORY_PASS, True),
+        )
+        self.assertEqual(state, {"key": "external_ok"})
+
+    def test_a_stored_failure_keeps_its_own_category(self):
+        state = self._state(
+            _live_backend("model not served"), check=(mhc.CATEGORY_TIMEOUT, False)
+        )
+        self.assertEqual(state, {"key": "failing", "category": mhc.CATEGORY_TIMEOUT})
+
+    def test_a_model_still_answers_while_one_instance_can(self):
+        state = self._state(
+            _live_backend("unreachable (connection refused)"),
+            _live_backend(None),
+            check=(mhc.CATEGORY_PASS, True),
+        )
+        self.assertEqual(state, {"key": "external_ok"})
+
+    def test_an_accessor_that_raises_reads_as_no_live_problem(self):
+        def broken():
+            raise RuntimeError("no flags here")
+
+        instance = SimpleNamespace(
+            external=True, context_only=False, unavailable_reason=broken
+        )
+        state = self._state(instance, check=(mhc.CATEGORY_PASS, True))
+        self.assertEqual(state, {"key": "external_ok"})
+
+    def test_a_mock_backend_reads_as_no_live_problem(self):
+        instance = mock.MagicMock(external=True, context_only=False)
+        state = self._state(instance, check=(mhc.CATEGORY_PASS, True))
+        self.assertEqual(state, {"key": "external_ok"})
+
+    def _chat_only_state(self, instance):
+        """The state of NAME registered only as a chat-only outside model,
+        which no general pool holds (DeepInfra's chat models):
+        enumerate_backend_checks carries the router's chat instance."""
+        result = _backend(self.NAME)
+        result.chat_only = True
+        checkable = [(result, instance)]
+        with mock.patch.object(
+            mhc, "enumerate_backend_checks", return_value=([], checkable)
+        ), mock.patch(
+            "fighthealthinsurance.ml.ml_router.ml_router",
+            SimpleNamespace(models_by_name={}),
+        ):
+            return _model_states([self.NAME])[self.NAME]
+
+    def test_a_chat_only_model_is_not_read_as_retired(self):
+        state = self._chat_only_state(_live_backend(None))
+        self.assertEqual(state, {"key": "external_unchecked"})
+
+    def test_a_dead_chat_only_model_reads_failing_live(self):
+        from fighthealthinsurance.ml import spend
+
+        spend.pause(spend.DEEPINFRA, reason="test")
+        state = self._chat_only_state(_live_backend(spend_provider=spend.DEEPINFRA))
+        self.assertEqual(state["key"], "failing")
+
+    def test_the_tag_names_the_live_reason(self):
+        _check(self.NAME, mhc.CATEGORY_PASS, True)
+        denial = self._denial()
+        self._draft(denial, self.NAME, "draft")
+        self._pick(denial, self.NAME, text="draft")
+        checkable = [(_backend(self.NAME), _live_backend("model not served"))]
+        with mock.patch.object(
+            mhc, "enumerate_backend_checks", return_value=([], checkable)
+        ), mock.patch(
+            "fighthealthinsurance.ml.ml_router.ml_router",
+            SimpleNamespace(models_by_name={self.NAME: [checkable[0][1]]}),
+        ):
+            response = self.client.get(reverse("model_usage_dashboard"))
+        self.assertContains(
+            response,
+            f'<a class="state-tag state-fail" href="{reverse("model_backend_status")}">'
+            "failing: model not served (live, this pod)</a>",
+        )
 
 
 class CallAttemptTableTest(StaffClientMixin, TestCase):
@@ -2500,6 +3101,28 @@ class ChatRoutingPolicyPanelTest(StaffClientMixin, TestCase):
         self.assertIn({"counter": "azure:chat", "amount": 7.0, "calls": True}, rows)
         self.assertContains(response, "Provider spend this month")
         self.assertContains(response, "7 calls")
+
+    def _page_with_deepinfra_paused(self):
+        from fighthealthinsurance.ml import spend
+
+        spend.pause(spend.DEEPINFRA, reason="test")
+        return self._page()
+
+    def test_todays_pauses_get_a_row_each(self):
+        response = self._page_with_deepinfra_paused()
+        self.assertEqual(
+            response.context["chat_policy"]["paused_rows"],
+            [{"provider": "deepinfra", "use": "every use"}],
+        )
+
+    def test_a_pause_is_shown_even_with_no_spend_counted(self):
+        response = self._page_with_deepinfra_paused()
+        self.assertEqual(response.context["chat_policy"]["spend_rows"], [])
+        self.assertContains(
+            response,
+            "<strong>deepinfra</strong> (every use): paused until 00:00 UTC"
+            " &mdash; the provider refused for credit or quota.",
+        )
 
     def test_the_panel_appears_once_in_the_all_time_section(self):
         _policy_row()

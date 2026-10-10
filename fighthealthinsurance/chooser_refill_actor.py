@@ -1,10 +1,15 @@
 import asyncio
 import os
 import time
+from typing import Optional
 
 import ray
 
+from fighthealthinsurance.base_actor_ref import decline_second_run
 from fighthealthinsurance.utils import get_env_variable
+
+# Consecutive failed ticks after which the actor stops reporting healthy.
+UNHEALTHY_AFTER_FAILURES = 3
 
 name = "ChooserRefillActor"
 
@@ -25,13 +30,24 @@ class ChooserRefillActor:
         from loguru import logger
 
         self._logger = logger
+        self.running = False
+        self._consecutive_failures = 0
         self._logger.info("ChooserRefillActor initialized")
 
     async def health_check(self) -> bool:
-        """Check if the actor is healthy and running."""
-        return getattr(self, "running", False)
+        """Running, and not failing every tick.
 
-    async def run(self) -> None:
+        The flag alone was true from the first ``run`` onward, so a loop
+        whose every tick raised (rotated database credentials, say) reported
+        healthy forever and the reconciler never touched it. Reporting False
+        gets this actor replaced by the next reconcile or launch (see
+        ``BaseActorRef._replace``).
+        """
+        return self.running and self._consecutive_failures < UNHEALTHY_AFTER_FAILURES
+
+    async def run(self) -> Optional[str]:
+        if self.running:
+            return decline_second_run(self._logger, "ChooserRefillActor")
         self._logger.info("Starting ChooserRefillActor run")
         self.running = True
 
@@ -39,14 +55,28 @@ class ChooserRefillActor:
 
         while self.running:
             try:
-                # Check and refill the task pool
-                await check_and_refill_task_pool()
+                # Check and refill the task pool. A refill that ran to the
+                # end but produced no usable task of any type it needed
+                # (every model failed, so each task came out DISABLED) is a
+                # failed tick too: the pool is not being refilled. One type
+                # failing while another refills is not (see
+                # check_and_refill_task_pool).
+                if await check_and_refill_task_pool():
+                    self._consecutive_failures = 0
+                else:
+                    self._consecutive_failures += 1
+                    self._logger.warning(
+                        "Chooser task pool refill produced no usable task "
+                        f"(consecutive failures: {self._consecutive_failures})"
+                    )
 
                 # Sleep for 5 minutes between checks
                 await asyncio.sleep(300)
             except Exception:
+                self._consecutive_failures += 1
                 self._logger.opt(exception=True).error(
-                    "Error while checking/refilling chooser task pool"
+                    "Error while checking/refilling chooser task pool "
+                    f"(consecutive failures: {self._consecutive_failures})"
                 )
                 # On error, wait a bit longer before retrying
                 await asyncio.sleep(60)

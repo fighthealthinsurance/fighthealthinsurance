@@ -37,7 +37,7 @@ from typing import (
 from fighthealthinsurance.env_utils import get_env_variable
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml.ml_models import RemoteModel, RemoteModelLike
-from fighthealthinsurance.ml.ml_router import MLRouter
+from fighthealthinsurance.ml.ml_router import MLRouter, appeal_pass_names
 
 KIND_INTERNAL = "internal"
 # An internal fine-tune that only writes appeal text (fhi-legacy). The router
@@ -267,52 +267,62 @@ def build_routing_overview(router: Optional[MLRouter] = None) -> RoutingOverview
             PlanEntry(label_of(m), notes.get(id(m), ""), counts[id(m)]) for m in firsts
         ]
 
-    # Appeals, primary pass. generate_appeal always asks for internal only
-    # here, whatever the person chose, so both columns are the same list.
-    primary = router.generate_text_backend_names(use_external=False)
-    for name in primary:
-        by_name.add(name, PATH_APPEALS, "primary", (False, True))
+    # Appeals, primary and backup passes, as make_appeals picks them. The
+    # primary pass is internal only whatever the person chose; opted in, with
+    # a hosted model to fall back on, it leaves out our models that are down.
+    # The backup runs only when the primary pass gives nothing, and only with
+    # names the primary pass didn't already call, so with use_external off it
+    # has none and make_appeals skips it.
+    primary: Dict[bool, List[str]] = {}
+    backup: Dict[bool, List[str]] = {}
+    hosted: Dict[bool, bool] = {}
+    for flag in (False, True):
+        primary[flag], backup[flag], hosted[flag] = appeal_pass_names(router, flag)
+    for flag in (False, True):
+        for name in primary[flag]:
+            by_name.add(name, PATH_APPEALS, "primary", (flag,))
     paths.append(
         PathPlan(
             "Appeals, primary pass",
             "Every model is asked at once and the first usable full letter "
             "wins. This pass is internal only whatever the person chose.",
-            name_entries(primary),
-            name_entries(primary),
+            name_entries(primary[False]),
+            name_entries(primary[True]),
         )
     )
 
-    # Appeals, backup pass: only run when the primary pass gives nothing.
-    backup = {
-        flag: router.generate_text_backend_names(use_external=flag)
-        for flag in (False, True)
-    }
     for flag, names in backup.items():
         for name in names:
             by_name.add(name, PATH_APPEALS, "backup", (flag,))
     paths.append(
         PathPlan(
             "Appeals, backup pass",
-            "Asked only when the primary pass gives no usable letter. "
-            "External models join only when the person allowed them.",
+            "Asked only when the primary pass gives no usable letter, and "
+            "only models the primary pass did not already ask, so it has none "
+            "unless the person allowed external models.",
             name_entries(backup[False]),
             name_entries(backup[True]),
         )
     )
 
     # The single extra call that carries denial-type guidance. The router
-    # picks an instance, but generate_appeal sends the call by its name.
+    # picks an instance, but generate_appeal sends the call by its name, and
+    # skips it when the first pass was left empty for a hosted backup.
     best = router.best_internal_model(general_only=False)
-    hint = [name_of(best)] if best is not None else []
-    for name in hint:
-        by_name.add(name, PATH_APPEALS, "best-internal hint", (False, True))
+    hint: Dict[bool, List[str]] = {}
+    for flag in (False, True):
+        skipped = not primary[flag] and hosted[flag]
+        hint[flag] = [name_of(best)] if best is not None and not skipped else []
+        for name in hint[flag]:
+            by_name.add(name, PATH_APPEALS, "best-internal hint", (flag,))
     paths.append(
         PathPlan(
             "Appeals, best-internal hint",
             "One extra call to the strongest internal model with denial-type "
-            "guidance, made only when a specialized denial template matches.",
-            name_entries(hint),
-            name_entries(hint),
+            "guidance, made only when a specialized denial template matches, "
+            "and not when none of ours is up while a hosted backup can answer.",
+            name_entries(hint[False]),
+            name_entries(hint[True]),
         )
     )
 

@@ -2,7 +2,11 @@
 
 Every production deploy (`k8s/deploy.yaml`) runs an end-to-end health check
 of all **enabled** model backends
-([`fighthealthinsurance/ml/model_health_check.py`](../fighthealthinsurance/ml/model_health_check.py)).
+([`fighthealthinsurance/ml/model_health_check.py`](../fighthealthinsurance/ml/model_health_check.py)),
+including the models a backend serves to chat only (its `chat_models()`, e.g.
+DeepInfra's chat roster). Like any other row, a chat-only model can trigger
+the alert email and fail a strict deploy. When `ENABLED_REMOTE_MODELS` leaves
+one out, it is reported `DISABLED`.
 The staging and dev manifests (`k8s/deploy_staging.yaml`, `k8s/deploy_dev.yaml`)
 have no job that runs it. Each backend gets one tiny "Reply with exactly: OK"
 inference, one attempt with no retries, all backends at once. The probe uses
@@ -24,7 +28,10 @@ greppable summary block.
 | `RETIRED` | On the retired list (`fighthealthinsurance/ml/retired_models.py`); listed with its date and reason, never called, even with its host set. | No |
 | `NOT_CONFIGURED` | No configuration; listed, never called. | No |
 | `DISABLED` | Excluded by `ENABLED_REMOTE_MODELS` ([ml-backends.md](ml-backends.md)); listed, never called. | No |
-| `FAIL_MISSING_CREDENTIALS`, `FAIL_CLIENT_INIT`, `FAIL_AUTH`, `FAIL_MODEL_NOT_FOUND`, `FAIL_RATE_LIMITED`, `FAIL_TIMEOUT`, `FAIL_NETWORK`, `FAIL_MALFORMED_RESPONSE`, `FAIL_OTHER` | What went wrong. | Yes |
+| `FAIL_MODEL_NOT_FOUND` | The endpoint does not serve the model: unknown, retired or deprecated (HTTP 410, or a 400/404 whose body names the model). | Yes |
+| `FAIL_BILLING` | Credit or quota exhausted (HTTP 402, or a 400/401/403/429 with a quota message); will not recover on its own. Also pauses the provider on every pod (see [Credit and quota pauses](#credit-and-quota-pauses)). | Yes |
+| `FAIL_RATE_LIMITED` | A passing rate limit: HTTP 429 without a quota message, or already in back-off from one. | Yes |
+| `FAIL_MISSING_CREDENTIALS`, `FAIL_CLIENT_INIT`, `FAIL_AUTH`, `FAIL_TIMEOUT`, `FAIL_NETWORK`, `FAIL_MALFORMED_RESPONSE`, `FAIL_OTHER` | What went wrong. | Yes |
 
 Only the `FAIL_*` categories trigger the alert email or strict mode.
 
@@ -37,8 +44,11 @@ the script sleeps 480 seconds before the check.
 
 The migrations Job (`web-migrations`) and this Job are applied together by
 `scripts/build.sh`, and nothing orders them. The check tolerates that: if the
-schema is not migrated yet, the leader claim and the result rows fail soft, so
-the check skips or runs without persisting rather than crashing.
+schema is not migrated yet, the leader claim and the result rows fail soft
+rather than crashing. A claim that cannot be made skips the check and says so
+(it is not reported as another process having run it); in strict mode it exits
+2, so the Job's retry claims the slot and runs the check once the schema is
+there. A failed result write still leaves the checks run, just not persisted.
 
 ## Leader election and duplicate-run prevention
 
@@ -56,8 +66,10 @@ insert the first time) keyed on the deployment identifier:
   re-checks. Re-deploying the same version within 6 hours does not; run the
   command by hand then.
 - The Dockerfile's `RELEASE` default is `unknown`, so `FHI_RELEASE` is never
-  empty inside a built image. An image built without `--build-arg RELEASE`
-  shares one claim key with every other such build.
+  empty inside a built image. That placeholder is not used as a claim key:
+  an image built without `--build-arg RELEASE` falls through to
+  `FHI_VERSION`, then to the hourly fallback, rather than sharing one key
+  with every other such build.
 
 ## Running it manually
 
@@ -80,7 +92,27 @@ python manage.py check_model_backends --no-persist
   the email.
 - Exit codes: a manual run exits 1 on any failure (or when the check could not
   run). The deploy hook exits 0, or 2 in strict mode, which
-  `start-server.sh` turns into 1.
+  `start-server.sh` turns into 1. In strict mode the deploy hook also exits 2
+  when nothing was verified: the check itself crashed, or the leader claim hit
+  a database error. A lost leader claim still exits 0.
+
+### Credit and quota pauses
+
+A credit or quota refusal from an outside provider, whether to a live request
+or to this check (`FAIL_BILLING`), pauses that provider for every use on every
+pod until 00:00 UTC (`fighthealthinsurance/ml/spend.py`). Every run of
+`check_model_backends` reads and writes that shared spend ledger,
+`--no-persist` included, since that flag only skips the result rows. So a
+manual probe that gets a quota refusal pauses the provider fleet-wide. A probe
+of a paused provider that answers lifts the pause on every pod, so after a
+top-up a deploy or a manual run of the check clears it. To lift it by hand:
+
+```bash
+python manage.py unpause_spend anthropic   # typesafe, deepinfra, azure, anthropic, azure-anthropic, perplexity
+```
+
+Other pods follow at their next ledger refresh (about 30 seconds). A provider
+still out of credit is paused again by its next refusal.
 
 ## Alerting
 
@@ -95,9 +127,9 @@ least one real failure triggered the email.
 
 | Value | Effect |
 | --- | --- |
-| unset (or anything other than `1`/`0`) | On in production; off when `settings.DEBUG` is true or `TESTING=True`. |
-| `1` | On anywhere. |
-| `0` | Off everywhere. |
+| unset (or anything unrecognised) | On in production; off when `settings.DEBUG` is true or `TESTING=True`. |
+| `1`, `true`, `yes`, `on` | On anywhere. |
+| `0`, `false`, `no`, `off` | Off everywhere. |
 
 Only the leader can send it, and only for `--deploy-hook` runs, so it has no
 effect on a local `run_local.sh` session, which never runs the hook. Error text
@@ -112,11 +144,13 @@ makes the first attempt of the `web-actor-launch` Job fail. It does not block
 or roll back a deploy today:
 
 - The Job has `restartPolicy: OnFailure`. The retry finds the leader claim
-  already taken, skips the check, and exits 0, so the Job completes.
+  already taken, skips the check, and exits 0, so the Job completes. (When the
+  first attempt failed because the claim itself could not be made, nothing
+  holds the claim, so the retry runs the check.)
 - `scripts/build.sh` does not wait on this Job.
 - The shell test in `start-server.sh` honors only the exact value `1`. The
-  Python side also accepts `true` and `yes`, but then the command's exit code
-  2 is reported as non-blocking.
+  Python side also accepts `true`, `yes` and `on`, but then the command's
+  exit code 2 is reported as non-blocking.
 
 ## Where to inspect results
 
@@ -126,10 +160,33 @@ or roll back a deploy today:
   latency, and sanitized detail. The Job is deleted 10 seconds after it
   finishes (`ttlSecondsAfterFinished: 10`), so read this from your log
   aggregator or the staff page, not `kubectl logs`.
-- **Staff dashboard:** `/timbit/help/model_backends` shows, per configured
-  model, enabled/disabled state, provider, registry name, internal key,
-  selection-UI/reporting registration, the latest check result and timestamp,
-  and the last stored generation. It makes no model calls.
+- **Staff dashboard:** `/timbit/help/model_backends` lists every backend the
+  code knows about, configured or not. For each it shows the kind, quality and
+  tier, which request paths this pod routes to it, the configuration and
+  registration state, the latest check result with the deploy and environment
+  it ran under, and the last stored generation. A panel above the table lists
+  each path's models with external models off and on. The page makes no model
+  calls.
+  - A context-only backend (Perplexity) reads "n/a (citations only)" under
+    "Last stored generation": it builds citations and never drafts.
+  - A chat-only roster model reads "n/a (chat only)" under "Last stored
+    generation": it answers chat and never drafts.
+  - The "Live (this pod)" column shows what this pod's own calls have found
+    since the check: a model not served, a key or account refused, or an
+    endpoint unreachable. Those three are held in this pod's memory, so other
+    pods can differ, and they clear on their own. The column also shows a
+    provider paused on every pod for credit or quota until 00:00 UTC.
+  - A registered backend that no request path picks, such as an external model
+    outside the router's top 3, reads "registered, not picked by any path".
+  - "Last stored generation" counts drafts and chooser candidates, not the
+    copies made when a user picks a draft.
+  - A disabled or unconfigured backend reads "not checked". Its stored
+    classification row is not shown as a failed check. Once the backend is
+    configured, that row shows as a grey pill flagged "config changed since"
+    until a real check runs.
+  - The healthy count is out of the enabled backends only. A backend counts
+    as healthy when its latest check passed and it is not failing live on
+    this pod. The page also gives the number that are failing live.
   `/timbit/help/model_usage` shows which models users actually pick.
 - **Database:** `ModelBackendHealthCheckResult` keeps one row per backend per
   run (including `NOT_CONFIGURED` and `DISABLED`). Skipped runs and

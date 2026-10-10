@@ -20,6 +20,7 @@ import os
 from typing import Any
 
 from django.core.management.base import BaseCommand
+from loguru import logger
 
 
 class Command(BaseCommand):
@@ -66,7 +67,42 @@ class Command(BaseCommand):
             help="Do not write results to the ModelBackendHealthCheckResult table.",
         )
 
+    def _fail_deploy_if_strict(self, mhc: Any) -> None:
+        """Exit 2 under strict mode, the code start-server.sh fails the
+        deploy job on; otherwise return and let the caller carry on."""
+        if mhc.strict_mode_enabled():
+            self.stderr.write(
+                self.style.ERROR("FHI_MODEL_HEALTH_STRICT=1: failing the deploy hook.")
+            )
+            raise SystemExit(2)
+
+    @staticmethod
+    def _sync_spend() -> None:
+        """Store and re-read the shared spend ledger, on this thread.
+
+        This process is short-lived. Read first, so a provider paused for
+        credit on another pod reads as paused here, and a probe that now
+        succeeds lifts the pause (spend.unpause). Stored before exiting, so
+        that lift reaches the other pods: the background writer may never
+        run. A database outage only costs the sync, never the check's
+        result or exit code.
+        """
+        from fighthealthinsurance.ml import spend
+
+        try:
+            spend.sync_now()
+        except Exception as e:
+            logger.warning(f"Spend ledger not synced: {type(e).__name__}")
+
     def handle(self, *args: str, **options: Any):
+        self._sync_spend()
+        try:
+            self._check(options)
+        finally:
+            # Every exit, the SystemExit ones included.
+            self._sync_spend()
+
+    def _check(self, options: dict[str, Any]) -> None:
         from fighthealthinsurance.ml import model_health_check as mhc
 
         deploy_hook: bool = options["deploy_hook"]
@@ -90,14 +126,30 @@ class Command(BaseCommand):
 
         if not summary.ran_checks:
             if deploy_hook:
+                if summary.crashed or summary.claim_failed:
+                    # The check itself raised, or the leader claim hit a
+                    # database error: nothing was verified, no row was
+                    # written, no email sent. A strict deploy must not pass
+                    # on that; it used to, because here both looked like a
+                    # lost leader claim.
+                    if summary.crashed:
+                        reason = "could not run (see the traceback above)"
+                    else:
+                        reason = (
+                            "could not claim its once-per-deployment slot "
+                            "(database error, or the schema is not migrated "
+                            "yet; see the warning above)"
+                        )
+                    self.stderr.write(
+                        self.style.ERROR(f"Model backend health check {reason}.")
+                    )
+                    self._fail_deploy_if_strict(mhc)
+                    return
                 self.stdout.write(
                     "Model backend health check skipped (another process "
-                    "already ran it for this deployment, or it could not run)."
+                    "already ran it for this deployment)."
                 )
-                # A lost leader claim is normal; only strict mode + an actual
-                # inability to verify should fail the deploy, and we can't
-                # tell those apart here without racing the winner — so always
-                # exit 0 on skip.
+                # A lost leader claim is normal: exit 0.
                 return
             self.stderr.write(
                 self.style.ERROR("Model backend health check could not run.")
@@ -127,13 +179,7 @@ class Command(BaseCommand):
             if summary.email_sent:
                 self.stdout.write("Consolidated failure alert emailed to support.")
             if deploy_hook:
-                if mhc.strict_mode_enabled():
-                    self.stderr.write(
-                        self.style.ERROR(
-                            "FHI_MODEL_HEALTH_STRICT=1: failing the deploy hook."
-                        )
-                    )
-                    raise SystemExit(2)
+                self._fail_deploy_if_strict(mhc)
                 self.stdout.write(
                     "Non-strict mode: healthy backends remain available; not "
                     "failing the deployment."

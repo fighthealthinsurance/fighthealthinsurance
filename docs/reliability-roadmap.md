@@ -55,10 +55,18 @@ the calls can move to a child table.
 
 ## 6. Real Perplexity health check
 
-`RemotePerplexity.model_is_ok` returns True unconditionally ("assume it's
-up"), so the health sweep can never mark it down and citation calls burn
-their timeout when Perplexity is broken. A tiny models/HEAD probe (or
-scoring recent failure counts) would close the gap.
+Landed as health recorded by inference rather than a probe.
+`RemotePerplexity.model_is_ok` now returns `is_available()`, which is down
+while every endpoint pair is marked missing, refused (key or account) or
+cooling down after transport failures. `health_checked_live` is True, so the
+router reads that live instead of an hourly copy, and it also skips
+Perplexity while the provider is paused for credit or quota
+(`ml/spend.py`). `MLRouter._citation_backend` never fails open, so the
+citation helpers fall back to the supplemental sources while Perplexity is
+down. Still open: there is no proactive models/HEAD probe, so Perplexity is
+only marked down after calls fail (one refusal or missing-model answer, or
+three transport failures within a minute), and those first failing citation
+calls in each process still pay their timeout.
 
 ## 7. Client-side upload queue + in-flight retry dedupe
 

@@ -163,8 +163,9 @@ def test_the_next_round_is_scheduled_even_when_this_one_goes_wrong():
     ), patch.object(
         status, "_schedule_refresh"
     ) as schedule:
-        with pytest.raises(RuntimeError):
-            status._refresh()
+        # Logged rather than raised: a timer's callback has no caller to
+        # catch it.
+        status._refresh()
     schedule.assert_called_once()
 
 

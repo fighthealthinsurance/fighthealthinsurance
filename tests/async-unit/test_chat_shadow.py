@@ -415,6 +415,17 @@ class TestScoreTurn:
         assert result.failure == "timeout"
         assert result.winner is None
 
+    def test_a_spent_budget_logs_no_warning(self, log_capture):
+        # typesafe.ask announced it once already (typesafe._log_budget_spent).
+        fake = _FakePost(typesafe.TypeSafeBudgetSpent("budget spent"))
+        with (
+            override_settings(**ENABLED),
+            patch.object(chat_shadow, "_post", fake),
+            log_capture() as cap,
+        ):
+            _run(chat_shadow.score_turn(MESSAGE, REPLY))
+        assert cap.messages("WARNING") == []
+
     def test_a_failure_logs_no_text(self):
         seen = []
         error = RuntimeError(f"upstream echoed: {MESSAGE}")
@@ -475,6 +486,18 @@ class TestStartGates:
         with override_settings(**settings_), patch.object(chat_shadow, "_post", fake):
             assert _run(go()) is None
         assert fake.states == []
+
+    def test_nothing_starts_while_typesafe_cools_down(self):
+        """The request would be refused before sending, so the identifier
+        lookup and the health note are not paid for either."""
+        with override_settings(FHI_TYPESAFE_COOLDOWN_SECONDS=900):
+            typesafe._start_cooldown("answered HTTP 401", 401)
+
+        async def go():
+            return _start()
+
+        with override_settings(**ENABLED):
+            assert _run(go()) is None
 
     def test_nothing_to_score_starts_nothing(self):
         async def go():

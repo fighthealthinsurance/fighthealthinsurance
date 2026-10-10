@@ -607,8 +607,12 @@ async def triage(
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        _count("failed")
-        logger.warning(f"denial triage unavailable: {type(e).__name__}: {e}")
+        # A spent or paused budget is normal operation, not a failure.
+        budget = isinstance(e, typesafe.TypeSafeBudgetSpent)
+        _count("skipped" if budget else "failed")
+        (logger.debug if typesafe.announced(e) else logger.warning)(
+            f"denial triage unavailable: {type(e).__name__}: {e}"
+        )
         return None
     _count("triaged")
     return result

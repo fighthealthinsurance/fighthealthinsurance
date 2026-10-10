@@ -3,7 +3,7 @@
 import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fighthealthinsurance.context_barrier import (
     _is_populated,
@@ -60,7 +60,7 @@ class TestWaitForWarmCache(unittest.IsolatedAsyncioTestCase):
         denial = _fake_denial()
         calls = {"n": 0}
 
-        async def _poll(denial_id, fields):
+        async def _poll(denial_id, fields, is_ready=None):
             calls["n"] += 1
             return calls["n"] >= 2  # miss first, hit second
 
@@ -187,6 +187,95 @@ class TestWarmThenFetch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "generated")
         fetch.assert_awaited_once()
         denial.arefresh_from_db.assert_not_awaited()
+
+
+CITATION_FIELDS = ["ml_citation_context", "candidate_ml_citation_context"]
+
+
+def _attempted(value):
+    """The citation barrier's predicate: None is "not run yet", while a run
+    that finished and found nothing stores []."""
+    return value is not None
+
+
+def _row_reads(row):
+    """Patch the barrier's one-query row read to return ``row`` on every
+    poll; returns the patcher and the read spy."""
+    denial_model = MagicMock()
+    read = AsyncMock(return_value=row)
+    denial_model.objects.filter.return_value.values.return_value.afirst = read
+    return patch("fighthealthinsurance.models.Denial", denial_model), read
+
+
+class TestReadinessPredicate(unittest.IsolatedAsyncioTestCase):
+    async def test_empty_list_releases_the_barrier_at_once_with_the_predicate(self):
+        denial = _fake_denial()
+        reads, read = _row_reads(
+            {"ml_citation_context": None, "candidate_ml_citation_context": []}
+        )
+        with reads:
+            ready = await wait_for_warm_cache(
+                denial,
+                readiness_fields=CITATION_FIELDS,
+                refresh_fields=CITATION_FIELDS,
+                barrier_timeout=1,
+                poll_interval=0.01,
+                is_ready=_attempted,
+            )
+        self.assertEqual((ready, read.await_count), (True, 1))
+
+    async def test_none_still_waits_with_the_predicate(self):
+        denial = _fake_denial()
+        reads, read = _row_reads(
+            {"ml_citation_context": None, "candidate_ml_citation_context": None}
+        )
+        with reads:
+            ready = await wait_for_warm_cache(
+                denial,
+                readiness_fields=CITATION_FIELDS,
+                refresh_fields=CITATION_FIELDS,
+                barrier_timeout=0.5,
+                poll_interval=0.01,
+                is_ready=_attempted,
+            )
+        # Polled more than once: with a 0.5s budget even a loaded worker
+        # gets a second read in.
+        self.assertEqual((ready, read.await_count > 1), (False, True))
+
+    async def test_empty_list_is_not_ready_by_default(self):
+        """Without a predicate the barrier keeps today's non-empty check, so
+        the PubMed barrier is unchanged."""
+        denial = _fake_denial()
+        reads, _ = _row_reads(
+            {"ml_citation_context": [], "candidate_ml_citation_context": []}
+        )
+        with reads:
+            ready = await wait_for_warm_cache(
+                denial,
+                readiness_fields=CITATION_FIELDS,
+                refresh_fields=CITATION_FIELDS,
+                barrier_timeout=0.05,
+                poll_interval=0.01,
+            )
+        self.assertFalse(ready)
+
+    async def test_warm_then_fetch_passes_the_predicate_to_the_barrier(self):
+        denial = _fake_denial()
+        fetch = AsyncMock(return_value=[])
+        reads, read = _row_reads(
+            {"ml_citation_context": [], "candidate_ml_citation_context": None}
+        )
+        with reads:
+            await warm_then_fetch(
+                denial,
+                readiness_fields=CITATION_FIELDS,
+                refresh_fields=CITATION_FIELDS,
+                barrier_timeout=1,
+                fetch=lambda: fetch(),
+                poll_interval=0.01,
+                is_ready=_attempted,
+            )
+        self.assertEqual(read.await_count, 1)
 
 
 if __name__ == "__main__":

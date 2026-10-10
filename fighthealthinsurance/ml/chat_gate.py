@@ -596,7 +596,9 @@ async def check_reply(
         raise
     except Exception as e:
         timed_out = isinstance(e, (TimeoutError, asyncio.TimeoutError))
-        logger.warning(f"Chat reply check unavailable: {type(e).__name__}")
+        (logger.debug if typesafe.announced(e) else logger.warning)(
+            f"Chat reply check unavailable: {type(e).__name__}"
+        )
         return GateResult(
             outcome=TIMEOUT if timed_out else ERROR,
             failure=letter_quality.failure_summary(e),
@@ -637,7 +639,9 @@ async def rank_replies(
         raise
     except Exception as e:
         timed_out = isinstance(e, (TimeoutError, asyncio.TimeoutError))
-        logger.warning(f"Chat reply ranking unavailable: {type(e).__name__}")
+        (logger.debug if typesafe.announced(e) else logger.warning)(
+            f"Chat reply ranking unavailable: {type(e).__name__}"
+        )
         return RankResult(
             outcome=TIMEOUT if timed_out else ERROR,
             failure=letter_quality.failure_summary(e),
