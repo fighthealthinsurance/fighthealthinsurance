@@ -31,7 +31,7 @@ from loguru import logger
 
 from fighthealthinsurance.context_utils import CONTEXT_LEVEL_TEMPLATE
 from fighthealthinsurance.exec import bridge_executor, letter_executor
-from fighthealthinsurance.ml import spend
+from fighthealthinsurance.ml import ml_models, spend
 from fighthealthinsurance.ml.ml_models import _env_float
 from fighthealthinsurance.ml.model_identity import TEMPLATE_MODEL_NAME
 from fighthealthinsurance.utils import is_real_appeal
@@ -290,7 +290,11 @@ async def generate_letter_for_denial(
 
     The first usable letter ends the drain, but make_appeals has already
     sent the wizard's whole fan-out: the calls still in flight run on (and
-    are billed) unread, and record no attempt rows.
+    are billed) unread, and record no attempt rows. Every provider call made
+    for the letter is clamped to its deadline the way the appeal journey
+    clamps its own (ml_models.attempt_deadline), so one sized by
+    ml_task_timeout ends with the deadline rather than its configured
+    timeout.
 
     Returns the winning ``GeneratedAppeal`` with its placeholders NOT yet
     filled (draft_letter_for_chat does that once, for whichever letter it
@@ -303,6 +307,17 @@ async def generate_letter_for_denial(
     """
     if deadline_seconds is None:
         deadline_seconds = _env_float("FHI_CHAT_LETTER_DEADLINE", 75.0)
+    # A context variable, so it reaches the summary's task and the drain's
+    # worker threads (asgiref and the exec.py pools copy the context).
+    with ml_models.attempt_deadline(deadline_seconds):
+        return await _generate_letter(denial, use_external, deadline_seconds)
+
+
+async def _generate_letter(
+    denial: Any, use_external: bool, deadline_seconds: float
+) -> Optional["GeneratedAppeal"]:
+    """generate_letter_for_denial's work, inside the denial's spend channel
+    and the letter's attempt deadline."""
     started = time.monotonic()
     try:
         # Lazy imports: common_view_logic pulls in a large graph and this

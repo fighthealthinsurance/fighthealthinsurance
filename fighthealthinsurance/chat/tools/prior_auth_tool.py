@@ -45,6 +45,7 @@ class PriorAuthTool(BaseTool):
     # See AppealTool: exact-span replacement means each call in a reply
     # needs its own pass.
     max_calls_per_reply: int = 3
+    anchored_calls: bool = True
 
     # Field name mappings for normalization
     FIELD_MAPPINGS = {

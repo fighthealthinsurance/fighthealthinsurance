@@ -10,6 +10,7 @@ same pipeline instead of having the chat model write the letter inline.
 
 import asyncio
 import itertools
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from loguru import logger
@@ -28,6 +29,7 @@ from fighthealthinsurance.chat_interface import ChatInterface
 from fighthealthinsurance.client_gone import ClientGone
 from fighthealthinsurance.context_utils import CONTEXT_LEVEL_TEMPLATE
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
+from fighthealthinsurance.ml import ml_models
 from fighthealthinsurance.ml.model_identity import TEMPLATE_MODEL_NAME
 from fighthealthinsurance.models import (
     Appeal,
@@ -889,6 +891,29 @@ class LetterSelectionPolicyTest(APITestCase):
         ):
             item = await generate_letter_for_denial(self._denial())
         self.assertIsNone(item)
+
+    async def test_model_calls_are_clamped_to_the_letter_deadline(self):
+        """make_appeals runs in a worker thread, and the provider calls it
+        makes must still see the letter's deadline (attempt_deadline), not
+        the configured 300s: a call that outlives the drain is billed for an
+        answer nobody reads."""
+        timeouts_seen = []
+
+        def make_appeals(*args, **kwargs):
+            timeouts_seen.append(ml_models.ml_task_timeout("appeal"))
+            return iter([])
+
+        with patch.dict(os.environ, {"FHI_ML_TIMEOUT": "300"}), patch(
+            "fighthealthinsurance.ml.ml_appeal_context_helper."
+            "MLAppealContextHelper.maybe_summarize_denial_text",
+            new=AsyncMock(return_value=None),
+        ), patch.object(
+            common_view_logic.appealGenerator,
+            "make_appeals",
+            side_effect=make_appeals,
+        ):
+            await generate_letter_for_denial(self._denial(), deadline_seconds=30)
+        self.assertEqual([t <= 30.0 for t in timeouts_seen], [True])
 
     async def _consent_seen_by_the_summarizer(self, stored, chat_consent):
         denial = self._denial()

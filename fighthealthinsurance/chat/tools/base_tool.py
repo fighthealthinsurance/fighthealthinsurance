@@ -398,6 +398,15 @@ class BaseTool(ABC):
     # as raw tool syntax.
     max_calls_per_reply: int = 1
 
+    # Whether this tool's calls are the anchored ``**tool**{...}`` JSON calls
+    # (create_or_update_appeal / _prior_auth, generate_appeal_letter). For
+    # those, ``handle`` strips the calls still in the reply after its passes
+    # -- one execute() declined, or ones past max_calls_per_reply --
+    # span-bounded, rather than leaving them to render as raw tool syntax
+    # with their JSON payloads. Other tools keep their historical behavior:
+    # the span-bounded removal assumes the anchored shape.
+    anchored_calls: bool = False
+
     def __init__(
         self,
         send_status_message: Callable[[str], Awaitable[None]],
@@ -509,14 +518,16 @@ class BaseTool(ABC):
         ).strip()
         return stripped or response_text
 
-    def dropped_calls_notice(self) -> str:
+    def dropped_calls_notice(self) -> Optional[str]:
         """Sentence appended when calls past ``max_calls_per_reply`` are
-        dropped from a SUCCESSFUL reply.
+        dropped from a SUCCESSFUL reply, or None to drop them silently.
 
         Those calls carried updates that were never applied, and the reply
         (minus them) is what both the user reads and the model sees in the
         history, so saying nothing would leave the user thinking the change
-        landed and the model with no reason to retry.
+        landed and the model with no reason to retry. A tool overrides this
+        when its own replacement already says what became of the request
+        (see GenerateAppealLetterTool).
         """
         return (
             f"(Note: I could only apply the first {self.max_calls_per_reply} "
@@ -561,12 +572,10 @@ class BaseTool(ABC):
                     stalled = True
                     break
                 response_text = updated
-            if handled and self.max_calls_per_reply > 1 and self.detect(response_text):
+            if handled and self.anchored_calls and self.detect(response_text):
                 # Calls left over are stripped rather than left to render as
-                # raw tool syntax with their JSON payloads. Gated on
-                # max_calls_per_reply > 1, i.e. the anchored JSON tools:
-                # span-bounded removal assumes their `**tool**{...}` shape,
-                # and single-call tools keep their historical behavior.
+                # raw tool syntax with their JSON payloads (see
+                # anchored_calls).
                 if stalled:
                     # Declined, not capped: no "first N updates" notice.
                     response_text = self.strip_calls_on_error(response_text)

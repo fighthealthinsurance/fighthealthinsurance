@@ -48,6 +48,7 @@ class AppealTool(BaseTool):
     # execute() replaces only the exact call span, each remaining call must
     # get its own pass or it renders as raw tool syntax.
     max_calls_per_reply: int = 3
+    anchored_calls: bool = True
 
     def strip_calls_on_error(self, response_text: str) -> str:
         """Span-bounded on-error strip: the greedy DOTALL pattern would also
