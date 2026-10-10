@@ -10,14 +10,14 @@ zero out generation.
 
 import io
 from typing import Optional
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from loguru import logger as loguru_logger
 
 from fighthealthinsurance.chooser_tasks import _select_candidate_models
 from fighthealthinsurance.ml import ml_router as ml_router_module
-from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
+from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike, RemoteModelLike
 from fighthealthinsurance.ml.ml_router import MLRouter
 
 
@@ -47,6 +47,18 @@ def _internal_model(name: str, quality: Optional[int] = None) -> RemoteFullOpenL
     if quality is not None:
         # RemoteFullOpenLike reports 100; the chat lead is picked by quality.
         m.quality = lambda: quality
+    return m
+
+
+def _external_model(name: str) -> MagicMock:
+    """A hosted model the router can select. It has a live signal of its
+    own, so the sweep is never read for it."""
+    m = MagicMock(spec=RemoteModelLike)
+    m.name = name
+    m.external = True
+    m.quality.return_value = 80
+    m.is_available.return_value = True
+    m.health_checked_live = True
     return m
 
 
@@ -176,6 +188,53 @@ class TestInternalHealthGating:
             )[:2]
 
         assert pool == [up]
+
+
+class TestGenerateTextBackendsBesideAnOutsideModel:
+    """generate_text_backends with use_external (the chooser's list). With
+    every internal marked down, the internals used to fail open ahead of a
+    healthy outside model, each hanging for its full timeout first, and the
+    pool's fail-open ERROR went out from the chooser alone."""
+
+    @staticmethod
+    def _all_internals_down_router():
+        router = _bare_router()
+        router.internal_models_by_cost = [
+            _internal_model("a-model"),
+            _internal_model("b-model"),
+        ]
+        outside = _external_model("outside")
+        router.external_models_by_cost = [outside]
+        router.all_models_by_cost = router.internal_models_by_cost + [outside]
+        return router, outside
+
+    @staticmethod
+    def _backends(router: MLRouter):
+        """(the opted-in list, ERROR text) with every internal marked down."""
+        sink = io.StringIO()
+        handler = loguru_logger.add(sink, level="ERROR")
+        try:
+            with _health_map({"a-model": False, "b-model": False}):
+                models = router.generate_text_backends(use_external=True)
+        finally:
+            loguru_logger.remove(handler)
+        return models, sink.getvalue()
+
+    def test_down_internals_are_left_out_beside_a_selectable_external(self):
+        router, outside = self._all_internals_down_router()
+        models, _ = self._backends(router)
+        assert models == [outside]
+
+    def test_no_failing_open_error_is_logged_beside_a_selectable_external(self):
+        router, _outside = self._all_internals_down_router()
+        _, errors = self._backends(router)
+        assert "failing open" not in errors
+
+    def test_down_internals_still_fail_open_when_no_external_can_answer(self):
+        router, outside = self._all_internals_down_router()
+        outside.is_available.return_value = False
+        models, _ = self._backends(router)
+        assert models == router.internal_models_by_cost
 
 
 class TestChatFhiDeterminism:

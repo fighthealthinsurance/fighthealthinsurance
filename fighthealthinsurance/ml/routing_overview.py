@@ -275,8 +275,9 @@ def build_routing_overview(router: Optional[MLRouter] = None) -> RoutingOverview
     # has none and make_appeals skips it.
     primary: Dict[bool, List[str]] = {}
     backup: Dict[bool, List[str]] = {}
+    hosted: Dict[bool, bool] = {}
     for flag in (False, True):
-        primary[flag], backup[flag] = appeal_pass_names(router, flag)
+        primary[flag], backup[flag], hosted[flag] = appeal_pass_names(router, flag)
     for flag in (False, True):
         for name in primary[flag]:
             by_name.add(name, PATH_APPEALS, "primary", (flag,))
@@ -310,12 +311,7 @@ def build_routing_overview(router: Optional[MLRouter] = None) -> RoutingOverview
     best = router.best_internal_model(general_only=False)
     hint: Dict[bool, List[str]] = {}
     for flag in (False, True):
-        hosted_backup = any(
-            getattr(m, "external", False)
-            for name in backup[flag]
-            for m in router.models_by_name.get(name, [])
-        )
-        skipped = not primary[flag] and hosted_backup
+        skipped = not primary[flag] and hosted[flag]
         hint[flag] = [name_of(best)] if best is not None and not skipped else []
         for name in hint[flag]:
             by_name.add(name, PATH_APPEALS, "best-internal hint", (flag,))

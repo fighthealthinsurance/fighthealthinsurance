@@ -250,7 +250,6 @@ class MLRouter(object):
         self,
         names: Optional[Sequence[str]] = None,
         limit: int = 3,
-        warn_if_down: bool = True,
         fail_open: bool = True,
     ) -> list[RemoteModelLike]:
         """The outside models chat asks, in ``names`` order (default
@@ -286,10 +285,11 @@ class MLRouter(object):
             if self.chat_internal_selectable():
                 # Expected once outside models are retired or out of credit:
                 # ours answer, and the roster is optional.
-                if warn_if_down:
-                    _warn_roster_down([str(m) for m in found])
+                _warn_roster_down([str(m) for m in found])
                 return []
-            available = self._filter_available(found, "chat-outside")
+            # No one else can answer: fail open, as _filter_available would.
+            _log_fail_open("chat-outside", [str(m) for m in found])
+            available = list(found)
         within_budget = [
             m
             for m in available
@@ -308,13 +308,12 @@ class MLRouter(object):
         name = str(getattr(settings, "FHI_CHAT_SIDE_BY_SIDE_MODEL", "") or "").strip()
         if not name:
             return None
-        # One model, not the roster: its being down says nothing about the
-        # others, so it neither warns nor spends the hourly warning. And it
-        # never fails open: a comparison with a dead model is no comparison,
-        # and the turn has its own fan-out to answer it.
-        found = self.chat_outside_models(
-            [name], limit=1, warn_if_down=False, fail_open=False
-        )
+        # One model, not the roster, and fail_open=False: a comparison with a
+        # dead model is no comparison (the turn has its own fan-out to answer
+        # it), and returning before the roster check means its being down
+        # neither warns nor spends the hourly warning, since it says nothing
+        # about the others.
+        found = self.chat_outside_models([name], limit=1, fail_open=False)
         return found[0] if found else None
 
     @staticmethod
@@ -363,6 +362,9 @@ class MLRouter(object):
 
         * ``is_available()`` — the model's own in-memory signal (paid providers
           report config + rate-limit back-off; others fail open).
+        * its provider's spend (ml/spend.py) — a budget for this use that is
+          spent, or a pause after a credit or quota refusal, leaves it out.
+          These two are ``can_be_asked``, the test _checked_infer makes.
         * the last cached ``health_status`` sweep — consulted only for models
           that lack a live signal (``health_checked_live`` is False, e.g.
           DeepInfra and the INTERNAL vLLM backends, which the sweep probes over
@@ -374,14 +376,12 @@ class MLRouter(object):
         vLLM the sweep already marked down used to be fanned out to anyway,
         burning its whole timeout on every request between sweeps.
         """
-        if not model.is_available():
-            return False
-        # A provider whose budget for this use is spent, or that refused for
-        # credit or quota today (ml/spend.py), would answer nothing: its slot
-        # goes to a model that can. The send checks it again (__infer), for a
-        # model chosen before the budget ran out.
-        spend_allows = getattr(model, "_spend_allows", None)
-        if spend_allows is not None and not spend_allows():
+        # A model parked, refused or cooling down, or whose provider's budget
+        # for this use is spent or that refused for credit or quota today
+        # (ml/spend.py), would answer nothing: its slot goes to a model that
+        # can. The send checks it again (__infer), for a model chosen before
+        # the budget ran out.
+        if not can_be_asked(model):
             return False
         if not model.health_checked_live:
             # Imported lazily to avoid a circular import (health_status imports
@@ -571,12 +571,16 @@ class MLRouter(object):
         # Filter BEFORE slicing so healthy backends past the slice boundary
         # can step up when the cheapest ones are marked down.
         models: list[RemoteModelLike] = []
+        # Fail open only when no outside model can answer: beside one that
+        # can, internals marked down would only hang for their full timeout.
+        externals = self.best_external_models() if use_external else []
         if self.internal_models_by_cost:
             models += self._filter_available(
-                self.internal_models_by_cost, "generate-text-internal"
+                self.internal_models_by_cost,
+                "generate-text-internal",
+                fail_open=not externals,
             )[:6]
-        if use_external:
-            models += self.best_external_models()
+        models += externals
         # Only fall back to all_models if use_external is True
         if not models and use_external:
             # Keep the availability gate authoritative: don't re-introduce
@@ -1190,11 +1194,6 @@ class MLRouter(object):
         healthy = self._filter_available(candidates, "best-internal", fail_open=False)
         return max(healthy or candidates, key=lambda m: m.quality())
 
-    def backends_for_name(self, name: str) -> list[RemoteModelLike]:
-        """The instances registered under ``name``, healthy first (see
-        healthy_first)."""
-        return self.healthy_first(self.models_by_name.get(name, []))
-
     def healthy_first(
         self, instances: Sequence[RemoteModelLike]
     ) -> list[RemoteModelLike]:
@@ -1202,7 +1201,12 @@ class MLRouter(object):
         otherwise kept), so a call by name goes to one that can answer
         before one the health signals have down. Every instance stays
         listed, since a healthy one may still fail, and one whose signals
-        cannot be read counts as healthy."""
+        cannot be read counts as healthy.
+
+        It takes the instances, not a name: callers look the name up through
+        their own ``ml_router`` reference, which is where tests patch
+        ``models_by_name``, and a lookup here would read the router's own
+        registry and miss the patch."""
 
         def down(model: RemoteModelLike) -> bool:
             try:
@@ -1499,17 +1503,22 @@ def appeal_backup_names(
     return [name for name in candidates if name not in already]
 
 
-def appeal_pass_names(router: Any, use_external: bool) -> Tuple[List[str], List[str]]:
-    """The names the appeals primary and backup passes call, in order.
+def appeal_pass_names(
+    router: Any, use_external: bool
+) -> Tuple[List[str], List[str], bool]:
+    """The names the appeals primary and backup passes call, in order, and
+    whether a hosted model can answer in the backup.
 
     The primary pass is internal only, whatever the person chose. Opted in,
     with a hosted model the router can select in the backup, the primary pass
     lists only our models that are up, possibly none: failing open to ones
     known down would hang for their whole timeout and leave the hosted backup
     no time to answer. With no hosted model to fall back on, ours fail open
-    as the last resort, as always. ``router`` is passed in (not ``self``) so
-    ``make_appeals`` and the staff routing overview read the same router their
-    callers (and tests) hand them.
+    as the last resort, as always. The hosted-backup flag is returned so
+    callers skip the best-internal hint on the same test when the primary
+    pass is empty, rather than each repeating it. ``router`` is passed in
+    (not ``self``) so ``make_appeals`` and the staff routing overview read the
+    same router their callers (and tests) hand them.
     """
     candidates = router.generate_text_backend_names(use_external=use_external)
     hosted_backup = use_external and any(
@@ -1523,7 +1532,7 @@ def appeal_pass_names(router: Any, use_external: bool) -> Tuple[List[str], List[
         )
     else:
         primary = router.generate_text_backend_names(use_external=False)
-    return primary, appeal_backup_names(candidates, primary)
+    return primary, appeal_backup_names(candidates, primary), hosted_backup
 
 
 # Lazy singleton - initialized on first access

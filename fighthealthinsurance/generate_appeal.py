@@ -83,6 +83,7 @@ from .ml.ml_models import (
     ProviderUnavailable,
     RemoteFullOpenLike,
     RemoteModelLike,
+    can_be_asked,
     context_already_in_prompt,
     describe_model_error,
     render_citations_context,
@@ -1048,16 +1049,16 @@ def _shed_context(
 
 
 def _model_can_be_asked(model_name: Optional[str]) -> bool:
-    """Whether any instance of ``model_name`` could be asked right now: the
-    in-memory test _checked_infer makes before raising ProviderUnavailable
-    (not parked, refused or cooling down, and its provider not out of
-    budget). Deliberately not the router's health-sweep view: a model the
-    sweep marked down may have been asked on the router's fail-open and
-    overflowed its context, which is what the shed ladder is for."""
+    """Whether any instance of ``model_name`` could be asked right now:
+    ``can_be_asked``, the in-memory test _checked_infer makes before raising
+    ProviderUnavailable (not parked, refused or cooling down, and its
+    provider not out of budget). Deliberately not the router's health-sweep
+    view: a model the sweep marked down may have been asked on the router's
+    fail-open and overflowed its context, which is what the shed ladder is
+    for."""
     for model in ml_router.models_by_name.get(model_name, []):
         try:
-            spend_allows = getattr(model, "_spend_allows", None)
-            if model.is_available() and (spend_allows is None or spend_allows()):
+            if can_be_asked(model):
                 return True
         except Exception:
             # An unreadable signal keeps the call, as healthy_first does.
@@ -1072,11 +1073,10 @@ def _calls_worth_shedding(calls: List[dict]) -> List[dict]:
     nothing; it cannot help one that could not be asked. So a call is dropped
     only when its model can no longer be asked (``_model_can_be_asked``).
 
-    The attempt rows are deliberately not read: an "unavailable:" error row
-    does not mean the model was never reached. The transport reports
-    "unavailable:" whenever any leg failed and none gave text, which includes
-    a primary endpoint that overflowed its context beside a backup leg that
-    was down or cooling, exactly the case this ladder exists to rescue.
+    The attempt rows are deliberately not read: an "unavailable:" row says
+    the model was not reached on that call, not that it cannot be asked now
+    (a model that was reached, with an overflow or an empty answer, reads
+    no_completion whatever its other leg did).
     """
     return [c for c in calls if _model_can_be_asked(c.get("model_name"))]
 
@@ -1368,9 +1368,9 @@ def _generated_to_appeals_text(
                     return
             model_results = k_text_future.result()
         except DeadlineSkipped:
-            # _checked_infer asked the model nothing: the requester's deadline
-            # (or the attempt's budget) had passed when the worker started, as
-            # when the pool is saturated. A skip for time is a budget problem,
+            # _checked_infer asked the model nothing: too little of the
+            # requester's deadline (or the attempt's budget) was left for a
+            # letter when the worker started, as when the pool is saturated. A skip for time is a budget problem,
             # filed like a call the deadline cut off, not as a failed model.
             abandoned = True
             error_detail = "skipped: requester deadline passed"
@@ -3328,11 +3328,8 @@ class AppealGenerator(object):
         use_ext = bool(denial.use_external)
         # Opted in, with a hosted model to fall back on, the first pass lists
         # only our models that are up, possibly none (see appeal_pass_names).
-        model_names, backup_model_names = appeal_pass_names(ml_router, use_ext)
-        hosted_backup = any(
-            getattr(m, "external", False)
-            for name in backup_model_names
-            for m in ml_router.models_by_name.get(name, [])
+        model_names, backup_model_names, hosted_backup = appeal_pass_names(
+            ml_router, use_ext
         )
         if not model_names and hosted_backup:
             logger.info(

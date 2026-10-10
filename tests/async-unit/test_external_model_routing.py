@@ -233,7 +233,7 @@ class TestCitationBackends(_WithRouter):
         assert self._backends() == ([], [])
 
 
-class TestBackendsForName:
+class TestHealthyFirst:
     def setup_method(self):
         self.router = MLRouter()
         self.registered = [
@@ -245,19 +245,12 @@ class TestBackendsForName:
         self.router.models_by_name["gemma"] = list(self.registered)
 
     def test_healthy_instances_come_first_and_none_are_dropped(self):
-        assert _names(self.router.backends_for_name("gemma")) == [
-            "up-b",
-            "up-d",
-            "down-a",
-            "down-c",
-        ]
+        backends = self.router.healthy_first(self.router.models_by_name["gemma"])
+        assert _names(backends) == ["up-b", "up-d", "down-a", "down-c"]
 
     def test_the_registry_keeps_its_cost_order(self):
-        self.router.backends_for_name("gemma")
+        self.router.healthy_first(self.router.models_by_name["gemma"])
         assert self.router.models_by_name["gemma"] == self.registered
-
-    def test_an_unknown_name_has_no_backends(self):
-        assert self.router.backends_for_name("not-registered") == []
 
 
 class TestChatExploration(_WithRouter):

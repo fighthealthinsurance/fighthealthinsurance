@@ -1484,6 +1484,34 @@ class TestMakeAppealsDiagnosticsSink:
             )
         assert "ghost-model:not_registered" in sink.get("models_tried", "")
 
+    def test_sink_counts_a_proactive_tier1_shed_win_as_a_shed_rescue(self):
+        """A call over its model's context window gets a tier-1 shed sibling
+        in the primary stage. When only that sibling answers, the context
+        shed is what rescued the appeal, so the sink says tier 1 rather than
+        reporting a plain primary win."""
+        backend = _fake_backend(external=False)
+        # A small window, so the full call is over budget and gets a sibling.
+        backend.get_max_context.return_value = 2000
+
+        def infer(**kwargs):
+            # The full call still carries pubmed_context and gives nothing;
+            # the tier-1 sibling has it shed and writes the letter.
+            if kwargs.get("pubmed_context"):
+                return []
+            return [("full", _REAL_APPEAL)]
+
+        backend.infer.side_effect = infer
+        names, _calls = _names_by_role(["fhi-a"], [], [])
+
+        sink = _run_make_appeals(
+            _mock_denial(use_external=False),
+            names,
+            {"fhi-a": [backend]},
+            pubmed_context="x" * (2000 * 4),
+        )
+
+        assert (sink["winning_stage"], sink["shed_tier"]) == ("primary", 1)
+
 
 class TestDenialTextOverride:
     """denial_text_override substitutes a summary for the raw denial text in

@@ -314,11 +314,12 @@ def _letter_outside_models() -> list[RemoteModelLike]:
     ours are up. A letter spends under its own use ("other", or "assistant"),
     and best_external_models judges each provider's spend for that use, so a
     healthy hosted model still gets the letter's last attempt. The roster is
-    read without chat's hourly warning, and never fails open onto a model
-    known to be down: the hosted models are the fallback here.
+    read with fail_open=False, so it never fails open onto a model known to
+    be down (the hosted models are the fallback here) and never sets off
+    chat's hourly warning.
     """
     roster: list[RemoteModelLike] = ml_router.chat_outside_models(
-        limit=MAX_EXTERNAL_ATTEMPTS, warn_if_down=False, fail_open=False
+        limit=MAX_EXTERNAL_ATTEMPTS, fail_open=False
     )
     if roster:
         return roster
