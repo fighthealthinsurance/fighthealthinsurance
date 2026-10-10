@@ -209,6 +209,41 @@ async def test_a_skipped_retry_keeps_what_the_asked_call_gave():
 
 
 @pytest.mark.asyncio
+async def test_a_skipped_retry_after_an_outage_raises_provider_unavailable():
+    """The asked call was not reached (a 5xx, a timeout) and no time is left
+    for the retry: the outage is raised, as when both tries fail. Not a
+    DeadlineSkipped, since the model was asked."""
+    model = _model_answering(ml_models.ProviderUnavailable("HTTP 503"), _GOOD_DRAFT)
+    with pytest.raises(ml_models.ProviderUnavailable) as excinfo:
+        await model._checked_infer(
+            **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 5.0
+        )
+    assert type(excinfo.value) is ml_models.ProviderUnavailable
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_retry_after_an_outage_is_an_unavailable_result():
+    model = _model_answering(ml_models.ProviderUnavailable("HTTP 503"), _GOOD_DRAFT)
+    with patch.object(ml_models, "record_ml_result") as recorded:
+        with pytest.raises(ml_models.ProviderUnavailable):
+            await model._checked_infer(
+                **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 5.0
+            )
+    assert [c.args[2] for c in recorded.call_args_list] == ["unavailable"]
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_retry_after_no_text_stays_no_completion():
+    """Reached, and it answered with no text: not an outage."""
+    model = _model_answering(ml_models.NoAnswerText("no text"), _GOOD_DRAFT)
+    with patch.object(ml_models, "record_ml_result") as recorded:
+        result = await model._checked_infer(
+            **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 5.0
+        )
+    assert (result, recorded.call_args.args[2]) == ([], "no_completion")
+
+
+@pytest.mark.asyncio
 async def test_a_prior_auth_letter_moves_on_from_a_deadline_skip():
     model = _model_answering(_GOOD_DRAFT)
     with ml_models.attempt_deadline(0.0):

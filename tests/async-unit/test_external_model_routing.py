@@ -409,11 +409,11 @@ class TestChatBesideAHealthyOutsideModel(_WithRouter):
         self.roster = [_outside(name) for name in ROSTER]
         self.router.chat_outside_models_by_name.update({m.name: m for m in self.roster})
 
-    def _chat(self, use_external=True):
+    def _chat(self, use_external=True, **kwargs):
         with override_settings(
             FHI_CHAT_OUTSIDE_MODELS=ROSTER, FHI_CHAT_EXPLORE_RATE=0.0
         ):
-            return self.router.get_chat_backends(use_external=use_external)
+            return self.router.get_chat_backends(use_external=use_external, **kwargs)
 
     def test_our_down_models_are_left_out(self):
         assert self._chat() == self.roster[:3]
@@ -437,6 +437,13 @@ class TestChatBesideAHealthyOutsideModel(_WithRouter):
 
     def test_ours_fail_open_without_outside_models(self):
         assert self._chat(use_external=False) == [self.lead, self.lead, self.other]
+
+    def test_ours_are_left_out_without_outside_models_when_told_not_to_fail_open(
+        self,
+    ):
+        """A caller that asks its own outside model after this list (a
+        regulator letter) says whether ours may fail open."""
+        assert self._chat(use_external=False, fail_open=False) == []
 
 
 class TestSummariesAndQuestionsBesideAnOutsideModel(_WithRouter):

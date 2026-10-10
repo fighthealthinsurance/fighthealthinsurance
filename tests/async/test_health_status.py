@@ -160,6 +160,21 @@ class _Flaky:
         return self.healthy
 
 
+class _FlakyOutside(_Flaky):
+    """An outside backend whose probe answers as ``healthy`` says: the public
+    snapshot lists it by name while it is down."""
+
+    external = True
+
+
+class _FlakyRefused(_FlakyOutside):
+    """One whose key this pod saw refused, which a passing /models probe
+    says nothing about."""
+
+    def unavailable_reason(self):
+        return "refused (HTTP 401)"
+
+
 class _CheckedLive(_Flaky):
     """A backend with its own live signal: routing never reads the sweep for
     it."""
@@ -203,11 +218,14 @@ def _router(models, chat_outside=None):
     return router
 
 
-def _swept(models, status=None):
+def _swept(models, status=None, chat_outside=None):
     """A health status (a fresh one unless given) after one sweep over
-    ``models``, its snapshot read as it stands from then on."""
+    ``models`` (and chat's own ``chat_outside`` ones), its snapshot read as
+    it stands from then on."""
     status = status or _HealthStatus()
-    with mock.patch("fighthealthinsurance.ml.ml_router.ml_router", _router(models)):
+    with mock.patch(
+        "fighthealthinsurance.ml.ml_router.ml_router", _router(models, chat_outside)
+    ):
         status._refresh_unlocked()
     status._initialized = True
     return status
@@ -905,6 +923,72 @@ class TestDownRecheck(TestCase):
         status = _swept([live])
         status._recheck_down()
         assert live.probes == 1
+
+    def _recheck_recording(self, status):
+        """Run a recheck; what it handed the serving registry."""
+        with mock.patch(
+            "fighthealthinsurance.ml.serving_registry.record_backends_async"
+        ) as record:
+            status._recheck_down()
+        return record
+
+    def test_a_recheck_records_the_card_of_only_the_backend_it_brings_back(self):
+        """The sweep that marked it down left the serving registry a "nothing"
+        for it, so unrecorded, every draft it wrote until the next sweep had
+        no ServingIdentity."""
+        recovering = _Flaky("recovering")
+        status = _swept([_Flaky("healthy", healthy=True), recovering, _Flaky()])
+        recovering.healthy = True
+        record = self._recheck_recording(status)
+        record.assert_called_once_with([recovering])
+
+    def test_a_recheck_that_brings_nothing_back_records_nothing(self):
+        status = _swept([_Flaky()])
+        record = self._recheck_recording(status)
+        record.assert_not_called()
+
+    # The public snapshot follows routing: a backend a recheck puts back is
+    # counted and no longer listed as failing, not an hour later.
+
+    def test_after_a_recheck_the_snapshot_counts_the_backend_alive(self):
+        backend = _FlakyOutside()
+        status = _swept([backend])
+        backend.healthy = True
+        status._recheck_down()
+        assert status.get_snapshot()["alive_models"] == 1
+
+    def test_after_a_recheck_the_snapshot_no_longer_lists_it_failing(self):
+        backend = _FlakyOutside()
+        status = _swept([backend])
+        backend.healthy = True
+        status._recheck_down()
+        assert status.get_snapshot()["details"] == []
+
+    def test_a_recheck_drops_only_the_row_of_the_backend_it_brings_back(self):
+        """Two providers can expose the same wire id."""
+        recovering = _FlakyOutside("same-id")
+        status = _swept([recovering, _FlakyOutside("same-id")])
+        recovering.healthy = True
+        status._recheck_down()
+        assert status.get_snapshot()["details"] == [
+            {"name": "same-id", "ok": False, "error": "not ok"}
+        ]
+
+    def test_a_recovered_chat_only_backend_is_not_counted_alive(self):
+        """It cannot draft, so the sweep would not have counted it either."""
+        chat = _FlakyOutside("chat-model")
+        status = _swept([_Flaky("drafter", healthy=True)], chat_outside={"c": chat})
+        chat.healthy = True
+        status._recheck_down()
+        assert status.get_snapshot()["alive_models"] == 1
+
+    def test_a_recovered_backend_with_a_live_problem_is_not_counted_alive(self):
+        """The live overlay reads it like any backend whose probe passed."""
+        backend = _FlakyRefused()
+        status = _swept([backend])
+        backend.healthy = True
+        status._recheck_down()
+        assert status.get_snapshot()["alive_models"] == 0
 
     def test_a_backend_that_stays_down_waits_twice_as_long_next_time(self):
         status = _swept([_Flaky()])

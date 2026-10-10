@@ -1065,31 +1065,20 @@ def _model_can_be_asked(model_name: Optional[str]) -> bool:
     return False
 
 
-def _calls_worth_shedding(
-    calls: List[dict], records: Sequence[ModelAttemptRecord]
-) -> List[dict]:
+def _calls_worth_shedding(calls: List[dict]) -> List[dict]:
     """The primary calls the context-shed ladder should retry.
 
     Shedding context helps a model that overflowed it or answered with
     nothing; it cannot help one that could not be asked. So a call is dropped
-    when its model can no longer be asked (``_model_can_be_asked``) or when
-    every attempt row for it this run is an error that says "unavailable:"
-    (refused, or not reached on the first call or the retry).
+    only when its model can no longer be asked (``_model_can_be_asked``).
+
+    The attempt rows are deliberately not read: an "unavailable:" error row
+    does not mean the model was never reached. The transport reports
+    "unavailable:" whenever any leg failed and none gave text, which includes
+    a primary endpoint that overflowed its context beside a backup leg that
+    was down or cooling, exactly the case this ladder exists to rescue.
     """
-
-    def never_reached(model_name: Optional[str]) -> bool:
-        rows = [r for r in records if r.model_name == model_name]
-        return bool(rows) and all(
-            r.outcome == "error" and r.error_detail.startswith("unavailable:")
-            for r in rows
-        )
-
-    return [
-        c
-        for c in calls
-        if _model_can_be_asked(c.get("model_name"))
-        and not never_reached(c.get("model_name"))
-    ]
+    return [c for c in calls if _model_can_be_asked(c.get("model_name"))]
 
 
 # Proactive dual-call threshold. When a call's estimated token footprint
@@ -3641,14 +3630,12 @@ class AppealGenerator(object):
                     "use_external=True but no external backend was selectable "
                     "for the backup"
                 )
-            # Every stage so far has been drained (the peeks ran dry), so the
-            # attempt rows say why each primary model failed.
-            ladder_calls = _calls_worth_shedding(calls, list(recorder._records))
+            ladder_calls = _calls_worth_shedding(calls)
             if not ladder_calls:
-                # No primary call, or each primary model is unavailable
-                # (parked, refused, cooling down, out of budget) or was never
-                # reached this run: one line, and no sleep or retry rows per
-                # appeal while that lasts.
+                # No primary call, or no instance of any primary model can be
+                # asked (parked, refused, cooling down, out of budget): one
+                # line, and no sleep or retry rows per appeal while that
+                # lasts.
                 logger.error(
                     f"{gen_prefix}make_appeals: primary+backup both produced 0 "
                     f"for denial {denial_id} ({ext_note}); no primary model "

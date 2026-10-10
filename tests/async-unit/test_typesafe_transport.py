@@ -223,11 +223,19 @@ def _connector_error(error_class, os_error):
     return error_class(key, os_error)
 
 
-def _connect_timeout():
-    """One request whose connect times out (a host dropping our packets)."""
+# The chat gate's budget after a slow identifier lookup ate most of it: a
+# connect bound of 0.225s, too short to say anything about the host.
+SQUEEZED_TIMEOUT_SECONDS = 0.3
+
+
+def _connect_timeout(timeout_seconds=20):
+    """One request whose connect times out (a host dropping our packets).
+    By default under the letter and triage callers' 20s timeout, whose
+    connect bound counts toward a streak; the fake fails at once, so nothing
+    waits that long."""
     error = aiohttp.ConnectionTimeoutError("Connection timeout to host")
     with pytest.raises(aiohttp.ConnectionTimeoutError):
-        _ask(_FakeSession(error=error))
+        _ask(_FakeSession(error=error), timeout_seconds=timeout_seconds)
 
 
 class _Clock:
@@ -349,6 +357,23 @@ class TestCooldown:
         _ask(session)
         assert len(session.posted) == 1
 
+    def test_connect_timeouts_under_a_short_bound_start_no_cooldown(self):
+        """A caller's leftover budget can be too short for a healthy host's
+        handshake, so even two in a row say nothing about reaching it."""
+        for _ in range(typesafe.CONNECT_TIMEOUT_STREAK):
+            _connect_timeout(timeout_seconds=SQUEEZED_TIMEOUT_SECONDS)
+        session = _FakeSession()
+        _ask(session)
+        assert len(session.posted) == 1
+
+    def test_a_connect_timeout_under_a_short_bound_starts_no_streak(self):
+        """The counted connect timeout after it is still the first of one."""
+        _connect_timeout(timeout_seconds=SQUEEZED_TIMEOUT_SECONDS)
+        _connect_timeout()
+        session = _FakeSession()
+        _ask(session)
+        assert len(session.posted) == 1
+
     def test_connect_timeouts_further_apart_than_the_window_start_no_cooldown(self):
         clock = _Clock()
         with patch.object(typesafe, "time", clock):
@@ -444,14 +469,17 @@ class TestConnectBound:
         """Through the real client: only the socket connect is replaced, by
         one that never completes. The URL is an address literal, so nothing
         is looked up, and were the patch to miss, the local refusal would
-        fail this test rather than reach out. Two in a row cool."""
+        fail this test rather than reach out. Two in a row cool. The counted
+        floor is lowered so a 0.3s connect bound counts and nothing waits a
+        full second."""
 
         async def never_connects(*args, **kwargs):
             await asyncio.Event().wait()
 
         conf = {**SETTINGS, "TYPESAFE_API_URL": "https://127.0.0.1:9/v1/systemone"}
         never = patch("aiohappyeyeballs.start_connection", never_connects)
-        with override_settings(**conf), never:
+        floor = patch.object(typesafe, "MIN_COUNTED_CONNECT_SECONDS", 0.1)
+        with override_settings(**conf), never, floor:
             for _ in range(typesafe.CONNECT_TIMEOUT_STREAK):
                 with pytest.raises(aiohttp.ConnectionTimeoutError):
                     asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=0.4))

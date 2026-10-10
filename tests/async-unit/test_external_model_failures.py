@@ -605,6 +605,13 @@ class TestMessagesResponseParsing:
         )
         assert parsed is None
 
+    def test_a_reply_of_only_whitespace_is_no_answer(self):
+        """As on the shared transport, a blank reply is no text."""
+        parsed = _azure_claude()._parse_messages_response(
+            {"content": [{"type": "text", "text": "\n\n"}]}
+        )
+        assert parsed is None
+
 
 _CHECKED_INFER_KWARGS = dict(
     prompt="denial text",
@@ -734,6 +741,22 @@ class TestRetryAfterAnOutage:
             with pytest.raises(ProviderUnavailable):
                 await model._checked_infer(**_CHECKED_INFER_KWARGS)
         assert (fake_post.calls, recorded.call_args.args[2]) == (2, "unavailable")
+
+    @pytest.mark.asyncio
+    async def test_an_outage_with_no_time_to_retry_is_an_unavailable_result(
+        self, monkeypatch, make_fake_model_post
+    ):
+        """Asked once, not reached, and too little time left for the retry:
+        it used to be filed as a model that answered nothing."""
+        model = _plain()
+        fake_post = make_fake_model_post(503, "overloaded")
+        monkeypatch.setattr(aiohttp.ClientSession, "post", fake_post)
+        with patch.object(ml_models, "record_ml_result") as recorded:
+            with pytest.raises(ProviderUnavailable, match="503"):
+                await model._checked_infer(
+                    **_CHECKED_INFER_KWARGS, deadline=time.monotonic() + 5.0
+                )
+        assert (fake_post.calls, recorded.call_args.args[2]) == (1, "unavailable")
 
     @pytest.mark.asyncio
     async def test_a_rate_limited_providers_outage_is_not_an_error_result(

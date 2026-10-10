@@ -305,18 +305,28 @@ def build_routing_overview(router: Optional[MLRouter] = None) -> RoutingOverview
     )
 
     # The single extra call that carries denial-type guidance. The router
-    # picks an instance, but generate_appeal sends the call by its name.
+    # picks an instance, but generate_appeal sends the call by its name, and
+    # skips it when the first pass was left empty for a hosted backup.
     best = router.best_internal_model(general_only=False)
-    hint = [name_of(best)] if best is not None else []
-    for name in hint:
-        by_name.add(name, PATH_APPEALS, "best-internal hint", (False, True))
+    hint: Dict[bool, List[str]] = {}
+    for flag in (False, True):
+        hosted_backup = any(
+            getattr(m, "external", False)
+            for name in backup[flag]
+            for m in router.models_by_name.get(name, [])
+        )
+        skipped = not primary[flag] and hosted_backup
+        hint[flag] = [name_of(best)] if best is not None and not skipped else []
+        for name in hint[flag]:
+            by_name.add(name, PATH_APPEALS, "best-internal hint", (flag,))
     paths.append(
         PathPlan(
             "Appeals, best-internal hint",
             "One extra call to the strongest internal model with denial-type "
-            "guidance, made only when a specialized denial template matches.",
-            name_entries(hint),
-            name_entries(hint),
+            "guidance, made only when a specialized denial template matches, "
+            "and not when none of ours is up while a hosted backup can answer.",
+            name_entries(hint[False]),
+            name_entries(hint[True]),
         )
     )
 

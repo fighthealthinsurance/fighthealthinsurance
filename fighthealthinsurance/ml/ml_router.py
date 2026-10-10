@@ -935,6 +935,7 @@ class MLRouter(object):
         use_external=False,
         policy: Optional[ChatPolicy] = None,
         explore: bool = True,
+        fail_open: Optional[bool] = None,
     ) -> list[RemoteModelLike]:
         """
         Return models for handling chat interactions.
@@ -948,6 +949,13 @@ class MLRouter(object):
                 _explore). False for the chooser, which compares them all:
                 every roster model that can be asked, in order, the same
                 answer each time it asks.
+            fail_open: Whether our own models fail open when every one of
+                them is marked down. None (the default) decides it here: only
+                when no outside model in this list can answer. A caller that
+                adds its own outside model after this list (a regulator
+                letter) passes False while that model can answer, so ours
+                marked down are left out rather than asked ahead of it.
+                A FORCE_MODEL is returned whatever this says.
 
         Returns:
             List of RemoteModelLike models suitable for chat tasks
@@ -965,7 +973,8 @@ class MLRouter(object):
         # answerers. Judged on selectable outside models, not on a non-empty
         # list: chat_outside_models fails open itself when the roster and
         # ours are all down, and then ours must fail open too.
-        fail_open = not any(self._selectable(m) for m in externals)
+        if fail_open is None:
+            fail_open = not any(self._selectable(m) for m in externals)
         # The lead fhi backend is asked twice, for redundancy against a slow
         # pod. It is picked by quality (see _chat_lead), so the doubled slot
         # goes to our strongest model rather than whichever name sorts first.

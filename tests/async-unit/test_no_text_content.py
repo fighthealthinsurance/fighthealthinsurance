@@ -1,9 +1,12 @@
 """A completion with no text is a provider condition, not a bug."""
 
+from unittest.mock import patch
+
 import aiohttp
 import pytest
 
-from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
+from fighthealthinsurance.ml import ml_models
+from fighthealthinsurance.ml.ml_models import NoAnswerText, RemoteFullOpenLike
 
 NO_TEXT = {
     "choices": [
@@ -85,3 +88,49 @@ async def test_a_null_text_part_is_no_text(monkeypatch, make_fake_model_post):
         make_fake_model_post(200, "{}", json_data=null_part),
     )
     assert await model._infer(system_prompts=["sys"], prompt="hi") is None
+
+
+def _content_only(content):
+    """A 200 whose only choice carries ``content`` and ran out of budget."""
+    return {
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "length",
+            }
+        ]
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ["", "\n\n"])
+async def test_empty_content_raises_no_answer_text_when_asked(
+    monkeypatch, make_fake_model_post, content
+):
+    """A reasoning model that spent its budget thinking can answer "" (or a
+    blank line) rather than null. That used to come back as an answer, so
+    entity extraction read the field as not in the letter rather than as a
+    failed read."""
+    model = RemoteFullOpenLike("http://reasoner.example/v1", "tok", "r3")
+    monkeypatch.setattr(
+        aiohttp.ClientSession,
+        "post",
+        make_fake_model_post(200, "{}", json_data=_content_only(content)),
+    )
+    with pytest.raises(NoAnswerText):
+        await model._infer_no_context(
+            system_prompts=["sys"], prompt="hi", raise_on_unavailable=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_empty_content_is_counted_as_no_text(monkeypatch, make_fake_model_post):
+    model = RemoteFullOpenLike("http://reasoner.example/v1", "tok", "r4")
+    monkeypatch.setattr(
+        aiohttp.ClientSession,
+        "post",
+        make_fake_model_post(200, "{}", json_data=_content_only("")),
+    )
+    with patch.object(ml_models, "record_ml_failure") as failure:
+        await model._infer(system_prompts=["sys"], prompt="hi")
+    assert [c.args[1] for c in failure.call_args_list] == ["no_text"]

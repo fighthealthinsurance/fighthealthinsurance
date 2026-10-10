@@ -44,18 +44,27 @@ class Command(BaseCommand):
         provider = options["provider"]
         use = options["use"]
         name = spend.counter(provider, use)
+        # This process has its own copy of the ledger, and a worker thread
+        # that may not run before it exits: read the shared pauses first, and
+        # store the lift before returning.
         try:
-            # This process has its own copy of the ledger, and a worker thread
-            # that may not run before it exits: read the shared pauses first,
-            # and store the lift before returning.
-            spend.sync_now()
-            lifted = spend.unpause(
-                provider, use, reason="by hand, manage.py unpause_spend"
-            )
             spend.sync_now()
         except Exception as e:
             raise CommandError(
                 f"Spend ledger not reachable, nothing lifted: {type(e).__name__}: {e}"
+            )
+        lifted = spend.unpause(provider, use, reason="by hand, manage.py unpause_spend")
+        try:
+            spend.sync_now()
+        except Exception as e:
+            # The lift may or may not have been stored before the failure.
+            # Running the command again is safe either way: it says "not
+            # paused" once the lift is stored.
+            raise CommandError(
+                f"Lifted {name} here, but could not confirm it reached the "
+                f"shared ledger ({type(e).__name__}: {e}); run it again to check."
+                if lifted
+                else f"Spend ledger not reachable: {type(e).__name__}: {e}"
             )
         if lifted:
             self.stdout.write(

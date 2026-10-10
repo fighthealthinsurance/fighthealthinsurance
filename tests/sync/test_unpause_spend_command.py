@@ -71,3 +71,20 @@ class UnpauseSpendCommandTest(TestCase):
         ):
             with self.assertRaises(CommandError):
                 self._run("anthropic")
+
+    def test_a_lift_whose_store_fails_says_to_run_it_again(self):
+        """The lift was made here, but whether it reached the other pods is
+        unknown: the command says so instead of "nothing lifted"."""
+        self._paused_elsewhere("anthropic:*")
+        real_sync = spend.sync_now
+        calls = []
+
+        def sync_then_fail():
+            calls.append(1)
+            if len(calls) > 1:
+                raise RuntimeError("database away")
+            real_sync()
+
+        with patch.object(spend, "sync_now", side_effect=sync_then_fail):
+            with self.assertRaisesRegex(CommandError, "run it again"):
+                self._run("anthropic")

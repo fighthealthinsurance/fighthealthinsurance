@@ -9,10 +9,7 @@ from fighthealthinsurance.ml.ml_models import (
     ProviderUnavailable,
     RemoteFullOpenLike,
 )
-from fighthealthinsurance.ml.model_attempt_log import (
-    ModelAttemptRecord,
-    ModelAttemptRecorder,
-)
+from fighthealthinsurance.ml.model_attempt_log import ModelAttemptRecorder
 from fighthealthinsurance.generate_appeal import (
     backend_label,
     AppealGenerator,
@@ -1773,66 +1770,46 @@ class TestOptInFirstPassSkipsDownInternals:
         assert all(fail_open for _use_ext, fail_open in calls)
 
 
-def _row(model_name, outcome, error_detail=""):
-    return ModelAttemptRecord(
-        model_name=model_name, outcome=outcome, error_detail=error_detail
-    )
-
-
 class TestCallsWorthShedding:
     """Shedding context can rescue a model that overflowed it, never one that
     could not be asked: the ladder used to re-ask unavailable models at both
     tiers on every appeal for the length of an outage."""
 
-    def _keep(self, models_by_name, records, names=("fhi-a",)):
+    def _keep(self, models_by_name, names=("fhi-a",)):
         calls = [_make_call(model_name=name) for name in names]
         with patch(
             "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
             new=models_by_name,
         ):
-            return [c["model_name"] for c in _calls_worth_shedding(calls, records)]
+            return [c["model_name"] for c in _calls_worth_shedding(calls)]
 
     def test_drops_a_model_with_no_instance_that_can_be_asked(self):
         parked = _fake_backend(external=False, available=False)
 
-        assert self._keep({"fhi-a": [parked]}, []) == []
+        assert self._keep({"fhi-a": [parked]}) == []
 
     def test_drops_a_model_whose_provider_is_out_of_budget(self):
         paused = _fake_backend(external=False)
         paused._spend_allows.return_value = False
 
-        assert self._keep({"fhi-a": [paused]}, []) == []
+        assert self._keep({"fhi-a": [paused]}) == []
 
-    def test_drops_a_model_never_reached_this_run(self):
-        """An internal 401 is never parked, but every row says it could not
-        be asked."""
+    def test_keeps_a_model_that_can_still_be_asked(self):
         backend = _fake_backend(external=False)
-        rows = [_row("fhi-a", "error", "unavailable: HTTP 401 Unauthorized")] * 2
 
-        assert self._keep({"fhi-a": [backend]}, rows) == []
-
-    def test_keeps_a_model_that_answered_with_nothing(self):
-        backend = _fake_backend(external=False)
-        rows = [
-            _row("fhi-a", "error", "unavailable: HTTP 503"),
-            _row("fhi-a", "no_output"),
-        ]
-
-        assert self._keep({"fhi-a": [backend]}, rows) == ["fhi-a"]
+        assert self._keep({"fhi-a": [backend]}) == ["fhi-a"]
 
     def test_keeps_a_model_whose_signal_cannot_be_read(self):
         backend = _fake_backend(external=False)
         backend.is_available.side_effect = RuntimeError("boom")
 
-        assert self._keep({"fhi-a": [backend]}, []) == ["fhi-a"]
+        assert self._keep({"fhi-a": [backend]}) == ["fhi-a"]
 
     def test_keeps_only_the_models_that_could_still_answer(self):
         parked = _fake_backend(external=False, available=False)
         up = _fake_backend(external=False)
 
-        kept = self._keep(
-            {"fhi-a": [parked], "fhi-b": [up]}, [], names=("fhi-a", "fhi-b")
-        )
+        kept = self._keep({"fhi-a": [parked], "fhi-b": [up]}, names=("fhi-a", "fhi-b"))
 
         assert kept == ["fhi-b"]
 
@@ -1876,14 +1853,31 @@ class TestShedLadderSkipsUnavailableModels:
 
         assert self._stages(sink) == {"primary"}
 
-    def test_model_refused_on_every_try_is_not_retried(self):
-        refused = _fake_backend(
-            external=False, infer_error=ProviderUnavailable("HTTP 401 Unauthorized")
-        )
+    def test_model_parked_by_its_refusal_is_not_retried(self):
+        refused = _fake_backend(external=False)
+
+        def refuse(*_args, **_kwargs):
+            refused.is_available.return_value = False
+            raise ProviderUnavailable("refused recently (key or account)")
+
+        refused.infer.side_effect = refuse
 
         sink = self._run({"fhi-a": [refused]})
 
         assert self._stages(sink) == {"primary"}
+
+    def test_askable_model_whose_every_row_says_unavailable_is_retried(self):
+        """A primary that overflowed its context beside a backup leg cooling
+        down reports "unavailable:" on every try, yet was reached: shedding
+        context is what rescues it, so its rows must not drop it."""
+        overflowed = _fake_backend(
+            external=False,
+            infer_error=ProviderUnavailable("fhi-a via backup: cooling down"),
+        )
+
+        sink = self._run({"fhi-a": [overflowed]})
+
+        assert {"retry_tier_1", "retry_tier_2"} <= self._stages(sink)
 
     def test_ladder_still_retries_the_model_that_answered_a_runt(self):
         parked = _fake_backend(

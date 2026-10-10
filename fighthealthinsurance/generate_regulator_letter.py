@@ -272,6 +272,13 @@ def _letter_backends(use_external: bool) -> list[RemoteModelLike]:
     outside models judged them by chat's budget and spent chat's hourly
     "every outside chat model is down" warning, though a letter is not chat.
     A FORCE_MODEL naming an outside model still picks it, as for chat.
+
+    The outside model is chosen first, because it decides whether ours fail
+    open. With one that can answer, ours marked down are left out, as they
+    are for chat: a dead model of ours ahead of it would hold the letter for
+    its whole share of the budget, and log the router's fail-open ERROR.
+    Without one (or without ``use_external``), ours are the letter's only
+    answerers and fail open as before.
     """
     outside_ids = {id(m) for m in ml_router.external_models_by_cost}
     outside_ids.update(id(m) for m in ml_router.chat_outside_models_by_name.values())
@@ -279,7 +286,12 @@ def _letter_backends(use_external: bool) -> list[RemoteModelLike]:
     internal: list[RemoteModelLike] = []
     external: list[RemoteModelLike] = []
     forced = use_external and bool(get_env_variable("FORCE_MODEL"))
-    for model in ml_router.get_chat_backends(use_external=forced):
+    # _letter_outside_models only returns models that can answer, so a
+    # non-empty list means ours need not fail open.
+    outside = _letter_outside_models() if use_external else []
+    for model in ml_router.get_chat_backends(
+        use_external=forced, fail_open=not outside
+    ):
         if id(model) in seen:
             continue
         seen.add(id(model))
@@ -289,7 +301,7 @@ def _letter_backends(use_external: bool) -> list[RemoteModelLike]:
             internal.append(model)
     chosen = internal[:MAX_INTERNAL_ATTEMPTS]
     if use_external:
-        chosen += (external or _letter_outside_models())[:MAX_EXTERNAL_ATTEMPTS]
+        chosen += (external or outside)[:MAX_EXTERNAL_ATTEMPTS]
     return chosen
 
 

@@ -218,6 +218,19 @@ class TestRoles(_NoRoutingEnv):
             "Appeals: primary (internal only)",
             _labels(overview, router, "fhi-local"),
         )
+
+    def test_the_hint_is_not_sent_to_a_down_internal_beside_a_hosted_backup(self):
+        """make_appeals skips the hint call when the first pass was left
+        empty for the hosted backup, so it is listed for opted-out appeals
+        only."""
+        router = _bare_router()
+        _register(router, "fhi-local", _backend("fhi-local", 210, available=False))
+        _register(router, GEMMA, _backend(GEMMA, 80, external=True))
+        overview = ro.build_routing_overview(router)
+        self.assertIn(
+            "Appeals: best-internal hint (internal only)",
+            _labels(overview, router, "fhi-local"),
+        )
         self.assertIn(
             "Summaries: 1st (external allowed)", _labels(overview, router, GEMMA)
         )

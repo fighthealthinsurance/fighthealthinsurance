@@ -105,6 +105,13 @@ CONNECT_TIMEOUT_SECONDS = 10.0
 # CONNECT_TIMEOUT_WINDOW_SECONDS of the first. Any HTTP answer ends a streak.
 CONNECT_TIMEOUT_STREAK = 2
 CONNECT_TIMEOUT_WINDOW_SECONDS = 60.0
+# A connect timeout counts toward that streak only when the connect had at
+# least this long. A shorter bound comes from a caller's leftover budget (the
+# chat gate's, after its identifier lookup ate most of it, or a chat timeout
+# configured low), and a healthy host's TCP and TLS handshake can miss it:
+# that says nothing about whether TypeSafe can be reached, and counting it
+# would let one squeezed chat turn stop letter scoring and triage too.
+MIN_COUNTED_CONNECT_SECONDS = 1.0
 
 # (monotonic deadline, the status that started it): one tuple, replaced
 # whole, so a reader never pairs one cooldown's deadline with another's
@@ -287,8 +294,10 @@ async def ask(
     or spend.quota_refusal) pauses TypeSafe for every use until the next UTC
     day. An HTTP 401, 403, 404 or 410, an endpoint that cannot be reached
     (DNS, refused, TLS), or a connect that times out twice in a row
-    (CONNECT_TIMEOUT_STREAK) starts the cooldown: until it ends every use
-    is refused with TypeSafeCoolingDown before anything is sent.
+    (CONNECT_TIMEOUT_STREAK; a connect bound under
+    MIN_COUNTED_CONNECT_SECONDS never counts) starts the cooldown: until it
+    ends every use is refused with TypeSafeCoolingDown before anything is
+    sent.
 
     Raises TypeSafeError on a non-200, a spent budget or a cooldown, and
     lets aiohttp/asyncio errors propagate: callers decide what a failure
@@ -321,9 +330,9 @@ async def ask(
     # own wait_for of the same length (the chat gate's), so a host that
     # cannot be reached fails here as a connect timeout, which counts toward
     # the cooldown, rather than being cut off by the caller's cancellation.
+    connect_bound = min(timeout_seconds * 0.75, CONNECT_TIMEOUT_SECONDS)
     client_timeout = aiohttp.ClientTimeout(
-        total=timeout_seconds,
-        sock_connect=min(timeout_seconds * 0.75, CONNECT_TIMEOUT_SECONDS),
+        total=timeout_seconds, sock_connect=connect_bound
     )
     try:
         async with aiohttp.ClientSession(timeout=client_timeout) as session:
@@ -352,8 +361,10 @@ async def ask(
     except aiohttp.ConnectionTimeoutError as e:
         # No connection within the connect bound. aiohttp raises this for
         # the connect phase only, so a slow answer after connecting (the
-        # request's own timeout) never gets here. Cools only on a streak.
-        if _connect_timed_out():
+        # request's own timeout) never gets here. Cools only on a streak, and
+        # only a bound of MIN_COUNTED_CONNECT_SECONDS or more counts toward
+        # one: a shorter one can miss a healthy host's handshake.
+        if connect_bound >= MIN_COUNTED_CONNECT_SECONDS and _connect_timed_out():
             _start_cooldown(
                 f"could not be reached ({type(e).__name__}, "
                 f"{CONNECT_TIMEOUT_STREAK} in a row)",

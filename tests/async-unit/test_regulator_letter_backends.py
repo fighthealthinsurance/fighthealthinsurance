@@ -5,6 +5,11 @@ The outside model used to come from the chat fan-out's roster only, so a
 spent chat budget or a down roster left the letter with none while a
 healthy hosted model sat unused, and a letter request spent chat's hourly
 "every outside chat model is down" warning.
+
+With an outside model that can answer, our models marked down are left out
+(as for chat) rather than failed open onto ahead of it, which held the
+letter for each dead model's share of the budget and logged the router's
+fail-open ERROR.
 """
 
 import asyncio
@@ -13,6 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.test import SimpleTestCase, override_settings
+from loguru import logger
 
 from fighthealthinsurance.escalation_addresses import EscalationRecipient
 from fighthealthinsurance.generate_regulator_letter import (
@@ -83,10 +89,28 @@ class LetterOutsideModelTest(SimpleTestCase):
         warning = patch.object(ml_router_module, "_warn_roster_down")
         self.roster_warning = warning.start()
         self.addCleanup(warning.stop)
+        # The fail-open ERROR goes out once per pool every ten minutes per
+        # process; start unlogged, so a test finding none proves something.
+        logged = patch.dict(ml_router_module._fail_open_logged_at, clear=True)
+        logged.start()
+        self.addCleanup(logged.stop)
 
     def roster_down(self):
         for model in self.roster:
             model.is_available.return_value = False
+
+    def failing_open_errors(self, use_external):
+        """The router's fail-open ERRORs logged while choosing a letter's
+        models."""
+        errors: list[str] = []
+        sink = logger.add(
+            lambda message: errors.append(message.record["message"]), level="ERROR"
+        )
+        try:
+            _letter_backends(use_external)
+        finally:
+            logger.remove(sink)
+        return [m for m in errors if "failing open" in m]
 
     def test_a_healthy_roster_model_is_the_outside_choice(self):
         self.assertEqual(_letter_backends(True), [self.ours, self.roster[0]])
@@ -100,9 +124,38 @@ class LetterOutsideModelTest(SimpleTestCase):
         self.assertEqual(_letter_backends(True), [self.ours, self.hosted])
 
     def test_a_down_roster_never_fails_open_when_ours_are_down_too(self):
+        """Nor do ours: the hosted model can answer, so it is asked alone
+        rather than after our dead ones."""
         self.roster_down()
         self.ours.is_available.return_value = False
-        self.assertEqual(_letter_backends(True)[-1], self.hosted)
+        self.assertEqual(_letter_backends(True), [self.hosted])
+
+    def test_ours_marked_down_log_no_failing_open_error_beside_a_hosted_model(
+        self,
+    ):
+        self.roster_down()
+        self.ours.is_available.return_value = False
+        self.assertEqual(self.failing_open_errors(True), [])
+
+    def test_ours_marked_down_are_left_out_beside_a_healthy_roster_model(self):
+        self.ours.is_available.return_value = False
+        self.assertEqual(_letter_backends(True), [self.roster[0]])
+
+    def test_ours_fail_open_when_no_outside_model_can_answer(self):
+        self.roster_down()
+        self.ours.is_available.return_value = False
+        spend.pause(spend.DEEPINFRA, spend.OTHER)
+        self.assertEqual(_letter_backends(True), [self.ours])
+
+    def test_ours_fail_open_without_use_external(self):
+        self.ours.is_available.return_value = False
+        self.assertEqual(_letter_backends(False), [self.ours])
+
+    def test_ours_failing_open_without_use_external_still_logs_the_error(self):
+        """They are the letter's only answerers, so the outage is still
+        reported (and failing_open_errors does see the ERROR)."""
+        self.ours.is_available.return_value = False
+        self.assertNotEqual(self.failing_open_errors(False), [])
 
     def test_a_letter_never_sends_chats_roster_down_warning(self):
         self.roster_down()

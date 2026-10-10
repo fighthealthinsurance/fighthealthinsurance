@@ -7,8 +7,8 @@ What & why:
   caches results, and refreshes periodically (hourly) in the background; until
   the first sweep lands every backend reads as unchecked and selection fails open.
 - Between sweeps, rechecks only the backends the last one marked down (every
-  few minutes), so one failed probe does not keep a backend out of routing
-  for the hour.
+  few minutes), so one failed probe does not keep a backend out of routing,
+  the public count or the serving registry for the hour.
 - Avoids heavy checks per request; endpoint simply returns the cached snapshot,
   with this pod's live signals (``live_problem``) read on top at each read.
 
@@ -61,6 +61,16 @@ def _model_key(model: Any) -> str:
     if not prefix:
         prefix = type(model).__name__
     return f"{prefix}@{id(model):x}"
+
+
+def _probe_name(model: Any) -> str:
+    """The name a health check shows for ``model``: its wire model id, or its
+    class name. Shared by the sweep, the down recheck and the staff
+    breakdown, so a backend reads the same in each."""
+    return str(
+        getattr(model, "model", None)
+        or getattr(model, "__class__", type(model)).__name__
+    )
 
 
 def _sweep_candidates(router: Any) -> Tuple[List[Any], Set[int], Set[int]]:
@@ -158,12 +168,16 @@ class BackendHealthDetail:
     name: str
     ok: bool
     error: Optional[str] = None
+    # The backend's _model_key, so a recheck that brings it back drops this
+    # row (names can repeat across providers). Never shown.
+    key: Optional[str] = None
 
 
 @dataclass
 class PassedProbe:
-    """A backend whose probe passed in the sweep. The snapshot re-reads it
-    for live problems at each read (see ``live_problem``)."""
+    """A backend whose probe passed in the sweep, or in a later recheck that
+    put it back. The snapshot re-reads it for live problems at each read
+    (see ``live_problem``)."""
 
     model: Any
     name: str
@@ -197,6 +211,10 @@ class _HealthStatus:
         # counts from it), and the wait before the next recheck of the ones it
         # marked down.
         self._last_candidates: List[Any] = []
+        # ids of the last sweep's candidates that cannot draft (context-only
+        # and chat-only), so a recheck that puts one back counts it as the
+        # sweep would have.
+        self._last_non_drafting_ids: Set[int] = set()
         self._last_sweep_at: Optional[float] = None
         self._recheck_seconds: float = DOWN_RECHECK_SECONDS
         self._timer: Optional[threading.Timer] = None
@@ -396,10 +414,13 @@ class _HealthStatus:
 
     def _recheck_down(self) -> None:
         """Probe again only the backends the last sweep marked down, and put
-        each that passes back into routing now rather than at the next
-        sweep. Never marks one down: the hourly sweep stays the only source
-        of that, of the alert and of the serving cards. Probes run outside
-        the sweep lock, which only guards rebinding the map."""
+        each that passes back now rather than at the next sweep: into
+        routing, into the public snapshot (counted alive when it can draft,
+        its failing row dropped), and into the serving registry with the card
+        its passing probe just read, so its drafts are attributed from the
+        start. Never marks one down: the hourly sweep stays the only source
+        of that and of the alert. Probes run outside the sweep lock, which
+        only guards rebinding the map and the snapshot."""
         down = self._down_for_routing()
         if not down:
             return
@@ -430,15 +451,49 @@ class _HealthStatus:
         with self._lock:
             # Copied and rebound, so model_ok's lock-free reads see one map
             # or the other. Only entries still False change: a sweep that
-            # ran meanwhile has the newer word on the rest.
+            # ran meanwhile has the newer word on the rest (and has put them
+            # in its own snapshot and registry round).
             health = dict(self._health_map)
-            for m in recovered:
-                if health.get(_model_key(m)) is False:
-                    health[_model_key(m)] = True
+            back = [m for m in recovered if health.get(_model_key(m)) is False]
+            for m in back:
+                health[_model_key(m)] = True
             self._health_map = health
+            # In the same step, so the public status never disagrees with
+            # routing about them.
+            if back:
+                self._snapshot = self._snapshot_with_recovered(back)
+        if not back:
+            return
+        # The sweep that marked these down left the registry a "nothing" for
+        # each, which holds until a round records an answer: record the cards
+        # their passing probes just set, or every draft they write goes
+        # unattributed until the next sweep.
+        self._record_serving(back)
         logger.info(
-            "Back in routing after a recheck: "
-            + ", ".join(_model_key(m) for m in recovered)
+            "Back in routing after a recheck: " + ", ".join(_model_key(m) for m in back)
+        )
+
+    def _snapshot_with_recovered(self, back: List[Any]) -> HealthSnapshot:
+        """The current snapshot with ``back`` (backends a recheck just put
+        back in routing) counted as the sweep counts a probe that passed:
+        alive when it can draft, its failing row dropped. get_snapshot reads
+        live problems on top of them as on the rest. Caller holds _lock."""
+        snapshot = self._snapshot
+        added = [
+            PassedProbe(
+                model=m,
+                name=_probe_name(m),
+                drafting=id(m) not in self._last_non_drafting_ids,
+                external=bool(getattr(m, "external", True)),
+            )
+            for m in back
+        ]
+        keys = {_model_key(m) for m in back}
+        return HealthSnapshot(
+            alive_models=snapshot.alive_models + sum(1 for p in added if p.drafting),
+            last_checked=snapshot.last_checked,
+            details=[d for d in snapshot.details if d.key not in keys],
+            passed=snapshot.passed + added,
         )
 
     def _refresh_unlocked(
@@ -484,8 +539,9 @@ class _HealthStatus:
             logger.warning(f"Could not get all_models_by_cost: {e}")
             candidates = []
         # Kept for the serving registry, which _refresh feeds after the
-        # sweep, outside the lock.
+        # sweep, outside the lock, and for the down recheck.
         self._last_candidates = list(candidates)
+        self._last_non_drafting_ids = set(non_drafting_ids)
         # A card describes this round's successful probe. Clear them all
         # first: a probe still queued at the deadline is cancelled before
         # model_is_ok runs, so it would never clear its own.
@@ -517,10 +573,7 @@ class _HealthStatus:
                 concurrent.futures.wait(future_map, timeout=timeout_seconds)
 
                 for future, m in future_map.items():
-                    name = str(
-                        getattr(m, "model", None)
-                        or getattr(m, "__class__", type(m)).__name__
-                    )
+                    name = _probe_name(m)
                     is_internal = not getattr(m, "external", True)
                     ok = False
                     err: Optional[str] = None
@@ -575,7 +628,10 @@ class _HealthStatus:
                         if is_internal:
                             err = err or _unavailable_reason(m)
                         detail = BackendHealthDetail(
-                            name=name, ok=False, error=err or "not ok"
+                            name=name,
+                            ok=False,
+                            error=err or "not ok",
+                            key=_model_key(m),
                         )
                         (internal_failures if is_internal else details).append(detail)
             finally:
@@ -604,16 +660,21 @@ class _HealthStatus:
 
         return internal_total, internal_alive, internal_failures, enumeration_error
 
-    def _record_serving(self) -> None:
-        """Hand this round's model cards to the serving registry. It records
-        on its own background thread and returns at once, so the registry can
-        never delay this sweep, its next round, or a reader of the snapshot."""
+    def _record_serving(self, backends: Optional[List[Any]] = None) -> None:
+        """Hand model cards to the serving registry: this round's, or only
+        those of ``backends`` (the ones a recheck just put back; the registry
+        records per backend, so a subset leaves the rest as they were). It
+        records on its own background thread and returns at once, so the
+        registry can never delay this sweep, its next round, a recheck, or a
+        reader of the snapshot."""
         try:
             from fighthealthinsurance.ml.serving_registry import (
                 record_backends_async,
             )
 
-            record_backends_async(getattr(self, "_last_candidates", []))
+            if backends is None:
+                backends = getattr(self, "_last_candidates", [])
+            record_backends_async(backends)
         except Exception as e:
             logger.warning(f"Serving registry update failed: {e}")
 
@@ -844,9 +905,7 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
         future_map = {ex.submit(probe, m): m for m in candidates}
         concurrent.futures.wait(future_map, timeout=timeout_seconds)
         for future, m in future_map.items():
-            name = str(
-                getattr(m, "model", None) or getattr(m, "__class__", type(m)).__name__
-            )
+            name = _probe_name(m)
             is_external = bool(getattr(m, "external", True))
             ok = False
             err: Optional[str] = None

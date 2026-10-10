@@ -3158,6 +3158,9 @@ class RemoteOpenLike(RemoteModel):
         if pubmed_context and isinstance(pubmed_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(pubmed_context))
 
+        # The first call's outage (a 5xx, refused, a timeout), raised below if
+        # there is no time left to retry it.
+        first_failure: Optional[ProviderUnavailable] = None
         try:
             result = await self._infer_no_context(
                 prompt=prompt,
@@ -3173,7 +3176,7 @@ class RemoteOpenLike(RemoteModel):
                 timeout=_call_timeout(),
                 raise_on_unavailable=True,
             )
-        except ProviderUnavailable:
+        except ProviderUnavailable as e:
             # A provider now known to be unusable (gone, refused, out of
             # credit or budget, cooling down) raises, so the attempt is
             # recorded with that reason rather than as a model that answered
@@ -3181,6 +3184,10 @@ class RemoteOpenLike(RemoteModel):
             # failure (a 5xx, a timeout) gets the retry, as it always has.
             if not self.is_available() or not self._spend_allows():
                 raise
+            # Reached and answered no text (NoAnswerText) is a no_completion,
+            # not an outage.
+            if not isinstance(e, NoAnswerText):
+                first_failure = e
             result = None
         if _is_verbose_logging():
             logger.debug(f"Got result from {self}: {result}")
@@ -3194,6 +3201,11 @@ class RemoteOpenLike(RemoteModel):
                 # Asked once, too late for a second try: the outcome is what
                 # that call gave. "skipped_deadline" is kept for a model that
                 # was never asked (DeadlineSkipped).
+                if result is None and first_failure is not None:
+                    # It was not reached: an outage ("unavailable: <cause>"),
+                    # as when both tries fail, not a model that answered
+                    # nothing.
+                    raise first_failure
                 return ("rejected_bad_result" if result else "no_completion"), []
             try:
                 result = await self._infer_no_context(
@@ -4713,13 +4725,16 @@ class RemoteOpenLike(RemoteModel):
                     )
                     or None
                 )
-            if r is None:
+            if r is None or (isinstance(r, str) and not r.strip()):
                 # No text at all: a tool-calls-only reply, or a reasoning model
                 # that spent its budget thinking (reasoning_content set,
-                # content null). A provider-side condition, not a bug: one
-                # line, no traceback, and the caller moves to the next
-                # backend. It used to raise into the catch-all below, which
-                # logged two ERROR lines and a traceback on the appeal path.
+                # content null, "" or just whitespace). A provider-side
+                # condition, not a bug: one line, no traceback, and the caller
+                # moves to the next backend. It used to raise into the
+                # catch-all below, which logged two ERROR lines and a
+                # traceback on the appeal path. "" and whitespace used to pass
+                # as an answer, so entity extraction filed them as a letter
+                # without the field; no caller uses whitespace as text.
                 finish = json_result["choices"][0].get("finish_reason")
                 logger.warning(
                     f"{self}: {model} via {api_base} returned no text content "
@@ -6726,10 +6741,11 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             and block.get("type") == "text"
             and isinstance(block.get("text"), str)
         )
-        if not text:
+        if not text.strip():
             # A provider-side failure worth seeing, as on the shared
             # transport: at DEBUG, a deployment that answered every call
-            # empty was asked on every call, silently.
+            # empty was asked on every call, silently. Whitespace is no text
+            # here too, as it is on the shared transport.
             logger.warning(
                 f"{self}: {self.model} via {self.api_base} returned no text "
                 f"content (stop_reason={json_result.get('stop_reason')!r})"

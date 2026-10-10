@@ -96,7 +96,8 @@ ML_CALL_SECONDS = Histogram(
 # not a content rejection); error (the inference raised); rejected_repetition
 # (the cleaners removed everything); skipped_deadline (never asked: the
 # requester's budget had passed); unavailable (not asked because it is known
-# gone, refused, out of credit or cooling, or not reached on either try).
+# gone, refused, out of credit or cooling, or not reached on either try, or
+# on the only try there was time for).
 ML_RESULTS_TOTAL = Counter(
     "fhi_ml_results_total",
     "Checked appeal inferences by what became of the completion (accepted, "
