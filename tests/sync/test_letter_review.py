@@ -1745,6 +1745,55 @@ class BinaryHighlightPageTests(StaffUsersMixin, TestCase):
         self.assertContains(response, "<p>SYNTH-LETTER: The $1,200.00 bill.</p>")
 
 
+# An input laid out like the appeal prompt a writer sees: the patient context
+# (intake Q&A answers and history), the details and plan sections, then the
+# denial last. Each section has a marker found nowhere else.
+SECTIONED_PROMPT = (
+    "System context: When answering the following question you can use the "
+    "patient context SYNTH-QA-SECTION Tried physical therapy:Yes, 14 weeks\n"
+    "SYNTH-HISTORY-SECTION Seen by Dr. Mary Walker since 2019.\n\n"
+    "TASK: Write a health insurance appeal for the denial letter below.\n\n"
+    "DETAILS TO INCLUDE (use these values exactly as given):\n"
+    '- Answers from the patient\'s intake questions (work these into the '
+    'appeal): {"SYNTH-QA-JSON": "Tried physical therapy: Yes"}\n\n'
+    "PLAN DETAILS: SYNTH-PLAN-SECTION the plan covers made-up test widgets.\n\n"
+    "DENIAL LETTER:\nSYNTH-DENIAL-SECTION the test widget is not covered."
+)
+
+
+class FullInputTests(StaffUsersMixin, TestCase):
+    """The input pane shows the whole prompt, every context section and not
+    only the denial, on both forms of packet."""
+
+    def page(self, letter: str = LETTER_1, **form: str) -> str:
+        self.make_users()
+        data = _packet_data(**form)
+        data["items"][0]["prompt"] = SECTIONED_PROMPT
+        data["items"][0]["letter"] = letter
+        packet = self.load_packet(data)
+        self.client.force_login(self.staff_a)
+        item = LetterReviewItem.objects.get(packet=packet, key=KEY_1)
+        return self.client.get(
+            reverse("letter_review_item", args=[packet.pk, item.slug])
+        ).content.decode()
+
+    def test_a_binary_page_shows_the_whole_prompt_in_the_input_pane(self):
+        page = self.page(**BINARY)
+        self.assertIn(f'<div class="lr-input">{escape(SECTIONED_PROMPT)}</div>', page)
+
+    def test_a_verdict_page_shows_the_whole_prompt_in_the_input_pane(self):
+        page = self.page()
+        self.assertIn(f'<div class="lr-input">{escape(SECTIONED_PROMPT)}</div>', page)
+
+    def test_specifics_given_only_in_the_qa_or_history_are_not_highlighted(self):
+        page = self.page(
+            letter="SYNTH-LETTER: After 14 weeks of therapy Mary Walker, "
+            "treating since 2019, recommends the widget.",
+            **BINARY,
+        )
+        self.assertNotIn('<mark class="lr-hl">', page)
+
+
 class BinaryBreakTests(StaffUsersMixin, TestCase):
     """A break page after every ten letters a reader finishes."""
 
