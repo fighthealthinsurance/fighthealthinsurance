@@ -672,35 +672,52 @@ failure for months.
 
 ### 11e. Restore drill — the only real proof of a backup
 
-A backup you have never restored is a hypothesis. Restore `-9`'s ObjectStore into a
-**throwaway** cluster and sanity-check it.
+Quiesce all `-9` writers first: web, Ray, scheduled jobs, and any other clients.
+Confirm no application sessions remain and keep writes paused through the
+comparison. Create a fresh backup after quiescing; a backup from before the
+pause cannot provide an exact comparison with live `-9`.
 
-**ACTION** (recovery into a disposable cluster; never touch `-9`):
+Run in the same Bash session as the restore steps:
+
 ```bash
-# Adapt the root-level pg-recover.yaml template into a NEW cluster (e.g.
-# fhi-pg-restore-drill) that recovers from -9's PLUGIN ObjectStore:
-#   - recovery source -> externalCluster whose plugin references
-#     barmanObjectName: fhi-backup-store-9 (serverName fhi-pg-main-9)
-#   - creds secret: pg-backup2 ; distinct metadata.name + PVC (never reuse -9's serverName)
-$EDITOR pg-recover.yaml    # produce restore-drill.yaml per the notes above
-kubectl apply -f restore-drill.yaml
-kubectl -n totallylegitco get cluster fhi-pg-restore-drill -w
+set -euo pipefail
+DRILL_BACKUP_NAME=$(kubectl create -f - -o jsonpath='{.metadata.name}' <<'YAML'
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  generateName: fhi-pg-main-9-comparison-
+  namespace: totallylegitco
+spec:
+  cluster:
+    name: fhi-pg-main-9
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+YAML
+)
+kubectl -n totallylegitco wait --for=jsonpath='{.status.phase}'=completed \
+  "backup/$DRILL_BACKUP_NAME" --timeout=7200s
+export DRILL_BACKUP_NAME
 ```
 
-**VALIDATION**
+Follow the [Phase 6 restore check](pg-backup-reconciliation-runbook-2026-07.md#restore-check--read-only-archive-disposable-cluster)
+to restore this named backup through the separate read-only ObjectStore. Run its
+data checks, then pause **before cleanup** for the migration comparison below.
+Phase 6 remains the standing procedure for later restore checks.
+
+**VALIDATION — migration comparison:** keep source writes quiesced; writes after
+the backup can legitimately change live counts. `DRILL_NAME` comes from the
+Phase 6 steps.
+
 ```bash
-# row counts on the restored cluster match -9 for the critical tables. The
-# validator derives the target pod from DST_CLUSTER's label, so pass DST_CLUSTER.
 CRITICAL_TABLES="django_migrations auth_user <add-your-critical-tables>" \
-  SRC_POD=fhi-pg-main-9-1 DST_CLUSTER=fhi-pg-restore-drill \
+  SRC_POD=fhi-pg-main-9-1 DST_CLUSTER="$DRILL_NAME" \
   ./scripts/validate-pg8-vs-pg9.sh
-kubectl -n totallylegitco logs fhi-pg-restore-drill-1 -c postgres | grep -i 'recovery\|consistent'
 ```
 
-**GATE:** the drill cluster reaches a consistent recovery point and its
-critical-table counts match `-9`. **This is the gate that unlocks decommission.**
-Tear the drill down afterward (`kubectl delete cluster fhi-pg-restore-drill` + its
-PVC) so it does not itself accrue backups.
+**GATE:** the source-versus-restored critical-table comparison passes. **This
+remains the gate that unlocks decommission.** Finish Phase 6's cleanup and confirm
+the restored Cluster, Pods, PVCs, and backing volumes are gone.
 
 ---
 
