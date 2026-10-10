@@ -12,11 +12,22 @@ import io
 from typing import Optional
 from unittest.mock import patch
 
+import pytest
 from loguru import logger as loguru_logger
 
 from fighthealthinsurance.chooser_tasks import _select_candidate_models
+from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
 from fighthealthinsurance.ml.ml_router import MLRouter
+
+
+@pytest.fixture(autouse=True)
+def _fail_open_error_not_yet_logged():
+    """The fail-open ERROR goes out once per pool every ten minutes per
+    process; start each test as if none had gone out yet, so the tests
+    that look for it see it whatever ran before them."""
+    with patch.dict(ml_router_module._fail_open_logged_at, clear=True):
+        yield
 
 
 def _bare_router() -> MLRouter:
@@ -325,3 +336,67 @@ class TestChatLeadSharingAName:
             models = router.get_chat_backends(use_external=False)
 
         assert models == [first, second, first, second, weaker]
+
+
+class TestFailOpenError:
+    """Every request reads the pools, so while a whole pool is down one
+    ERROR per pool every ten minutes says so; one per request buried the
+    rest of the log. A pool that is not the only answerer (fail_open=False)
+    doesn't fail open at all, and logs nothing."""
+
+    @staticmethod
+    def _all_down_router() -> MLRouter:
+        router = _bare_router()
+        router.internal_models_by_cost = [
+            _internal_model("a-model"),
+            _internal_model("b-model"),
+        ]
+        return router
+
+    @staticmethod
+    def _filter(router: MLRouter, *contexts: str, fail_open: bool = True):
+        """Filter the pool once per context; return (last result, ERROR text)."""
+        sink = io.StringIO()
+        handler = loguru_logger.add(sink, level="ERROR")
+        result = None
+        try:
+            with _health_map({"a-model": False, "b-model": False}):
+                for context in contexts:
+                    result = router._filter_available(
+                        router.internal_models_by_cost, context, fail_open=fail_open
+                    )
+        finally:
+            loguru_logger.remove(handler)
+        return result, sink.getvalue()
+
+    def test_a_pool_logs_its_error_once_within_ten_minutes(self):
+        _, errors = self._filter(self._all_down_router(), "pool", "pool")
+        assert errors.count("failing open") == 1
+
+    def test_each_pool_logs_its_own_error(self):
+        _, errors = self._filter(self._all_down_router(), "pool-a", "pool-b")
+        assert errors.count("failing open") == 2
+
+    def test_a_pool_logs_again_after_ten_minutes(self):
+        router = self._all_down_router()
+        self._filter(router, "pool")
+        # As if ten minutes had passed since the first ERROR.
+        ml_router_module._fail_open_logged_at["pool"] -= (
+            ml_router_module._FAIL_OPEN_ERROR_SECONDS + 1
+        )
+        _, errors = self._filter(router, "pool")
+        assert errors.count("failing open") == 1
+
+    def test_a_quiet_pool_still_fails_open(self):
+        """The throttle quiets the log only: the full pool still comes back."""
+        router = self._all_down_router()
+        result, _ = self._filter(router, "pool", "pool")
+        assert result == router.internal_models_by_cost
+
+    def test_without_fail_open_nothing_is_returned_when_all_are_down(self):
+        result, _ = self._filter(self._all_down_router(), "pool", fail_open=False)
+        assert result == []
+
+    def test_without_fail_open_no_error_is_logged(self):
+        _, errors = self._filter(self._all_down_router(), "pool", fail_open=False)
+        assert errors == ""

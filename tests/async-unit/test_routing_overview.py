@@ -193,16 +193,31 @@ class TestRoles(_NoRoutingEnv):
                 ]
             )
 
-    def test_a_marked_down_internal_moves_behind_the_generalist(self):
+    def test_a_marked_down_internal_is_left_out_beside_the_generalist(self):
         router = _bare_router()
         _register(router, "fhi-local", _backend("fhi-local", 210, available=False))
         _register(router, GEMMA, _backend(GEMMA, 80, external=True))
         overview = ro.build_routing_overview(router)
-        # First when only internals may answer (the fail-open fallback), second
-        # behind the generalist when external models are allowed.
+        # First when only internals may answer (the fail-open fallback), and
+        # not asked at all when the healthy generalist can answer instead.
         local = _labels(overview, router, "fhi-local")
         self.assertIn("Summaries: 1st (internal only)", local)
-        self.assertIn("Summaries: 2nd (external allowed)", local)
+        self.assertNotIn("Summaries: 2nd (external allowed)", local)
+
+    def test_a_marked_down_internal_is_no_opted_in_primary_beside_a_hosted_backup(
+        self,
+    ):
+        """make_appeals leaves a down model of ours out of an opted-in
+        appeal's first pass while a hosted model can answer the backup, so
+        the page lists it as a primary only when external models are off."""
+        router = _bare_router()
+        _register(router, "fhi-local", _backend("fhi-local", 210, available=False))
+        _register(router, GEMMA, _backend(GEMMA, 80, external=True))
+        overview = ro.build_routing_overview(router)
+        self.assertIn(
+            "Appeals: primary (internal only)",
+            _labels(overview, router, "fhi-local"),
+        )
         self.assertIn(
             "Summaries: 1st (external allowed)", _labels(overview, router, GEMMA)
         )

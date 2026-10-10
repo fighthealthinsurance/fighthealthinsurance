@@ -43,11 +43,11 @@ def _outside(name, quality=80, available=True):
     return model
 
 
-def _ours(available=True):
+def _ours(available=True, quality=120):
     """One of our own models that can take a chat turn."""
     model = MagicMock(spec=RemoteModelLike)
     model.external = False
-    model.quality.return_value = 120
+    model.quality.return_value = quality
     model.supports_general_instructions.return_value = True
     model.is_available.return_value = available
     model.health_checked_live = True
@@ -64,15 +64,23 @@ def _sonar():
         return RemotePerplexity("sonar")
 
 
+def _failing_open_errors(cap):
+    return [m for m in cap.messages("ERROR") if "failing open" in m]
+
+
 class _WithRouter:
     """A fresh router per test. (The spend ledger, where pauses live, is
     reset around every test by tests/conftest.py.)"""
 
     def setup_method(self):
         self.router = MLRouter()
+        # The fail-open ERROR goes out once per pool every ten minutes per
+        # process; start unlogged, so a test finding none proves something.
+        self._fail_open_logged = patch.dict(ml_router._fail_open_logged_at, clear=True)
+        self._fail_open_logged.start()
 
     def teardown_method(self):
-        pass
+        self._fail_open_logged.stop()
 
 
 class TestSpendGatesSelection(_WithRouter):
@@ -141,7 +149,7 @@ class TestChatRosterAllDown(_WithRouter):
     def test_no_failing_open_error_is_logged(self, log_capture):
         with log_capture() as cap:
             self._ask()
-        assert [m for m in cap.messages("ERROR") if "failing open" in m] == []
+        assert _failing_open_errors(cap) == []
 
     def test_the_warning_goes_out_once_within_the_hour(self, log_capture):
         with log_capture() as cap:
@@ -173,6 +181,27 @@ class TestChatRosterAllDown(_WithRouter):
         with log_capture() as cap:
             self._ask()
         assert len(self._roster_warnings(cap)) == 1
+
+    def _side_by_side(self):
+        with override_settings(FHI_CHAT_SIDE_BY_SIDE_MODEL=ROSTER[0]):
+            return self.router.chat_side_by_side_model()
+
+    def test_a_down_side_by_side_model_is_none_when_none_of_ours_can_answer(self):
+        """The roster's fail-open (no one else to ask) is not for one
+        optional comparison model."""
+        self.router.internal_models_by_cost = [_ours(available=False)]
+        assert self._side_by_side() is None
+
+    def test_a_down_side_by_side_model_logs_no_failing_open_error(self, log_capture):
+        self.router.internal_models_by_cost = [_ours(available=False)]
+        with log_capture() as cap:
+            self._side_by_side()
+        assert _failing_open_errors(cap) == []
+
+    def test_a_healthy_side_by_side_model_is_returned(self):
+        side_by_side = self.router.chat_outside_models_by_name[ROSTER[0]]
+        side_by_side.is_available.return_value = True
+        assert self._side_by_side() is side_by_side
 
 
 class TestCitationBackends(_WithRouter):
@@ -264,6 +293,185 @@ class TestChatExploration(_WithRouter):
         # Guards the test above: with these settings a turn does draw.
         with patch.object(ml_router, "_explore_draw", return_value=0.0):
             assert self._externals() == ["mistral", "qwen", "deepseek"]
+
+
+class TestBestInternalModel(_WithRouter):
+    """The denial-type hint goes to the strongest internal model that can
+    answer: a parked or marked-down one gives its place to the next."""
+
+    def setup_method(self):
+        super().setup_method()
+        self.strong = _ours(quality=210)
+        self.weak = _ours(quality=200)
+        self.router.internal_models_by_cost = [self.weak, self.strong]
+
+    def test_a_down_strongest_model_gives_its_place_to_the_next(self):
+        self.strong.is_available.return_value = False
+        assert self.router.best_internal_model(general_only=False) is self.weak
+
+    def test_a_strongest_model_the_sweep_marked_down_gives_its_place(self):
+        for model in (self.strong, self.weak):
+            model.health_checked_live = False
+        with patch(
+            "fighthealthinsurance.ml.health_status.health_status.model_ok",
+            side_effect=lambda m: m is not self.strong,
+        ):
+            assert self.router.best_internal_model(general_only=False) is self.weak
+
+    def test_the_strongest_is_returned_when_none_can_answer(self):
+        self.strong.is_available.return_value = False
+        self.weak.is_available.return_value = False
+        assert self.router.best_internal_model(general_only=False) is self.strong
+
+    def test_no_failing_open_error_is_logged_when_none_can_answer(self, log_capture):
+        self.strong.is_available.return_value = False
+        self.weak.is_available.return_value = False
+        with log_capture() as cap:
+            self.router.best_internal_model(general_only=False)
+        assert _failing_open_errors(cap) == []
+
+    def test_a_down_general_model_still_beats_a_healthy_appeal_only_one(self):
+        """For instruction-following callers the appeal-only fine-tune's
+        digit soup is no answer either, so the general filter comes first."""
+        self.strong.supports_general_instructions.return_value = False
+        self.weak.is_available.return_value = False
+        assert self.router.best_internal_model() is self.weak
+
+
+class TestAppealNames(_WithRouter):
+    """generate_text_backend_names: our models marked down fail open only
+    when nothing else can answer the appeal."""
+
+    def setup_method(self):
+        super().setup_method()
+        self.ours = _ours(available=False)
+        self.outside = _outside("outside")
+        self.router.internal_models_by_cost = [self.ours]
+        self.router.external_models_by_cost = [self.outside]
+        self.router.models_by_name = {
+            "fhi-ours": [self.ours],
+            "outside": [self.outside],
+        }
+
+    def test_without_fail_open_down_internals_are_left_out(self):
+        assert (
+            self.router.generate_text_backend_names(use_external=False, fail_open=False)
+            == []
+        )
+
+    def test_without_fail_open_internals_that_can_answer_are_kept(self):
+        self.ours.is_available.return_value = True
+        assert self.router.generate_text_backend_names(
+            use_external=False, fail_open=False
+        ) == ["fhi-ours"]
+
+    def test_without_fail_open_no_failing_open_error_is_logged(self, log_capture):
+        with log_capture() as cap:
+            self.router.generate_text_backend_names(use_external=False, fail_open=False)
+        assert _failing_open_errors(cap) == []
+
+    def test_internal_only_names_still_fail_open(self):
+        assert self.router.generate_text_backend_names(use_external=False) == [
+            "fhi-ours"
+        ]
+
+    def test_opt_in_names_leave_out_down_internals_while_an_external_can_answer(
+        self,
+    ):
+        assert self.router.generate_text_backend_names(use_external=True) == ["outside"]
+
+    def test_opt_in_names_fail_open_when_no_external_can_answer(self):
+        self.outside.is_available.return_value = False
+        assert self.router.generate_text_backend_names(use_external=True) == [
+            "fhi-ours"
+        ]
+
+    def test_a_forced_model_is_listed_whatever_its_health(self):
+        with patch.dict(os.environ, {"FORCE_MODEL": "fhi-ours"}):
+            names = self.router.generate_text_backend_names(
+                use_external=False, fail_open=False
+            )
+        assert names == ["fhi-ours"]
+
+
+class TestChatBesideAHealthyOutsideModel(_WithRouter):
+    """A chat turn with a healthy outside model in it doesn't fail open on
+    our own models marked down: they would only hold the turn open."""
+
+    def setup_method(self):
+        super().setup_method()
+        self.lead = _ours(available=False, quality=210)
+        self.other = _ours(available=False, quality=200)
+        self.router.internal_models_by_cost = [self.other, self.lead]
+        self.router.models_by_name.update(
+            {"fhi-lead": [self.lead], "fhi-other": [self.other]}
+        )
+        self.roster = [_outside(name) for name in ROSTER]
+        self.router.chat_outside_models_by_name.update({m.name: m for m in self.roster})
+
+    def _chat(self, use_external=True):
+        with override_settings(
+            FHI_CHAT_OUTSIDE_MODELS=ROSTER, FHI_CHAT_EXPLORE_RATE=0.0
+        ):
+            return self.router.get_chat_backends(use_external=use_external)
+
+    def test_our_down_models_are_left_out(self):
+        assert self._chat() == self.roster[:3]
+
+    def test_no_failing_open_error_is_logged(self, log_capture):
+        with log_capture() as cap:
+            self._chat()
+        assert _failing_open_errors(cap) == []
+
+    def test_ours_fail_open_when_no_outside_model_can_answer(self):
+        """Then the roster fails open too (chat_outside_models), and those
+        long shots must not leave our own out."""
+        for model in self.roster:
+            model.is_available.return_value = False
+        assert self._chat() == [
+            self.lead,
+            self.lead,
+            *self.roster[:3],
+            self.other,
+        ]
+
+    def test_ours_fail_open_without_outside_models(self):
+        assert self._chat(use_external=False) == [self.lead, self.lead, self.other]
+
+
+class TestSummariesAndQuestionsBesideAnOutsideModel(_WithRouter):
+    """Summaries and appeal questions leave our models marked down out
+    while an outside model in the same list can answer."""
+
+    def setup_method(self):
+        super().setup_method()
+        self.ours = _ours(available=False)
+        self.router.internal_models_by_cost = [self.ours]
+        self.generalist = _outside("generalist")
+        self.sonar = _outside("sonar")
+
+    def _with_generalist(self):
+        self.router.models_by_name[ml_router._EXTERNAL_GENERALIST] = [self.generalist]
+
+    def test_summaries_log_no_failing_open_error_beside_the_generalist(
+        self, log_capture
+    ):
+        self._with_generalist()
+        with log_capture() as cap:
+            self.router.summarize_backends(use_external=True)
+        assert _failing_open_errors(cap) == []
+
+    def test_questions_log_no_failing_open_error_beside_the_generalist(
+        self, log_capture
+    ):
+        self._with_generalist()
+        with log_capture() as cap:
+            self.router.full_qa_backends(use_external=True)
+        assert _failing_open_errors(cap) == []
+
+    def test_questions_leave_down_internals_out_beside_perplexity_alone(self):
+        self.router.models_by_name["sonar"] = [self.sonar]
+        assert self.router.full_qa_backends(use_external=True) == [self.sonar]
 
 
 _CHECKED_INFER_KWARGS = dict(

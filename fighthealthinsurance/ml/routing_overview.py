@@ -37,7 +37,7 @@ from typing import (
 from fighthealthinsurance.env_utils import get_env_variable
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml.ml_models import RemoteModel, RemoteModelLike
-from fighthealthinsurance.ml.ml_router import MLRouter, appeal_backup_names
+from fighthealthinsurance.ml.ml_router import MLRouter, appeal_pass_names
 
 KIND_INTERNAL = "internal"
 # An internal fine-tune that only writes appeal text (fhi-legacy). The router
@@ -267,30 +267,29 @@ def build_routing_overview(router: Optional[MLRouter] = None) -> RoutingOverview
             PlanEntry(label_of(m), notes.get(id(m), ""), counts[id(m)]) for m in firsts
         ]
 
-    # Appeals, primary pass. generate_appeal always asks for internal only
-    # here, whatever the person chose, so both columns are the same list.
-    primary = router.generate_text_backend_names(use_external=False)
-    for name in primary:
-        by_name.add(name, PATH_APPEALS, "primary", (False, True))
+    # Appeals, primary and backup passes, as make_appeals picks them. The
+    # primary pass is internal only whatever the person chose; opted in, with
+    # a hosted model to fall back on, it leaves out our models that are down.
+    # The backup runs only when the primary pass gives nothing, and only with
+    # names the primary pass didn't already call, so with use_external off it
+    # has none and make_appeals skips it.
+    primary: Dict[bool, List[str]] = {}
+    backup: Dict[bool, List[str]] = {}
+    for flag in (False, True):
+        primary[flag], backup[flag] = appeal_pass_names(router, flag)
+    for flag in (False, True):
+        for name in primary[flag]:
+            by_name.add(name, PATH_APPEALS, "primary", (flag,))
     paths.append(
         PathPlan(
             "Appeals, primary pass",
             "Every model is asked at once and the first usable full letter "
             "wins. This pass is internal only whatever the person chose.",
-            name_entries(primary),
-            name_entries(primary),
+            name_entries(primary[False]),
+            name_entries(primary[True]),
         )
     )
 
-    # Appeals, backup pass: only run when the primary pass gives nothing, and
-    # only with names the primary pass didn't already call, so with
-    # use_external off it has none and make_appeals skips it.
-    backup = {
-        flag: appeal_backup_names(
-            router.generate_text_backend_names(use_external=flag), primary
-        )
-        for flag in (False, True)
-    }
     for flag, names in backup.items():
         for name in names:
             by_name.add(name, PATH_APPEALS, "backup", (flag,))

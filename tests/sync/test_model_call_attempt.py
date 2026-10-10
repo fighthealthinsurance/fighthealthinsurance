@@ -264,7 +264,7 @@ class MakeAppealsPersistsAttemptsTest(TestCase):
         sink: dict = {}
         with patch(
             "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
-            side_effect=lambda use_external=False: names,
+            side_effect=lambda use_external=False, fail_open=True: names,
         ), patch(
             "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
             new=models_by_name,
@@ -423,7 +423,7 @@ class MakeAppealsStaysLazyTest(TestCase):
         self.sink: dict = {}
         with patch(
             "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
-            side_effect=lambda use_external=False: ["lazy"],
+            side_effect=lambda use_external=False, fail_open=True: ["lazy"],
         ), patch(
             "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
             new={"lazy": [self._lazy_backend()]},
