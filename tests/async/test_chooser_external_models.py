@@ -16,6 +16,7 @@ dashboard:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from prometheus_client import REGISTRY
 
 from fighthealthinsurance import chooser_tasks
 from fighthealthinsurance.chooser_tasks import (
@@ -25,6 +26,14 @@ from fighthealthinsurance.chooser_tasks import (
     _parse_conversation,
     _scenario_writers,
     _select_candidate_models,
+)
+from fighthealthinsurance.ml import spend
+from fighthealthinsurance.ml.ml_metrics import (
+    labelled_ml_calls,
+    ml_call_purpose,
+    ml_call_purpose_override,
+    record_ml_call,
+    record_ml_failure,
 )
 from fighthealthinsurance.models import ChooserCandidate, ChooserTask
 
@@ -58,10 +67,14 @@ class FakeModel:
     real generate_chat_response parameter names — so a caller regression back
     to ``current_message=`` fails loudly here."""
 
-    def __init__(self, name, external=False, appeal_text=APPEAL_TEXT):
+    def __init__(
+        self, name, external=False, appeal_text=APPEAL_TEXT, chat_text=CHAT_TEXT
+    ):
         self.name = name
         self._external = external
         self._appeal_text = appeal_text
+        self._chat_text = chat_text
+        self.calls = 0
         self.chat_calls = 0
 
     def __str__(self):
@@ -79,6 +92,7 @@ class FakeModel:
         return 100
 
     async def _infer_no_context(self, system_prompts, prompt, **kwargs):
+        self.calls += 1
         return self._appeal_text
 
     async def generate_chat_response(
@@ -93,7 +107,7 @@ class FakeModel:
         allow_repeated_reply=False,
     ):
         self.chat_calls += 1
-        return (CHAT_TEXT, "summary")
+        return (self._chat_text, "summary")
 
 
 class ScenarioModel(FakeModel):
@@ -576,3 +590,178 @@ class TestChatCandidatesSignatureAndExternalModels:
         assert "fhi-2025-nov" in names
         assert internal.chat_calls >= 1
         assert claude.chat_calls >= 1
+
+
+async def _candidate_names(task_type, backends):
+    """The model names, in slot order, of the candidates one ``task_type``
+    task gets when the chooser compares ``backends``. The externals keep
+    their order (no shuffle), so which backend is seated and which is spare
+    is fixed."""
+    task = await ChooserTask.objects.acreate(
+        task_type=task_type, status="QUEUED", source="synthetic"
+    )
+    if task_type == "appeal":
+        writer, generate = ScenarioModel(SCENARIO_TEXT), _generate_appeal_candidates
+    else:
+        writer, generate = ScenarioModel(CONVERSATION_TEXT), _generate_chat_candidates
+    with patch.object(
+        chooser_tasks.ml_router,
+        "generate_text_backends",
+        MagicMock(return_value=[writer]),
+    ), patch.object(
+        chooser_tasks, "_comparable_backends", MagicMock(return_value=backends)
+    ), patch.object(
+        chooser_tasks, "_maybe_add_synthesized_candidate", new=AsyncMock()
+    ), patch.object(
+        chooser_tasks.random, "shuffle", lambda items: None
+    ):
+        await generate(task)
+    return [
+        name
+        async for name in ChooserCandidate.objects.filter(task=task)
+        .order_by("candidate_index")
+        .values_list("model_name", flat=True)
+    ]
+
+
+def _dead(name, external=True):
+    """A backend that answers every draft with nothing, as a retired or
+    refused one does (its transport returns None)."""
+    return FakeModel(name, external=external, appeal_text=None, chat_text=None)
+
+
+def _asked(model, task_type):
+    """How many candidate drafts ``model`` was asked for."""
+    return model.calls if task_type == "appeal" else model.chat_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("task_type", ["appeal", "chat"])
+class TestRetryPassAfterAFailedBackend:
+    """A dead external was asked again in every task's retry pass, and its
+    slot went to a second draft from a model that had already answered: that
+    model was charged two presentations per vote it could win once, while a
+    live external the router offered was never asked."""
+
+    async def test_a_failed_backend_is_not_asked_again(self, task_type):
+        dead = _dead("deepinfra/retired-model")
+
+        await _candidate_names(task_type, [FakeModel("fhi-a"), dead])
+
+        assert _asked(dead, task_type) == 1
+
+    async def test_a_dead_externals_slot_goes_to_an_unused_external(self, task_type):
+        backends = [
+            FakeModel("fhi-a"),
+            _dead("deepinfra/retired-model"),
+            FakeModel("fhi-b"),
+            FakeModel("anthropic/claude-sonnet-4-6", external=True),
+            FakeModel("fhi-c"),
+            FakeModel("azure-openai/gpt-5", external=True),
+        ]
+
+        names = await _candidate_names(task_type, backends)
+
+        assert names == [
+            "fhi-a",
+            "fhi-b",
+            "anthropic/claude-sonnet-4-6",
+            "azure-openai/gpt-5",
+        ]
+
+    async def test_no_second_draft_once_two_candidates_exist(self, task_type):
+        backends = [
+            FakeModel("fhi-a"),
+            _dead("deepinfra/retired-model"),
+            FakeModel("anthropic/claude-sonnet-4-6", external=True),
+        ]
+
+        names = await _candidate_names(task_type, backends)
+
+        assert names == ["fhi-a", "anthropic/claude-sonnet-4-6"]
+
+    async def test_the_retry_pass_ends_when_every_backend_fails(self, task_type):
+        backends = [_dead("fhi-a", external=False), _dead("deepinfra/retired-model")]
+
+        await _candidate_names(task_type, backends)
+
+        assert [_asked(m, task_type) for m in backends] == [1, 1]
+
+
+class ChatTurnLabelledModel(FakeModel):
+    """Fails a chat call the way the transport does: records the failure
+    from inside an entry point labelled "chat", as generate_chat_response
+    is, and notes which budget the call would have spent."""
+
+    def __init__(self, name):
+        super().__init__(name, external=True, chat_text=None)
+        self.spend_uses = []
+
+    @labelled_ml_calls("chat")
+    async def generate_chat_response(self, current_message_for_llm, **kwargs):
+        self.chat_calls += 1
+        self.spend_uses.append(spend.current_use())
+        record_ml_failure(self.name, "http_error")
+        return (None, None)
+
+
+def _sample(name, **labels):
+    """One fhi_ml_call* series' value, 0 when it was never recorded."""
+    labels = {"endpoint": "unknown", "leg": "primary", **labels}
+    return REGISTRY.get_sample_value(name, labels) or 0.0
+
+
+def _chat_failures(model_name):
+    """``model_name``'s http_error failures as (purpose=other, purpose=chat)."""
+    return tuple(
+        _sample(
+            "fhi_ml_call_failures_total",
+            model=model_name,
+            purpose=purpose,
+            reason="http_error",
+        )
+        for purpose in ("other", "chat")
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestChooserChatCandidatesAreNotChatTurns:
+    """Chooser chat candidates go through generate_chat_response, which
+    labels its calls "chat", so a dead external's synthetic candidates showed
+    in the chat series as failed user chat turns that never happened."""
+
+    async def test_a_failed_chat_candidate_is_counted_under_other(self):
+        failing = ChatTurnLabelledModel("chooser-purpose-failing")
+        other_before, chat_before = _chat_failures(failing.name)
+
+        await _candidate_names("chat", [FakeModel("fhi-a"), failing])
+
+        other_after, chat_after = _chat_failures(failing.name)
+        assert (other_after - other_before, chat_after - chat_before) == (1, 0)
+
+    async def test_its_spend_still_comes_from_the_chat_budget(self):
+        failing = ChatTurnLabelledModel("chooser-purpose-spend")
+
+        await _candidate_names("chat", [FakeModel("fhi-a"), failing])
+
+        assert failing.spend_uses == [spend.CHAT]
+
+
+class TestMetricsPurposeOverride:
+    def test_a_call_inside_a_labelled_entry_point_takes_the_override(self):
+        model_name = "chooser-purpose-override"
+        before = _sample(
+            "fhi_ml_calls_total", model=model_name, purpose="other", outcome="ok"
+        )
+
+        with ml_call_purpose_override("other"), ml_call_purpose("chat"):
+            record_ml_call(model_name, "ok", 0.1)
+
+        assert (
+            _sample(
+                "fhi_ml_calls_total", model=model_name, purpose="other", outcome="ok"
+            )
+            == before + 1
+        )

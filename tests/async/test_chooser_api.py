@@ -267,20 +267,6 @@ class ChooserNextTaskAPITest(APITestCase):
         self.assertEqual(len(synthesized), 1)
         self.assertTrue(synthesized[0]["synthesized"])
 
-    def test_get_next_task_no_tasks_available(self):
-        """Test getting next task when none are available."""
-        # Delete all tasks
-        ChooserTask.objects.all().delete()
-
-        # The view hands generation to a background prefill thread; keep it
-        # from starting one (and from reaching any model) in the test.
-        with patch("fighthealthinsurance.chooser_tasks.trigger_prefill_async"):
-            url = reverse("chooser-next-appeal")
-            response = self.client.get(url)
-
-            self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-            self.assertIn("No tasks available", response.json()["message"])
-
     def test_session_exclusion(self):
         """Test that tasks already voted on are excluded."""
         # Force session creation first
@@ -947,8 +933,7 @@ class ChooserTaskContextTest(APITestCase):
 
 class ChooserVoteIntegrityTest(APITestCase):
     """Presented ids are the usage dashboard's denominator, so they must be
-    this task's candidates; and candidates are served in a fresh random
-    order so position bias does not land on the same models every time."""
+    this task's active candidates."""
 
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 

@@ -19,15 +19,16 @@ import datetime
 import random
 import re
 import threading
-from typing import List, Optional, Tuple, cast
+from typing import Any, List, Optional, Tuple, cast
 
 from django.conf import settings
-from django.db.models import QuerySet
+from django.db.models import Count, QuerySet
 from django.utils import timezone
 
 from channels.db import database_sync_to_async
 from loguru import logger
 
+from fighthealthinsurance.ml.ml_metrics import ml_call_purpose_override
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.ml.model_identity import (
     SYNTHESIZED_MODEL_NAME,
@@ -74,12 +75,31 @@ CHOOSER_PREFILL_THROTTLE_SECONDS = getattr(
 CHOOSER_GENERATION_CLAIM_SECONDS = getattr(
     settings, "CHOOSER_GENERATION_CLAIM_SECONDS", 15 * 60
 )
+# The fewest candidates a task needs to go READY.
+_MIN_READY_CANDIDATES = 2
 
 
 def _model_display_name(model) -> str:
     """The friendly registry name stamped by MLRouter, with a str() fallback
     (RemoteModelLike.__str__ never yields an opaque object repr)."""
     return getattr(model, "name", None) or str(model)
+
+
+def _split_by_kind(models: List, seen: set) -> Tuple[List, List]:
+    """``(internal, external)``: ``models`` deduped by friendly name, in
+    router order, skipping the names already in ``seen``."""
+    internal: List = []
+    external: List = []
+    for m in models:
+        name = _model_display_name(m)
+        if name in seen:
+            continue
+        seen.add(name)
+        if getattr(m, "external", False):
+            external.append(m)
+        else:
+            internal.append(m)
+    return internal, external
 
 
 def _select_candidate_models(models: List, limit: int) -> List:
@@ -92,18 +112,7 @@ def _select_candidate_models(models: List, limit: int) -> List:
     internal/external so both pools get compared, shuffling the external pool
     so different external providers get coverage across tasks.
     """
-    internal: List = []
-    external: List = []
-    seen: set = set()
-    for m in models:
-        name = _model_display_name(m)
-        if name in seen:
-            continue
-        seen.add(name)
-        if getattr(m, "external", False):
-            external.append(m)
-        else:
-            internal.append(m)
+    internal, external = _split_by_kind(models, set())
     # Randomize external order for coverage across tasks; keep the internal
     # ordering (cost/quality ranked by the router).
     random.shuffle(external)
@@ -117,6 +126,42 @@ def _select_candidate_models(models: List, limit: int) -> List:
             selected.append(external[e])
             e += 1
     return selected
+
+
+def _spare_candidate_models(models: List, seated: List) -> List:
+    """The backends of ``models`` that ``seated`` left out, deduped by name,
+    externals first: the ones the retry pass gives a failed backend's slot
+    to (see _next_retry_model). Externals lead so that a dead external's
+    slot stays external and the internal/external balance holds."""
+    internal, external = _split_by_kind(
+        models, {_model_display_name(m) for m in seated}
+    )
+    random.shuffle(external)
+    return external + internal
+
+
+def _next_retry_model(
+    spares: List, produced: dict[int, Any], failed: set[int], have: int
+) -> Optional[Any]:
+    """The backend the retry pass asks next, or None when none should be.
+
+    A backend that gave nothing usable or raised in this task is never asked
+    again: it is usually down, and each re-ask was another paid call and
+    warning, on every task. An unused backend fills the slot first
+    (``spares`` is consumed in order). One that already answered is asked
+    again only while the task's ``have`` candidates are short of the ones it
+    needs to go READY: two of its drafts in one task make the usage
+    dashboard charge it two presentations per vote it can win at most once.
+    ``produced`` maps id to model, in the order they answered.
+    """
+    if spares:
+        return spares.pop(0)
+    if have < _MIN_READY_CANDIDATES:
+        return next(
+            (m for key, m in produced.items() if key not in failed),
+            None,
+        )
+    return None
 
 
 _LABEL_MARKUP_RE = re.compile(r"^[\s\-\*\u2022\d\.\)\(#>]+")
@@ -297,9 +342,9 @@ async def _ask_for_single_question(model, prompt: str) -> Optional[str]:
 
 def _note_unusable_candidate(task: ChooserTask, model, kind: str, response) -> None:
     """A backend answered with nothing usable. Logged, because the retry
-    sweep fills the slot with whichever backend does answer: without this a
-    task whose external backends both failed went READY with internal
-    candidates only and no trace of why."""
+    pass gives the slot to another backend: without this a task whose
+    external backends both failed went READY with internal candidates only
+    and no trace of why."""
     size = len(response.strip()) if isinstance(response, str) else 0
     logger.info(
         f"Chooser task {task.id}: {_model_display_name(model)} returned no "
@@ -313,23 +358,17 @@ def _note_unusable_candidate(task: ChooserTask, model, kind: str, response) -> N
 # was process-local anyway (Prod's cache is LocMemCache), so it never kept
 # two batches apart. Across processes the refill actor is one named Ray
 # actor, and its run loop is started once (see BaseActorRef.get).
-_refill_guard = threading.Lock()
-_refill_in_progress = False
+_refill_lock = threading.Lock()
 
 
 def _claim_refill() -> bool:
-    global _refill_in_progress
-    with _refill_guard:
-        if _refill_in_progress:
-            return False
-        _refill_in_progress = True
-        return True
+    # Never blocks: the holder awaits its batch, possibly on this same event
+    # loop, so waiting for it here would stall the loop it needs to finish.
+    return _refill_lock.acquire(blocking=False)
 
 
 def _release_refill() -> None:
-    global _refill_in_progress
-    with _refill_guard:
-        _refill_in_progress = False
+    _refill_lock.release()
 
 
 async def check_and_refill_task_pool() -> bool:
@@ -402,17 +441,20 @@ async def _refill_reason(task_type: str) -> Optional[str]:
 
 
 def _comparable_backends(task_type: str) -> List:
-    """The backends candidate generation draws from for ``task_type``."""
+    """The backends candidate generation draws from for ``task_type``, and
+    so the ones the coverage refill checks. (``ml_router`` is a proxy, so
+    its methods read as Any to mypy; hence the casts.)"""
     if task_type == "appeal":
         return cast(List, ml_router.generate_text_backends(use_external=True))
-    return cast(List, ml_router.get_chat_backends(use_external=True))
+    # explore=False: every roster model that can be asked, so each gets
+    # compared, and the same list each time: which models need fresh tasks
+    # must not depend on a chat turn's random draw.
+    return cast(List, ml_router.get_chat_backends(use_external=True, explore=False))
 
 
 def _fresh_tasks(task_type: str) -> "QuerySet[ChooserTask]":
     """READY synthetic tasks of ``task_type`` with no vote yet: the fresh
     ("unscored") tasks, the ones still able to gather new preference data."""
-    from django.db.models import Count
-
     return (
         ChooserTask.objects.filter(
             task_type=task_type, status="READY", source="synthetic"
@@ -425,8 +467,6 @@ def _fresh_tasks(task_type: str) -> "QuerySet[ChooserTask]":
 async def _fresh_task_coverage(task_type: str) -> dict:
     """How many fresh tasks of ``task_type`` hold a candidate from each
     backend, keyed by the persisted model name."""
-    from django.db.models import Count
-
     fresh_ids = _fresh_tasks(task_type).values("id")
     coverage: dict = {}
     # .order_by() clears the Meta ordering, which would otherwise leak into
@@ -530,7 +570,7 @@ async def _generate_single_task(task_type: str) -> bool:
         # Mark task as READY if we generated enough candidates. The counter
         # was persisted by the generator's end-of-run save (not once per
         # candidate); this save records the final status.
-        if task.num_candidates_generated >= 2:  # Minimum 2 candidates needed
+        if task.num_candidates_generated >= _MIN_READY_CANDIDATES:
             task.status = "READY"
             await database_sync_to_async(task.save)()
             logger.info(
@@ -638,9 +678,9 @@ async def _generate_appeal_candidates(task: ChooserTask):
     # Generate candidates using different models. Synthetic context only, so
     # external backends (Anthropic/Azure/DeepInfra/...) participate — the chooser
     # is how they get compared and how they show up in usage reporting.
-    models = _select_candidate_models(
-        ml_router.generate_text_backends(use_external=True), CHOOSER_NUM_CANDIDATES
-    )
+    # Drawn from the same list the coverage refill checks, so the two agree.
+    comparable = _comparable_backends("appeal")
+    models = _select_candidate_models(comparable, CHOOSER_NUM_CANDIDATES)
     if not models:
         logger.warning("No models available for appeal candidate generation")
         return
@@ -652,11 +692,10 @@ async def _generate_appeal_candidates(task: ChooserTask):
     prompt = _build_appeal_prompt(task.context_json)
 
     candidate_index = 0
-    # Models that have already seated a candidate, so the retry pass asks
-    # the ones that have NOT first: re-sampling a model that already
-    # answered puts two of its drafts in one task, and the usage dashboard
-    # then charges it two presentations per vote it can win at most once.
-    produced: set[int] = set()
+    # By id: the models that seated a candidate (in the order they did) and
+    # the ones that gave nothing usable or raised; see _next_retry_model.
+    produced: dict[int, Any] = {}
+    failed: set[int] = set()
     # First pass: try each model once
     for model in models:
         try:
@@ -676,50 +715,56 @@ async def _generate_appeal_candidates(task: ChooserTask):
                     content=response.strip(),
                     metadata={"source": "synthetic"},
                 )
-                produced.add(id(model))
+                produced[id(model)] = model
                 candidate_index += 1
                 task.num_candidates_generated = candidate_index
             else:
                 _note_unusable_candidate(task, model, "appeal", response)
+                failed.add(id(model))
         except Exception as e:
             logger.warning(f"Error generating appeal candidate with model {model}: {e}")
+            failed.add(id(model))
 
-    # If we don't have enough candidates, retry with the same models
+    # If we don't have enough candidates, give the open slots to backends
+    # not asked yet, then (only to reach the READY minimum) re-sample one
+    # that answered.
+    spares = _spare_candidate_models(comparable, models)
     retry_count = 0
     max_retries = CHOOSER_NUM_CANDIDATES * 2  # Limit total retries
     while candidate_index < CHOOSER_NUM_CANDIDATES and retry_count < max_retries:
-        # Stable sort: the models still owed a candidate come first.
-        for model in sorted(models, key=lambda m: id(m) in produced):
-            if candidate_index >= CHOOSER_NUM_CANDIDATES:
-                break
-            try:
-                response = await model._infer_no_context(
-                    system_prompts=[
-                        "You are an expert at writing health insurance appeal letters. "
-                        "Write a professional, compelling appeal letter based on the given context. "
-                        "Be creative and write a unique response different from previous attempts."
-                    ],
-                    prompt=prompt,
+        model = _next_retry_model(spares, produced, failed, candidate_index)
+        if model is None:
+            break
+        retry_count += 1
+        try:
+            response = await model._infer_no_context(
+                system_prompts=[
+                    "You are an expert at writing health insurance appeal letters. "
+                    "Write a professional, compelling appeal letter based on the given context. "
+                    "Be creative and write a unique response different from previous attempts."
+                ],
+                prompt=prompt,
+            )
+            if response and len(response.strip()) > 100:
+                await database_sync_to_async(ChooserCandidate.objects.create)(
+                    task=task,
+                    candidate_index=candidate_index,
+                    kind="appeal_letter",
+                    model_name=canonical_model_name(model),
+                    content=response.strip(),
+                    metadata={"source": "synthetic", "retry": True},
                 )
-                if response and len(response.strip()) > 100:
-                    await database_sync_to_async(ChooserCandidate.objects.create)(
-                        task=task,
-                        candidate_index=candidate_index,
-                        kind="appeal_letter",
-                        model_name=canonical_model_name(model),
-                        content=response.strip(),
-                        metadata={"source": "synthetic", "retry": True},
-                    )
-                    produced.add(id(model))
-                    candidate_index += 1
-                    task.num_candidates_generated = candidate_index
-                else:
-                    _note_unusable_candidate(task, model, "appeal", response)
-            except Exception as e:
-                logger.warning(
-                    f"Error generating appeal candidate (retry) with model {model}: {e}"
-                )
-            retry_count += 1
+                produced[id(model)] = model
+                candidate_index += 1
+                task.num_candidates_generated = candidate_index
+            else:
+                _note_unusable_candidate(task, model, "appeal", response)
+                failed.add(id(model))
+        except Exception as e:
+            logger.warning(
+                f"Error generating appeal candidate (retry) with model {model}: {e}"
+            )
+            failed.add(id(model))
 
     # One save covers every candidate generated above; candidates are
     # created durably as they complete, only the counter waits.
@@ -835,9 +880,9 @@ async def _generate_chat_candidates(task: ChooserTask):
 
     # Generate candidates using different models. Synthetic context only, so
     # external backends participate (they are what the chooser compares).
-    models = _select_candidate_models(
-        ml_router.get_chat_backends(use_external=True), CHOOSER_NUM_CANDIDATES
-    )
+    # Drawn from the same list the coverage refill checks, so the two agree.
+    comparable = _comparable_backends("chat")
+    models = _select_candidate_models(comparable, CHOOSER_NUM_CANDIDATES)
     if not models:
         logger.warning("No models available for chat candidate generation")
         return
@@ -851,21 +896,25 @@ async def _generate_chat_candidates(task: ChooserTask):
     user_prompt = task.context_json.get("prompt", "")
 
     candidate_index = 0
-    # Same bookkeeping as the appeal candidates: the retry pass asks the
-    # models that have not answered yet first.
-    produced: set[int] = set()
+    # Same bookkeeping as the appeal candidates (see _next_retry_model).
+    produced: dict[int, Any] = {}
+    failed: set[int] = set()
     for model in models:
         try:
             # NOTE: the parameter is current_message_for_llm — passing
             # current_message= raised TypeError for EVERY backend and silently
-            # produced zero chat candidates.
-            response, _ = await model.generate_chat_response(
-                current_message_for_llm=user_prompt,
-                previous_context_summary=None,
-                history=chat_history,
-                is_professional=True,
-                is_logged_in=True,
-            )
+            # produced zero chat candidates. Labelled "other" in the call
+            # metrics, like the appeal synthesis: this is not a user's chat
+            # turn, though generate_chat_response labels its calls "chat"
+            # (whose budget still pays for, and caps, them).
+            with ml_call_purpose_override("other"):
+                response, _ = await model.generate_chat_response(
+                    current_message_for_llm=user_prompt,
+                    previous_context_summary=None,
+                    history=chat_history,
+                    is_professional=True,
+                    is_logged_in=True,
+                )
             if response and len(response.strip()) > 50:
                 await database_sync_to_async(ChooserCandidate.objects.create)(
                     task=task,
@@ -878,23 +927,29 @@ async def _generate_chat_candidates(task: ChooserTask):
                         "has_history": len(chat_history) > 0,
                     },
                 )
-                produced.add(id(model))
+                produced[id(model)] = model
                 candidate_index += 1
                 task.num_candidates_generated = candidate_index
             else:
                 _note_unusable_candidate(task, model, "chat", response)
+                failed.add(id(model))
         except Exception as e:
             logger.warning(f"Error generating chat candidate with model {model}: {e}")
+            failed.add(id(model))
 
-    # If we don't have enough candidates, retry with the same models
+    # If we don't have enough candidates, give the open slots to backends
+    # not asked yet, then (only to reach the READY minimum) re-sample one
+    # that answered.
+    spares = _spare_candidate_models(comparable, models)
     retry_count = 0
     max_retries = CHOOSER_NUM_CANDIDATES * 2  # Limit total retries
     while candidate_index < CHOOSER_NUM_CANDIDATES and retry_count < max_retries:
-        # Stable sort: the models still owed a candidate come first.
-        for model in sorted(models, key=lambda m: id(m) in produced):
-            if candidate_index >= CHOOSER_NUM_CANDIDATES:
-                break
-            try:
+        model = _next_retry_model(spares, produced, failed, candidate_index)
+        if model is None:
+            break
+        retry_count += 1
+        try:
+            with ml_call_purpose_override("other"):
                 response, _ = await model.generate_chat_response(
                     current_message_for_llm=user_prompt,
                     previous_context_summary=None,
@@ -902,29 +957,30 @@ async def _generate_chat_candidates(task: ChooserTask):
                     is_professional=True,
                     is_logged_in=True,
                 )
-                if response and len(response.strip()) > 50:
-                    await database_sync_to_async(ChooserCandidate.objects.create)(
-                        task=task,
-                        candidate_index=candidate_index,
-                        kind="chat_response",
-                        model_name=canonical_model_name(model),
-                        content=response.strip(),
-                        metadata={
-                            "source": "synthetic",
-                            "has_history": len(chat_history) > 0,
-                            "retry": True,
-                        },
-                    )
-                    produced.add(id(model))
-                    candidate_index += 1
-                    task.num_candidates_generated = candidate_index
-                else:
-                    _note_unusable_candidate(task, model, "chat", response)
-            except Exception as e:
-                logger.warning(
-                    f"Error generating chat candidate (retry) with model {model}: {e}"
+            if response and len(response.strip()) > 50:
+                await database_sync_to_async(ChooserCandidate.objects.create)(
+                    task=task,
+                    candidate_index=candidate_index,
+                    kind="chat_response",
+                    model_name=canonical_model_name(model),
+                    content=response.strip(),
+                    metadata={
+                        "source": "synthetic",
+                        "has_history": len(chat_history) > 0,
+                        "retry": True,
+                    },
                 )
-            retry_count += 1
+                produced[id(model)] = model
+                candidate_index += 1
+                task.num_candidates_generated = candidate_index
+            else:
+                _note_unusable_candidate(task, model, "chat", response)
+                failed.add(id(model))
+        except Exception as e:
+            logger.warning(
+                f"Error generating chat candidate (retry) with model {model}: {e}"
+            )
+            failed.add(id(model))
 
     # One save covers every candidate generated above; candidates are
     # created durably as they complete, only the counter waits.

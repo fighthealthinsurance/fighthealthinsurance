@@ -10,6 +10,7 @@ Covers two behaviors added alongside synthesis tracking:
   individual models.
 """
 
+import contextlib
 import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -209,21 +210,30 @@ class TestCoverageRefill:
     is refilled. READY is monotonic, so without this trigger a provider
     configured after the pool was bootstrapped never got a task."""
 
-    def _thresholds(self, backends=None):
+    @contextlib.contextmanager
+    def _thresholds(self, backends=None, max_unscored=10):
         if backends is None:
             backends = [
                 _Backend("fhi-2025-may", external=False),
                 _Backend("azure-openai/gpt-5.5", external=True),
             ]
-        return [
-            patch("fighthealthinsurance.chooser_tasks.CHOOSER_MIN_READY_TASKS", 1),
-            patch("fighthealthinsurance.chooser_tasks.CHOOSER_MIN_UNSCORED_TASKS", 1),
-            patch("fighthealthinsurance.chooser_tasks.CHOOSER_MAX_UNSCORED_TASKS", 10),
-            patch(
-                "fighthealthinsurance.chooser_tasks._comparable_backends",
-                return_value=backends,
-            ),
-        ]
+        with contextlib.ExitStack() as stack:
+            for patcher in (
+                patch("fighthealthinsurance.chooser_tasks.CHOOSER_MIN_READY_TASKS", 1),
+                patch(
+                    "fighthealthinsurance.chooser_tasks.CHOOSER_MIN_UNSCORED_TASKS", 1
+                ),
+                patch(
+                    "fighthealthinsurance.chooser_tasks.CHOOSER_MAX_UNSCORED_TASKS",
+                    max_unscored,
+                ),
+                patch(
+                    "fighthealthinsurance.chooser_tasks._comparable_backends",
+                    return_value=backends,
+                ),
+            ):
+                stack.enter_context(patcher)
+            yield
 
     async def test_an_external_backend_with_no_fresh_tasks_triggers_a_refill(self):
         # READY and unscored are both healthy (one task each, thresholds 1),
@@ -231,19 +241,13 @@ class TestCoverageRefill:
         await _fresh_task_with("appeal", "fhi-2025-may")
         await _fresh_task_with("chat", "fhi-2025-may")
 
-        patches = self._thresholds()
-        for p in patches:
-            p.start()
-        try:
+        with self._thresholds():
             reason = await _refill_reason("appeal")
             with patch(
                 "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
                 new=AsyncMock(),
             ) as mock_batch:
                 await check_and_refill_task_pool()
-        finally:
-            for p in patches:
-                p.stop()
 
         assert reason is not None and "azure-openai/gpt-5.5" in reason
         assert mock_batch.await_count == 2
@@ -252,19 +256,13 @@ class TestCoverageRefill:
         await _fresh_task_with("appeal", "fhi-2025-may", "azure-openai/gpt-5.5")
         await _fresh_task_with("chat", "fhi-2025-may", "azure-openai/gpt-5.5")
 
-        patches = self._thresholds()
-        for p in patches:
-            p.start()
-        try:
+        with self._thresholds():
             assert await _refill_reason("appeal") is None
             with patch(
                 "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
                 new=AsyncMock(),
             ) as mock_batch:
                 await check_and_refill_task_pool()
-        finally:
-            for p in patches:
-                p.stop()
 
         mock_batch.assert_not_awaited()
 
@@ -280,14 +278,8 @@ class TestCoverageRefill:
         # One fresh task keeps the unscored count healthy; it holds no external.
         await _fresh_task_with("appeal", "fhi-2025-may")
 
-        patches = self._thresholds()
-        for p in patches:
-            p.start()
-        try:
+        with self._thresholds():
             reason = await _refill_reason("appeal")
-        finally:
-            for p in patches:
-                p.stop()
 
         assert reason is not None and "azure-openai/gpt-5.5" in reason
 
@@ -297,19 +289,13 @@ class TestCoverageRefill:
         # coverage check keyed on str(backend) instead and never saw them.
         await _fresh_task_with("appeal", "fhi-2025-may", "gpt-5.5")
 
-        patches = self._thresholds(
+        with self._thresholds(
             backends=[
                 _Backend("fhi-2025-may", external=False),
                 _Backend(None, external=True, model="gpt-5.5"),
             ]
-        )
-        for p in patches:
-            p.start()
-        try:
+        ):
             reason = await _refill_reason("appeal")
-        finally:
-            for p in patches:
-                p.stop()
 
         assert reason is None
 
@@ -318,17 +304,8 @@ class TestCoverageRefill:
         # batch every tick forever: past the ceiling the trigger is off.
         await _fresh_task_with("appeal", "fhi-2025-may")
 
-        patches = self._thresholds()
-        patches.append(
-            patch("fighthealthinsurance.chooser_tasks.CHOOSER_MAX_UNSCORED_TASKS", 1)
-        )
-        for p in patches:
-            p.start()
-        try:
+        with self._thresholds(max_unscored=1):
             reason = await _refill_reason("appeal")
-        finally:
-            for p in patches:
-                p.stop()
 
         assert reason is None
 
@@ -700,16 +677,18 @@ class TestSynthesizeHelpers:
             result = await _synthesize_appeal_candidate({}, ["a", "b"])
         assert result is None
 
+
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
-class TestRetryAsksTheModelsStillOwedACandidateFirst:
-    """When a backend fails in the first pass, the retry pass used to walk
-    the model list from the top again, so the internal model that had
-    already answered was re-sampled and the task carried two of its drafts
-    while the failed backend was never retried -- and the usage dashboard
-    then charged that model two presentations per vote."""
+class TestRetryDoesNotAskAFailedModelAgain:
+    """A backend that failed in the first pass used to be asked again by the
+    retry pass, first, on every task: for a dead external that was another
+    paid call and WARNING per task, and nothing to show for it."""
 
-    async def test_retry_pass_starts_with_the_model_that_failed(self):
+    async def _generate(self):
+        """Candidates for a task where model-a writes the scenario and a
+        draft, and model-b raises on its first draft (later ones would
+        succeed). Returns (model-b, the candidates' model names in order)."""
         scenario = (
             "Procedure: MRI of lumbar spine\nDiagnosis: chronic lower back pain\n"
             "Insurance Company: Fictional Mutual\nDenial Reason: not medically "
@@ -743,6 +722,16 @@ class TestRetryAsksTheModelsStillOwedACandidateFirst:
             .order_by("candidate_index")
             .values_list("model_name", flat=True)
         ]
-        # model-a answered in the first pass; the retry's first slot goes to
-        # model-b, the one still owed a candidate, not back to model-a.
-        assert names[:2] == ["model-a", "model-b"], names
+        return model_b, names
+
+    async def test_a_model_that_raised_is_not_asked_again(self):
+        model_b, _ = await self._generate()
+
+        assert model_b._infer_no_context.await_count == 1
+
+    async def test_the_model_that_answered_is_resampled_to_reach_ready(self):
+        # With no unused backend left, one task short of the two candidates
+        # READY needs gets a second draft from the model that answered.
+        _, names = await self._generate()
+
+        assert names == ["model-a", "model-a"]
