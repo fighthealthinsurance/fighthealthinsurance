@@ -27,7 +27,12 @@ from fighthealthinsurance.chat.message_preprocessor import (
     DIRECT_CHAT_SOFT_LIMIT_CHARS,
     build_long_paste_marker,
 )
-from fighthealthinsurance.models import ChatDocument, OngoingChat, ProfessionalUser
+from fighthealthinsurance.models import (
+    ChatDocument,
+    ChatTurn,
+    OngoingChat,
+    ProfessionalUser,
+)
 from fighthealthinsurance.websockets import OngoingChatConsumer
 from tests.chat_fixtures import RecordingChatModel
 from tests.sync.mock_chat_model import MockChatModel
@@ -287,6 +292,12 @@ class LongPasteAllModelsFailTest(ChatTurnTestCase):
         self.assertIn("stored for reference", chat.chat_history[0]["content"])
         self.assertEqual(chat.chat_history[1]["content"], response.get("content"))
 
+    async def test_failed_paste_turn_row_says_failed(self):
+        # Only the frame the user sees changes: the turn is still a failure.
+        chat, _ = await self.paste_big()
+        row = await ChatTurn.objects.filter(chat=chat).aget()
+        self.assertEqual(row.outcome, "failed")
+
     async def test_total_model_failure_on_short_message_still_errors(self):
         # The acknowledgment fallback is only for turns whose content was
         # diverted to storage; an ordinary failed turn keeps the error frame.
@@ -312,10 +323,13 @@ class LongPasteMarkerEchoTest(ChatTurnTestCase):
 
     async def paste_big(self):
         user, chat = await _make_professional_chat()
-        return await self.send(user, chat, self.BIG, document_name=self.DOCUMENT_NAME)
+        response = await self.send(
+            user, chat, self.BIG, document_name=self.DOCUMENT_NAME
+        )
+        return chat, response
 
     async def test_marker_echo_is_replaced_by_acknowledgment(self):
-        response = await self.paste_big()
+        _, response = await self.paste_big()
         self.assertIn("paste it again", response.get("content", ""))
 
     async def test_replacement_is_counted_apart_from_delivered_repeats(self):
@@ -325,6 +339,13 @@ class LongPasteMarkerEchoTest(ChatTurnTestCase):
         self.assertEqual(
             _counter("fhi_chat_repeated_responses_total", **replaced), before + 1
         )
+
+    async def test_replacement_turn_row_says_ok(self):
+        # The acknowledgment goes out as the turn's reply, so the ChatTurn
+        # row follows the metric's "ok", like any delivered reply.
+        chat, _ = await self.paste_big()
+        row = await ChatTurn.objects.filter(chat=chat).aget()
+        self.assertEqual(row.outcome, "ok")
 
     async def test_replacement_is_not_counted_as_a_failed_turn(self):
         # The models DID answer (only with repeats): alerting on it as a

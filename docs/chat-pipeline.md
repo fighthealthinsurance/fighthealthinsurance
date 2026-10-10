@@ -26,7 +26,7 @@ ChatInterface.handle_chat_message (chat_interface.py)
   │    accreted summary to FHI_CHAT_MAX_SUMMARY_CHARS (6000)
   │  long paste (> 8000 chars): full text stored as a ChatDocument first
   │    (document_processor.py); history + scoring then use a compact
-  │    marker -- see "Stored-content turns" in section 6
+  │    marker -- see "Stored-content turns" in §6
   │  prepare_user_message_variants (message_preprocessor.py)
   │  state hint injected into the summary context as an UNCONFIRMED guess
   ▼
@@ -170,7 +170,7 @@ leaves the loop broken:
 6. **Last-resort delivery**: the retry scorer penalizes repeats by -1e6
    (finite) instead of -inf — a repeat beats an error frame, but only when
    literally nothing else came back. A stored-content turn (long paste or
-   upload, section 6) has a better last resort than either: the delivered
+   upload, §6) has a better last resort than either: the delivered
    repeat is swapped for the turn's stored-content acknowledgment, since
    the "repeat" there is the user's own marker, or our previous reply,
    echoed back.
@@ -580,7 +580,9 @@ search. Explicit uploads take the same storage path under their own marker.
   coherent exchange. "All models are experiencing issues, try again" read
   as "your paste was lost", and a re-paste only duplicated the failure.
   The repeat case is still an "ok" turn, like any delivered repeat: the
-  models did answer, so it raises no failure metric or reliability event.
+  models did answer, so it raises no failure metric or reliability event,
+  and its ChatTurn row says "ok". A total failure keeps its "failed" count
+  and row; only the frame the user sees changes.
 
 ## 7. Debuggability
 
