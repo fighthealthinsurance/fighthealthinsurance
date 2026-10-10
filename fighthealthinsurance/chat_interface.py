@@ -108,6 +108,7 @@ from fighthealthinsurance.chat.appeal_letter_generator import (
     denial_has_letter_context,
     draft_letter_for_chat,
     looks_like_letter_request,
+    wants_fresh_letter,
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
@@ -2520,7 +2521,8 @@ class ChatInterface:
                     )
                 if letter_appeal:
                     fallback_reply = await self._attempt_letter_fallback_reply(
-                        letter_appeal
+                        letter_appeal,
+                        fresh_letter=wants_fresh_letter(user_message),
                     )
                 else:
                     logger.info(
@@ -2603,10 +2605,11 @@ class ChatInterface:
                     "additional model providers when our primary models are unavailable."
                 )
             if letter_appeal:
+                # Plain text: the client shows an error frame as text, so a
+                # markdown link would render as raw [...](...) syntax.
                 err_msg += (
                     f" You can also generate your appeal letter directly "
-                    f"from [Appeal #{letter_appeal.id}]"
-                    f"(/appeals/{letter_appeal.id})."
+                    f"from the page for Appeal #{letter_appeal.id}."
                 )
             # Sizes, the error class and flags only: message text is PHI.
             logger.error(
@@ -2681,15 +2684,20 @@ class ChatInterface:
         default = _env_float("FHI_CHAT_LETTER_DEADLINE", 75.0)
         return max(10.0, min(default, remaining))
 
-    async def _attempt_letter_fallback_reply(self, appeal) -> Optional[str]:
+    async def _attempt_letter_fallback_reply(
+        self, appeal, fresh_letter: bool = False
+    ) -> Optional[str]:
         """Draft the requested appeal letter after a total chat-model failure.
 
         ``appeal`` is the letter-capable linked appeal the caller already
         looked up. A letter this turn's letter tool already drafted is
         delivered as is. Otherwise serves an existing ProposedAppeal first (a
         DB read is the one step guaranteed to work while models are down),
-        then runs a bounded appeal-pipeline generation. Never raises: the
-        caller still owes the user an error frame when this returns None.
+        then runs a bounded appeal-pipeline generation. ``fresh_letter``
+        (a redo/rewrite request) skips the ProposedAppeal: it was written
+        before whatever the person now wants changed, and would be offered
+        as the new draft. Never raises: the caller still owes the user an
+        error frame when this returns None.
         """
         chat = self.chat
         try:
@@ -2713,7 +2721,8 @@ class ChatInterface:
                         appeal=appeal,
                         denial=appeal.for_denial,
                         use_external=self.use_external_models,
-                        prefer_existing=True,
+                        prefer_existing=not fresh_letter,
+                        use_reserve=not fresh_letter,
                         deadline_seconds=_env_float(
                             "FHI_CHAT_LETTER_FALLBACK_DEADLINE", 60.0
                         ),

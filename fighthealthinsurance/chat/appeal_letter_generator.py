@@ -493,7 +493,7 @@ async def draft_letter_for_chat(
 
     from fighthealthinsurance.models import Appeal
 
-    appeal_id = getattr(appeal, "id", None)
+    appeal_id = appeal.id
     try:
         # The appeal as it is now: drafting can take the whole deadline, and
         # the person may have saved, sent or faxed a letter meanwhile.

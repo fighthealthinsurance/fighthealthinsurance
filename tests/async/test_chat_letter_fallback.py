@@ -207,9 +207,10 @@ class ChatLetterFallbackTest(APITestCase):
         error_frames = [f for f in recorder.frames if "error" in f]
         self.assertTrue(error_frames)
 
-    async def test_failed_fallback_error_links_to_appeal_page(self):
+    async def test_failed_fallback_error_names_the_appeal_in_plain_text(self):
         """When even the letter fallback can't deliver, the error message
-        points the user at the linked appeal's own generation page."""
+        points the user at the linked appeal's own page. The client shows
+        error frames as plain text, so a markdown link would render raw."""
         with patch(
             "fighthealthinsurance.chat_interface.draft_letter_for_chat",
             new=AsyncMock(return_value=None),
@@ -218,8 +219,51 @@ class ChatLetterFallbackTest(APITestCase):
                 "letterfall6", "9999920006", "Please go ahead and draft a letter."
             )
         error_frames = [f for f in recorder.frames if "error" in f]
-        self.assertEqual(len(error_frames), 1)
-        self.assertIn(f"/appeals/{appeal.id}", error_frames[0]["error"])
+        self.assertIn(
+            f"from the page for Appeal #{appeal.id}.", error_frames[0]["error"]
+        )
+
+    async def test_redo_request_does_not_ask_for_a_stored_draft(self):
+        with patch(
+            "fighthealthinsurance.chat_interface.draft_letter_for_chat",
+            new=AsyncMock(return_value=DraftedLetter(GENERATED_LETTER, True)),
+        ) as mock_draft:
+            await self._run_failing_turn(
+                "letterfall17",
+                "9999920017",
+                "Please redo the letter with the new diagnosis.",
+            )
+        self.assertFalse(mock_draft.await_args.kwargs["use_reserve"])
+
+    async def test_redo_request_is_not_answered_with_a_draft_from_before(self):
+        """The stored draft predates the change the person asked for, so
+        with no new letter to give, the turn ends in the error frame."""
+        user, chat = await _make_professional_chat("letterfall18", "9999920018")
+        _, denial = await _link_letter_appeal(chat, user, your_state="CA")
+        await ProposedAppeal.objects.acreate(
+            appeal_text=RESERVE_LETTER,
+            for_denial=denial,
+            speculative=True,
+            built_for_state="CA",
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(
+            send_json_message_func=recorder,
+            chat=chat,
+            user=user,
+        )
+        with patch(
+            "fighthealthinsurance.chat.appeal_letter_generator."
+            "generate_letter_for_denial",
+            new=AsyncMock(return_value=None),
+        ), _llm_call_fails(lambda *a, **k: (None, None)):
+            await interface.handle_chat_message(
+                "Please redo the letter with the new diagnosis."
+            )
+        assistant_frames = [
+            f for f in recorder.frames if f.get("role") == "assistant"
+        ]
+        self.assertEqual(assistant_frames, [])
 
 
     async def _interface_with_linked_appeal(self, username, npi):
