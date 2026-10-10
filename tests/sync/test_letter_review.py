@@ -1227,6 +1227,28 @@ class FrozenLabelTests(PageTestBase):
             label.save(update_fields=["verdict"])
         self.assertEqual(self._exported(), before)
 
+    def test_a_stored_label_is_locked_before_its_packet(self):
+        """Its own row first, so a concurrent move of the same label can't
+        change which packet is checked."""
+        from django.db.models import QuerySet
+
+        order: List[str] = []
+        real = QuerySet.select_for_update
+
+        def spy(qs, *args, **kwargs):
+            order.append(qs.model.__name__)
+            return real(qs, *args, **kwargs)
+
+        label = self.label(self.reader_a, KEY_2, "clean")
+        with patch.object(QuerySet, "select_for_update", spy):
+            label.verdict = "flag"
+            label.save()
+            label.delete()
+        self.assertEqual(
+            order,
+            ["LetterReviewLabel", "LetterReviewPacket"] * 2,
+        )
+
     def test_a_label_cannot_be_moved_onto_a_finished_packet(self):
         other = self.load_packet(_packet_data(packet="synthetic-open-packet"))
         moving = LetterReviewLabel.objects.filter(item__packet=other).first() or LetterReviewLabel.objects.create(

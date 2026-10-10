@@ -5486,8 +5486,12 @@ class LetterReviewLabel(models.Model):
         being moved to another letter, that letter's packet too."""
         from fighthealthinsurance.letter_review import labels_frozen
 
+        # Lock the label's own row before reading its packet, so a move of
+        # the same label can't change the packet between the read and the
+        # packet locks. Packets are locked after the label, always.
         stored = (
-            LetterReviewLabel.objects.filter(pk=self.pk)
+            LetterReviewLabel.objects.select_for_update(of=("self",))
+            .filter(pk=self.pk)
             .values_list("item__packet_id", flat=True)
             .first()
             if self.pk is not None
