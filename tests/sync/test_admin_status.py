@@ -111,6 +111,124 @@ class AdminStatusAccessTest(TestCase):
         self.assertContains(response, "WORKING")
 
 
+class AdminStatusDeploymentAndModelRowsTest(TestCase):
+    """The page header names the deploy, and each model row its endpoint and
+    when it was checked."""
+
+    def setUp(self):
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+
+    def _get(self, models=()):
+        with mock.patch(_MODELS, return_value=list(models)), mock.patch(
+            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
+        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+            return self.client.get(reverse("admin_status"))
+
+    @mock.patch.dict(os.environ, {"FHI_DEPLOYMENT_ID": "v9.9.9-statuspage"})
+    def test_header_shows_deployment_id(self):
+        self.assertContains(self._get(), "v9.9.9-statuspage")
+
+    def test_header_flags_missing_release_id(self):
+        with mock.patch.dict(os.environ):
+            for name in ("FHI_DEPLOYMENT_ID", "FHI_RELEASE", "FHI_VERSION"):
+                os.environ.pop(name, None)
+            response = self._get()
+        self.assertContains(response, "no release id set")
+
+    def test_header_flags_dockerfile_placeholder_release(self):
+        with mock.patch.dict(os.environ, {"FHI_RELEASE": "unknown"}):
+            os.environ.pop("FHI_DEPLOYMENT_ID", None)
+            response = self._get()
+        self.assertContains(response, "no release id set")
+
+    def test_model_row_shows_url_and_backup_url(self):
+        response = self._get(
+            [
+                {
+                    "name": "fhi-2025",
+                    "ok": True,
+                    "external": False,
+                    "error": None,
+                    "url": "http://primary.example.invalid:8000/v1",
+                    "backup_url": "http://backup.example.invalid:8000/v1",
+                }
+            ]
+        )
+        self.assertContains(response, "http://primary.example.invalid:8000/v1")
+        self.assertContains(response, "backup: http://backup.example.invalid:8000/v1")
+
+    def test_model_row_shows_live_check_time(self):
+        checked = datetime.datetime(2026, 10, 9, 14, 2, 11, tzinfo=datetime.UTC)
+        response = self._get(
+            [
+                {
+                    "name": "fhi-2025",
+                    "ok": True,
+                    "external": False,
+                    "error": None,
+                    "checked_at": checked,
+                }
+            ]
+        )
+        self.assertContains(response, "14:02:11 UTC")
+
+    def test_model_row_shows_sweep_verdict_and_age(self):
+        response = self._get(
+            [
+                {
+                    "name": "fhi-2025",
+                    "ok": True,
+                    "external": False,
+                    "error": None,
+                    "sweep_ok": False,
+                    "sweep_checked_at": timezone.now() - datetime.timedelta(minutes=20),
+                }
+            ]
+        )
+        self.assertContains(response, "down, 20\xa0minutes ago")
+
+    def test_model_row_without_sweep_says_so(self):
+        response = self._get(
+            [{"name": "fhi-2025", "ok": True, "external": False, "error": None}]
+        )
+        self.assertContains(response, "not run on this pod yet")
+
+    def test_model_row_names_backup_model(self):
+        response = self._get(
+            [
+                {
+                    "name": "fhi-2025",
+                    "ok": True,
+                    "external": False,
+                    "error": None,
+                    "url": "http://primary.example.invalid:8000/v1",
+                    "backup_url": "http://primary.example.invalid:8000/v1",
+                    "backup_model": "fhi-2025-small",
+                }
+            ]
+        )
+        self.assertContains(
+            response, "backup: http://primary.example.invalid:8000/v1 (fhi-2025-small)"
+        )
+
+    def test_model_row_missing_from_last_sweep_says_so(self):
+        response = self._get(
+            [
+                {
+                    "name": "fhi-2025",
+                    "ok": True,
+                    "external": False,
+                    "error": None,
+                    "sweep_ok": None,
+                    "sweep_checked_at": timezone.now()
+                    - datetime.timedelta(minutes=5),
+                }
+            ]
+        )
+        self.assertContains(response, "not in the last sweep, 5\xa0minutes ago")
+
+
 class AdminStatusFaxQueueTest(TestCase):
     def setUp(self):
         self.staff = User.objects.create_user(
@@ -1248,6 +1366,165 @@ class ComputeModelHealthDetailsTest(TestCase):
         self.assertTrue(by_name["bad-external"]["external"])
         # Down backends sort first so on-call sees problems at the top.
         self.assertFalse(details[0]["ok"])
+
+    def _details_for(self, *models, timeout_seconds=2):
+        from fighthealthinsurance.ml.health_status import compute_model_health_details
+
+        fake_router = mock.MagicMock()
+        fake_router.all_models_by_cost = list(models)
+        with mock.patch("fighthealthinsurance.ml.ml_router.ml_router", fake_router):
+            details = compute_model_health_details(timeout_seconds=timeout_seconds)
+        return {d["name"]: d for d in details}
+
+    def test_url_drops_credentials_query_and_fragment(self):
+        class Remote:
+            model = "remote"
+            external = False
+            api_base = "https://user:hunter2@llm.example.invalid:8443/v1?key=abc#x"
+
+            def model_is_ok(self):
+                return True
+
+        row = self._details_for(Remote())["remote"]
+        self.assertEqual(row["url"], "https://llm.example.invalid:8443/v1")
+
+    def test_backup_url_reported_when_it_differs(self):
+        class Remote:
+            model = "remote"
+            external = False
+            api_base = "http://primary.example.invalid:8000/v1"
+            backup_api_base = "http://backup.example.invalid:8000/v1"
+
+            def model_is_ok(self):
+                return True
+
+        row = self._details_for(Remote())["remote"]
+        self.assertEqual(row["backup_url"], "http://backup.example.invalid:8000/v1")
+
+    def test_backup_url_omitted_when_same_as_primary(self):
+        class Remote:
+            model = "remote"
+            external = False
+            api_base = "http://primary.example.invalid:8000/v1"
+            backup_api_base = "http://primary.example.invalid:8000/v1"
+
+            def model_is_ok(self):
+                return True
+
+        self.assertIsNone(self._details_for(Remote())["remote"]["backup_url"])
+
+    def test_backup_serving_another_model_on_same_host_is_named(self):
+        class Remote:
+            model = "remote"
+            external = False
+            api_base = "http://primary.example.invalid:8000/v1"
+            backup_api_base = "http://primary.example.invalid:8000/v1"
+            backup_model = "remote-small"
+
+            def model_is_ok(self):
+                return True
+
+        row = self._details_for(Remote())["remote"]
+        self.assertEqual(
+            (row["backup_url"], row["backup_model"]),
+            ("http://primary.example.invalid:8000/v1", "remote-small"),
+        )
+
+    def test_backup_model_omitted_when_same_as_primary(self):
+        class Remote:
+            model = "remote"
+            external = False
+            api_base = "http://primary.example.invalid:8000/v1"
+            backup_api_base = "http://backup.example.invalid:8000/v1"
+            backup_model = "remote"
+
+            def model_is_ok(self):
+                return True
+
+        self.assertIsNone(self._details_for(Remote())["remote"]["backup_model"])
+
+    def test_backend_without_endpoint_has_no_url(self):
+        class Hosted:
+            model = "hosted"
+            external = True
+
+            def model_is_ok(self):
+                return True
+
+        self.assertIsNone(self._details_for(Hosted())["hosted"]["url"])
+
+    def test_checked_at_is_when_the_probe_answered(self):
+        class Good:
+            model = "good"
+            external = False
+
+            def model_is_ok(self):
+                return True
+
+        before = timezone.now()
+        row = self._details_for(Good())["good"]
+        self.assertTrue(before <= row["checked_at"] <= timezone.now())
+
+    def test_checked_at_set_when_probe_raises(self):
+        class Broken:
+            model = "broken"
+            external = False
+
+            def model_is_ok(self):
+                raise RuntimeError("connection refused")
+
+        self.assertIsNotNone(self._details_for(Broken())["broken"]["checked_at"])
+
+    def test_checked_at_none_when_probe_misses_deadline(self):
+        release = threading.Event()
+
+        class Slow:
+            model = "slow"
+            external = False
+
+            def model_is_ok(self):
+                release.wait(timeout=10)
+                return True
+
+        try:
+            row = self._details_for(Slow(), timeout_seconds=1)["slow"]
+        finally:
+            release.set()
+        self.assertIsNone(row["checked_at"])
+
+    def test_reports_last_background_sweep_result(self):
+        from fighthealthinsurance.ml.health_status import _model_key, health_status
+
+        class Good:
+            model = "good"
+            external = False
+
+            def model_is_ok(self):
+                return True
+
+        backend = Good()
+        swept = timezone.now() - datetime.timedelta(minutes=30)
+        with mock.patch.object(
+            health_status,
+            "_last_sweep",
+            ({_model_key(backend): False}, swept.timestamp()),
+        ):
+            row = self._details_for(backend)["good"]
+        self.assertEqual((row["sweep_ok"], row["sweep_checked_at"]), (False, swept))
+
+    def test_no_sweep_yet_reports_none(self):
+        from fighthealthinsurance.ml.health_status import health_status
+
+        class Good:
+            model = "good"
+            external = False
+
+            def model_is_ok(self):
+                return True
+
+        with mock.patch.object(health_status, "_last_sweep", None):
+            row = self._details_for(Good())["good"]
+        self.assertEqual((row["sweep_ok"], row["sweep_checked_at"]), (None, None))
 
     def test_empty_router_returns_empty_list(self):
         from fighthealthinsurance.ml.health_status import compute_model_health_details

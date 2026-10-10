@@ -793,6 +793,14 @@ class TestConfigFlags:
         monkeypatch.setenv("FHI_RELEASE", "v1.2.3")
         assert mhc.deployment_id() == "v1.2.3"
 
+    def test_dockerfile_placeholder_release_is_not_versioned(self):
+        # k8s/Dockerfile bakes FHI_RELEASE=unknown when no RELEASE build arg
+        # was given: it names no release, so it can't date a health row.
+        assert mhc.is_versioned_deployment_id("unknown") is False
+
+    def test_real_release_is_versioned(self):
+        assert mhc.is_versioned_deployment_id("v1.2.3") is True
+
 
 class TestCheckModelBackendsCommand:
     def _summary(self, results, ran=True, email_sent=False):

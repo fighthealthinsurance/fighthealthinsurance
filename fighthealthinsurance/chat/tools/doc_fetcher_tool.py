@@ -11,12 +11,15 @@ import json
 import re
 import socket
 from typing import AbstractSet, Any, Awaitable, Callable, Optional, Tuple
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 from loguru import logger
 
 from fighthealthinsurance.chat.document_processor import process_uploaded_document
 from fighthealthinsurance.extralink_fetcher import ExtraLinkFetcher
+from fighthealthinsurance.utils import (
+    sanitize_url_for_display as _sanitize_url_for_display,
+)
 
 from .base_tool import BaseTool
 from .patterns import FETCH_DOC_REGEX
@@ -26,22 +29,6 @@ MAX_CHAT_TEXT_LENGTH = 15_000
 
 # Maximum number of fetch_doc calls allowed per chat session
 MAX_FETCHES_PER_SESSION = 3
-
-
-def _sanitize_url_for_display(url: str) -> str:
-    """Strip sensitive URL components for safe display in status messages."""
-    parsed = urlparse(url)
-    hostname = parsed.hostname
-    if hostname is not None:
-        display_host = f"[{hostname}]" if ":" in hostname else hostname
-        try:
-            port = parsed.port
-        except ValueError:
-            port = None
-        netloc = f"{display_host}:{port}" if port is not None else display_host
-    else:
-        netloc = parsed.netloc.rsplit("@", 1)[-1]
-    return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
 
 
 def _url_summary_for_log(
