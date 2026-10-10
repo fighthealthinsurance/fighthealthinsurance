@@ -13,7 +13,15 @@ from loguru import logger
 
 from fighthealthinsurance.utils import aget_related
 
-from .base_tool import BaseTool, is_safe_tool_field, settable_model_fields
+from .base_tool import (
+    BaseTool,
+    is_safe_tool_field,
+    parse_anchored_json_payload,
+    replace_anchored_call,
+    set_tool_field,
+    settable_model_fields,
+    strip_anchored_calls,
+)
 from .patterns import CREATE_OR_UPDATE_APPEAL_REGEX
 
 
@@ -30,7 +38,33 @@ class AppealTool(BaseTool):
 
     pattern = CREATE_OR_UPDATE_APPEAL_REGEX
     detect_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
+    # The pattern is ^...$-anchored, so every scan needs MULTILINE -- the
+    # base default (no MULTILINE) made the on-error strip in
+    # BaseTool.handle miss a call that follows a line of prose, leaking raw
+    # tool syntax (and its JSON payload) into the chat when execute raised.
+    detect_all_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
     name = "Appeal"
+    # Models legitimately emit several update calls in one reply; since
+    # execute() replaces only the exact call span, each remaining call must
+    # get its own pass or it renders as raw tool syntax.
+    max_calls_per_reply: int = 3
+
+    def strip_calls_on_error(self, response_text: str) -> str:
+        """Span-bounded on-error strip: the greedy DOTALL pattern would also
+        delete the text (and any other pending tool call) between two calls.
+
+        ``empty_fallback`` covers a reply that was nothing BUT the failed
+        call: returning the original text there (the base behavior) would
+        hand the user the raw token and its payload.
+        """
+        return strip_anchored_calls(
+            self,
+            response_text,
+            empty_fallback=(
+                "Sorry -- I hit a problem saving those appeal details. "
+                "Could you tell me again what you'd like recorded?"
+            ),
+        )
 
     def __init__(
         self,
@@ -75,10 +109,15 @@ class AppealTool(BaseTool):
             await self.send_error_message("Cannot create appeal: no chat context")
             return response_text, context
 
-        json_data = match.group(1).strip()
-
         try:
-            appeal_data = json.loads(json_data)
+            # Precise payload + span: the greedy anchored pattern can
+            # over-capture into a later tool call on another line (see
+            # parse_anchored_json_payload); replacing call_span rather than
+            # match.group(0) keeps that later call intact for its own handler.
+            # Spliced at the match (replace_anchored_call), so a duplicate
+            # call gets its own pass via max_calls_per_reply and a copy of
+            # the call quoted earlier in the prose is left alone.
+            appeal_data, call_span = parse_anchored_json_payload(response_text, match)
             await self.send_status_message("Processing update appeal data...")
 
             appeal, denial = await self._get_or_create_appeal(chat, appeal_data)
@@ -88,8 +127,10 @@ class AppealTool(BaseTool):
                 await appeal.asave()
                 await denial.asave()
 
-                cleaned_response = response_text.replace(
-                    match.group(0),
+                cleaned_response = replace_anchored_call(
+                    response_text,
+                    match,
+                    call_span,
                     f"I've created/updated [Appeal #{appeal.id}]({self.domain}/appeals/{appeal.id}) for you.",
                 )
                 await self.send_status_message(
@@ -97,20 +138,25 @@ class AppealTool(BaseTool):
                 )
                 return cleaned_response, context
             else:
-                cleaned_response = response_text.replace(
-                    match.group(0),
+                cleaned_response = replace_anchored_call(
+                    response_text,
+                    match,
+                    call_span,
                     "I couldn't create or update the appeal.",
                 )
                 await self.send_status_message("Failed to create or update appeal.")
                 return cleaned_response, context
 
         except json.JSONDecodeError as e:
+            # No payload content in the log or the error frame: the appeal
+            # JSON carries medical/claim details (PHI) -- sizes only.
             logger.warning(
                 "Invalid JSON in create_or_update_appeal token "
-                f"(payload_chars={len(json_data)}): {type(e).__name__}"
+                f"(payload_chars={len(match.group(1))}): {type(e).__name__}"
             )
             await self.send_error_message(
-                f"Error processing appeal data: Invalid JSON format {e} -- {json_data}"
+                "Error processing appeal data: the appeal details were not "
+                "valid JSON. Please try again."
             )
             raise
 
@@ -118,7 +164,11 @@ class AppealTool(BaseTool):
             logger.opt(exception=True).warning(
                 f"Error processing appeal data: {type(e).__name__}"
             )
-            await self.send_error_message(f"Error processing appeal data: {str(e)}")
+            # Generic on purpose: the exception text can carry PHI (a
+            # database error quotes the failing row).
+            await self.send_error_message(
+                "Error processing appeal data. Please try again in a moment."
+            )
             raise
 
     async def _get_or_create_appeal(
@@ -193,11 +243,11 @@ class AppealTool(BaseTool):
 
             if is_safe_tool_field(key, appeal_allowed):
                 set_field = True
-                setattr(appeal, key, value)
+                set_tool_field(appeal, key, value)
 
             if is_safe_tool_field(key, denial_allowed):
                 set_field = True
-                setattr(denial, key, value)
+                set_tool_field(denial, key, value)
 
             if not set_field:
                 rejected_keys += 1

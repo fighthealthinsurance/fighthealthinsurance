@@ -93,6 +93,7 @@ from fighthealthinsurance.chat.tools import (
     ClinicalTrialsTool,
     DocFetcherTool,
     FinancialAssistanceTool,
+    GenerateAppealLetterTool,
     MedicaidEligibilityTool,
     MedicaidGovLookupTool,
     MedicaidInfoTool,
@@ -101,6 +102,14 @@ from fighthealthinsurance.chat.tools import (
     PubMedTool,
     RxNormLookupTool,
     USPSTFLookupTool,
+)
+from fighthealthinsurance.chat.appeal_letter_generator import (
+    DraftedLetter,
+    denial_has_letter_context,
+    draft_letter_for_chat,
+    letter_placement_note,
+    looks_like_letter_request,
+    wants_fresh_letter,
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
@@ -312,6 +321,22 @@ class ChatInterface:
         # (chat/reply_gate.py), or None when it is off for the turn. Set per
         # turn just before the models are asked.
         self._reply_gate: Optional[ReplyGate] = None
+        # monotonic deadline of the turn in flight (set by handle_chat_message
+        # just before its wait_for). Lets the letter tool clamp its generation
+        # deadline to the time actually left in the turn -- see
+        # _remaining_letter_deadline. None outside a budgeted turn.
+        self._turn_deadline: Optional[float] = None
+        # The appeal letter drafted in the turn in flight, if any. Shared
+        # with GenerateAppealLetterTool via a one-element list (same trick as
+        # _doc_fetch_count; the tool is rebuilt for every pass of a turn) so
+        # a turn drafts at most one letter, and so the total-failure fallback
+        # delivers a letter the tool already drafted instead of generating --
+        # and saving over it -- another. Reset at the start of each turn.
+        self._turn_drafted_letter: list[Optional[DraftedLetter]] = [None]
+        # Whether the turn's message asks for a new letter (a redo, another
+        # version). Then neither the letter tool nor the total-failure
+        # fallback may hand back a stored draft: it predates the request.
+        self._turn_wants_fresh_letter = False
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -1365,9 +1390,24 @@ class ChatInterface:
             user_message_for_scoring=scoring_message,
         )
 
-        # Non-recursive tools: appeal, prior auth
+        # Non-recursive tools: appeal, appeal letter, prior auth
         appeal_tool = AppealTool(self.send_status_message, self.send_error_message)
         response_text, context, _ = await appeal_tool.handle(
+            response_text, context, chat=chat
+        )
+
+        # After AppealTool on purpose: when a reply carries both calls, the
+        # field updates from create_or_update_appeal land first and the
+        # generated letter (which reads them) wins the appeal_text.
+        generate_letter_tool = GenerateAppealLetterTool(
+            self.send_status_message,
+            self.send_error_message,
+            use_external=self.use_external_models,
+            deadline_seconds=self._remaining_letter_deadline(),
+            drafted_this_turn=self._turn_drafted_letter,
+            use_reserve=not self._turn_wants_fresh_letter,
+        )
+        response_text, context, _ = await generate_letter_tool.handle(
             response_text, context, chat=chat
         )
 
@@ -1547,6 +1587,11 @@ class ChatInterface:
         self._shadow_runner_up = None
         self._external_delay_seconds = 0.0
         self._reply_gate = None
+        # Nor may a previous turn's letter count as this turn's.
+        self._turn_drafted_letter[0] = None
+        self._turn_wants_fresh_letter = not is_document and wants_fresh_letter(
+            user_message
+        )
 
         # SAFETY: Check for crisis/self-harm indicators in user-authored messages.
         # Skip for document uploads — OCR'd clinical text often contains
@@ -2168,6 +2213,10 @@ class ChatInterface:
         # failure and must not be counted, reported or apologised for -- see
         # the failure branch below.
         client_hung_up = False
+        # Recorded so the letter tool can clamp its generation deadline to
+        # what is actually left of this budget (see
+        # _remaining_letter_deadline).
+        self._turn_deadline = time.monotonic() + turn_budget
         heartbeat_task = asyncio.create_task(self._turn_heartbeat())
         try:
             response_text, context_part = await asyncio.wait_for(
@@ -2451,6 +2500,107 @@ class ChatInterface:
                 await self._end_turn_client_gone()
                 return
 
+            # Letter-draft rescue: when the failed turn was asking us to
+            # draft the appeal letter and the chat is linked to an appeal
+            # with real denial context, route the request to the dedicated
+            # appeal-generation pipeline instead of erroring out. It fails
+            # differently from chat (no repeat-rejection scoring, its own
+            # backend ladder), its specialized static templates need no
+            # model at all, and a precomputed ProposedAppeal reserve is
+            # served straight from the DB -- so "every chat model failed"
+            # does not mean the letter is out of reach.
+            fallback_reply: Optional[str] = None
+            letter_appeal = None
+            # A letter this turn's tool already drafted qualifies whatever
+            # the message said (e.g. a bare "yes" to the model's offer to
+            # draft one): it is already on the appeal, and an error reply
+            # would hide it.
+            letter_request = (
+                looks_like_letter_request(user_message)
+                or self._turn_drafted_letter[0] is not None
+            )
+            if letter_request:
+                # One lookup for both the fallback attempt and the
+                # appeal-page link in the error message below.
+                try:
+                    letter_appeal = await self._linked_appeal_for_letter_fallback()
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Could not look up linked appeal for chat {chat.id}"
+                    )
+                if letter_appeal:
+                    fallback_reply = await self._attempt_letter_fallback_reply(
+                        letter_appeal,
+                        fresh_letter=self._turn_wants_fresh_letter,
+                    )
+                else:
+                    logger.info(
+                        f"Chat {chat.id}: no letter-capable linked appeal; "
+                        f"skipping letter fallback"
+                    )
+            if fallback_reply:
+                try:
+                    self.chat = chat = await apersist_chat_turn(
+                        chat,
+                        new_messages=[{"role": "assistant", "content": fallback_reply}],
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Could not persist letter-fallback reply for chat "
+                        f"{chat.id}; delivering it unpersisted"
+                    )
+            if self._client_gone:
+                # The user left while the fallback ran (one of its status or
+                # heartbeat frames found the socket closed). As in the check
+                # above, that is a departure, not a failure to report; a
+                # letter it drafted is persisted above, so a reconnect
+                # replays it.
+                logger.info(
+                    f"Chat {chat.id}: client left during the letter fallback; "
+                    f"not counted as a generation failure"
+                )
+                await self._end_rescue_client_gone(turn_timed_out)
+                return
+            if fallback_reply:
+                logger.warning(
+                    f"Chat {chat.id}: all chat models failed for a letter-draft "
+                    f"request but the appeal-generator fallback delivered "
+                    f"(use_external_models={bool(self.use_external_models)}, "
+                    f"turn_timed_out={turn_timed_out})"
+                )
+                try:
+                    await self.send_message_to_client(fallback_reply)
+                except ClientGone:
+                    # As for a normal reply: persisted above, so a reconnect
+                    # replays it, and the turn is the departure it became.
+                    logger.info(
+                        f"Chat {chat.id}: letter-fallback reply persisted but "
+                        f"not delivered; the client left as it was sent"
+                    )
+                    await self._end_rescue_client_gone(turn_timed_out)
+                    return
+                except BaseException:
+                    if not turn_timed_out:
+                        self._count_turn(OUTCOME_FAILED)
+                    raise
+                # The chat models failed all the same, so the turn is counted,
+                # and its ChatTurn row written, exactly as an unrescued
+                # failure (a timed-out one was counted "timeout" above): the
+                # routing policy reads those rows for how each model's calls
+                # ended, and a row's outcome is always the one the metric
+                # counted. The rescue is reported by its reliability event.
+                if not turn_timed_out:
+                    self._count_turn(OUTCOME_FAILED)
+                capture_reliability_event(
+                    "chat_turn_letter_fallback_rescue",
+                    chat_id=str(chat.id),
+                    use_external_models=self.use_external_models,
+                    turn_timed_out=turn_timed_out,
+                )
+                self._shadow_runner_up = None
+                await self._write_turn_record("timeout" if turn_timed_out else "failed")
+                return
+
             # Provide more helpful error message based on context
             err_msg = (
                 "Sorry, all available models (including backup models) are currently "
@@ -2463,11 +2613,19 @@ class ChatInterface:
                     "You can enable 'Use backup models' in settings to allow fallback to "
                     "additional model providers when our primary models are unavailable."
                 )
+            if letter_appeal:
+                # Plain text: the client shows an error frame as text, so a
+                # markdown link would render as raw [...](...) syntax.
+                err_msg += (
+                    f" You can also generate your appeal letter directly "
+                    f"from the page for Appeal #{letter_appeal.id}."
+                )
             # Sizes, the error class and flags only: message text is PHI.
             logger.error(
                 f"Failed to generate a response in chat {chat.id} after trying "
                 f"all models (message_chars={len(user_message or '')}, "
                 f"error={turn_error or 'none'}, timed_out={turn_timed_out}, "
+                f"letter_request={letter_request}, "
                 f"use_external_models={bool(self.use_external_models)})"
             )
             if not turn_timed_out:
@@ -2477,12 +2635,131 @@ class ChatInterface:
                 chat_id=str(chat.id),
                 use_external_models=self.use_external_models,
                 message_chars=len(user_message or ""),
+                letter_request=letter_request,
+                # Ran and failed, vs. never ran (no letter-capable appeal):
+                # letter_appeal is set exactly when the fallback was tried.
+                letter_fallback_attempted=letter_appeal is not None,
             )
             self._shadow_runner_up = None
             # As above, a send that raises or is cancelled still leaves the
             # row: handle_chat_message writes it.
             await self.send_error_message(err_msg)
             await self._write_turn_record("timeout" if turn_timed_out else "failed")
+
+    async def _end_rescue_client_gone(self, turn_timed_out: bool) -> None:
+        """End a turn whose client left during the letter fallback.
+
+        A turn that timed out was counted "timeout" before the fallback ran,
+        so it keeps that count and its row: ending it as "client_gone" too
+        would count the one turn twice and drop the row the count promises.
+        Any other turn is the departure it became.
+        """
+        if turn_timed_out:
+            self._shadow_runner_up = None
+            await self._write_turn_record("timeout")
+        else:
+            await self._end_turn_client_gone()
+
+    async def _linked_appeal_for_letter_fallback(self):
+        """The chat's linked appeal (with denial preloaded) if its denial
+        carries enough context to draft a letter from, else None."""
+        appeal = (
+            await Appeal.objects.select_related("for_denial")
+            .filter(chat=self.chat)
+            .afirst()
+        )
+        if not appeal or not appeal.for_denial:
+            return None
+        if not denial_has_letter_context(appeal.for_denial):
+            return None
+        return appeal
+
+    def _remaining_letter_deadline(self) -> Optional[float]:
+        """Letter-generation deadline clamped to the turn budget's remainder.
+
+        Without the clamp, a letter drafted near the budget's end was
+        cancelled at the wait_for timeout -- the bridge thread kept burning
+        model quota on a drain nobody would read, the finished letter was
+        discarded unsaved, and the total-failure fallback then re-generated
+        it from scratch. The margin leaves room to persist and deliver the
+        reply; the floor keeps a near-exhausted turn's attempt cheap (the
+        pipeline degrades to its static templates almost immediately).
+        Returns None outside a budgeted turn (e.g. direct tool tests),
+        letting the pipeline's env default apply.
+        """
+        if self._turn_deadline is None:
+            return None
+        remaining = self._turn_deadline - time.monotonic() - 15.0
+        default = _env_float("FHI_CHAT_LETTER_DEADLINE", 75.0)
+        return max(10.0, min(default, remaining))
+
+    async def _attempt_letter_fallback_reply(
+        self, appeal, fresh_letter: bool = False
+    ) -> Optional[str]:
+        """Draft the requested appeal letter after a total chat-model failure.
+
+        ``appeal`` is the letter-capable linked appeal the caller already
+        looked up. A letter this turn's letter tool already drafted is
+        delivered as is. Otherwise serves an existing ProposedAppeal first (a
+        DB read is the one step guaranteed to work while models are down),
+        then runs a bounded appeal-pipeline generation. ``fresh_letter``
+        (a redo/rewrite request) skips the ProposedAppeal: it was written
+        before whatever the person now wants changed, and would be offered
+        as the new draft. Never raises: the caller still owes the user an
+        error frame when this returns None.
+        """
+        chat = self.chat
+        try:
+            # The tool can finish its letter and the turn still fail, e.g. a
+            # later research pass running out the budget. Drafting again
+            # would repeat up to a minute of model work only to save a
+            # different letter over the one just saved.
+            drafted = self._turn_drafted_letter[0]
+            if drafted is None:
+                await self.send_status_message(
+                    "Our chat models are having trouble right now -- drafting "
+                    "your appeal letter through the appeal generator instead..."
+                )
+                # The turn's own heartbeat was cancelled when generation
+                # failed; the fallback can run for another minute, so keep
+                # frames moving on the socket for the user (and any
+                # idle-reaping proxy).
+                heartbeat_task = asyncio.create_task(self._turn_heartbeat())
+                try:
+                    drafted = await draft_letter_for_chat(
+                        appeal=appeal,
+                        denial=appeal.for_denial,
+                        use_external=self.use_external_models,
+                        prefer_existing=not fresh_letter,
+                        use_reserve=not fresh_letter,
+                        deadline_seconds=_env_float(
+                            "FHI_CHAT_LETTER_FALLBACK_DEADLINE", 60.0
+                        ),
+                    )
+                finally:
+                    heartbeat_task.cancel()
+            if not drafted:
+                return None
+            # Word the appeal-row relationship honestly: saved, deliberately
+            # left alone (or already sent), or failed to save.
+            saved_note = letter_placement_note(
+                drafted, f"[Appeal #{appeal.id}](/appeals/{appeal.id})"
+            )
+            return (
+                f"Our chat models are having trouble right now, so I drafted "
+                f"your appeal letter with our dedicated appeal generator "
+                f"instead. {saved_note} Here's the draft -- please review "
+                f"the details before sending:\n\n---\n\n{drafted.text}"
+            )
+        except ClientGone:
+            # The send path has recorded the departure; the caller ends the
+            # turn as one.
+            return None
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Letter fallback failed for chat {chat.id}: {type(e).__name__}"
+            )
+            return None
 
     async def replay_chat_history(self):
         """Sends the existing chat history to the client, minus internal

@@ -13,7 +13,15 @@ from loguru import logger
 
 from fighthealthinsurance.utils import aget_related
 
-from .base_tool import BaseTool, is_safe_tool_field, settable_model_fields
+from .base_tool import (
+    BaseTool,
+    is_safe_tool_field,
+    parse_anchored_json_payload,
+    replace_anchored_call,
+    set_tool_field,
+    settable_model_fields,
+    strip_anchored_calls,
+)
 from .patterns import CREATE_OR_UPDATE_PRIOR_AUTH_REGEX
 
 
@@ -29,7 +37,14 @@ class PriorAuthTool(BaseTool):
 
     pattern = CREATE_OR_UPDATE_PRIOR_AUTH_REGEX
     detect_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
+    # ^...$-anchored pattern: the on-error strip needs MULTILINE too, or a
+    # call after a line of prose leaks raw tool syntax when execute raises
+    # (see AppealTool).
+    detect_all_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
     name = "Prior Auth"
+    # See AppealTool: exact-span replacement means each call in a reply
+    # needs its own pass.
+    max_calls_per_reply: int = 3
 
     # Field name mappings for normalization
     FIELD_MAPPINGS = {
@@ -54,6 +69,17 @@ class PriorAuthTool(BaseTool):
         super().__init__(send_status_message)
         self.send_error_message = send_error_message or send_status_message
         self.domain = domain
+
+    def strip_calls_on_error(self, response_text: str) -> str:
+        """Span-bounded on-error strip (see AppealTool.strip_calls_on_error)."""
+        return strip_anchored_calls(
+            self,
+            response_text,
+            empty_fallback=(
+                "Sorry -- I hit a problem saving that prior authorization. "
+                "Could you tell me again what you'd like recorded?"
+            ),
+        )
 
     async def execute(
         self,
@@ -80,10 +106,13 @@ class PriorAuthTool(BaseTool):
             await self.send_error_message("Cannot create prior auth: no chat context")
             return response_text, context
 
-        json_data = match.group(1).strip()
-
         try:
-            prior_auth_data = json.loads(json_data)
+            # Precise payload + span (see parse_anchored_json_payload): replace
+            # call_span, not the greedy match.group(0), so a second tool call
+            # in the same reply survives for its own handler.
+            prior_auth_data, call_span = parse_anchored_json_payload(
+                response_text, match
+            )
             await self.send_status_message(
                 "Processing prior authorization update/create data..."
             )
@@ -94,8 +123,11 @@ class PriorAuthTool(BaseTool):
                 await self._update_prior_auth_fields(prior_auth, prior_auth_data)
                 await prior_auth.asave()
 
-                cleaned_response = response_text.replace(
-                    match.group(0),
+                # Spliced at the match: see AppealTool.execute.
+                cleaned_response = replace_anchored_call(
+                    response_text,
+                    match,
+                    call_span,
                     f"I've created/updated [Prior Auth Request #{prior_auth.id}]"
                     f"({self.domain}/prior-auths/view/{prior_auth.id}) for you.",
                 )
@@ -105,8 +137,10 @@ class PriorAuthTool(BaseTool):
                 )
                 return cleaned_response, context
             else:
-                cleaned_response = response_text.replace(
-                    match.group(0),
+                cleaned_response = replace_anchored_call(
+                    response_text,
+                    match,
+                    call_span,
                     "I couldn't create or update the prior authorization request.",
                 )
                 await self.send_status_message(
@@ -114,10 +148,12 @@ class PriorAuthTool(BaseTool):
                 )
                 return cleaned_response, context
 
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            # No payload content in the log: prior-auth JSON carries
+            # medical/claim details (PHI) -- sizes only.
             logger.warning(
                 "Invalid JSON in create_or_update_prior_auth token "
-                f"(payload_chars={len(json_data)})"
+                f"(payload_chars={len(match.group(1))})"
             )
             await self.send_status_message(
                 "Error processing prior auth data: Invalid JSON format."
@@ -128,8 +164,10 @@ class PriorAuthTool(BaseTool):
             logger.opt(exception=True).warning(
                 f"Error processing prior auth data: {type(e).__name__}"
             )
+            # Generic on purpose: the exception text can carry PHI (a
+            # database error quotes the failing row).
             await self.send_status_message(
-                f"Error processing prior auth data: {str(e)}"
+                "Error processing prior auth data. Please try again in a moment."
             )
             raise
 
@@ -184,7 +222,7 @@ class PriorAuthTool(BaseTool):
                 key = self.FIELD_MAPPINGS[key]
 
             if is_safe_tool_field(key, allowed):
-                setattr(prior_auth, key, value)
+                set_tool_field(prior_auth, key, value)
             else:
                 rejected_keys += 1
 
