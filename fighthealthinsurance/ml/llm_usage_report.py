@@ -192,7 +192,7 @@ def dashboard_tables(now: Optional[datetime.datetime] = None) -> Dict[str, Any]:
         .annotate(**_sums())
     )
     top_asns = sorted(
-        (_row(r) for r in asns), key=lambda r: (-r["tokens"], -r["calls"])
+        (_row(dict(r)) for r in asns), key=lambda r: (-r["tokens"], -r["calls"])
     )[:25]
     past_weeks = [
         _summary_row(s)

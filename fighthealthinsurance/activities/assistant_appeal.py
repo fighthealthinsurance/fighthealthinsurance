@@ -19,7 +19,7 @@ from temporalio.exceptions import ApplicationError
 
 from fighthealthinsurance import assistant_drafts
 from fighthealthinsurance.appeal_journey_core import aload_denial
-from fighthealthinsurance.ml import llm_usage, spend
+from fighthealthinsurance.ml import spend
 from fighthealthinsurance.models import AssistantDraft
 
 _aclose_old_connections = database_sync_to_async(close_old_connections)
@@ -107,8 +107,7 @@ async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
         from fighthealthinsurance.common_view_logic import DenialCreatorHelper
 
         try:
-            # extract_entity notes the case's LLM usage origin; scoped here.
-            with spend.for_channel(spend.channel_of(denial)), llm_usage.origin_scope():
+            with spend.for_channel(spend.channel_of(denial)):
                 async with asyncio.timeout(READ_TIMEOUT_S):
                     async for _ in DenialCreatorHelper.extract_entity(denial.denial_id):
                         pass

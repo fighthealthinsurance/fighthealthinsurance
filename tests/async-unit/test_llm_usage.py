@@ -10,8 +10,7 @@ from unittest.mock import patch
 
 import aiohttp
 import pytest
-from asgiref.sync import async_to_sync
-from channels.db import database_sync_to_async
+from asgiref.sync import async_to_sync, sync_to_async
 from django.test import override_settings
 from prometheus_client import REGISTRY
 
@@ -348,7 +347,8 @@ class TestPropagation:
 
         with llm_usage.origin(llm_usage.Origin("pro")), llm_usage.llm_task("questions"):
             in_task = await asyncio.create_task(seen())
-            in_thread = await database_sync_to_async(self._seen)()
+            # Plain asgiref in tests (CLAUDE.md); it touches no ORM anyway.
+            in_thread = await sync_to_async(self._seen)()
         assert in_task == in_thread == ("pro", "questions")
 
     def test_async_to_sync(self):

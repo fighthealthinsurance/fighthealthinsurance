@@ -3385,10 +3385,24 @@ class DenialCreatorHelper:
         it, so the letter is actually read again, and spends one of the
         letter's attempts so the button cannot be pressed forever.
         """
+        # The body notes the case's LLM usage origin once it has loaded the
+        # Denial; scoped here, like generate_appeals, so no caller keeps it.
+        agen = cast(
+            AsyncGenerator[dict, None], cls._extract_entity_body(denial_id, retry)
+        )
+        try:
+            with llm_usage.origin_scope():
+                async for record in agen:
+                    yield record
+        finally:
+            await agen.aclose()
 
+    @classmethod
+    async def _extract_entity_body(
+        cls, denial_id: int, retry: bool
+    ) -> AsyncIterator[dict]:
+        """extract_entity's steps (see there)."""
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        # Count the model calls below from this case's origin. Its callers
-        # scope it: the socket's per-message origin, the Temporal activity's.
         await llm_usage.anote_denial(denial)
         # Read the budget before anything clears it: a retry already over the
         # cap must reach the out-of-attempts branch below.

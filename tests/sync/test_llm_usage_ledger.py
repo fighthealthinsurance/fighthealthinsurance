@@ -294,5 +294,6 @@ class DenialOriginTest(TestCase):
         self.assertEqual(async_to_sync(surface)(), "assistant")
 
     def test_the_origin_does_not_outlive_its_scope(self):
+        before = llm_usage.current_origin()
         self._surface(self._denial(channel="assistant"))
-        self.assertIsNone(llm_usage.current_origin())
+        self.assertEqual(llm_usage.current_origin(), before)
