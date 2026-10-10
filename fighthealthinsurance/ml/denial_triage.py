@@ -610,14 +610,9 @@ async def triage(
         # A spent or paused budget is normal operation, not a failure.
         budget = isinstance(e, typesafe.TypeSafeBudgetSpent)
         _count("skipped" if budget else "failed")
-        # A cooldown or a spent budget was announced once when it began
-        # (typesafe._start_cooldown, typesafe.ask, spend.pause).
-        log = (
-            logger.debug
-            if budget or isinstance(e, typesafe.TypeSafeCoolingDown)
-            else logger.warning
+        (logger.debug if typesafe.announced(e) else logger.warning)(
+            f"denial triage unavailable: {type(e).__name__}: {e}"
         )
-        log(f"denial triage unavailable: {type(e).__name__}: {e}")
         return None
     _count("triaged")
     return result

@@ -428,6 +428,18 @@ class TestCheckReply:
         assert result.failure == "ChatGateError"
 
     @pytest.mark.asyncio
+    async def test_a_spent_budget_logs_no_warning(self, log_capture):
+        # typesafe.ask announced it once already (typesafe._log_budget_spent).
+        spent = typesafe.TypeSafeBudgetSpent("budget spent")
+        with (
+            override_settings(**ENABLED),
+            patch.object(chat_gate, "_post", new=AsyncMock(side_effect=spent)),
+            log_capture() as cap,
+        ):
+            await chat_gate.check_reply(MESSAGE, REPLY, timeout=1.0)
+        assert cap.messages("WARNING") == []
+
+    @pytest.mark.asyncio
     async def test_failures_log_class_names_only(self, log_capture):
         leaky = RuntimeError(f"upstream echoed: {MESSAGE} {REPLY}")
         with (

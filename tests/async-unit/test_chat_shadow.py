@@ -415,6 +415,17 @@ class TestScoreTurn:
         assert result.failure == "timeout"
         assert result.winner is None
 
+    def test_a_spent_budget_logs_no_warning(self, log_capture):
+        # typesafe.ask announced it once already (typesafe._log_budget_spent).
+        fake = _FakePost(typesafe.TypeSafeBudgetSpent("budget spent"))
+        with (
+            override_settings(**ENABLED),
+            patch.object(chat_shadow, "_post", fake),
+            log_capture() as cap,
+        ):
+            _run(chat_shadow.score_turn(MESSAGE, REPLY))
+        assert cap.messages("WARNING") == []
+
     def test_a_failure_logs_no_text(self):
         seen = []
         error = RuntimeError(f"upstream echoed: {MESSAGE}")

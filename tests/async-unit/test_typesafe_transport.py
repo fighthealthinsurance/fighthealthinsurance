@@ -465,6 +465,11 @@ class TestConnectBound:
     def test_a_long_request_timeout_caps_the_connect(self):
         assert self._client_timeout(20).sock_connect == typesafe.CONNECT_TIMEOUT_SECONDS
 
+    @pytest.mark.parametrize("seconds", [1.5, 20])
+    def test_the_whole_connect_has_the_same_bound_as_each_address(self, seconds):
+        timeout = self._client_timeout(seconds)
+        assert timeout.connect == timeout.sock_connect
+
     def test_a_host_that_never_completes_the_connect_is_cooled_down(self):
         """Through the real client: only the socket connect is replaced, by
         one that never completes. The URL is an address literal, so nothing
@@ -480,6 +485,43 @@ class TestConnectBound:
         never = patch("aiohappyeyeballs.start_connection", never_connects)
         floor = patch.object(typesafe, "MIN_COUNTED_CONNECT_SECONDS", 0.1)
         with override_settings(**conf), never, floor:
+            for _ in range(typesafe.CONNECT_TIMEOUT_STREAK):
+                with pytest.raises(aiohttp.ConnectionTimeoutError):
+                    asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=0.4))
+        assert typesafe.cooling_down() is True
+
+    def test_a_host_with_two_addresses_that_never_connect_is_cooled_down(self):
+        """api.typesafe.ai has two addresses, and aiohttp tries them in turn,
+        each with its own socket connect bound: without a bound on the whole
+        connect, the second try runs past the request's timeout, which never
+        counts toward the cooldown. The lookup is replaced by two loopback
+        addresses and the socket connect by one that never completes, so
+        nothing is looked up or sent."""
+
+        async def two_addresses(self, host, port, traces=None):
+            return [
+                {
+                    "hostname": host,
+                    "host": address,
+                    "port": port,
+                    "family": socket.AF_INET,
+                    "proto": 0,
+                    "flags": 0,
+                }
+                for address in ("127.0.0.1", "127.0.0.2")
+            ]
+
+        async def never_connects(*args, **kwargs):
+            await asyncio.Event().wait()
+
+        conf = {
+            **SETTINGS,
+            "TYPESAFE_API_URL": "https://typesafe.invalid:9/v1/systemone",
+        }
+        lookup = patch.object(aiohttp.TCPConnector, "_resolve_host", two_addresses)
+        never = patch("aiohappyeyeballs.start_connection", never_connects)
+        floor = patch.object(typesafe, "MIN_COUNTED_CONNECT_SECONDS", 0.1)
+        with override_settings(**conf), lookup, never, floor:
             for _ in range(typesafe.CONNECT_TIMEOUT_STREAK):
                 with pytest.raises(aiohttp.ConnectionTimeoutError):
                     asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=0.4))
@@ -543,6 +585,32 @@ class TestBudgetSpentLog:
         with log_capture() as cap:
             self._refuse(spend.LETTERS, times=1)
         assert len(self._warnings(cap)) == 1
+
+
+class TestAnnounced:
+    """typesafe.announced(): the refusals whose cause was logged once when it
+    began, which every feature then logs at debug rather than WARNING."""
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            typesafe.TypeSafeCoolingDown("cooling down", status=401),
+            typesafe.TypeSafeBudgetSpent("budget spent"),
+        ],
+    )
+    def test_a_cooldown_or_a_spent_budget_was_announced(self, error):
+        assert typesafe.announced(error) is True
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            typesafe.TypeSafeError("HTTP 503", status=503),
+            aiohttp.ConnectionTimeoutError("Connection timeout to host"),
+            asyncio.TimeoutError(),
+        ],
+    )
+    def test_any_other_failure_was_not(self, error):
+        assert typesafe.announced(error) is False
 
 
 class TestReportedModel:

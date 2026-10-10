@@ -72,7 +72,8 @@ class TypeSafeBudgetSpent(TypeSafeError):
 
 class TypeSafeCoolingDown(TypeSafeError):
     """Not sent: TypeSafe refused the key, did not know the model or could
-    not be reached moments ago (FHI_TYPESAFE_COOLDOWN_SECONDS).
+    not be reached moments ago (FHI_TYPESAFE_COOLDOWN_SECONDS; a cooldown
+    a failed connection started is capped at CONNECT_COOLDOWN_SECONDS).
 
     ``status`` is the HTTP status that started the cooldown, so a status
     page keeps showing the cause; None when TypeSafe could not be reached.
@@ -92,11 +93,11 @@ DEFAULT_COOLDOWN_SECONDS = 900.0
 # restart) than a refusal is, so it holds requests back for less: drafts made
 # meanwhile go unscored.
 CONNECT_COOLDOWN_SECONDS = 120.0
-# The longest the TCP and TLS connect may take, inside the request's own
-# timeout. A host that drops our packets then fails as a connect timeout,
-# which counts toward the cooldown, rather than as the request's timeout,
-# which does not (a slow answer from a reachable host is no reason to stop
-# asking).
+# The longest the connect (DNS, then TCP and TLS over every address the host
+# has) may take, inside the request's own timeout. A host that drops our
+# packets then fails as a connect timeout, which counts toward the cooldown,
+# rather than as the request's timeout, which does not (a slow answer from a
+# reachable host is no reason to stop asking).
 CONNECT_TIMEOUT_SECONDS = 10.0
 # A refused connection is definitive and cools at once; a connect timeout is
 # not (one lost packet can cause it inside the chat gate's ~1s connect
@@ -201,6 +202,14 @@ def _log_budget_spent(use: str) -> None:
         )
     else:
         logger.debug(f"TypeSafe not asked for {use}: budget spent or paused")
+
+
+def announced(e: BaseException) -> bool:
+    """Whether ``e`` is a refusal whose cause was logged once when it began:
+    a cooldown (_start_cooldown) or a spent or paused budget
+    (_log_budget_spent, spend.pause). Callers log these at debug and
+    anything else at WARNING."""
+    return isinstance(e, (TypeSafeCoolingDown, TypeSafeBudgetSpent))
 
 
 def _connect_timed_out() -> bool:
@@ -330,9 +339,15 @@ async def ask(
     # own wait_for of the same length (the chat gate's), so a host that
     # cannot be reached fails here as a connect timeout, which counts toward
     # the cooldown, rather than being cut off by the caller's cancellation.
+    # `connect` bounds the whole connect phase once (DNS, every address
+    # aiohttp tries, TCP and TLS); when it expires, aiohttp (3.14) raises
+    # ConnectionTimeoutError, as it wraps the timeout of connector.connect().
+    # `sock_connect` alone bounds one address round, and api.typesafe.ai has
+    # two addresses: the second round then ran past `total` and failed as a
+    # plain TimeoutError, which never counts toward the cooldown.
     connect_bound = min(timeout_seconds * 0.75, CONNECT_TIMEOUT_SECONDS)
     client_timeout = aiohttp.ClientTimeout(
-        total=timeout_seconds, sock_connect=connect_bound
+        total=timeout_seconds, connect=connect_bound, sock_connect=connect_bound
     )
     try:
         async with aiohttp.ClientSession(timeout=client_timeout) as session:

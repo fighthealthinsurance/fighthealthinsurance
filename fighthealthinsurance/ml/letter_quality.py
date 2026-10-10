@@ -539,14 +539,9 @@ async def score_letter(
         # A spent or paused budget is normal operation, not a failure.
         budget = isinstance(e, typesafe.TypeSafeBudgetSpent)
         _count("skipped" if budget else "failed")
-        # A cooldown or a spent budget was announced once when it began
-        # (typesafe._start_cooldown, typesafe.ask, spend.pause).
-        log = (
-            logger.debug
-            if budget or isinstance(e, typesafe.TypeSafeCoolingDown)
-            else logger.warning
+        (logger.debug if typesafe.announced(e) else logger.warning)(
+            f"letter scoring unavailable: {type(e).__name__}: {e}"
         )
-        log(f"letter scoring unavailable: {type(e).__name__}: {e}")
         # Still noted for a spent budget: the status page explains the
         # "TypeSafeBudgetSpent" summary (staff_views._scoring_failure_hint).
         if on_failure is not None:
