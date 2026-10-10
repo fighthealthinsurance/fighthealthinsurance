@@ -5482,7 +5482,8 @@ class LetterReviewLabel(models.Model):
         """Lock the packet, then refuse a change to a stored label once every
         reader is done. Every label write takes the same lock, so the save
         that finishes a packet can't slip between this check and the write.
-        The packet is the stored row's, not whatever item is in memory."""
+        A stored label is checked against its stored packet and, if it is
+        being moved to another letter, that letter's packet too."""
         from fighthealthinsurance.letter_review import labels_frozen
 
         stored = (
@@ -5492,9 +5493,16 @@ class LetterReviewLabel(models.Model):
             if self.pk is not None
             else None
         )
-        packet_id = stored if stored is not None else self.item.packet_id
-        packet = LetterReviewPacket.objects.select_for_update().get(pk=packet_id)
-        if stored is not None and labels_frozen(packet):
+        packet_ids = sorted(
+            {self.item.packet_id} | ({stored} if stored is not None else set())
+        )
+        # In id order, so two writers never wait on each other's lock.
+        packets = list(
+            LetterReviewPacket.objects.select_for_update()
+            .filter(pk__in=packet_ids)
+            .order_by("pk")
+        )
+        if stored is not None and any(labels_frozen(packet) for packet in packets):
             raise LetterReviewLabelsFrozen(
                 "Every reader has finished this packet, so its labels can no "
                 "longer change."

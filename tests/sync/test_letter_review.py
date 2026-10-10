@@ -1227,6 +1227,20 @@ class FrozenLabelTests(PageTestBase):
             label.save(update_fields=["verdict"])
         self.assertEqual(self._exported(), before)
 
+    def test_a_label_cannot_be_moved_onto_a_finished_packet(self):
+        other = self.load_packet(_packet_data(packet="synthetic-open-packet"))
+        moving = LetterReviewLabel.objects.filter(item__packet=other).first() or LetterReviewLabel.objects.create(
+            item=other.items.first(),
+            reader=other.readers.first(),
+            verdict="clean",
+        )
+        self._finish_everyone()
+        before = self._exported()
+        moving.item = self.item(KEY_2)
+        with self.assertRaises(LetterReviewLabelsFrozen):
+            moving.save()
+        self.assertEqual(self._exported(), before)
+
     def test_a_save_that_loses_the_race_to_the_last_reader_is_a_409(self):
         """The last reader finishes between the page's check and this save."""
         real = letter_review.labels_frozen
