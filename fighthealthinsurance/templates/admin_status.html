@@ -499,6 +499,90 @@
     {% endif %}
   </div>
 
+  {# ---------------- LLM usage ---------------- #}
+  <div class="status-section" id="llm-usage">
+    <h2>&#128202; LLM usage</h2>
+    {% if llm_usage.error %}
+      <p class="summary-line"><span class="status-badge bad">ERROR</span> <span class="error-text">{{ llm_usage.error }}</span></p>
+    {% else %}
+      {% for w in llm_usage.windows %}
+      <h3>{{ w.label }}</h3>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="value">{{ w.calls }}</div>
+          <div class="label">Model requests answered</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ w.prompt_tokens }}</div>
+          <div class="label">Prompt tokens</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ w.completion_tokens }}</div>
+          <div class="label">Completion tokens</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{% if w.external_token_percent is None %}&ndash;{% else %}{{ w.external_token_percent }}%{% endif %}</div>
+          <div class="label">Of tokens from external models</div>
+        </div>
+        <div class="stat-card {% if w.usage_missing_calls %}stat-alert{% endif %}">
+          <div class="value">{{ w.usage_missing_calls }}</div>
+          <div class="label">Requests with no token count reported</div>
+        </div>
+      </div>
+      {% endfor %}
+      {% if llm_usage.unknown_calls %}
+      <p class="summary-line"><span class="status-badge warn">WIRING GAP</span> {{ llm_usage.unknown_calls }} request{{ llm_usage.unknown_calls|pluralize }} in the last 7 days came from no known entry point (surface "unknown").</p>
+      {% endif %}
+
+      <h3>Last 7 days by surface</h3>
+      <table class="status">
+        <thead><tr><th>Surface</th><th class="num">Requests</th><th class="num">Prompt tokens</th><th class="num">Completion tokens</th><th class="num">External share of tokens</th></tr></thead>
+        <tbody>
+          {% for r in llm_usage.by_surface %}
+          <tr><td>{{ r.surface }}</td><td class="num">{{ r.calls }}</td><td class="num">{{ r.prompt_tokens }}</td><td class="num">{{ r.completion_tokens }}</td><td class="num">{% if r.external_token_percent is None %}&ndash;{% else %}{{ r.external_token_percent }}%{% endif %}</td></tr>
+          {% empty %}
+          <tr><td colspan="5">No model requests recorded in the last 7 days.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <h3>Last 7 days: top tasks by tokens</h3>
+      <table class="status">
+        <thead><tr><th>Task</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">External share of tokens</th></tr></thead>
+        <tbody>
+          {% for r in llm_usage.top_tasks %}
+          <tr><td>{{ r.task }}</td><td class="num">{{ r.calls }}</td><td class="num">{{ r.tokens }}</td><td class="num">{% if r.external_token_percent is None %}&ndash;{% else %}{{ r.external_token_percent }}%{% endif %}</td></tr>
+          {% empty %}
+          <tr><td colspan="4">None yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <h3>Last 7 days by network</h3>
+      <table class="status">
+        <thead><tr><th>Network class</th><th class="num">Requests</th><th class="num">Tokens</th></tr></thead>
+        <tbody>
+          {% for r in llm_usage.by_network %}
+          <tr><td>{{ r.network_class }}</td><td class="num">{{ r.calls }}</td><td class="num">{{ r.tokens }}</td></tr>
+          {% empty %}
+          <tr><td colspan="3">None yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      {% with wk=llm_usage.this_week %}
+      <p class="summary-line">
+        This week (from {{ wk.week_start }}): {{ wk.networks }} client network{{ wk.networks|pluralize }} sent {{ wk.calls }} keyed request{{ wk.calls|pluralize }}.
+        {% if wk.tokens %}The busiest network sent {{ wk.top1_token_percent }}% of their tokens; the busiest ten, {{ wk.top10_token_percent }}%.{% endif %}
+      </p>
+      {% endwith %}
+      <p class="summary-line">
+        <span class="pill">From the database, across every pod, the Temporal worker and the Ray actors. Counts and labels only: no addresses, keys or ids. Networks are counted by a weekly keyed digest of their /24 or /48, deleted when the week is rolled up.</span>
+        <span class="pill">By model and ASN: <a href="{% url 'model_usage_dashboard' %}#llm-usage">model usage dashboard</a>.</span>
+      </p>
+    {% endif %}
+  </div>
+
   {# ---------------- Storage ---------------- #}
   <div class="status-section">
     <h2>💾 External Storage</h2>

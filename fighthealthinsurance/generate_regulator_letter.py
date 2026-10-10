@@ -28,6 +28,7 @@ from fighthealthinsurance.escalation_addresses import (
     EscalationRecipient,
 )
 from fighthealthinsurance.context_utils import truncate_at_boundary
+from fighthealthinsurance.ml import llm_usage
 from fighthealthinsurance.ml.ml_router import ml_router
 
 # System prompt for this path. The prior-auth one it used to inherit
@@ -239,6 +240,7 @@ explanation, no markdown headings.
     return prompt
 
 
+@llm_usage.for_denial(task="regulator_letter")
 async def generate_regulator_letter(
     denial: Any,
     recipient: EscalationRecipient,

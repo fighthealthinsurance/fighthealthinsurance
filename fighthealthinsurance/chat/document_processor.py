@@ -96,6 +96,7 @@ async def _try_internal_models(
         timeout=timeout,
         min_length=min_length,
         label="doc chunk summary",
+        task="doc_summary",
     )
 
 

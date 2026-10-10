@@ -448,3 +448,60 @@ class TestTransports:
 
 def test_every_network_class_is_a_label_value():
     assert set(client_network.NETWORK_CLASSES) >= {"isp", "none", "unknown"}
+
+
+class TestSocketOrigin:
+    """websockets.LLMUsageOriginMixin: a socket's messages count from the
+    network Cloudflare saw and the consumer's surface."""
+
+    def _consumer(self, mixin_base_surface=None, headers=()):
+        from fighthealthinsurance.websockets import LLMUsageOriginMixin
+
+        class _Base:
+            async def websocket_receive(self, message):
+                self.seen = llm_usage.current_origin()
+
+        class _Probe(LLMUsageOriginMixin, _Base):
+            pass
+
+        if mixin_base_surface:
+            _Probe.LLM_SURFACE = mixin_base_surface
+        consumer = _Probe()
+        consumer.scope = {"headers": list(headers), "client": ("10.0.0.1", 1)}
+        return consumer
+
+    @pytest.mark.asyncio
+    async def test_a_message_counts_from_the_cloudflare_address(self, comcast):
+        consumer = self._consumer(headers=[(b"cf-connecting-ip", b"203.0.113.77")])
+        await consumer.websocket_receive({})
+        assert (consumer.seen.surface, consumer.seen.prefix) == ("site", "203.0.113.0/24")
+        assert llm_usage.current_origin() is None
+
+    @pytest.mark.asyncio
+    async def test_forwarded_for_alone_names_nothing(self, comcast):
+        consumer = self._consumer(headers=[(b"x-forwarded-for", b"203.0.113.77")])
+        await consumer.websocket_receive({})
+        assert consumer.seen.prefix is None
+        assert consumer.seen.network_class == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_a_chat_found_to_be_a_professionals_stays_pro(self):
+        consumer = self._consumer()
+        await consumer.websocket_receive({})
+        consumer.refine_llm_surface("pro")
+        await consumer.websocket_receive({})
+        assert consumer.seen.surface == "pro"
+
+    def test_prior_auth_is_pro_and_every_model_socket_has_the_mixin(self):
+        from fighthealthinsurance import websockets
+
+        assert websockets.PriorAuthConsumer.LLM_SURFACE == "pro"
+        for name in (
+            "StreamingAppealsBackend",
+            "StreamingEscalationBackend",
+            "StreamingEntityBackend",
+            "PriorAuthConsumer",
+            "OngoingChatConsumer",
+        ):
+            consumer = getattr(websockets, name)
+            assert issubclass(consumer, websockets.LLMUsageOriginMixin), name

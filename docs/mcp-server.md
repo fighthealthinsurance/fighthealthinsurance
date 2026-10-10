@@ -97,7 +97,10 @@ files reach someone before counting on these.
    and almost none opened is a script.
 2. **Which cap?** `max(fhi_assistant_handoff_live_links)` at or near the live
    cap means it is full. Below it, the per-minute cap is the one refusing.
-3. **One source?** The app keeps no record of callers, on purpose. Look at
+3. **One source?** The app keeps no record of `/mcp` callers' addresses, on
+   purpose. (The LLM usage metrics key client networks by week, but only for
+   the site's own pages and sockets that run models, never `/mcp`; see
+   [llm-usage-metrics.md](llm-usage-metrics.md).) Look at
    the path `/mcp` in Cloudflare's analytics, by source IP. Calls from an
    assistant platform come from that platform's addresses, not the person's:
    Anthropic's are `160.79.104.0/21` (its published outbound range, checked

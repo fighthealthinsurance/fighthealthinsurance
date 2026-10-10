@@ -64,6 +64,7 @@ from fighthealthinsurance.ml.appeal_prompt_versions import (
     current_letter_prompt_mode,
     uses_sectioned_prompt,
 )
+from fighthealthinsurance.ml import llm_usage
 from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
 from fighthealthinsurance.ml.model_identity import TEMPLATE_MODEL_NAME
 from fighthealthinsurance.context_utils import (
@@ -1663,6 +1664,7 @@ class AppealGenerator(object):
             return ""
         return "\n\n".join(t.model_prompt_hint() for t in ordered)
 
+    @llm_usage.labelled_task("entity_extraction")
     async def _extract_entity_with_regexes_and_model(
         self,
         denial_text: str,
@@ -2165,6 +2167,7 @@ class AppealGenerator(object):
             score_fn=date_score,
         )
 
+    @llm_usage.labelled_task("entity_extraction")
     async def get_procedure_and_diagnosis(
         self, denial_text=None, use_external=False
     ) -> Tuple[Optional[str], Optional[str]]:
@@ -3681,7 +3684,7 @@ class AppealGenerator(object):
                 # belongs in the appeal series; the chooser refill reuses this
                 # method for synthetic candidates and passes "other", so its
                 # traffic stays out of the series real appeals are judged by.
-                with ml_call_purpose(purpose):
+                with ml_call_purpose(purpose), llm_usage.llm_task("synthesis"):
                     result = await model._infer_no_context(
                         system_prompts=[self.SYNTHESIS_SYSTEM_PROMPT],
                         prompt=prompt,

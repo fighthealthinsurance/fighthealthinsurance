@@ -10,6 +10,7 @@ from typing import Optional
 
 from loguru import logger
 
+from fighthealthinsurance.ml import llm_usage
 from fighthealthinsurance.ml.ml_router import ml_router
 
 
@@ -23,6 +24,7 @@ async def infer_with_fallback(
     label: str = "",
     validator: Optional[Callable[[str], bool]] = None,
     models: Optional[list] = None,
+    task: Optional[str] = None,
 ) -> Optional[str]:
     """
     Try inference across multiple models with timeout.
@@ -32,7 +34,8 @@ async def infer_with_fallback(
     otherwise the next model is tried.
 
     By default the cheapest internal models are used; pass ``models`` to run
-    against a specific list (e.g. external models) instead.
+    against a specific list (e.g. external models) instead. ``task`` is what
+    the LLM usage metrics count the calls as (ml/llm_usage.py TASKS).
     """
     if models is None:
         # General-purpose only: every caller of this helper is asking a model
@@ -41,14 +44,15 @@ async def infer_with_fallback(
         models = ml_router.general_purpose_internal_models()[:model_count]
     for model in models:
         try:
-            result = await asyncio.wait_for(
-                model._infer_no_context(
-                    system_prompts=system_prompts,
-                    prompt=prompt,
-                    temperature=temperature,
-                ),
-                timeout=timeout,
-            )
+            with llm_usage.llm_task(task):
+                result = await asyncio.wait_for(
+                    model._infer_no_context(
+                        system_prompts=system_prompts,
+                        prompt=prompt,
+                        temperature=temperature,
+                    ),
+                    timeout=timeout,
+                )
             text = str(result).strip() if result else ""
             if text and len(text) > min_length:
                 if validator is None or validator(text):

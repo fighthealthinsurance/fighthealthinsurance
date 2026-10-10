@@ -74,7 +74,12 @@ class ExtraLinkPrefetchActor:
             extralink_result = await self._prefetch_extralinks()
 
             # Fetch PubMed articles
-            pubmed_result = await self._prefetch_pubmed()
+            # No person behind this: its PubMed summaries count as system
+            # work (imported here, like loguru: the class pickles by value).
+            from fighthealthinsurance.ml import llm_usage
+
+            with llm_usage.system_work():
+                pubmed_result = await self._prefetch_pubmed()
 
             elapsed = time.time() - start_time
             total_fetched = extralink_result.get("fetched", 0) + pubmed_result.get(

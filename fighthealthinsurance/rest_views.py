@@ -48,6 +48,7 @@ from fighthealthinsurance.external_review import (
 )
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.log_redaction import session_key_prefix_for_log
+from fighthealthinsurance.ml import llm_usage
 from fighthealthinsurance.ml.health_status import health_status
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
@@ -267,6 +268,7 @@ class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
             400: serializers.ErrorSerializer,
         }
     )
+    @llm_usage.http_entry()
     def create(self, request: Request) -> Response:
         """Analyze denial data and return recommended next steps."""
         return super().create(request)
@@ -773,6 +775,9 @@ def streaming_appeals_rest_fallback(request: Request):
             status=status.HTTP_404_NOT_FOUND,
         )
 
+    # Read now: the stream below runs after this view has returned.
+    usage_origin = llm_usage.origin_from_request(request)
+
     async def stream():
         appeal_count = 0
         status_count = 0
@@ -800,8 +805,11 @@ def streaming_appeals_rest_fallback(request: Request):
         # already failed.
         # Request payloads never reach the generator with internal-only
         # (underscore-prefixed) keys; those belong to internal dispatchers.
-        aitr = common_view_logic.AppealsBackendHelper.generate_appeals(
-            strip_internal_keys(data)
+        aitr = llm_usage.iterate_from(
+            usage_origin,
+            common_view_logic.AppealsBackendHelper.generate_appeals(
+                strip_internal_keys(data)
+            ),
         )
         try:
             # Flush a leading newline before awaiting generate_appeals
@@ -1890,6 +1898,7 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
         responses={200: serializers.ExtractPatientFieldsResponseSerializer},
     )
     @action(detail=False, methods=["post"])
+    @llm_usage.http_entry(llm_usage.PRO)
     def extract_patient_fields(self, request: Request) -> Response:
         """
         Extract patient fields from uploaded PDF text content using ML entity extraction.
@@ -1948,7 +1957,8 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
 
             # Run all extraction tasks in parallel
             results = {}
-            extracted_values = await asyncio.gather(*tasks, return_exceptions=True)
+            with llm_usage.llm_task("entity_extraction"):
+                extracted_values = await asyncio.gather(*tasks, return_exceptions=True)
 
             from fighthealthinsurance.generate_appeal import is_plausible_identifier
 
@@ -2027,6 +2037,7 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             )
 
     @extend_schema(responses=serializers.PriorAuthRequestSerializer)
+    @llm_usage.http_entry(llm_usage.PRO)
     def create(self, request: Request) -> Response:
         """Create a new prior authorization request and generate initial questions."""
         serializer = self.deserialize(data=request.data)

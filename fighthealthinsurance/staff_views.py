@@ -285,8 +285,25 @@ class AdminStatusView(generic.TemplateView):
         ctx["all_time"] = self._all_time_status(counters)
         ctx["intake_funnel"] = self._intake_funnel_status()
         ctx["letter_scoring"] = self._letter_scoring_status()
+        ctx["llm_usage"] = self._llm_usage_status()
         ctx["storage"] = self._storage_status()
         return ctx
+
+    @staticmethod
+    def _llm_usage_status() -> Dict[str, Any]:
+        """LLM requests and tokens by where they came from and what kind of
+        network (ml/llm_usage_report.py), from the shared database tables.
+        Counts and labels only: no address, key or id."""
+        out: Dict[str, Any] = {"ok": True, "error": None}
+        try:
+            from fighthealthinsurance.ml import llm_usage_report
+
+            out.update(llm_usage_report.status_summary())
+        except Exception as e:
+            logger.opt(exception=True).error("Error reading LLM usage")
+            out["ok"] = False
+            out["error"] = type(e).__name__
+        return out
 
     @staticmethod
     def _model_status() -> Dict[str, Any]:
@@ -2536,6 +2553,7 @@ class ModelUsageDashboardView(generic.TemplateView):
         ctx["chat_policy"] = self._chat_policy_panel()
         ctx["reply_check"] = self._reply_check_state()
         ctx["letter_prompts"] = self._letter_prompts_panel()
+        ctx["llm_usage"] = self._llm_usage_panel()
         ctx["letter_prompt_saved"] = self.request.GET.get("prompt_saved") == "1"
         return ctx
 
@@ -2698,6 +2716,19 @@ class ModelUsageDashboardView(generic.TemplateView):
                 health.last_failure
             )
         return out
+
+    @staticmethod
+    def _llm_usage_panel() -> Dict[str, Any]:
+        """The LLM usage tables (ml/llm_usage_report.py): the last 30 days
+        by surface and task, model, network class and ASN, and the weekly
+        network concentration. Never raises."""
+        try:
+            from fighthealthinsurance.ml import llm_usage_report
+
+            return {"error": None, **llm_usage_report.dashboard_tables()}
+        except Exception as e:
+            logger.opt(exception=True).error("Error reading LLM usage tables")
+            return {"error": type(e).__name__}
 
     @staticmethod
     def _chat_policy_panel() -> Dict[str, Any]:

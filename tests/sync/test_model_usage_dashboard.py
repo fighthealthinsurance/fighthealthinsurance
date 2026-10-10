@@ -2810,3 +2810,70 @@ class LiveChatShadowScoresTest(StaffClientMixin, TestCase):
         )
         response, _windows = self._windows()
         self.assertEqual(response.context["chat_shadow"]["last_failure"], "")
+
+
+class ModelUsageDashboardLLMUsageTest(TestCase):
+    """The LLM usage tables: 30 days by surface and task, model, network
+    class and ASN, and keyless weekly concentration."""
+
+    def test_the_tables_render_without_any_key(self):
+        from fighthealthinsurance.client_network import week_start
+        from fighthealthinsurance.models import (
+            LLMUsageDaily,
+            LLMUsageNetworkDaily,
+            LLMUsageNetworkWeek,
+            LLMUsageNetworkWeekSummary,
+        )
+
+        today = timezone.now().astimezone(datetime.timezone.utc).date()
+        LLMUsageDaily.objects.create(
+            day=today,
+            surface="site",
+            task="questions",
+            model="fhi-test-model",
+            tier="internal",
+            network_class="hosting",
+            calls=3,
+            prompt_tokens=30,
+            completion_tokens=6,
+        )
+        LLMUsageNetworkDaily.objects.create(
+            day=today,
+            surface="site",
+            network_class="hosting",
+            asn_name="AMAZON-02",
+            country="US",
+            calls=3,
+            prompt_tokens=30,
+        )
+        key = "e" * 64
+        LLMUsageNetworkWeek.objects.create(
+            week_start=week_start(today),
+            key=key,
+            surface="site",
+            network_class="hosting",
+            calls=3,
+            prompt_tokens=30,
+        )
+        LLMUsageNetworkWeekSummary.objects.create(
+            week_start=week_start(today) - datetime.timedelta(days=7),
+            surface="all",
+            network_class="all",
+            networks=5,
+            calls=10,
+            tokens=100,
+            top1_tokens=40,
+            top10_tokens=100,
+        )
+        User.objects.create_user(username="staff", password="pw", is_staff=True)
+        self.client.login(username="staff", password="pw")
+        response = self.client.get(reverse("model_usage_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        usage = response.context["llm_usage"]
+        self.assertEqual(usage["by_surface_task"][0]["task"], "questions")
+        self.assertEqual(usage["by_surface_network"][0]["surface_token_percent"], 100.0)
+        self.assertEqual(usage["top_asns"][0]["asn_name"], "AMAZON-02")
+        self.assertEqual(usage["past_weeks"][0]["top1_token_percent"], 40.0)
+        self.assertContains(response, "fhi-test-model")
+        self.assertContains(response, "AMAZON-02")
+        self.assertNotContains(response, key)

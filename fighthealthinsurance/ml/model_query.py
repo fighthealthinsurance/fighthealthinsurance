@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from asgiref.sync import async_to_sync
 from loguru import logger
 
+from fighthealthinsurance.ml import llm_usage
 from fighthealthinsurance.ml import ml_router as ml_router_module
 from fighthealthinsurance.ml.ml_models import RemoteModelLike, describe_model_error
 
@@ -184,6 +185,7 @@ def clamp_temperature(raw: Any, default: float = DEFAULT_TEMPERATURE) -> float:
     return max(0.0, min(2.0, value))
 
 
+@llm_usage.staff_entry("staff_query")
 async def aquery_model(
     model: Any,
     prompt: str,

@@ -16,7 +16,7 @@ from fighthealthinsurance.extralink_context_helper import (
     ExtraLinkContextHelper,
 )
 from fighthealthinsurance.microsites import get_microsite
-from fighthealthinsurance.ml import spend
+from fighthealthinsurance.ml import llm_usage, spend
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     CMSCoverageCache,
@@ -570,6 +570,7 @@ class MLCitationsHelper:
 
     @classmethod
     @spend.for_denial_channel
+    @llm_usage.for_denial(task="citations")
     async def generate_citations_for_denial(
         cls, denial: Denial, speculative: bool
     ) -> List[str]:

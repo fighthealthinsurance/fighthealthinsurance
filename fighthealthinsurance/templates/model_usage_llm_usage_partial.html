@@ -1,0 +1,74 @@
+{% comment %}
+LLM requests and tokens by where they came from, from
+ModelUsageDashboardView._llm_usage_panel (ml/llm_usage_report.py). Counts,
+labels, ASN names and countries only; never a weekly network key.
+{% endcomment %}
+<h2 id="llm-usage">LLM usage <span class="source-label">(LLMUsageDaily, LLMUsageNetworkDaily, LLMUsageNetworkWeek, last 30 days from {{ usage.since }})</span></h2>
+{% if usage.error %}
+<p class="note">The LLM usage tables could not be read ({{ usage.error }}); the server log says why.</p>
+{% else %}
+<p class="note">Every answered model request, with the tokens its provider reported, by surface (where it entered: site, pro, assistant, staff, system, or unknown for a wiring gap) and task. Requests with no token count are counted but add no tokens. See docs/llm-usage-metrics.md.</p>
+
+<h3>By surface and task</h3>
+<table class="usage">
+  <thead><tr><th>Surface</th><th>Task</th><th class="num">Requests</th><th class="num">Prompt tokens</th><th class="num">Completion tokens</th><th class="num">External share of tokens</th><th class="num">No token count</th></tr></thead>
+  <tbody>
+    {% for r in usage.by_surface_task %}
+    <tr><td>{{ r.surface }}</td><td>{{ r.task }}</td><td class="num">{{ r.calls }}</td><td class="num">{{ r.prompt_tokens }}</td><td class="num">{{ r.completion_tokens }}</td><td class="num">{% if r.external_token_percent is None %}&ndash;{% else %}{{ r.external_token_percent }}%{% endif %}</td><td class="num">{{ r.usage_missing_calls }}</td></tr>
+    {% empty %}
+    <tr><td colspan="7">No model requests recorded yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3>By model <span class="source-label">(top 30 by tokens)</span></h3>
+<table class="usage">
+  <thead><tr><th>Model</th><th>Tier</th><th class="num">Requests</th><th class="num">Prompt tokens</th><th class="num">Completion tokens</th><th class="num">No token count</th></tr></thead>
+  <tbody>
+    {% for r in usage.by_model %}
+    <tr><td>{{ r.model }}</td><td>{{ r.tier }}</td><td class="num">{{ r.calls }}</td><td class="num">{{ r.prompt_tokens }}</td><td class="num">{{ r.completion_tokens }}</td><td class="num">{{ r.usage_missing_calls }}</td></tr>
+    {% empty %}
+    <tr><td colspan="6">None yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3>By surface and network class</h3>
+<table class="usage">
+  <thead><tr><th>Surface</th><th>Network class</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Share of the surface's tokens</th></tr></thead>
+  <tbody>
+    {% for r in usage.by_surface_network %}
+    <tr><td>{{ r.surface }}</td><td>{{ r.network_class }}</td><td class="num">{{ r.calls }}</td><td class="num">{{ r.tokens }}</td><td class="num">{% if r.surface_token_percent is None %}&ndash;{% else %}{{ r.surface_token_percent }}%{% endif %}</td></tr>
+    {% empty %}
+    <tr><td colspan="5">None yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="note">Network classes: isp (a named network that is not a host or platform), hosting (a cloud or hosting provider, which includes iCloud Private Relay and Cloudflare WARP), ai_platform, tor, unknown (a client with no network we could name), none (no client: system work). Background work takes its class from the ASN recorded on its case.</p>
+
+<h3>Top networks by ASN <span class="source-label">(top 25 by tokens; kept 90 days)</span></h3>
+<table class="usage">
+  <thead><tr><th>ASN name</th><th>Country</th><th>Class</th><th class="num">Requests</th><th class="num">Tokens</th></tr></thead>
+  <tbody>
+    {% for r in usage.top_asns %}
+    <tr><td>{{ r.asn_name }}</td><td>{{ r.country|default:"&ndash;" }}</td><td>{{ r.network_class }}</td><td class="num">{{ r.calls }}</td><td class="num">{{ r.tokens }}</td></tr>
+    {% empty %}
+    <tr><td colspan="5">No named networks yet (the GeoIP database may be off: see docs/geoip.md).</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3>Network concentration by week <span class="source-label">(all surfaces; keyless summaries)</span></h3>
+<table class="usage">
+  <thead><tr><th>Week from</th><th class="num">Networks</th><th class="num">Requests</th><th class="num">Tokens</th><th class="num">Busiest network's tokens</th><th class="num">Busiest ten's tokens</th><th class="num">Busiest network's requests</th></tr></thead>
+  <tbody>
+    {% with wk=usage.this_week %}
+    <tr><td>{{ wk.week_start }} (this week, so far)</td><td class="num">{{ wk.networks }}</td><td class="num">{{ wk.calls }}</td><td class="num">{{ wk.tokens }}</td><td class="num">{% if wk.top1_token_percent is None %}&ndash;{% else %}{{ wk.top1_token_percent }}%{% endif %}</td><td class="num">{% if wk.top10_token_percent is None %}&ndash;{% else %}{{ wk.top10_token_percent }}%{% endif %}</td><td class="num">{% if wk.top1_call_percent is None %}&ndash;{% else %}{{ wk.top1_call_percent }}%{% endif %}</td></tr>
+    {% endwith %}
+    {% for wk in usage.past_weeks %}
+    <tr><td>{{ wk.week_start }}</td><td class="num">{{ wk.networks }}</td><td class="num">{{ wk.calls }}</td><td class="num">{{ wk.tokens }}</td><td class="num">{% if wk.top1_token_percent is None %}&ndash;{% else %}{{ wk.top1_token_percent }}%{% endif %}</td><td class="num">{% if wk.top10_token_percent is None %}&ndash;{% else %}{{ wk.top10_token_percent }}%{% endif %}</td><td class="num">{% if wk.top1_call_percent is None %}&ndash;{% else %}{{ wk.top1_call_percent }}%{% endif %}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="note">A network is a client's IPv4 /24 or IPv6 /48, counted by a digest keyed for its week only, for the site, pro and assistant surfaces. A week's keyed rows are rolled up into these figures and deleted about an hour after it ends.</p>
+{% endif %}

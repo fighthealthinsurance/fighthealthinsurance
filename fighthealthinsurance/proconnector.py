@@ -45,6 +45,7 @@ from django.utils import timezone
 from loguru import logger
 
 from fighthealthinsurance.email_utils import is_blocked_email, is_sendable_email
+from fighthealthinsurance.ml import llm_usage
 from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import InterestedProfessional, ScheduledEmail
@@ -795,6 +796,7 @@ def _is_safe_new_signup_intro_draft(text: Optional[str]) -> bool:
     return introduction in body and has_call_to_action
 
 
+@llm_usage.staff_entry("intro_email")
 async def agenerate_intro_email(
     pro: InterestedProfessional, *, new_signup: bool = False
 ) -> str:
@@ -847,6 +849,7 @@ async def agenerate_intro_email(
         label="proconnector intro",
         validator=validator,
         models=models,
+        task="intro_email",
     )
     return result or base
 

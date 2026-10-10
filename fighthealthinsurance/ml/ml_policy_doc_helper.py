@@ -492,6 +492,7 @@ Document chunk:
             timeout=cls.CHUNK_TIMEOUT_SECONDS,
             model_count=2,
             label=f"chunk {chunk_index}",
+            task="policy_analysis",
         )
 
         async with remaining_counter:
@@ -656,6 +657,7 @@ Respond in JSON format with the following structure:
                     timeout=per_model_timeout,
                     model_count=3,
                     label="synthesis",
+                    task="policy_analysis",
                 ),
                 timeout=cls.SYNTHESIS_TIMEOUT_SECONDS,
             )

@@ -97,6 +97,7 @@
   </ul>
 
   {% include "model_usage_prompts_partial.html" with panel=letter_prompts %}
+  {% include "model_usage_llm_usage_partial.html" with usage=llm_usage %}
 
   {% for w in windows %}
   <div class="window-section" id="window-{{ w.slug }}">

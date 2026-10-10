@@ -1527,3 +1527,93 @@ class AdminStatusTemporalScopeTest(AdminStatusTemporalTest):
         assert running, client.queries
         for q in running:
             assert "StartTime >" not in q, q
+
+
+class AdminStatusLLMUsageTest(TestCase):
+    """The LLM usage panel: admin-only like the rest of the page, totals
+    from the shared tables, and never a network key."""
+
+    KEY = "f" * 64
+
+    def setUp(self):
+        from fighthealthinsurance.client_network import week_start
+        from fighthealthinsurance.models import (
+            LLMUsageDaily,
+            LLMUsageNetworkWeek,
+        )
+
+        today = timezone.now().astimezone(datetime.timezone.utc).date()
+        for surface, task, tier, calls, prompt in (
+            ("site", "chat_reply", "internal", 4, 400),
+            ("assistant", "appeal_letter", "external", 2, 600),
+            ("unknown", "other", "internal", 1, 10),
+        ):
+            LLMUsageDaily.objects.create(
+                day=today,
+                surface=surface,
+                task=task,
+                model="m",
+                tier=tier,
+                network_class="isp",
+                calls=calls,
+                prompt_tokens=prompt,
+                completion_tokens=0,
+            )
+        LLMUsageNetworkWeek.objects.create(
+            week_start=week_start(today),
+            key=self.KEY,
+            surface="site",
+            network_class="isp",
+            calls=4,
+            prompt_tokens=400,
+        )
+
+    def _get(self, staff=True):
+        User.objects.create_user(username="u", password="pw123", is_staff=staff)
+        self.client.login(username="u", password="pw123")
+        with (
+            mock.patch(_MODELS, return_value=[]),
+            mock.patch(_ACTORS, return_value={"details": []}),
+            mock.patch(_FAX, return_value=_ok_fax_backends()),
+        ):
+            return self.client.get(reverse("admin_status"))
+
+    def test_anonymous_user_never_sees_it(self):
+        response = self.client.get(reverse("admin_status"))
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn(b"LLM usage", response.content)
+
+    def test_a_non_staff_user_never_sees_it(self):
+        response = self._get(staff=False)
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn(b"LLM usage", response.content)
+
+    def test_staff_see_the_totals(self):
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        usage = response.context["llm_usage"]
+        today, week = usage["windows"]
+        self.assertEqual((today["calls"], today["prompt_tokens"]), (7, 1010))
+        self.assertEqual(today["external_token_percent"], 59.4)
+        self.assertEqual(
+            [r["surface"] for r in usage["by_surface"]], ["assistant", "site", "unknown"]
+        )
+        self.assertEqual(usage["unknown_calls"], 1)
+        self.assertEqual(usage["this_week"]["networks"], 1)
+        self.assertEqual(usage["this_week"]["top1_token_percent"], 100.0)
+        self.assertContains(response, "LLM usage")
+        self.assertContains(response, "WIRING GAP")
+
+    def test_no_network_key_reaches_the_page(self):
+        response = self._get()
+        self.assertNotContains(response, self.KEY)
+
+    def test_a_failing_read_is_an_error_row(self):
+        with mock.patch(
+            "fighthealthinsurance.ml.llm_usage_report.status_summary",
+            side_effect=RuntimeError("database away"),
+        ):
+            response = self._get()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["llm_usage"]["error"], "RuntimeError")
+        self.assertContains(response, "ERROR")

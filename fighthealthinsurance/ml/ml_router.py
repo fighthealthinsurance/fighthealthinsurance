@@ -13,6 +13,7 @@ from fighthealthinsurance.ml.chat_policy import ChatPolicy, narrow_externals
 CHAT_OUTSIDE_LIMIT = 3
 _explore_draw = random.random
 from fighthealthinsurance.ml.ml_models import *
+from fighthealthinsurance.ml import llm_usage
 from fighthealthinsurance.ml.retired_models import retirement
 
 # The hosted model that backs up our own models for summaries and appeal
@@ -934,6 +935,7 @@ class MLRouter(object):
 
         return primary_models, fallback_models
 
+    @llm_usage.labelled_task("chat_summary")
     async def summarize_chat_history(
         self, history: list[dict], max_messages: int = 10
     ) -> Optional[str]:
@@ -1090,6 +1092,7 @@ class MLRouter(object):
         listed = {id(m) for m in head}
         return head + external + [m for m in fallback if id(m) not in listed]
 
+    @llm_usage.labelled_task("pubmed_summary")
     async def summarize(
         self,
         title: Optional[str],
@@ -1202,6 +1205,7 @@ class MLRouter(object):
         "letter."
     )
 
+    @llm_usage.labelled_task("doc_summary")
     async def summarize_denial_letter(
         self,
         text: str,

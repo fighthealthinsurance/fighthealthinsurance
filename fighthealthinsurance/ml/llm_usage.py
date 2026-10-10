@@ -40,6 +40,7 @@ import re
 from dataclasses import dataclass, field
 from typing import (
     Any,
+    AsyncIterator,
     Callable,
     Iterator,
     Mapping,
@@ -249,6 +250,7 @@ def llm_task(task: Optional[str], *, pin: bool = False) -> Iterator[None]:
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
+_T = TypeVar("_T")
 
 
 def labelled_task(task: str, *, pin: bool = False) -> Callable[[_F], _F]:
@@ -280,6 +282,30 @@ def staff_work(task: Optional[str] = None) -> Iterator[None]:
     """A /timbit staff tool. Staff networks are never keyed."""
     with origin(_STAFF_ORIGIN), llm_task(task, pin=True):
         yield
+
+
+def _entry(
+    work: Callable[[Optional[str]], Any], task: Optional[str]
+) -> Callable[[_F], _F]:
+    def decorate(fn: _F) -> _F:
+        @functools.wraps(fn)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            with work(task):
+                return await fn(*args, **kwargs)
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorate
+
+
+def system_entry(task: Optional[str] = None) -> Callable[[_F], _F]:
+    """Decorate an async entry point of system work (see system_work)."""
+    return _entry(system_work, task)
+
+
+def staff_entry(task: Optional[str] = None) -> Callable[[_F], _F]:
+    """Decorate an async entry point of a staff tool (see staff_work)."""
+    return _entry(staff_work, task)
 
 
 # --- building an origin ---------------------------------------------------------
@@ -369,6 +395,22 @@ def http_entry(surface: str = SITE) -> Callable[[_F], _F]:
         return wrapper  # type: ignore[return-value]
 
     return decorate
+
+
+async def iterate_from(where: Origin, agen: AsyncIterator[_T]) -> AsyncIterator[_T]:
+    """Iterate ``agen`` with its model calls counted from ``where``, for a
+    streaming response, whose body runs after its view (and any block in it)
+    has returned. Closes ``agen`` when done or closed itself. The origin is
+    visible to whatever iterates this between items too: a request's own
+    streaming task, so nothing else."""
+    try:
+        with origin(where):
+            async for item in agen:
+                yield item
+    finally:
+        aclose = getattr(agen, "aclose", None)
+        if aclose is not None:
+            await aclose()
 
 
 def _professional_case(denial: Any) -> bool:

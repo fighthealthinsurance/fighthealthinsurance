@@ -103,6 +103,7 @@ Focus on terms that would appear in an insurance plan document."""
             temperature=0.3,
             timeout=30,
             label="search terms",
+            task="doc_summary",
         )
         if result:
             terms = [
@@ -312,6 +313,7 @@ Include specific page references where helpful."""
             timeout=45,
             min_length=50,
             label="plan doc summary",
+            task="doc_summary",
         )
         if result:
             logger.debug(f"Generated plan document summary ({len(result)} chars)")

@@ -10,6 +10,7 @@ from channels.db import database_sync_to_async
 from loguru import logger
 
 from fighthealthinsurance.exec import executor
+from fighthealthinsurance.ml import llm_usage
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import PriorAuthRequest, ProposedPriorAuth
@@ -215,6 +216,7 @@ class PriorAuthGenerator:
             prior_auth, model, context, index
         )
 
+    @llm_usage.labelled_task("prior_auth_letter")
     async def _generate_single_proposal(
         self,
         prior_auth: PriorAuthRequest,

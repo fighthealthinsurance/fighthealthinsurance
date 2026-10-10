@@ -408,6 +408,7 @@ and how to update it: [docs/geoip.md](docs/geoip.md).
 | [docs/chat-pipeline.md](docs/chat-pipeline.md) | How the chat works, and its failure modes |
 | [docs/back-link-references.md](docs/back-link-references.md) | Why back links carry an encrypted reference |
 | [docs/metrics-endpoint-access.md](docs/metrics-endpoint-access.md) | Why `/metrics` is cluster-internal |
+| [docs/llm-usage-metrics.md](docs/llm-usage-metrics.md) | LLM requests and tokens by surface, task and network, and what is never stored |
 | [docs/reliability-roadmap.md](docs/reliability-roadmap.md) | Reliability follow-ups |
 | [docs/pg-reliability-hardening.md](docs/pg-reliability-hardening.md) | Postgres outage root cause and hardening |
 | [docs/pg8-to-pg9-migration-runbook.md](docs/pg8-to-pg9-migration-runbook.md), [docs/pg-backup-reconciliation-runbook-2026-07.md](docs/pg-backup-reconciliation-runbook-2026-07.md) | Production database runbooks. They act on the live cluster; a human runs them. |

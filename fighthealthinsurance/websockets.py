@@ -32,6 +32,7 @@ from fhi_users.audit import (
     guess_us_state,
 )
 from fighthealthinsurance.chat.turn_record import arecord_answer_preference
+from fighthealthinsurance.ml import llm_usage
 from fighthealthinsurance.ml.ml_metrics import record_answer_feedback
 from fighthealthinsurance.log_redaction import session_key_prefix_for_log
 from fighthealthinsurance.reliability_events import capture_reliability_event
@@ -261,6 +262,38 @@ def _get_client_ip_from_scope(scope: Optional[dict] = None) -> Optional[str]:
 
     logger.warning("Unable to determine client IP from websocket scope")
     return None
+
+
+class LLMUsageOriginMixin:
+    """Count the model calls a socket's messages make from its origin
+    (ml/llm_usage.py): its surface, and the network Cloudflare saw it come
+    from. Built once per connection, on its first message; the address
+    behind it is held only in memory, to key its week's usage row.
+
+    Listed before PerConnectionThreadSensitiveMixin, so the origin is in
+    the context every model call a message starts copies, including the
+    tasks and threads it outlives the message in.
+    """
+
+    LLM_SURFACE = llm_usage.SITE
+    _llm_origin: Optional[llm_usage.Origin] = None
+
+    def llm_usage_origin(self) -> llm_usage.Origin:
+        if self._llm_origin is None:
+            self._llm_origin = llm_usage.origin_from_scope(
+                getattr(self, "scope", None), self.LLM_SURFACE
+            )
+        return self._llm_origin
+
+    def refine_llm_surface(self, surface: str) -> None:
+        """This connection's surface is ``surface`` from now on (a chat
+        found to be a professional's)."""
+        self._llm_origin = self.llm_usage_origin().with_surface(surface)
+        llm_usage.set_surface(surface)
+
+    async def websocket_receive(self, message):
+        with llm_usage.origin(self.llm_usage_origin()):
+            await super().websocket_receive(message)  # type: ignore[misc]
 
 
 class _AppealGenTraceFields:
@@ -677,7 +710,7 @@ SUPPRESS_APPEAL_WS_DELIVERY = False
 
 
 class StreamingAppealsBackend(
-    PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer
+    LLMUsageOriginMixin, PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer
 ):
     """Streaming back the appeals as json :D"""
 
@@ -937,7 +970,7 @@ class StreamingAppealsBackend(
 
 
 class StreamingEscalationBackend(
-    PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer
+    LLMUsageOriginMixin, PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer
 ):
     """Streaming back regulator/executive escalation letters as JSON.
 
@@ -1017,7 +1050,9 @@ class StreamingEscalationBackend(
                 logger.debug("Error closing escalation connection")
 
 
-class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer):
+class StreamingEntityBackend(
+    LLMUsageOriginMixin, PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer
+):
     """Streaming Entity Extraction"""
 
     async def connect(self):
@@ -1157,8 +1192,13 @@ class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketCo
                 logger.debug("entity ws: error closing connection")
 
 
-class PriorAuthConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer):
+class PriorAuthConsumer(
+    LLMUsageOriginMixin, PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer
+):
     """Streaming back the proposed prior authorizations as JSON."""
+
+    # Prior auth is a professional's tool.
+    LLM_SURFACE = llm_usage.PRO
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1367,7 +1407,9 @@ async def resolve_chat_type(
     return ChatType.PATIENT, None
 
 
-class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer):
+class OngoingChatConsumer(
+    LLMUsageOriginMixin, PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer
+):
     """WebSocket consumer for ongoing chat with LLMs for both pro users and patients."""
 
     chat_interface: Optional[ChatInterface] = None
@@ -1451,14 +1493,19 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                     f"history_msgs={len(chat.chat_history or [])})"
                 )
 
-                # Get the analysis from the model
-                response_text, _ = await model.generate_chat_response(
-                    full_prompt,
-                    # Both helpers only read local columns (chat_type /
-                    # user_id) — no queries, so no bridge needed.
-                    is_professional=chat.is_professional_user(),
-                    is_logged_in=chat.is_logged_in_user(),
-                )
+                # Get the analysis from the model. Runs on a Ray actor, so
+                # its usage origin comes from the chat, without the address.
+                with (
+                    llm_usage.origin(llm_usage.origin_for_chat(chat)),
+                    llm_usage.llm_task("chat_analysis"),
+                ):
+                    response_text, _ = await model.generate_chat_response(
+                        full_prompt,
+                        # Both helpers only read local columns (chat_type /
+                        # user_id) — no queries, so no bridge needed.
+                        is_professional=chat.is_professional_user(),
+                        is_logged_in=chat.is_logged_in_user(),
+                    )
 
                 if response_text:
                     # Extract JSON from response
@@ -1735,6 +1782,8 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
 
             # Use server-derived is_patient for all subsequent logic
             is_patient = chat_type == ChatType.PATIENT
+            if not is_patient:
+                self.refine_llm_surface(llm_usage.surface_for_chat_type(chat_type))
 
             # For anonymous patients we need the e-mail to allow data deletion since
             # we don't have accounts or lead objects to link to.

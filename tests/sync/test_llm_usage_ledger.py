@@ -229,3 +229,70 @@ class RollupTest(TestCase):
         _week_row("a" * 64, calls=5, tokens=500, week=MONDAY - datetime.timedelta(days=28))
         call_command("rollup_llm_usage")
         self.assertFalse(LLMUsageNetworkWeek.objects.exists())
+
+
+class DenialOriginTest(TestCase):
+    """Work on a case counts from where the case came from: an assistant
+    case by its channel or its latest agreement record, a professional's
+    case as pro, the rest as site."""
+
+    def _denial(self, **fields):
+        from fighthealthinsurance.models import Denial
+
+        return Denial.objects.create(
+            hashed_email="h",
+            denial_text="The MRI was denied as not medically necessary.",
+            **fields,
+        )
+
+    def _surface(self, denial):
+        with llm_usage.origin_scope():
+            llm_usage.note_denial(denial)
+            return llm_usage.current_origin().surface
+
+    def test_a_site_case(self):
+        self.assertEqual(self._surface(self._denial()), "site")
+
+    def test_an_assistant_channel_case(self):
+        self.assertEqual(self._surface(self._denial(channel="assistant")), "assistant")
+
+    def test_a_handoff_case_by_its_latest_agreement(self):
+        from fighthealthinsurance import consent
+
+        denial = self._denial()
+        consent.record_consent(
+            denial.denial_id, {}, channel="assistant", assistant_client="Claude"
+        )
+        self.assertEqual(self._surface(denial), "assistant")
+
+    def test_a_later_site_agreement_makes_it_site_again(self):
+        from fighthealthinsurance import consent
+
+        denial = self._denial()
+        consent.record_consent(denial.denial_id, {}, channel="assistant")
+        consent.record_consent(denial.denial_id, {}, channel="site")
+        self.assertEqual(self._surface(self._denial_reloaded(denial)), "site")
+
+    def _denial_reloaded(self, denial):
+        from fighthealthinsurance.models import Denial
+
+        return Denial.objects.get(pk=denial.pk)
+
+    def test_the_async_lookup_agrees(self):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance import consent
+
+        denial = self._denial()
+        consent.record_consent(denial.denial_id, {}, channel="assistant")
+
+        async def surface():
+            with llm_usage.origin_scope():
+                await llm_usage.anote_denial(denial)
+                return llm_usage.current_origin().surface
+
+        self.assertEqual(async_to_sync(surface)(), "assistant")
+
+    def test_the_origin_does_not_outlive_its_scope(self):
+        self._surface(self._denial(channel="assistant"))
+        self.assertIsNone(llm_usage.current_origin())

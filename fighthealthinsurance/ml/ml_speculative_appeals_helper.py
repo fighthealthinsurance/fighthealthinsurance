@@ -34,7 +34,7 @@ from loguru import logger
 
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.exec import bridge_executor
-from fighthealthinsurance.ml import spend
+from fighthealthinsurance.ml import llm_usage, spend
 from fighthealthinsurance.ml.serving_registry import aserving_id_for
 from fighthealthinsurance.context_utils import (
     CONTEXT_LEVEL_SPECULATIVE,
@@ -89,8 +89,13 @@ class SpeculativeAppealsHelper:
 
     @classmethod
     async def generate_for_denial(cls, *args: Any, **kwargs: Any) -> int:
-        """Model spend for the precompute counts for the denial's channel."""
-        with spend.channel_scope():
+        """Model spend for the precompute counts for the denial's channel,
+        and its LLM usage as precompute from the denial's origin."""
+        with (
+            spend.channel_scope(),
+            llm_usage.origin_scope(),
+            llm_usage.llm_task("appeal_precompute"),
+        ):
             return await cls._generate_for_denial(*args, **kwargs)
 
     @classmethod
@@ -182,6 +187,7 @@ class SpeculativeAppealsHelper:
             )
             if denial is not None:
                 spend.set_channel_of(denial)
+                await llm_usage.anote_denial(denial)
             if denial is None:
                 logger.warning(
                     f"speculative appeals[{trigger}]: denial {denial_id} not "

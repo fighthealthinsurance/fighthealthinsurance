@@ -77,7 +77,7 @@ from fhi_users.fight_paperwork import (
     unavailable_response,
 )
 from fighthealthinsurance.log_redaction import session_key_prefix_for_log
-from fighthealthinsurance.ml import denial_triage
+from fighthealthinsurance.ml import denial_triage, llm_usage
 from fighthealthinsurance.media_references import (
     MEDIA_REFERENCES,
     SOCIAL_MEDIA_REFERENCES,
@@ -1368,6 +1368,7 @@ class FindNextSteps(View):
             },
         )
 
+    @llm_usage.http_entry()
     def post(self, request):
         form = core_forms.PostInferedForm(request.POST)
         if form.is_valid():
