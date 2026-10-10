@@ -608,7 +608,13 @@ async def triage(
         raise
     except Exception as e:
         _count("failed")
-        logger.warning(f"denial triage unavailable: {type(e).__name__}: {e}")
+        # A cooldown skip was announced once when the cooldown started.
+        log = (
+            logger.debug
+            if isinstance(e, typesafe.TypeSafeCoolingDown)
+            else logger.warning
+        )
+        log(f"denial triage unavailable: {type(e).__name__}: {e}")
         return None
     _count("triaged")
     return result

@@ -537,7 +537,13 @@ async def score_letter(
         # The exception text never carries the document: _post raises on
         # status alone and aiohttp's own errors describe the connection.
         _count("failed")
-        logger.warning(f"letter scoring unavailable: {type(e).__name__}: {e}")
+        # A cooldown skip was announced once when the cooldown started.
+        log = (
+            logger.debug
+            if isinstance(e, typesafe.TypeSafeCoolingDown)
+            else logger.warning
+        )
+        log(f"letter scoring unavailable: {type(e).__name__}: {e}")
         if on_failure is not None:
             try:
                 await on_failure(failure_summary(e))

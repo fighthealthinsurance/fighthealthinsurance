@@ -6,7 +6,6 @@ honouring cooldowns."""
 import asyncio
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -24,19 +23,42 @@ LONG_REPLY = (
     "the requested procedure, which is medically necessary given the documented "
     "diagnosis and history. " * 3
 )
-GOOD_JSON = {
-    "choices": [{"message": {"role": "assistant", "content": LONG_REPLY}}]
-}
+GOOD_JSON = {"choices": [{"message": {"role": "assistant", "content": LONG_REPLY}}]}
 AZURE_CLAUDE_ENV = {
     "AZURE_ANTHROPIC_API_KEY": "test-key",
     "AZURE_ANTHROPIC_ENDPOINT": "https://res.services.ai.azure.com/anthropic",
 }
 
 
+def _azure_claude() -> RemoteAzureClaude:
+    # The rate limiters are per class: drop a back-off another test left.
+    RemoteAzureClaude._rate_limiters.pop("claude-opus-4-8", None)
+    with patch.dict(os.environ, AZURE_CLAUDE_ENV):
+        return RemoteAzureClaude(model="claude-opus-4-8")
+
+
+def _never_called(monkeypatch) -> None:
+    def explode(*args, **kwargs):
+        raise AssertionError("the endpoint was called")
+
+    monkeypatch.setattr(aiohttp.ClientSession, "post", explode)
+
+
+def _refuse(monkeypatch) -> None:
+    def refuse(*args, **kwargs):
+        raise aiohttp.ClientConnectionError("connection refused")
+
+    monkeypatch.setattr(aiohttp.ClientSession, "post", refuse)
+
+
+def _cool(model: RemoteAzureClaude) -> None:
+    model._transport_cooldowns[(model.api_base, model.model)] = time.monotonic() + 100
+
+
 class TestAttemptDeadlineReachesAppealCalls:
     def test_parallel_infer_carries_the_deadline_into_the_worker(self, monkeypatch):
-        """A raw executor submit does not copy the context, so the clamp
-        read in the worker saw no deadline."""
+        """The clamp read in the worker sees the submitter's deadline: the
+        pool parallel_infer uses by default copies the context on submit."""
         model = RemoteFullOpenLike("http://x.example/v1", "tok", "m")
         seen = []
 
@@ -45,18 +67,16 @@ class TestAttemptDeadlineReachesAppealCalls:
             return []
 
         monkeypatch.setattr(model, "_blocking_checked_infer", fake_blocking)
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            with ml_models.attempt_deadline(25.0):
-                futures = model.parallel_infer(
-                    prompt="p",
-                    infer_type="full",
-                    patient_context=None,
-                    plan_context=None,
-                    pubmed_context=None,
-                    submit_executor=pool,
-                )
-                for f in futures:
-                    f.result()
+        with ml_models.attempt_deadline(25.0):
+            futures = model.parallel_infer(
+                prompt="p",
+                infer_type="full",
+                patient_context=None,
+                plan_context=None,
+                pubmed_context=None,
+            )
+            for f in futures:
+                f.result()
         assert seen
         assert all(t <= 25.0 for t in seen), seen
 
@@ -175,20 +195,12 @@ class TestDualModeCancellation:
 
 
 class TestAzureClaudeCooldowns:
-    def _model(self):
-        with patch.dict(os.environ, AZURE_CLAUDE_ENV):
-            return RemoteAzureClaude(model="claude-opus-4-8")
-
     @pytest.mark.asyncio
     async def test_a_transport_failure_strikes_the_endpoint(self, monkeypatch):
         """The Messages transport bypassed the shared strike accounting, so a
         dead Foundry endpoint never entered a cooldown."""
-        model = self._model()
-
-        def refuse(*args, **kwargs):
-            raise aiohttp.ClientConnectionError("connection refused")
-
-        monkeypatch.setattr(aiohttp.ClientSession, "post", refuse)
+        model = _azure_claude()
+        _refuse(monkeypatch)
         with patch.object(model, "_note_transport_failure") as note:
             result = await model._infer(system_prompts=["sys"], prompt="hi")
 
@@ -198,34 +210,17 @@ class TestAzureClaudeCooldowns:
 
     @pytest.mark.asyncio
     async def test_a_probe_does_not_strike(self, monkeypatch):
-        model = self._model()
-
-        def refuse(*args, **kwargs):
-            raise aiohttp.ClientConnectionError("connection refused")
-
-        monkeypatch.setattr(aiohttp.ClientSession, "post", refuse)
+        model = _azure_claude()
+        _refuse(monkeypatch)
         with patch.object(model, "_note_transport_failure") as note:
             await model._infer(
                 system_prompts=["sys"], prompt="hi", raise_http_errors=True
             )
         note.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_an_endpoint_in_cooldown_is_not_called(self, monkeypatch):
-        model = self._model()
-        model._transport_cooldowns[(model.api_base, "claude-opus-4-8")] = (
-            time.monotonic() + 100
-        )
-
-        def explode(*args, **kwargs):
-            raise AssertionError("the endpoint was called")
-
-        monkeypatch.setattr(aiohttp.ClientSession, "post", explode)
-        assert await model._infer(system_prompts=["sys"], prompt="hi") is None
-
     async def _time_out_twice(self, monkeypatch, error, timeout, **kwargs):
         """Two calls whose request raises ``error``; the strikes they made."""
-        model = self._model()
+        model = _azure_claude()
 
         def time_out(*args, **kw):
             raise error
@@ -239,9 +234,7 @@ class TestAzureClaudeCooldowns:
         return note
 
     @pytest.mark.asyncio
-    async def test_a_generous_budget_timeout_strikes_once_per_window(
-        self, monkeypatch
-    ):
+    async def test_a_generous_budget_timeout_strikes_once_per_window(self, monkeypatch):
         """A timeout returned None without a strike, so an endpoint that
         kept timing out never cooled down. As on the shared transport, the
         parallel legs of one slow inference strike once between them."""
@@ -276,24 +269,11 @@ class TestAzureClaudeUnreachableCallsSayUnavailable:
     that answered and found nothing from one it never reached. The Messages
     transport's skips and timeouts returned None for both."""
 
-    def _model(self):
-        with patch.dict(os.environ, AZURE_CLAUDE_ENV):
-            return RemoteAzureClaude(model="claude-opus-4-8")
-
-    @staticmethod
-    def _never_called(monkeypatch):
-        def explode(*args, **kwargs):
-            raise AssertionError("the endpoint was called")
-
-        monkeypatch.setattr(aiohttp.ClientSession, "post", explode)
-
     @pytest.mark.asyncio
     async def test_a_cooldown_skip_raises_when_asked(self, monkeypatch):
-        model = self._model()
-        model._transport_cooldowns[(model.api_base, "claude-opus-4-8")] = (
-            time.monotonic() + 100
-        )
-        self._never_called(monkeypatch)
+        model = _azure_claude()
+        _cool(model)
+        _never_called(monkeypatch)
         with pytest.raises(ml_models.ProviderUnavailable, match="cooldown"):
             await model._infer(
                 system_prompts=["sys"], prompt="hi", raise_on_unavailable=True
@@ -301,8 +281,8 @@ class TestAzureClaudeUnreachableCallsSayUnavailable:
 
     @pytest.mark.asyncio
     async def test_a_missing_model_skip_raises_when_asked(self, monkeypatch):
-        model = self._model()
-        self._never_called(monkeypatch)
+        model = _azure_claude()
+        _never_called(monkeypatch)
         with patch.object(model, "_model_marked_missing", return_value=True):
             with pytest.raises(ml_models.ProviderUnavailable, match="not served"):
                 await model._infer(
@@ -311,7 +291,7 @@ class TestAzureClaudeUnreachableCallsSayUnavailable:
 
     @pytest.mark.asyncio
     async def test_a_timeout_raises_when_asked(self, monkeypatch):
-        model = self._model()
+        model = _azure_claude()
 
         class _Hang:
             async def __aenter__(self):
@@ -333,11 +313,9 @@ class TestAzureClaudeUnreachableCallsSayUnavailable:
     async def test_a_skip_is_counted_with_its_reason(self, monkeypatch):
         """As the shared transport counts one: an outcome=none call whose
         failure reason is the skip."""
-        model = self._model()
-        model._transport_cooldowns[(model.api_base, "claude-opus-4-8")] = (
-            time.monotonic() + 100
-        )
-        self._never_called(monkeypatch)
+        model = _azure_claude()
+        _cool(model)
+        _never_called(monkeypatch)
         with patch.object(ml_models, "record_ml_call") as call, patch.object(
             ml_models, "record_ml_failure"
         ) as failure:

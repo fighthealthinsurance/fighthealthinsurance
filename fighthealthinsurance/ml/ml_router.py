@@ -1,6 +1,7 @@
 import asyncio
 import random
 import threading
+import time
 from typing import List, Optional, Sequence, Tuple
 
 from loguru import logger
@@ -18,6 +19,23 @@ from fighthealthinsurance.ml.retired_models import retirement
 # The hosted model that backs up our own models for summaries and appeal
 # questions (DeepInfra's Gemma). Named once so the two paths can't drift apart.
 _EXTERNAL_GENERALIST = "google/gemma-4-26B-A4B-it"
+
+# When the "every outside chat model is down" warning last went out: once an
+# hour (the health sweep's cadence) says it, a line per chat turn would not.
+_ROSTER_DOWN_WARN_SECONDS = 3600.0
+_roster_down_warned_at = float("-inf")
+
+
+def _warn_roster_down(names: list[str]) -> None:
+    global _roster_down_warned_at
+    now = time.monotonic()
+    if now - _roster_down_warned_at < _ROSTER_DOWN_WARN_SECONDS:
+        return
+    _roster_down_warned_at = now
+    logger.warning(
+        f"MLRouter: every outside chat model ({names}) is down or out of "
+        f"budget; chat is answered by our own models alone"
+    )
 
 
 class MLRouter(object):
@@ -208,14 +226,19 @@ class MLRouter(object):
                     )
 
     def chat_outside_models(
-        self, names: Optional[Sequence[str]] = None, limit: int = 3
+        self,
+        names: Optional[Sequence[str]] = None,
+        limit: int = 3,
+        warn_if_down: bool = True,
     ) -> list[RemoteModelLike]:
         """The outside models chat asks, in ``names`` order (default
         FHI_CHAT_OUTSIDE_MODELS): the chat-only models, or any registered
         external model by name (Azure's GPT-5.5). Models that are down are
-        left out (failing open like the other filters), and so is any model
-        whose provider's chat budget is spent (never failing open: a spent
-        budget means no call)."""
+        left out, so the next ones on the roster take their places; and so
+        is any model whose provider's chat budget is spent (a spent budget
+        means no call). Only when every roster model is down and none of
+        ours can answer either does this fail open like the other filters,
+        so a wrong health signal cannot leave a turn with no one to ask."""
         from django.conf import settings
 
         from fighthealthinsurance.ml import spend
@@ -232,7 +255,15 @@ class MLRouter(object):
                 )
             if model is not None and model not in found:
                 found.append(model)
-        available = self._filter_available(found, "chat-outside") if found else []
+        available = [m for m in found if self._selectable(m)]
+        if found and not available:
+            if self.chat_internal_selectable():
+                # Expected once outside models are retired or out of credit:
+                # ours answer, and the roster is optional.
+                if warn_if_down:
+                    _warn_roster_down([str(m) for m in found])
+                return []
+            available = self._filter_available(found, "chat-outside")
         within_budget = [
             m
             for m in available
@@ -251,7 +282,9 @@ class MLRouter(object):
         name = str(getattr(settings, "FHI_CHAT_SIDE_BY_SIDE_MODEL", "") or "").strip()
         if not name:
             return None
-        found = self.chat_outside_models([name], limit=1)
+        # One model, not the roster: its being down says nothing about the
+        # others, so it neither warns nor spends the hourly warning.
+        found = self.chat_outside_models([name], limit=1, warn_if_down=False)
         return found[0] if found else None
 
     @staticmethod
@@ -312,6 +345,13 @@ class MLRouter(object):
         burning its whole timeout on every request between sweeps.
         """
         if not model.is_available():
+            return False
+        # A provider whose budget for this use is spent, or that refused for
+        # credit or quota today (ml/spend.py), would answer nothing: its slot
+        # goes to a model that can. The send checks it again (__infer), for a
+        # model chosen before the budget ran out.
+        spend_allows = getattr(model, "_spend_allows", None)
+        if spend_allows is not None and not spend_allows():
             return False
         if not model.health_checked_live:
             # Imported lazily to avoid a circular import (health_status imports
@@ -692,14 +732,7 @@ class MLRouter(object):
         """
         if not use_external:
             return []
-
-        # Only use Perplexity models for citations
-        if "sonar-reasoning" in self.models_by_name:
-            return self.cheapest("sonar-reasoning")
-        if "sonar" in self.models_by_name:
-            return self.cheapest("sonar")
-
-        return []
+        return self._citation_backend()
 
     def partial_find_citation_backends(self) -> list[RemoteModelLike]:
         """
@@ -710,12 +743,18 @@ class MLRouter(object):
         Returns:
             List of RemoteModelLike models suitable for citation finding with partial context
         """
-        # Only use Perplexity models for citations
-        if "sonar-reasoning" in self.models_by_name:
-            return self.cheapest("sonar-reasoning")
-        if "sonar" in self.models_by_name:
-            return self.cheapest("sonar")
+        return self._citation_backend()
 
+    def _citation_backend(self) -> list[RemoteModelLike]:
+        """The Perplexity model citations are found with, or nothing while
+        it is down (retired, refused, out of credit, unreachable). Never
+        fails open: the citation helpers fall back to the supplemental
+        sources, which beats asking a model that cannot answer on every
+        appeal."""
+        for name in ("sonar-reasoning", "sonar"):
+            up = [m for m in self.cheapest(name) if self._selectable(m)]
+            if up:
+                return up
         return []
 
     def get_prior_auth_backends(self) -> list[RemoteModelLike]:
@@ -758,7 +797,9 @@ class MLRouter(object):
         in_force = self.chat_policy_in_force(policy)
         return in_force.external_delay_seconds if in_force is not None else 0.0
 
-    def _chat_externals(self, policy: Optional[ChatPolicy]) -> list[RemoteModelLike]:
+    def _chat_externals(
+        self, policy: Optional[ChatPolicy], explore: bool = True
+    ) -> list[RemoteModelLike]:
         """The outside models for a chat turn: the FHI_CHAT_OUTSIDE_MODELS
         roster when it is set (else best_external_models, as before),
         narrowed by the policy when one is in force. The policy never adds
@@ -774,7 +815,8 @@ class MLRouter(object):
             if in_force is not None and in_force.outside_order:
                 learned = [n for n in in_force.outside_order if n in roster]
                 names = learned + [n for n in roster if n not in learned]
-            externals = self._explore(self.chat_outside_models(names, limit=50))
+            candidates = self.chat_outside_models(names, limit=50)
+            externals = self._explore(candidates) if explore else candidates
         else:
             externals = self.best_external_models()
         if in_force is None:
@@ -839,7 +881,10 @@ class MLRouter(object):
         ]
 
     def get_chat_backends(
-        self, use_external=False, policy: Optional[ChatPolicy] = None
+        self,
+        use_external=False,
+        policy: Optional[ChatPolicy] = None,
+        explore: bool = True,
     ) -> list[RemoteModelLike]:
         """
         Return models for handling chat interactions.
@@ -848,6 +893,11 @@ class MLRouter(object):
             policy: Optional chat routing policy (ml/chat_policy.py). It can
                 only narrow the external models, and only when use_external
                 is on; see chat_policy_in_force for when it is set aside.
+            explore: True for a chat turn: CHAT_OUTSIDE_LIMIT roster models,
+                one of them sometimes swapped for one further down (see
+                _explore). False for the chooser, which compares them all:
+                every roster model that can be asked, in order, the same
+                answer each time it asks.
 
         Returns:
             List of RemoteModelLike models suitable for chat tasks
@@ -864,7 +914,7 @@ class MLRouter(object):
         lead = self._chat_lead()
         models += lead * 2
         if use_external:
-            models += self._chat_externals(policy)
+            models += self._chat_externals(policy, explore=explore)
         # Strongest available internals, not cheapest: the cost ordering was
         # picking the 6 CHEAPEST internal backends for chat, which is the
         # wrong end of the list when strong and weak internals coexist. The
@@ -1063,6 +1113,28 @@ class MLRouter(object):
         if general_only:
             candidates = self._general_purpose_only(candidates, "best-internal")
         return max(candidates, key=lambda m: m.quality())
+
+    def backends_for_name(self, name: str) -> list[RemoteModelLike]:
+        """The instances registered under ``name``, healthy first (see
+        healthy_first)."""
+        return self.healthy_first(self.models_by_name.get(name, []))
+
+    def healthy_first(
+        self, instances: Sequence[RemoteModelLike]
+    ) -> list[RemoteModelLike]:
+        """``instances`` with those that look healthy first (their order
+        otherwise kept), so a call by name goes to one that can answer
+        before one the health signals have down. Every instance stays
+        listed, since a healthy one may still fail, and one whose signals
+        cannot be read counts as healthy."""
+
+        def down(model: RemoteModelLike) -> bool:
+            try:
+                return not self._selectable(model)
+            except Exception:
+                return False
+
+        return sorted(instances, key=down)
 
     def cheapest(self, name: str) -> list[RemoteModelLike]:
         try:

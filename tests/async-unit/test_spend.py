@@ -2,8 +2,9 @@
 
 TypeSafe's month is shared, with a reserve kept for letters that chat may
 never spend. Chat's shares (TypeSafe and DeepInfra) are spread by day. A
-provider that refuses for credit or quota is paused for the rest of the UTC
-day. The rules read memory only; these tests load the ledger directly.
+provider that refuses for credit or quota is paused for every use for the
+rest of the UTC day. The rules read memory only; these tests load the ledger
+directly.
 """
 
 import datetime
@@ -122,6 +123,18 @@ class TestTypeSafeBudget:
             assert not spend.allows(spend.TYPESAFE, spend.LETTERS)
             assert spend.allows(spend.DEEPINFRA, spend.CHAT)
 
+    def test_an_unread_ledger_holds_back_no_unbudgeted_provider(self):
+        """Anthropic, Claude on Azure and Perplexity have no budget to
+        judge, so an assistant appeal is not kept from them while the
+        ledger is unread, as it is from DeepInfra's capped share."""
+        with override_settings(FHI_SPEND_BACKGROUND=True), patch.object(
+            spend._Ledger, "_ensure_worker"
+        ):
+            spend._ledger.reset_for_tests()
+            assert not spend.allows(spend.DEEPINFRA, spend.ASSISTANT)
+            for provider in spend.UNBUDGETED:
+                assert spend.allows(provider, spend.ASSISTANT), provider
+
     def test_a_copy_that_stopped_refreshing_counts_as_unread(self):
         """Another pod may have spent the month or paused TypeSafe: a copy
         the worker has not refreshed for STALE_SECONDS refuses TypeSafe and
@@ -190,7 +203,7 @@ class TestOutsideBudgets:
 
 
 class TestPauses:
-    def test_a_quota_refusal_pauses_that_use_for_the_day(self):
+    def test_a_pause_for_one_use_leaves_the_others(self):
         _load()
         spend.pause(spend.DEEPINFRA, spend.CHAT)
         assert not spend.allows(spend.DEEPINFRA, spend.CHAT)
@@ -209,6 +222,16 @@ class TestPauses:
     def test_yesterdays_pause_is_over(self):
         _load(**{spend.counter(spend.PAUSED, "typesafe:*"): {EARLIER: 1}})
         assert spend.allows(spend.TYPESAFE, spend.LETTERS)
+
+    def test_active_pauses_names_todays_pauses_from_here_and_other_pods(self):
+        _load(
+            **{
+                spend.counter(spend.PAUSED, "typesafe:*"): {TODAY: 1},
+                spend.counter(spend.PAUSED, "azure:chat"): {EARLIER: 1},
+            }
+        )
+        spend.pause(spend.DEEPINFRA)
+        assert spend.active_pauses() == ["deepinfra:*", "typesafe:*"]
 
     @pytest.mark.parametrize(
         "status,body,refused",
@@ -231,6 +254,19 @@ class TestPauses:
             (429, "You exceeded your current quota, please check your plan", True),
             (429, "Your balance is updated nightly; retry in 5s", False),
             (500, "quota", False),
+            # Anthropic answers an empty balance with a 400, Perplexity with a
+            # 401 insufficient_quota.
+            (400, "Your credit balance is too low to access the Anthropic API", True),
+            (401, '{"error":{"type":"insufficient_quota"}}', True),
+            (403, '{"error": {"code": "insufficient_quota"}}', True),
+            # Generic wording on a 400/401/403 may be the request quoted
+            # back (a denial says "insufficient funds"); only 402/429 read it.
+            (403, "insufficient balance", False),
+            (400, "Denied: insufficient funds in the HSA", False),
+            (429, "insufficient balance", True),
+            (400, "You have reached your specified API usage limits", True),
+            (400, "Bad request", False),
+            (401, "Invalid API key", False),
         ],
     )
     def test_what_counts_as_a_quota_refusal(self, status, body, refused):
@@ -245,10 +281,18 @@ class TestTypeSafeRequests:
         TYPESAFE_API_URL="https://typesafe.invalid/v1/systemone",
     )
 
+    @pytest.fixture(autouse=True)
+    def _no_cooldown(self):
+        # A 401 also starts typesafe's process-wide cooldown.
+        typesafe.reset_cooldown_for_tests()
+        yield
+        typesafe.reset_cooldown_for_tests()
+
     class _Response:
-        def __init__(self, status, payload):
+        def __init__(self, status, payload, body=""):
             self.status = status
             self.payload = payload
+            self.body = body
 
         async def __aenter__(self):
             return self
@@ -259,10 +303,14 @@ class TestTypeSafeRequests:
         async def json(self):
             return self.payload
 
+        async def text(self, **kwargs):
+            return self.body
+
     class _Session:
-        def __init__(self, status=200, payload=None):
+        def __init__(self, status=200, payload=None, body=""):
             self.status = status
             self.payload = payload or {"answers": {}, "usage": {"input_tokens": 10_000}}
+            self.body = body
             self.posts = 0
 
         def __call__(self, *args, **kwargs):
@@ -276,7 +324,7 @@ class TestTypeSafeRequests:
 
         def post(self, *args, **kwargs):
             self.posts += 1
-            return TestTypeSafeRequests._Response(self.status, self.payload)
+            return TestTypeSafeRequests._Response(self.status, self.payload, self.body)
 
     @pytest.mark.asyncio
     async def test_a_spent_budget_is_refused_before_anything_is_sent(self):
@@ -311,3 +359,35 @@ class TestTypeSafeRequests:
                 await typesafe.ask("state", {}, timeout_seconds=1, use=spend.LETTERS)
         assert not spend.allows(spend.TYPESAFE, spend.LETTERS)
         assert not spend.allows(spend.TYPESAFE, spend.CHAT)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "status,body",
+        [
+            (400, "Your credit balance is too low"),
+            (401, '{"error": {"type": "insufficient_quota"}}'),
+            (429, '{"error": {"code": "insufficient_quota"}}'),
+        ],
+    )
+    async def test_a_quota_refusal_under_another_status_pauses_typesafe_for_every_use(
+        self, status, body
+    ):
+        _load()
+        with override_settings(**self.SETTINGS), patch.object(
+            typesafe.aiohttp, "ClientSession", self._Session(status=status, body=body)
+        ):
+            with pytest.raises(typesafe.TypeSafeError):
+                await typesafe.ask("state", {}, timeout_seconds=1, use=spend.CHAT)
+        assert spend.paused(spend.TYPESAFE, "*")
+
+    @pytest.mark.asyncio
+    async def test_a_passing_rate_limit_pauses_nothing(self):
+        _load()
+        with override_settings(**self.SETTINGS), patch.object(
+            typesafe.aiohttp,
+            "ClientSession",
+            self._Session(status=429, body="Too many requests, slow down"),
+        ):
+            with pytest.raises(typesafe.TypeSafeError):
+                await typesafe.ask("state", {}, timeout_seconds=1, use=spend.CHAT)
+        assert spend.allows(spend.TYPESAFE, spend.LETTERS)

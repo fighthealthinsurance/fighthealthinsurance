@@ -61,3 +61,27 @@ async def test_content_parts_are_joined(monkeypatch, make_fake_model_post):
     result = await model._infer(system_prompts=["sys"], prompt="hi")
     assert result is not None
     assert result[0] == "OK"
+
+
+@pytest.mark.asyncio
+async def test_a_null_text_part_is_no_text(monkeypatch, make_fake_model_post):
+    """A text part whose text is null used to be coerced to the string
+    "None" and returned as the model's answer."""
+    null_part = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": None}],
+                },
+                "finish_reason": "stop",
+            }
+        ]
+    }
+    model = RemoteFullOpenLike("http://parts.example/v1", "tok", "p2")
+    monkeypatch.setattr(
+        aiohttp.ClientSession,
+        "post",
+        make_fake_model_post(200, "{}", json_data=null_part),
+    )
+    assert await model._infer(system_prompts=["sys"], prompt="hi") is None

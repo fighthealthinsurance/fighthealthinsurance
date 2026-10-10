@@ -28,9 +28,11 @@ The budgets (settings, all in US dollars):
   work for these appeals counts in the shared month and, like chat, never
   spends the letters reserve. Setting either to 0 removes that cap.
 
-A provider that refuses for credit or quota (HTTP 402, or a 429 naming the
-quota) is paused for the rest of the UTC day with :func:`pause`, on every
-pod, instead of being asked again on every turn.
+A provider that refuses for credit or quota (HTTP 402, or a 400, 401, 403
+or 429 whose body says so) is paused for every use for the rest of the UTC
+day with :func:`pause`, on every pod, instead of being asked again on every
+turn. Anthropic, Claude on Azure and Perplexity are not budgeted or counted
+here; they are providers only so that pause can reach them.
 
 How it stays off the request path: :func:`allows` reads a per-process copy
 of this month's counters and never touches the database. :func:`record`
@@ -61,6 +63,7 @@ from typing import (
     Callable,
     Dict,
     Iterator,
+    List,
     Mapping,
     Optional,
     Tuple,
@@ -74,6 +77,12 @@ from loguru import logger
 TYPESAFE = "typesafe"
 DEEPINFRA = "deepinfra"
 AZURE = "azure"
+ANTHROPIC = "anthropic"
+AZURE_ANTHROPIC = "azure-anthropic"
+PERPLEXITY = "perplexity"
+# Providers here only so a credit refusal can pause them; nothing is
+# budgeted or counted for them.
+UNBUDGETED = frozenset({ANTHROPIC, AZURE_ANTHROPIC, PERPLEXITY})
 FHI = "fhi"  # our own generations, counted not priced
 CHAT = "chat"
 LETTERS = "letters"
@@ -204,7 +213,7 @@ def typesafe_use(default: str) -> str:
     return ASSISTANT if assistant_work() else default
 
 
-# Phrases in a 429 body that mean the account is out of credit or quota.
+# Phrases in an error body that mean the account is out of credit or quota.
 QUOTA_PHRASES = (
     "insufficient_quota",
     "exceeded your current quota",
@@ -214,21 +223,40 @@ QUOTA_PHRASES = (
     "insufficient funds",
     "out of credits",
     "billing hard limit",
+    # Anthropic's "You have reached your specified API usage limits".
+    "api usage limits",
+)
+# The ones a provider's own error code or wording uses. A 400, 401 or 403 can
+# quote the request back, and a denial's text says "insufficient funds": only
+# these count there.
+PROVIDER_QUOTA_PHRASES = (
+    "insufficient_quota",
+    "exceeded your current quota",
+    "credit balance is too low",
+    "billing hard limit",
+    "api usage limits",
 )
 
 
 def quota_refusal(status: int, body: str) -> bool:
     """Whether a provider's error means credit or quota ran out, not a
-    passing rate limit: HTTP 402, or a 429 whose body says so."""
+    passing rate limit: HTTP 402; a 429 whose body says so; or a 400, 401 or
+    403 in the provider's own words (Anthropic answers an empty balance with
+    a 400, Perplexity with a 401 insufficient_quota)."""
     if status == 402:
         return True
-    if status != 429:
+    phrases: Tuple[str, ...]
+    if status == 429:
+        phrases = QUOTA_PHRASES
+    elif status in (400, 401, 403):
+        phrases = PROVIDER_QUOTA_PHRASES
+    else:
         return False
     text = (body or "").lower()
     # Whole phrases only. A passing rate limit's body can mention quota too:
     # Azure OpenAI's links to aka.ms/oai/quotaincrease, and pausing on that
     # would take the model out of chat for the rest of the day.
-    return any(phrase in text for phrase in QUOTA_PHRASES)
+    return any(phrase in text for phrase in phrases)
 
 
 def counter(provider: str, use: str) -> str:
@@ -540,6 +568,9 @@ def allows(provider: str, use: str) -> bool:
     try:
         if paused(provider, use) or paused(provider, "*"):
             return False
+        if provider in UNBUDGETED:
+            # No budget to judge, so an unread ledger holds nothing back.
+            return True
         view = _ledger.snapshot()
         if use == ASSISTANT and not view.loaded:
             # An assistant appeal can wait; a person in chat cannot (the fail
@@ -593,7 +624,7 @@ def allows(provider: str, use: str) -> bool:
     except Exception as e:
         logger.warning(f"Spend check failed: {type(e).__name__}")
         # The same fail rule as an unread ledger.
-        return provider != TYPESAFE and use != ASSISTANT
+        return provider in UNBUDGETED or (provider != TYPESAFE and use != ASSISTANT)
 
 
 def record(provider: str, use: str, amount: int) -> None:
@@ -605,7 +636,7 @@ def record(provider: str, use: str, amount: int) -> None:
         logger.warning(f"Spend not recorded: {type(e).__name__}")
 
 
-def pause(provider: str, use: str = "*") -> None:
+def pause(provider: str, use: str = "*", reason: str = "") -> None:
     """Stop asking ``provider`` for ``use`` (every use with "*") until the
     next UTC day, here at once and on other pods at their next refresh."""
     try:
@@ -614,7 +645,8 @@ def pause(provider: str, use: str = "*") -> None:
             return
         _ledger.pause_locally(name)
         _ledger.add(counter(PAUSED, name), 1)
-        logger.warning(f"Paused {name} for the rest of the UTC day")
+        because = f" ({reason})" if reason else ""
+        logger.warning(f"Paused {name} for the rest of the UTC day{because}")
     except Exception as e:
         logger.warning(f"Spend pause not recorded: {type(e).__name__}")
 
@@ -718,6 +750,28 @@ def release_generation(reservation: Reservation) -> bool:
     except Exception as e:
         logger.warning(f"Spend release failed: {type(e).__name__}")
         return False
+
+
+def active_pauses() -> List[str]:
+    """The "<provider>:<use>" counters paused today ("<provider>:*" for
+    every use), on any pod, for the staff pages. Never raises."""
+    try:
+        view = _ledger.snapshot()
+        today = _today()
+        prefix = PAUSED + ":"
+        names = {
+            name[len(prefix) :]
+            for name in view.by_day
+            if name.startswith(prefix) and view.day_total(name, today) > 0
+        }
+        with _ledger._lock:
+            names.update(
+                name for name, day in _ledger._local_pauses.items() if day == today
+            )
+        return sorted(names)
+    except Exception as e:
+        logger.warning(f"Spend pauses not read: {type(e).__name__}")
+        return []
 
 
 def month_summary() -> Dict[str, float]:

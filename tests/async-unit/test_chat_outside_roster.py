@@ -167,14 +167,15 @@ class ProviderSpendTest(SimpleTestCase):
         model._record_spend("x", {"object": "error", "usage": {"estimated_cost": 1}})
         self.assertEqual(spend._ledger.snapshot().by_day, {})
 
-    def test_a_quota_refusal_pauses_the_provider_for_that_use(self):
+    def test_a_quota_refusal_pauses_the_provider_for_every_use(self):
         from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
 
+        # Credit is account-wide: a refusal met in chat holds for appeals too.
         model = self._deepinfra()
         with ml_call_purpose("chat"):
             model._note_spend_refusal(402, "")
         self.assertFalse(spend.allows(spend.DEEPINFRA, spend.CHAT))
-        self.assertTrue(spend.allows(spend.DEEPINFRA, spend.OTHER))
+        self.assertFalse(spend.allows(spend.DEEPINFRA, spend.OTHER))
 
 
 class SendGuardTest(SimpleTestCase):

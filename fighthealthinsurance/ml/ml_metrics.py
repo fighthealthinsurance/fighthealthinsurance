@@ -29,6 +29,7 @@ from typing import (
     Coroutine,
     Iterable,
     Iterator,
+    Optional,
     ParamSpec,
     TypeVar,
 )
@@ -66,8 +67,9 @@ ML_CALLS_TOTAL = Counter(
 # separate counter from ML_CALLS_TOTAL: a failed call shows up once there
 # (outcome=none/timeout/error) and once here with its classified reason
 # (transport_error, http_error, bad_body, no_text, context_overflow, missing_model,
-# skipped_missing_model, skipped_cooling, unexpected_error). The two skips are
-# calls not made because the pair failed moments ago; counting them as plain
+# skipped_missing_model, skipped_refused, skipped_budget, skipped_cooling,
+# unexpected_error). The skips are calls not made because the pair failed
+# moments ago (or its provider's budget is spent); counting them as plain
 # outcome=none would let the failure rate fall during the very outage that
 # started the cooldown.
 ML_CALL_FAILURES_TOTAL = Counter(
@@ -98,7 +100,7 @@ ML_RESULTS_TOTAL = Counter(
     "fhi_ml_results_total",
     "Checked appeal inferences by what became of the completion (accepted, "
     "rejected_bad_result, no_completion, error, rejected_repetition, "
-    "skipped_deadline).",
+    "skipped_deadline, unavailable).",
     labelnames=("model", "infer_type", "result"),
 )
 _RESULTS = frozenset(
@@ -109,6 +111,7 @@ _RESULTS = frozenset(
         "error",
         "rejected_repetition",
         "skipped_deadline",
+        "unavailable",
     }
 )
 
@@ -193,6 +196,33 @@ def ml_call_purpose(purpose: str) -> Iterator[None]:
         ML_CALL_PURPOSE.reset(token)
 
 
+# A purpose for the metric labels only, which the labelled entry points
+# awaited inside cannot replace: generate_chat_response sets "chat" for its
+# own calls, so the chooser's synthetic chat candidates were counted as
+# failing user chat turns. ML_CALL_PURPOSE is left as the entry point set
+# it, so spend.current_use still charges (and caps) those calls by it.
+ML_CALL_PURPOSE_OVERRIDE: contextvars.ContextVar[Optional[str]] = (
+    contextvars.ContextVar("fhi_ml_call_purpose_override", default=None)
+)
+
+
+@contextlib.contextmanager
+def ml_call_purpose_override(purpose: str) -> Iterator[None]:
+    """Label every model call made inside this block ``purpose`` in the
+    metrics, whatever purpose the entry points it goes through set."""
+    token = ML_CALL_PURPOSE_OVERRIDE.set(_purpose_label(purpose))
+    try:
+        yield
+    finally:
+        ML_CALL_PURPOSE_OVERRIDE.reset(token)
+
+
+def _metric_purpose() -> str:
+    """The purpose label for a call recorded now (see ML_CALL_PURPOSE_OVERRIDE)."""
+    override = ML_CALL_PURPOSE_OVERRIDE.get()
+    return override if override is not None else ML_CALL_PURPOSE.get()
+
+
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
 
@@ -226,13 +256,13 @@ def record_ml_call(
     """Record one completed model call. ``model`` is the registry name when the
     router stamped one and ``endpoint`` the host[:port] it went to
     (RemoteModelLike._metric_identity), ``leg`` the side of a primary/backup
-    pair; the purpose comes from the ML_CALL_PURPOSE in scope. Never
-    raises."""
+    pair; the purpose comes from the ML_CALL_PURPOSE in scope (or its
+    override, see ML_CALL_PURPOSE_OVERRIDE). Never raises."""
     try:
         name = _safe_label(model)
         where = _safe_label(endpoint)
         leg = _leg_label(leg)
-        purpose = ML_CALL_PURPOSE.get()
+        purpose = _metric_purpose()
         ML_CALLS_TOTAL.labels(
             model=name, endpoint=where, leg=leg, purpose=purpose, outcome=outcome
         ).inc()
@@ -252,7 +282,7 @@ def record_ml_failure(
             model=_safe_label(model),
             endpoint=_safe_label(endpoint),
             leg=_leg_label(leg),
-            purpose=ML_CALL_PURPOSE.get(),
+            purpose=_metric_purpose(),
             reason=reason,
         ).inc()
     except Exception:  # pragma: no cover

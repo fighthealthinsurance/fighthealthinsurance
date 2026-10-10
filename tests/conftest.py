@@ -282,10 +282,13 @@ def _fresh_spend_ledger():
     """Each test starts with no recorded provider spend and no pauses
     (ml/spend.py keeps them in process memory when its worker is off)."""
     try:
-        from fighthealthinsurance.ml import spend
+        from fighthealthinsurance.ml import spend, typesafe
     except Exception:
         yield
         return
     spend._ledger.reset_for_tests()
+    # TypeSafe's cooldown after a refusal is process-wide too.
+    typesafe.reset_cooldown_for_tests()
     yield
     spend._ledger.reset_for_tests()
+    typesafe.reset_cooldown_for_tests()

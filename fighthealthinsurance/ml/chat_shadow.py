@@ -407,7 +407,13 @@ async def score_turn(
         raise
     except Exception as e:
         timed_out = isinstance(e, (TimeoutError, asyncio.TimeoutError))
-        logger.warning(f"chat shadow scoring unavailable: {type(e).__name__}")
+        # A cooldown skip was announced once when the cooldown started.
+        log = (
+            logger.debug
+            if isinstance(e, typesafe.TypeSafeCoolingDown)
+            else logger.warning
+        )
+        log(f"chat shadow scoring unavailable: {type(e).__name__}")
         return ShadowResult(
             outcome=TIMEOUT if timed_out else FAILED,
             failure=letter_quality.failure_summary(e),

@@ -92,7 +92,7 @@ class TestMissingModelCooldown:
         # No ERROR-level noise for this operational condition.
         assert cap.messages("ERROR") == []
         # The skip is visible at DEBUG for traceability.
-        assert any("flagged as not served" in m for m in cap.messages("DEBUG"))
+        assert any("not served here" in m for m in cap.messages("DEBUG"))
 
     @pytest.mark.asyncio
     async def test_cooldown_expiry_probes_endpoint_again(

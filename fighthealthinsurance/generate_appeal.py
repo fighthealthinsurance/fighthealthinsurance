@@ -1114,7 +1114,7 @@ def _model_context_limit(model_name: Optional[str]) -> Optional[int]:
     """
     if not model_name:
         return None
-    backends = ml_router.models_by_name.get(model_name)
+    backends = ml_router.healthy_first(ml_router.models_by_name.get(model_name, []))
     if not backends:
         return None
     for backend in backends:
@@ -1340,7 +1340,13 @@ def _generated_to_appeals_text(
             # from ordinary backend downtime.
             failed = True
             error_detail = describe_model_error(e)
-            if isinstance(e, MODEL_TRANSPORT_ERRORS):
+            if isinstance(e, ProviderUnavailable):
+                # Known gone, refused, out of credit or cooling down: said
+                # once when it was found out, and the attempt row carries it.
+                logger.debug(
+                    f"Appeal generation via {model_name} skipped -- {error_detail}"
+                )
+            elif isinstance(e, MODEL_TRANSPORT_ERRORS):
                 logger.warning(
                     f"Appeal generation via {model_name} failed -- {error_detail}"
                 )
@@ -3109,7 +3115,9 @@ class AppealGenerator(object):
                     )
                 )
                 return [], ""
-            model_backends = ml_router.models_by_name[model_name]
+            model_backends = ml_router.healthy_first(
+                ml_router.models_by_name[model_name]
+            )
             if prompt is None:
                 logger.debug(f"get_model_result: no prompt for {model_name}, skipping")
                 recorder.record(

@@ -4,14 +4,21 @@ The request is the documented System One shape (docs.typesafe.ai/api): a
 ``state``, a ``model`` and the ``questions``, with the key as a Bearer token.
 It carries the API key and the redacted text, so it only ever goes over https
 and never follows a redirect. The one thing a caller may learn from a failed
-call is the HTTP status: the body is never read, because an error body could
-quote the text back.
+call is the HTTP status: the body is never surfaced, because an error body
+could quote the text back (it is read only to tell a credit or quota refusal).
+A refused key, an unknown model or an unreachable endpoint holds every use
+off the wire for a cooldown.
 """
 
 import asyncio
 import datetime
+import os
+import socket
+import ssl
+from types import SimpleNamespace
 from unittest.mock import patch
 
+import aiohttp
 import pytest
 from django.conf import settings
 from django.test import override_settings
@@ -19,15 +26,20 @@ from django.test import override_settings
 from fighthealthinsurance.ml import denial_triage, letter_quality, typesafe
 
 SETTINGS = dict(
-    TYPESAFE_API_KEY="test-key", TYPESAFE_API_URL="https://typesafe.invalid/v1/systemone"
+    TYPESAFE_API_KEY="test-key",
+    TYPESAFE_API_URL="https://typesafe.invalid/v1/systemone",
+    # Pinned, so a developer's environment cannot change the cooldown tests.
+    FHI_TYPESAFE_COOLDOWN_SECONDS=900,
 )
 
 
 class _FakeResponse:
-    def __init__(self, status, payload=None):
+    def __init__(self, status, payload=None, body=""):
         self.status = status
         self.json_calls = 0
+        self.text_calls = 0
         self.payload = {"answers": {}} if payload is None else payload
+        self.body = body
 
     async def __aenter__(self):
         return self
@@ -39,12 +51,18 @@ class _FakeResponse:
         self.json_calls += 1
         return self.payload
 
+    async def text(self, **kwargs):
+        self.text_calls += 1
+        return self.body
+
 
 class _FakeSession:
-    """Stands in for aiohttp.ClientSession: the constructor and the context."""
+    """Stands in for aiohttp.ClientSession: the constructor and the context.
+    With ``error``, the post fails the way an unreachable endpoint does."""
 
-    def __init__(self, status=200, payload=None):
-        self.response = _FakeResponse(status, payload)
+    def __init__(self, status=200, payload=None, body="", error=None):
+        self.response = _FakeResponse(status, payload, body)
+        self.error = error
         self.posted = []
         self.opened = 0
         self.post_kwargs = {}
@@ -60,12 +78,22 @@ class _FakeSession:
         return False
 
     def post(self, url, json=None, headers=None, **kwargs):
+        if self.error is not None:
+            raise self.error
         self.posted.append((url, json, headers))
         self.post_kwargs = kwargs
         return self.response
 
 
 QUESTIONS = {"is_urgent": {"type": "noul", "instructions": "Does this convey urgency?"}}
+
+
+@pytest.fixture(autouse=True)
+def _no_cooldown():
+    """The cooldown is process-wide: no test inherits or leaves one."""
+    typesafe.reset_cooldown_for_tests()
+    yield
+    typesafe.reset_cooldown_for_tests()
 
 
 def _ask(session, state="doc", **overrides):
@@ -113,6 +141,7 @@ def test_the_body_is_never_read_on_a_failure():
     with pytest.raises(typesafe.TypeSafeError):
         _ask(session)
     assert session.response.json_calls == 0
+    assert session.response.text_calls == 0
 
 
 def test_redirects_are_never_followed():
@@ -175,13 +204,148 @@ def test_a_model_setting_that_is_not_a_model_name_is_refused_before_a_session(va
 
 @pytest.mark.parametrize("status", [401, 422, 429, 529])
 def test_each_documented_error_carries_its_status_and_nothing_else(status):
-    session = _FakeSession(status, payload={"detail": "state: the text quoted back"})
+    quoted = "state: the text quoted back"
+    session = _FakeSession(status, payload={"detail": quoted}, body=quoted)
     with pytest.raises(typesafe.TypeSafeError) as info:
         _ask(session, state="Jane Q. Doe was denied")
     assert info.value.status == status
     assert str(info.value) == f"HTTP {status}"
     assert info.value.args == (f"HTTP {status}",)
     assert session.response.json_calls == 0
+
+
+def _connector_error(error_class, os_error):
+    """An aiohttp connect-phase error; the key only needs what its str() reads."""
+    key = SimpleNamespace(host="typesafe.invalid", port=443, is_ssl=True, ssl=True)
+    return error_class(key, os_error)
+
+
+class _Clock:
+    """Stands in for the time module the cooldown reads."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+
+class TestCooldown:
+    """A refused key, an unknown or retired model, or an endpoint that cannot
+    be reached fails every request the same way, so every use is held off
+    the wire for FHI_TYPESAFE_COOLDOWN_SECONDS."""
+
+    @pytest.mark.parametrize("status", [401, 403, 404, 410])
+    def test_a_refused_key_or_unknown_model_holds_the_next_request_back(self, status):
+        with pytest.raises(typesafe.TypeSafeError):
+            _ask(_FakeSession(status))
+        session = _FakeSession()
+        with pytest.raises(typesafe.TypeSafeCoolingDown):
+            _ask(session)
+        assert session.opened == 0 and session.posted == []
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            _connector_error(aiohttp.ClientConnectorError, ConnectionRefusedError(111, "refused")),
+            _connector_error(aiohttp.ClientConnectorDNSError, socket.gaierror(-2, "not known")),
+            _connector_error(aiohttp.ClientConnectorSSLError, ssl.SSLError(1, "handshake")),
+        ],
+        ids=["refused", "dns", "tls"],
+    )
+    def test_an_unreachable_endpoint_holds_the_next_request_back(self, error):
+        with pytest.raises(aiohttp.ClientConnectorError):
+            _ask(_FakeSession(error=error))
+        session = _FakeSession()
+        with pytest.raises(typesafe.TypeSafeCoolingDown):
+            _ask(session)
+        assert session.opened == 0 and session.posted == []
+
+    def test_the_skip_carries_the_status_that_started_it(self):
+        """So the status page keeps naming the cause during the cooldown."""
+        with pytest.raises(typesafe.TypeSafeError):
+            _ask(_FakeSession(401))
+        with pytest.raises(typesafe.TypeSafeCoolingDown) as info:
+            _ask(_FakeSession())
+        assert letter_quality.failure_summary(info.value) == "HTTP 401"
+
+    def test_the_skip_after_an_unreachable_endpoint_carries_no_status(self):
+        error = _connector_error(aiohttp.ClientConnectorError, ConnectionRefusedError(111, "x"))
+        with pytest.raises(aiohttp.ClientConnectorError):
+            _ask(_FakeSession(error=error))
+        with pytest.raises(typesafe.TypeSafeCoolingDown) as info:
+            _ask(_FakeSession())
+        assert info.value.status is None
+
+    @pytest.mark.parametrize("status", [400, 422, 429, 503])
+    def test_an_error_one_request_can_earn_starts_no_cooldown(self, status):
+        with pytest.raises(typesafe.TypeSafeError):
+            _ask(_FakeSession(status))
+        session = _FakeSession()
+        _ask(session)
+        assert len(session.posted) == 1
+
+    def test_it_ends_after_the_configured_window(self):
+        clock = _Clock()
+        window = dict(FHI_TYPESAFE_COOLDOWN_SECONDS=60)
+        with patch.object(typesafe, "time", clock):
+            with pytest.raises(typesafe.TypeSafeError):
+                _ask(_FakeSession(404), **window)
+            clock.now += 59
+            with pytest.raises(typesafe.TypeSafeCoolingDown):
+                _ask(_FakeSession(), **window)
+            clock.now += 2
+            session = _FakeSession()
+            _ask(session, **window)
+        assert len(session.posted) == 1
+
+    def test_an_unreachable_endpoint_cools_for_less_than_a_refusal(self):
+        """A failed connect is often a passing blip: it holds requests back
+        for CONNECT_COOLDOWN_SECONDS, not the refusal window."""
+        clock = _Clock()
+        error = _connector_error(aiohttp.ClientConnectorError, ConnectionRefusedError(111, "x"))
+        with patch.object(typesafe, "time", clock):
+            with pytest.raises(aiohttp.ClientConnectorError):
+                _ask(_FakeSession(error=error))
+            clock.now += typesafe.CONNECT_COOLDOWN_SECONDS + 1
+            session = _FakeSession()
+            _ask(session)
+        assert len(session.posted) == 1
+
+    def test_an_answer_ends_the_cooldown(self):
+        """A request sent before the cooldown began that then gets a 200
+        shows TypeSafe is back: the next request is sent."""
+        with pytest.raises(typesafe.TypeSafeError):
+            _ask(_FakeSession(401))
+        # Sent before the cooldown began, so not held back; answered 200.
+        with patch.object(typesafe, "_refuse_while_cooling"):
+            _ask(_FakeSession())
+        session = _FakeSession()
+        _ask(session)
+        assert len(session.posted) == 1
+
+    def test_the_start_is_one_warning_and_each_skip_a_debug_line(self, log_capture):
+        with log_capture() as cap:
+            with pytest.raises(typesafe.TypeSafeError):
+                _ask(_FakeSession(401))
+            for _ in range(3):
+                with pytest.raises(typesafe.TypeSafeCoolingDown):
+                    _ask(_FakeSession())
+        assert len([m for m in cap.messages("WARNING") if "TypeSafe" in m]) == 1
+        assert len([m for m in cap.messages("DEBUG") if "not asked" in m]) == 3
+
+    def test_the_window_comes_from_the_environment_when_not_set(self):
+        with patch.dict(os.environ, {"FHI_TYPESAFE_COOLDOWN_SECONDS": "60"}), override_settings(
+            FHI_TYPESAFE_COOLDOWN_SECONDS=None
+        ):
+            assert typesafe.cooldown_seconds() == 60.0
+
+    @pytest.mark.parametrize("value", [None, "", "soon", "-5", "nan", "inf"])
+    def test_an_unset_or_unusable_window_is_fifteen_minutes(self, value):
+        with patch.dict(os.environ, {"FHI_TYPESAFE_COOLDOWN_SECONDS": ""}), override_settings(
+            FHI_TYPESAFE_COOLDOWN_SECONDS=value
+        ):
+            assert typesafe.cooldown_seconds() == 900.0
 
 
 class TestReportedModel:
