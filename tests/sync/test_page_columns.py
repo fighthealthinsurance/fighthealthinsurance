@@ -31,7 +31,7 @@ ON_A_COLUMN = {
     "media_references.html": "fhi-page-wide",
     "microsite_directory.html": "fhi-page-wide",
     "fax_thankyou.html": "fhi-page-wide",
-    "about_ai.html": "fhi-page",
+    "about_ai.html": "fhi-page-wide",
     "faxfollowup.html": "fhi-page",
     "thankyou.html": "fhi-page",
     "followup_thankyou.html": "fhi-page",

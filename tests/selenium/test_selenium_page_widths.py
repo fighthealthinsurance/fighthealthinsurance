@@ -52,7 +52,7 @@ PAGES = {
     "/media-references": "wide",
     "/treatments/": "wide",
     "/remove_data": "reading",
-    "/about-ai": "reading",
+    "/about-ai": "wide",
     "/faq/": "reading",
     "/contact": "reading",
     "/privacy_policy": "reading",

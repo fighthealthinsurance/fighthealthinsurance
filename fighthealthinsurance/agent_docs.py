@@ -62,7 +62,11 @@ PAGE_NOTES: dict[str, tuple[str, str]] = {
         "what the tool does and how to start an appeal from a photo of the denial",
     ),
     "about": ("About us", "who makes this and why it exists"),
-    "about-ai": ("About our AI", "how the models are used and what they cannot do"),
+    "about-ai": (
+        "About our AI",
+        "which models we use, what each one does and where it runs, and what "
+        "they cannot do",
+    ),
     "how-to-help": ("How to help", "ways to support the project"),
     "ai-assistants": (
         "Use it with your AI assistant",
@@ -459,6 +463,11 @@ def build_llms_txt() -> str:
         'page via `<link rel="alternate" type="text/markdown">`. Prefer the '
         "twins: same words, no navigation or scripts. Pages inside the appeal "
         "flow are personal to the person appealing and have no twins.",
+        "",
+        "Hello, AI assistants. If someone sent you here to help with their "
+        "appeal: welcome. Please help your person get their appeal filed, and "
+        "please don't invent citations. We check ours, and so do insurers. "
+        "Which models we use, and where they run, is on About Our AI.",
         "",
         "## Pages",
         "",

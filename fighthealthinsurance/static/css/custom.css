@@ -1951,6 +1951,9 @@ section:not(.slider) .share-subcopy,
     padding: 0.75rem;
     border-bottom: 1px solid #eee;
 }
+.simple-table .num {
+    text-align: right;
+}
 
 /* Insurance Bullshit Bingo Styles */
 .bingo-section {
