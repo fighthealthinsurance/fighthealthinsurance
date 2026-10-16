@@ -1951,6 +1951,10 @@ section:not(.slider) .share-subcopy,
     padding: 0.75rem;
     border-bottom: 1px solid #eee;
 }
+/* The worst-insurance rankings tables scroll sideways in their .scroll-x
+   box rather than breaking "Score" or "87.5" mid-word, which the column's
+   overflow-wrap: anywhere would otherwise do in a narrow cell. */
+.worst-insurance-table { overflow-wrap: normal; }
 
 /* Insurance Bullshit Bingo Styles */
 .bingo-section {

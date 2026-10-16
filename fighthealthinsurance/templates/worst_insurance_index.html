@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Worst Health Insurance Company by State - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Worst Health Insurance Company by State - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Monthly rankings of the worst-behaving health insurance company in each state, computed from public regulator data (claim denial rates, confirmed complaints, overturned appeals, enforcement actions) normalized by insured population.{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="worst-insurance-hero" class="slider">
+    <div class="item item-first fhi-hero-short">
+        <div class="caption">
+            <div class="hero-inner">
+                <h3 class="hero-tagline">Public Regulator Data, Ranked</h3>
+                <h1 class="hero-headline">The Worst Health Insurance Company in Each State</h1>
+                <p class="hero-subcopy">Updated monthly from government data. We estimate the hours of patients' and providers' time each insurer's denials cost people &mdash; from claim denial rates, overturned appeals, confirmed complaints, and enforcement actions. Every number is an estimate from public data.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Report meta -->
+<section id="report-meta" class="fhi-section fhi-section-tight">
+    <div class="fhi-column fhi-stack fhi-column-centred">
+        <p class="fhi-lead">
+            Rankings as of <strong>{{ report.period }}</strong>
+            {% if report.window_start %}(data window {{ report.window_start }} to {{ report.window_end }}){% endif %}
+            &mdash; {{ ranked_count }} states ranked.
+        </p>
+        <p class="fhi-hint">
+            Where a state publishes no usable data, we say so &mdash; that lack of transparency is part of the story.
+            Read the full <a href="{% url 'worst_insurance_methodology' %}">methodology</a>, including how we calculate the hours estimate.
+        </p>
+    </div>
+</section>
+
+<!-- State grid -->
+<section id="worst-by-state" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-column-wide fhi-stack fhi-stack-loose">
+        <h2>Select Your State</h2>
+        <div class="fhi-cards fhi-cards-tiles">
+            {% for row in state_rows %}
+            <div class="fhi-card{% if row.status == 'ok' %} fhi-card-warning{% endif %}">
+                <h3 class="fhi-card-title">
+                    {% if row.status == 'ok' %}
+                    <a href="{% url 'worst_insurance_state' row.slug %}">{{ row.name }}</a>
+                    {% else %}
+                    {{ row.name }}
+                    {% endif %}
+                </h3>
+                {% if row.status == 'ok' %}
+                <p><strong>{{ row.worst.issuer_name }}</strong></p>
+                {% if row.worst_time_burden %}
+                <p class="fhi-note">est. {{ row.worst_time_burden.display }} hrs/yr of people's time</p>
+                {% endif %}
+                <p class="fhi-note">
+                    Score {{ row.worst.composite_score|floatformat:0 }}/100
+                    &middot; <a href="{% url 'worst_insurance_state' row.slug %}">full rankings</a>
+                </p>
+                {% else %}
+                <p><span class="fhi-badge fhi-badge-warning">Insufficient public data</span></p>
+                <p class="fhi-note">This state doesn't publish enough machine-readable regulator data to rank insurers.</p>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer -->
+<section id="disclaimer" class="fhi-section fhi-section-tight">
+    <div class="fhi-column">
+        <div class="fhi-disclaimer" role="note">
+            <p class="fhi-note">
+                <strong>About these rankings:</strong> scores are computed from public regulator data
+                (CMS transparency and MLR files, state insurance department complaint and enforcement records)
+                and describe performance on those public metrics among insurers with sufficient data
+                &mdash; see the <a href="{% url 'worst_insurance_methodology' %}">methodology</a>, including
+                per-source data vintages. They are not statements about any company's legal compliance,
+                and every underlying number is shown on the state pages.
+            </p>
+        </div>
+    </div>
+</section>
+
+<!-- CTA -->
+<section id="final-cta" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose fhi-column-centred">
+        <h2>Denied by your insurance company?</h2>
+        <p class="fhi-lead">Whoever your insurer is, you can fight back. Most denials can be appealed &mdash; and we make it easy, for free.</p>
+        <div class="fhi-cluster fhi-cluster-center">
+            <a href="{% url 'scan' %}" class="fhi-button fhi-button-primary fhi-button-large">Start Your Appeal</a>
+        </div>
+    </div>
+</section>
+{% endblock content %}

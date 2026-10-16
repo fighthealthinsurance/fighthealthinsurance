@@ -477,6 +477,25 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.GlossaryView.as_view(),
         name="glossary_term",
     ),
+    # Monthly worst-insurance rankings; views 404 until a report is ingested
+    # so these stay unpublished until data is present. Cached via
+    # StaticIshView.as_view like the glossary routes above.
+    path(
+        "worst-insurance/",
+        views.WorstInsuranceIndexView.as_view(),
+        name="worst_insurance_index",
+    ),
+    # Registered before the slug route so "methodology" isn't swallowed.
+    path(
+        "worst-insurance/methodology/",
+        views.WorstInsuranceMethodologyView.as_view(),
+        name="worst_insurance_methodology",
+    ),
+    path(
+        "worst-insurance/<slug:slug>/",
+        views.WorstInsuranceStateView.as_view(),
+        name="worst_insurance_state",
+    ),
     path("pro_version", views.ProVersionView.as_view(), name="pro_version"),
     # Cross-origin classic-form intake for the interested-professional lead form
     # hosted on the static site (fightpaperwork.com). csrf_exempt because that

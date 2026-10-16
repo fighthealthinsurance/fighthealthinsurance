@@ -19,6 +19,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.http import (
+    Http404,
     HttpRequest,
     HttpResponse,
     HttpResponseBase,
@@ -4115,4 +4116,108 @@ class GlossaryView(StaticIshView):
         # render_json_ld escapes <, >, & so a term's definition/aliases can't
         # break out of the <script type="application/ld+json"> block.
         context["json_ld"] = render_json_ld([defined_term, breadcrumbs])
+        return context
+
+
+class WorstInsuranceIndexView(StaticIshView):
+    """Monthly worst-insurance-company-by-state rankings index.
+
+    Stays unpublished (404, and absent from the sitemap) until a rankings
+    report has been ingested from the worst-insurance pipeline.
+    """
+
+    template_name = "worst_insurance_index.html"
+
+    def get(self, request, *args, **kwargs):
+        from fighthealthinsurance.worst_insurance import get_latest_report
+
+        self._report = get_latest_report()
+        if self._report is None:
+            raise Http404("No insurance rankings published yet")
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        from fighthealthinsurance.worst_insurance import get_index_rows
+
+        context = super().get_context_data(**kwargs)
+        report = self._report
+        assert report is not None  # guaranteed by get()
+        context["report"] = report
+        context["state_rows"] = get_index_rows(report)
+        context["ranked_count"] = sum(
+            1 for row in context["state_rows"] if row.status == "ok"
+        )
+        context["title"] = "Worst Health Insurance Company by State"
+        return context
+
+
+class WorstInsuranceStateView(StaticIshView):
+    """Full ranking table for one state."""
+
+    template_name = "worst_insurance_state.html"
+
+    def get(self, request, slug, *args, **kwargs):
+        from fighthealthinsurance.state_help import get_state_help
+        from fighthealthinsurance.worst_insurance import get_latest_report
+
+        self._state = get_state_help(slug)
+        if self._state is None:
+            raise Http404(f"Unknown state '{slug}'")
+        self._report = get_latest_report()
+        if self._report is None:
+            raise Http404("No insurance rankings published yet")
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        from fighthealthinsurance.worst_insurance import (
+            build_ranking_table,
+            get_state_rankings,
+            time_burden_summary,
+        )
+
+        context = super().get_context_data(**kwargs)
+        state = self._state
+        report = self._report
+        assert state is not None and report is not None  # guaranteed by get()
+        rankings = get_state_rankings(report, state.abbreviation)
+        statuses = report.state_statuses or {}
+        status_block = statuses.get(state.abbreviation, {})
+        context["state"] = state
+        context["report"] = report
+        context["rankings"] = rankings
+        context["table"] = build_ranking_table(rankings)
+        # Headline estimate for the worst issuer; None when it wasn't ranked
+        # on the hours metric so the hero doesn't mislabel another metric.
+        context["top_time_burden"] = (
+            time_burden_summary(rankings[0]) if rankings else None
+        )
+        context["status"] = "ok" if rankings else "insufficient_data"
+        context["reason"] = str(status_block.get("reason", "no_data"))
+        context["notes"] = status_block.get("notes", [])
+        context["title"] = f"Worst Health Insurance Company in {state.name}"
+        return context
+
+
+class WorstInsuranceMethodologyView(StaticIshView):
+    """How the rankings are computed, with the live report's parameters."""
+
+    template_name = "worst_insurance_methodology.html"
+
+    def get(self, request, *args, **kwargs):
+        from fighthealthinsurance.worst_insurance import get_latest_report
+
+        self._report = get_latest_report()
+        if self._report is None:
+            raise Http404("No insurance rankings published yet")
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        from fighthealthinsurance.worst_insurance import get_time_burden_assumptions
+
+        context = super().get_context_data(**kwargs)
+        report = self._report
+        assert report is not None  # guaranteed by get()
+        context["report"] = report
+        context["time_burden"] = get_time_burden_assumptions(report)
+        context["title"] = "Worst Insurance Rankings Methodology"
         return context

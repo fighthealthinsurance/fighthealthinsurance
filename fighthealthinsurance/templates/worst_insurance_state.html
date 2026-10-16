@@ -1,0 +1,134 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Worst Health Insurance Company in {{ state.name }} - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Worst Health Insurance Company in {{ state.name }} - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Which health insurance company behaves worst in {{ state.name }}? Monthly rankings from public regulator data: denial rates, confirmed complaints, overturned appeals, and enforcement actions, normalized by insured population.{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="worst-insurance-state-hero" class="slider">
+    <div class="item item-first fhi-hero-short">
+        <div class="caption">
+            <div class="hero-inner">
+                <h3 class="hero-tagline">{{ state.name }} &middot; {{ report.period }}</h3>
+                {% if status == 'ok' %}
+                <h1 class="hero-headline">{{ rankings.0.issuer_name }} ranks worst in {{ state.name }}</h1>
+                {% if top_time_burden %}
+                <p class="hero-subcopy">We estimate {{ rankings.0.issuer_name }}'s denials cost {{ state.name }} patients and providers <strong>{{ top_time_burden.display }} hours</strong> in this period ({{ top_time_burden.detail }}). It's an estimate from public data; the methodology below explains how we calculate it, and every underlying number is shown.</p>
+                {% else %}
+                <p class="hero-subcopy">Based on public regulator data, normalized by how many people each insurer covers. Full rankings and every underlying number below.</p>
+                {% endif %}
+                {% else %}
+                <h1 class="hero-headline">Not enough public data to rank {{ state.name }} insurers</h1>
+                <p class="hero-subcopy">{{ state.name }} regulators don't publish enough machine-readable data on insurer conduct for a fair ranking &mdash; a transparency gap in itself.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="rankings" class="fhi-section">
+    <div class="fhi-column fhi-column-wide fhi-stack fhi-stack-loose">
+        {% if status == 'ok' %}
+        <h2>{{ state.name }} rankings &mdash; worst first</h2>
+        <p class="fhi-hint">Higher score = worse performance on the public metrics available for {{ state.name }}. Scores are only comparable within this state.</p>
+        <div class="scroll-x">
+            <table class="simple-table worst-insurance-table">
+                <thead>
+                    <tr>
+                        <th scope="col">#</th>
+                        <th scope="col">Insurer</th>
+                        <th scope="col">Score</th>
+                        {% for col in table.columns %}
+                        <th scope="col">{{ col.label }}<br><span class="fhi-note">{{ col.hint }}</span></th>
+                        {% endfor %}
+                        <th scope="col">Covered member-months</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in table.rows %}
+                    <tr>
+                        <td>{{ row.ranking.rank }}</td>
+                        <td>
+                            <strong>{{ row.ranking.issuer_name }}</strong>
+                            {% if row.ranking.group_affiliation %}<br><span class="fhi-note">{{ row.ranking.group_affiliation }}</span>{% endif %}
+                        </td>
+                        <td>{% if row.ranking.rank == 1 %}<strong>{{ row.ranking.composite_score|floatformat:1 }}</strong>{% else %}{{ row.ranking.composite_score|floatformat:1 }}{% endif %}</td>
+                        {% for cell in row.cells %}
+                        <td>
+                            {% if cell %}
+                            {{ cell.display }}<br><span class="fhi-note">{{ cell.detail }}</span>
+                            {% else %}
+                            <span class="fhi-hint" title="Not measured for this insurer">&mdash;*</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                        <td>{% if row.member_months_display %}{{ row.member_months_display }}{% else %}<span class="fhi-hint">&mdash;</span>{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <p class="fhi-note">* &mdash; means the metric isn't measured for that insurer (e.g. it doesn't sell marketplace plans, or its volume is below our
+        <a href="{% url 'worst_insurance_methodology' %}">reliability thresholds</a>). Scores are discounted for missing metrics rather than treating unmeasured as bad.</p>
+        {% else %}
+        <div class="fhi-notice fhi-notice-info">
+            <h3 class="fhi-callout-title">Why isn't {{ state.name }} ranked?</h3>
+            <p>
+                {% if reason == 'no_behavior_data' or reason == 'no_data' %}
+                No public, machine-readable dataset we use covers insurer conduct in {{ state.name }} right now.
+                {% elif reason == 'too_few_measurable_issuers' %}
+                Fewer than two insurers in {{ state.name }} meet our data-volume thresholds, so crowning a &ldquo;worst&rdquo; wouldn't be meaningful.
+                {% else %}
+                The public data available for {{ state.name }} fell below our reliability thresholds this month.
+                {% endif %}
+            </p>
+            <p>See the <a href="{% url 'worst_insurance_methodology' %}">methodology</a> for the sources we check and the thresholds we apply.</p>
+        </div>
+        {% endif %}
+
+        {% if notes %}
+        <p class="fhi-note">Notes: {% for note in notes %}{{ note }}{% if not forloop.last %}; {% endif %}{% endfor %}</p>
+        {% endif %}
+    </div>
+</section>
+
+<!-- Data sources -->
+<section id="sources" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose">
+        <h2>Data sources for this report</h2>
+        <ul class="fhi-bare-list fhi-stack">
+            {% for source in report.sources %}
+            <li class="fhi-media">
+                {% if source.status == 'ok' %}<span class="fhi-badge fhi-badge-success">ok</span>{% else %}<span class="fhi-badge fhi-badge-warning">{{ source.status }}</span>{% endif %}
+                <span>{{ source.name }} <span class="fhi-note">({{ source.vintage }})</span></span>
+            </li>
+            {% endfor %}
+        </ul>
+        <p class="fhi-note">Rankings describe performance on these public metrics among insurers with sufficient data; they are not statements about any company's legal compliance. Full details in the <a href="{% url 'worst_insurance_methodology' %}">methodology</a>.</p>
+    </div>
+</section>
+
+<!-- Complaint pointer -->
+<section id="take-action" class="fhi-section">
+    <div class="fhi-column fhi-stack">
+        <h2>Had a bad experience with an insurer in {{ state.name }}?</h2>
+        <p>
+            Complaints to your state regulator are how this data gets built &mdash; and they often get results.
+            <a href="{% url 'state_help' state.slug %}">Find {{ state.name }}'s insurance department contacts and consumer help here.</a>
+        </p>
+    </div>
+</section>
+
+<!-- CTA -->
+<section id="final-cta" class="fhi-section fhi-section-alt">
+    <div class="fhi-column fhi-stack fhi-stack-loose fhi-column-centred">
+        <h2>Fighting a denial{% if status == 'ok' %} from {{ rankings.0.issuer_name }} or anyone else{% endif %}?</h2>
+        <p class="fhi-lead">Most denials can be appealed. We help you generate a strong appeal letter in minutes, for free.</p>
+        <div class="fhi-cluster fhi-cluster-center">
+            <a href="{% url 'scan' %}" class="fhi-button fhi-button-primary fhi-button-large">Start Your Appeal</a>
+        </div>
+    </div>
+</section>
+{% endblock content %}
