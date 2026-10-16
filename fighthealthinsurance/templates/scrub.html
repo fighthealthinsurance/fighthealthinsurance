@@ -33,6 +33,7 @@
 {% block content %}
 <section class="scan-section">
     <div class="container-narrow">
+	{% include 'partials/flow_progress.html' with current_step=1 %}
 	{% include "partials/page_title.html" with title="Generate an Appeal" %}
 	{% if resume_help %}
 	<div class="alert-box alert-box-warning-light" id="resume-help">

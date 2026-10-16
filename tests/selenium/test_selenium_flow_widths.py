@@ -194,7 +194,7 @@ Cheap-O-Insurance-Corp""",
 
         self.assert_title_eventually("Categorize Your Denial")
         self._measure("details", results)
-        self.select_option_by_value("select#id_denial_type", "2")
+        self.check_if_unchecked('input[name="denial_type"][value="2"]')
         self.type("input#id_procedure", "prep")
         self.type("input#id_diagnosis", "high risk homosexual behaviour")
         self.click("button#submit_cat")
