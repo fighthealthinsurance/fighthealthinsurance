@@ -81,6 +81,8 @@ class SeleniumTestAppealGeneration(FHISeleniumBase, StaticLiveServerTestCase):
             path_to_image = tmp.name
 
             file_input.send_keys(path_to_image)
+            for box in ("privacy", "tos", "personalonly"):
+                self.click(f"input#{box}")
             self.click("button#submit")
             # The OCR should process the image (even if it doesn't find text)
             # Wait for page to process and redirect
