@@ -1837,7 +1837,7 @@ section:not(.slider) .share-subcopy,
     border-left-color: #a5c422;
 }
 /* A callout's heading takes its box's ink, as the Bootstrap-named boxes'
-   did: green on green 4.56:1, amber 4.96:1, blue 5.03:1, red 4.92:1. */
+   did: green on green 4.56:1, amber 4.96:1, blue 5.03:1. */
 .alert-box-success h2,
 .alert-box-success h4 {
     color: #2e7d32;
@@ -1847,6 +1847,7 @@ section:not(.slider) .share-subcopy,
     border-left-color: #ffc107;
 }
 .alert-box-warning h2,
+.alert-box-warning h3,
 .alert-box-warning h4,
 .alert-box-warning li {
     color: #856404;
@@ -1863,14 +1864,6 @@ section:not(.slider) .share-subcopy,
 .alert-box-info h3,
 .alert-box-info h4 {
     color: #1565c0;
-}
-.alert-box-danger {
-    background: #ffebee;
-    border-left-color: #f44336;
-}
-.alert-box-danger h3,
-.alert-box-danger p {
-    color: #c62828;
 }
 
 /* Navigation/Form actions row */
