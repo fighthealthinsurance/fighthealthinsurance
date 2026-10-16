@@ -61,6 +61,12 @@ class TestMedicaidEligibilityLandingPage(TestCase):
     def test_page_covers_2026_work_requirements(self):
         self.assertIn("80 hours per month", self.content)
 
+    def test_caregiving_is_an_exemption_not_hours(self):
+        # Caring for a child 13 or younger or a disabled person exempts you
+        # in every state; it was listed as an activity that "varies by state".
+        self.assertNotIn("Caregiving (varies by state)", self.content)
+        self.assertIn("Groups Exempt in Every State", self.content)
+
 
 class TestMedicaidEligibilityFunnelIntoChat(TestCase):
     """The CTA's microsite_slug must survive the whole path into chat."""

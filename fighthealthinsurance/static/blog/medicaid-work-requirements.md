@@ -21,9 +21,9 @@ Congress has passed new rules that will require many adults to prove they’re w
 
 ## Who's Affected and What’s Required
 
-At the heart of this change is a specific group: adults ages 19 to 64 who gained Medicaid through the Affordable Care Act (ACA). When the ACA passed in 2010, it gave states the option to expand Medicaid to cover more low-income adults, including those without children. As of today, 41 states and Washington, D.C. have taken up that offer. But now, many of those enrollees are being asked to meet new standards to keep their benefits.
+At the heart of this change is a specific group: adults ages 19 to 64 who gained Medicaid through the Affordable Care Act (ACA). When the ACA passed in 2010, it gave states the option to expand Medicaid to cover more low-income adults, including those without children. As of today, 40 states and Washington, D.C. have taken up that offer. But now, many of those enrollees are being asked to meet new standards to keep their benefits.
 
-Under the new law, enrollees in this group will need to complete and verify at least **80 hours a month** of work, job training, school, community service, or some combination. It’s not enough to do the work, you’ll have to prove it. That could mean turning in pay stubs, class schedules, or logs from volunteer programs every six months depending on how your state implements their program. The exact process will vary by state, but the message is clear: **documentation matters**. For many, the real risk isn’t meeting the work rule, but getting caught in what some have called the “paperwork trap,” where confusing forms and red tape kick people off coverage simply because they can’t keep up.
+Under the new law, enrollees in this group will need to complete and verify at least **80 hours a month** of work, job training, school, community service, or some combination. Going to school at least half-time, or earning at least what 80 hours at the federal minimum wage pays, also counts. It’s not enough to do the work, you’ll have to prove it. That could mean turning in pay stubs, class schedules, or logs from volunteer programs every six months depending on how your state implements their program. The exact process will vary by state, but the message is clear: **documentation matters**. For many, the real risk isn’t meeting the work rule, but getting caught in what some have called the “paperwork trap,” where confusing forms and red tape kick people off coverage simply because they can’t keep up.
 
 Some people won’t have to meet the work rule, but the exemptions still come with paperwork. You may be exempt if you are pregnant or recently gave birth, caring for a young child, or medically frail due to illness or disability. But don’t expect it to be automatic, you’ll likely need to apply and provide proof.
 
@@ -33,7 +33,7 @@ This isn't the first time work requirements have been tried. The experience of A
 The challenges weren't just in Arkansas. These programs often come with significant administrative hurdles for enrollees. Many people struggle with **complex reporting systems** that are difficult to navigate. The **digital divide** makes it harder for those in rural areas or with low incomes to keep up with online reporting. **Language barriers** can create obstacles for non-English speakers, and **inadequate customer service** during the rollout can leave people without the help they need to maintain their coverage.
 
 ## When Life Disrupts the Rules
-Life doesn’t always follow a predictable schedule. A sudden illness, a natural disaster, or a family emergency could throw off your work hours. That’s why the policy includes something called a “hardship exception” for people facing short-term challenges. But again, it’s on the individual to speak up, apply, and back it up with documentation.
+Life doesn’t always follow a predictable schedule. A hospital stay or a natural disaster could throw off your work hours. That’s why the law lets states offer a “hardship exception” for a few short-term situations: a hospital stay, a declared disaster or very high unemployment where you live, or traveling far for serious medical care. But again, it’s on the individual to speak up, apply, and back it up with documentation.
 
 States will monitor compliance in different ways. When you first apply for coverage, they might look back one to three months to see if you met the requirement. After that, they’ll check at least once every six months. Some information might be pulled from payroll databases, but much of it will still come down to whether individuals can prove what they’ve been doing.
 
@@ -48,6 +48,8 @@ But here’s a major catch: if you lose Medicaid for not meeting the work rule, 
 If you or someone you know could be affected, now is the time to prepare. Make sure your contact information is up to date with your state’s Medicaid agency. Respond quickly to any notices you receive.
 
 If anything is unclear, don’t hesitate to ask questions. Legal aid groups and community health organizations may be able to help you understand your options and gather the right documentation.
+
+*Correction, October 2026: An earlier version of this post said 41 states and Washington, D.C. had expanded Medicaid. It was 40 states and D.C. It also said the hardship exception covers family emergencies. The law lists only a few situations, and each state decides whether to offer it. And it left out two other ways to meet the rule that were in the law: half-time school and income.*
 
 ---
 

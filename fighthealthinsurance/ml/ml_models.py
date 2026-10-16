@@ -181,18 +181,17 @@ PRIOR_AUTH_SYSTEM_PROMPT = (
     "and medical questions. Provide accurate, helpful, and concise information."
 )
 
-MEDICAID_WORK_REQUIREMENTS_BLOCK = """New federal rules require many adults (ages 19-64) to complete at least 80 hours per month of work, job training, school, or community service to keep Medicaid coverage. States must implement these requirements by January 1, 2027 — a few have started earlier, and some may receive extensions.
+MEDICAID_WORK_REQUIREMENTS_BLOCK = """New federal rules require many adults (ages 19-64) who got Medicaid through the ACA expansion to meet a work rule to get or keep Medicaid. Most states start on January 1, 2027, and a few started earlier.
 
 **Key Points:**
-- Applies to adults ages 19-64 in most states
-- 80 hours per month minimum requirement (make sure to keep records)
-- Qualifying activities: work, job training, school, community service
-- There are groups which are often exempt, see the FAQ for more information.
-- Implementation deadline: January 1, 2027 (some states earlier; extensions possible)
-- States check the one to three months before you apply or renew, so late-2026 activity can already count
-- State-specific details may vary
+- Each month, any one of these counts: 80 hours per month of work, job training, school or volunteering (any mix), half-time school on its own, or at least $580 in household income
+- Exempt in every state: people who are pregnant or postpartum, medically frail, or caring for a child 13 or younger or a disabled person, plus several other groups listed in the FAQ
+- Your state checks its own records first and asks you only when it can't confirm, so keep records and answer every notice by its date
+- If your state says you haven't met the rule, you have 30 days to respond, and coverage continues meanwhile
+- To keep Medicaid during an appeal, ask for a fair hearing before the end date on your notice
+- Details vary by state
 
-For detailed information and state-specific details, visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)"""
+For who is exempt and what to do if you get a notice, visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)"""
 
 
 # How we invite someone into the eligibility check. Four places have to say
