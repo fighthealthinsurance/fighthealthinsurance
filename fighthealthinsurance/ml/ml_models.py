@@ -5785,7 +5785,8 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         """The same in-memory signal as is_available(): these providers are
         not probed over the network (fail fast on inference instead), so the
         health sweep and status pages see a retired model, a refused key or
-        an unreachable endpoint only through what inference recorded."""
+        an unreachable endpoint only through what inference recorded.
+        RemoteAnthropic, whose Models API is free to ask, overrides this."""
         return self.is_available()
 
     @property
@@ -6008,6 +6009,12 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         )
 
 
+# The ``anthropic-version`` header the native Anthropic API requires: the
+# Models API RemoteAnthropic's health check asks, and the Messages API
+# RemoteAzureClaude infers through.
+ANTHROPIC_API_VERSION = "2023-06-01"
+
+
 class RemoteAnthropic(RateLimitedRemoteOpenLike):
     """
     Anthropic Claude API backend.
@@ -6129,15 +6136,63 @@ class RemoteAnthropic(RateLimitedRemoteOpenLike):
         return cls.model_catalog()
 
     def _configured_and_not_limited(self) -> bool:
-        """API key set and not rate limited.
-
-        Note: We don't query the /models endpoint because Anthropic's
-        OpenAI-compatibility layer historically has limited support for it,
-        and we'd rather fail fast on actual inference than block startup.
-        """
+        """API key set and not rate limited. In memory only: the network
+        check is model_is_ok's."""
         if not get_env_variable("ANTHROPIC_API_KEY"):
             return False
         return self.rate_limiter.can_request()
+
+    @property
+    def health_checked_live(self) -> bool:
+        """False, unlike the other paid providers: model_is_ok asks Anthropic
+        itself, so the router reads the sweep's verdict on top of
+        is_available(), and the sweep rechecks the model every few minutes
+        while it is down. is_available() still carries the 429 back-off,
+        read live."""
+        return False
+
+    def model_is_ok(self) -> bool:
+        """Whether Anthropic serves this model to our key now: GET
+        ``/v1/models/{model}`` on its native Models API, with the key and
+        host inference uses. Free, unlike an inference. A 200 is up; a key
+        or account refused (401/403), a model retired or not open to the
+        account (404), an outage or no answer is down.
+
+        The health sweep and the staff status page call this. It used to be
+        the in-memory signal alone (key set, no 429 back-off), so a revoked
+        key or a retired model read as up until a real call failed, and a
+        model a run of failed connects had cooled down was never asked
+        again until the cooldown ran out (up to an hour). The 429 back-off
+        stays out of it: is_available() reads that live, so a back-off is
+        never held for a sweep's length.
+        """
+        if not get_env_variable("ANTHROPIC_API_KEY"):
+            return False
+        url = f"{self.api_base}/models/{self.model}"
+        headers = {
+            "x-api-key": self.token or "",
+            "anthropic-version": ANTHROPIC_API_VERSION,
+        }
+        # (connect, read): see MODEL_PROBE_BUDGET_SECONDS.
+        connect = self.MODEL_PROBE_CONNECT_SECONDS
+        timeout = (connect, self.MODEL_PROBE_BUDGET_SECONDS - connect)
+        try:
+            resp = requests.get(url, headers=headers, timeout=timeout)
+        except requests.RequestException as exc:
+            logger.warning(
+                f"Unable to contact Anthropic at {url} for {self.model} "
+                f"({type(exc).__name__})"
+            )
+            return False
+        # WARNING, as for the /models check: this takes the model out of
+        # routing, at sweep cadence, so it cannot spam.
+        if resp.status_code != 200:
+            logger.warning(
+                f"Anthropic's Models API returned status {resp.status_code} "
+                f"while checking {self.model}."
+            )
+            return False
+        return True
 
 
 class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
@@ -6386,7 +6441,7 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
     MAX_LEN: ClassVar[int] = 200000
 
     # Anthropic Messages API wire constants.
-    ANTHROPIC_VERSION: ClassVar[str] = "2023-06-01"
+    ANTHROPIC_VERSION: ClassVar[str] = ANTHROPIC_API_VERSION
     # The Messages API requires an explicit max output token budget.
     MAX_OUTPUT_TOKENS: ClassVar[int] = 8192
 
