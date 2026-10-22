@@ -131,14 +131,19 @@
     <div class="fhi-column fhi-stack fhi-stack-loose">
         <h2>Your fall checklist</h2>
         <ol class="fhi-list prep-checklist">
-            <li><strong>Read your renewal notice.</strong> Medicare's Annual Notice of Change, or your Marketplace or employer renewal. Check that your drugs are still covered and whether they now need prior authorization or step therapy.</li>
+            <li><strong>Read your renewal notice.</strong> Medicare's Annual Notice of Change, or your Marketplace or employer renewal. On HealthCare.gov you should get two letters by November 1, one from your insurer and one from the Marketplace. Together they tell you whether your plan is still available next year and which plan you'll be renewed into if you don't act (<a href="https://www.healthcare.gov/keep-or-change-plan/" target="_blank" rel="noopener noreferrer">what the letters mean</a>). Check that your drugs are still covered and whether they now need prior authorization or step therapy.</li>
             <li><strong>On Medicare, compare plans between October 15 and December 7.</strong> Check whether any of your drugs are among the 15 with new negotiated prices.</li>
-            <li><strong>On the Marketplace, update your income and compare plans between November 1 and December 15</strong> for coverage from January 1.</li>
-            <li><strong>Check that your doctors, hospitals and pharmacy are in the plan's 2027 network</strong> before you pick it.</li>
-            <li><strong>If you got premium tax credits, file your taxes and reconcile them</strong> (Form 8962), and fix any income mismatch your marketplace asks about.</li>
+            <li><strong>On the Marketplace, update your income and compare plans between November 1 and December 15</strong> for coverage from January 1. Do it even if you'll be renewed automatically: "plan costs can change," and your 2027 savings are based on the income you expect in 2027, not last year's. If your state runs its own marketplace, <a href="https://www.healthcare.gov/marketplace-in-your-state/" target="_blank" rel="noopener noreferrer">check its site</a> for its dates.</li>
+            <li><strong>Check that your doctors, hospitals and pharmacy are in the plan's 2027 network</strong> before you pick it, and look at the whole year, not just the monthly price. In 2027 a Marketplace plan's out-of-pocket limit for covered, in-network care can be as high as $12,000 for one person and $24,000 for a family.</li>
+            <li><strong>Check what else you qualify for.</strong> You can apply for <a href="https://www.healthcare.gov/medicaid-chip/" target="_blank" rel="noopener noreferrer">Medicaid and CHIP</a> any time of year. If a job offers you coverage, <a href="https://www.healthcare.gov/have-job-based-coverage/options/" target="_blank" rel="noopener noreferrer">update your Marketplace application</a> first: "you may no longer qualify for savings on your Marketplace plan even if you don't accept" the offer. If you're not a U.S. citizen, <a href="https://www.healthcare.gov/immigrants/lawfully-present-immigrants/" target="_blank" rel="noopener noreferrer">check which immigration statuses</a> still get savings starting January 1, 2027.</li>
+            <li><strong>Before you buy a plan outside the Marketplace,</strong> like a short-term plan or a health care sharing ministry, ask <a href="{% url 'state_help_index' %}">your state's insurance department</a> what it does and doesn't cover.</li>
+            <li><strong>Pay your first premium.</strong> Once you pick a plan, "your coverage won't start until you pay your first premium." You pay the insurance company, not the Marketplace. Then log in and check "My Plans &amp; Programs" to see the plan you're enrolled in (<a href="https://www.healthcare.gov/apply-and-enroll/complete-your-enrollment/" target="_blank" rel="noopener noreferrer">finish enrolling</a>).</li>
+            <li><strong>Tell the Marketplace when your income changes,</strong> as soon as you can (<a href="https://www.healthcare.gov/reporting-changes/" target="_blank" rel="noopener noreferrer">how to report a change</a>). Starting with 2026 taxes, if you got more premium help than you qualified for, you pay all the extra back. <a href="https://www.irs.gov/tax-professionals/eitc-central/repayment-caps-eliminated-for-excess-advance-payments-of-the-premium-tax-credit" target="_blank" rel="noopener noreferrer">There's no cap anymore</a>. If you got premium tax credits, file your taxes and reconcile them (Form 8962), and fix any income mismatch your marketplace asks about.</li>
             <li><strong>On Medicaid through expansion, keep your address current</strong> and gather proof of your work hours or exemption. Answer notices within 30 days.</li>
             <li><strong>Renew or document prior authorizations for ongoing treatment</strong> before January 1.</li>
             <li><strong>Use your 2026 FSA balance</strong> and set your 2027 HSA contributions.</li>
+            <li><strong>Get free help, and watch for scams.</strong> Independent assisters, like Navigators, are free and have to be unbiased. <a href="https://www.healthcare.gov/find-local-help/" target="_blank" rel="noopener noreferrer">Find one near you</a> (the tool lists agents and brokers too, so pick "Independent assisters"), or call HealthCare.gov at <a href="tel:+18003182596">1-800-318-2596</a> (TTY <a href="tel:+18558894325">1-855-889-4325</a>), 24 hours a day, 7 days a week, except holidays. "The Marketplace, assisters, and your state will never threaten you or your household or ask for your credit card information or payment to keep or qualify for health coverage." Turn on login security codes for your account too (<a href="https://www.healthcare.gov/protect-from-fraud-and-scams/" target="_blank" rel="noopener noreferrer">how to spot scams</a>).</li>
+            <li><strong>If the Marketplace says no, you can appeal.</strong> That covers being told you can't buy a plan, can't get savings or got the wrong amount, or can't use a special enrollment period. You generally have 90 days from your eligibility notice (<a href="https://www.healthcare.gov/marketplace-appeals/" target="_blank" rel="noopener noreferrer">how to appeal</a>). If your insurer says no to care or a claim, that's a different appeal, the one we help with.</li>
         </ol>
     </div>
 </section>
@@ -237,7 +242,7 @@
                 <a href="https://www.cms.gov/newsroom/fact-sheets/cms-interoperability-prior-authorization-final-rule-cms-0057-f" target="_blank" rel="noopener noreferrer">CMS prior authorization rule</a>.
             </p>
             <p class="fhi-note">
-                <strong>Please note:</strong> This page is general information, not legal, medical or financial advice. Plans vary, so check your own plan's documents. Some 2027 numbers are proposed or projected and may change. Last updated: September 2026.
+                <strong>Please note:</strong> This page is general information, not legal, medical or financial advice. Plans vary, so check your own plan's documents. Some 2027 numbers are proposed or projected and may change. Last updated: October 2026.
             </p>
         </div>
     </div>
@@ -264,6 +269,10 @@
     }
     .prep-checklist > * {
         display: list-item;
+    }
+    /* A phone number reads and dials better on one line. */
+    .prep-checklist a[href^="tel:"] {
+        white-space: nowrap;
     }
     /* The three rights read as badges with a caption: centred. */
     #denial-rights .fhi-card {
