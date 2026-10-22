@@ -664,10 +664,19 @@ class TestDenialWatchEnrollment(TestCase):
         self.assertIn("tracking-insurer-participation-changes-in-the-aca-marketplaces-in-2027", sources)
 
     def test_box_prints_no_healthcare_gov_dates(self):
-        # The 2027 marketplace window is in court, so the box links out instead.
+        # CMS set the 2027 marketplace dates, but the court ruling behind them is under appeal, so the box links out.
         box = _between(_page(date(2026, 10, 18)), 'id="enroll"', "</section>")
         for day in ("November 1", "December 15", "January 15"):
             self.assertNotIn(day, box)
+
+    def test_method_note_says_cms_set_the_dates_and_the_ruling_is_under_appeal(self):
+        html = _page(date(2026, 10, 18))
+        note = _between(html, "<b>Open enrollment:</b>", "</li>")
+        self.assertIn("CMS has set HealthCare.gov's 2027 sign-up dates", _text(note))
+        self.assertIn("but the court ruling behind them is under appeal, so we link to HealthCare.gov rather than print them. Checked October 22, 2026.", _text(note))
+        self.assertIn('href="https://www.cms.gov/files/document/ftr-requirement-py26-27-statement.pdf"', note)
+        for stale in ("in a court case", "are in court"):
+            self.assertNotIn(stale, _without_data(html))
 
     def test_page_drops_the_medicare_line_after_december_7(self):
         html = _page(date(2026, 12, 8))

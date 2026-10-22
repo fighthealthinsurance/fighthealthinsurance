@@ -652,7 +652,7 @@ def denial_watch_teaser() -> dict[str, typing.Any]:
     }
 
 
-# Checked 2026-10-18. HealthCare.gov's 2027 dates are in court, so the box ends on its latest posted day.
+# Checked 2026-10-22. CMS set HealthCare.gov's 2027 dates, but the court ruling behind them is under appeal, so the box links out and ends on the last posted day.
 DENIAL_WATCH_MEDICARE_ENROLLMENT = (date(2026, 10, 15), date(2026, 12, 7))
 DENIAL_WATCH_ENROLLMENT_BOX_ENDS = date(2027, 1, 15)
 # Hawaii's date, so the box doesn't change hours early for the rest of the country.
