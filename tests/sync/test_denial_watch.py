@@ -6,7 +6,9 @@ some of them are also written into the page's sentences, so these tests check
 that the copy still agrees with the data after a refresh.
 """
 
+import contextlib
 import csv
+import hashlib
 import importlib.util
 import json
 import pathlib
@@ -1659,6 +1661,14 @@ class TestDenialWatchMarketplaceBuilder(TestCase):
         with self.assertRaises(SystemExit):
             self.b.february_totals(rows)
 
+    def test_stops_on_a_national_february_count_of_zero(self):
+        # States that add up to 0, so only the count check can stop it.
+        rows = self._rows([2016, 2017], no_december=[2017])
+        next(r for r in rows if r["Year"] == "2016" and r["State"] == "Total" and r["Platform"] == "All" and r["Month"] == "February")["Effectuated_Enr"] = "0"
+        next(r for r in rows if r["Year"] == "2016" and r["State"] == "TX")["Effectuated_Enr"] = "-100"
+        with self.assertRaisesRegex(SystemExit, "February 2016 has a national count of 0"):
+            self.b.february_totals(rows)
+
     def _temp(self, text, suffix):
         with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, newline="") as f:
             f.write(text)
@@ -1705,6 +1715,105 @@ class TestDenialWatchMarketplaceBuilder(TestCase):
         ):
             with self.subTest(column=column, bad=bad), self.assertRaisesRegex(SystemExit, f": {column} must"):
                 self.b.load_marketplace_signups(self._picks(**{column: bad}))
+
+    def test_plan_picks_must_be_a_count_above_zero_for_a_year(self):
+        for column, bad in (
+            ("plan_selections", "0"),
+            ("plan_selections", "-5"),
+            ("plan_selections", ""),
+            ("plan_selections", "1.5"),
+            ("plan_selections", "1_000"),
+            ("plan_selections", "023130860"),
+            ("year", ""),
+            ("year", "26"),
+            ("year", "2026.0"),
+        ):
+            with self.subTest(column=column, bad=bad), self.assertRaisesRegex(SystemExit, f": {column} must"):
+                self.b.load_marketplace_signups(self._picks(**{column: bad}))
+
+    def _picks_rows(self, *years):
+        rows = [{**self.PICK, "year": str(y)} for y in years]
+        lines = [",".join(self.PICK)] + [",".join(r.values()) for r in rows]
+        return self._temp("\n".join(lines) + "\n", ".csv")
+
+    def test_plan_picks_stop_on_two_rows_for_a_year(self):
+        with self.assertRaisesRegex(SystemExit, ": two rows for 2026"):
+            self.b.load_marketplace_signups(self._picks_rows(2025, 2026, 2026))
+
+    def test_plan_picks_stop_on_a_file_with_no_rows(self):
+        with self.assertRaisesRegex(SystemExit, ": no plan picks"):
+            self.b.load_marketplace_signups(self._picks_rows())
+
+    def _dir(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        return pathlib.Path(d.name)
+
+    def _zip_dir(self, content):
+        d = self._dir()
+        if content is not None:
+            (d / "x.zip").write_bytes(content)
+        return d
+
+    def test_plan_picks_zip_in_the_raw_directory_must_match_its_sha256(self):
+        content = b"a CMS zip"
+        ok = hashlib.sha256(content).hexdigest()
+        loaded = [dict(y=2026, n=1, url="https://www.cms.gov/x")]
+        self.assertEqual(self.b.load_marketplace_signups(self._picks(file_sha256=ok), zip_dir=self._zip_dir(content)), loaded)
+        with self.assertRaisesRegex(SystemExit, "not the file_sha256 recorded"):
+            self.b.load_marketplace_signups(self._picks(file_sha256=ok), zip_dir=self._zip_dir(b"another file"))
+        # A zip that isn't there is reported as unchecked, not refused.
+        self.assertEqual(self.b.load_marketplace_signups(self._picks(file_sha256=ok), zip_dir=self._zip_dir(None)), loaded)
+
+    def _feb(self, *years):
+        return [dict(y=y, n=1000 + y, mn=1) for y in years]
+
+    def _pick(self, *years):
+        return [dict(y=y, n=2000 + y, url="https://www.cms.gov/x") for y in years]
+
+    def test_plan_picks_cover_the_two_februaries_the_page_compares(self):
+        entry = self.b.marketplace_entry(self._feb(2024, 2025, 2026), 2026, self._pick(2025, 2026))
+        self.assertEqual((entry["prelim"], [p["y"] for p in entry["picks"]]), (2026, [2025, 2026]))
+        for picks in (self._pick(2026), self._pick(2025), self._pick(2024, 2026), []):
+            with self.subTest(picks=[p["y"] for p in picks]), self.assertRaisesRegex(SystemExit, "plan picks have no row for"):
+                self.b.marketplace_entry(self._feb(2024, 2025, 2026), 2026, picks)
+
+    def test_plan_picks_need_a_february_to_compare_with(self):
+        with self.assertRaisesRegex(SystemExit, r"plan picks for \[2027\] have no February count"):
+            self.b.marketplace_entry(self._feb(2025, 2026), 2026, self._pick(2025, 2026, 2027))
+
+    def test_one_february_is_not_enough_to_compare(self):
+        with self.assertRaisesRegex(SystemExit, "compares two Februaries"):
+            self.b.marketplace_entry(self._feb(2026), 2026, self._pick(2026))
+
+    def test_report_gives_each_change_and_share(self):
+        mk = dict(feb=[dict(y=2025, n=200, mn=1), dict(y=2026, n=150, mn=1)], prelim=2026, picks=self._pick(2026))
+        mk["picks"][0]["n"] = 300
+        self.assertEqual(
+            self.b.marketplace_report(mk),
+            ["marketplace February 2026 150 -25.00% not final", "plan picks 2026 300 February coverage 50.0% of them"],
+        )
+
+    def test_nothing_is_written_when_the_report_cant_be_worked_out(self):
+        # A count of 0 that got past the checks still stops the build before the bundle is written.
+        raw = self._dir()
+        names = [f"tic{py}.xlsx" for py in self.b.CLAIMS_YEAR] + [
+            "imr.csv", "partd.csv", "sahie_2023.csv", "sahie_2024.csv", "places_county.csv", "effectuated_monthly.csv"
+        ]
+        for n in names:
+            (raw / n).write_text("")
+        out = raw / "out.json"
+        mk = dict(feb=[dict(y=2025, n=0, mn=1), dict(y=2026, n=150, mn=1)], prelim=2026, picks=[])
+        stubs = dict(build_denials={}, build_imr={}, build_drugs={}, build_sahie={}, build_places={}, correlations={}, build_prior_auth=[])
+        with contextlib.ExitStack() as stack:
+            # main() points RAW at the raw directory; put it back afterwards.
+            stack.enter_context(mock.patch.object(self.b, "RAW", self.b.RAW))
+            for name, value in stubs.items():
+                stack.enter_context(mock.patch.object(self.b, name, return_value=value))
+            stack.enter_context(mock.patch.object(self.b, "build_marketplace", return_value=mk))
+            with self.assertRaises(ZeroDivisionError):
+                self.b.main(["--raw-dir", str(raw), "--out", str(out)])
+        self.assertFalse(out.exists())
 
 
 class TestDenialWatchMarketplacePage(TestCase):

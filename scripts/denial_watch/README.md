@@ -19,6 +19,7 @@ nothing here runs in the app.
    | `sahie_2023.csv`, `sahie_2024.csv` | `https://www2.census.gov/programs-surveys/sahie/datasets/time-series/estimates-acs/sahie-<YEAR>-csv.zip` (the Census API now needs a key; the zips don't) |
    | `places_county.csv` | `https://data.cdc.gov/api/v3/views/i46a-9kgh/export.csv` (the old `rows.csv?accessType=DOWNLOAD` link was retired in October 2026) |
    | `effectuated_monthly.csv` | The CSV on [data.cms.gov's Health Insurance Exchanges Monthly Effectuated Enrollment page](https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/health-insurance-marketplace/health-insurance-exchanges-monthly-effectuated-enrollment), renamed (the current build used `Health Insurance Exchanges Monthly Effectuated Enrollment Data_asof_20260505.csv`) |
+   | `<YEAR>-oep-state-level-public-use-file.zip` (optional) | The `file` link in each row of `marketplace_signups.csv`, not renamed; when it's here the build checks it against that row's sha256 |
 
 2. Build:
 
@@ -75,7 +76,15 @@ nothing here runs in the app.
   in the Total/All row of that year's OEP State-Level Public Use File,
   HealthCare.gov and state-run marketplaces together), with the CMS page, the
   zip, its sha256 and the date it was read; the build stops on a row missing
-  any of them. The page compares each year's February coverage with it.
+  any of them. The page compares each year's February coverage with it, so
+  the build also stops on a count that isn't above 0, two rows for one year,
+  a file with no rows, a year with no February count, or a missing row for
+  either of the last two Februaries.
+- `file_sha256` is a record of the zip the count was read from, taken when it
+  was downloaded. The zips stay out of git: put them in the raw directory
+  under their own names (`2026-oep-state-level-public-use-file.zip`) and the
+  build checks each against its sha256 and stops on a mismatch. A zip that
+  isn't there is reported as not checked.
 - KFF's figures are quoted and linked, never redrawn: its content is
   CC BY-NC-ND 4.0, and it asks for links to its pages, not its PDFs.
 - The open-enrollment box's dates and plan year come from `views.py`

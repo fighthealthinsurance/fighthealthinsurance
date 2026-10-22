@@ -576,6 +576,8 @@ def february_totals(rows):
     if not years or years != list(range(years[0], years[-1] + 1)):
         sys.exit(f"effectuated file: the February years have a gap: {years}")
     for y in years:
+        if feb[y] <= 0:
+            sys.exit(f"effectuated file: February {y} has a national count of {feb[y]}")
         if sum(states.get(y, {}).values()) != feb[y]:
             sys.exit(f"effectuated file: the state rows for February {y} don't add up to the national total")
     # CMS restates a year's months until its December is in, so only a year without one may be open.
@@ -586,11 +588,18 @@ def february_totals(rows):
     return out, (open_years[0] if open_years else None)
 
 
-def load_marketplace_signups(path=MARKETPLACE_SIGNUPS_CSV):
-    """Plans picked in each open enrollment, HealthCare.gov and state-run marketplaces together."""
+def load_marketplace_signups(path=MARKETPLACE_SIGNUPS_CSV, zip_dir=None):
+    """Plans picked in each open enrollment, HealthCare.gov and state-run marketplaces together.
+
+    file_sha256 is recorded when the zip is fetched; a zip found in zip_dir is checked against it.
+    """
     rows, name = [], pathlib.Path(path).name
     with open(path, newline="") as f:
         for r in csv.DictReader(f):
+            if not re.fullmatch(r"20[0-9]{2}", r["year"]):
+                sys.exit(f"{name}: year must be a year like 2026, not {r['year']!r}")
+            if not re.fullmatch(r"[1-9][0-9]*", r["plan_selections"]):
+                sys.exit(f"{name}: plan_selections must be a count above 0 for {r['year']}, not {r['plan_selections']!r}")
             if not r["source_url"].startswith("https://www.cms.gov/"):
                 sys.exit(f"{name}: source_url must be a cms.gov page for {r['year']}")
             # The zip and its sha256 are the record of which CMS file the count came from.
@@ -602,8 +611,49 @@ def load_marketplace_signups(path=MARKETPLACE_SIGNUPS_CSV):
                 datetime.date.fromisoformat(r["accessed"])
             except ValueError:
                 sys.exit(f"{name}: accessed must be a date like 2026-10-22 for {r['year']}")
-            rows.append(dict(y=int(r["year"]), n=int(r["plan_selections"]), url=r["source_url"]))
+            if zip_dir is not None:
+                check_signup_zip(pathlib.Path(zip_dir) / r["file"].rsplit("/", 1)[-1], r["file_sha256"], f"{name} {r['year']}")
+            y = int(r["year"])
+            if any(x["y"] == y for x in rows):
+                sys.exit(f"{name}: two rows for {y}")
+            rows.append(dict(y=y, n=int(r["plan_selections"]), url=r["source_url"]))
+    if not rows:
+        sys.exit(f"{name}: no plan picks")
     return sorted(rows, key=lambda r: r["y"])
+
+
+def check_signup_zip(path, sha256, where):
+    if not path.exists():
+        print(where, f"{path.name} isn't in the raw directory, so its sha256 wasn't checked")
+        return
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != sha256:
+        sys.exit(f"{where}: {path} has sha256 {digest}, not the file_sha256 recorded for it")
+    print(where, f"{path.name} matches its recorded sha256")
+
+
+def marketplace_entry(feb, prelim, picks):
+    """The bundle's marketplace data, once the plan picks cover the Februaries the page compares."""
+    years = [r["y"] for r in feb]
+    extra = sorted({p["y"] for p in picks} - set(years))
+    if extra:
+        sys.exit(f"plan picks for {extra} have no February count to compare with")
+    # The page compares the last two Februaries, each with that year's plan picks.
+    if len(years) < 2:
+        sys.exit(f"effectuated file: the page compares two Februaries, and the file has {years}")
+    missing = sorted(set(years[-2:]) - {p["y"] for p in picks})
+    if missing:
+        sys.exit(f"plan picks have no row for {missing}; the page compares February {years[-2]} and {years[-1]} with them")
+    return dict(feb=feb, prelim=prelim, as_of=EFFECTUATED_AS_OF, file=EFFECTUATED_FILE, picks=picks)
+
+
+def marketplace_report(mk):
+    """The yearly changes and plan-pick shares to check by eye, worked out before the bundle is written."""
+    feb = {r["y"]: r["n"] for r in mk["feb"]}
+    lines = [f"marketplace February {b['y']} {b['n']:,} {b['n'] / a['n'] - 1:+.2%}" + (" not final" if b["y"] == mk["prelim"] else "")
+             for a, b in zip(mk["feb"], mk["feb"][1:])]
+    lines += [f"plan picks {p['y']} {p['n']:,} February coverage {feb[p['y']] / p['n']:.1%} of them" for p in mk["picks"]]
+    return lines
 
 
 def build_marketplace(path=None, signups_path=MARKETPLACE_SIGNUPS_CSV):
@@ -614,11 +664,7 @@ def build_marketplace(path=None, signups_path=MARKETPLACE_SIGNUPS_CSV):
                  "EFFECTUATED_AS_OF and EFFECTUATED_SHA256, then reread the page's marketplace copy")
     with open(path, newline="", encoding="utf-8-sig") as f:
         feb, prelim = february_totals(csv.DictReader(f))
-    picks = load_marketplace_signups(signups_path)
-    missing = {p["y"] for p in picks} - {r["y"] for r in feb}
-    if missing:
-        sys.exit(f"plan picks for {sorted(missing)} have no February count to compare with")
-    return dict(feb=feb, prelim=prelim, as_of=EFFECTUATED_AS_OF, file=EFFECTUATED_FILE, picks=picks)
+    return marketplace_entry(feb, prelim, load_marketplace_signups(signups_path, zip_dir=RAW))
 
 
 SOURCES = [
@@ -665,6 +711,7 @@ def main(argv=None):
     bundle["corr"] = correlations(bundle["sahie"], bundle["places"])
     bundle["prior_auth"] = build_prior_auth()
     bundle["marketplace"] = build_marketplace()
+    marketplace_lines = marketplace_report(bundle["marketplace"])
     bundle["sources"] = SOURCES
     bundle["built"] = datetime.date.today().isoformat()
     args.out.write_text(json.dumps(bundle, separators=(",", ":"), sort_keys=True) + "\n")
@@ -692,12 +739,7 @@ def main(argv=None):
     for line in ("ma", "mcd", "mkt", "ffs"):
         std = [r["std"] for r in bundle["prior_auth"] if r["line"] == line and r["std"] is not None]
         print("prior auth", line, len(std), f"{min(std):.2%} to {max(std):.2%}")
-    mk = bundle["marketplace"]
-    for a, b in zip(mk["feb"], mk["feb"][1:]):
-        print("marketplace February", b["y"], f"{b['n']:,}", f"{b['n'] / a['n'] - 1:+.2%}", "not final" if b["y"] == mk["prelim"] else "")
-    feb = {r["y"]: r["n"] for r in mk["feb"]}
-    for p in mk["picks"]:
-        print("plan picks", p["y"], f"{p['n']:,}", f"February coverage {feb[p['y']] / p['n']:.1%} of them")
+    print("\n".join(marketplace_lines))
 
 
 if __name__ == "__main__":
