@@ -832,6 +832,26 @@ class TestDenialWatchWhoToCall(TestCase):
             self.assertEqual(href, re.sub(r"\D", "", shown)[-10:], shown)
         self.assertEqual(len(re.findall(r'href="tel:', card)), 5)
 
+    def test_marketplace_decisions_are_appealed_to_the_marketplace(self):
+        bullet = _between(self.content, 'id="marketplace-appeals"', "</li>")
+        self.assertIn(
+            "appeal to the marketplace itself, generally within 90 days of your eligibility notice, "
+            "on HealthCare.gov's appeals page or your state marketplace's site.",
+            _text(bullet),
+        )
+        self.assertIn('href="https://www.healthcare.gov/marketplace-appeals/"', bullet)
+        self.assertIn('href="https://www.healthcare.gov/marketplace-in-your-state/"', bullet)
+
+    def test_appeals_bullet_says_insurer_denials_are_a_different_appeal(self):
+        bullet = _text(_between(self.content, 'id="marketplace-appeals"', "</li>"))
+        self.assertIn("A denial from your insurer is a different appeal, the kind the rest of this page and Fight Health Insurance help with.", bullet)
+        self.assertNotIn(chr(0x2014), bullet)
+
+    def test_appeals_bullet_sits_in_the_card_with_its_check_date(self):
+        card = _between(self.content, 'id="who-to-call"', "</section>")
+        self.assertIn('id="marketplace-appeals"', card)
+        self.assertIn("Numbers and links checked October 22, 2026.", _text(card))
+
     def test_ship_is_spelled_out(self):
         card = _between(self.content, 'id="who-to-call"', "</section>")
         self.assertIn("State Health Insurance Assistance Program (SHIP)", card)
