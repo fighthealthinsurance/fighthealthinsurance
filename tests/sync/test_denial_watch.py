@@ -1534,3 +1534,277 @@ class TestDenialWatchThemes(TestCase):
             f"About {round(total / 1e6)} million people under 65 in 2024, about 1 in 10, from {low[1]['pct']}% in {low[0]} to {high[1]['pct']}% in {high[0]}.",
             self._theme("coverage"),
         )
+
+
+MK = DATA["marketplace"]
+KFF_MARKET = "https://www.kff.org/affordable-care-act/individual-market-enrollment-continues-to-fall-through-mid-2026/"
+KFF_SURVEY = "https://www.kff.org/public-opinion/a-follow-up-survey-of-aca-marketplace-enrollees/"
+KFF_SENTENCE = "Enrollment in the individual health insurance market fell 18% between June 2025 and June 2026."
+CMS_EFFECTUATED = "https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/health-insurance-marketplace/health-insurance-exchanges-monthly-effectuated-enrollment"
+CMS_PREMIUM = "plan selections will only become coverage for consumers that effectuate their coverage by paying their first monthly premium"
+
+
+def _february() -> dict[int, int]:
+    return {r["y"]: r["n"] for r in MK["feb"]}
+
+
+def _yearly_changes() -> dict[int, float]:
+    feb = MK["feb"]
+    return {b["y"]: b["n"] / a["n"] - 1 for a, b in zip(feb, feb[1:])}
+
+
+class TestDenialWatchMarketplaceData(TestCase):
+    """February coverage in effect, every year from one CMS file, and the plan picks beside it."""
+
+    def test_years_run_from_2016_without_a_gap(self):
+        years = [r["y"] for r in MK["feb"]]
+        self.assertEqual(years, list(range(2016, years[-1] + 1)))
+
+    def test_only_the_latest_year_is_preliminary(self):
+        self.assertEqual(MK["prelim"], MK["feb"][-1]["y"])
+
+    def test_2025_is_the_final_count_not_the_early_snapshot(self):
+        # CMS's early 2025 report counted February 2025 sooner, at 23,393,198; mixing it in fakes an 18% drop.
+        self.assertEqual(_february()[2025], 21_776_626)
+
+    def test_file_and_date_are_the_ones_the_builder_checks(self):
+        b = _load_builder()
+        self.assertEqual((MK["file"], MK["as_of"]), (b.EFFECTUATED_FILE, b.EFFECTUATED_AS_OF))
+        self.assertIn("asof_" + MK["as_of"].replace("-", ""), MK["file"])
+
+    def test_every_year_has_minnesotas_count(self):
+        for r in MK["feb"]:
+            self.assertTrue(0 < r["mn"] < r["n"], r["y"])
+
+    def test_plan_picks_have_a_february_count_and_a_cms_page(self):
+        feb = _february()
+        self.assertEqual([p["y"] for p in MK["picks"]], [2025, 2026])
+        for p in MK["picks"]:
+            self.assertIn(p["y"], feb)
+            self.assertTrue(feb[p["y"]] < p["n"], p["y"])
+            self.assertTrue(p["url"].startswith("https://www.cms.gov/"), p["y"])
+
+    def test_builder_reads_the_curated_plan_picks(self):
+        self.assertEqual(_load_builder().load_marketplace_signups(), MK["picks"])
+
+
+class TestDenialWatchMarketplaceBuilder(TestCase):
+    """The builder's February rules, on made-up rows shaped like CMS's CSV (no pandas needed)."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.b = _load_builder()
+
+    def _rows(self, years, no_december=()):
+        rows = []
+
+        def add(y, month, state, platform, n):
+            rows.append({"State": state, "Platform": platform, "Year": str(y), "Month": month, "Effectuated_Enr": str(n)})
+
+        for y in years:
+            add(y, "February", "Total", "All", 300 + y)
+            add(y, "February", "Total", "HealthCare.gov", 200 + y)
+            add(y, "January", "Total", "All", 1)
+            add(y, "February", "MN", "SBE", 100)
+            add(y, "February", "TX", "HealthCare.gov", 200 + y)
+            if y not in no_december:
+                add(y, "December", "Total", "All", 1)
+        return rows
+
+    def test_keeps_only_the_national_february_count(self):
+        feb, prelim = self.b.february_totals(self._rows([2016, 2017], no_december=[2017]))
+        self.assertEqual(feb, [dict(y=2016, n=2316, mn=100), dict(y=2017, n=2317, mn=100)])
+        self.assertEqual(prelim, 2017)
+
+    def test_a_year_with_its_december_is_final(self):
+        self.assertIsNone(self.b.february_totals(self._rows([2016, 2017]))[1])
+
+    def test_stops_on_a_gap_in_the_years(self):
+        with self.assertRaises(SystemExit):
+            self.b.february_totals(self._rows([2016, 2018], no_december=[2018]))
+
+    def test_stops_when_an_earlier_year_has_no_december(self):
+        with self.assertRaises(SystemExit):
+            self.b.february_totals(self._rows([2016, 2017], no_december=[2016, 2017]))
+
+    def test_stops_when_the_states_dont_add_up(self):
+        rows = self._rows([2016])
+        next(r for r in rows if r["State"] == "TX")["Effectuated_Enr"] = "1"
+        with self.assertRaises(SystemExit):
+            self.b.february_totals(rows)
+
+    def _temp(self, text, suffix):
+        with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False, newline="") as f:
+            f.write(text)
+        self.addCleanup(pathlib.Path(f.name).unlink)
+        return pathlib.Path(f.name)
+
+    def test_stops_on_a_cms_file_it_wasnt_written_for(self):
+        # Rows that would build, so only the file check can stop it.
+        rows = self._rows([2025, 2026], no_december=[2026])
+        lines = ['"State","Platform","Year","Month","Effectuated_Enr"'] + [",".join(r.values()) for r in rows]
+        path = self._temp("\n".join(lines) + "\n", ".csv")
+        with self.assertRaises(SystemExit):
+            self.b.build_marketplace(path)
+
+    def test_plan_picks_must_cite_a_cms_page(self):
+        path = self._temp("year,plan_selections,source_url,file,file_sha256,accessed\n2026,1,https://example.org/x,,,2026-10-22\n", ".csv")
+        with self.assertRaises(SystemExit):
+            self.b.load_marketplace_signups(path)
+
+
+class TestDenialWatchMarketplacePage(TestCase):
+    """The marketplace section's words, chart and tables agree with the data and say where they come from."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.content = _page()
+        cls.section = _between(cls.content, 'id="marketplace-trend"', "</section>")
+        cls.text = _text(cls.section)
+        method = _between(cls.content, 'id="method-coverage"', "</div>")
+        cls.method = _text(method[method.index("<b>Marketplace coverage:</b>") : method.index("</ol>")])
+        cls.method_html = method
+        cls.script = _between(JS, "/* marketplace coverage:", "})();")
+
+    def test_section_sits_under_the_coverage_map(self):
+        at = [self.content.index(m) for m in ('id="coverage"', 'id="cmap"', 'id="marketplace-trend"', 'id="costs"')]
+        self.assertEqual(at, sorted(at))
+        self.assertIn('<section class="fhi-stack" id="marketplace-trend" aria-labelledby="marketplace-trend-title">', self.content)
+
+    def test_no_id_is_used_twice_in_season_or_out(self):
+        # The season box already owns id="enroll", so this section names itself differently.
+        self.assertNotIn('id="enroll', self.section)
+        for day in (date(2026, 10, 18), date(2027, 1, 16)):
+            body = _between(_page(day), '<div class="fhi-page-wide dw"', '<script id="dw-data"')
+            ids = re.findall(r'\sid="([^"]+)"', body)
+            self.assertEqual(len(ids), len(set(ids)), sorted(i for i in ids if ids.count(i) > 1))
+
+    def test_heading_states_the_biggest_drop_from_the_data(self):
+        changes, feb = _yearly_changes(), _february()
+        last, first = MK["feb"][-1]["y"], MK["feb"][0]["y"]
+        self.assertEqual(min(changes, key=changes.get), last)
+        self.assertEqual(min(changes, key=lambda y: feb[y] - feb[y - 1]), last)
+        self.assertIn(
+            f'<h3 id="marketplace-trend-title">Marketplace coverage fell {round(-changes[last] * 100)}% in {last}, '
+            f"the biggest drop since CMS's monthly count began in {first}</h3>",
+            self.section,
+        )
+
+    def test_the_only_other_drop_is_small(self):
+        changes = _yearly_changes()
+        drops = [y for y, c in changes.items() if c < 0]
+        self.assertEqual(drops, [2019, MK["feb"][-1]["y"]])
+        self.assertLess(abs(changes[2019]), 0.01)
+        self.assertIn("The only other drop was in 2019, and it was less than 1%.", self.text)
+
+    def test_intro_gives_the_counts(self):
+        feb = _february()
+        self.assertIn(
+            f"From February 2025 to February 2026 the count fell from {_millions(feb[2025])} to {_millions(feb[2026])}, "
+            f"about {_millions(feb[2025] - feb[2026])} fewer people.",
+            self.text,
+        )
+
+    def test_latest_year_is_marked_preliminary(self):
+        prelim = MK["prelim"]
+        self.assertIn(f"The hollow point, {prelim}, is preliminary.", _text(_between(self.section, 'id="mknote"', "</p>")))
+        self.assertIn(f"The {prelim} count isn't final yet", self.text)
+        self.assertIn(f"so {prelim} is preliminary and may change", self.method)
+        self.assertIn("open:p=>p.x===MK.prelim", self.script)
+        self.assertIn("fill=\"${o?'#ffffff':color}\" stroke=\"${o?color:'#ffffff'}\"", JS)
+        self.assertIn("(preliminary)", self.script)
+
+    def test_chart_starts_at_zero_and_fits_every_year(self):
+        call = re.search(r"line\(\$\('mkline'\),.*?\{ymin:(\d+),ymax:([\d.e]+),ticks:\[([^\]]+)\]", self.script)
+        self.assertIsNotNone(call)
+        ymin, ymax = float(call.group(1)), float(call.group(2))
+        self.assertEqual(ymin, 0)
+        self.assertEqual(float(call.group(3).split(",")[-1]), ymax)
+        self.assertTrue(all(r["n"] <= ymax for r in MK["feb"]))
+        self.assertIn("color:css('--dw-blue')", self.script)
+
+    def test_script_draws_last_and_only_with_data(self):
+        # Last in the script, so a throw here can't stop another chart.
+        self.assertIn("const MK=D.marketplace;\nif(MK){", JS)
+        self.assertEqual(JS.index("/* marketplace coverage:"), JS.rindex("/* "))
+
+    def test_tables_are_accessible(self):
+        picks = _between(self.section, 'id="mkpicks"', "</table>")
+        self.assertIn('<caption class="fhi-visually-hidden">', picks)
+        self.assertEqual(picks.count('<th scope="col"'), 3)
+        self.assertEqual(picks.count('<th scope="row">'), 2)
+        self.assertIn('<table class="dw-table" id="mktable"></table>', self.section)
+        self.assertIn('<caption class="fhi-visually-hidden">People with marketplace coverage in effect each February', self.script)
+        self.assertIn('<th scope="col">February</th>', self.script)
+        self.assertIn('<tr><th scope="row">${r.y}', self.script)
+        self.assertIn('<svg class="dw-chart" id="mkline" viewBox="0 0 560 270" role="img" aria-label="', self.section)
+
+    def test_plan_picks_table_matches_the_data(self):
+        feb = _february()
+        picks = _between(self.section, 'id="mkpicks"', "</table>")
+        share = {p["y"]: feb[p["y"]] / p["n"] for p in MK["picks"]}
+        self.assertEqual((_pct(share[2025]), _pct(share[2026])), ("90%", "83%"))
+        for p in MK["picks"]:
+            self.assertIn(f'<td class="dw-r dw-num">{p["n"]:,}</td>', picks)
+            self.assertIn(f'<td class="dw-r dw-num">{feb[p["y"]]:,} <span class="dw-note">({_pct(share[p["y"]])}', picks)
+        self.assertIn(
+            f"Coverage in effect in February came to {_pct(share[2025])} of the plans picked for 2025, "
+            f"and {_pct(share[2026])} of those picked for 2026.",
+            self.text,
+        )
+
+    def test_picking_a_plan_is_explained_and_cms_quoted(self):
+        self.assertIn("Picking a plan isn't the same as having coverage.", self.text)
+        self.assertIn("starts once its first month's premium is paid, if it has one.", self.text)
+        self.assertIn(f'"{CMS_PREMIUM}"', self.method)
+        self.assertIn('href="https://www.cms.gov/files/document/2026-public-use-files-faqs.pdf"', self.method_html)
+
+    def test_kff_sentence_is_quoted_exactly_and_linked(self):
+        quote = _between(self.section, '<blockquote class="dw-quote"', "</blockquote>")
+        self.assertIn(f'cite="{KFF_MARKET}"><p>{KFF_SENTENCE}</p>', quote)
+        self.assertIn(f'href="{KFF_MARKET}"', self.section)
+        self.assertIn("KFF, a nonprofit health policy research, polling, and news organization,", self.text)
+
+    def test_kff_differences_are_named(self):
+        self.assertIn("on the marketplace or off it", self.text)
+        self.assertIn("compares June with June", self.text)
+        self.assertIn("so the two numbers aren't meant to match", self.text)
+
+    def test_no_link_to_a_kff_pdf(self):
+        for href in re.findall(r'href="(https://www\.kff\.org/[^"]*)"', self.content):
+            self.assertFalse(href.lower().endswith(".pdf"), href)
+
+    def test_survey_figures_say_who_was_asked(self):
+        self.assertIn(f'href="{KFF_SURVEY}"', self.section)
+        self.assertIn("adults who had a marketplace plan in 2025, taken in February and March 2026, 22% said they had moved to other coverage", self.text)
+        self.assertIn("and 9% said they were uninsured.", self.text)
+        self.assertIn("1,117 adults who had marketplace plans in 2025", self.method)
+        self.assertIn("plus or minus 3.8 points", self.method)
+
+    def test_census_figures_say_their_year(self):
+        self.assertIn("the Census uninsured figures above are for 2024, before this drop.", self.text)
+
+    def test_causes_stay_off_the_page(self):
+        # Why enrollment fell is contested, so the page shows what changed, not why.
+        for words in ("tax credit", "subsid", "fraud", "improper", "because", "caused", "blame", "enhanced"):
+            self.assertNotIn(words, (self.text + self.method).lower())
+
+    def test_no_insurer_is_named(self):
+        names = {_short(i["n"]) for i in DATA["issuers"]} | {r["n"] for r in DATA["prior_auth"]}
+        for name in names:
+            self.assertNotIn(name, self.text + self.method)
+
+    def test_no_em_dashes_in_the_new_copy(self):
+        for part in (self.section, self.method, self.script):
+            self.assertNotIn("\u2014", part)
+
+    def test_method_note_names_the_file_its_date_and_minnesota(self):
+        feb = {r["y"]: r for r in MK["feb"]}
+        without = (feb[2026]["n"] - feb[2026]["mn"]) / (feb[2025]["n"] - feb[2025]["mn"]) - 1
+        self.assertIn(f'<a href="{CMS_EFFECTUATED}">CMS Health Insurance Exchanges Monthly Effectuated Enrollment</a>', self.method_html)
+        self.assertIn("the file dated May 5, 2026 (Data_asof_" + MK["as_of"].replace("-", "") + "), which runs to February 2026", self.method)
+        self.assertIn(f"without Minnesota, the 2026 drop is {-without * 100:.1f}%", self.method)
+        for p in MK["picks"]:
+            self.assertIn(f'<a href="{p["url"]}">{p["y"]}</a>', self.method_html)
