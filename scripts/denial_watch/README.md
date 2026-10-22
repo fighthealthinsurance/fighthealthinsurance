@@ -74,7 +74,8 @@ nothing here runs in the app.
 - `marketplace_signups.csv` holds plans picked in each open enrollment (`Cnsmr`
   in the Total/All row of that year's OEP State-Level Public Use File,
   HealthCare.gov and state-run marketplaces together), with the CMS page, the
-  zip and its sha256. The page compares each year's February coverage with it.
+  zip, its sha256 and the date it was read; the build stops on a row missing
+  any of them. The page compares each year's February coverage with it.
 - KFF's figures are quoted and linked, never redrawn: its content is
   CC BY-NC-ND 4.0, and it asks for links to its pages, not its PDFs.
 - The open-enrollment box's dates and plan year come from `views.py`

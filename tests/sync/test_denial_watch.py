@@ -1673,10 +1673,38 @@ class TestDenialWatchMarketplaceBuilder(TestCase):
         with self.assertRaises(SystemExit):
             self.b.build_marketplace(path)
 
+    PICK = dict(
+        year="2026",
+        plan_selections="1",
+        source_url="https://www.cms.gov/x",
+        file="https://www.cms.gov/files/zip/x.zip",
+        file_sha256="0" * 64,
+        accessed="2026-10-22",
+    )
+
+    def _picks(self, **change):
+        row = {**self.PICK, **change}
+        return self._temp(",".join(row) + "\n" + ",".join(row.values()) + "\n", ".csv")
+
+    def test_a_complete_plan_pick_row_loads(self):
+        self.assertEqual(self.b.load_marketplace_signups(self._picks()), [dict(y=2026, n=1, url="https://www.cms.gov/x")])
+
     def test_plan_picks_must_cite_a_cms_page(self):
-        path = self._temp("year,plan_selections,source_url,file,file_sha256,accessed\n2026,1,https://example.org/x,,,2026-10-22\n", ".csv")
-        with self.assertRaises(SystemExit):
-            self.b.load_marketplace_signups(path)
+        with self.assertRaisesRegex(SystemExit, ": source_url must"):
+            self.b.load_marketplace_signups(self._picks(source_url="https://example.org/x"))
+
+    def test_plan_picks_must_name_the_cms_zip_its_sha256_and_when(self):
+        for column, bad in (
+            ("file", ""),
+            ("file", "https://example.org/x.zip"),
+            ("file", "https://www.cms.gov/files/document/x.pdf"),
+            ("file_sha256", ""),
+            ("file_sha256", "4538f7f8"),
+            ("accessed", ""),
+            ("accessed", "October 22"),
+        ):
+            with self.subTest(column=column, bad=bad), self.assertRaisesRegex(SystemExit, f": {column} must"):
+                self.b.load_marketplace_signups(self._picks(**{column: bad}))
 
 
 class TestDenialWatchMarketplacePage(TestCase):

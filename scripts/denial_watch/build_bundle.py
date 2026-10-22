@@ -588,11 +588,20 @@ def february_totals(rows):
 
 def load_marketplace_signups(path=MARKETPLACE_SIGNUPS_CSV):
     """Plans picked in each open enrollment, HealthCare.gov and state-run marketplaces together."""
-    rows = []
+    rows, name = [], pathlib.Path(path).name
     with open(path, newline="") as f:
         for r in csv.DictReader(f):
             if not r["source_url"].startswith("https://www.cms.gov/"):
-                sys.exit(f"{pathlib.Path(path).name}: source_url must be a cms.gov page for {r['year']}")
+                sys.exit(f"{name}: source_url must be a cms.gov page for {r['year']}")
+            # The zip and its sha256 are the record of which CMS file the count came from.
+            if not (r["file"].startswith("https://www.cms.gov/files/zip/") and r["file"].endswith(".zip")):
+                sys.exit(f"{name}: file must be the CMS zip the count came from for {r['year']}")
+            if not re.fullmatch(r"[0-9a-f]{64}", r["file_sha256"]):
+                sys.exit(f"{name}: file_sha256 must be the zip's sha256 for {r['year']}")
+            try:
+                datetime.date.fromisoformat(r["accessed"])
+            except ValueError:
+                sys.exit(f"{name}: accessed must be a date like 2026-10-22 for {r['year']}")
             rows.append(dict(y=int(r["year"]), n=int(r["plan_selections"]), url=r["source_url"]))
     return sorted(rows, key=lambda r: r["y"])
 
