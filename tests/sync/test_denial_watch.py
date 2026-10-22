@@ -1531,6 +1531,6 @@ class TestDenialWatchThemes(TestCase):
         high = max(sahie.items(), key=lambda kv: kv[1]["pct"])
         self.assertEqual(round(people / total), 10)
         self.assertIn(
-            f"About {round(total / 1e6)} million people under 65, about 1 in 10, from {low[1]['pct']}% in {low[0]} to {high[1]['pct']}% in {high[0]}.",
+            f"About {round(total / 1e6)} million people under 65 in 2024, about 1 in 10, from {low[1]['pct']}% in {low[0]} to {high[1]['pct']}% in {high[0]}.",
             self._theme("coverage"),
         )

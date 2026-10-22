@@ -627,6 +627,12 @@ SOURCES = [
          url="https://data.cms.gov/summary-statistics-on-use-and-payments/medicare-medicaid-spending-by-drug/medicare-part-d-spending-by-drug"),
     dict(name="CMS Medicare drug price negotiation: selected drugs and negotiated prices", years="2026-2028",
          url="https://www.cms.gov/initiatives/medicare-prescription-drug-affordability/overview/medicare-drug-price-negotiation-program/selected-drugs-negotiated-prices"),
+    dict(name="CMS Health Insurance Exchanges Monthly Effectuated Enrollment", years="February 2016-2026",
+         url="https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/health-insurance-marketplace/health-insurance-exchanges-monthly-effectuated-enrollment"),
+    dict(name="CMS Marketplace Open Enrollment Period public use files", years="2025",
+         url="https://www.cms.gov/data-research/statistics-trends-reports/marketplace-products/2025-marketplace-open-enrollment-period-public-use-files"),
+    dict(name="CMS Marketplace Open Enrollment Period public use files", years="2026",
+         url="https://www.cms.gov/data-research/statistics-trends-reports/marketplace-products/2026-marketplace-open-enrollment-period-public-use-files"),
 ]
 
 
