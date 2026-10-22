@@ -1962,6 +1962,13 @@ class TestDenialWatchMarketplacePage(TestCase):
         self.assertTrue(all(r["n"] <= ymax for r in MK["feb"]))
         self.assertIn("color:css('--dw-blue')", self.script)
 
+    def test_chart_and_table_use_each_february_count(self):
+        # A source check; the browser test reads the drawn points and cells back against the bundle.
+        self.assertIn("const F=MK.feb,", self.script)
+        self.assertIn("line($('mkline'),F.map(r=>({x:r.y,y:r.n})),", self.script)
+        self.assertIn("const chg=i=>{const c=F[i].n/F[i-1].n-1;", self.script)
+        self.assertIn("<td class=\"dw-r dw-num\">${fmt(r.n)}</td><td class=\"dw-r dw-num\">${i?chg(i):''}</td>", self.script)
+
     def test_script_draws_last_and_only_with_data(self):
         # Last in the script, so a throw here can't stop another chart.
         self.assertIn("const MK=D.marketplace;\nif(MK){", JS)
