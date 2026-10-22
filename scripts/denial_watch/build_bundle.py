@@ -12,6 +12,7 @@ This runs by hand, not in the app: the site only ever reads the JSON.
 """
 
 import csv
+import hashlib
 import io
 import json
 import math
@@ -544,6 +545,73 @@ def build_prior_auth(path=PRIOR_AUTH_CSV):
     return rows
 
 
+# data.cms.gov keeps only its latest effectuated file, so the build checks it has the one the copy was written from.
+EFFECTUATED_FILE = "Health Insurance Exchanges Monthly Effectuated Enrollment Data_asof_20260505.csv"
+EFFECTUATED_AS_OF = "2026-05-05"
+EFFECTUATED_SHA256 = "4611c6aa318499668440d7e5b76796d143eecfb895a38646b7eaa46d064c9eb0"
+MARKETPLACE_SIGNUPS_CSV = HERE / "marketplace_signups.csv"
+
+
+def february_totals(rows):
+    """National February coverage in effect by year, and the one year that isn't final yet.
+
+    Every year comes from one file: earlier CMS reports counted the same month
+    on an earlier date and give a higher number.
+    """
+    feb, states, decembers = {}, {}, set()
+    for r in rows:
+        y = int(r["Year"])
+        if r["State"] == "Total":
+            if r["Platform"] != "All":
+                continue
+            if r["Month"] == "December":
+                decembers.add(y)
+            if r["Month"] == "February":
+                if y in feb:
+                    sys.exit(f"effectuated file: two national February rows for {y}")
+                feb[y] = int(r["Effectuated_Enr"])
+        elif r["Month"] == "February":
+            states.setdefault(y, {})[r["State"]] = int(r["Effectuated_Enr"])
+    years = sorted(feb)
+    if not years or years != list(range(years[0], years[-1] + 1)):
+        sys.exit(f"effectuated file: the February years have a gap: {years}")
+    for y in years:
+        if sum(states.get(y, {}).values()) != feb[y]:
+            sys.exit(f"effectuated file: the state rows for February {y} don't add up to the national total")
+    # CMS restates a year's months until its December is in, so only a year without one may be open.
+    open_years = [y for y in years if y not in decembers]
+    if open_years not in ([], [years[-1]]):
+        sys.exit(f"effectuated file: years without a December {open_years}; only the latest may be open")
+    out = [dict(y=y, n=feb[y], mn=states[y].get("MN")) for y in years]
+    return out, (open_years[0] if open_years else None)
+
+
+def load_marketplace_signups(path=MARKETPLACE_SIGNUPS_CSV):
+    """Plans picked in each open enrollment, HealthCare.gov and state-run marketplaces together."""
+    rows = []
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            if not r["source_url"].startswith("https://www.cms.gov/"):
+                sys.exit(f"{pathlib.Path(path).name}: source_url must be a cms.gov page for {r['year']}")
+            rows.append(dict(y=int(r["year"]), n=int(r["plan_selections"]), url=r["source_url"]))
+    return sorted(rows, key=lambda r: r["y"])
+
+
+def build_marketplace(path=None, signups_path=MARKETPLACE_SIGNUPS_CSV):
+    path = path or RAW / "effectuated_monthly.csv"
+    digest = hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+    if digest != EFFECTUATED_SHA256:
+        sys.exit(f"{path} isn't {EFFECTUATED_FILE} (sha256 {digest}): update EFFECTUATED_FILE, "
+                 "EFFECTUATED_AS_OF and EFFECTUATED_SHA256, then reread the page's marketplace copy")
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        feb, prelim = february_totals(csv.DictReader(f))
+    picks = load_marketplace_signups(signups_path)
+    missing = {p["y"] for p in picks} - {r["y"] for r in feb}
+    if missing:
+        sys.exit(f"plan picks for {sorted(missing)} have no February count to compare with")
+    return dict(feb=feb, prelim=prelim, as_of=EFFECTUATED_AS_OF, file=EFFECTUATED_FILE, picks=picks)
+
+
 SOURCES = [
     dict(name="CMS Transparency in Coverage public use files", years="plan years 2022-2026 (claims 2020-2024)",
          url="https://www.cms.gov/marketplace/resources/data/public-use-files"),
@@ -569,7 +637,7 @@ def main(argv=None):
     ap.add_argument("--out", type=pathlib.Path, default=DEFAULT_OUT)
     args = ap.parse_args(argv)
     RAW = args.raw_dir
-    missing = [n for n in [f"tic{py}.xlsx" for py in CLAIMS_YEAR] + ["imr.csv", "partd.csv", "sahie_2023.csv", "sahie_2024.csv", "places_county.csv"]
+    missing = [n for n in [f"tic{py}.xlsx" for py in CLAIMS_YEAR] + ["imr.csv", "partd.csv", "sahie_2023.csv", "sahie_2024.csv", "places_county.csv", "effectuated_monthly.csv"]
                if not (RAW / n).exists()]
     if missing:
         sys.exit(f"missing source files in {RAW}: {', '.join(missing)} (see README.md)")
@@ -581,6 +649,7 @@ def main(argv=None):
     bundle["places"] = build_places()
     bundle["corr"] = correlations(bundle["sahie"], bundle["places"])
     bundle["prior_auth"] = build_prior_auth()
+    bundle["marketplace"] = build_marketplace()
     bundle["sources"] = SOURCES
     bundle["built"] = datetime.date.today().isoformat()
     args.out.write_text(json.dumps(bundle, separators=(",", ":"), sort_keys=True) + "\n")
@@ -608,6 +677,12 @@ def main(argv=None):
     for line in ("ma", "mcd", "mkt", "ffs"):
         std = [r["std"] for r in bundle["prior_auth"] if r["line"] == line and r["std"] is not None]
         print("prior auth", line, len(std), f"{min(std):.2%} to {max(std):.2%}")
+    mk = bundle["marketplace"]
+    for a, b in zip(mk["feb"], mk["feb"][1:]):
+        print("marketplace February", b["y"], f"{b['n']:,}", f"{b['n'] / a['n'] - 1:+.2%}", "not final" if b["y"] == mk["prelim"] else "")
+    feb = {r["y"]: r["n"] for r in mk["feb"]}
+    for p in mk["picks"]:
+        print("plan picks", p["y"], f"{p['n']:,}", f"February coverage {feb[p['y']] / p['n']:.1%} of them")
 
 
 if __name__ == "__main__":

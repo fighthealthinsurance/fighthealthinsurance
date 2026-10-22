@@ -18,6 +18,7 @@ nothing here runs in the app.
    | `partd.csv` | "Medicare Part D Spending by Drug" CSV from [data.cms.gov](https://data.cms.gov/summary-statistics-on-use-and-payments/medicare-medicaid-spending-by-drug/medicare-part-d-spending-by-drug) |
    | `sahie_2023.csv`, `sahie_2024.csv` | `https://www2.census.gov/programs-surveys/sahie/datasets/time-series/estimates-acs/sahie-<YEAR>-csv.zip` (the Census API now needs a key; the zips don't) |
    | `places_county.csv` | `https://data.cdc.gov/api/v3/views/i46a-9kgh/export.csv` (the old `rows.csv?accessType=DOWNLOAD` link was retired in October 2026) |
+   | `effectuated_monthly.csv` | The CSV on [data.cms.gov's Health Insurance Exchanges Monthly Effectuated Enrollment page](https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/health-insurance-marketplace/health-insurance-exchanges-monthly-effectuated-enrollment), renamed (the current build used `Health Insurance Exchanges Monthly Effectuated Enrollment Data_asof_20260505.csv`) |
 
 2. Build:
 
@@ -47,6 +48,35 @@ nothing here runs in the app.
   doesn't look drugs up, so after a refresh check any newly shown drug against
   CMS's selected-drug lists. Update the file when CMS publishes the 2028 prices
   (due by November 30, 2026) and picks the next drugs (by February 1, 2027).
+- Marketplace coverage is the February count of people whose marketplace plan
+  was in effect, nationally (`State` Total, `Platform` All), every year from
+  one CMS file. CMS's earlier reports counted the same month sooner and give
+  higher numbers (its early 2025 report had 23.4 million for February 2025,
+  the final file 21.8 million), so never mix in a figure from another report.
+- data.cms.gov keeps only its latest effectuated file, so `EFFECTUATED_SHA256`
+  records the one the page was written from and the build stops on any other.
+  For a new file, update `EFFECTUATED_FILE`, `EFFECTUATED_AS_OF` and the
+  sha256, then reread the marketplace copy: its heading says how the latest
+  year compares with every other.
+- CMS updates a year's months until that year's December is in, so the year
+  without a December is marked not final (the page says preliminary). The
+  build stops if any earlier year has no December, if a year is missing, or if
+  the state rows don't add up to the national total.
+- Only the national total is charted: the HealthCare.gov and state-run splits
+  move when a state switches platform (Georgia and Illinois have since moved
+  to their own marketplaces).
+- CMS's methodology says Minnesota's latest data leave out a subgroup of
+  enrollments after a reporting change, so each February row keeps
+  Minnesota's count (`mn`) and the copy gives the drop without it too.
+- CMS revised its 2021 counts for a new method (its Early 2022 effectuated
+  enrollment report, footnote 1). No source says whether the file's 2016 to
+  2020 counts were redone the same way.
+- `marketplace_signups.csv` holds plans picked in each open enrollment (`Cnsmr`
+  in the Total/All row of that year's OEP State-Level Public Use File,
+  HealthCare.gov and state-run marketplaces together), with the CMS page, the
+  zip and its sha256. The page compares each year's February coverage with it.
+- KFF's figures are quoted and linked, never redrawn: its content is
+  CC BY-NC-ND 4.0, and it asks for links to its pages, not its PDFs.
 - The open-enrollment box's dates and plan year come from `views.py`
   (`DENIAL_WATCH_MEDICARE_ENROLLMENT`, `DENIAL_WATCH_ENROLLMENT_BOX_ENDS`); the
   box hides itself after the season. Each fall, also recheck its Sources line,
