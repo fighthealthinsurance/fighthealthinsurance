@@ -699,7 +699,7 @@ class TestDenialWatchEnrollment(TestCase):
         self.assertIn("Picking a plan for 2028?", box)
         self.assertIn("runs from October 15 to December 7, 2027,", box)
         self.assertIn("Picking a 2028 HealthCare.gov plan?", _between(html, 'id="insurers"', "</section>"))
-        self.assertNotIn("2026", box.replace("checked October 19, 2026", ""))
+        self.assertNotIn("2026", box.replace("checked October 22, 2026", ""))
 
     def test_last_day_counts_in_hawaii_not_utc(self):
         # 5am UTC on December 8 is still December 7 in every state.
@@ -713,6 +713,52 @@ class TestDenialWatchEnrollment(TestCase):
         self.assertNotIn('id="enroll"', html)
         self.assertNotIn("Picking a 2027 HealthCare.gov plan?", html)
         self.assertNotIn("<b>Open enrollment:</b>", html)
+
+    # Medicare's window, HealthCare.gov's alone, and the box's last day.
+    SEASON_DAYS = (date(2026, 10, 18), date(2026, 12, 8), date(2027, 1, 15))
+    RENEWING = (
+        "Already have a marketplace plan? During open enrollment, log in, update your income and compare plans, "
+        "even if you'll be renewed automatically. Plans and prices change every year, and a new plan only starts "
+        "once you pay the first premium. For free, unbiased help, find an independent assister near you or call "
+        "1-800-318-2596. Our fall checklist has the rest."
+    )
+
+    def _renewing(self, day):
+        box = _between(_page(day), 'id="enroll"', "</section>")
+        return box, _between(box, 'id="enroll-renewing"', "</p>")
+
+    def test_box_tells_current_enrollees_what_to_do_all_season(self):
+        for day in self.SEASON_DAYS:
+            with self.subTest(day=day):
+                box, para = self._renewing(day)
+                self.assertIn(self.RENEWING, _text(para))
+                self.assertIn('href="https://www.healthcare.gov/find-local-help/"', para)
+                self.assertIn(f'href="{reverse("coverage-changes")}#fall-checklist"', para)
+                self.assertIn("Dates, numbers and links checked October 22, 2026.", _text(box))
+
+    def test_box_help_line_dials_the_number_it_shows(self):
+        _, para = self._renewing(self.SEASON_DAYS[0])
+        self.assertIn('<a class="dw-tel" href="tel:+18003182596">1-800-318-2596</a>', para)
+
+    def test_box_prints_no_healthcare_gov_dates_on_any_season_day(self):
+        for day in self.SEASON_DAYS:
+            box, para = self._renewing(day)
+            for text in ("November 1", "December 15", "January 15", "2026"):
+                with self.subTest(day=day, text=text):
+                    self.assertNotIn(text, para)
+            for text in ("November 1", "December 15", "January 15"):
+                with self.subTest(day=day, text=text):
+                    self.assertNotIn(text, box)
+
+    def test_box_fall_checklist_link_lands_on_the_checklist(self):
+        guide = Client().get(reverse("coverage-changes")).content.decode()
+        self.assertIn('id="fall-checklist"', guide)
+
+    def test_box_paragraph_has_no_em_dash_or_insurer(self):
+        _, para = self._renewing(self.SEASON_DAYS[0])
+        self.assertNotIn("\u2014", para)
+        for name in {_short(i["n"]) for i in DATA["issuers"]}:
+            self.assertNotIn(name, _text(para))
 
 
 class TestDenialWatchWhoToCall(TestCase):
