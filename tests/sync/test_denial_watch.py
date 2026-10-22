@@ -2012,6 +2012,31 @@ class TestDenialWatchMarketplacePage(TestCase):
             self.text,
         )
 
+    def test_bridge_says_the_denial_rates_scope_and_year(self):
+        year = DATA["trend"][-1]["year"]
+        bridge = _text(_between(self.section, '<p id="denials-bridge">', "</p>"))
+        self.assertEqual(
+            bridge,
+            "The denial rates higher up the page, on the state map and in the insurer table, "
+            f"are for marketplace plans too, but only for HealthCare.gov states and insurers in {year}, "
+            "while the count here covers every marketplace nationwide.",
+        )
+        # The map and insurer table say the same year.
+        self.assertIn(f"Share of in-network claims denied by HealthCare.gov insurers in each state, {year}.", self.content)
+
+    def test_bridge_links_resolve_to_the_denial_sections_above(self):
+        bridge = _between(self.section, 'id="denials-bridge"', "</p>")
+        targets = re.findall(r'href="#([\w-]+)"', bridge)
+        self.assertEqual(targets, ["map-denials", "insurers"])
+        for target in targets:
+            self.assertLess(self.content.index(f'id="{target}"'), self.content.index('id="marketplace-trend"'))
+
+    def test_bridge_has_no_causal_words(self):
+        bridge = _text(_between(self.section, '<p id="denials-bridge">', "</p>")).lower()
+        for words in ("because", "after", "led to", "due to", "caused", "result", "drove", "since", "so "):
+            self.assertNotIn(words, bridge)
+        self.assertNotIn(chr(0x2014), bridge)
+
     def test_chart_label_before_the_script_runs_names_the_years(self):
         first, last, prelim = MK["feb"][0]["y"], MK["feb"][-1]["y"], MK["prelim"]
         self.assertIn(
