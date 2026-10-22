@@ -28,6 +28,12 @@ class CoverageChangesTest(TestCase):
         for source in ("healthcare.gov/quick-guide/dates-and-deadlines", "rp-26-24.pdf", "2027-announcement.pdf"):
             self.assertIn(source, html)
 
+    def test_end_of_automatic_renewal_with_premium_help_is_expected_not_settled(self):
+        # The 2025 law ties premium help to checks from 2028 that CMS hasn't set out yet; KFF says "could effectively end".
+        html = self.client.get(reverse("coverage-changes")).content.decode()
+        self.assertIn("Automatic renewal with premium help is expected to end for 2028", html)
+        self.assertNotIn("premium help ends for 2028", html)
+
     def test_the_resources_menu_links_to_the_guide(self):
         html = self.client.get(reverse("root")).content.decode()
         self.assertIn(f'href="{reverse("coverage-changes")}"', html)
