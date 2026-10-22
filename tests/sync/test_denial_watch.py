@@ -1688,7 +1688,7 @@ class TestDenialWatchMarketplacePage(TestCase):
         self.assertEqual(min(changes, key=lambda y: feb[y] - feb[y - 1]), last)
         self.assertIn(
             f'<h3 id="marketplace-trend-title">Marketplace coverage fell {round(-changes[last] * 100)}% in {last}, '
-            f"the biggest drop since CMS's monthly count began in {first}</h3>",
+            f"the biggest drop in CMS's monthly count, which goes back to {first}</h3>",
             self.section,
         )
 
@@ -1750,14 +1750,14 @@ class TestDenialWatchMarketplacePage(TestCase):
             self.assertIn(f'<td class="dw-r dw-num">{p["n"]:,}</td>', picks)
             self.assertIn(f'<td class="dw-r dw-num">{feb[p["y"]]:,} <span class="dw-note">({_pct(share[p["y"]])}', picks)
         self.assertIn(
-            f"Coverage in effect in February came to {_pct(share[2025])} of the plans picked for 2025, "
-            f"and {_pct(share[2026])} of those picked for 2026.",
+            f"Coverage in effect in February came to {_pct(share[2025])} of those people for 2025, "
+            f"and {_pct(share[2026])} for 2026.",
             self.text,
         )
 
     def test_picking_a_plan_is_explained_and_cms_quoted(self):
         self.assertIn("Picking a plan isn't the same as having coverage.", self.text)
-        self.assertIn("starts once its first month's premium is paid, if it has one.", self.text)
+        self.assertIn("only becomes coverage once the first month's premium is paid, if there is one.", self.text)
         self.assertIn(f'"{CMS_PREMIUM}"', self.method)
         self.assertIn('href="https://www.cms.gov/files/document/2026-public-use-files-faqs.pdf"', self.method_html)
 
@@ -1766,6 +1766,19 @@ class TestDenialWatchMarketplacePage(TestCase):
         self.assertIn(f'cite="{KFF_MARKET}"><p>{KFF_SENTENCE}</p>', quote)
         self.assertIn(f'href="{KFF_MARKET}"', self.section)
         self.assertIn("KFF, a nonprofit health policy research, polling, and news organization,", self.text)
+
+    def test_plan_picks_count_people_including_automatic_renewals(self):
+        # CMS's count is of people, and it includes people renewed without picking again.
+        self.assertIn("CMS counts everyone with a plan picked, including people renewed into one automatically.", self.text)
+        self.assertIn("CMS counts people, not plans, including people renewed into a plan automatically.", self.method)
+        self.assertNotIn("of the plans picked", self.text)
+        rows = re.findall(r'<th scope="row">([^<]+)</th>', _between(self.section, 'id="mkpicks"', "</table>"))
+        self.assertEqual(rows, ["People with a plan picked in open enrollment", "People with coverage in effect in February"])
+
+    def test_kff_is_described_the_way_it_asks_everywhere(self):
+        self.assertNotIn("independent health policy research group", self.content)
+        more = _text(_between(self.content, '<a href="https://www.kff.org/">KFF</a>', "</li>"))
+        self.assertIn("A nonprofit health policy research, polling, and news organization.", more)
 
     def test_kff_differences_are_named(self):
         self.assertIn("on the marketplace or off it", self.text)
@@ -1780,6 +1793,8 @@ class TestDenialWatchMarketplacePage(TestCase):
         self.assertIn(f'href="{KFF_SURVEY}"', self.section)
         self.assertIn("adults who had a marketplace plan in 2025, taken in February and March 2026, 22% said they had moved to other coverage", self.text)
         self.assertIn("and 9% said they were uninsured.", self.text)
+        # KFF's own caveat on those plans, so the note doesn't reassure more than KFF does.
+        self.assertIn("KFF notes that some plans sold outside the marketplace may cover less and have fewer consumer protections.", self.text)
         self.assertIn("1,117 adults who had marketplace plans in 2025", self.method)
         self.assertIn("plus or minus 3.8 points", self.method)
 
@@ -1804,7 +1819,11 @@ class TestDenialWatchMarketplacePage(TestCase):
         feb = {r["y"]: r for r in MK["feb"]}
         without = (feb[2026]["n"] - feb[2026]["mn"]) / (feb[2025]["n"] - feb[2025]["mn"]) - 1
         self.assertIn(f'<a href="{CMS_EFFECTUATED}">CMS Health Insurance Exchanges Monthly Effectuated Enrollment</a>', self.method_html)
-        self.assertIn("the file dated May 5, 2026 (Data_asof_" + MK["as_of"].replace("-", "") + "), which runs to February 2026", self.method)
+        asof = date.fromisoformat(MK["as_of"])
+        self.assertIn(
+            f"the file with data as of {asof:%B} {asof.day}, {asof.year} (Data_asof_{asof:%Y%m%d}), which runs to February 2026",
+            self.method,
+        )
         self.assertIn(f"without Minnesota, the 2026 drop is {-without * 100:.1f}%", self.method)
         for p in MK["picks"]:
             self.assertIn(f'<a href="{p["url"]}">{p["y"]}</a>', self.method_html)
