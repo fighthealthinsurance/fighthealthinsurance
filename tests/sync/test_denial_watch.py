@@ -1527,14 +1527,15 @@ class TestDenialWatchThemes(TestCase):
         )
 
     def test_coverage_answer_matches_the_census_figures(self):
-        sahie = DATA["sahie"]["2024"]
+        year = _census_year()
+        sahie = DATA["sahie"][year]
         total = sum(r["n"] for r in sahie.values())
         people = sum(r["n"] / (r["pct"] / 100) for r in sahie.values())
         low = min(sahie.items(), key=lambda kv: kv[1]["pct"])
         high = max(sahie.items(), key=lambda kv: kv[1]["pct"])
         self.assertEqual(round(people / total), 10)
         self.assertIn(
-            f"About {round(total / 1e6)} million people under 65 in 2024, about 1 in 10, from {low[1]['pct']}% in {low[0]} to {high[1]['pct']}% in {high[0]}.",
+            f"About {round(total / 1e6)} million people under 65 in {year}, about 1 in 10, from {low[1]['pct']}% in {low[0]} to {high[1]['pct']}% in {high[0]}.",
             self._theme("coverage"),
         )
 
@@ -1545,6 +1546,47 @@ KFF_SURVEY = "https://www.kff.org/public-opinion/a-follow-up-survey-of-aca-marke
 KFF_SENTENCE = "Enrollment in the individual health insurance market fell 18% between June 2025 and June 2026."
 CMS_EFFECTUATED = "https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/health-insurance-marketplace/health-insurance-exchanges-monthly-effectuated-enrollment"
 CMS_PREMIUM = "plan selections will only become coverage for consumers that effectuate their coverage by paying their first monthly premium"
+KFF_MARKET_DATE = "October 14, 2026"
+KFF_JUNE = (25.2, 20.5)  # millions, June 2025 and June 2026, from the KFF analysis
+# CMS's early 2025 effectuated report counted February 2025 on March 15, 2025, sooner than the file the page uses.
+EARLY_FEB_2025 = 23_393_198
+
+
+def _census_year() -> str:
+    return max(DATA["sahie"], key=int)
+
+
+def _picks() -> dict[int, int]:
+    return {p["y"]: p["n"] for p in MK["picks"]}
+
+
+def _table_rows(html: str) -> list[list[str]]:
+    """Each row's cell text, header cells included, spaces collapsed."""
+
+    class Rows(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.rows: list[list[str]] = []
+            self.cell: list[str] | None = None
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "tr":
+                self.rows.append([])
+            elif tag in ("th", "td"):
+                self.cell = []
+
+        def handle_endtag(self, tag):
+            if tag in ("th", "td") and self.cell is not None:
+                self.rows[-1].append(re.sub(r"\s+", " ", "".join(self.cell)).strip())
+                self.cell = None
+
+        def handle_data(self, data):
+            if self.cell is not None:
+                self.cell.append(data)
+
+    parser = Rows()
+    parser.feed(html)
+    return parser.rows
 
 
 def _february() -> dict[int, int]:
@@ -1591,8 +1633,17 @@ class TestDenialWatchMarketplaceData(TestCase):
         self.assertEqual(MK["prelim"], MK["feb"][-1]["y"])
 
     def test_2025_is_the_final_count_not_the_early_snapshot(self):
-        # CMS's early 2025 report counted February 2025 sooner, at 23,393,198; mixing it in fakes an 18% drop.
+        # Mixing in the early report's count fakes an 18% drop.
         self.assertEqual(_february()[2025], 21_776_626)
+        self.assertGreater(EARLY_FEB_2025, _february()[2025])
+
+    def test_sources_give_the_years_shown(self):
+        years = {}
+        for s in DATA["sources"]:
+            years.setdefault(s["url"], s["years"])
+        self.assertEqual(years[CMS_EFFECTUATED], f"February {MK['feb'][0]['y']}-{MK['feb'][-1]['y']}")
+        for p in MK["picks"]:
+            self.assertEqual(years[p["url"]], str(p["y"]))
 
     def test_file_and_date_are_the_ones_the_builder_checks(self):
         b = _load_builder()
@@ -1605,7 +1656,8 @@ class TestDenialWatchMarketplaceData(TestCase):
 
     def test_plan_picks_have_a_february_count_and_a_cms_page(self):
         feb = _february()
-        self.assertEqual([p["y"] for p in MK["picks"]], [2025, 2026])
+        # The page compares the last two Februaries, each with that year's plan picks.
+        self.assertEqual([p["y"] for p in MK["picks"]], [r["y"] for r in MK["feb"][-2:]])
         for p in MK["picks"]:
             self.assertIn(p["y"], feb)
             self.assertTrue(feb[p["y"]] < p["n"], p["y"])
@@ -1855,18 +1907,27 @@ class TestDenialWatchMarketplacePage(TestCase):
         )
 
     def test_the_only_other_drop_is_small(self):
-        changes = _yearly_changes()
-        drops = [y for y, c in changes.items() if c < 0]
-        self.assertEqual(drops, [2019, MK["feb"][-1]["y"]])
-        self.assertLess(abs(changes[2019]), 0.01)
-        self.assertIn("The only other drop was in 2019, and it was less than 1%.", self.text)
+        changes, last = _yearly_changes(), MK["feb"][-1]["y"]
+        others = [y for y, c in changes.items() if c < 0 and y != last]
+        self.assertEqual(len(others), 1, others)
+        self.assertLess(abs(changes[others[0]]), 0.01)
+        self.assertIn(f"The only other drop was in {others[0]}, and it was less than 1%.", self.text)
 
     def test_intro_gives_the_counts(self):
-        feb = _february()
+        a, b = MK["feb"][-2], MK["feb"][-1]
+        self.assertLess(b["n"], a["n"])
+        self.assertIn(f"February is the latest month CMS has published for {b['y']}, so every year is compared on that month.", self.text)
         self.assertIn(
-            f"From February 2025 to February 2026 the count fell from {_millions(feb[2025])} to {_millions(feb[2026])}, "
-            f"about {_millions(feb[2025] - feb[2026])} fewer people.",
+            f"From February {a['y']} to February {b['y']} the count fell from {_millions(a['n'])} to {_millions(b['n'])}, "
+            f"about {_millions(a['n'] - b['n'])} fewer people.",
             self.text,
+        )
+
+    def test_chart_label_before_the_script_runs_names_the_years(self):
+        first, last, prelim = MK["feb"][0]["y"], MK["feb"][-1]["y"], MK["prelim"]
+        self.assertIn(
+            f'aria-label="Line chart of people with marketplace coverage in effect each February, {first} to {last}. {prelim} is preliminary"',
+            self.section,
         )
 
     def test_latest_year_is_marked_preliminary(self):
@@ -1904,18 +1965,29 @@ class TestDenialWatchMarketplacePage(TestCase):
         self.assertIn('<svg class="dw-chart" id="mkline" viewBox="0 0 560 270" role="img" aria-label="', self.section)
 
     def test_plan_picks_table_matches_the_data(self):
-        feb = _february()
-        picks = _between(self.section, 'id="mkpicks"', "</table>")
-        share = {p["y"]: feb[p["y"]] / p["n"] for p in MK["picks"]}
-        self.assertEqual((_pct(share[2025]), _pct(share[2026])), ("90%", "83%"))
-        for p in MK["picks"]:
-            self.assertIn(f'<td class="dw-r dw-num">{p["n"]:,}</td>', picks)
-            self.assertIn(f'<td class="dw-r dw-num">{feb[p["y"]]:,} <span class="dw-note">({_pct(share[p["y"]])}', picks)
-        self.assertIn(
-            f"Coverage in effect in February came to {_pct(share[2025])} of those people for 2025, "
-            f"and {_pct(share[2026])} for 2026.",
-            self.text,
+        feb, picks, prelim = _february(), _picks(), MK["prelim"]
+        years = sorted(picks)
+
+        def covered(y):
+            return f"{feb[y]:,} ({_pct(feb[y] / picks[y])}{', preliminary' if y == prelim else ''})"
+
+        table = _between(self.section, 'id="mkpicks"', "</table>")
+        self.assertEqual(
+            _table_rows(table),
+            [
+                ["Count", *map(str, years)],
+                ["People with a plan picked in open enrollment", *(f"{picks[y]:,}" for y in years)],
+                ["People with coverage in effect in February", *map(covered, years)],
+            ],
         )
+        self.assertIn(f"with coverage in effect that February, {years[0]} and {years[1]}</caption>", table)
+
+    def test_coverage_shares_in_the_words_match_the_data(self):
+        feb, picks = _february(), _picks()
+        (y0, s0), (y1, s1) = sorted((y, _pct(feb[y] / n)) for y, n in picks.items())
+        self.assertIn(f"Coverage in effect in February came to {s0} of those people for {y0}, and {s1} for {y1}.", self.text)
+        self.assertIn(f"The {s0} and {s1} divide each February's coverage by that year's plan picks.", self.method)
+        self.assertIn(f"CMS's early 2025 report gave {_pct(EARLY_FEB_2025 / picks[2025])}, from its earlier February count.", self.method)
 
     def test_picking_a_plan_is_explained_and_cms_quoted(self):
         self.assertIn("Picking a plan isn't the same as having coverage.", self.text)
@@ -1927,6 +1999,16 @@ class TestDenialWatchMarketplacePage(TestCase):
         quote = _between(self.section, '<blockquote class="dw-quote"', "</blockquote>")
         self.assertIn(f'cite="{KFF_MARKET}"><p>{KFF_SENTENCE}</p>', quote)
         self.assertIn(f'href="{KFF_MARKET}"', self.section)
+        self.assertIn(f"From KFF's analysis of {KFF_MARKET_DATE}.", self.text)
+        self.assertIn(f"(KFF, {KFF_MARKET_DATE})", self.method)
+
+    def test_kff_counts_agree_with_its_quoted_drop(self):
+        june25, june26 = KFF_JUNE
+        self.assertIn(f"{june25} million in June 2025 and {june26} million in June 2026", self.method)
+        # The quote rounds to a whole percent, the counts to a tenth of a million: their ranges must overlap.
+        drop = int(re.search(r"fell (\d+)%", KFF_SENTENCE).group(1)) / 100
+        low, high = 1 - (june26 + 0.05) / (june25 - 0.05), 1 - (june26 - 0.05) / (june25 + 0.05)
+        self.assertTrue(low < drop + 0.005 and high >= drop - 0.005, (low, high))
         self.assertIn("KFF, a nonprofit health policy research, polling, and news organization,", self.text)
 
     def test_plan_picks_count_people_including_automatic_renewals(self):
@@ -1961,7 +2043,7 @@ class TestDenialWatchMarketplacePage(TestCase):
         self.assertIn("plus or minus 3.8 points", self.method)
 
     def test_census_figures_say_their_year(self):
-        self.assertIn("the Census uninsured figures above are for 2024, before this drop.", self.text)
+        self.assertIn(f"the Census uninsured figures above are for {_census_year()}, before this drop.", self.text)
 
     def test_causes_stay_off_the_page(self):
         # Why enrollment fell is contested, so the page shows what changed, not why.
@@ -1978,14 +2060,23 @@ class TestDenialWatchMarketplacePage(TestCase):
             self.assertNotIn("\u2014", part)
 
     def test_method_note_names_the_file_its_date_and_minnesota(self):
-        feb = {r["y"]: r for r in MK["feb"]}
-        without = (feb[2026]["n"] - feb[2026]["mn"]) / (feb[2025]["n"] - feb[2025]["mn"]) - 1
+        a, b = MK["feb"][-2], MK["feb"][-1]
+        without = (b["n"] - b["mn"]) / (a["n"] - a["mn"]) - 1
         self.assertIn(f'<a href="{CMS_EFFECTUATED}">CMS Health Insurance Exchanges Monthly Effectuated Enrollment</a>', self.method_html)
         asof = date.fromisoformat(MK["as_of"])
         self.assertIn(
-            f"the file with data as of {asof:%B} {asof.day}, {asof.year} (Data_asof_{asof:%Y%m%d}), which runs to February 2026",
+            f"the file with data as of {asof:%B} {asof.day}, {asof.year} (Data_asof_{asof:%Y%m%d}), which runs to February {b['y']}",
             self.method,
         )
-        self.assertIn(f"without Minnesota, the 2026 drop is {-without * 100:.1f}%", self.method)
+        self.assertIn(f"without Minnesota, the {b['y']} drop is {-without * 100:.1f}%", self.method)
+        # CMS redid 2021 onward; the years before that start with the file's first.
+        self.assertIn(f"don't say whether {MK['feb'][0]['y']} to 2020 were counted again the same way", self.method)
+
+    def test_method_note_compares_the_early_count_with_this_file(self):
+        self.assertIn(
+            f"its early 2025 report had {_millions(EARLY_FEB_2025)} for February 2025 (counted March 15, 2025), "
+            f"against {_millions(_february()[2025])} in this file, so mixing reports would make the drop look bigger.",
+            self.method,
+        )
         for p in MK["picks"]:
             self.assertIn(f'<a href="{p["url"]}">{p["y"]}</a>', self.method_html)
