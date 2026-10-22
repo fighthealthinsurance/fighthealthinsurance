@@ -2118,6 +2118,29 @@ class TestDenialWatchMarketplacePage(TestCase):
         self.assertIn("1,117 adults who had marketplace plans in 2025", self.method)
         self.assertIn("plus or minus 3.8 points", self.method)
 
+    def test_section_closes_with_what_to_do_after_losing_coverage(self):
+        line = _between(self.section, 'id="lost-coverage"', "</p>")
+        self.assertIn(
+            "Lost coverage, or about to? Losing health coverage can open a special enrollment period, usually from "
+            "60 days before it ends to 60 days after (90 days after, for Medicaid or CHIP), and you may need to send "
+            "proof that you lost it. Medicaid and CHIP take applications any time of year.",
+            _text(line),
+        )
+        # Last in the section, after the survey.
+        self.assertGreater(self.section.index('id="lost-coverage"'), self.section.index(f'href="{KFF_SURVEY}"'))
+        self.assertEqual(self.section.rindex("<p"), self.section.index('<p id="lost-coverage"'))
+
+    def test_closing_line_links_special_enrollment_and_local_help(self):
+        line = _between(self.section, 'id="lost-coverage"', "</p>")
+        for href in (
+            "https://www.healthcare.gov/coverage-outside-open-enrollment/special-enrollment-period/",
+            "https://www.healthcare.gov/find-local-help/",
+        ):
+            self.assertIn(f'href="{href}"', line)
+
+    def test_closing_line_has_no_em_dash(self):
+        self.assertNotIn(chr(0x2014), _between(self.section, 'id="lost-coverage"', "</p>"))
+
     def test_census_figures_say_their_year(self):
         self.assertIn(f"the Census uninsured figures above are for {_census_year()}, before this drop.", self.text)
 
