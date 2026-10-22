@@ -2022,6 +2022,7 @@ class TestDenialWatchMarketplacePage(TestCase):
         self.assertIn(f'href="{KFF_MARKET}"', self.section)
         self.assertIn(f"From KFF's analysis of {KFF_MARKET_DATE}.", self.text)
         self.assertIn(f"(KFF, {KFF_MARKET_DATE})", self.method)
+        self.assertIn("KFF, a nonprofit health policy research, polling, and news organization,", self.text)
 
     def test_kff_counts_agree_with_its_quoted_drop(self):
         june25, june26 = KFF_JUNE
@@ -2030,7 +2031,6 @@ class TestDenialWatchMarketplacePage(TestCase):
         drop = int(re.search(r"fell (\d+)%", KFF_SENTENCE).group(1)) / 100
         low, high = 1 - (june26 + 0.05) / (june25 - 0.05), 1 - (june26 - 0.05) / (june25 + 0.05)
         self.assertTrue(low < drop + 0.005 and high >= drop - 0.005, (low, high))
-        self.assertIn("KFF, a nonprofit health policy research, polling, and news organization,", self.text)
 
     def test_plan_picks_count_people_including_automatic_renewals(self):
         # CMS's count is of people, and it includes people renewed without picking again.
@@ -2092,6 +2092,8 @@ class TestDenialWatchMarketplacePage(TestCase):
         self.assertIn(f"without Minnesota, the {b['y']} drop is {-without * 100:.1f}%", self.method)
         # CMS redid 2021 onward; the years before that start with the file's first.
         self.assertIn(f"don't say whether {MK['feb'][0]['y']} to 2020 were counted again the same way", self.method)
+        for p in MK["picks"]:
+            self.assertIn(f'<a href="{p["url"]}">{p["y"]}</a>', self.method_html)
 
     def test_method_note_compares_the_early_count_with_this_file(self):
         self.assertIn(
@@ -2099,5 +2101,3 @@ class TestDenialWatchMarketplacePage(TestCase):
             f"against {_millions(_february()[2025])} in this file, so mixing reports would make the drop look bigger.",
             self.method,
         )
-        for p in MK["picks"]:
-            self.assertIn(f'<a href="{p["url"]}">{p["y"]}</a>', self.method_html)
