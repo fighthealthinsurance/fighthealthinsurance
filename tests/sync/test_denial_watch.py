@@ -1817,6 +1817,20 @@ class TestDenialWatchMarketplaceBuilder(TestCase):
         # A zip that isn't there is reported as unchecked, not refused.
         self.assertEqual(self.b.load_marketplace_signups(self._picks(file_sha256=ok), zip_dir=self._zip_dir(None)), loaded)
 
+    def test_build_checks_plan_pick_zips_in_the_raw_directory(self):
+        rows = self._rows([2025, 2026], no_december=[2026])
+        lines = ['"State","Platform","Year","Month","Effectuated_Enr"'] + [",".join(r.values()) for r in rows]
+        path = self._temp("\n".join(lines) + "\n", ".csv")
+        picks = self._picks_rows(2025, 2026)
+        # Made-up rows pass the file check only with their own sha256.
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        with mock.patch.object(self.b, "EFFECTUATED_SHA256", digest):
+            with mock.patch.object(self.b, "RAW", self._zip_dir(b"not the zip")), self.assertRaisesRegex(SystemExit, "not the file_sha256 recorded"):
+                self.b.build_marketplace(path, picks)
+            with mock.patch.object(self.b, "RAW", self._zip_dir(None)):
+                mk = self.b.build_marketplace(path, picks)
+        self.assertEqual((mk["prelim"], [r["y"] for r in mk["feb"]], [p["y"] for p in mk["picks"]]), (2026, [2025, 2026], [2025, 2026]))
+
     def _feb(self, *years):
         return [dict(y=y, n=1000 + y, mn=1) for y in years]
 
