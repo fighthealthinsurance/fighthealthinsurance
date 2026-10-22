@@ -1,7 +1,8 @@
 """Denial Watch's view buttons, run in a browser.
 
 The sync tests read the script's source; these check that switching a view
-changes what a reader sees, and that the map buttons wrap on a phone.
+changes what a reader sees, that the map buttons wrap on a phone, and that
+the marketplace chart marks the year CMS is still counting.
 """
 
 import json
@@ -23,7 +24,7 @@ DATA = json.loads(
 
 
 class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
-    """The map and trend buttons on /denial-watch."""
+    """The map and trend buttons, and the marketplace chart, on /denial-watch."""
 
     @classmethod
     def setUpClass(cls):
@@ -80,6 +81,18 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         )
         # Alaska and North Dakota report but have no all-claims figure; Ohio has one; California has no data here.
         self.assertEqual(gone, [True, True, False, False])
+
+    def test_marketplace_chart_draws_only_the_preliminary_year_hollow(self):
+        feb, prelim = DATA["marketplace"]["feb"], DATA["marketplace"]["prelim"]
+        self._open()
+        fills, rows = self.execute_script(
+            "return [[...document.querySelectorAll('#mkline circle')].map(c => c.getAttribute('fill')),"
+            " [...document.querySelectorAll('#mktable tbody tr')].map(r => r.cells[0].textContent)];"
+        )
+        # One point and one row per February, in order; only the year without its December is hollow and labelled.
+        self.assertEqual(len(fills), len(feb))
+        self.assertEqual([r["y"] for r, fill in zip(feb, fills) if fill == "#ffffff"], [prelim])
+        self.assertEqual(rows, [f"{r['y']} (preliminary)" if r["y"] == prelim else str(r["y"]) for r in feb])
 
     def _rows(self):
         return self.execute_script("return [...document.querySelectorAll('#itable tbody tr')].map(r => r.cells[0].textContent)")

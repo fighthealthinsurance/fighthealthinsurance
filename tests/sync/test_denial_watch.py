@@ -12,6 +12,7 @@ import json
 import pathlib
 import re
 import tempfile
+from html.parser import HTMLParser
 from datetime import date, datetime, timezone as dt_timezone
 from unittest import mock
 
@@ -1548,6 +1549,30 @@ def _february() -> dict[int, int]:
     return {r["y"]: r["n"] for r in MK["feb"]}
 
 
+def _section_parents(html: str) -> dict[str | None, str | None]:
+    """Each section's id and the id of the section it sits inside (None at the top)."""
+
+    class Parents(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack: list[str | None] = []
+            self.of: dict[str | None, str | None] = {}
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "section":
+                sid = dict(attrs).get("id")
+                self.of[sid] = self.stack[-1] if self.stack else None
+                self.stack.append(sid)
+
+        def handle_endtag(self, tag):
+            if tag == "section":
+                self.stack.pop()
+
+    parser = Parents()
+    parser.feed(html)
+    return parser.of
+
+
 def _yearly_changes() -> dict[int, float]:
     feb = MK["feb"]
     return {b["y"]: b["n"] / a["n"] - 1 for a, b in zip(feb, feb[1:])}
@@ -1668,9 +1693,9 @@ class TestDenialWatchMarketplacePage(TestCase):
         cls.method_html = method
         cls.script = _between(JS, "/* marketplace coverage:", "})();")
 
-    def test_section_sits_under_the_coverage_map(self):
-        at = [self.content.index(m) for m in ('id="coverage"', 'id="cmap"', 'id="marketplace-trend"', 'id="costs"')]
-        self.assertEqual(at, sorted(at))
+    def test_section_sits_inside_coverage_after_the_map(self):
+        self.assertEqual(_section_parents(self.content)["marketplace-trend"], "coverage")
+        self.assertLess(self.content.index('id="cmap"'), self.content.index('id="marketplace-trend"'))
         self.assertIn('<section class="fhi-stack" id="marketplace-trend" aria-labelledby="marketplace-trend-title">', self.content)
 
     def test_no_id_is_used_twice_in_season_or_out(self):
