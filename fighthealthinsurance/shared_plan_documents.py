@@ -2,11 +2,13 @@
 
 Each shared file is one encrypted PolicyDocument marked with where it came
 from (``source``) and the date of the agreement it was shared under. This
-module stores them and holds the limits every way in shares: a signed
-timestamp that each upload form carries, and a daily budget per visitor and
-for everyone.
+module stores them, with a fingerprint of each file so repeats can be
+counted, and holds the limits every way in shares: a signed timestamp that
+each upload form carries, and a daily budget per visitor and for everyone.
 """
 
+import hashlib
+import hmac
 import time
 import uuid
 from typing import Any, Mapping, Optional, Sequence
@@ -125,6 +127,26 @@ def note_shared(request: HttpRequest, files: Sequence[UploadedFile]) -> None:
 
 # ---- Storing shared files ---------------------------------------------------
 
+# Names the SECRET_KEY sub-key, so these digests match no other feature's.
+_FINGERPRINT_LABEL = b"fhi.shared-plan-document-fingerprint.v1"
+
+
+def fingerprint(file: UploadedFile) -> str:
+    """A keyed SHA-256 of the file's contents, the same for the same file.
+
+    Keyed, so someone holding a file can't check it against our table
+    without our key. Reads in chunks and leaves the file rewound.
+    """
+    secret = settings.SECRET_KEY
+    if isinstance(secret, str):
+        secret = secret.encode("utf-8")
+    key = hmac.new(secret, _FINGERPRINT_LABEL, hashlib.sha256).digest()
+    digest = hmac.new(key, digestmod=hashlib.sha256)
+    for chunk in file.chunks():
+        digest.update(chunk)
+    file.seek(0)
+    return digest.hexdigest()
+
 
 def save_shared_documents(
     files: Sequence[UploadedFile],
@@ -161,7 +183,7 @@ def save_shared_documents(
         with transaction.atomic():
             for uploaded in files:
                 doc = PolicyDocument(**shared)
-                uploaded.seek(0)
+                doc.fingerprint = fingerprint(uploaded)
                 # A neutral name, since the person's own file name can carry theirs.
                 ext = policy_document_extension(uploaded.name or "")
                 uploaded.name = f"shared-{doc.id.hex}{ext}"

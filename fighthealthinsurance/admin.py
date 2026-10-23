@@ -1287,7 +1287,21 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "shared_consent_version",
         "shared_at",
         "share_batch",
+        "fingerprint",
     )
+
+    def changelist_view(self, request, extra_context=None):
+        # How many shared files there are, and how many different documents.
+        shared = PolicyDocument.objects.filter(source__in=PolicyDocument.SHARED_SOURCES)
+        extra_context = {
+            **(extra_context or {}),
+            "shared_files": shared.count(),
+            "shared_documents": shared.exclude(fingerprint="")
+            .values("fingerprint")
+            .distinct()
+            .count(),
+        }
+        return super().changelist_view(request, extra_context=extra_context)
 
     @admin.display(description="File")
     def file(self, obj: PolicyDocument) -> str:

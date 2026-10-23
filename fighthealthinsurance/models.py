@@ -4499,6 +4499,8 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         blank=True,
         related_name="policy_documents",
     )
+    # Shared uploads only: a keyed SHA-256 of the file, so repeats can be counted.
+    fingerprint = models.CharField(max_length=64, blank=True)
 
     class Meta:
         indexes = [
@@ -4507,6 +4509,7 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
             models.Index(fields=["created_at"]),
             models.Index(fields=["source", "created_at"]),
             models.Index(fields=["share_batch"]),
+            models.Index(fields=["fingerprint"]),
         ]
         verbose_name = "Policy Document"
         verbose_name_plural = "Policy Documents"

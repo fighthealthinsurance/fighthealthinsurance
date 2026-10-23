@@ -1,0 +1,7 @@
+{% extends "admin/change_list.html" %}
+{% comment %} PolicyDocumentAdmin.changelist_view counts the shared files, and
+the different documents among them by their fingerprints. {% endcomment %}
+{% block result_list %}
+<p id="shared-document-counts">Shared for research: {{ shared_files }} file{{ shared_files|pluralize }}, {{ shared_documents }} different document{{ shared_documents|pluralize }}.</p>
+{{ block.super }}
+{% endblock %}
