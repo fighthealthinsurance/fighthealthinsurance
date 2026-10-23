@@ -249,6 +249,11 @@ class TheFormMustHaveBeenDrawnTest(_ShareTestCase):
         response = self.share([txt()], rendered=forged)
         self.assertRefused(response, TRY_AGAIN)
 
+    def test_asking_again_keeps_the_email_a_removal_request_needs(self):
+        response = self.share([txt()], rendered="", email="rebecca@test-fhi.com")
+        soup = BeautifulSoup(response.content, "html.parser")
+        self.assertEqual(soup.find(id="id_email")["value"], "rebecca@test-fhi.com")
+
     def test_asking_again_keeps_what_was_typed_and_reads_no_file(self):
         with patch.object(chat_forms, "validate_shared_document") as checked:
             response = self.share(

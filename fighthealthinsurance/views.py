@@ -4043,6 +4043,7 @@ class SharePlanDocumentsView(FormView):
         "employer_name",
         "plan_year",
         "state",
+        "email",
     )
 
     def post(self, request, *args, **kwargs) -> HttpResponse:
