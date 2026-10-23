@@ -4,9 +4,9 @@ Ticking the box agrees to every point of the sharing terms: the documents
 come to us, we combine them with other people's and publish what we learn,
 AI models read them (ours and outside services), we keep them as long as we
 can, and people should leave out personal details unless they want them in,
-while we do our best to take them out either way. The page also explains how
-to ask a plan for its full documents, with a letter to copy that works
-without JavaScript.
+while we do our best to take them out either way. The page says we ask once a
+year and take documents anytime. It also explains how to ask a plan for its
+full documents, with a letter to copy that works without JavaScript.
 """
 
 import hashlib
@@ -104,6 +104,23 @@ class SharePlanDocumentsPageTest(TestCase):
         # Both lines come before the form, where people decide what to share.
         form = self.soup.find("form", id="share-plan-documents-form")
         self.assertIsNotNone(form.find_previous(id="most-useful"))
+
+    def test_the_page_asks_once_a_year_and_is_open_anytime(self):
+        ask = self.soup.find(id="yearly-ask")
+        self.assertEqual(
+            ask.get_text(" ", strip=True),
+            "Once a year we ask everyone to request their plan documents and "
+            "share them with us. You can share anytime.",
+        )
+        form = self.soup.find("form", id="share-plan-documents-form")
+        self.assertIsNotNone(form.find_previous(id="yearly-ask"))
+
+    def test_the_explanation_has_an_anchor_other_pages_link_to(self):
+        about = self.soup.find(id="about-sharing")
+        for part in ("what-we-look-at", "most-useful", "yearly-ask"):
+            with self.subTest(part=part):
+                self.assertIsNotNone(about.find(id=part))
+        self.assertIsNone(about.find_parent("form"))
 
     def test_the_plan_year_stays_optional_and_says_it_shows_trends(self):
         field = SharePlanDocumentsForm().fields["plan_year"]

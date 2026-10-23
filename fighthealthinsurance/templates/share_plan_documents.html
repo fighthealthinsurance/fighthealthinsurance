@@ -92,8 +92,11 @@ before changing it.
         <p>Have more? <a href="{% url 'share_plan_documents' %}">Share more documents</a></p>
     </div>
     {% else %}
-    <p id="what-we-look-at">Your plan documents say what your plan covers and how appeals work. We'll look at what common care costs under each plan, how deductibles and out-of-pocket limits change over time, what plans cover and leave out, and what needs approval first. We share what we learn publicly.</p>
-    <p id="most-useful">Most useful: your Summary of Benefits and Coverage and your Summary Plan Description, for this year and past years if you have them. Plan-wide documents like these usually don't include personal details.</p>
+    <div id="about-sharing">
+        <p id="what-we-look-at">Your plan documents say what your plan covers and how appeals work. We'll look at what common care costs under each plan, how deductibles and out-of-pocket limits change over time, what plans cover and leave out, and what needs approval first. We share what we learn publicly.</p>
+        <p id="most-useful">Most useful: your Summary of Benefits and Coverage and your Summary Plan Description, for this year and past years if you have them. Plan-wide documents like these usually don't include personal details.</p>
+        <p id="yearly-ask">Once a year we ask everyone to request their plan documents and share them with us. You can share anytime.</p>
+    </div>
 
     <form method="post" action="{% url 'share_plan_documents' %}" enctype="multipart/form-data" class="fhi-stack" id="share-plan-documents-form" data-max-files="{{ max_files }}" data-max-bytes="{{ max_total_bytes }}" data-too-many="{{ too_many_message }}" data-too-big="{{ too_big_message }}">
         {% csrf_token %}
