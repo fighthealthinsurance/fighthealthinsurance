@@ -155,6 +155,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="admin_delete_user_data",
     ),
     path(
+        "timbit/help/policy_documents/<uuid:pk>/download",
+        staff_member_required(staff_views.PolicyDocumentDownloadView.as_view()),
+        name="staff_policy_document_download",
+    ),
+    path(
         "timbit/help/model_usage",
         staff_member_required(staff_views.ModelUsageDashboardView.as_view()),
         name="model_usage_dashboard",
@@ -677,6 +682,14 @@ urlpatterns += [
             "email", "first_name", "last_name", "user_question", "policy_document"
         )(views.UnderstandPolicyView.as_view()),
         name="understand_policy",
+    ),
+    # Share your plan documents (for research; the upload only stores them)
+    path(
+        "share-plan-documents",
+        sensitive_post_parameters(
+            "email", "insurer_name", "employer_name", "plan_documents"
+        )(views.SharePlanDocumentsView.as_view()),
+        name="share_plan_documents",
     ),
 ]
 

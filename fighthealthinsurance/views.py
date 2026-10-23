@@ -10,6 +10,7 @@ import functools
 import secrets
 import time
 import typing
+import uuid
 from datetime import date, timedelta
 from typing import TypedDict
 from urllib.parse import quote, urlencode
@@ -20,6 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import ImproperlyConfigured
+from django.db import transaction
 from django.http import (
     HttpRequest,
     HttpResponse,
@@ -60,7 +62,12 @@ from fighthealthinsurance.form_utils import append_help_text, from_your_letter_h
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
 from fighthealthinsurance.structured_data import render_json_ld
-from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
+from fighthealthinsurance.chat_forms import (
+    SharePlanDocumentsForm,
+    UnderstandPolicyForm,
+    UserConsentForm,
+    policy_document_extension,
+)
 from fighthealthinsurance.denial_context import (
     GENERATED_QUESTION_PREFIX,
     load_qa,
@@ -3991,6 +3998,91 @@ class UnderstandPolicyView(FormView):
             "chat_url": reverse("chat"),
         }
         return render(self.request, "chat_redirect.html", context)
+
+
+def _save_shared_plan_documents(
+    data: typing.Mapping[str, typing.Any],
+) -> list[PolicyDocument]:
+    """One encrypted PolicyDocument per shared file, all or none. Only stores:
+    no model reads the files here."""
+    from fighthealthinsurance.pa_requirements import (
+        resolve_insurance_company_by_name,
+    )
+
+    email = (data.get("email") or "").strip().lower()
+    insurer_name = (data.get("insurer_name") or "").strip()
+    company = None
+    if insurer_name:
+        try:
+            company = resolve_insurance_company_by_name(insurer_name)
+        except Exception:
+            logger.opt(exception=True).warning("Could not match a shared insurer name")
+    shared = {
+        "source": PolicyDocument.SOURCE_SHARED,
+        "plan_category": data.get("plan_category") or "unknown",
+        "hashed_email": models.Denial.get_hashed_email(email) if email else None,
+        "shared_consent_version": consent.SHARING_VERSION,
+        "shared_at": timezone.now(),
+        "share_batch": uuid.uuid4(),
+        "plan_year": data.get("plan_year"),
+        "state": data.get("state") or "",
+        "insurer_name": insurer_name,
+        "employer_name": (data.get("employer_name") or "").strip(),
+        "insurance_company_obj": company,
+    }
+    saved: list[PolicyDocument] = []
+    try:
+        with transaction.atomic():
+            for uploaded in data["plan_documents"]:
+                doc = PolicyDocument(**shared)
+                # A neutral name, since the person's own file name can carry theirs.
+                uploaded.name = (
+                    f"shared-{doc.id.hex}{policy_document_extension(uploaded.name)}"
+                )
+                doc.document_enc = uploaded
+                doc.filename = uploaded.name
+                saved.append(doc)
+                doc.save()
+    except Exception:
+        # The rows rolled back; their encrypted files would not.
+        for doc in saved:
+            try:
+                doc.document_enc.delete(save=False)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Failed to delete an unsaved shared file for {doc.pk}"
+                )
+        raise
+    logger.info(f"Saved {len(saved)} shared plan document(s)")
+    return saved
+
+
+class SharePlanDocumentsView(FormView):
+    """Share your plan documents: people give us their plan's documents to
+    learn from. The upload only stores them; see _save_shared_plan_documents."""
+
+    template_name = "share_plan_documents.html"
+    form_class = SharePlanDocumentsForm
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["sharing_terms"] = consent.SHARING_TERMS
+        context["shared"] = self.request.GET.get("shared") == "1"
+        return context
+
+    def get_success_url(self) -> str:
+        return f"{reverse('share_plan_documents')}?shared=1"
+
+    def form_valid(self, form) -> HttpResponse:
+        if form.cleaned_data.get("website"):
+            return redirect(self.get_success_url())
+        try:
+            _save_shared_plan_documents(form.cleaned_data)
+        except Exception:
+            logger.opt(exception=True).error("Failed to save shared plan documents")
+            form.add_error(None, "We couldn't save your files. Please try again.")
+            return self.form_invalid(form)
+        return redirect(self.get_success_url())
 
 
 class DenialLanguageLibraryView(StaticIshView):

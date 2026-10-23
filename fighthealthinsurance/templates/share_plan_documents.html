@@ -1,0 +1,226 @@
+{% extends 'base.html' %}
+{% block title %}Share your plan documents - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Share your plan documents - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Share your health plan's documents so we can learn what plans cover and share what we learn. Plus how to ask your plan for its full documents.{% endblock metadescription %}
+
+{% block scriptmagic %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var button = document.getElementById("copy-letter");
+    var letter = document.getElementById("request-letter");
+    var status = document.getElementById("copy-letter-status");
+    if (!button || !letter || !status) {
+      return;
+    }
+    button.hidden = false;
+    function selectIt() {
+      letter.focus();
+      letter.select();
+      status.textContent = "The letter is selected. Press Ctrl+C, or Command+C on a Mac, to copy it.";
+    }
+    button.addEventListener("click", function () {
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(letter.value).then(function () {
+          status.textContent = "Copied. Paste it into a document and fill in the parts in brackets.";
+        }, selectIt);
+      } else {
+        selectIt();
+      }
+    });
+  });
+</script>
+{% endblock scriptmagic %}
+
+{% block content %}
+{% comment %}
+Share your plan documents (SharePlanDocumentsView). Only the files and the
+agreement are required; the rest folds away under "About the plan". The
+agreement's words are consent.SHARING_TERMS. The facts under "How to get your
+full plan documents" were checked on the date the section gives; recheck them
+before changing it.
+{% endcomment %}
+<div class="fhi-page">
+    {% include "partials/page_title.html" with title="Share your plan documents" %}
+
+    {% if shared %}
+    <div class="fhi-notice fhi-notice-info" role="status" id="share-thanks">
+        <p><strong>Thank you. We have your documents.</strong></p>
+        <p>We store them encrypted. Our team and AI models will read them along with documents from other people, to learn how plans work. We'll share what we learn on this site, and we do our best to remove personal details from anything we share.</p>
+        <p><a href="{% url 'share_plan_documents' %}">Share more documents</a></p>
+    </div>
+    {% else %}
+    <p>Your plan documents say what your plan covers and how appeals work. When you share them, we can learn what plans leave out, what needs approval first and how appeals work. We share what we learn publicly.</p>
+    <p>Plan-wide documents, like the Summary Plan Description or Evidence of Coverage, usually don't include personal details.</p>
+
+    <form method="post" action="{% url 'share_plan_documents' %}" enctype="multipart/form-data" class="fhi-stack" id="share-plan-documents-form">
+        {% csrf_token %}
+        {{ form.website }}
+        {% if form.errors %}
+        <div class="fhi-form-errors" role="alert" id="share-errors">
+            <p>Please check these and try again:</p>
+            <ul>
+                {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+                {% for field in form.visible_fields %}{% for error in field.errors %}<li><a href="#{{ field.id_for_label }}">{{ error }}</a></li>{% endfor %}{% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <div class="fhi-field-group">
+            <label for="{{ form.plan_documents.id_for_label }}" class="fhi-label">{{ form.plan_documents.label }}</label>
+            {{ form.plan_documents }}
+            <small class="fhi-hint">PDF, Word (.docx) or text files, up to 20MB each. You can choose more than one. We store them encrypted, and our team can open them to review them.</small>
+            {% include "partials/field_error.html" with id=form.plan_documents.auto_id|add:"_error" errors=form.plan_documents.errors filled=True %}
+        </div>
+
+        <div class="fhi-field-group">
+            <label for="{{ form.plan_category.id_for_label }}" class="fhi-label">{{ form.plan_category.label }}</label>
+            {{ form.plan_category }}
+        </div>
+
+        <div class="fhi-accordion">
+            <details class="fhi-accordion-item" id="about-the-plan"{% if form.about_the_plan_has_errors %} open{% endif %}>
+                <summary><span class="fhi-accordion-question">About the plan (optional)</span></summary>
+                <div class="fhi-accordion-body fhi-stack">
+                    <div class="fhi-field-group">
+                        <label for="{{ form.insurer_name.id_for_label }}" class="fhi-label">{{ form.insurer_name.label }}</label>
+                        {{ form.insurer_name }}
+                    </div>
+                    <div class="fhi-field-group">
+                        <label for="{{ form.employer_name.id_for_label }}" class="fhi-label">{{ form.employer_name.label }}</label>
+                        {{ form.employer_name }}
+                    </div>
+                    <div class="fhi-field-group">
+                        <label for="{{ form.plan_year.id_for_label }}" class="fhi-label">{{ form.plan_year.label }}</label>
+                        {{ form.plan_year }}
+                        {% include "partials/field_error.html" with id=form.plan_year.auto_id|add:"_error" errors=form.plan_year.errors filled=True %}
+                    </div>
+                    <div class="fhi-field-group">
+                        <label for="{{ form.state.id_for_label }}" class="fhi-label">{{ form.state.label }}</label>
+                        {{ form.state }}
+                    </div>
+                    <div class="fhi-field-group">
+                        <label for="{{ form.email.id_for_label }}" class="fhi-label">{{ form.email.label }}</label>
+                        {{ form.email }}
+                        <small class="fhi-hint" id="{{ form.email.auto_id }}_helptext">{{ form.email.help_text }}</small>
+                        {% include "partials/field_error.html" with id=form.email.auto_id|add:"_error" errors=form.email.errors filled=True %}
+                    </div>
+                </div>
+            </details>
+        </div>
+
+        <p id="sharing-terms">{{ sharing_terms }}</p>
+        <div class="fhi-check-row">
+            {{ form.agree }}
+            <label for="{{ form.agree.id_for_label }}">{{ form.agree.label }}</label>
+            {% include "partials/field_error.html" with id=form.agree.auto_id|add:"_error" errors=form.agree.errors filled=True %}
+        </div>
+        <small class="fhi-hint">Our <a href="{% url 'privacy_policy' %}">privacy policy</a> and <a href="{% url 'tos' %}">terms of service</a> also apply.</small>
+
+        <div class="fhi-actions">
+            <button type="submit" id="share-submit" class="fhi-button fhi-button-primary fhi-button-large">Share my documents</button>
+        </div>
+    </form>
+    {% endif %}
+
+    <section class="fhi-stack" id="get-your-plan-documents" aria-labelledby="get-your-plan-documents-heading">
+        <h2 id="get-your-plan-documents-heading">How to get your full plan documents</h2>
+        <p>You can ask your plan for its full documents, not just a summary. Here is how.</p>
+
+        <h3>Plans through a private employer</h3>
+        <p>Most job-based plans at private companies follow a federal law called ERISA. Plans from government employers and most churches don't.</p>
+        <ul>
+            <li>You can ask in writing for the plan's key documents: the Summary Plan Description, the full plan document, the insurance policy if the plan is insured, the latest annual report (Form 5500), and any changes made since the Summary Plan Description.</li>
+            <li>A covered spouse or child can ask too, and some former employees can as well.</li>
+            <li>Send your request to the plan administrator. Their name and address are in your Summary Plan Description. It may be your employer rather than the insurance company on your card. No Summary Plan Description? Search for your plan's Form 5500 on the Department of Labor's free <a href="https://www.efast.dol.gov/5500Search/" target="_blank" rel="noopener noreferrer">Form 5500 search</a>. It names the administrator.</li>
+            <li>They have 30 days to mail the documents. If they don't, a judge can order them to pay you up to $110 a day. You would have to go to court to get it.</li>
+            <li>They can charge for paper copies, but no more than 25 cents a page, and no postage or handling fees. You can ask what it will cost first.</li>
+            <li>Small plans may not file an annual report, so there may be none to send.</li>
+            <li>If they don't answer, the Department of Labor's Employee Benefits Security Administration can help: <a href="https://askebsa.dol.gov" target="_blank" rel="noopener noreferrer">askebsa.dol.gov</a> or 1-866-444-3272.</li>
+        </ul>
+        <p>Send your letter by certified mail with a return receipt, so you can show when they got it, and keep a copy.</p>
+
+        <h3>A letter you can send</h3>
+        <div class="fhi-field-group">
+            <label for="request-letter" class="fhi-label">Request letter for an employer plan</label>
+            <small class="fhi-hint">Fill in the parts in [brackets]. The plan administrator's name and address are in your Summary Plan Description.</small>
+            <textarea id="request-letter" class="fhi-field" rows="16" readonly>[Date]
+
+[Plan administrator name]
+[Plan administrator address, from your Summary Plan Description]
+
+Re: Request for plan documents under ERISA section 104(b)(4)
+Plan: [Plan name] [Plan number, if you know it]
+Employer: [Employer name]
+
+Dear Plan Administrator,
+
+I am a [participant / beneficiary] in the [Plan name]. Under section 104(b)(4) of ERISA (29 U.S.C. 1024(b)(4)), I am asking for copies of these documents:
+
+1. The latest Summary Plan Description, and every Summary of Material Modifications issued since then.
+2. The plan document, with all amendments.
+3. If the plan is insured, the group insurance policy or contract and the certificate of coverage.
+4. The latest annual report (Form 5500) with all schedules, if the plan files one.
+5. Any trust agreement, collective bargaining agreement, or other document under which the plan is established or operated.
+6. The plan's claims and appeals procedures, if they are in a separate document.
+
+Please also send the current Summary of Benefits and Coverage for my coverage. That is due within 7 business days of a request.
+
+ERISA requires you to send the documents within 30 days. Please mail them to me at the address below. If it is easier, you may email them to [Your email address].
+
+If you will charge for paper copies, please tell me the amount before you send them.
+
+If you are not the plan administrator, please send this request to the plan administrator right away and tell me who that is.
+
+Thank you,
+
+[Your name]
+[Your mailing address]
+[Your phone number]</textarea>
+            <button type="button" id="copy-letter" class="fhi-button fhi-button-secondary" hidden>Copy the letter</button>
+            <p class="fhi-note" id="copy-letter-status" role="status"></p>
+        </div>
+
+        <h3>Other kinds of plans</h3>
+        <ul>
+            <li><strong>Job-based and individual plans:</strong> you can ask for a Summary of Benefits and Coverage at any time, and the plan or insurer must send it within 7 business days. It is only a summary. One from an insurer must list a web address for the full policy.</li>
+            <li><strong>Marketplace and individual plans:</strong> the Summary of Benefits and Coverage is linked from each plan's page on <a href="https://www.healthcare.gov/health-care-law-protections/summary-of-benefits-and-coverage/" target="_blank" rel="noopener noreferrer">HealthCare.gov</a>. The full policy is at the web address in it.</li>
+            <li><strong>Government and most church employer plans:</strong> ERISA doesn't cover these, so ask the benefits office for the plan's governing document. State and local government plans must still give you a Summary of Benefits and Coverage.</li>
+            <li><strong>Federal employees:</strong> your plan's brochure on <a href="https://www.opm.gov/healthcare-insurance/healthcare/plan-information/plans/" target="_blank" rel="noopener noreferrer">OPM's site</a> is the official statement of benefits.</li>
+            <li><strong>Medicare Advantage:</strong> your plan sends an Annual Notice of Change by September 30, and its Evidence of Coverage, or a notice of how to get it, by October 15. The plan posts it online and must mail you a paper copy if you ask.</li>
+            <li><strong>Medicaid managed care:</strong> your plan must give you a member handbook. If it's online, the plan must mail you a free paper copy within 5 business days of asking.</li>
+        </ul>
+
+        <h3>After a denial</h3>
+        <p>Ask for your claim file. Job-based plans covered by ERISA, and individual and Marketplace plans that aren't grandfathered, must give you free copies of the documents about your claim. That includes any internal rule or guideline they used to deny it.</p>
+
+        <div class="fhi-accordion">
+            <details class="fhi-accordion-item" id="plan-documents-sources">
+                <summary><span class="fhi-accordion-question">Sources</span></summary>
+                <div class="fhi-accordion-body">
+                    <ul>
+                        <li><a href="https://www.law.cornell.edu/uscode/text/29/1024" target="_blank" rel="noopener noreferrer">ERISA section 104(b)(4), 29 U.S.C. 1024</a>: the right to plan documents</li>
+                        <li><a href="https://www.law.cornell.edu/uscode/text/29/1002" target="_blank" rel="noopener noreferrer">29 U.S.C. 1002</a>: who counts as a participant, beneficiary and plan administrator</li>
+                        <li><a href="https://www.law.cornell.edu/uscode/text/29/1003" target="_blank" rel="noopener noreferrer">29 U.S.C. 1003</a>: plans ERISA doesn't cover</li>
+                        <li><a href="https://www.law.cornell.edu/uscode/text/29/1132" target="_blank" rel="noopener noreferrer">29 U.S.C. 1132(c)(1)</a> and <a href="https://www.ecfr.gov/current/title-29/section-2575.502c-1" target="_blank" rel="noopener noreferrer">29 CFR 2575.502c-1</a>: the 30 days and the $110 a day</li>
+                        <li><a href="https://www.ecfr.gov/current/title-29/section-2520.102-3" target="_blank" rel="noopener noreferrer">29 CFR 2520.102-3</a>: what a Summary Plan Description must say</li>
+                        <li><a href="https://www.ecfr.gov/current/title-29/section-2520.104b-30" target="_blank" rel="noopener noreferrer">29 CFR 2520.104b-30</a>: charges for copies</li>
+                        <li><a href="https://www.ecfr.gov/current/title-29/section-2520.104b-1" target="_blank" rel="noopener noreferrer">29 CFR 2520.104b-1</a>: documents are mailed to the address you give</li>
+                        <li><a href="https://www.ecfr.gov/current/title-29/section-2520.104-20" target="_blank" rel="noopener noreferrer">29 CFR 2520.104-20</a>: small plans that file no annual report</li>
+                        <li><a href="https://www.dol.gov/sites/dolgov/files/EBSA/about-ebsa/our-activities/resource-center/publications/reporting-annual-disclosure.pdf" target="_blank" rel="noopener noreferrer">Department of Labor, Reporting and Disclosure Guide</a></li>
+                        <li><a href="https://www.dol.gov/agencies/ebsa/about-ebsa/our-activities/resource-center/publications/understanding-your-fiduciary-responsibilities-under-a-group-health-plan" target="_blank" rel="noopener noreferrer">Department of Labor, Understanding Your Fiduciary Responsibilities Under a Group Health Plan</a></li>
+                        <li><a href="https://www.dol.gov/agencies/ebsa/about-ebsa/our-activities/resource-center/publications/filing-a-claim-for-your-health-benefits" target="_blank" rel="noopener noreferrer">Department of Labor, Filing a Claim for Your Health Benefits</a></li>
+                        <li><a href="https://www.efast.dol.gov/5500Search/" target="_blank" rel="noopener noreferrer">Department of Labor, Form 5500 search</a></li>
+                        <li><a href="https://www.ecfr.gov/current/title-29/section-2560.503-1" target="_blank" rel="noopener noreferrer">29 CFR 2560.503-1</a> and <a href="https://www.ecfr.gov/current/title-45/section-147.136" target="_blank" rel="noopener noreferrer">45 CFR 147.136</a>: your claim file after a denial</li>
+                        <li><a href="https://www.ecfr.gov/current/title-29/section-2590.715-2715" target="_blank" rel="noopener noreferrer">29 CFR 2590.715-2715</a> and <a href="https://www.ecfr.gov/current/title-45/section-147.200" target="_blank" rel="noopener noreferrer">45 CFR 147.200</a>: the Summary of Benefits and Coverage</li>
+                        <li><a href="https://www.healthcare.gov/health-care-law-protections/summary-of-benefits-and-coverage/" target="_blank" rel="noopener noreferrer">HealthCare.gov, Summary of Benefits and Coverage</a></li>
+                        <li><a href="https://www.opm.gov/healthcare-insurance/healthcare/plan-information/plans/" target="_blank" rel="noopener noreferrer">OPM, federal employee plan information</a></li>
+                        <li><a href="https://www.medicare.gov/publications/12026-understanding-medicare-advantage-plans.pdf" target="_blank" rel="noopener noreferrer">Medicare, Understanding Medicare Advantage Plans</a> and <a href="https://www.ecfr.gov/current/title-42/section-422.111" target="_blank" rel="noopener noreferrer">42 CFR 422.111</a></li>
+                        <li><a href="https://www.ecfr.gov/current/title-42/section-438.10" target="_blank" rel="noopener noreferrer">42 CFR 438.10</a>: Medicaid managed care member handbooks</li>
+                    </ul>
+                </div>
+            </details>
+        </div>
+        <p class="fhi-note" id="plan-documents-checked">Checked October 23, 2026. This is general information, not legal advice.</p>
+    </section>
+</div>
+{% endblock content %}

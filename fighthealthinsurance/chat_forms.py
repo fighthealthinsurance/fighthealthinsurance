@@ -1,16 +1,58 @@
-from typing import Optional
+import typing
+from typing import Any, Optional
 
 from django import forms
 from django.core.files.uploadedfile import UploadedFile
 
+from fighthealthinsurance import consent
+from fighthealthinsurance.form_utils import (
+    MultipleFileField,
+    MultipleFileInput,
+    StyledWidgetsMixin,
+)
 from fighthealthinsurance.forms import REFERRAL_SOURCE_CHOICES
 from fighthealthinsurance.models import PolicyDocument
+from fighthealthinsurance.state_help import get_states_sorted_by_name
 
 SUPPORTED_POLICY_EXTENSIONS = {".pdf", ".docx", ".txt"}
+MAX_POLICY_DOCUMENT_BYTES = 20 * 1024 * 1024
 
 # Magic bytes for file type validation
 _PDF_MAGIC = b"%PDF"
 _DOCX_MAGIC = b"PK"  # ZIP-based format
+
+
+def policy_document_extension(name: str) -> str:
+    """The file's extension, lowercased with its dot, or "" when it has none."""
+    return "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+
+def validate_policy_document(file: UploadedFile) -> None:
+    """Raise ValidationError unless ``file`` is a policy document we can read:
+    a supported extension, at most MAX_POLICY_DOCUMENT_BYTES, and for PDF and
+    DOCX the right first bytes."""
+    if file.size is not None and file.size > MAX_POLICY_DOCUMENT_BYTES:
+        raise forms.ValidationError(
+            "File size must be less than 20MB. Please upload a smaller file."
+        )
+    ext = policy_document_extension(file.name or "")
+    if not ext:
+        raise forms.ValidationError(
+            f"File must have an extension. Please upload a {', '.join(sorted(SUPPORTED_POLICY_EXTENSIONS))} file."
+        )
+    if ext not in SUPPORTED_POLICY_EXTENSIONS:
+        raise forms.ValidationError(
+            f"Unsupported file type. Please upload one of: {', '.join(sorted(SUPPORTED_POLICY_EXTENSIONS))}"
+        )
+    # Magic byte check for PDF and DOCX (stronger than MIME type)
+    header = file.read(8)
+    file.seek(0)
+    if ext == ".pdf" and not header.startswith(_PDF_MAGIC):
+        raise forms.ValidationError("The file does not appear to be a valid PDF.")
+    if ext == ".docx" and not header.startswith(_DOCX_MAGIC):
+        raise forms.ValidationError(
+            "The file does not appear to be a valid DOCX document."
+        )
 
 
 class BaseConsentForm(forms.Form):
@@ -141,31 +183,91 @@ class UnderstandPolicyForm(BaseConsentForm):
         """Validate the uploaded file type and size."""
         file = self.cleaned_data.get("policy_document")
         if file:
-            if file.size > 20 * 1024 * 1024:
-                raise forms.ValidationError(
-                    "File size must be less than 20MB. Please upload a smaller file."
-                )
-            ext = "." + file.name.rsplit(".", 1)[-1].lower() if "." in file.name else ""
-            if not ext:
-                raise forms.ValidationError(
-                    f"File must have an extension. Please upload a {', '.join(sorted(SUPPORTED_POLICY_EXTENSIONS))} file."
-                )
-            if ext not in SUPPORTED_POLICY_EXTENSIONS:
-                raise forms.ValidationError(
-                    f"Unsupported file type. Please upload one of: {', '.join(sorted(SUPPORTED_POLICY_EXTENSIONS))}"
-                )
-            # Magic byte check for PDF and DOCX (stronger than MIME type)
-            header = file.read(8)
-            file.seek(0)
-            if ext == ".pdf" and not header.startswith(_PDF_MAGIC):
-                raise forms.ValidationError(
-                    "The file does not appear to be a valid PDF."
-                )
-            if ext == ".docx" and not header.startswith(_DOCX_MAGIC):
-                raise forms.ValidationError(
-                    "The file does not appear to be a valid DOCX document."
-                )
+            validate_policy_document(file)
         return file
+
+
+class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
+    """Plan documents shared for research. Only the files and the agreement
+    are required: no name, and an email only so a removal request finds them."""
+
+    MAX_FILES = 10
+    # The optional fields, shown folded under "About the plan".
+    ABOUT_THE_PLAN = ("insurer_name", "employer_name", "plan_year", "state", "email")
+
+    # Required is checked in clean_plan_documents: an empty list passes the field.
+    plan_documents = MultipleFileField(
+        label="Your plan documents",
+        widget=MultipleFileInput(attrs={"accept": ".pdf,.docx,.txt"}),
+    )
+    plan_category = forms.ChoiceField(
+        required=False,
+        choices=PolicyDocument.PLAN_CATEGORY_CHOICES,
+        initial="unknown",
+        label="What kind of plan is it?",
+    )
+    insurer_name = forms.CharField(
+        required=False, max_length=200, label="Insurance company"
+    )
+    employer_name = forms.CharField(
+        required=False, max_length=200, label="Employer, if the plan is through a job"
+    )
+    plan_year = forms.IntegerField(
+        required=False,
+        min_value=2000,
+        max_value=2099,
+        label="Plan year",
+        error_messages={
+            "min_value": "Enter a year from 2000 to 2099.",
+            "max_value": "Enter a year from 2000 to 2099.",
+            "invalid": "Enter a year from 2000 to 2099.",
+        },
+    )
+    state = forms.ChoiceField(required=False, choices=(), label="State")
+    email = forms.EmailField(
+        required=False,
+        max_length=300,
+        label="Your email",
+        help_text=(
+            "We keep only a scrambled form of it, so we can find these files "
+            "if you ask us to delete them. We can't use it to write to you."
+        ),
+    )
+    agree = forms.BooleanField(
+        required=True,
+        label=consent.SHARING_CHECKBOX,
+        error_messages={"required": "Tick the box to agree before you share."},
+    )
+    # Hidden from people; the view drops a post that fills it in.
+    website = forms.CharField(required=False, widget=forms.HiddenInput())
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        state_field = typing.cast(forms.ChoiceField, self.fields["state"])
+        state_field.choices = [("", "Choose a state")] + [
+            (state.abbreviation, state.name) for state in get_states_sorted_by_name()
+        ]
+
+    def clean_plan_documents(self) -> list[UploadedFile]:
+        files = [f for f in self.cleaned_data.get("plan_documents") or [] if f]
+        if not files:
+            raise forms.ValidationError("Choose at least one file to share.")
+        if len(files) > self.MAX_FILES:
+            raise forms.ValidationError(
+                f"You can share up to {self.MAX_FILES} files at a time."
+            )
+        problems: list[str] = []
+        for file in files:
+            try:
+                validate_policy_document(file)
+            except forms.ValidationError as error:
+                problems.extend(f"{file.name}: {message}" for message in error.messages)
+        if problems:
+            raise forms.ValidationError(problems)
+        return files
+
+    def about_the_plan_has_errors(self) -> bool:
+        return any(name in self.errors for name in self.ABOUT_THE_PLAN)
 
 
 class UserConsentForm(BaseConsentForm):

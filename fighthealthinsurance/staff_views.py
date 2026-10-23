@@ -1,5 +1,6 @@
 import csv
 import datetime
+import io
 import json
 import statistics
 from urllib.parse import urlencode
@@ -24,6 +25,7 @@ from django.db.models import (
 )
 from django.db.models.functions import Coalesce, Lower
 from django.http import (
+    FileResponse,
     Http404,
     HttpResponse,
     HttpResponseBase,
@@ -88,6 +90,7 @@ from fighthealthinsurance.models import (
     MailingListSubscriber,
     ModelBackendHealthCheckResult,
     ModelCallAttempt,
+    PolicyDocument,
     ProfessionalDomainRelation,
     ProfessionalUser,
     ProposedAppeal,
@@ -202,6 +205,31 @@ class AdminDeleteDataView(generic.FormView):
             f"Staff user {self.request.user.username} deleted data for {masked}"
         )
         return HttpResponse(f"All data for {masked} has been deleted.")
+
+
+@method_decorator(never_cache, name="dispatch")
+class PolicyDocumentDownloadView(View):
+    """A policy document's file, decrypted with the server's key, for staff
+    reviewing it. Routed behind staff_member_required."""
+
+    def get(self, request, pk) -> HttpResponseBase:
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            read_and_decrypt_file,
+        )
+
+        doc = PolicyDocument.objects.filter(pk=pk).first()
+        if doc is None or not doc.document_enc:
+            raise Http404("No file for that policy document")
+        content = read_and_decrypt_file(doc.document_enc)
+        if not content:
+            raise Http404("No file for that policy document")
+        logger.info(f"Staff user {request.user.pk} downloaded policy document {pk}")
+        return FileResponse(
+            io.BytesIO(content),
+            as_attachment=True,
+            filename=doc.filename or f"{pk}",
+            content_type="application/octet-stream",
+        )
 
 
 class StaffDashboardView(generic.TemplateView):

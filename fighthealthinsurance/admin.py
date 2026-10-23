@@ -4,6 +4,8 @@ from django.contrib.auth.admin import UserAdmin
 from django.db import connection
 from django.db.models import IntegerField
 from django.db.models.expressions import RawSQL
+from django.urls import reverse
+from django.utils.html import format_html
 
 from fighthealthinsurance.constants import SITE_BANNER_CANNED_MESSAGES
 
@@ -1264,10 +1266,36 @@ class AuditLogAdmin(admin.ModelAdmin):
 
 @admin.register(PolicyDocument)
 class PolicyDocumentAdmin(admin.ModelAdmin):
-    list_display = ("id", "filename", "document_type", "plan_category", "created_at")
-    list_filter = ("document_type", "plan_category", "created_at")
-    search_fields = ("filename", "hashed_email")
-    readonly_fields = ("id", "created_at")
+    list_display = (
+        "id",
+        "filename",
+        "source",
+        "document_type",
+        "plan_category",
+        "created_at",
+        "download",
+    )
+    list_filter = ("source", "document_type", "plan_category", "created_at")
+    search_fields = ("filename", "hashed_email", "insurer_name", "employer_name")
+    readonly_fields = (
+        "id",
+        "created_at",
+        "download",
+        "source",
+        "shared_consent_version",
+        "shared_at",
+        "share_batch",
+    )
+
+    @admin.display(description="File")
+    def download(self, obj: PolicyDocument) -> str:
+        # The file field's own link goes nowhere; encrypted files are served here.
+        if not obj.pk or not obj.document_enc:
+            return "-"
+        return format_html(
+            '<a href="{}">Download</a>',
+            reverse("staff_policy_document_download", kwargs={"pk": obj.pk}),
+        )
 
 
 @admin.register(PolicyDocumentAnalysis)

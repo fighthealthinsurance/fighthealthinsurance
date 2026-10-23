@@ -4452,6 +4452,13 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         ("unknown", "I'm Not Sure"),
     ]
 
+    SOURCE_EXPLAIN_POLICY = "explain_policy"
+    SOURCE_SHARED = "shared"
+    SOURCE_CHOICES = [
+        (SOURCE_EXPLAIN_POLICY, "Explain my policy"),
+        (SOURCE_SHARED, "Shared for research"),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
     document_type = models.CharField(
@@ -4464,12 +4471,40 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     hashed_email = models.CharField(max_length=200, null=True, blank=True)
     session_key = models.CharField(max_length=100, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    source = models.CharField(
+        max_length=20, choices=SOURCE_CHOICES, default=SOURCE_EXPLAIN_POLICY
+    )
+    # Shared uploads only: the agreement's date (consent.SHARING_VERSION) and when.
+    shared_consent_version = models.DateField(null=True, blank=True)
+    shared_at = models.DateTimeField(null=True, blank=True)
+    # Files shared together in one upload carry the same batch.
+    share_batch = models.UUIDField(null=True, blank=True)
+    plan_year = models.PositiveSmallIntegerField(null=True, blank=True)
+    state = models.CharField(max_length=2, blank=True)
+    insurer_name = models.CharField(max_length=200, blank=True)
+    employer_name = models.CharField(max_length=200, blank=True)
+    insurance_company_obj = models.ForeignKey(
+        InsuranceCompany,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="policy_documents",
+    )
+    insurance_plan_obj = models.ForeignKey(
+        InsurancePlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="policy_documents",
+    )
 
     class Meta:
         indexes = [
             models.Index(fields=["hashed_email"]),
             models.Index(fields=["session_key"]),
             models.Index(fields=["created_at"]),
+            models.Index(fields=["source", "created_at"]),
+            models.Index(fields=["share_batch"]),
         ]
         verbose_name = "Policy Document"
         verbose_name_plural = "Policy Documents"

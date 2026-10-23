@@ -41,6 +41,20 @@ BOXES: dict[str, str] = {
 }
 
 
+# The share page's agreement; give it a new date whenever the words change.
+SHARING_VERSION = datetime.date(2026, 10, 23)
+SHARING_TERMS = (
+    "By uploading, you agree to share these documents with Fight Health "
+    "Insurance. We combine them with documents from other people to learn how "
+    "plans work, and we share what we learn publicly. AI models read them, "
+    "including ones we run and outside services. We keep shared documents as "
+    "long as we can. Please do your best to leave out your name, member ID and "
+    "health information, unless you want to include them. Either way, we do our "
+    "best to remove personal details from anything we share."
+)
+SHARING_CHECKBOX = "I agree to share these documents this way."
+
+
 def boxes_as_shown(ticked: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Each box with its wording and whether it was ticked."""
     return [
