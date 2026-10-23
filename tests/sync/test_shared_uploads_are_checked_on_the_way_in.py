@@ -13,6 +13,7 @@ came back faster than a person can choose files, is asked to try again before
 any file is read. Each visitor, and everyone together, has a daily budget.
 
 Staff read a shared file as text first, as plain text that runs nothing.
+Word files are read by word_text (tests/sync/test_word_text.py).
 """
 
 import datetime
@@ -72,20 +73,6 @@ def zip_bytes(entries):
 def zip_entries(data):
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         return {entry.filename: archive.read(entry) for entry in archive.infolist()}
-
-
-def docx_with_a_table():
-    import docx
-
-    document = docx.Document()
-    document.add_paragraph("Summary Plan Description for the Crumpler Cooperative")
-    table = document.add_table(rows=2, cols=2)
-    table.cell(0, 0).text = "Deductible"
-    table.cell(0, 1).text = "$500"
-    table.cell(1, 0).merge(table.cell(1, 1)).text = "Out-of-pocket limit"
-    out = io.BytesIO()
-    document.save(out)
-    return out.getvalue()
 
 
 def docx_with_a_damaged_part(part_name):
@@ -435,14 +422,6 @@ class StaffReadSharedFilesAsTextTest(_ShareTestCase):
         doc = self.shared(SimpleUploadedFile("spd.docx", docx_bytes()))
         text = self.read_as_text(doc, self.staff()).content.decode()
         self.assertIn("Summary Plan Description for the Crumpler Cooperative", text)
-
-    def test_staff_read_a_word_table_in_one_pass_over_its_text(self):
-        doc = self.shared(SimpleUploadedFile("spd.docx", docx_with_a_table()))
-        with patch(
-            "docx.Document", side_effect=AssertionError("parsed by python-docx")
-        ):
-            text = self.read_as_text(doc, self.staff()).content.decode()
-        self.assertIn("Deductible\n$500\nOut-of-pocket limit", text)
 
     def test_reading_a_word_file_logs_nothing_from_inside_it(self):
         damaged = docx_with_a_damaged_part("rebecca.crumpler@test-fhi.com.xml")
