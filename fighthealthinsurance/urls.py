@@ -692,7 +692,13 @@ urlpatterns += [
     path(
         "share-plan-documents",
         sensitive_post_parameters(
-            "email", "insurer_name", "employer_name", "plan_documents"
+            "email",
+            "insurer_name",
+            "employer_name",
+            "premium_amount",
+            "premium_period",
+            "who_is_covered",
+            "plan_documents",
         )(views.SharePlanDocumentsView.as_view()),
         name="share_plan_documents",
     ),

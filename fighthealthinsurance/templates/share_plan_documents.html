@@ -148,6 +148,22 @@ before changing it.
                         {{ form.state }}
                     </div>
                     <div class="fhi-field-group">
+                        <label for="{{ form.premium_amount.id_for_label }}" class="fhi-label">{{ form.premium_amount.label }}</label>
+                        {{ form.premium_amount }}
+                        <small class="fhi-hint" id="{{ form.premium_amount.auto_id }}_helptext">{{ form.premium_amount.help_text }}</small>
+                        {% include "partials/field_error.html" with id=form.premium_amount.auto_id|add:"_error" errors=form.premium_amount.errors filled=True %}
+                    </div>
+                    <div class="fhi-field-group">
+                        <label for="{{ form.premium_period.id_for_label }}" class="fhi-label">{{ form.premium_period.label }}</label>
+                        {{ form.premium_period }}
+                        {% include "partials/field_error.html" with id=form.premium_period.auto_id|add:"_error" errors=form.premium_period.errors filled=True %}
+                    </div>
+                    <div class="fhi-field-group">
+                        <label for="{{ form.who_is_covered.id_for_label }}" class="fhi-label">{{ form.who_is_covered.label }}</label>
+                        {{ form.who_is_covered }}
+                        {% include "partials/field_error.html" with id=form.who_is_covered.auto_id|add:"_error" errors=form.who_is_covered.errors filled=True %}
+                    </div>
+                    <div class="fhi-field-group">
                         <label for="{{ form.email.id_for_label }}" class="fhi-label">{{ form.email.label }}</label>
                         {{ form.email }}
                         <small class="fhi-hint" id="{{ form.email.auto_id }}_helptext">{{ form.email.help_text }}</small>

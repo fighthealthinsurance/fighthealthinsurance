@@ -4043,6 +4043,9 @@ class SharePlanDocumentsView(FormView):
         "employer_name",
         "plan_year",
         "state",
+        "premium_amount",
+        "premium_period",
+        "who_is_covered",
         "email",
     )
 
@@ -4078,6 +4081,9 @@ class SharePlanDocumentsView(FormView):
                 "state",
                 "insurer_name",
                 "employer_name",
+                "premium_amount",
+                "premium_period",
+                "who_is_covered",
             )
         }
         details["insurance_company_obj"] = shared_plan_documents.match_insurer(

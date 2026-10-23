@@ -1,12 +1,13 @@
 """The share-your-plan-documents page says plainly what sharing means.
 
-Ticking the box agrees to every point of the sharing terms: the documents
-come to us, we combine them with other people's and publish what we learn,
-AI models read them (ours and outside services), we keep them as long as we
-can, and people should leave out personal details unless they want them in,
-while we do our best to take them out either way. The page says we ask once a
-year and take documents anytime. It also explains how to ask a plan for its
-full documents, with a letter to copy that works without JavaScript.
+Ticking the box agrees to every point of the sharing terms: the documents,
+and what people tell us about the plan, come to us, we combine them with
+other people's and publish what we learn, AI models read them (ours and
+outside services), we keep them as long as we can, and people should leave
+out personal details unless they want them in, while we do our best to take
+them out either way. The page says we ask once a year and take documents
+anytime. It also explains how to ask a plan for its full documents, with a
+letter to copy that works without JavaScript.
 """
 
 import hashlib
@@ -24,11 +25,12 @@ TEMPLATES = Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "temp
 
 # Each point of the terms, as the page words it.
 SHARING_POINTS = [
-    "By uploading, you agree to share these documents with Fight Health Insurance.",
+    "By uploading, you agree to share these documents, and what you tell us about "
+    "the plan, with Fight Health Insurance.",
     "We combine them with documents from other people to learn how plans work, "
     "and we share what we learn publicly.",
     "AI models read them, including ones we run and outside services.",
-    "We keep shared documents as long as we can.",
+    "We keep what you share as long as we can.",
     "Please do your best to leave out your name, member ID and health "
     "information, unless you want to include them.",
     "Either way, we do our best to remove personal details from anything we share.",
@@ -38,7 +40,7 @@ SHARING_POINTS = [
 # Explain Policy and the plan documents step. A change to any of them needs
 # a new date.
 SHARING_WORDS_SHA256 = {
-    "2026-10-23": "96adb45af6b423a1e90ade646f96b1bae23210557be2c6f6e6b8998c4229cd68",
+    "2026-10-23": "4f7bdb8a89fdaea06cc7aa7fa6a4b9615d13a993e5447582e861d9c143690d91",
 }
 
 EM_DASH = "\u2014"

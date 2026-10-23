@@ -9,7 +9,8 @@ closer look a shared file gets is copied into a row of its own: its own
 source, the agreement's date, a neutral name, no session key and no link to
 the appeal, so its life is its own. A copy that can't be made never stops
 the page's own work. The person's scrambled email goes with the copy, so a
-removal request takes it too.
+removal request takes it too. The copies carry no premium: only the share
+page asks.
 """
 
 import time
@@ -44,6 +45,20 @@ def pdf(name="Rebecca Lee Crumpler SBC.pdf", content=PDF):
 
 def txt(name="Rebecca Lee Crumpler SPD.txt", content=TXT):
     return SimpleUploadedFile(name, content, content_type="text/plain")
+
+
+# Only the share page asks about the premium; a post to these pages is ignored.
+PREMIUM_POST = {
+    "premium_amount": "250",
+    "premium_period": "monthly",
+    "who_is_covered": "family",
+}
+
+
+def assertNoPremium(test, copy):
+    test.assertIsNone(copy.premium_amount)
+    test.assertEqual(copy.premium_period, "")
+    test.assertEqual(copy.who_is_covered, "")
 
 
 class _UploadsTestCase(TestCase):
@@ -216,6 +231,10 @@ class ExplainPolicyTest(_UploadsTestCase):
         RemoveDataHelper.remove_data_for_email(EMAIL)
         self.assertFalse(PolicyDocument.objects.exists())
 
+    def test_the_copy_carries_no_premium(self):
+        self.upload(share_for_research="on", **PREMIUM_POST)
+        assertNoPremium(self, self.shared_copies().get())
+
 
 class AppealPlanDocumentsStepTest(_UploadsTestCase):
     def setUp(self):
@@ -278,6 +297,10 @@ class AppealPlanDocumentsStepTest(_UploadsTestCase):
         self.assertEqual(copy.insurer_name, "Crumpler Health Mutual")
         self.assertEqual(copy.insurance_company_obj, self.company)
         self.assertEqual(copy.plan_category, "aca_marketplace")
+
+    def test_the_copies_carry_no_premium(self):
+        self.post([pdf()], share_for_research="on", **PREMIUM_POST)
+        assertNoPremium(self, self.shared_copies().get())
 
     def test_the_copies_carry_nothing_about_the_person_or_the_claim(self):
         self.post([pdf()], share_for_research="on")

@@ -4452,6 +4452,20 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         ("unknown", "I'm Not Sure"),
     ]
 
+    PREMIUM_PERIOD_CHOICES = [
+        ("weekly", "Each week"),
+        ("biweekly", "Every two weeks"),
+        ("semimonthly", "Twice a month"),
+        ("monthly", "Each month"),
+        ("yearly", "Each year"),
+    ]
+    WHO_IS_COVERED_CHOICES = [
+        ("self_only", "Just you"),
+        ("self_and_partner", "You and a spouse or partner"),
+        ("self_and_children", "You and your children"),
+        ("family", "Your whole family"),
+    ]
+
     SOURCE_EXPLAIN_POLICY = "explain_policy"
     SOURCE_SHARED = "shared"
     # A copy shared by ticking the box on Explain Policy or the appeal's plan
@@ -4491,6 +4505,16 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     state = models.CharField(max_length=2, blank=True)
     insurer_name = models.CharField(max_length=200, blank=True)
     employer_name = models.CharField(max_length=200, blank=True)
+    # Shared uploads only: the premium, if the person told us, and who it covers.
+    premium_amount = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True
+    )
+    premium_period = models.CharField(
+        max_length=20, choices=PREMIUM_PERIOD_CHOICES, blank=True
+    )
+    who_is_covered = models.CharField(
+        max_length=20, choices=WHO_IS_COVERED_CHOICES, blank=True
+    )
     insurance_company_obj = models.ForeignKey(
         InsuranceCompany,
         on_delete=models.SET_NULL,

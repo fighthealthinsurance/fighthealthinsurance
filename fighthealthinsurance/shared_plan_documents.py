@@ -220,7 +220,8 @@ def save_shared_documents(
     model reads the files here.
 
     ``details`` holds what is known about the plan: plan_category,
-    plan_year, state, insurer_name, employer_name, insurance_company_obj and
+    plan_year, state, insurer_name, employer_name, premium_amount,
+    premium_period, who_is_covered, insurance_company_obj and
     insurance_plan_obj, each optional. Raises OverDailyBudget, storing
     nothing, when today's budget for everyone from ``source`` has no room
     for them.
@@ -237,6 +238,9 @@ def save_shared_documents(
         "state": details.get("state") or "",
         "insurer_name": (details.get("insurer_name") or "").strip()[:200],
         "employer_name": (details.get("employer_name") or "").strip()[:200],
+        "premium_amount": details.get("premium_amount"),
+        "premium_period": details.get("premium_period") or "",
+        "who_is_covered": details.get("who_is_covered") or "",
         "insurance_company_obj": details.get("insurance_company_obj"),
         "insurance_plan_obj": details.get("insurance_plan_obj"),
     }

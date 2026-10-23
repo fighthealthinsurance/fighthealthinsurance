@@ -48,21 +48,22 @@ SHARING_VERSION = datetime.date(2026, 10, 23)
 _SHARING_BODY = (
     "We combine them with documents from other people to learn how plans "
     "work, and we share what we learn publicly. AI models read them, including "
-    "ones we run and outside services. We keep shared documents as long as we "
+    "ones we run and outside services. We keep what you share as long as we "
     "can. Please do your best to leave out your name, member ID and health "
     "information, unless you want to include them. Either way, we do our best "
     "to remove personal details from anything we share."
 )
 SHARING_TERMS = (
-    "By uploading, you agree to share these documents with Fight Health "
-    "Insurance. " + _SHARING_BODY
+    "By uploading, you agree to share these documents, and what you tell us "
+    "about the plan, with Fight Health Insurance. " + _SHARING_BODY
 )
 SHARING_CHECKBOX = "I agree to share these documents this way."
 # Where uploading is for something else, only the tick shares a copy.
 SHARING_OPT_IN_TERMS = (
-    "If you tick the box, you agree to share a copy of these documents with "
-    "Fight Health Insurance. " + _SHARING_BODY + " If you ask us to delete your "
-    "data, we delete this copy too."
+    "If you tick the box, you agree to share a copy of these documents, and "
+    "what you've told us about the plan, with Fight Health Insurance. "
+    + _SHARING_BODY
+    + " If you ask us to delete your data, we delete this copy too."
 )
 SHARING_OPT_IN_CHECKBOX = "Yes, also share a copy with Fight Health Insurance."
 

@@ -295,7 +295,19 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
     # All the files in one upload, with room under the proxy's 80MB limit.
     MAX_TOTAL_BYTES = 60 * 1024 * 1024
     # The optional fields, shown folded under "About the plan".
-    ABOUT_THE_PLAN = ("insurer_name", "employer_name", "plan_year", "state", "email")
+    ABOUT_THE_PLAN = (
+        "insurer_name",
+        "employer_name",
+        "plan_year",
+        "state",
+        "premium_amount",
+        "premium_period",
+        "who_is_covered",
+        "email",
+    )
+    # The most a premium can be, in dollars, however often it is paid.
+    MAX_PREMIUM = 100_000
+    _PREMIUM_RANGE = f"Enter an amount from 0 to {MAX_PREMIUM:,} dollars."
 
     # Required is checked in clean_plan_documents: an empty list passes the field.
     plan_documents = MultipleFileField(
@@ -330,6 +342,35 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
         },
     )
     state = forms.ChoiceField(required=False, choices=(), label="State")
+    premium_amount = forms.DecimalField(
+        required=False,
+        min_value=0,
+        max_value=MAX_PREMIUM,
+        max_digits=8,
+        decimal_places=2,
+        label="What you pay for the plan (the premium), in dollars",
+        help_text="If you know it. This helps us show what plans cost over time.",
+        error_messages={
+            "invalid": "Enter an amount in dollars, like 250 or 250.50.",
+            "min_value": _PREMIUM_RANGE,
+            "max_value": _PREMIUM_RANGE,
+            "max_digits": _PREMIUM_RANGE,
+            "max_whole_digits": _PREMIUM_RANGE,
+            "max_decimal_places": "Enter dollars and cents, like 250.50.",
+        },
+    )
+    premium_period = forms.ChoiceField(
+        required=False,
+        choices=[("", "Choose how often")] + PolicyDocument.PREMIUM_PERIOD_CHOICES,
+        label="How often you pay it",
+        error_messages={"invalid_choice": "Choose how often from the list."},
+    )
+    who_is_covered = forms.ChoiceField(
+        required=False,
+        choices=[("", "Choose who it covers")] + PolicyDocument.WHO_IS_COVERED_CHOICES,
+        label="Who the plan covers",
+        error_messages={"invalid_choice": "Choose who the plan covers from the list."},
+    )
     email = forms.EmailField(
         required=False,
         max_length=300,
@@ -375,6 +416,9 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
 
     def clean(self) -> dict[str, Any]:
         cleaned = super().clean() or {}
+        # An amount can't be compared without how often it is paid.
+        if cleaned.get("premium_amount") and not cleaned.get("premium_period"):
+            self.add_error("premium_period", "Choose how often you pay that amount.")
         # Only the scrambled form is kept, so the address goes no further.
         email = (cleaned.pop("email", "") or "").strip().lower()
         cleaned["hashed_email"] = Denial.get_hashed_email(email) if email else None
