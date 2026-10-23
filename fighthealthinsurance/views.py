@@ -62,6 +62,7 @@ from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
 from fighthealthinsurance.structured_data import render_json_ld
 from fighthealthinsurance.chat_forms import (
+    PlanDocumentsReminderForm,
     SharePlanDocumentsForm,
     UnderstandPolicyForm,
     UserConsentForm,
@@ -4025,6 +4026,11 @@ class SharePlanDocumentsView(FormView):
         context["max_total_mb"] = SharePlanDocumentsForm.max_total_mb()
         context["too_many_message"] = SharePlanDocumentsForm.too_many_message()
         context["too_big_message"] = SharePlanDocumentsForm.too_big_message()
+        if "reminder_form" not in context:
+            context["reminder_form"] = PlanDocumentsReminderForm(
+                prefix=PlanDocumentsReminderForm.PREFIX
+            )
+        context["reminded"] = self.request.GET.get("reminder") == "1"
         return context
 
     def get_success_url(self) -> str:
@@ -4089,6 +4095,47 @@ class SharePlanDocumentsView(FormView):
             return self.form_invalid(form)
         shared_plan_documents.note_shared(self.request, files)
         return redirect(self.get_success_url())
+
+
+class PlanDocumentsReminderView(View):
+    """The share page's opt-in reminder (plan_documents_reminder). Posts
+    only; the page itself draws the form."""
+
+    def get(self, request, *args, **kwargs) -> HttpResponse:
+        return redirect(reverse("share_plan_documents") + "#plan-documents-reminder")
+
+    def post(self, request, *args, **kwargs) -> HttpResponse:
+        from fighthealthinsurance import plan_documents_reminder
+
+        prefix = PlanDocumentsReminderForm.PREFIX
+        done = f"{reverse('share_plan_documents')}?reminder=1#plan-documents-reminder"
+        if request.POST.get(f"{prefix}-website"):
+            return redirect(done)
+        refused = None
+        if not shared_plan_documents.render_token_ok(request.POST.get("rendered")):
+            form = PlanDocumentsReminderForm(
+                prefix=prefix,
+                initial={"email": request.POST.get(f"{prefix}-email", "")},
+            )
+            refused = "Please press Remind me in 30 days again."
+        else:
+            form = PlanDocumentsReminderForm(request.POST, prefix=prefix)
+            if form.is_valid():
+                problem = plan_documents_reminder.schedule_reminder(
+                    form.cleaned_data["email"]
+                )
+                if problem is None:
+                    return redirect(done)
+                form.add_error("email", problem)
+        page = SharePlanDocumentsView()
+        page.setup(request, *args, **kwargs)
+        return page.render_to_response(
+            page.get_context_data(
+                form=SharePlanDocumentsForm(),
+                reminder_form=form,
+                reminder_refused=refused,
+            )
+        )
 
 
 class DenialLanguageLibraryView(StaticIshView):

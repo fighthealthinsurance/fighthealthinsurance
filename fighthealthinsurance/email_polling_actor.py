@@ -38,11 +38,15 @@ class EmailPollingActor:
             FollowUpEmailSender,
             ThankyouEmailSender,
         )
+        from fighthealthinsurance.plan_documents_reminder import (
+            PlanDocumentsReminderSender,
+        )
         from fighthealthinsurance.scheduled_emails import ScheduledEmailSender
 
         self.followup_sender = FollowUpEmailSender()
         self.thankyou_sender = ThankyouEmailSender()
         self.scheduled_sender = ScheduledEmailSender()
+        self.plan_documents_reminder_sender = PlanDocumentsReminderSender()
         # Damping for the scheduled-email block's private error handling (see
         # run()): consecutive failures and the time to skip the block until.
         self._scheduled_failures = 0
@@ -116,6 +120,10 @@ class EmailPollingActor:
                             f"for {skip_s}s: {e}"
                         )
 
+                # The share page's 30-day reminders, before the follow-ups'
+                # long pacing wait, and failing on their own.
+                await self._send_plan_documents_reminders()
+
                 self._logger.debug("Getting follow up candidates")
                 # Send follow-up emails (pass candidates to avoid double DB query)
                 followup_candidates = await self.followup_sender.afind_candidates()
@@ -158,6 +166,21 @@ class EmailPollingActor:
 
         self._logger.warning("EmailPollingActor stopped running")
         return None
+
+    async def _send_plan_documents_reminders(self) -> None:
+        """Send the share page's reminders that are due. Catches its own
+        errors, so a failure here never trips the loop's backoff."""
+        try:
+            due = await self.plan_documents_reminder_sender.afind_candidates()
+            if due:
+                sent = await self.plan_documents_reminder_sender.asend_all(
+                    count=10, candidates=due
+                )
+                self._logger.info(f"Sent {sent} plan documents reminder(s)")
+        except Exception:
+            self._logger.opt(exception=True).error(
+                "Sending plan documents reminders failed"
+            )
 
     async def _jittered_send_delay(self, sent_count: int) -> None:
         """Apply jittered delay proportional to emails sent."""

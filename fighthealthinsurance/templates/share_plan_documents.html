@@ -225,6 +225,34 @@ Thank you,
             <p class="fhi-note" id="copy-letter-status" role="status"></p>
         </div>
 
+        <div class="fhi-card fhi-stack" id="plan-documents-reminder" role="group" aria-labelledby="plan-documents-reminder-heading">
+            <h3 id="plan-documents-reminder-heading">Want a reminder?</h3>
+            {% if reminded %}
+            <p role="status" id="plan-documents-reminder-set">Done. We'll email you once, 30 days from now.</p>
+            {% else %}
+            <p>We'll email you once in 30 days to upload what you get. It's the only email we'll send, and we delete your address when we send it.</p>
+            <form method="post" action="{% url 'share_plan_documents_reminder' %}" class="fhi-stack" id="plan-documents-reminder-form">
+                {% csrf_token %}
+                {{ reminder_form.website }}
+                <input type="hidden" name="rendered" value="{{ rendered }}">
+                {% if reminder_refused %}<p class="fhi-notice fhi-notice-danger" role="alert">{{ reminder_refused }}</p>{% endif %}
+                <div class="fhi-field-group">
+                    <label for="{{ reminder_form.email.id_for_label }}" class="fhi-label">{{ reminder_form.email.label }}</label>
+                    {{ reminder_form.email }}
+                    {% include "partials/field_error.html" with id=reminder_form.email.auto_id|add:"_error" errors=reminder_form.email.errors filled=True %}
+                </div>
+                <div class="fhi-check-row">
+                    {{ reminder_form.remind }}
+                    <label for="{{ reminder_form.remind.id_for_label }}">{{ reminder_form.remind.label }}</label>
+                    {% include "partials/field_error.html" with id=reminder_form.remind.auto_id|add:"_error" errors=reminder_form.remind.errors filled=True %}
+                </div>
+                <div class="fhi-actions">
+                    <button type="submit" id="plan-documents-reminder-submit" class="fhi-button fhi-button-secondary">Remind me in 30 days</button>
+                </div>
+            </form>
+            {% endif %}
+        </div>
+
         <h3>Other kinds of plans</h3>
         <ul>
             <li><strong>Job-based and individual plans:</strong> you can ask for a Summary of Benefits and Coverage at any time, and the plan or insurer must send it within 7 business days. It is only a summary. One from an insurer must list a web address for the full policy. For a job-based plan, that address is for the certificate of coverage, which is not the full group policy.</li>

@@ -696,6 +696,13 @@ urlpatterns += [
         )(views.SharePlanDocumentsView.as_view()),
         name="share_plan_documents",
     ),
+    path(
+        "share-plan-documents/remind",
+        sensitive_post_parameters("reminder-email")(
+            views.PlanDocumentsReminderView.as_view()
+        ),
+        name="share_plan_documents_reminder",
+    ),
 ]
 
 

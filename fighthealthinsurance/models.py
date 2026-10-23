@@ -4546,6 +4546,21 @@ def _delete_policy_document_file(
     transaction.on_commit(_delete_file, using=using)
 
 
+class PlanDocumentsReminder(models.Model):
+    """One email, 30 days after asking on the share page, to share the plan
+    documents a plan has sent by then. The row, and the address with it, is
+    deleted when the email goes (plan_documents_reminder.py), and by
+    remove-my-data before then."""
+
+    # One waiting reminder per address: asking again moves the date.
+    email = models.EmailField(max_length=254, unique=True)
+    send_after = models.DateTimeField(db_index=True)
+    created = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"PlanDocumentsReminder {self.pk} after {self.send_after:%Y-%m-%d}"
+
+
 class PolicyDocumentAnalysis(ExportModelOperationsMixin("PolicyDocumentAnalysis"), models.Model):  # type: ignore
     """
     Stores AI analysis of policy documents.

@@ -1,0 +1,18 @@
+{% extends "./fhi_base_email.html" %}
+{% block title %}A reminder to share your plan documents{% endblock %}
+{% block content %}
+<p>Hi,</p>
+<p>
+You asked us to remind you about your plan documents. If your plan has sent them, you can share them with us here.
+</p>
+{% include "emails/partials/button.html" with href=url label="Share my plan documents" %}
+<p>
+If they haven't come yet, the page says what to do next. This is the only reminder we'll send, and we deleted your email address from our reminder list when we sent it.
+</p>
+<p>
+If you didn't ask for this, you can ignore this email.
+</p>
+<p>
+The team at Fight Health Insurance and Timbit
+</p>
+{% endblock %}
