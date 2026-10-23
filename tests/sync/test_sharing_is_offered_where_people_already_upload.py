@@ -2,7 +2,7 @@
 
 Explain Policy and the appeal's plan documents step each offer an unticked
 box, in a highlighted card that stands apart from the boxes a person must
-tick, with the sharing agreement next to it (consent.SHARING_OPT_IN_TERMS,
+tick, with the sharing agreement just above it (consent.SHARING_OPT_IN_TERMS,
 dated by the same SHARING_VERSION as the share page). Unticked, the page
 shares nothing and works exactly as before. Ticked, each file that passes the
 closer look a shared file gets is copied into a row of its own: its own
@@ -82,10 +82,19 @@ class TheBoxIsOfferedUntickedAndStandsOutTest(TestCase):
         self.assertIn("fhi-notice-info", band["class"])
         label = card.find("label", attrs={"for": box["id"]})
         self.assertEqual(label.get_text(strip=True), consent.SHARING_OPT_IN_CHECKBOX)
-        # The agreement is next to the box and read out with it.
+        # The agreement is just above the box, as on the share page, and read
+        # out with it.
         self.assertEqual(box["aria-describedby"], SHARE_FOR_RESEARCH_TERMS_ID)
         terms = card.find(id=SHARE_FOR_RESEARCH_TERMS_ID)
         self.assertEqual(terms.get_text(strip=True), consent.SHARING_OPT_IN_TERMS)
+        self.assertIs(band.find_previous_sibling(), terms)
+        # The card says what we learn, as the share page does.
+        self.assertEqual(
+            card.find(id="share-for-research-intro").get_text(" ", strip=True),
+            "Share a copy of these documents with us. We learn from them what "
+            "care costs, how costs and coverage change over time, and what needs "
+            "approval first, and we share what we learn so others can fight back.",
+        )
         return card
 
     def test_explain_policy_offers_it_just_above_the_button(self):
