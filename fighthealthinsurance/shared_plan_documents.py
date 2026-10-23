@@ -5,12 +5,16 @@ from (``source``) and the date of the agreement it was shared under. This
 module stores them, with a fingerprint of each file so repeats can be
 counted, and holds the limits every way in shares: a signed timestamp that
 each upload form carries, and a daily budget per visitor and for everyone.
+The budget for everyone is taken in one conditional database update
+(reserve), so shares landing at the same moment can't all fit in the same
+room.
 
 People share here in three ways: the share page, and the opt-in box on
 Explain Policy and on the appeal's plan documents step, which shares a copy
 of what was uploaded there.
 """
 
+import datetime
 import hashlib
 import hmac
 import time
@@ -21,13 +25,15 @@ from django.conf import settings
 from django.core import signing
 from django.core.files.uploadedfile import UploadedFile
 from django.db import transaction
+from django.db.models import F, PositiveIntegerField
+from django.db.models.functions import Greatest
 from django.http import HttpRequest
 from django.utils import timezone
 from loguru import logger
 
 from fighthealthinsurance import consent
 from fighthealthinsurance.chat_forms import policy_document_extension
-from fighthealthinsurance.models import PolicyDocument
+from fighthealthinsurance.models import PolicyDocument, SharedPlanDocumentsDay
 
 # ---- The signed timestamp on each upload form --------------------------------
 
@@ -91,12 +97,44 @@ def _used_today(request: HttpRequest) -> dict[str, int]:
     return {"files": int(used.get("files", 0)), "bytes": int(used.get("bytes", 0))}
 
 
+def _taken_today(name: str) -> int:
+    """How much of today's ``name`` budget for everyone has been taken."""
+    used = (
+        SharedPlanDocumentsDay.objects.filter(day=timezone.now().date(), name=name)
+        .values_list("count", flat=True)
+        .first()
+    )
+    return used or 0
+
+
 def shared_today() -> int:
     """Files shared by everyone since midnight UTC, from every page."""
-    midnight = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    return PolicyDocument.objects.filter(
-        source__in=PolicyDocument.SHARED_SOURCES, created_at__gte=midnight
-    ).count()
+    return _taken_today(SharedPlanDocumentsDay.FILES)
+
+
+def reserve(name: str, amount: int, limit: int) -> Optional[datetime.date]:
+    """Take ``amount`` from today's ``name`` budget of ``limit``. Returns the
+    day it was taken from, or None when it doesn't fit. The check and the
+    count are one update, so every pod sees the same room."""
+    day = timezone.now().date()
+    if amount > limit:
+        return None
+    SharedPlanDocumentsDay.objects.get_or_create(day=day, name=name)
+    taken = SharedPlanDocumentsDay.objects.filter(
+        day=day, name=name, count__lte=limit - amount
+    ).update(count=F("count") + amount)
+    return day if taken else None
+
+
+def give_back(name: str, amount: int, day: datetime.date) -> None:
+    """Return what reserve took, when what it was for didn't happen."""
+    SharedPlanDocumentsDay.objects.filter(day=day, name=name).update(
+        count=Greatest(F("count") - amount, 0, output_field=PositiveIntegerField())
+    )
+
+
+class OverDailyBudget(Exception):
+    """Today's budget for everyone has no room for these files."""
 
 
 def daily_limit_problem(
@@ -165,7 +203,8 @@ def save_shared_documents(
 
     ``details`` holds what is known about the plan: plan_category,
     plan_year, state, insurer_name, employer_name, insurance_company_obj and
-    insurance_plan_obj, each optional.
+    insurance_plan_obj, each optional. Raises OverDailyBudget, storing
+    nothing, when today's budget for everyone has no room for them.
     """
     shared = {
         "source": source,
@@ -182,6 +221,9 @@ def save_shared_documents(
         "insurance_company_obj": details.get("insurance_company_obj"),
         "insurance_plan_obj": details.get("insurance_plan_obj"),
     }
+    day = reserve(SharedPlanDocumentsDay.FILES, len(files), _files_per_day())
+    if day is None:
+        raise OverDailyBudget()
     saved: list[PolicyDocument] = []
     try:
         with transaction.atomic():
@@ -196,6 +238,7 @@ def save_shared_documents(
                 saved.append(doc)
                 doc.save()
     except Exception:
+        give_back(SharedPlanDocumentsDay.FILES, len(files), day)
         # The rows rolled back; their encrypted files would not.
         for doc in saved:
             try:
@@ -277,6 +320,9 @@ def share_opt_in_copies(
         )
         note_shared(request, passing)
         return saved
+    except OverDailyBudget:
+        logger.info(f"Left opted-in files from {source} unshared: over budget")
+        return []
     except Exception:
         logger.opt(exception=True).error(
             f"Failed to save opted-in shared copies from {source}"

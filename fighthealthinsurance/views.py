@@ -4089,6 +4089,8 @@ class SharePlanDocumentsView(FormView):
                 details=details,
                 hashed_email=data.get("hashed_email"),
             )
+        except shared_plan_documents.OverDailyBudget:
+            return self._refuse(shared_plan_documents.DAILY_LIMIT_MESSAGE)
         except Exception:
             logger.opt(exception=True).error("Failed to save shared plan documents")
             form.add_error(None, "We couldn't save your files. Please try again.")

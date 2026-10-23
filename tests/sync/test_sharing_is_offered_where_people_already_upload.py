@@ -318,22 +318,25 @@ class AppealPlanDocumentsStepTest(_UploadsTestCase):
 
 
 class OptInSharesCountAgainstTheDailyBudgetTest(_UploadsTestCase):
+    def explain_with_the_box_ticked(self):
+        return Client().post(
+            reverse("understand_policy"),
+            {
+                "first_name": "Rebecca",
+                "last_name": "Crumpler",
+                "email": EMAIL,
+                "document_type": "summary_of_benefits",
+                "plan_category": "unknown",
+                "tos_agreement": "on",
+                "privacy_policy": "on",
+                "policy_document": pdf(),
+                "share_for_research": "on",
+            },
+        )
+
     def test_over_budget_the_page_goes_on_and_nothing_is_shared(self):
         with self.settings(SHARED_PLAN_DOCUMENTS_DAILY_FILES=0):
-            response = Client().post(
-                reverse("understand_policy"),
-                {
-                    "first_name": "Rebecca",
-                    "last_name": "Crumpler",
-                    "email": EMAIL,
-                    "document_type": "summary_of_benefits",
-                    "plan_category": "unknown",
-                    "tos_agreement": "on",
-                    "privacy_policy": "on",
-                    "policy_document": pdf(),
-                    "share_for_research": "on",
-                },
-            )
+            response = self.explain_with_the_box_ticked()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(PolicyDocument.objects.count(), 1)
         self.assertFalse(self.shared_copies().exists())
@@ -347,8 +350,9 @@ class OptInSharesCountAgainstTheDailyBudgetTest(_UploadsTestCase):
                 PolicyDocument.SOURCE_SHARED_APPEAL,
             },
         )
-        PolicyDocument.objects.create(source=PolicyDocument.SOURCE_SHARED_APPEAL)
-        PolicyDocument.objects.create(source=PolicyDocument.SOURCE_EXPLAIN_POLICY)
+        self.explain_with_the_box_ticked()
+        self.assertEqual(PolicyDocument.objects.count(), 2)
+        # The person's own upload isn't shared; only the copy counts.
         self.assertEqual(shared_plan_documents.shared_today(), 1)
 
 

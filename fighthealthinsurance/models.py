@@ -4561,6 +4561,30 @@ class PlanDocumentsReminder(models.Model):
         return f"PlanDocumentsReminder {self.pk} after {self.send_after:%Y-%m-%d}"
 
 
+class SharedPlanDocumentsDay(models.Model):
+    """How much of one daily budget for everyone has been used on one UTC
+    day: shared plan documents, or new reminder addresses. One row per
+    budget per day, shared by every pod (shared_plan_documents.reserve).
+    Counts only."""
+
+    FILES = "files"
+    REMINDERS = "reminders"
+
+    day = models.DateField()
+    name = models.CharField(max_length=16)
+    count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["day", "name"], name="shared_plan_documents_day_name"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.day} {self.name}: {self.count}"
+
+
 class PolicyDocumentAnalysis(ExportModelOperationsMixin("PolicyDocumentAnalysis"), models.Model):  # type: ignore
     """
     Stores AI analysis of policy documents.

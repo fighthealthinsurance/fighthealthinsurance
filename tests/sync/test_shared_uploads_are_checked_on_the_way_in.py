@@ -31,9 +31,9 @@ from django.urls import reverse
 from django.utils import timezone
 from loguru import logger
 
-from fighthealthinsurance import chat_forms, sentry_filters
+from fighthealthinsurance import chat_forms, sentry_filters, shared_plan_documents
 from fighthealthinsurance.chat_forms import SharePlanDocumentsForm
-from fighthealthinsurance.models import PolicyDocument
+from fighthealthinsurance.models import PolicyDocument, SharedPlanDocumentsDay
 from fighthealthinsurance.shared_plan_documents import (
     DAILY_LIMIT_MESSAGE,
     SESSION_LIMIT_MESSAGE,
@@ -374,10 +374,27 @@ class DailyBudgetsTest(_ShareTestCase):
     @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_FILES=1)
     def test_yesterdays_shares_do_not_count_today(self):
         self.share([txt()], client=Client())
-        PolicyDocument.objects.update(
-            created_at=timezone.now() - datetime.timedelta(days=1, hours=1)
+        SharedPlanDocumentsDay.objects.update(
+            day=timezone.now().date() - datetime.timedelta(days=1)
         )
         self.assertStored(self.share([txt()], client=Client()), count=2)
+
+    @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_FILES=1)
+    def test_two_shares_at_once_cannot_both_take_the_last_room(self):
+        # Both get past the first check, as two posts arriving together do.
+        with patch.object(
+            shared_plan_documents, "daily_limit_problem", return_value=None
+        ):
+            self.assertStored(self.share([txt()], client=Client()))
+            response = self.share([txt()], client=Client())
+        self.assertRefused(response, "Please try again tomorrow.", count=1)
+
+    def test_a_share_that_fails_to_save_gives_its_room_back(self):
+        with patch.object(
+            PolicyDocument, "save", side_effect=RuntimeError("storage went away")
+        ):
+            self.share([txt(), txt()])
+        self.assertEqual(shared_plan_documents.shared_today(), 0)
 
 
 class StaffReadSharedFilesAsTextTest(_ShareTestCase):

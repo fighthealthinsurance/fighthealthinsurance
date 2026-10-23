@@ -18,7 +18,7 @@ from loguru import logger
 
 from fighthealthinsurance.email_utils import is_blocked_email
 from fighthealthinsurance.followup_emails import AsyncEmailSenderMixin
-from fighthealthinsurance.models import PlanDocumentsReminder
+from fighthealthinsurance.models import PlanDocumentsReminder, SharedPlanDocumentsDay
 from fighthealthinsurance.utils import build_fallback_email
 
 REMINDER_DAYS = 30
@@ -43,16 +43,15 @@ def schedule_reminder(email: str) -> Optional[str]:
     """Set the reminder for ``email``. Returns None when it is set, else what
     to tell the person. Asking again moves the date; it never adds a second
     email."""
+    from fighthealthinsurance.shared_plan_documents import reserve
+
     email = (email or "").strip().lower()
     if is_blocked_email(email):
         return CANT_SEND_MESSAGE
     now = _now()
     waiting = PlanDocumentsReminder.objects.filter(email=email).exists()
-    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if (
-        not waiting
-        and PlanDocumentsReminder.objects.filter(created__gte=midnight).count()
-        >= _requests_per_day()
+    if not waiting and (
+        reserve(SharedPlanDocumentsDay.REMINDERS, 1, _requests_per_day()) is None
     ):
         return DAILY_LIMIT_MESSAGE
     PlanDocumentsReminder.objects.update_or_create(
