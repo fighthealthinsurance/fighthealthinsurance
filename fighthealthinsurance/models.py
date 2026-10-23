@@ -4563,11 +4563,12 @@ class PlanDocumentsReminder(models.Model):
 
 class SharedPlanDocumentsDay(models.Model):
     """How much of one daily budget for everyone has been used on one UTC
-    day: shared plan documents, or new reminder addresses. One row per
-    budget per day, shared by every pod (shared_plan_documents.reserve).
-    Counts only."""
+    day: files shared on the share page, copies shared by ticking the box on
+    another page, or new reminder addresses. One row per budget per day,
+    shared by every pod (shared_plan_documents.reserve). Counts only."""
 
     FILES = "files"
+    OPT_IN_FILES = "opt_in_files"
     REMINDERS = "reminders"
 
     day = models.DateField()

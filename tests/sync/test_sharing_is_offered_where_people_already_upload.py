@@ -326,7 +326,7 @@ class AppealPlanDocumentsStepTest(_UploadsTestCase):
         self.assertFalse(self.shared_copies().exists())
 
 
-class OptInSharesCountAgainstTheDailyBudgetTest(_UploadsTestCase):
+class OptInSharesHaveTheirOwnDailyBudgetTest(_UploadsTestCase):
     def explain_with_the_box_ticked(self):
         return Client().post(
             reverse("understand_policy"),
@@ -343,14 +343,24 @@ class OptInSharesCountAgainstTheDailyBudgetTest(_UploadsTestCase):
             },
         )
 
+    def share_on_the_share_page(self):
+        return Client().post(
+            reverse("share_plan_documents"),
+            {
+                "plan_documents": [txt()],
+                "agree": "on",
+                "rendered": shared_plan_documents.render_token(at=time.time() - 60),
+            },
+        )
+
     def test_over_budget_the_page_goes_on_and_nothing_is_shared(self):
-        with self.settings(SHARED_PLAN_DOCUMENTS_DAILY_FILES=0):
+        with self.settings(SHARED_PLAN_DOCUMENTS_OPT_IN_DAILY_FILES=0):
             response = self.explain_with_the_box_ticked()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(PolicyDocument.objects.count(), 1)
         self.assertFalse(self.shared_copies().exists())
 
-    def test_every_way_in_counts_toward_the_budget_for_everyone(self):
+    def test_opt_in_copies_count_against_their_own_budget(self):
         self.assertEqual(
             set(PolicyDocument.SHARED_SOURCES),
             {
@@ -362,7 +372,37 @@ class OptInSharesCountAgainstTheDailyBudgetTest(_UploadsTestCase):
         self.explain_with_the_box_ticked()
         self.assertEqual(PolicyDocument.objects.count(), 2)
         # The person's own upload isn't shared; only the copy counts.
-        self.assertEqual(shared_plan_documents.shared_today(), 1)
+        for source in (
+            PolicyDocument.SOURCE_SHARED_EXPLAIN,
+            PolicyDocument.SOURCE_SHARED_APPEAL,
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(shared_plan_documents.shared_today(source), 1)
+        self.assertEqual(shared_plan_documents.shared_today(), 0)
+
+    def test_opt_in_copies_leave_the_share_pages_room(self):
+        with self.settings(
+            SHARED_PLAN_DOCUMENTS_DAILY_FILES=1,
+            SHARED_PLAN_DOCUMENTS_OPT_IN_DAILY_FILES=1,
+        ):
+            self.explain_with_the_box_ticked()
+            shared = self.share_on_the_share_page()
+        self.assertEqual(shared.status_code, 302)
+        self.assertEqual(
+            PolicyDocument.objects.filter(source=PolicyDocument.SOURCE_SHARED).count(),
+            1,
+        )
+        self.assertEqual(self.shared_copies().count(), 2)
+
+    def test_a_full_share_page_leaves_room_for_opt_in_copies(self):
+        with self.settings(SHARED_PLAN_DOCUMENTS_DAILY_FILES=0):
+            self.explain_with_the_box_ticked()
+        self.assertEqual(
+            self.shared_copies()
+            .filter(source=PolicyDocument.SOURCE_SHARED_EXPLAIN)
+            .count(),
+            1,
+        )
 
 
 class ErrorReportsFromTheOptInPagesCarryNoFormDataTest(TestCase):
