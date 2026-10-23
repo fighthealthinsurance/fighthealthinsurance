@@ -4481,6 +4481,16 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     # Every source whose rows were shared for research.
     SHARED_SOURCES = (SOURCE_SHARED, SOURCE_SHARED_EXPLAIN, SOURCE_SHARED_APPEAL)
 
+    # Where a shared file is in its reading (plan_documents_processing).
+    PROCESSING_RECEIVED = "received"
+    PROCESSING_READY = "ready_for_review"
+    PROCESSING_UNREADABLE = "unreadable"
+    PROCESSING_STATUS_CHOICES = [
+        (PROCESSING_RECEIVED, "Received, not read yet"),
+        (PROCESSING_READY, "Read and cleaned, ready for review"),
+        (PROCESSING_UNREADABLE, "No text could be read"),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
     document_type = models.CharField(
@@ -4531,6 +4541,13 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     )
     # Shared uploads only: a keyed SHA-256 of the file, so repeats can be counted.
     fingerprint = models.CharField(max_length=64, blank=True)
+    # Shared uploads only: the file's text with personal details taken out as
+    # best we can, and where its reading is. The raw text is never stored.
+    processing_status = models.CharField(
+        max_length=20, choices=PROCESSING_STATUS_CHOICES, blank=True, default=""
+    )
+    processed_at = models.DateTimeField(null=True, blank=True)
+    cleaned_text = models.TextField(blank=True, default="")
 
     class Meta:
         indexes = [
@@ -4540,6 +4557,7 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
             models.Index(fields=["source", "created_at"]),
             models.Index(fields=["share_batch"]),
             models.Index(fields=["fingerprint"]),
+            models.Index(fields=["processing_status", "shared_at"]),
         ]
         verbose_name = "Policy Document"
         verbose_name_plural = "Policy Documents"

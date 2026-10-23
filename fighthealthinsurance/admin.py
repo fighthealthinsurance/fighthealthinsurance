@@ -1277,8 +1277,9 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     )
     list_filter = ("source", "document_type", "plan_category", "created_at")
     search_fields = ("filename", "hashed_email", "insurer_name", "employer_name")
-    # Staff reach the file through the links below, never the raw field.
-    exclude = ("document_enc",)
+    # Staff reach the file through the links below, never the raw field, and
+    # the cleaned text, which runs long, is never a form field either.
+    exclude = ("document_enc", "cleaned_text")
     readonly_fields = (
         "id",
         "created_at",
@@ -1288,6 +1289,8 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "shared_at",
         "share_batch",
         "fingerprint",
+        "processing_status",
+        "processed_at",
     )
 
     def changelist_view(self, request, extra_context=None):

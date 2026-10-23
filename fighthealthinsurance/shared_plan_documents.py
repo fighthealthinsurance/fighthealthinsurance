@@ -216,8 +216,9 @@ def save_shared_documents(
     hashed_email: Optional[str],
     document_type: str = "other",
 ) -> list[PolicyDocument]:
-    """One encrypted PolicyDocument per file, all or none. Only stores: no
-    model reads the files here.
+    """One encrypted PolicyDocument per file, all or none, each marked
+    received. Only stores: no model reads the files here, and their text is
+    read later, away from the request (plan_documents_processing).
 
     ``details`` holds what is known about the plan: plan_category,
     plan_year, state, insurer_name, employer_name, premium_amount,
@@ -243,6 +244,7 @@ def save_shared_documents(
         "who_is_covered": details.get("who_is_covered") or "",
         "insurance_company_obj": details.get("insurance_company_obj"),
         "insurance_plan_obj": details.get("insurance_plan_obj"),
+        "processing_status": PolicyDocument.PROCESSING_RECEIVED,
     }
     budget, limit = _budget(source)
     day = reserve(budget, len(files), limit)

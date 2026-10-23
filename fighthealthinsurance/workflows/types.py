@@ -85,3 +85,12 @@ class AssistantAppealInput:
 
     hashed_email: str
     denial_uuid: str
+
+
+@dataclass
+class SharedPlanDocumentsInput:
+    """Input for ``SharedPlanDocumentsWorkflow``: one share, by the uuid its
+    rows carry (``PolicyDocument.share_batch``). Never the email, the
+    fingerprints, the insurer, the employer, a file name or any text."""
+
+    share_batch: str
