@@ -31,6 +31,31 @@ def from_your_letter_hint() -> SafeString:
     return mark_safe(render_to_string("partials/from_your_letter_hint.html").strip())
 
 
+#: The id of the agreement under the share-for-research box.
+SHARE_FOR_RESEARCH_TERMS_ID = "share-for-research-terms"
+
+
+def share_for_research_field() -> forms.BooleanField:
+    """The box that also shares a copy of a page's uploads for research,
+    drawn by partials/share_for_research.html with its agreement as the help
+    text. Unticked until the person ticks it."""
+    from fighthealthinsurance import consent
+
+    return forms.BooleanField(
+        required=False,
+        initial=False,
+        label=consent.SHARING_OPT_IN_CHECKBOX,
+        help_text=consent.SHARING_OPT_IN_TERMS,
+        widget=forms.CheckboxInput(
+            attrs={
+                "class": "fhi-check fhi-check-large",
+                "id": "share_for_research",
+                "aria-describedby": SHARE_FOR_RESEARCH_TERMS_ID,
+            }
+        ),
+    )
+
+
 # See https://docs.djangoproject.com/en/5.1/topics/http/file-uploads/
 class MultipleFileInput(forms.ClearableFileInput):
     allow_multiple_selected = True

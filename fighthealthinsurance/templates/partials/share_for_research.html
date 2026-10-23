@@ -1,0 +1,19 @@
+{% comment %}
+The offer to also share a copy of the documents on this page for research,
+on Explain Policy and the appeal's plan documents step. "field" is the form's
+share_for_research (form_utils.share_for_research_field): its label is the
+box's words and its help text the agreement (consent.SHARING_OPT_IN_TERMS).
+It renders unticked. "heading_level" is the level its heading takes on the
+page. Draws nothing when the form has no such field.
+{% endcomment %}
+{% if field %}{% with level=heading_level|default:3 %}
+<div class="fhi-card fhi-card-info" id="share-for-research" role="group" aria-labelledby="share-for-research-heading">
+  <h{{ level }} class="fhi-card-banner" id="share-for-research-heading">Help other people fight back</h{{ level }}>
+  <p>Share a copy of these documents with us. We learn from them what plans cover, what they leave out and what needs approval first, and we share what we learn so others can fight back.</p>
+  <div class="fhi-notice fhi-notice-info fhi-check-row">
+    {{ field }}
+    <label class="fhi-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+  </div>
+  <p id="share-for-research-terms">{{ field.help_text }}</p>
+</div>
+{% endwith %}{% endif %}

@@ -4454,12 +4454,18 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
 
     SOURCE_EXPLAIN_POLICY = "explain_policy"
     SOURCE_SHARED = "shared"
+    # A copy shared by ticking the box on Explain Policy or the appeal's plan
+    # documents step, kept apart from the row or appeal it was copied from.
+    SOURCE_SHARED_EXPLAIN = "shared_explain"
+    SOURCE_SHARED_APPEAL = "shared_appeal"
     SOURCE_CHOICES = [
         (SOURCE_EXPLAIN_POLICY, "Explain my policy"),
         (SOURCE_SHARED, "Shared for research"),
+        (SOURCE_SHARED_EXPLAIN, "Shared for research from Explain my policy"),
+        (SOURCE_SHARED_APPEAL, "Shared for research from an appeal"),
     ]
     # Every source whose rows were shared for research.
-    SHARED_SOURCES = (SOURCE_SHARED,)
+    SHARED_SOURCES = (SOURCE_SHARED, SOURCE_SHARED_EXPLAIN, SOURCE_SHARED_APPEAL)
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)

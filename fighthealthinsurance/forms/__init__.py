@@ -400,6 +400,8 @@ class HealthHistory(DenialRefForm):
 
 class PlanDocumentsForm(DenialRefForm):
     plan_documents = MultipleFileField(required=False)
+    # Not the appeal's: DenialCollectedView takes it out before update_denial.
+    share_for_research = share_for_research_field()
 
 
 class ChooseAppealForm(DenialRefForm):

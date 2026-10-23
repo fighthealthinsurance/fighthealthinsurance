@@ -9,6 +9,7 @@ from fighthealthinsurance.form_utils import (
     MultipleFileField,
     MultipleFileInput,
     StyledWidgetsMixin,
+    share_for_research_field,
 )
 from fighthealthinsurance.forms import REFERRAL_SOURCE_CHOICES
 from fighthealthinsurance.models import Denial, PolicyDocument
@@ -275,6 +276,8 @@ class UnderstandPolicyForm(BaseConsentForm):
             }
         ),
     )
+
+    share_for_research = share_for_research_field()
 
     def clean_policy_document(self) -> Optional[UploadedFile]:
         """Validate the uploaded file type and size."""

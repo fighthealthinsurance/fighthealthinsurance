@@ -3183,14 +3183,19 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
         return context
 
     def form_valid(self, form):
+        submitted = dict(form.cleaned_data)
+        share_for_research = submitted.pop("share_for_research", False)
         # TODO: Make use of the response from this
         try:
-            common_view_logic.DenialCreatorHelper.update_denial(**form.cleaned_data)
+            common_view_logic.DenialCreatorHelper.update_denial(**submitted)
         except models.Denial.DoesNotExist:
             logger.warning(
                 "DenialCollectedView: stale denial ref on POST; redirecting to scan"
             )
             return redirect("scan")
+        if share_for_research:
+            # After the appeal's own save, so a failed share never touches it.
+            shared_plan_documents.share_appeal_plan_documents(self.request, submitted)
         intake_resume.note_step(form.cleaned_data["denial_id"], "eev")
 
         new_form = core_forms.EntityExtractForm(
@@ -3958,6 +3963,11 @@ class UnderstandPolicyView(FormView):
             logger.opt(exception=True).error(f"Failed to save policy document: {e}")
             form.add_error(None, "Failed to upload document. Please try again.")
             return self.form_invalid(form)
+
+        if form.cleaned_data.get("share_for_research"):
+            shared_plan_documents.share_explain_policy_copy(
+                self.request, uploaded_file, policy_doc
+            )
 
         _handle_mailing_list_subscribe(form, "understand policy page")
 

@@ -34,9 +34,11 @@ SHARING_POINTS = [
     "Either way, we do our best to remove personal details from anything we share.",
 ]
 
-# The words SHARING_VERSION dates. A change to the words needs a new date.
+# The words SHARING_VERSION dates: the share page's and the opt-in box's on
+# Explain Policy and the plan documents step. A change to any of them needs
+# a new date.
 SHARING_WORDS_SHA256 = {
-    "2026-10-23": "6c2b00892bd10f47ca46959e6ffbcbd796010303177b8eb6a7aa14e69bcb887c",
+    "2026-10-23": "96adb45af6b423a1e90ade646f96b1bae23210557be2c6f6e6b8998c4229cd68",
 }
 
 EM_DASH = "\u2014"
@@ -184,7 +186,14 @@ class SharePlanDocumentsPageTest(TestCase):
 
 class SharingTermsVersionTest(TestCase):
     def test_the_words_match_the_version_they_are_dated(self):
-        words = consent.SHARING_TERMS + "\n" + consent.SHARING_CHECKBOX
+        words = "\n".join(
+            [
+                consent.SHARING_TERMS,
+                consent.SHARING_CHECKBOX,
+                consent.SHARING_OPT_IN_TERMS,
+                consent.SHARING_OPT_IN_CHECKBOX,
+            ]
+        )
         digest = hashlib.sha256(words.encode()).hexdigest()
         self.assertEqual(
             SHARING_WORDS_SHA256.get(consent.SHARING_VERSION.isoformat()),

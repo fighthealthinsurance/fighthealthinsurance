@@ -5,6 +5,10 @@ from (``source``) and the date of the agreement it was shared under. This
 module stores them, with a fingerprint of each file so repeats can be
 counted, and holds the limits every way in shares: a signed timestamp that
 each upload form carries, and a daily budget per visitor and for everyone.
+
+People share here in three ways: the share page, and the opt-in box on
+Explain Policy and on the appeal's plan documents step, which shares a copy
+of what was uploaded there.
 """
 
 import hashlib
@@ -219,3 +223,161 @@ def match_insurer(insurer_name: str) -> Any:
     except Exception:
         logger.opt(exception=True).warning("Could not match a shared insurer name")
         return None
+
+
+# ---- Copies shared by ticking the box on another page -----------------------
+
+
+def share_opt_in_copies(
+    request: HttpRequest,
+    files: Sequence[UploadedFile],
+    *,
+    source: str,
+    details: Mapping[str, Any],
+    hashed_email: Optional[str],
+    document_type: str = "other",
+) -> list[PolicyDocument]:
+    """Shared copies of files a person also ticked the box to share, made
+    once the page's own work is saved, as rows of their own.
+
+    Only files that pass validate_shared_document are shared, within today's
+    budgets; the rest are left out without a word, since the page they came
+    from has already done what it was for. Never raises, for the same reason.
+    """
+    from django.core.exceptions import ValidationError
+
+    from fighthealthinsurance.chat_forms import validate_shared_document
+
+    try:
+        passing: list[UploadedFile] = []
+        for uploaded in files:
+            if not uploaded:
+                continue
+            try:
+                validate_shared_document(uploaded)
+            except ValidationError:
+                continue
+            passing.append(uploaded)
+        if len(passing) < len(files):
+            logger.info(
+                f"Left {len(files) - len(passing)} opted-in file(s) from {source} "
+                "unshared: they failed the closer look"
+            )
+        if not passing:
+            return []
+        if daily_limit_problem(request, passing):
+            logger.info(f"Left opted-in files from {source} unshared: over budget")
+            return []
+        saved = save_shared_documents(
+            passing,
+            source=source,
+            details=details,
+            hashed_email=hashed_email,
+            document_type=document_type,
+        )
+        note_shared(request, passing)
+        return saved
+    except Exception:
+        logger.opt(exception=True).error(
+            f"Failed to save opted-in shared copies from {source}"
+        )
+        return []
+
+
+def share_explain_policy_copy(
+    request: HttpRequest, uploaded: UploadedFile, policy_doc: PolicyDocument
+) -> list[PolicyDocument]:
+    """A shared copy of an Explain Policy upload whose box was ticked. The
+    copy has no session key, so the chat never picks it up, and the same
+    scrambled email, so a removal request takes both."""
+    return share_opt_in_copies(
+        request,
+        [uploaded],
+        source=PolicyDocument.SOURCE_SHARED_EXPLAIN,
+        details={"plan_category": policy_doc.plan_category},
+        hashed_email=policy_doc.hashed_email or None,
+        document_type=policy_doc.document_type,
+    )
+
+
+def share_appeal_plan_documents(
+    request: HttpRequest, data: Mapping[str, Any]
+) -> list[PolicyDocument]:
+    """Shared copies of the files added on the appeal's plan documents step
+    whose box was ticked. ``data`` is that step's cleaned form. The copies
+    don't point at the appeal, so deleting one leaves the other; they carry
+    the denial's scrambled email, so a removal request takes both."""
+    from fighthealthinsurance.models import Denial
+
+    files = [uploaded for uploaded in data.get("plan_documents") or [] if uploaded]
+    if not files:
+        return []
+    try:
+        denial = Denial.objects.get(
+            hashed_email=Denial.get_hashed_email(data["email"]),
+            denial_id=data["denial_id"],
+            semi_sekret=data["semi_sekret"],
+        )
+        details = details_from_denial(denial)
+    except Exception:
+        logger.opt(exception=True).warning(
+            "Could not read the appeal for an opted-in share"
+        )
+        return []
+    return share_opt_in_copies(
+        request,
+        files,
+        source=PolicyDocument.SOURCE_SHARED_APPEAL,
+        details=details,
+        hashed_email=denial.hashed_email,
+    )
+
+
+# A plan source names the kind of plan only for these. "Employer -- Private"
+# is left out: church plans are private and not under ERISA.
+_PLAN_SOURCE_CATEGORIES = {
+    "medicare advantage": "medicare_advantage",
+    "medicare regular": "medicare_traditional",
+    "medicaid": "medicaid_chip",
+    "veterans affairs": "va",
+    "state marketplace / affordable care act": "aca_marketplace",
+    "employer -- state government": "employer_non_erisa",
+    "employer -- federal government": "employer_non_erisa",
+    "employer -- other government": "employer_non_erisa",
+}
+
+
+def details_from_denial(denial: Any) -> dict[str, Any]:
+    """What an appeal already knows about the plan, for its shared copies:
+    insurer, plan, employer, state and kind of plan. Nothing about the
+    person or the claim."""
+    from fighthealthinsurance.state_help import get_states_sorted_by_name
+
+    names = {
+        " ".join(name.split()).lower()
+        for name in denial.plan_source.values_list("name", flat=True)
+    }
+    categories = {_PLAN_SOURCE_CATEGORIES.get(name, "unknown") for name in names}
+    plan_category = categories.pop() if len(categories) == 1 else "unknown"
+
+    state = ""
+    given = (denial.your_state or "").strip().lower()
+    for known in get_states_sorted_by_name():
+        if given and given in (known.abbreviation.lower(), known.name.lower()):
+            state = known.abbreviation if len(known.abbreviation) == 2 else ""
+            break
+
+    company = denial.insurance_company_obj
+    insurer_name = (denial.insurance_company or "").strip()
+    if not insurer_name and company is not None:
+        insurer_name = company.name
+    if company is None:
+        company = match_insurer(insurer_name)
+    return {
+        "plan_category": plan_category,
+        "state": state,
+        "insurer_name": insurer_name,
+        "employer_name": (denial.employer_name or "").strip(),
+        "insurance_company_obj": company,
+        "insurance_plan_obj": denial.insurance_plan_obj,
+    }

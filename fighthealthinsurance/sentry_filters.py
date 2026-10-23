@@ -118,11 +118,16 @@ ASSISTANT_TEXT_MODULES = (
 # letter_review/{packet_id}/...") or the request URL's path.
 LETTER_REVIEW_PATH_PREFIX = "/timbit/help/letter_review/"
 
-# The pages where people share plan documents: their posts carry an email,
-# plan details and files. An error event from one keeps its stack but loses
-# the request body and every frame's variables, as a letter review event
-# does. Matched on the request URL's path.
-SHARING_FORM_PATHS = ("/share-plan-documents",)
+# The pages where people share plan documents, or tick a box to share a copy
+# of what they upload: their posts carry an email, plan details and files.
+# An error event from one keeps its stack but loses the request body and
+# every frame's variables, as a letter review event does. Matched on the
+# request URL's path.
+SHARING_FORM_PATHS = (
+    "/share-plan-documents",
+    "/understand-policy",
+    "/v0/combined_collected_view",
+)
 
 
 # sentry's logentry/Message interface renders text into "formatted" and keeps
