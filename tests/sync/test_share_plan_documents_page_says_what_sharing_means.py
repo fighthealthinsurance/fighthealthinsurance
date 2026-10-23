@@ -120,6 +120,20 @@ class SharePlanDocumentsPageTest(TestCase):
                 self.assertIn(fact, text)
         self.assertIn("Checked October 23, 2026.", text)
 
+    def test_the_summary_of_benefits_facts_keep_their_limits(self):
+        text = self.soup.find("section", id="get-your-plan-documents").get_text(
+            " ", strip=True
+        )
+        # 45 CFR 147.200(a)(2)(i)(J): a group plan's address is for its certificate.
+        self.assertIn("certificate of coverage, which is not the full group policy", text)
+        # HealthCare.gov lists only its own Marketplace plans.
+        self.assertIn("Marketplace plans on HealthCare.gov", text)
+        self.assertIn(
+            "If your state runs its own marketplace, or you bought your plan "
+            "straight from an insurer, ask the insurer for it.",
+            text,
+        )
+
     def test_the_letter_is_plain_text_that_is_never_posted(self):
         letter = self.soup.find("textarea", id="request-letter")
         self.assertTrue(letter.has_attr("readonly"))
