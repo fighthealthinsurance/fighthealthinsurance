@@ -3,14 +3,15 @@
 Explain Policy and the appeal's plan documents step each offer an unticked
 box, in a highlighted card that stands apart from the boxes a person must
 tick, with the sharing agreement just above it (consent.SHARING_OPT_IN_TERMS,
-dated by the same SHARING_VERSION as the share page). Unticked, the page
-shares nothing and works exactly as before. Ticked, each file that passes the
-closer look a shared file gets is copied into a row of its own: its own
-source, the agreement's date, a neutral name, no session key and no link to
-the appeal, so its life is its own. A copy that can't be made never stops
-the page's own work. The person's scrambled email goes with the copy, so a
-removal request takes it too. The copies carry no premium: only the share
-page asks.
+dated by the same SHARING_VERSION as the share page). Under the box, "What
+does sharing mean?" opens in place, and its link opens the share page in a
+new tab, so nothing on the form is lost. Unticked, the page shares nothing
+and works exactly as before. Ticked, each file that passes the closer look a
+shared file gets is copied into a row of its own: its own source, the
+agreement's date, a neutral name, no session key and no link to the appeal,
+so its life is its own. A copy that can't be made never stops the page's own
+work. The person's scrambled email goes with the copy, so a removal request
+takes it too. The copies carry no premium: only the share page asks.
 """
 
 import time
@@ -112,19 +113,39 @@ class TheBoxIsOfferedUntickedAndStandsOutTest(TestCase):
         )
         return card
 
-    def test_explain_policy_offers_it_just_above_the_button(self):
-        soup = self.soup(Client().get(reverse("understand_policy")).content)
-        card = self.check_box(soup, "h3")
-        form = soup.find("form", id="understand_policy_form")
-        self.assertIs(card.find_parent("form"), form)
-        # After the required boxes, so it can't be mistaken for one of them.
-        following = card.find_next("button", attrs={"type": "submit"})
-        self.assertIsNotNone(following)
-        self.assertIsNotNone(
-            card.find_previous("input", attrs={"name": "privacy_policy"})
+    def check_learn_more(self, soup):
+        """Under the box, "What does sharing mean?" opens in place, and its
+        link opens the share page's explanation in a new tab."""
+        card = soup.find(id="share-for-research")
+        more = card.find("details", id="share-for-research-more")
+        self.assertIn("fhi-accordion-item", more["class"])
+        self.assertIn("fhi-accordion", more.parent["class"])
+        self.assertFalse(more.has_attr("open"))
+        self.assertEqual(
+            more.find("summary").get_text(strip=True), "What does sharing mean?"
         )
+        band = card.find("input", attrs={"name": "share_for_research"}).parent
+        self.assertIs(more.parent.find_previous_sibling(), band)
+        # Opening it sends nothing and changes no answer.
+        self.assertEqual(more.find_all(["input", "select", "textarea", "button"]), [])
+        link = more.find("a", id="share-for-research-read-more")
+        self.assertEqual(
+            link.get_text(strip=True),
+            "Read more about sharing your plan documents (opens in a new tab)",
+        )
+        self.assertEqual(
+            link["href"], reverse("share_plan_documents") + "#about-sharing"
+        )
+        self.assertEqual(link["target"], "_blank")
+        self.assertIn("noopener", link["rel"])
+        # The anchor it points at is on the share page.
+        page = self.soup(Client().get(reverse("share_plan_documents")).content)
+        self.assertIsNotNone(page.find(id="about-sharing"))
 
-    def test_the_appeal_step_offers_it_under_the_file_box(self):
+    def explain_policy_page(self):
+        return self.soup(Client().get(reverse("understand_policy")).content)
+
+    def appeal_plan_documents_step(self):
         denial = Denial.objects.create(
             denial_text="Your claim has been denied.",
             hashed_email=Denial.get_hashed_email(EMAIL),
@@ -139,7 +160,28 @@ class TheBoxIsOfferedUntickedAndStandsOutTest(TestCase):
                 "health_history": "",
             },
         )
-        soup = self.soup(response.content)
+        return self.soup(response.content)
+
+    def test_explain_policy_explains_sharing_without_leaving_the_form(self):
+        self.check_learn_more(self.explain_policy_page())
+
+    def test_the_appeal_step_explains_sharing_without_leaving_the_form(self):
+        self.check_learn_more(self.appeal_plan_documents_step())
+
+    def test_explain_policy_offers_it_just_above_the_button(self):
+        soup = self.explain_policy_page()
+        card = self.check_box(soup, "h3")
+        form = soup.find("form", id="understand_policy_form")
+        self.assertIs(card.find_parent("form"), form)
+        # After the required boxes, so it can't be mistaken for one of them.
+        following = card.find_next("button", attrs={"type": "submit"})
+        self.assertIsNotNone(following)
+        self.assertIsNotNone(
+            card.find_previous("input", attrs={"name": "privacy_policy"})
+        )
+
+    def test_the_appeal_step_offers_it_under_the_file_box(self):
+        soup = self.appeal_plan_documents_step()
         card = self.check_box(soup, "h2")
         self.assertIsNotNone(
             card.find_previous("input", attrs={"name": "plan_documents"})
