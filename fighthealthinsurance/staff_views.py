@@ -293,8 +293,8 @@ class PolicyDocumentTextView(View):
     _DOCX_BREAKS = {_W + "p": "\n", _W + "tab": "\t", _W + "br": "\n", _W + "cr": "\n"}
 
     def _docx_text(self, content: bytes) -> tuple[str, str]:
-        """The text runs of word/document.xml, read as a stream in one pass,
-        so time and memory follow the file's size. Logs nothing about the
+        """The text runs of word/document.xml, read as a stream in one pass
+        with character, time and unpacked-size caps. Logs nothing about the
         file."""
         import zipfile
 

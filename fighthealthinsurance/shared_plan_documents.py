@@ -143,7 +143,7 @@ def daily_limit_problem(
     """None when ``files`` fit today's budgets, else what to tell the person.
 
     The visitor's own budget is generous for a person with many documents;
-    the budget for everyone holds whatever a script does with cookies.
+    the budget for everyone is shared by every page and every visitor.
     """
     used = _used_today(request)
     size = sum(f.size or 0 for f in files)

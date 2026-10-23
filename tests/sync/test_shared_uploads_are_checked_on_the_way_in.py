@@ -362,7 +362,7 @@ class DailyBudgetsTest(_ShareTestCase):
         )
 
     @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_FILES=1)
-    def test_everyone_together_has_a_budget_whatever_the_cookies(self):
+    def test_everyone_together_has_one_budget(self):
         self.assertStored(self.share([txt()], client=Client()))
         response = self.share([txt()], client=Client())
         self.assertRefused(response, "Please try again tomorrow.", count=1)
