@@ -4458,6 +4458,8 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         (SOURCE_EXPLAIN_POLICY, "Explain my policy"),
         (SOURCE_SHARED, "Shared for research"),
     ]
+    # Every source whose rows were shared for research.
+    SHARED_SOURCES = (SOURCE_SHARED,)
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)

@@ -224,12 +224,113 @@ class PolicyDocumentDownloadView(View):
         if not content:
             raise Http404("No file for that policy document")
         logger.info(f"Staff user {request.user.pk} downloaded policy document {pk}")
-        return FileResponse(
+        response = FileResponse(
             io.BytesIO(content),
             as_attachment=True,
             filename=doc.filename or f"{pk}",
             content_type="application/octet-stream",
         )
+        response["Content-Security-Policy"] = _NOTHING_RUNS
+        return response
+
+
+# A response that runs nothing and loads nothing, even if a browser renders it.
+_NOTHING_RUNS = "default-src 'none'; sandbox"
+
+
+@method_decorator(never_cache, name="dispatch")
+class PolicyDocumentTextView(View):
+    """A policy document's text, for staff reviewing it, as plain text that
+    can't run anything. PDFs are read in a separate process with page,
+    character and time limits, so the file is never parsed here. Routed
+    behind staff_member_required."""
+
+    MAX_PAGES = 1500
+    MAX_CHARS = 3_000_000
+    TIMEOUT_SECONDS = 60
+    # The encrypted file is about a third bigger than the 20MB upload limit.
+    MAX_STORED_BYTES = 32 * 1024 * 1024
+
+    def get(self, request, pk) -> HttpResponseBase:
+        from fighthealthinsurance.chat_forms import policy_document_extension
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            read_and_decrypt_file,
+        )
+
+        doc = PolicyDocument.objects.filter(pk=pk).first()
+        if doc is None or not doc.document_enc:
+            raise Http404("No file for that policy document")
+        content = read_and_decrypt_file(
+            doc.document_enc, max_bytes=self.MAX_STORED_BYTES
+        )
+        if not content:
+            raise Http404("No file for that policy document")
+        ext = policy_document_extension(doc.filename or doc.document_enc.name or "")
+        text, note = self._text(ext, content)
+        logger.info(f"Staff user {request.user.pk} read policy document {pk} as text")
+        header = f"Policy document {pk} ({ext or 'no extension'})\n"
+        if note:
+            header += f"{note}\n"
+        response = HttpResponse(
+            header + "\n" + text, content_type="text/plain; charset=utf-8"
+        )
+        response["Content-Security-Policy"] = _NOTHING_RUNS
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Content-Disposition"] = "inline"
+        return response
+
+    def _text(self, ext: str, content: bytes) -> tuple[str, str]:
+        """The file's text and a note about it, such as that it was cut short."""
+        if ext == ".pdf":
+            return self._pdf_text(content)
+        if ext == ".docx":
+            from fighthealthinsurance.ml.ml_document_extraction import (
+                extract_text_from_docx_bytes,
+            )
+
+            text = extract_text_from_docx_bytes(content)[0].strip()
+        else:
+            text = content.decode("utf-8", "replace").strip()
+        return self._cut(text, "")
+
+    def _pdf_text(self, content: bytes) -> tuple[str, str]:
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.pdf_text import aextract_pdf_page_texts
+
+        try:
+            pages = async_to_sync(aextract_pdf_page_texts)(
+                content, self.MAX_PAGES, self.MAX_CHARS, self.TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            return "", "Reading this PDF took too long. Download the original."
+        except ValueError as error:
+            if "encrypted" in str(error):
+                return "", "This PDF is locked with a password. Download the original."
+            return "", "We couldn't read text from this PDF. Download the original."
+        except Exception:
+            return "", "We couldn't read text from this PDF. Download the original."
+        if not any(page.strip() for page in pages):
+            return self._cut("", "")
+        text = "\n\n".join(
+            f"[Page {number}]\n{page.strip()}"
+            for number, page in enumerate(pages, start=1)
+        )
+        note = ""
+        if len(pages) >= self.MAX_PAGES:
+            note = f"Only the first {self.MAX_PAGES} pages are shown."
+        return self._cut(text, note)
+
+    def _cut(self, text: str, note: str) -> tuple[str, str]:
+        if not text.strip():
+            return "", note or (
+                "No text found. It may be scanned pages. Download the original."
+            )
+        if len(text) >= self.MAX_CHARS:
+            return text[: self.MAX_CHARS], (
+                f"Only the first {self.MAX_CHARS:,} characters are shown."
+            )
+        return text, note
 
 
 class StaffDashboardView(generic.TemplateView):

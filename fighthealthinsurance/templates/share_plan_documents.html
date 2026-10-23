@@ -5,6 +5,49 @@
 
 {% block scriptmagic %}
 <script>
+  // Say a choice of files is too many or too big before sending it; the server checks again.
+  document.addEventListener("DOMContentLoaded", function () {
+    var form = document.getElementById("share-plan-documents-form");
+    var input = document.getElementById("id_plan_documents");
+    var note = document.getElementById("id_plan_documents_error");
+    if (!form || !input || !note) {
+      return;
+    }
+    var maxFiles = parseInt(form.getAttribute("data-max-files"), 10);
+    var maxBytes = parseInt(form.getAttribute("data-max-bytes"), 10);
+    function problem() {
+      var files = input.files || [];
+      var total = 0;
+      for (var i = 0; i < files.length; i++) {
+        total += files[i].size;
+      }
+      if (files.length > maxFiles) {
+        return form.getAttribute("data-too-many");
+      }
+      if (total > maxBytes) {
+        return form.getAttribute("data-too-big");
+      }
+      return "";
+    }
+    function check() {
+      var message = problem();
+      note.textContent = message;
+      if (message) {
+        input.setAttribute("aria-invalid", "true");
+        input.setAttribute("aria-describedby", note.id);
+      } else {
+        input.removeAttribute("aria-invalid");
+      }
+      return message;
+    }
+    input.addEventListener("change", check);
+    form.addEventListener("submit", function (event) {
+      if (check()) {
+        event.preventDefault();
+        input.focus();
+      }
+    });
+  });
   document.addEventListener("DOMContentLoaded", function () {
     var button = document.getElementById("copy-letter");
     var letter = document.getElementById("request-letter");
@@ -46,19 +89,21 @@ before changing it.
     <div class="fhi-notice fhi-notice-info" role="status" id="share-thanks">
         <p><strong>Thank you. We have your documents.</strong></p>
         <p>We store them encrypted. Our team and AI models will read them along with documents from other people, to learn how plans work. We'll share what we learn on this site, and we do our best to remove personal details from anything we share.</p>
-        <p><a href="{% url 'share_plan_documents' %}">Share more documents</a></p>
+        <p>Have more? <a href="{% url 'share_plan_documents' %}">Share more documents</a></p>
     </div>
     {% else %}
     <p>Your plan documents say what your plan covers and how appeals work. When you share them, we can learn what plans leave out, what needs approval first and how appeals work. We share what we learn publicly.</p>
     <p>Plan-wide documents, like the Summary Plan Description or Evidence of Coverage, usually don't include personal details.</p>
 
-    <form method="post" action="{% url 'share_plan_documents' %}" enctype="multipart/form-data" class="fhi-stack" id="share-plan-documents-form">
+    <form method="post" action="{% url 'share_plan_documents' %}" enctype="multipart/form-data" class="fhi-stack" id="share-plan-documents-form" data-max-files="{{ max_files }}" data-max-bytes="{{ max_total_bytes }}" data-too-many="{{ too_many_message }}" data-too-big="{{ too_big_message }}">
         {% csrf_token %}
         {{ form.website }}
-        {% if form.errors %}
+        <input type="hidden" name="rendered" value="{{ rendered }}">
+        {% if form.errors or refused %}
         <div class="fhi-form-errors" role="alert" id="share-errors">
             <p>Please check these and try again:</p>
             <ul>
+                {% if refused %}<li>{{ refused }}</li>{% endif %}
                 {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
                 {% for field in form.visible_fields %}{% for error in field.errors %}<li><a href="#{{ field.id_for_label }}">{{ error }}</a></li>{% endfor %}{% endfor %}
             </ul>
@@ -68,7 +113,7 @@ before changing it.
         <div class="fhi-field-group">
             <label for="{{ form.plan_documents.id_for_label }}" class="fhi-label">{{ form.plan_documents.label }}</label>
             {{ form.plan_documents }}
-            <small class="fhi-hint">PDF, Word (.docx) or text files, up to 20MB each. You can choose more than one. We store them encrypted, and our team can open them to review them.</small>
+            <small class="fhi-hint" id="plan-documents-limits">PDF, Word (.docx) or text files. Up to {{ max_files }} files and {{ max_total_mb }}MB at a time, 20MB each. Have more? Send them in another upload. We store them encrypted, and our team can open them to review them.</small>
             {% include "partials/field_error.html" with id=form.plan_documents.auto_id|add:"_error" errors=form.plan_documents.errors filled=True %}
         </div>
 

@@ -11,7 +11,7 @@ from fighthealthinsurance.form_utils import (
     StyledWidgetsMixin,
 )
 from fighthealthinsurance.forms import REFERRAL_SOURCE_CHOICES
-from fighthealthinsurance.models import PolicyDocument
+from fighthealthinsurance.models import Denial, PolicyDocument
 from fighthealthinsurance.state_help import get_states_sorted_by_name
 
 SUPPORTED_POLICY_EXTENSIONS = {".pdf", ".docx", ".txt"}
@@ -52,6 +52,103 @@ def validate_policy_document(file: UploadedFile) -> None:
     if ext == ".docx" and not header.startswith(_DOCX_MAGIC):
         raise forms.ValidationError(
             "The file does not appear to be a valid DOCX document."
+        )
+
+
+# A Word file locked with a password, or an old .doc, is an OLE file, not a zip.
+_OLE_MAGIC = b"\xd0\xcf\x11\xe0"
+# A real .docx holds a few dozen parts; thousands means it isn't one.
+_MAX_DOCX_ENTRIES = 2000
+# A text file with a NUL byte near the start is a binary file renamed.
+_TEXT_SNIFF_BYTES = 64 * 1024
+# The most pages a shared PDF may have, and how long counting them may take.
+MAX_SHARED_PDF_PAGES = 3000
+_PDF_CHECK_SECONDS = 15
+
+LOCKED_WORD_MESSAGE = (
+    "This Word file is locked with a password or is an old .doc file. Please "
+    "save it as a .docx without a password, or as a PDF."
+)
+LOCKED_PDF_MESSAGE = (
+    "This PDF is locked with a password. Please upload a copy without one."
+)
+UNREADABLE_PDF_MESSAGE = (
+    "We couldn't open this PDF. Please save it again as a PDF and try once more."
+)
+
+
+def validate_shared_document(file: UploadedFile) -> None:
+    """validate_policy_document, then a closer look, for a file we keep:
+    a .docx must be a Word document with no macros or locked parts, a .txt
+    must be text, and a PDF must open in a separate process without a
+    password, within MAX_SHARED_PDF_PAGES pages. Leaves the file rewound."""
+    ext = policy_document_extension(file.name or "")
+    file.seek(0)
+    if ext == ".docx" and file.read(4) == _OLE_MAGIC:
+        file.seek(0)
+        raise forms.ValidationError(LOCKED_WORD_MESSAGE)
+    file.seek(0)
+    validate_policy_document(file)
+    try:
+        if ext == ".docx":
+            _check_docx(file)
+        elif ext == ".txt":
+            if b"\x00" in file.read(_TEXT_SNIFF_BYTES):
+                raise forms.ValidationError(
+                    "This doesn't look like a text file. Please upload a PDF, "
+                    "Word (.docx) or text file."
+                )
+        elif ext == ".pdf":
+            _check_pdf(file.read())
+    finally:
+        file.seek(0)
+
+
+def _check_docx(file: UploadedFile) -> None:
+    import zipfile
+
+    not_word = forms.ValidationError(
+        "The file does not appear to be a valid DOCX document."
+    )
+    try:
+        with zipfile.ZipFile(file) as archive:
+            entries = archive.infolist()
+    except (zipfile.BadZipFile, OSError, ValueError):
+        raise not_word from None
+    if len(entries) > _MAX_DOCX_ENTRIES:
+        raise not_word
+    names = {entry.filename for entry in entries}
+    if not {"[Content_Types].xml", "word/document.xml"} <= names:
+        raise not_word
+    if any(entry.flag_bits & 0x1 for entry in entries):
+        raise forms.ValidationError(LOCKED_WORD_MESSAGE)
+    if any(name.lower().endswith("vbaproject.bin") for name in names):
+        raise forms.ValidationError(
+            "This Word file has macros. Please save it as a .docx without "
+            "macros, or as a PDF."
+        )
+
+
+def _check_pdf(content: bytes) -> None:
+    from asgiref.sync import async_to_sync
+
+    from fighthealthinsurance.pdf_text import acount_pdf_pages
+
+    try:
+        pages = async_to_sync(acount_pdf_pages)(content, _PDF_CHECK_SECONDS)
+    except TimeoutError:
+        raise forms.ValidationError(UNREADABLE_PDF_MESSAGE) from None
+    except ValueError as error:
+        if "encrypted" in str(error):
+            raise forms.ValidationError(LOCKED_PDF_MESSAGE) from None
+        # pypdf is stricter than the reader that analyses files later.
+        return
+    except Exception:
+        return
+    if pages > MAX_SHARED_PDF_PAGES:
+        raise forms.ValidationError(
+            f"This PDF has more than {MAX_SHARED_PDF_PAGES:,} pages. Please split "
+            "it and share the parts."
         )
 
 
@@ -192,6 +289,8 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
     are required: no name, and an email only so a removal request finds them."""
 
     MAX_FILES = 10
+    # All the files in one upload, with room under the proxy's 80MB limit.
+    MAX_TOTAL_BYTES = 60 * 1024 * 1024
     # The optional fields, shown folded under "About the plan".
     ABOUT_THE_PLAN = ("insurer_name", "employer_name", "plan_year", "state", "email")
 
@@ -253,18 +352,45 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
         if not files:
             raise forms.ValidationError("Choose at least one file to share.")
         if len(files) > self.MAX_FILES:
-            raise forms.ValidationError(
-                f"You can share up to {self.MAX_FILES} files at a time."
-            )
+            raise forms.ValidationError(self.too_many_message())
+        # Django measured each file as it arrived, so the sizes can be trusted.
+        if sum(f.size or 0 for f in files) > self.MAX_TOTAL_BYTES:
+            raise forms.ValidationError(self.too_big_message())
         problems: list[str] = []
         for file in files:
             try:
-                validate_policy_document(file)
+                validate_shared_document(file)
             except forms.ValidationError as error:
                 problems.extend(f"{file.name}: {message}" for message in error.messages)
         if problems:
             raise forms.ValidationError(problems)
         return files
+
+    def clean(self) -> dict[str, Any]:
+        cleaned = super().clean() or {}
+        # Only the scrambled form is kept, so the address goes no further.
+        email = (cleaned.pop("email", "") or "").strip().lower()
+        cleaned["hashed_email"] = Denial.get_hashed_email(email) if email else None
+        return cleaned
+
+    @classmethod
+    def max_total_mb(cls) -> int:
+        return cls.MAX_TOTAL_BYTES // (1024 * 1024)
+
+    # The page's script shows the same words before anything is sent.
+    @classmethod
+    def too_many_message(cls) -> str:
+        return (
+            f"You can share up to {cls.MAX_FILES} files at a time. Have more? "
+            "Send them in another upload."
+        )
+
+    @classmethod
+    def too_big_message(cls) -> str:
+        return (
+            f"These files add up to more than {cls.max_total_mb()}MB. Share some "
+            "of them now, then send the rest in another upload."
+        )
 
     def about_the_plan_has_errors(self) -> bool:
         return any(name in self.errors for name in self.ABOUT_THE_PLAN)

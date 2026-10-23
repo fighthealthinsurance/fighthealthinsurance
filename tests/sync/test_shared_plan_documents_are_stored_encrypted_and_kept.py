@@ -10,6 +10,7 @@ that was given.
 
 import datetime
 import io
+import time
 from unittest.mock import patch
 
 from bs4 import BeautifulSoup
@@ -26,6 +27,7 @@ from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.ml.chat_policy import prune_old_chat_policies
 from fighthealthinsurance.ml.ml_document_extraction import read_and_decrypt_file
 from fighthealthinsurance.models import Denial, InsuranceCompany, PolicyDocument
+from fighthealthinsurance.shared_plan_documents import render_token
 
 User = get_user_model()
 
@@ -53,10 +55,15 @@ class _ShareTestCase(TestCase):
             if doc.document_enc:
                 doc.document_enc.delete(save=False)
 
+    def post(self, data):
+        # A form drawn a minute ago, as a person would send it.
+        data = {"rendered": render_token(at=time.time() - 60), **data}
+        return self.client.post(self.url, data)
+
     def share(self, files, **fields):
         data = {"plan_documents": files, "agree": "on"}
         data.update(fields)
-        return self.client.post(self.url, data)
+        return self.post(data)
 
 
 class SharingStoresTheFilesTest(_ShareTestCase):
@@ -139,12 +146,12 @@ class SharingRejectsTest(_ShareTestCase):
         self.assertEqual(PolicyDocument.objects.count(), 0)
 
     def test_without_the_agreement_nothing_is_stored(self):
-        response = self.client.post(self.url, {"plan_documents": [pdf()]})
+        response = self.post({"plan_documents": [pdf()]})
         self.assertNothingStored(response)
         self.assertContains(response, 'id="share-errors"')
 
     def test_each_error_is_read_out_with_its_field(self):
-        response = self.client.post(self.url, {"plan_year": "1999"})
+        response = self.post({"plan_year": "1999"})
         soup = BeautifulSoup(response.content, "html.parser")
         for name in ("plan_documents", "plan_year", "agree"):
             with self.subTest(field=name):
@@ -154,7 +161,7 @@ class SharingRejectsTest(_ShareTestCase):
         self.assertContains(response, "Tick the box to agree before you share.")
 
     def test_without_a_file_nothing_is_stored(self):
-        response = self.client.post(self.url, {"agree": "on"})
+        response = self.post({"agree": "on"})
         self.assertNothingStored(response)
         self.assertContains(response, "Choose at least one file to share.")
 

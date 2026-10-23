@@ -1273,14 +1273,16 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "document_type",
         "plan_category",
         "created_at",
-        "download",
+        "file",
     )
     list_filter = ("source", "document_type", "plan_category", "created_at")
     search_fields = ("filename", "hashed_email", "insurer_name", "employer_name")
+    # Staff reach the file through the links below, never the raw field.
+    exclude = ("document_enc",)
     readonly_fields = (
         "id",
         "created_at",
-        "download",
+        "file",
         "source",
         "shared_consent_version",
         "shared_at",
@@ -1288,12 +1290,13 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     )
 
     @admin.display(description="File")
-    def download(self, obj: PolicyDocument) -> str:
-        # The file field's own link goes nowhere; encrypted files are served here.
+    def file(self, obj: PolicyDocument) -> str:
+        # Text first: reading it opens nothing a stranger made.
         if not obj.pk or not obj.document_enc:
             return "-"
         return format_html(
-            '<a href="{}">Download</a>',
+            '<a href="{}">Read as text</a> or <a href="{}">download the original</a>',
+            reverse("staff_policy_document_text", kwargs={"pk": obj.pk}),
             reverse("staff_policy_document_download", kwargs={"pk": obj.pk}),
         )
 
