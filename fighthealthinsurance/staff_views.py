@@ -3,6 +3,7 @@ import datetime
 import io
 import json
 import statistics
+import time
 from urllib.parse import urlencode
 from collections import Counter, defaultdict
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
@@ -242,8 +243,9 @@ _NOTHING_RUNS = "default-src 'none'; sandbox"
 class PolicyDocumentTextView(View):
     """A policy document's text, for staff reviewing it, as plain text that
     can't run anything. PDFs are read in a separate process with page,
-    character and time limits, so the file is never parsed here. Routed
-    behind staff_member_required."""
+    character and time limits, so the file is never parsed here; Word files
+    are read here as a stream, with the same character and time limits.
+    Routed behind staff_member_required."""
 
     MAX_PAGES = 1500
     MAX_CHARS = 3_000_000
@@ -284,14 +286,68 @@ class PolicyDocumentTextView(View):
         if ext == ".pdf":
             return self._pdf_text(content)
         if ext == ".docx":
-            from fighthealthinsurance.ml.ml_document_extraction import (
-                extract_text_from_docx_bytes,
-            )
+            return self._docx_text(content)
+        return self._cut(content.decode("utf-8", "replace").strip(), "")
 
-            text = extract_text_from_docx_bytes(content)[0].strip()
-        else:
-            text = content.decode("utf-8", "replace").strip()
-        return self._cut(text, "")
+    _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    _DOCX_BREAKS = {_W + "p": "\n", _W + "tab": "\t", _W + "br": "\n", _W + "cr": "\n"}
+
+    def _docx_text(self, content: bytes) -> tuple[str, str]:
+        """The text runs of word/document.xml, read as a stream in one pass,
+        so time and memory follow the file's size. Logs nothing about the
+        file."""
+        import zipfile
+
+        from lxml import etree
+
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            MAX_DOCX_UNPACKED_BYTES,
+        )
+
+        parser = etree.XMLPullParser(
+            events=("end",), resolve_entities=False, no_network=True, load_dtd=False
+        )
+        pieces: list[str] = []
+        chars = 0
+        unpacked = 0
+        note = ""
+        deadline = time.monotonic() + self.TIMEOUT_SECONDS
+        try:
+            with (
+                zipfile.ZipFile(io.BytesIO(content)) as archive,
+                archive.open("word/document.xml") as body,
+            ):
+                while chars < self.MAX_CHARS:
+                    chunk = body.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    unpacked += len(chunk)
+                    if unpacked > MAX_DOCX_UNPACKED_BYTES or (
+                        time.monotonic() > deadline
+                    ):
+                        note = "Only part of this Word file is shown."
+                        break
+                    parser.feed(chunk)
+                    for _, element in parser.read_events():
+                        if element.tag == self._W + "t":
+                            piece = element.text or ""
+                        else:
+                            piece = self._DOCX_BREAKS.get(element.tag, "")
+                        if piece:
+                            pieces.append(piece)
+                            chars += len(piece)
+                        # Drop what has been read, so only the open elements stay.
+                        element.clear(keep_tail=True)
+                        while element.getprevious() is not None:
+                            del element.getparent()[0]
+        except Exception:
+            if not pieces:
+                return (
+                    "",
+                    "We couldn't read text from this Word file. Download the original.",
+                )
+            note = "Only part of this Word file is shown."
+        return self._cut("".join(pieces).strip(), note)
 
     def _pdf_text(self, content: bytes) -> tuple[str, str]:
         from asgiref.sync import async_to_sync

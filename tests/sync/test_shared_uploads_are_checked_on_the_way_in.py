@@ -29,6 +29,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from loguru import logger
 
 from fighthealthinsurance import chat_forms, sentry_filters
 from fighthealthinsurance.chat_forms import SharePlanDocumentsForm
@@ -66,6 +67,34 @@ def zip_bytes(entries):
         for name, content in entries.items():
             archive.writestr(name, content)
     return out.getvalue()
+
+
+def zip_entries(data):
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return {entry.filename: archive.read(entry) for entry in archive.infolist()}
+
+
+def docx_with_a_table():
+    import docx
+
+    document = docx.Document()
+    document.add_paragraph("Summary Plan Description for the Crumpler Cooperative")
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Deductible"
+    table.cell(0, 1).text = "$500"
+    table.cell(1, 0).merge(table.cell(1, 1)).text = "Out-of-pocket limit"
+    out = io.BytesIO()
+    document.save(out)
+    return out.getvalue()
+
+
+def docx_with_a_damaged_part(part_name):
+    """A Word document with an extra part whose bytes don't match its CRC."""
+    entries = zip_entries(docx_bytes())
+    entries[part_name] = b"damaged part payload"
+    data = bytearray(zip_bytes(entries))
+    data[data.index(b"damaged part payload")] ^= 0xFF
+    return bytes(data)
 
 
 def with_encrypted_flag(data: bytes) -> bytes:
@@ -383,6 +412,26 @@ class StaffReadSharedFilesAsTextTest(_ShareTestCase):
     def test_staff_read_a_word_document(self):
         doc = self.shared(SimpleUploadedFile("spd.docx", docx_bytes()))
         text = self.read_as_text(doc, self.staff()).content.decode()
+        self.assertIn("Summary Plan Description for the Crumpler Cooperative", text)
+
+    def test_staff_read_a_word_table_in_one_pass_over_its_text(self):
+        doc = self.shared(SimpleUploadedFile("spd.docx", docx_with_a_table()))
+        with patch(
+            "docx.Document", side_effect=AssertionError("parsed by python-docx")
+        ):
+            text = self.read_as_text(doc, self.staff()).content.decode()
+        self.assertIn("Deductible\n$500\nOut-of-pocket limit", text)
+
+    def test_reading_a_word_file_logs_nothing_from_inside_it(self):
+        damaged = docx_with_a_damaged_part("rebecca.crumpler@test-fhi.com.xml")
+        doc = self.shared(SimpleUploadedFile("spd.docx", damaged))
+        logged = []
+        sink = logger.add(lambda message: logged.append(str(message)), level="DEBUG")
+        try:
+            text = self.read_as_text(doc, self.staff()).content.decode()
+        finally:
+            logger.remove(sink)
+        self.assertNotIn("rebecca.crumpler", "".join(logged).lower())
         self.assertIn("Summary Plan Description for the Crumpler Cooperative", text)
 
     def test_markup_in_a_file_is_shown_as_text_that_runs_nothing(self):
