@@ -77,7 +77,7 @@ class CoverageChangesFallChecklistTest(TestCase):
     def test_keeps_the_medicare_medicaid_prior_auth_and_fsa_items(self):
         for item in (
             "On Medicare, compare plans between October 15 and December 7. Check whether any of your drugs are among the 15 with new negotiated prices.",
-            "On Medicaid through expansion, keep your address current and gather proof of your work hours or exemption. Answer notices within 30 days.",
+            "On Medicaid through expansion, keep your address current and gather proof of your work hours or exemption. If the state says it can't confirm your hours or exemption, you have 30 days from getting that notice to send proof.",
             "Renew or document prior authorizations for ongoing treatment before January 1.",
             "Use your 2026 FSA balance and set your 2027 HSA contributions.",
         ):
