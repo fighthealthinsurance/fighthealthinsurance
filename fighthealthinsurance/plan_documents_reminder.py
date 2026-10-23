@@ -3,9 +3,11 @@ the plan documents a plan has sent by then.
 
 The address is kept only until the email goes. Sending claims a reminder by
 deleting its row first, so there is at most one email and the address is
-gone whatever happens to the send; a failed send is not retried. The email
-goes to the person alone, with no staff copy. EmailPollingActor sends what is
-due on its regular pass, and remove-my-data deletes a reminder still waiting.
+gone whatever happens to the send; a failed send is not retried. The address
+is read only from a row the sender deleted, and a failed claim or send logs
+only the error's type. The email goes to the person alone, with no staff
+copy. EmailPollingActor sends what is due on its regular pass, and
+remove-my-data deletes a reminder still waiting.
 """
 
 import datetime
@@ -80,14 +82,25 @@ class PlanDocumentsReminderSender(AsyncEmailSenderMixin):
         )
 
     def dosend(self, reminder_id: int) -> bool:
-        now = _now()
-        due = PlanDocumentsReminder.objects.filter(pk=reminder_id, send_after__lte=now)
-        email = due.values_list("email", flat=True).first()
-        if email is None:
-            return False
         # The claim: whoever deletes the row sends, once, and the address goes.
-        deleted, _ = due.delete()
-        if not deleted or is_blocked_email(email):
+        try:
+            claimed = PlanDocumentsReminder.objects.filter(
+                pk=reminder_id, send_after__lte=_now()
+            ).first()
+            if claimed is None:
+                return False
+            deleted, _ = PlanDocumentsReminder.objects.filter(pk=claimed.pk).delete()
+        except Exception as error:
+            # Only the error's type: the row holds an address.
+            logger.error(
+                f"A plan documents reminder was not claimed: {type(error).__name__}"
+            )
+            return False
+        if not deleted:
+            return False
+        # Read only from the row this sender deleted.
+        email = claimed.email
+        if is_blocked_email(email):
             return False
         try:
             build_fallback_email(

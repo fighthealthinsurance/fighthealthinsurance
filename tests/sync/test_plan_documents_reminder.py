@@ -10,11 +10,14 @@ and signed render time, and its address is never the share form's email.
 """
 
 import datetime
+import sys
 import time
 from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 from django.core import mail
+from django.db import DatabaseError
+from django.db.models.deletion import Collector
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -254,6 +257,28 @@ class SendingTheReminderTest(_ReminderTestCase):
         self.assertFalse(PlanDocumentsReminder.objects.exists())
         self.assertNotIn("crumpler", str(logged.mock_calls).lower())
         self.assertEqual(self.run_due(later), [])
+
+    def test_a_failed_claim_keeps_the_address_out_of_logs_and_error_reports(self):
+        later = self.asked_at + datetime.timedelta(days=30, minutes=1)
+        held = []
+
+        def fail(*args, **kwargs):
+            # What an error report would show of the sender's own variables.
+            frame = sys._getframe()
+            while frame.f_code.co_name != "dosend":
+                frame = frame.f_back
+            held.extend(repr(value) for value in frame.f_locals.values())
+            raise DatabaseError(f"could not delete the reminder for {EMAIL}")
+
+        with patch.object(Collector, "delete", side_effect=fail), patch.object(
+            plan_documents_reminder, "logger"
+        ) as logged:
+            sent = self.run_due(later)
+        self.assertEqual(sent, [False])
+        self.assertTrue(held)
+        self.assertNotIn("crumpler", " ".join(held).lower())
+        self.assertNotIn("crumpler", str(logged.mock_calls).lower())
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_a_claimed_reminder_is_not_sent_by_a_second_sender(self):
         later = self.asked_at + datetime.timedelta(days=30, minutes=1)
