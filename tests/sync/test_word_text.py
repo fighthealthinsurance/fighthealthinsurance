@@ -81,6 +81,16 @@ def test_tabs_and_line_breaks_keep_their_places():
     assert read(word_file(body)) == ("Deductible\t$500\nCopay", word_text.WHOLE)
 
 
+def test_non_breaking_hyphens_and_position_tabs_read_as_text():
+    body = (
+        "<w:p><w:r><w:t>out</w:t><w:noBreakHyphen/><w:t>of</w:t>"
+        "<w:noBreakHyphen/><w:t>network</w:t></w:r></w:p>"
+        '<w:p><w:r><w:t>Copay</w:t><w:ptab w:alignment="left" '
+        'w:relativeTo="margin" w:leader="none"/><w:t>$50</w:t></w:r></w:p>'
+    )
+    assert read(word_file(body)) == ("out-of-network\nCopay\t$50", word_text.WHOLE)
+
+
 def test_it_stops_reading_at_the_character_cap():
     # More than one chunk, so the cap stops it before the end.
     content = word_file(many_paragraphs(40_000))
@@ -118,6 +128,20 @@ def test_a_body_that_breaks_off_keeps_what_was_read():
     text, status = read(word_file(body))
     assert status == word_text.PARTIAL
     assert text.startswith("Crumpler line 0\nCrumpler line 1\n")
+
+
+def test_a_body_that_ends_before_it_closes_is_partial():
+    # Every read succeeds; only the end of the body shows it is cut short.
+    content = zip_bytes(
+        {
+            "word/document.xml": (
+                f'<w:document xmlns:w="{W}"><w:body>'
+                f"{paragraph('Rebecca Lee Crumpler Cooperative')}"
+                "<w:p><w:r><w:t>Exclusions: cosmetic"
+            ).encode("utf-8")
+        }
+    )
+    assert read(content) == ("Rebecca Lee Crumpler Cooperative", word_text.PARTIAL)
 
 
 def test_entities_are_left_unexpanded():

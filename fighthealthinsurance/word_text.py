@@ -3,10 +3,10 @@ Reading the text of Word (.docx) files in one pass.
 
 :func:`docx_text` streams word/document.xml through an XML pull parser and
 keeps only the elements still open, so it reads the body once, in order.
-Paragraphs, tabs and line breaks keep their places, so a table reads cell by
-cell. It stops at the caps it is given: characters collected, seconds spent
-and bytes unpacked. It logs nothing and raises nothing, so nothing from inside
-a file reaches the logs or an error report. It has no Django imports, so any
+Paragraphs, tabs, line breaks and non-breaking hyphens keep their places, so
+a table reads cell by cell. It stops at the caps it is given: characters
+collected, seconds spent and bytes unpacked. It logs nothing and raises
+nothing, so nothing from inside a file reaches the logs or an error report. It has no Django imports, so any
 worker can use it as is.
 """
 
@@ -26,7 +26,14 @@ PARTIAL = "partial"
 UNREADABLE = "unreadable"
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-_BREAKS = {_W + "p": "\n", _W + "tab": "\t", _W + "br": "\n", _W + "cr": "\n"}
+_BREAKS = {
+    _W + "p": "\n",
+    _W + "tab": "\t",
+    _W + "ptab": "\t",
+    _W + "br": "\n",
+    _W + "cr": "\n",
+    _W + "noBreakHyphen": "-",
+}
 _CHUNK_BYTES = 1024 * 1024
 
 
@@ -50,6 +57,8 @@ def docx_text(
             while chars < max_chars:
                 chunk = body.read(_CHUNK_BYTES)
                 if not chunk:
+                    # Raises if the body ended before its markup closed.
+                    parser.close()
                     break
                 unpacked += len(chunk)
                 if unpacked > max_unpacked_bytes or time.monotonic() > deadline:
