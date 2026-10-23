@@ -319,6 +319,10 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
         min_value=2000,
         max_value=2099,
         label="Plan year",
+        help_text=(
+            "The year these documents are for. Past years help us show how "
+            "plans change over time."
+        ),
         error_messages={
             "min_value": "Enter a year from 2000 to 2099.",
             "max_value": "Enter a year from 2000 to 2099.",

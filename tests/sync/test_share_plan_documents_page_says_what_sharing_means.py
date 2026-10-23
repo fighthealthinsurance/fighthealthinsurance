@@ -85,6 +85,35 @@ class SharePlanDocumentsPageTest(TestCase):
     ):
         self.assertContains(self.response, "usually don't include personal details")
 
+    def test_the_page_says_which_documents_help_most(self):
+        text = self.soup.find(id="most-useful").get_text(" ", strip=True)
+        self.assertIn(
+            "Most useful: your Summary of Benefits and Coverage and your Summary "
+            "Plan Description, for this year and past years if you have them.",
+            text,
+        )
+
+    def test_the_page_says_what_we_will_look_at(self):
+        text = self.soup.find(id="what-we-look-at").get_text(" ", strip=True)
+        self.assertIn(
+            "We'll look at what common care costs under each plan, how "
+            "deductibles and out-of-pocket limits change over time, what plans "
+            "cover and leave out, and what needs approval first.",
+            text,
+        )
+        # Both lines come before the form, where people decide what to share.
+        form = self.soup.find("form", id="share-plan-documents-form")
+        self.assertIsNotNone(form.find_previous(id="most-useful"))
+
+    def test_the_plan_year_stays_optional_and_says_it_shows_trends(self):
+        field = SharePlanDocumentsForm().fields["plan_year"]
+        self.assertFalse(field.required)
+        self.assertIn("plans change over time", field.help_text)
+        year = self.soup.find("input", attrs={"name": "plan_year"})
+        hint = self.soup.find(id=year["aria-describedby"])
+        self.assertEqual(hint.get_text(strip=True), field.help_text)
+        self.assertIsNotNone(year.find_parent("details", id="about-the-plan"))
+
     def test_only_the_files_and_the_agreement_are_required(self):
         form = SharePlanDocumentsForm()
         required = {name for name, field in form.fields.items() if field.required}
@@ -127,7 +156,9 @@ class SharePlanDocumentsPageTest(TestCase):
             " ", strip=True
         )
         # 45 CFR 147.200(a)(2)(i)(J): a group plan's address is for its certificate.
-        self.assertIn("certificate of coverage, which is not the full group policy", text)
+        self.assertIn(
+            "certificate of coverage, which is not the full group policy", text
+        )
         # HealthCare.gov lists only its own Marketplace plans.
         self.assertIn("Marketplace plans on HealthCare.gov", text)
         self.assertIn(

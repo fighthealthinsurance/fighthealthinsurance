@@ -156,7 +156,9 @@ class SharingRejectsTest(_ShareTestCase):
         for name in ("plan_documents", "plan_year", "agree"):
             with self.subTest(field=name):
                 field = soup.find(attrs={"name": name})
-                note = soup.find(id=field["aria-describedby"])
+                described_by = field["aria-describedby"].split()
+                self.assertIn(f"{field['id']}_error", described_by)
+                note = soup.find(id=f"{field['id']}_error")
                 self.assertTrue(note.get_text(strip=True))
         self.assertContains(response, "Tick the box to agree before you share.")
 
