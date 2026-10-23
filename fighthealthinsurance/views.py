@@ -4120,7 +4120,7 @@ class PlanDocumentsReminderView(View):
                 prefix=prefix,
                 initial={"email": request.POST.get(f"{prefix}-email", "")},
             )
-            refused = "Please press Remind me in 30 days again."
+            refused = "Please ask for the reminder again."
         else:
             form = PlanDocumentsReminderForm(request.POST, prefix=prefix)
             if form.is_valid():

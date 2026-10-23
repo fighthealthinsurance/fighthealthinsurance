@@ -1,7 +1,7 @@
 """The share page's opt-in reminder: one email, 30 days on, then the address goes.
 
-Below the request letter, a small form takes an email and a tick. Nothing is
-sent before 30 days. Then the regular email pass sends one email, to the
+Below the request letter, a small form takes an email, and its button says
+what happens. Nothing is sent before 30 days. Then the regular email pass sends one email, to the
 person alone, linking back to the share page, and the address is deleted as
 the email is claimed, so it is never sent twice and never kept after. Asking
 again moves the date instead of adding a second email. Remove-my-data
@@ -37,7 +37,6 @@ class _ReminderTestCase(TestCase):
     def ask(self, email=EMAIL, rendered=None, **extra):
         data = {
             "reminder-email": email,
-            "reminder-remind": "on",
             "rendered": (
                 render_token(at=time.time() - 60) if rendered is None else rendered
             ),
@@ -59,9 +58,11 @@ class TheFormSitsUnderTheLetterTest(_ReminderTestCase):
         )
         box = soup.find(id="plan-documents-reminder")
         self.assertIn("Want a reminder?", box.get_text(" ", strip=True))
-        self.assertIn(
-            "We'll email you once in 30 days to upload what you get.",
-            box.get_text(" ", strip=True),
+        self.assertEqual(
+            box.find(id="plan-documents-reminder-intro").get_text(" ", strip=True),
+            "We'll email you once, 30 days from now, so you can upload what you "
+            "get. It's the only email we'll send, and we delete your address "
+            "when we send it.",
         )
         # After the letter, before the other kinds of plans.
         self.assertIsNotNone(box.find_previous(id="request-letter"))
@@ -69,16 +70,29 @@ class TheFormSitsUnderTheLetterTest(_ReminderTestCase):
             box.find_next_sibling("h3").get_text(strip=True), "Other kinds of plans"
         )
         form = box.find("form")
-        self.assertEqual(form["action"], self.url)
         email = form.find("input", attrs={"name": "reminder-email"})
         self.assertEqual(email["type"], "email")
         self.assertEqual(email["autocomplete"], "email")
         self.assertTrue(email.has_attr("required"))
-        tick = form.find("input", attrs={"name": "reminder-remind"})
-        self.assertEqual(tick["type"], "checkbox")
-        self.assertFalse(tick.has_attr("checked"))
-        self.assertTrue(tick.has_attr("required"))
         self.assertIsNotNone(form.find("input", attrs={"name": "rendered"}))
+
+    def test_the_email_and_a_button_that_says_what_happens_are_the_opt_in(self):
+        soup = BeautifulSoup(
+            self.client.get(reverse("share_plan_documents")).content, "html.parser"
+        )
+        form = soup.find(id="plan-documents-reminder-form")
+        self.assertIsNone(form.find("input", attrs={"type": "checkbox"}))
+        self.assertEqual(
+            form.find("button", attrs={"type": "submit"}).get_text(strip=True),
+            "Email me once in 30 days",
+        )
+
+    def test_a_refused_reminder_comes_back_to_its_card(self):
+        soup = BeautifulSoup(
+            self.client.get(reverse("share_plan_documents")).content, "html.parser"
+        )
+        form = soup.find(id="plan-documents-reminder-form")
+        self.assertEqual(form["action"], self.url + "#plan-documents-reminder")
 
     def test_it_is_its_own_form_apart_from_the_share_form(self):
         soup = BeautifulSoup(
@@ -138,11 +152,11 @@ class AskingForTheReminderTest(_ReminderTestCase):
             reminder.send_after, timezone.now() + datetime.timedelta(days=29)
         )
 
-    def test_without_the_tick_nothing_is_set(self):
-        response = self.ask(**{"reminder-remind": ""})
+    def test_without_an_email_nothing_is_set(self):
+        response = self.ask(email="")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(PlanDocumentsReminder.objects.exists())
-        self.assertContains(response, "Tick the box to ask for the reminder.")
+        self.assertContains(response, "This field is required.")
 
     def test_an_address_we_cant_send_to_is_refused(self):
         response = self.ask(email="rebecca@example.com")
@@ -160,9 +174,7 @@ class AskingForTheReminderTest(_ReminderTestCase):
                 response = self.ask(rendered=rendered)
                 self.assertEqual(response.status_code, 200)
                 self.assertFalse(PlanDocumentsReminder.objects.exists())
-                self.assertContains(
-                    response, "Please press Remind me in 30 days again."
-                )
+                self.assertContains(response, "Please ask for the reminder again.")
                 self.assertContains(response, f'value="{EMAIL}"')
 
     @override_settings(PLAN_DOCUMENTS_REMINDERS_DAILY=1)

@@ -404,9 +404,10 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
 
 
 class PlanDocumentsReminderForm(StyledWidgetsMixin, forms.Form):
-    """The share page's opt-in reminder: an email and a tick, nothing else.
-    Its own form, so the share form's email, which we never write to, is
-    never used for it. The page draws it with the prefix "reminder"."""
+    """The share page's opt-in reminder: an email, nothing else, sent with a
+    button that says what happens. Its own form, so the share form's email,
+    which we never write to, is never used for it. The page draws it with
+    the prefix "reminder"."""
 
     PREFIX = "reminder"
 
@@ -414,11 +415,6 @@ class PlanDocumentsReminderForm(StyledWidgetsMixin, forms.Form):
         max_length=254,
         label="Your email",
         widget=forms.EmailInput(attrs={"autocomplete": "email"}),
-    )
-    remind = forms.BooleanField(
-        required=True,
-        label="Email me once, 30 days from now.",
-        error_messages={"required": "Tick the box to ask for the reminder."},
     )
     # Hidden from people; the view drops a post that fills it in.
     website = forms.CharField(required=False, widget=forms.HiddenInput())
