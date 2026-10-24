@@ -5,7 +5,8 @@ best we could) is shown to staff the same safe way as the raw text view:
 plain text that runs nothing, never cached, behind the staff login. The
 admin lists shared files by where their reading is, offers the cleaned text
 first, never puts the cleaned text in its form, and can set files marked
-unreadable back to waiting so they are read again.
+unreadable back to waiting so they are read again, but never a file
+removed at the person's request.
 """
 
 import datetime
@@ -19,7 +20,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from fighthealthinsurance import plan_documents_processing as processing
-from fighthealthinsurance.models import PolicyDocument
+from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
+from fighthealthinsurance.models import Denial, PolicyDocument
 from fighthealthinsurance.shared_plan_documents import render_token
 
 User = get_user_model()
@@ -207,6 +209,22 @@ class StaffCanAskForAFileToBeReadAgainTest(_CleanedTextTestCase):
             async_to_sync(processing.awaiting_batches)(15, 10),
             [str(unreadable.share_batch)],
         )
+
+    def test_a_file_removed_at_the_persons_request_stays_removed(self):
+        email = "rebecca.crumpler@example.com"
+        doc = self.shared(status=PolicyDocument.PROCESSING_UNREADABLE, cleaned="")
+        PolicyDocument.objects.filter(pk=doc.pk).update(
+            hashed_email=Denial.get_hashed_email(email),
+            insurer_name="Crumpler Health Mutual",
+            shared_at=timezone.now() - datetime.timedelta(days=2),
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            RemoveDataHelper.remove_data_for_email(email)
+        response = self.read_again(doc)
+        self.assertContains(response, "0 file(s) will be read again")
+        doc.refresh_from_db()
+        self.assertEqual(doc.processing_status, PolicyDocument.PROCESSING_REMOVED)
+        self.assertEqual(async_to_sync(processing.awaiting_batches)(15, 10), [])
 
 
 class TheStaffDashboardNamesEveryWorkflowTest(TestCase):

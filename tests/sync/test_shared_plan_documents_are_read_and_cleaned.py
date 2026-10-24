@@ -250,6 +250,20 @@ class RemovedRowsStayRemovedTest(_ReadingTest):
         self.assertEqual(doc.cleaned_text, "")
         self.assertFalse(doc.document_enc)
 
+    def test_a_share_kept_for_its_plan_facts_is_not_found_by_the_sweep(self):
+        share(upload("plan.txt", SUMMARY.encode()))
+        (waiting,) = share(
+            upload("plan.txt", SUMMARY.encode()), email="mary.mahoney@example.com"
+        )
+        PolicyDocument.objects.update(
+            shared_at=timezone.now() - datetime.timedelta(hours=1)
+        )
+        RemoveDataHelper.remove_data_for_email(EMAIL)
+        self.assertEqual(
+            async_to_sync(processing.awaiting_batches)(15, 50),
+            [str(waiting.share_batch)],
+        )
+
     def test_a_row_emptied_during_its_reading_stays_empty(self):
         (doc,) = share(upload("plan.txt", SUMMARY.encode()))
         read = processing.aread_text
