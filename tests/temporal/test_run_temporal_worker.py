@@ -1183,6 +1183,14 @@ def _warnings_at_start_up(role, **flags):
             dict(TEMPORAL_PAYLOAD_KEY=_RESEARCH_KEY, **_PLAN_DOCS_ON),
             "TEMPORAL_RESEARCH_PAYLOAD_KEY shares a key with TEMPORAL_PAYLOAD_KEY",
         ),
+        (
+            "appeal",
+            dict(
+                TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
+                TEMPORAL_RESEARCH_PAYLOAD_KEY="not-a-key",
+            ),
+            "not a Fernet key",
+        ),
         ("appeal", _PLAN_DOCS_ON, None),
         (
             "appeal",

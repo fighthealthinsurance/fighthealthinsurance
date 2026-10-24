@@ -15,6 +15,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from asgiref.sync import async_to_sync
+from cryptography.fernet import Fernet
 
 from bs4 import BeautifulSoup
 from django.core import mail
@@ -386,19 +387,21 @@ class TheRayLoopLeavesRemindersToTheSweepTest(TestCase):
         with override_settings(
             TEMPORAL_ENABLED=True,
             TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
-            TEMPORAL_RESEARCH_PAYLOAD_KEY="k",
+            TEMPORAL_RESEARCH_PAYLOAD_KEY=Fernet.generate_key().decode(),
         ):
             async_to_sync(actor._send_plan_documents_reminders)()
         actor.plan_documents_reminder_sender.afind_candidates.assert_not_awaited()
 
     def test_otherwise_the_loop_sends_them_as_before(self):
-        for key in ("", "k"):
-            with self.subTest(payload_key=key):
+        key = Fernet.generate_key().decode()
+        # No key, the flag off, or a malformed key.
+        for flag, research in ((True, ""), (False, key), (True, "not-a-key")):
+            with self.subTest(flag=flag, payload_key=research):
                 actor = self.actor()
                 with override_settings(
                     TEMPORAL_ENABLED=True,
-                    TEMPORAL_PLAN_DOCUMENTS_ENABLED=not key,
-                    TEMPORAL_RESEARCH_PAYLOAD_KEY=key,
+                    TEMPORAL_PLAN_DOCUMENTS_ENABLED=flag,
+                    TEMPORAL_RESEARCH_PAYLOAD_KEY=research,
                     TEMPORAL_PAYLOAD_KEY="shared",
                 ):
                     async_to_sync(actor._send_plan_documents_reminders)()

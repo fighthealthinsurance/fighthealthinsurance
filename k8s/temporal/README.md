@@ -458,8 +458,10 @@ the share page's 30-day reminders in place of the Ray email loop.
   same rotation rule as `TEMPORAL_PAYLOAD_KEY` (see "Protecting user data"
   below). The research client encrypts and decrypts with these keys
   alone, so the shared key can't read research history and this key can't
-  read the history in `default`. Generate a new key for it; a key that
-  also appears in `TEMPORAL_PAYLOAD_KEY` keeps the flag off.
+  read the history in `default`. Generate a new key for it; a malformed
+  key, or one that also appears in `TEMPORAL_PAYLOAD_KEY`, keeps the flag
+  off, and so does a `TEMPORAL_RESEARCH_NAMESPACE` equal to
+  `TEMPORAL_NAMESPACE`.
 - **Flag:** takes effect only with `TEMPORAL_ENABLED` and
   `TEMPORAL_RESEARCH_PAYLOAD_KEY` also set, so these runs only ever exist
   in encrypted history. It does not need the journey flags. With the flag

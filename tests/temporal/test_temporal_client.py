@@ -18,6 +18,7 @@ from fighthealthinsurance.temporal_client import (
     dispatch_fax_send,
     dispatch_shared_plan_documents,
     plan_documents_enabled,
+    research_payload_key_problem,
 )
 from fighthealthinsurance.workflows.types import SharedPlanDocumentsInput
 
@@ -45,15 +46,20 @@ def test_dispatch_returns_false_when_disabled():
 
 # --- Shared plan documents ----------------------------------------------------
 
+_KEY = Fernet.generate_key().decode()
+_IN_BOTH_KEY = Fernet.generate_key().decode()
+_OLD_KEY = Fernet.generate_key().decode()
+
+
 
 @pytest.mark.parametrize(
     "temporal, flag, key, expected",
     [
-        (True, True, "k", True),
+        (True, True, _KEY, True),
         (True, True, "", False),
         (True, True, " , ,", False),
-        (True, False, "k", False),
-        (False, True, "k", False),
+        (True, False, _KEY, False),
+        (False, True, _KEY, False),
     ],
 )
 def test_plan_documents_need_temporal_their_flag_and_the_research_key(
@@ -78,7 +84,16 @@ def test_the_shared_payload_key_alone_does_not_turn_plan_documents_on():
         assert plan_documents_enabled() is False
 
 
-@pytest.mark.parametrize("research", ["shared", "new,shared", " shared ,new"])
+@pytest.mark.parametrize(
+    "research",
+    [
+        _IN_BOTH_KEY,
+        f"{_KEY},{_IN_BOTH_KEY}",
+        f" {_IN_BOTH_KEY} ,{_KEY}",
+        # The same key bytes, written without the base64 padding.
+        _IN_BOTH_KEY.rstrip("=") + "==",
+    ],
+)
 def test_a_research_key_the_shared_setting_also_holds_keeps_plan_documents_off(
     research,
 ):
@@ -86,17 +101,53 @@ def test_a_research_key_the_shared_setting_also_holds_keeps_plan_documents_off(
     with override_settings(
         TEMPORAL_ENABLED=True,
         TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
-        TEMPORAL_PAYLOAD_KEY="old,shared",
+        TEMPORAL_PAYLOAD_KEY=f"{_OLD_KEY},{_IN_BOTH_KEY}",
         TEMPORAL_RESEARCH_PAYLOAD_KEY=research,
     ):
         assert plan_documents_enabled() is False
+
+
+@pytest.mark.parametrize("research", ["k", f"{_KEY},not-a-key", "a" * 44])
+def test_a_malformed_research_key_keeps_plan_documents_off(research):
+    """Off everywhere, so the Ray email loop keeps sending reminders."""
+    with override_settings(
+        TEMPORAL_ENABLED=True,
+        TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
+        TEMPORAL_PAYLOAD_KEY="",
+        TEMPORAL_RESEARCH_PAYLOAD_KEY=research,
+    ):
+        assert plan_documents_enabled() is False
+        assert "not a Fernet key" in research_payload_key_problem()
+
+
+def test_a_malformed_shared_key_does_not_turn_plan_documents_off():
+    with override_settings(
+        TEMPORAL_ENABLED=True,
+        TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
+        TEMPORAL_PAYLOAD_KEY="k",
+        TEMPORAL_RESEARCH_PAYLOAD_KEY=_KEY,
+    ):
+        assert plan_documents_enabled() is True
+
+
+def test_a_research_namespace_that_is_the_default_one_keeps_plan_documents_off():
+    with override_settings(
+        TEMPORAL_ENABLED=True,
+        TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
+        TEMPORAL_PAYLOAD_KEY=_IN_BOTH_KEY,
+        TEMPORAL_RESEARCH_PAYLOAD_KEY=_KEY,
+        TEMPORAL_NAMESPACE="default",
+        TEMPORAL_RESEARCH_NAMESPACE="default",
+    ):
+        assert plan_documents_enabled() is False
+        assert "TEMPORAL_RESEARCH_NAMESPACE" in research_payload_key_problem()
 
 
 def test_plan_documents_do_not_need_the_journey_or_policy_flags():
     with override_settings(
         TEMPORAL_ENABLED=True,
         TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
-        TEMPORAL_RESEARCH_PAYLOAD_KEY="k",
+        TEMPORAL_RESEARCH_PAYLOAD_KEY=_KEY,
         TEMPORAL_APPEAL_JOURNEY_ENABLED=False,
         TEMPORAL_CHAT_POLICY_ENABLED=False,
     ):
@@ -108,7 +159,7 @@ def test_plan_documents_do_not_need_the_journey_or_policy_flags():
 _ON = dict(
     TEMPORAL_ENABLED=True,
     TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
-    TEMPORAL_RESEARCH_PAYLOAD_KEY="k",
+    TEMPORAL_RESEARCH_PAYLOAD_KEY=_KEY,
     TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE="q-plan-docs",
 )
 BATCH = "5b7d1f0e-6a43-4f8e-9c1d-2e3f4a5b6c7d"

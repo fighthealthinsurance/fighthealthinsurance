@@ -11,6 +11,7 @@ leaving the existing Ray path entirely untouched.
 """
 
 import asyncio
+import base64
 from datetime import timedelta
 from typing import Any, Callable, Optional
 
@@ -712,16 +713,33 @@ def plan_documents_enabled() -> bool:
 
 
 def research_payload_key_problem() -> Optional[str]:
-    """Why TEMPORAL_RESEARCH_PAYLOAD_KEY can't be used, or None when it can.
-    A key it shares with TEMPORAL_PAYLOAD_KEY would read both namespaces."""
+    """Why the research namespace and its key can't be used, or None when
+    they can. A malformed key keeps the feature off everywhere, so the Ray
+    email loop goes on sending reminders. A key or namespace it shares with
+    the default profile would mix the two namespaces' history."""
+    from cryptography.fernet import Fernet
+
     from fighthealthinsurance.temporal_codec import payload_keys
 
     research = payload_keys(getattr(settings, "TEMPORAL_RESEARCH_PAYLOAD_KEY", ""))
     if not research:
         return "TEMPORAL_RESEARCH_PAYLOAD_KEY is unset"
-    shared = payload_keys(getattr(settings, "TEMPORAL_PAYLOAD_KEY", ""))
-    if set(research) & set(shared):
+    for key in research:
+        try:
+            Fernet(key)
+        except (ValueError, TypeError):
+            return "TEMPORAL_RESEARCH_PAYLOAD_KEY holds a key that is not a Fernet key"
+    shared = set()
+    for key in payload_keys(getattr(settings, "TEMPORAL_PAYLOAD_KEY", "")):
+        try:
+            shared.add(base64.urlsafe_b64decode(key))
+        except (ValueError, TypeError):
+            # Not a key, so it can't read research history.
+            continue
+    if {base64.urlsafe_b64decode(key) for key in research} & shared:
         return "TEMPORAL_RESEARCH_PAYLOAD_KEY shares a key with TEMPORAL_PAYLOAD_KEY"
+    if temporal_namespace(RESEARCH_PROFILE) == temporal_namespace(DEFAULT_PROFILE):
+        return "TEMPORAL_RESEARCH_NAMESPACE is the same as TEMPORAL_NAMESPACE"
     return None
 
 
