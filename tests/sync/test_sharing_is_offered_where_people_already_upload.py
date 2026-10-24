@@ -128,6 +128,15 @@ class TheBoxIsOfferedUntickedAndStandsOutTest(TestCase):
         self.assertIs(more.parent.find_previous_sibling(), band)
         # Opening it sends nothing and changes no answer.
         self.assertEqual(more.find_all(["input", "select", "textarea", "button"]), [])
+        # It says the file is what we keep encrypted, and names outside
+        # services among those who read it, as the terms do.
+        self.assertEqual(
+            more.find(id="share-for-research-who-reads").get_text(" ", strip=True),
+            "We keep the file encrypted. Our team and AI models, including "
+            "outside services, read it with documents from many other people, "
+            "and we share what we learn publicly. You can ask us to delete your "
+            "data at any time, and we delete the copy too.",
+        )
         link = more.find("a", id="share-for-research-read-more")
         self.assertEqual(
             link.get_text(strip=True),
