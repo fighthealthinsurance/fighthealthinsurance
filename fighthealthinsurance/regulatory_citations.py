@@ -126,32 +126,35 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
     ),
     RegulatoryHook(
         name=(
-            "CMS 2024 Final Rule on the use of algorithms and artificial "
-            "intelligence in coverage determinations"
+            "Medicare Advantage coverage criteria rule (CMS-4201-F, 42 C.F.R. "
+            "§ 422.101(b)(6) and (c)(1)(i)) and CMS's February 6, 2024 FAQ memo"
         ),
         summary=(
-            "An algorithm or AI tool may not be the sole basis for an adverse "
-            "coverage determination; an individualized assessment by a "
-            "qualified human reviewer is required. Demand disclosure of any "
-            "tool used and the human reviewer's clinical rationale."
+            "Medicare Advantage plans only, for Part A and Part B benefits "
+            "(a Part D drug denial follows 42 C.F.R. Part 423, Subpart M). A "
+            "medical necessity decision must rest on the enrollee's own "
+            "medical history, physician recommendations, and clinical notes, "
+            "and the plan may use internal coverage criteria only where "
+            "Medicare's are not fully established and only if they are public "
+            "with their evidence. CMS's memo says an algorithm or AI tool may "
+            "assist with, but cannot replace, that individual assessment. "
+            "Demand disclosure of any tool used and the reviewer's clinical "
+            "rationale."
         ),
         jurisdiction="US",
-        effective="effective 2024",
-        source_url=(
-            "https://www.kff.org/patient-consumer-protections/"
-            "regulation-of-ai-in-prior-authorization-and-claims-review-a-look-"
-            "at-federal-and-state-consumer-protections/"
-        ),
-        # This is a Medicare Advantage rule; it does not bind self-funded
-        # commercial employer plans.
+        effective="applies to coverage from January 1, 2024",
+        source_url="https://www.ecfr.gov/current/title-42/section-422.101",
+        # Binds Medicare Advantage plans only, and only for basic benefits.
         applies_to_self_insured=False,
         public_programs=frozenset({MEDICARE_ADVANTAGE}),
         plain_summary=(
-            "A Medicare Advantage plan may not use an algorithm or AI tool as "
-            "the only basis for denying coverage; a qualified human reviewer "
-            "has to assess the person's own case. An appeal can ask whether "
-            "any such tool was used and for the human reviewer's clinical "
-            "reasoning."
+            "For Medicare Advantage plans only, and only for Part A and Part B "
+            "benefits, not Part D drugs: the plan has to base a medical "
+            "necessity decision on the person's own medical history, their "
+            "doctor's recommendations and their clinical notes. CMS has told "
+            "these plans that an algorithm or AI tool can help with that "
+            "review but cannot replace it. An appeal can ask whether any such "
+            "tool was used and for the reviewer's clinical reasoning."
         ),
     ),
     RegulatoryHook(
@@ -477,6 +480,9 @@ def applicable_hooks(
     public_only = bool(public) and not keys & PRIVATE_COVERAGE
     if public_only:
         hooks = [h for h in hooks if h.public_programs & public]
+    elif not public:
+        # No public program known: drop rules written only for one.
+        hooks = [h for h in hooks if not h.public_programs or h.federal_marketplace]
     if self_insured is True:
         hooks = [h for h in hooks if h.applies_to_self_insured]
     return hooks
