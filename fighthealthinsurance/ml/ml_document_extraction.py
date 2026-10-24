@@ -5,6 +5,7 @@ Handles PDF, DOCX, and plain text extraction with page/section tracking.
 Also provides encrypted file decryption for EncryptedFileField.
 """
 
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
@@ -45,9 +46,8 @@ def read_and_decrypt_file(
                 raw_bytes = f.read(max_bytes + 1)
                 if len(raw_bytes) > max_bytes:
                     logger.warning(
-                        f"{file_field.name} is larger than the {max_bytes} "
-                        "bytes this reads; skipping it rather than risking "
-                        "the worker other patients are generating on"
+                        f"Skipped a stored document larger than the {max_bytes} "
+                        "bytes this reads"
                     )
                     return None
             else:
@@ -60,7 +60,7 @@ def read_and_decrypt_file(
                 logger.debug("Decryption failed, returning raw bytes as fallback")
                 return raw_bytes
     except Exception as e:
-        logger.warning(f"Error reading encrypted file: {e}")
+        logger.warning(f"Could not read a stored document: {type(e).__name__}")
         return None
 
 
@@ -81,7 +81,7 @@ def extract_text_from_pdf_bytes(data: bytes) -> tuple[str, Dict[int, str]]:
                     page_dict[page_num] = page_text
                     full_text += f"\n\n[Page {page_num}]\n{page_text}"
     except Exception as e:
-        logger.warning(f"Error extracting text from PDF bytes: {e}")
+        logger.warning(f"Could not read text from a PDF: {type(e).__name__}")
 
     return full_text, page_dict
 
@@ -148,7 +148,7 @@ def extract_text_from_plaintext_bytes(data: bytes) -> tuple[str, Dict[int, str]]
             page_dict[1] = content
             full_text = f"\n\n[Section 1]\n{content}"
     except Exception as e:
-        logger.warning(f"Error reading plaintext bytes: {e}")
+        logger.warning(f"Could not read a text file: {type(e).__name__}")
 
     return full_text, page_dict
 
@@ -176,6 +176,21 @@ _PARSING = threading.Lock()
 #: back to reading the bytes as text needs to know which failures mean "no
 #: parser for this" and which mean "the parser tried and got nothing".
 PARSED_EXTENSIONS = (".pdf", ".docx", ".txt")
+
+# Unparsed extensions a log may name; any other is logged as unsupported.
+_NAMED_UNPARSED_EXTENSIONS = (
+    ".doc",
+    ".rtf",
+    ".odt",
+    ".text",
+    ".md",
+    ".html",
+    ".htm",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".heic",
+)
 
 
 class _Payload:
@@ -249,5 +264,9 @@ def extract_text_from_bytes(data: bytes, filename: str) -> tuple[str, Dict[int, 
             return extract_text_from_docx_bytes(data)
         elif lower_name.endswith(".txt"):
             return extract_text_from_plaintext_bytes(data)
-    logger.warning(f"Unsupported file type for text extraction: {filename}")
+    extension = os.path.splitext(lower_name)[1]
+    if extension in _NAMED_UNPARSED_EXTENSIONS:
+        logger.warning(f"Text extraction skipped: {extension} file")
+    else:
+        logger.warning("Text extraction skipped: unsupported type")
     return "", {}
