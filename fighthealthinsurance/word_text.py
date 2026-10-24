@@ -3,13 +3,13 @@ Reading the text of Word (.docx) files in one pass.
 
 :func:`docx_text` streams word/document.xml through an XML pull parser and
 keeps only the elements still open, so it reads the body once, in order.
-Paragraphs, tabs, line breaks and non-breaking hyphens keep their places, so
-a table reads cell by cell. Content saved in more than one form
-(mc:AlternateContent, as Word saves a text box) is read once, from its first
-mc:Choice. It stops at the caps it is given: characters
-collected, seconds spent and bytes unpacked. It logs nothing and raises
-nothing, so nothing from inside a file reaches the logs or an error report. It has no Django imports, so any
-worker can use it as is.
+Paragraphs, tabs, line breaks and non-breaking hyphens keep their places,
+so a table reads cell by cell. Content saved in more than one form
+(mc:AlternateContent, as Word saves a text box) is read once, from its
+first mc:Choice. It stops at the caps it is given: characters collected,
+seconds spent and bytes unpacked. It logs nothing and raises nothing, so
+nothing from inside a file reaches the logs or an error report. It has no
+Django imports, so any worker can use it as is.
 """
 
 import io
