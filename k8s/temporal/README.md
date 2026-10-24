@@ -524,9 +524,12 @@ the share page's 30-day reminders in place of the Ray email loop.
   these reminders alone; while it is false it sends them as before. If the
   Ray pods and the worker disagree about the flags for a while, the claim
   still sends each reminder once.
-- **Deletion:** remove-my-data deletes the rows as before. Every activity
-  looks its row up by id when it runs, so a run that finds its rows gone
-  writes nothing.
+- **Deletion:** remove-my-data deletes each shared file with its cleaned
+  text. A row with facts about the plan, such as its insurer or premium,
+  keeps them, loses its scrambled email and is marked removed; a row with
+  none is deleted. Every activity looks its row up by id when it runs and
+  writes only to a row still waiting, so a run that finds its rows gone or
+  removed writes nothing.
 - **History:** the share's uuid, the rows' ids and their statuses; for the
   sweep, its three numbers, the reminders' row ids, true or false for
   each, the shares' uuids and two counts. No text, file names, emails,

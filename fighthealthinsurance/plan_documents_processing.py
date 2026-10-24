@@ -9,8 +9,9 @@ read, as with a scanned PDF. The raw text is never stored, and nothing read
 from a file is logged or raised.
 
 Rows are looked up by id when the work runs, so a row that remove-my-data
-deleted first is simply not there, and the store only updates a row still
-waiting, so a row deleted during a reading stays deleted. The
+deleted first is simply not there, and one it emptied of its file and text
+is marked removed, not waiting. The store only updates a row still waiting,
+so a row deleted or emptied during a reading stays that way. The
 SharedPlanDocumentsWorkflow activities wrap these
 (activities/shared_plan_documents.py).
 """

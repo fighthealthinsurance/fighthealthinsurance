@@ -6,7 +6,7 @@ with the bounded readers, takes out personal details as best it can, and
 stores only the cleaned text on the row: ready for review, or unreadable
 when no text could be read, as with a scanned PDF. A row removed by
 remove-my-data, before or during its reading, stays removed and nothing is
-written for it. The activities run for real here, against the database; the
+written for it, whether it was deleted or kept, emptied, for its plan facts. The activities run for real here, against the database; the
 workflow tests in tests/temporal stub them.
 """
 
@@ -14,7 +14,7 @@ import datetime
 import time
 from unittest.mock import AsyncMock, patch
 
-from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync, sync_to_async
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.forms.models import model_to_dict
 from django.test import TestCase, TransactionTestCase, override_settings
@@ -48,17 +48,19 @@ PERSONAL = ("Rebecca Lee Crumpler", "W123456789", EMAIL)
 READY = PolicyDocument.PROCESSING_READY
 UNREADABLE = PolicyDocument.PROCESSING_UNREADABLE
 RECEIVED = PolicyDocument.PROCESSING_RECEIVED
+REMOVED = PolicyDocument.PROCESSING_REMOVED
+PLAN_FACTS = {"insurer_name": "Crumpler Mutual Health"}
 
 
 def upload(name, content):
     return SimpleUploadedFile(name, content)
 
 
-def share(*files, email=EMAIL):
+def share(*files, email=EMAIL, details=PLAN_FACTS):
     return save_shared_documents(
         list(files),
         source=PolicyDocument.SOURCE_SHARED,
-        details={"insurer_name": "Crumpler Mutual Health"},
+        details=details,
         hashed_email=Denial.get_hashed_email(email),
     )
 
@@ -219,21 +221,50 @@ class SharedRowsAreReadAndCleanedTest(_ReadingTest):
 
 
 class RemovedRowsStayRemovedTest(_ReadingTest):
-    def test_a_share_removed_before_its_reading_is_not_read(self):
-        (doc,) = share(upload("plan.txt", SUMMARY.encode()))
-        RemoveDataHelper.remove_data_for_email(EMAIL)
+    def assertNeverRead(self, doc, expected):
         listed = async_to_sync(activities.list_shared_plan_documents)(
             str(doc.share_batch)
         )
         self.assertEqual(listed, [])
-        self.assertEqual(self.process(doc), processing.GONE)
+        self.assertEqual(self.process(doc), expected)
         self.assertEqual(
             async_to_sync(activities.mark_shared_plan_document_unreadable)(
                 str(doc.pk)
             ),
-            processing.GONE,
+            expected,
         )
+
+    def test_a_share_removed_before_its_reading_is_not_read(self):
+        (doc,) = share(upload("plan.txt", SUMMARY.encode()), details={})
+        RemoveDataHelper.remove_data_for_email(EMAIL)
+        self.assertNeverRead(doc, processing.GONE)
         self.assertFalse(PolicyDocument.objects.exists())
+
+    def test_a_share_kept_for_its_plan_facts_is_not_read(self):
+        (doc,) = share(upload("plan.txt", SUMMARY.encode()))
+        RemoveDataHelper.remove_data_for_email(EMAIL)
+        self.assertNeverRead(doc, REMOVED)
+        doc.refresh_from_db()
+        self.assertEqual(doc.processing_status, REMOVED)
+        self.assertIsNone(doc.processed_at)
+        self.assertEqual(doc.cleaned_text, "")
+        self.assertFalse(doc.document_enc)
+
+    def test_a_row_emptied_during_its_reading_stays_empty(self):
+        (doc,) = share(upload("plan.txt", SUMMARY.encode()))
+        read = processing.aread_text
+
+        async def removed_while_reading(ext, content):
+            await sync_to_async(RemoveDataHelper.remove_data_for_email)(EMAIL)
+            return await read(ext, content)
+
+        with patch.object(processing, "aread_text", removed_while_reading):
+            self.assertEqual(self.process(doc), REMOVED)
+        doc.refresh_from_db()
+        self.assertEqual(doc.processing_status, REMOVED)
+        self.assertEqual(doc.cleaned_text, "")
+        self.assertIsNone(doc.processed_at)
+        self.assertEqual(doc.insurer_name, "Crumpler Mutual Health")
 
     def test_a_row_removed_during_its_reading_stays_removed(self):
         (doc,) = share(upload("plan.txt", SUMMARY.encode()))

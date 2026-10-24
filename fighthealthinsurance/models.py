@@ -4485,10 +4485,13 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     PROCESSING_RECEIVED = "received"
     PROCESSING_READY = "ready_for_review"
     PROCESSING_UNREADABLE = "unreadable"
+    # Remove-my-data deleted the file and its text and kept the plan facts.
+    PROCESSING_REMOVED = "removed"
     PROCESSING_STATUS_CHOICES = [
         (PROCESSING_RECEIVED, "Received, not read yet"),
         (PROCESSING_READY, "Read and cleaned, ready for review"),
         (PROCESSING_UNREADABLE, "No text could be read"),
+        (PROCESSING_REMOVED, "File and text deleted at the person's request"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -4566,26 +4569,33 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         return f"PolicyDocument: {self.filename or self.id} ({self.document_type})"
 
 
-@receiver(post_delete, sender=PolicyDocument)
-def _delete_policy_document_file(
-    sender: type, instance: "PolicyDocument", **kwargs: typing.Any
+def delete_policy_document_file_on_commit(
+    document_field: typing.Any, pk: typing.Any, using: typing.Optional[str] = None
 ) -> None:
-    """Remove the encrypted file blob after the row delete commits."""
-    if not instance.document_enc:
+    """Remove a PolicyDocument's encrypted file blob once the surrounding
+    transaction commits."""
+    if not document_field:
         return
-
-    document_field = instance.document_enc
-    using = kwargs.get("using")
 
     def _delete_file() -> None:
         try:
             document_field.delete(save=False)
         except Exception:
             logger.opt(exception=True).warning(
-                f"Failed to delete PolicyDocument file for {instance.pk}"
+                f"Failed to delete PolicyDocument file for {pk}"
             )
 
     transaction.on_commit(_delete_file, using=using)
+
+
+@receiver(post_delete, sender=PolicyDocument)
+def _delete_policy_document_file(
+    sender: type, instance: "PolicyDocument", **kwargs: typing.Any
+) -> None:
+    """Remove the encrypted file blob after the row delete commits."""
+    delete_policy_document_file_on_commit(
+        instance.document_enc, instance.pk, using=kwargs.get("using")
+    )
 
 
 class PlanDocumentsReminder(models.Model):

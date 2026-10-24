@@ -12,7 +12,8 @@ same moment can't all fit in the same room.
 
 People share here in three ways: the share page, and the opt-in box on
 Explain Policy and on the appeal's plan documents step, which shares a copy
-of what was uploaded there.
+of what was uploaded there. A removal request deletes a person's shared
+files and keeps what they told us about the plan (remove_shared_documents).
 """
 
 import datetime
@@ -34,7 +35,12 @@ from loguru import logger
 
 from fighthealthinsurance import consent, temporal_client
 from fighthealthinsurance.chat_forms import policy_document_extension
-from fighthealthinsurance.models import PolicyDocument, SharedPlanDocumentsDay
+from fighthealthinsurance.models import (
+    PolicyDocument,
+    PolicyDocumentAnalysis,
+    SharedPlanDocumentsDay,
+    delete_policy_document_file_on_commit,
+)
 
 # ---- The signed timestamp on each upload form --------------------------------
 
@@ -367,7 +373,7 @@ def share_explain_policy_copy(
 ) -> list[PolicyDocument]:
     """A shared copy of an Explain Policy upload whose box was ticked. The
     copy has no session key, so the chat never picks it up, and the same
-    scrambled email, so a removal request takes both."""
+    scrambled email, so a removal request finds both."""
     return share_opt_in_copies(
         request,
         [uploaded],
@@ -384,7 +390,7 @@ def share_appeal_plan_documents(
     """Shared copies of the files added on the appeal's plan documents step
     whose box was ticked. ``data`` is that step's cleaned form. The copies
     don't point at the appeal, so deleting one leaves the other; they carry
-    the denial's scrambled email, so a removal request takes both."""
+    the denial's scrambled email, so a removal request finds both."""
     from fighthealthinsurance.models import Denial
 
     files = [uploaded for uploaded in data.get("plan_documents") or [] if uploaded]
@@ -459,3 +465,93 @@ def details_from_denial(denial: Any) -> dict[str, Any]:
         "insurance_company_obj": company,
         "insurance_plan_obj": denial.insurance_plan_obj,
     }
+
+
+# ---- What a removal request keeps -------------------------------------------
+
+#: Facts about the plan, not the person, that a removal request keeps on a
+#: shared row. Who it covers and how often are kept only with the premium.
+PLAN_FACT_FIELDS = (
+    "plan_category",
+    "plan_year",
+    "state",
+    "insurer_name",
+    "employer_name",
+    "premium_amount",
+    "premium_period",
+    "who_is_covered",
+    "insurance_company_obj",
+    "insurance_plan_obj",
+)
+#: The record of the share itself, kept with the plan facts.
+SHARE_RECORD_FIELDS = (
+    "id",
+    "document_type",
+    "source",
+    "shared_consent_version",
+    "shared_at",
+    "created_at",
+    "share_batch",
+    "processed_at",
+)
+#: What a removal request clears on a row it keeps: the file, everything
+#: read from it, and what linked it to the person.
+REMOVED_VALUES: dict[str, Any] = {
+    "document_enc": None,
+    "filename": "",
+    "hashed_email": None,
+    "session_key": None,
+    "fingerprint": "",
+    "cleaned_text": "",
+    "processing_status": PolicyDocument.PROCESSING_REMOVED,
+}
+
+
+def has_plan_facts(doc: PolicyDocument) -> bool:
+    """True when the row holds a fact about the plan worth keeping."""
+    return bool(
+        doc.plan_category not in ("", "unknown")
+        or doc.plan_year
+        or doc.state
+        or doc.insurer_name
+        or doc.employer_name
+        or doc.premium_amount is not None
+        or doc.insurance_company_obj_id
+        or doc.insurance_plan_obj_id
+    )
+
+
+def remove_shared_documents(hashed_email: str) -> None:
+    """Remove-my-data for the plan documents shared with this scrambled email.
+
+    Each file is deleted, with its cleaned text, its fingerprint and the
+    scrambled email. A row that holds facts about the plan (PLAN_FACT_FIELDS)
+    keeps them and is marked removed, so no reading writes to it again; a
+    row with none is deleted whole. Rows shared with no email, or another
+    email, are untouched.
+    """
+    with transaction.atomic():
+        rows = list(
+            PolicyDocument.objects.filter(
+                hashed_email=hashed_email,
+                source__in=PolicyDocument.SHARED_SOURCES,
+            )
+        )
+        nothing_to_keep = [doc.pk for doc in rows if not has_plan_facts(doc)]
+        # The row's own delete signal takes its file.
+        PolicyDocument.objects.filter(pk__in=nothing_to_keep).delete()
+        for doc in rows:
+            if doc.pk in nothing_to_keep:
+                continue
+            values = dict(REMOVED_VALUES)
+            if doc.premium_amount is None:
+                # Without an amount these describe the household, not the plan.
+                values.update(premium_period="", who_is_covered="")
+            PolicyDocument.objects.filter(pk=doc.pk).update(**values)
+            PolicyDocumentAnalysis.objects.filter(policy_document_id=doc.pk).delete()
+            delete_policy_document_file_on_commit(doc.document_enc, doc.pk)
+        if rows:
+            logger.info(
+                f"Removed {len(rows)} shared plan document(s): "
+                f"{len(rows) - len(nothing_to_keep)} kept for their plan facts"
+            )

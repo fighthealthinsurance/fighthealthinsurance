@@ -11,7 +11,8 @@ and stores the cleaned text on the row as ready for review, or marks the
 row unreadable when no text could be read. A row whose reading fails on
 every attempt is marked unreadable, so the sweep never picks it up again
 and staff still have the original. A row deleted in the meantime is
-reported as gone, and nothing is written for it.
+reported as gone, and one remove-my-data emptied as removed; nothing is
+written for either.
 
 History holds the share's uuid, the rows' ids and their statuses. The text
 stays in Django.

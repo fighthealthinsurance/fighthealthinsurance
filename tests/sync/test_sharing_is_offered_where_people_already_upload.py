@@ -11,7 +11,8 @@ shared file gets is copied into a row of its own: its own source, the
 agreement's date, a neutral name, no session key and no link to the appeal,
 so its life is its own. A copy that can't be made never stops the page's own
 work. The person's scrambled email goes with the copy, so a removal request
-takes it too. The copies carry no premium: only the share page asks.
+finds it too: the files go, and what the copy says about the plan stays.
+The copies carry no premium: only the share page asks.
 """
 
 import time
@@ -277,8 +278,21 @@ class ExplainPolicyTest(_UploadsTestCase):
         self.assertIn("policy_document_id", self.client.session)
         self.assertFalse(self.shared_copies().exists())
 
-    def test_removing_my_data_removes_the_copy_too(self):
+    def test_removing_my_data_deletes_both_files_and_keeps_the_kind_of_plan(self):
         self.upload(share_for_research="on")
+        RemoveDataHelper.remove_data_for_email(EMAIL)
+        self.assertFalse(
+            PolicyDocument.objects.filter(
+                source=PolicyDocument.SOURCE_EXPLAIN_POLICY
+            ).exists()
+        )
+        copy = self.shared_copies().get()
+        self.assertFalse(copy.document_enc)
+        self.assertIsNone(copy.hashed_email)
+        self.assertEqual(copy.plan_category, "aca_marketplace")
+
+    def test_removing_my_data_deletes_a_copy_with_nothing_about_the_plan(self):
+        self.upload(share_for_research="on", plan_category="unknown")
         RemoveDataHelper.remove_data_for_email(EMAIL)
         self.assertFalse(PolicyDocument.objects.exists())
 
@@ -392,12 +406,21 @@ class AppealPlanDocumentsStepTest(_UploadsTestCase):
         self.assertTemplateUsed(response, "entity_extract.html")
         self.assertEqual(PlanDocuments.objects.filter(denial=self.denial).count(), 1)
 
-    def test_the_copy_outlives_the_appeal_until_a_removal_request(self):
+    def test_the_copy_outlives_the_appeal_and_a_removal_request_takes_its_file(
+        self,
+    ):
         self.post([pdf()], share_for_research="on")
         Denial.objects.filter(pk=self.denial.pk).delete()
         self.assertEqual(self.shared_copies().count(), 1)
         RemoveDataHelper.remove_data_for_email(EMAIL)
-        self.assertFalse(self.shared_copies().exists())
+        copy = self.shared_copies().get()
+        self.assertFalse(copy.document_enc)
+        self.assertIsNone(copy.hashed_email)
+        self.assertEqual(copy.processing_status, PolicyDocument.PROCESSING_REMOVED)
+        self.assertEqual(
+            (copy.state, copy.insurer_name, copy.employer_name),
+            ("MA", "Crumpler Health Mutual", "Lee Crumpler Clinic"),
+        )
 
 
 class OptInSharesHaveTheirOwnDailyBudgetTest(_UploadsTestCase):

@@ -107,6 +107,12 @@ class RemoveDataHelper:
         # (covers hashed_email, user__email, and professional_user__user__email)
         OngoingChat.find_chats_by_email(email).delete()
         ChatLeads.objects.filter(email__iexact=email).delete()
+        # Shared plan documents: the files go, facts about the plan stay.
+        from fighthealthinsurance.shared_plan_documents import (
+            remove_shared_documents,
+        )
+
+        remove_shared_documents(hashed_email)
         # Policy documents (encrypted files cleaned up via post_delete signal)
         PolicyDocument.objects.filter(hashed_email=hashed_email).delete()
         # A share page reminder that hasn't gone yet

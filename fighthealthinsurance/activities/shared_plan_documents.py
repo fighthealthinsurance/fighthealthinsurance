@@ -7,8 +7,8 @@ Temporal conventions:
 * Ids in, ids and statuses out. The text read from a file is written to the
   row inside the activity and never returned, so no text, file name, email,
   insurer or employer reaches workflow history.
-* A row that is gone (remove-my-data) is reported as "gone" and nothing is
-  written.
+* A row remove-my-data deleted is reported as "gone", and one it emptied
+  as "removed"; nothing is written for either.
 * Errors are reported as the exception's class name and the row's id only,
   in history and in the logs, since a message could quote a file. Schema
   and bad-input errors are not retried.

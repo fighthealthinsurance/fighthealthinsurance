@@ -6,8 +6,8 @@ out is kept blank, an amount with no "how often" is kept with the period
 blank, an answer the checks can't use is dropped, and $0 is a real answer.
 Each file shared together keeps the same answers, a share that is asked to try
 again keeps them, staff see them in the admin, error reports leave them out,
-and remove-my-data takes them with the files. The opt-in boxes on other pages
-don't ask.
+and remove-my-data keeps them, as facts about the plan, when it deletes the
+files. The opt-in boxes on other pages don't ask.
 """
 
 from decimal import Decimal
@@ -143,7 +143,7 @@ class ThePremiumIsKeptWithTheFilesTest(_PremiumTestCase):
         self.share([pdf()], who_is_covered="family")
         self.assertEqual(PolicyDocument.objects.get().who_is_covered, "family")
 
-    def test_removing_my_data_takes_the_answers_with_the_files(self):
+    def test_removing_my_data_deletes_the_file_and_keeps_the_answers(self):
         self.share(
             [pdf()],
             email=EMAIL,
@@ -152,7 +152,13 @@ class ThePremiumIsKeptWithTheFilesTest(_PremiumTestCase):
             who_is_covered="self_only",
         )
         RemoveDataHelper.remove_data_for_email(EMAIL)
-        self.assertFalse(PolicyDocument.objects.exists())
+        doc = PolicyDocument.objects.get()
+        self.assertFalse(doc.document_enc)
+        self.assertIsNone(doc.hashed_email)
+        self.assertEqual(
+            (doc.premium_amount, doc.premium_period, doc.who_is_covered),
+            (Decimal("250"), "monthly", "self_only"),
+        )
 
 
 class ABadPremiumAnswerIsDroppedAndTheShareKeptTest(_PremiumTestCase):
