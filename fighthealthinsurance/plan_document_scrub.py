@@ -165,8 +165,10 @@ _ADDRESS_RULE = re.compile(
 
 # Plan facts kept even where they look like a phone number or an identifier.
 # A provider's NPI is ten digits, like a phone number, and names no member.
+# A "Group Policy" number is the group's.
 _KEPT_RULE = re.compile(
-    rf"\b(?:group|plan|payer|npi|rx{_SP}*(?:bin|pcn|grp|group))\b"
+    rf"\b(?:group(?:{_SP}*(?:/{_SP}*)?policy)?|plan|payer|npi"
+    rf"|rx{_SP}*(?:bin|pcn|grp|group))\b"
     rf"(?:{_SP}*{_NUMBER_WORDS})?{_SEP}(?P<value>[a-z0-9-]{{1,30}})",
     _FLAGS,
 )

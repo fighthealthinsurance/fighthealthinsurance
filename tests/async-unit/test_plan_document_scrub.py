@@ -88,6 +88,21 @@ def test_plan_numbers_next_to_the_new_labels_are_kept(text):
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "Group Policy Number: 0012345",
+        "Group Policy #: 0012345",
+        "Group Policy No. 0012345",
+        "Group/Policy #: 0012345",
+        "Employer Group Policy Number 0012345",
+        "Group Policy: 0012345",
+    ],
+)
+def test_a_group_policy_number_is_kept_as_a_group_number(text):
+    assert scrub(text) == text
+
+
+@pytest.mark.parametrize(
     "text, expected",
     [
         ("Patient: Rebecca Lee Crumpler", f"Patient: {REMOVED}"),
@@ -355,6 +370,8 @@ LONG_RUN_LABELS = [
     "Plan",
     "Plan ID",
     "Group number",
+    "Group Policy",
+    "Group/Policy",
     "Member ID",
     "Member name",
     "Member:",
