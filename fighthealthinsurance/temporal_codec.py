@@ -15,6 +15,10 @@ before it reaches the Temporal server, so:
 
 Decoding passes unencrypted payloads through untouched, so histories
 written before the key was configured keep replaying during rollout.
+
+The research namespace has a key of its own, TEMPORAL_RESEARCH_PAYLOAD_KEY
+(see ``temporal_client.TEMPORAL_PROFILES``), so neither key reads the other
+namespace's history.
 """
 
 import base64
@@ -28,19 +32,24 @@ from temporalio.converter import PayloadCodec
 ENCODING = b"binary/encrypted-fernet"
 
 
+def payload_keys(key: str) -> List[str]:
+    """The keys in a comma-separated payload key setting, in order."""
+    return [k.strip() for k in key.split(",") if k.strip()]
+
+
 class EncryptionCodec(PayloadCodec):
     """``key`` may be a comma-separated list: the FIRST key encrypts, every
     key decrypts -- so rotation is "prepend the new key, keep the old one
     until retention has expired everything it encrypted"."""
 
-    def __init__(self, key: str) -> None:
-        keys = [k.strip() for k in key.split(",") if k.strip()]
+    def __init__(self, key: str, setting: str = "TEMPORAL_PAYLOAD_KEY") -> None:
+        keys = payload_keys(key)
         if not keys:
             # A set-but-unusable key (e.g. only commas/whitespace) would
             # otherwise surface as MultiFernet's bare ValueError long after
             # the config mistake was made.
             raise ValueError(
-                "TEMPORAL_PAYLOAD_KEY is set but contains no usable key "
+                f"{setting} is set but contains no usable key "
                 "after splitting on commas; provide at least one Fernet key"
             )
         self._fernet = MultiFernet([Fernet(k) for k in keys])

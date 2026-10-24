@@ -3,7 +3,8 @@
 There are two. ``chat-routing-policy`` is created or updated (and
 unpaused) when TEMPORAL_ENABLED and TEMPORAL_CHAT_POLICY_ENABLED are both
 on, paused when not. ``plan-documents-sweep`` follows
-temporal_client.plan_documents_enabled() the same way. The appeal-worker
+temporal_client.plan_documents_enabled() the same way, in the research
+namespace, over the same connection. The appeal-worker
 process does the same at start-up, so this command is for doing it by hand,
 for example after changing a flag without restarting the workers. It is
 idempotent.
@@ -39,8 +40,11 @@ class Command(BaseCommand):
     async def _ensure(self) -> list[tuple[str, str, bool]]:
         from fighthealthinsurance.temporal_client import (
             CHAT_POLICY_SCHEDULE_ID,
+            DEFAULT_PROFILE,
             PLAN_DOCUMENTS_SCHEDULE_ID,
+            RESEARCH_PROFILE,
             chat_policy_schedule_enabled,
+            client_for_profile,
             ensure_chat_policy_schedule,
             ensure_plan_documents_schedule,
             get_temporal_client,
@@ -49,20 +53,28 @@ class Command(BaseCommand):
 
         client = await get_temporal_client()
         results = []
-        for schedule_id, ensure, enabled in (
+        for schedule_id, ensure, enabled, profile in (
             (
                 CHAT_POLICY_SCHEDULE_ID,
                 ensure_chat_policy_schedule,
                 chat_policy_schedule_enabled(),
+                DEFAULT_PROFILE,
             ),
             (
                 PLAN_DOCUMENTS_SCHEDULE_ID,
                 ensure_plan_documents_schedule,
                 plan_documents_enabled(),
+                RESEARCH_PROFILE,
             ),
         ):
             try:
-                outcome = await ensure(client, enabled=enabled)
+                # Each Schedule in its own namespace, over the one connection.
+                target = (
+                    client
+                    if profile == DEFAULT_PROFILE
+                    else client_for_profile(client, profile)
+                )
+                outcome = await ensure(target, enabled=enabled)
             except Exception as e:
                 # Class name only, as the worker logs it.
                 results.append((schedule_id, f"failed ({type(e).__name__})", False))

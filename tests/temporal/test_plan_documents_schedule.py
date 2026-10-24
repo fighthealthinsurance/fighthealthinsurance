@@ -25,9 +25,12 @@ from temporalio.client import (
     ScheduleState,
     ScheduleUpdate,
 )
+from cryptography.fernet import Fernet
+from temporalio.client import Client
 from temporalio.service import RPCError, RPCStatusCode
 
 from fighthealthinsurance import temporal_client
+from fighthealthinsurance.temporal_codec import ENCODING
 from fighthealthinsurance.temporal_client import (
     PLAN_DOCUMENTS_SCHEDULE_ID,
     ensure_plan_documents_schedule,
@@ -61,7 +64,8 @@ class _FakeClient:
     """Records schedule calls. ``exists`` and ``paused`` describe the
     Schedule the server holds before the call."""
 
-    def __init__(self, exists=False, paused=False):
+    def __init__(self, exists=False, paused=False, namespace="fhi-research"):
+        self.namespace = namespace
         self.exists = exists
         self.paused = paused
         self.created = []
@@ -132,7 +136,8 @@ def test_disabled_pauses_the_schedule_and_never_creates_one():
     note = client.handle.pause.await_args.kwargs["note"]
     assert note == (
         "plan_documents_enabled() is false (it needs TEMPORAL_ENABLED, "
-        "TEMPORAL_PLAN_DOCUMENTS_ENABLED and TEMPORAL_PAYLOAD_KEY)"
+        "TEMPORAL_PLAN_DOCUMENTS_ENABLED and a TEMPORAL_RESEARCH_PAYLOAD_KEY "
+        "of its own)"
     )
 
 
@@ -144,34 +149,85 @@ def test_disabled_with_no_schedule_does_nothing():
     assert client.created == []
 
 
+@pytest.mark.parametrize("enabled", [True, False])
+def test_a_client_outside_the_research_namespace_is_refused(enabled):
+    """The Schedule and the runs it starts live in the research namespace;
+    a client in another one touches nothing."""
+    client = _FakeClient(exists=True, namespace="default")
+    with pytest.raises(ValueError, match="research namespace"):
+        asyncio.run(ensure_plan_documents_schedule(client, enabled=enabled))
+    assert client.created == [] and client.updates == []
+    client.handle.pause.assert_not_awaited()
+
+
+@override_settings(TEMPORAL_RESEARCH_NAMESPACE="research-elsewhere")
+def test_the_research_namespace_comes_from_its_setting():
+    with pytest.raises(ValueError):
+        asyncio.run(ensure_plan_documents_schedule(_FakeClient(), enabled=True))
+    client = _FakeClient(namespace="research-elsewhere")
+    assert asyncio.run(ensure_plan_documents_schedule(client, enabled=True)) == (
+        "created"
+    )
+
+
 # --- manage.py ensure_temporal_schedules --------------------------------------
+
+
+_RESEARCH_KEY = Fernet.generate_key().decode()
 
 
 @pytest.mark.parametrize(
     "flags, expected",
     [
-        (dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_PAYLOAD_KEY="k"), True),
-        (dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_PAYLOAD_KEY=""), False),
-        (dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=False, TEMPORAL_PAYLOAD_KEY="k"), False),
+        (
+            dict(
+                TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
+                TEMPORAL_RESEARCH_PAYLOAD_KEY=_RESEARCH_KEY,
+            ),
+            True,
+        ),
+        (
+            dict(
+                TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_RESEARCH_PAYLOAD_KEY=""
+            ),
+            False,
+        ),
+        (
+            dict(
+                TEMPORAL_PLAN_DOCUMENTS_ENABLED=False,
+                TEMPORAL_RESEARCH_PAYLOAD_KEY=_RESEARCH_KEY,
+            ),
+            False,
+        ),
     ],
 )
 def test_the_command_keeps_both_schedules_in_step(flags, expected):
     out = io.StringIO()
     policy = AsyncMock(return_value="paused")
     plan_documents = AsyncMock(return_value="created")
+    default = Mock(name="default-client")
+    connect = AsyncMock(return_value=default)
     with (
         override_settings(
-            TEMPORAL_ENABLED=True, TEMPORAL_CHAT_POLICY_ENABLED=False, **flags
+            TEMPORAL_ENABLED=True,
+            TEMPORAL_CHAT_POLICY_ENABLED=False,
+            TEMPORAL_PAYLOAD_KEY="",
+            **flags,
         ),
         patch.object(temporal_client, "ensure_chat_policy_schedule", policy),
         patch.object(temporal_client, "ensure_plan_documents_schedule", plan_documents),
-        patch.object(
-            temporal_client, "get_temporal_client", AsyncMock(return_value=Mock())
-        ),
+        patch.object(temporal_client, "get_temporal_client", connect),
     ):
         call_command("ensure_temporal_schedules", stdout=out)
     assert plan_documents.await_args.kwargs == {"enabled": expected}
     assert policy.await_args.kwargs == {"enabled": False}
+    # The sweep in the research namespace over the command's one connection;
+    # the chat policy stays in the default one.
+    (research,) = plan_documents.await_args.args
+    assert research.namespace == "fhi-research"
+    assert research.service_client is default.service_client
+    assert policy.await_args.args == (default,)
+    connect.assert_awaited_once_with()
     assert "chat-routing-policy: paused" in out.getvalue()
     assert "plan-documents-sweep: created" in out.getvalue()
 
@@ -215,12 +271,22 @@ def test_the_command_tries_every_schedule_and_fails_if_one_did(failing):
 
 
 @pytest.mark.asyncio
+@override_settings(
+    TEMPORAL_RESEARCH_NAMESPACE="fhi-research",
+    TEMPORAL_RESEARCH_PAYLOAD_KEY=_RESEARCH_KEY,
+    TEMPORAL_PAYLOAD_KEY="",
+)
 async def test_against_a_local_server_create_pause_and_unpause():
     from temporalio.testing import WorkflowEnvironment
 
     queue = f"q-plan-docs-{uuid.uuid4()}"
-    async with await WorkflowEnvironment.start_local() as env:
-        client = env.client
+    async with await WorkflowEnvironment.start_local(
+        dev_server_extra_args=["--namespace", "fhi-research"]
+    ) as env:
+        client = temporal_client.client_for_profile(
+            env.client, temporal_client.RESEARCH_PROFILE
+        )
+        assert client.namespace == "fhi-research"
         handle = client.get_schedule_handle(PLAN_DOCUMENTS_SCHEDULE_ID)
         with override_settings(TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE=queue):
             assert await ensure_plan_documents_schedule(client, enabled=False) == (
@@ -247,4 +313,15 @@ async def test_against_a_local_server_create_pause_and_unpause():
                 "updated"
             )
             assert (await handle.describe()).schedule.state.paused is False
+        # Nothing of it in the default namespace.
+        with pytest.raises(RPCError) as missing:
+            await env.client.get_schedule_handle(PLAN_DOCUMENTS_SCHEDULE_ID).describe()
+        assert missing.value.status == RPCStatusCode.NOT_FOUND
+        # Its input is sealed with the research key: the namespace read
+        # without that key holds only ciphertext.
+        raw = Client(**{**env.client.config(), "namespace": "fhi-research"})
+        (sealed,) = (
+            await raw.get_schedule_handle(PLAN_DOCUMENTS_SCHEDULE_ID).describe()
+        ).schedule.action.args
+        assert sealed.metadata["encoding"] == ENCODING
         await handle.delete()

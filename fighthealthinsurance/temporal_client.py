@@ -1,6 +1,7 @@
 """Temporal client connection, fax-dispatch helpers, the chat policy
 Schedule, and starting the reading of shared plan documents with the
-Schedule that sweeps them.
+Schedule that sweeps them. Shared plan documents run in a namespace of
+their own (RESEARCH_PROFILE); everything else runs in the default one.
 
 All ``temporalio`` imports are done lazily inside the functions so that simply
 importing this module (e.g. from ``fax_helpers``) does not require ``temporalio``
@@ -35,7 +36,37 @@ INTAKE_RPC_TIMEOUT_SECONDS = 15.0
 ASSISTANT_REQUEST_WAIT_SECONDS = 10.0
 
 
-async def get_temporal_client(runtime: Any = None) -> Any:
+# --- Namespaces ---------------------------------------------------------------
+
+DEFAULT_PROFILE = "default"
+RESEARCH_PROFILE = "research"
+
+# The settings naming each profile's namespace and payload key.
+TEMPORAL_PROFILES: dict[str, tuple[str, str]] = {
+    DEFAULT_PROFILE: ("TEMPORAL_NAMESPACE", "TEMPORAL_PAYLOAD_KEY"),
+    RESEARCH_PROFILE: ("TEMPORAL_RESEARCH_NAMESPACE", "TEMPORAL_RESEARCH_PAYLOAD_KEY"),
+}
+
+
+def temporal_namespace(profile: str = DEFAULT_PROFILE) -> str:
+    """The Temporal namespace a profile's workflows run in."""
+    namespace_setting, _ = TEMPORAL_PROFILES[profile]
+    return str(getattr(settings, namespace_setting))
+
+
+def _profile_data_converter(profile: str) -> Any:
+    """The profile's encrypting data converter, built from its own key
+    setting alone, or None when that setting is unset."""
+    _, key_setting = TEMPORAL_PROFILES[profile]
+    payload_key = getattr(settings, key_setting, "")
+    if not payload_key:
+        return None
+    return _encrypting_data_converter(payload_key, key_setting)
+
+
+async def get_temporal_client(
+    runtime: Any = None, profile: str = DEFAULT_PROFILE
+) -> Any:
     """Connect a Temporal client using Django settings.
 
     Supports a plain connection (local dev server), server-side TLS, and mTLS
@@ -44,10 +75,16 @@ async def get_temporal_client(runtime: Any = None) -> Any:
     ``runtime`` is the SDK ``temporalio.runtime.Runtime`` carrying telemetry
     config; only the worker process passes one (it hosts the Prometheus
     metrics endpoint). Web/Ray callers leave it None and get the default.
+
+    ``profile`` picks the namespace and payload key (TEMPORAL_PROFILES); the
+    default is the one every caller had before there were profiles. To reach
+    another namespace over a connection already open, see
+    :func:`client_for_profile`.
     """
     from temporalio.client import Client
     from temporalio.service import TLSConfig
 
+    data_converter = _profile_data_converter(profile)
     tls: Any = False
     if getattr(settings, "TEMPORAL_TLS", False):
         client_cert_path = getattr(settings, "TEMPORAL_CLIENT_CERT_PATH", "")
@@ -64,27 +101,64 @@ async def get_temporal_client(runtime: Any = None) -> Any:
         else:
             tls = True
 
-    # With TEMPORAL_PAYLOAD_KEY set, every payload is encrypted client-side
-    # before it reaches the Temporal server (see temporal_codec.py): history
-    # holds ciphertext only, and destroying the key crypto-shreds whatever
-    # namespace retention has not yet expired. The worker connects through
-    # this same function, so one setting covers both sides.
+    # With the profile's key set (TEMPORAL_PAYLOAD_KEY for the default one),
+    # every payload is encrypted client-side before it reaches the Temporal
+    # server (see temporal_codec.py): history holds ciphertext only, and
+    # destroying the key crypto-shreds whatever namespace retention has not
+    # yet expired. The worker connects through this same function, so one
+    # setting covers both sides.
     connect_kwargs: dict = {}
-    payload_key = getattr(settings, "TEMPORAL_PAYLOAD_KEY", "")
-    if payload_key:
-        connect_kwargs["data_converter"] = _encrypting_data_converter(payload_key)
+    if data_converter is not None:
+        connect_kwargs["data_converter"] = data_converter
     if runtime is not None:
         connect_kwargs["runtime"] = runtime
 
     return await Client.connect(
         settings.TEMPORAL_HOST,
-        namespace=settings.TEMPORAL_NAMESPACE,
+        namespace=temporal_namespace(profile),
         tls=tls,
         **connect_kwargs,
     )
 
 
-def _encrypting_data_converter(payload_key: str):
+def client_for_profile(client: Any, profile: str) -> Any:
+    """A client in ``profile``'s namespace with that profile's payload key,
+    over ``client``'s connection (its TLS and runtime too), so no new
+    connection is opened. Interceptors and plugins are not carried over;
+    FHI's clients have none."""
+    import temporalio.converter
+    from temporalio.client import Client
+
+    return Client(
+        client.service_client,
+        namespace=temporal_namespace(profile),
+        # Never the other client's converter: that one holds the other keys.
+        data_converter=(
+            _profile_data_converter(profile) or temporalio.converter.default()
+        ),
+    )
+
+
+async def namespace_exists(client: Any) -> bool:
+    """Whether the client's namespace exists on the server. A Worker in a
+    namespace that does not exist fails as it starts. Raises on other RPC
+    failures."""
+    from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
+    from temporalio.service import RPCError, RPCStatusCode
+
+    try:
+        await client.workflow_service.describe_namespace(
+            DescribeNamespaceRequest(namespace=client.namespace),
+            timeout=timedelta(seconds=SCHEDULE_RPC_TIMEOUT_SECONDS),
+        )
+    except RPCError as e:
+        if e.status == RPCStatusCode.NOT_FOUND:
+            return False
+        raise
+    return True
+
+
+def _encrypting_data_converter(payload_key: str, setting: str = "TEMPORAL_PAYLOAD_KEY"):
     """Payload codec + ENCODED failure attributes. The codec alone is not
     enough: Temporal's default failure converter leaves exception messages
     and stack traces as plaintext protobuf fields, so an activity error
@@ -100,7 +174,7 @@ def _encrypting_data_converter(payload_key: str):
 
     return _dc.replace(
         temporalio.converter.default(),
-        payload_codec=EncryptionCodec(payload_key),
+        payload_codec=EncryptionCodec(payload_key, setting),
         failure_converter_class=DefaultFailureConverterWithEncodedAttributes,
     )
 
@@ -626,13 +700,29 @@ async def ensure_chat_policy_schedule(client: Any, enabled: bool) -> str:
 
 def plan_documents_enabled() -> bool:
     """Whether shared plan documents are read on Temporal: TEMPORAL_ENABLED,
-    TEMPORAL_PLAN_DOCUMENTS_ENABLED and a TEMPORAL_PAYLOAD_KEY, so these runs
-    only ever exist in encrypted history. Independent of the journey flags."""
-    return bool(
+    TEMPORAL_PLAN_DOCUMENTS_ENABLED and a usable TEMPORAL_RESEARCH_PAYLOAD_KEY,
+    so these runs only ever exist in history that the research key alone
+    reads. Independent of the journey flags."""
+    if not (
         getattr(settings, "TEMPORAL_ENABLED", False)
         and getattr(settings, "TEMPORAL_PLAN_DOCUMENTS_ENABLED", False)
-        and getattr(settings, "TEMPORAL_PAYLOAD_KEY", "")
-    )
+    ):
+        return False
+    return research_payload_key_problem() is None
+
+
+def research_payload_key_problem() -> Optional[str]:
+    """Why TEMPORAL_RESEARCH_PAYLOAD_KEY can't be used, or None when it can.
+    A key it shares with TEMPORAL_PAYLOAD_KEY would read both namespaces."""
+    from fighthealthinsurance.temporal_codec import payload_keys
+
+    research = payload_keys(getattr(settings, "TEMPORAL_RESEARCH_PAYLOAD_KEY", ""))
+    if not research:
+        return "TEMPORAL_RESEARCH_PAYLOAD_KEY is unset"
+    shared = payload_keys(getattr(settings, "TEMPORAL_PAYLOAD_KEY", ""))
+    if set(research) & set(shared):
+        return "TEMPORAL_RESEARCH_PAYLOAD_KEY shares a key with TEMPORAL_PAYLOAD_KEY"
+    return None
 
 
 # The longest a share waits on Temporal for its reading to start, connecting
@@ -653,7 +743,7 @@ async def start_shared_plan_documents_workflow(
     from fighthealthinsurance.workflows.types import SharedPlanDocumentsInput
 
     if client is None:
-        client = await get_temporal_client()
+        client = await get_temporal_client(profile=RESEARCH_PROFILE)
     handle = await client.start_workflow(
         "SharedPlanDocumentsWorkflow",
         SharedPlanDocumentsInput(share_batch=str(share_batch)),
@@ -698,7 +788,8 @@ def dispatch_shared_plan_documents(share_batch: str) -> bool:
 PLAN_DOCUMENTS_SCHEDULE_ID = "plan-documents-sweep"
 PLAN_DOCUMENTS_OFF_NOTE = (
     "plan_documents_enabled() is false (it needs TEMPORAL_ENABLED, "
-    "TEMPORAL_PLAN_DOCUMENTS_ENABLED and TEMPORAL_PAYLOAD_KEY)"
+    "TEMPORAL_PLAN_DOCUMENTS_ENABLED and a TEMPORAL_RESEARCH_PAYLOAD_KEY "
+    "of its own)"
 )
 # Scheduled runs get this id with the scheduled time appended by Temporal.
 PLAN_DOCUMENTS_SWEEP_WORKFLOW_ID = "plan-documents-sweep-run"
@@ -752,7 +843,12 @@ def plan_documents_schedule() -> Any:
 
 async def ensure_plan_documents_schedule(client: Any, enabled: bool) -> str:
     """Make the ``plan-documents-sweep`` Schedule match
-    :func:`plan_documents_enabled` (see :func:`_ensure_schedule`)."""
+    :func:`plan_documents_enabled` (see :func:`_ensure_schedule`). ``client``
+    must be in the research namespace, where the Schedule and its runs live."""
+    if client.namespace != temporal_namespace(RESEARCH_PROFILE):
+        raise ValueError(
+            f"The {PLAN_DOCUMENTS_SCHEDULE_ID} Schedule lives in the research namespace"
+        )
     return await _ensure_schedule(
         client,
         PLAN_DOCUMENTS_SCHEDULE_ID,

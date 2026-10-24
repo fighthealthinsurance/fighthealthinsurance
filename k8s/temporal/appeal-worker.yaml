@@ -83,10 +83,14 @@ spec:
               value: "fhi-chat-policy"
             # The shared plan documents queue, hosted the same way while
             # TEMPORAL_PLAN_DOCUMENTS_ENABLED is on (with TEMPORAL_ENABLED and
-            # TEMPORAL_PAYLOAD_KEY). Keep it equal to the settings default:
-            # the web pods start runs on the queue their settings name.
+            # TEMPORAL_RESEARCH_PAYLOAD_KEY), in the research namespace. Keep
+            # both equal to the settings defaults: the web pods start runs on
+            # the queue and in the namespace their settings name. The key and
+            # the flag come from the app secret, never from here.
             - name: TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE
               value: "fhi-plan-documents"
+            - name: TEMPORAL_RESEARCH_NAMESPACE
+              value: "fhi-research"
             - name: TEMPORAL_HOST
               value: "temporal-frontend:7233"
             - name: TEMPORAL_NAMESPACE

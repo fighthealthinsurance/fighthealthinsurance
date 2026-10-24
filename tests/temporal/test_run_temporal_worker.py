@@ -7,6 +7,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from cryptography.fernet import Fernet
 from django.core.management.base import CommandError
 
 from fighthealthinsurance.management.commands.run_temporal_worker import (
@@ -70,6 +71,8 @@ _BASE_SETTINGS = dict(
     TEMPORAL_PLAN_DOCUMENTS_ENABLED=False,
     TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE="q-plan-docs",
     TEMPORAL_PAYLOAD_KEY="",
+    TEMPORAL_RESEARCH_PAYLOAD_KEY="",
+    TEMPORAL_RESEARCH_NAMESPACE="test-research-ns",
     TEMPORAL_HOST="test-host",
     TEMPORAL_NAMESPACE="test-ns",
 )
@@ -78,11 +81,20 @@ _ENSURE = "fighthealthinsurance.temporal_client.ensure_chat_policy_schedule"
 _ENSURE_PLAN_DOCS = (
     "fighthealthinsurance.temporal_client.ensure_plan_documents_schedule"
 )
+_NAMESPACE_EXISTS = "fighthealthinsurance.temporal_client.namespace_exists"
 
 
-def _run_capture(options, ensure=None, connect=None, ensure_plan_docs=None, **flags):
-    """Run _run with stand-ins for the Worker class, the client connect and
-    the Schedule calls; return each Worker's construction kwargs."""
+def _run_calls(
+    options,
+    ensure=None,
+    connect=None,
+    ensure_plan_docs=None,
+    exists=None,
+    **flags,
+):
+    """Run _run with stand-ins for the Worker class, the client connect,
+    the namespace check and the Schedule calls; return each Worker's
+    construction call."""
     from django.test import override_settings
     from unittest.mock import AsyncMock, Mock
 
@@ -95,12 +107,18 @@ def _run_capture(options, ensure=None, connect=None, ensure_plan_docs=None, **fl
             "fighthealthinsurance.temporal_client.get_temporal_client",
             connect or AsyncMock(return_value=Mock()),
         ),
+        patch(_NAMESPACE_EXISTS, exists or AsyncMock(return_value=True)),
         patch(_ENSURE, ensure or AsyncMock(return_value="created")),
         patch(_ENSURE_PLAN_DOCS, ensure_plan_docs or AsyncMock(return_value="absent")),
         override_settings(**settings),
     ):
         asyncio.run(asyncio.wait_for(Command()._run(options), timeout=2))
-    return [c.kwargs for c in worker_cls.call_args_list]
+    return worker_cls.call_args_list
+
+
+def _run_capture(options, **kwargs):
+    """Each Worker's construction kwargs (see _run_calls)."""
+    return [c.kwargs for c in _run_calls(options, **kwargs)]
 
 
 def _run_with(role, **flags):
@@ -331,16 +349,11 @@ def test_fax_worker_slots_match_the_thread_executor():
     assert kwargs[0]["max_concurrent_activities"] == 7
 
 
-def test_alert_rules_use_the_workers_temporal_namespace_and_cover_worker_loss():
-    """Review-9: rules filtered on the Kubernetes namespace could never match
-    SDK series (which carry the Temporal namespace, 'default'); and worker-
-    side series vanish with the last worker, so worker-loss must be alerted
-    from scrape/kube-state data and server-side metrics."""
-    import pathlib
+def _worker_temporal_namespaces(tdir):
+    """The Temporal namespaces the worker manifests pin: the one both use,
+    and the research namespace the appeal worker hosts plan documents in."""
     import re
 
-    root = pathlib.Path(__file__).resolve().parents[2]
-    tdir = root / "k8s" / "temporal"
     configured = set()
     for name in ("worker.yaml", "appeal-worker.yaml"):
         text = (tdir / name).read_text()
@@ -348,21 +361,56 @@ def test_alert_rules_use_the_workers_temporal_namespace_and_cover_worker_loss():
         assert m, f"{name} must pin TEMPORAL_NAMESPACE"
         configured.add(m.group(1))
     assert len(configured) == 1
-    (ns,) = configured
+    research = re.search(
+        r'name: TEMPORAL_RESEARCH_NAMESPACE\s*\n\s*value: "([^"]+)"',
+        (tdir / "appeal-worker.yaml").read_text(),
+    )
+    assert research, "appeal-worker.yaml must pin TEMPORAL_RESEARCH_NAMESPACE"
+    return configured | {research.group(1)}
+
+
+def _matched_namespaces(label, expr):
+    """Each ``label="x"`` or ``label=~"x|y"`` matcher in a PromQL expr, as
+    the set of namespaces it matches."""
+    import re
+
+    return [
+        set(value.split("|")) if op == "=~" else {value}
+        for op, value in re.findall(rf'(?<![\w]){label}(=~|=)"([^"]+)"', expr)
+    ]
+
+
+def test_alert_rules_use_the_workers_temporal_namespaces_and_cover_worker_loss():
+    """Review-9: rules filtered on the Kubernetes namespace could never match
+    SDK series (which carry the Temporal namespace); and worker-side series
+    vanish with the last worker, so worker-loss must be alerted from
+    scrape/kube-state data and server-side metrics. Every rule covers both
+    namespaces the workers use, so the plan documents queue in the research
+    namespace stays covered."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    tdir = root / "k8s" / "temporal"
+    namespaces = _worker_temporal_namespaces(tdir)
+    assert len(namespaces) == 2
 
     rules = (tdir / "worker-alerts.yaml").read_text()
-    # Every Temporal-namespace matcher in a PromQL expr must be the configured
-    # one; the Kubernetes namespace may only appear as a kube_* label or in
-    # the manifest's own metadata.
+    # Every Temporal-namespace matcher in a PromQL expr must match exactly
+    # the configured ones; the Kubernetes namespace may only appear as a
+    # kube_* label or in the manifest's own metadata.
     exprs = re.findall(r"expr:\s*>-\s*\n((?:\s{12}.*\n)+)", rules)
     assert exprs, "no rule expressions parsed"
+    checked = 0
     for expr in exprs:
-        for label_ns in re.findall(r'(?<!kube_)\bnamespace="([^"]+)"', expr):
-            if "kube_deployment" in expr:
-                continue  # kube-state label: Kubernetes namespace is correct
+        if "kube_deployment" in expr:
+            continue  # kube-state label: Kubernetes namespace is correct
+        for matched in _matched_namespaces("namespace", expr):
+            checked += 1
             assert (
-                label_ns == ns
-            ), f"rule filters on Temporal namespace {label_ns!r}, workers use {ns!r}"
+                matched == namespaces
+            ), f"rule filters on Temporal namespaces {matched}, workers use {namespaces}"
+    assert checked, "no worker-side namespace matcher parsed"
     for needle in (
         "absent(up{",
         "kube_deployment_status_replicas_available",
@@ -389,8 +437,7 @@ def test_server_side_rules_read_the_temporal_namespace_the_service_monitors_rela
 
     root = pathlib.Path(__file__).resolve().parents[2]
     tdir = root / "k8s" / "temporal"
-    worker = (tdir / "worker.yaml").read_text()
-    ns = re.search(r'name: TEMPORAL_NAMESPACE\s*\n\s*value: "([^"]+)"', worker).group(1)
+    namespaces = _worker_temporal_namespaces(tdir)
 
     values = yaml.safe_load((tdir / "values.yaml").read_text())
     endpoint = values["server"]["config"]["metrics"]["prometheus"]
@@ -413,12 +460,11 @@ def test_server_side_rules_read_the_temporal_namespace_the_service_monitors_rela
     assert server_side["rules"], "no server-side rules"
     for rule in server_side["rules"]:
         expr = rule["expr"]
-        assert set(re.findall(r'\btemporal_namespace="([^"]+)"', expr)) == {ns}, (
-            rule["alert"]
-        )
-        assert not re.search(r'(?<![\w])namespace="', expr), (
-            f"{rule['alert']} matches the Kubernetes namespace label"
-        )
+        matchers = _matched_namespaces("temporal_namespace", expr)
+        assert matchers and all(m == namespaces for m in matchers), rule["alert"]
+        assert not re.search(
+            r'(?<![\w])namespace=~?"', expr
+        ), f"{rule['alert']} matches the Kubernetes namespace label"
 
 
 def test_the_no_poller_rule_also_fires_on_a_counter_whose_first_sample_is_its_first_count():
@@ -518,6 +564,7 @@ def _run_until_signal(role, sig, command=None, **flags):
             AsyncMock(return_value=Mock()),
         ),
         patch.object(cmd, "install_shutdown_handlers", _install_and_signal_ready),
+        patch(_NAMESPACE_EXISTS, AsyncMock(return_value=True)),
         patch(_ENSURE, AsyncMock(return_value="created")),
         patch(_ENSURE_PLAN_DOCS, AsyncMock(return_value="absent")),
         override_settings(**settings),
@@ -1062,10 +1109,14 @@ def test_the_appeal_manifest_names_the_policy_queue_and_leaves_the_flag_off():
 # --- The shared plan documents queue -------------------------------------------
 #
 # Hosted by the appeal-worker process (roles appeal and all) as a Worker of
-# its own, gated on TEMPORAL_ENABLED, TEMPORAL_PLAN_DOCUMENTS_ENABLED and a
-# TEMPORAL_PAYLOAD_KEY, independent of the journey and policy flags.
+# its own in the research namespace, gated on TEMPORAL_ENABLED,
+# TEMPORAL_PLAN_DOCUMENTS_ENABLED and a TEMPORAL_RESEARCH_PAYLOAD_KEY,
+# independent of the journey and policy flags.
 
-_PLAN_DOCS_ON = dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_PAYLOAD_KEY="k")
+_RESEARCH_KEY = Fernet.generate_key().decode()
+_PLAN_DOCS_ON = dict(
+    TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_RESEARCH_PAYLOAD_KEY=_RESEARCH_KEY
+)
 
 
 def test_appeal_role_with_only_plan_documents_on_hosts_only_their_queue():
@@ -1086,13 +1137,19 @@ def test_all_role_with_everything_on_hosts_every_queue():
 @pytest.mark.parametrize(
     "flags",
     [
-        dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_PAYLOAD_KEY=""),
-        dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=False, TEMPORAL_PAYLOAD_KEY="k"),
+        dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_RESEARCH_PAYLOAD_KEY=""),
+        dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_PAYLOAD_KEY="k"),
+        dict(
+            TEMPORAL_PLAN_DOCUMENTS_ENABLED=False,
+            TEMPORAL_RESEARCH_PAYLOAD_KEY=_RESEARCH_KEY,
+        ),
         dict(TEMPORAL_ENABLED=False, **_PLAN_DOCS_ON),
+        dict(TEMPORAL_PAYLOAD_KEY=_RESEARCH_KEY, **_PLAN_DOCS_ON),
     ],
 )
-def test_plan_documents_need_the_flag_temporal_and_the_payload_key(flags):
-    """Without all three the dark appeal role hosts nothing and idles."""
+def test_plan_documents_need_the_flag_temporal_and_the_research_key(flags):
+    """Without all three the dark appeal role hosts nothing and idles. A
+    research key the shared setting also holds counts as none."""
     with pytest.raises(asyncio.TimeoutError):
         _run_with("appeal", **{"TEMPORAL_APPEAL_JOURNEY_ENABLED": False, **flags})
 
@@ -1114,30 +1171,51 @@ def _warnings_at_start_up(role, **flags):
     [
         (
             "appeal",
-            dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_PAYLOAD_KEY=""),
-            True,
+            dict(
+                TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
+                TEMPORAL_RESEARCH_PAYLOAD_KEY="",
+                TEMPORAL_PAYLOAD_KEY="k",
+            ),
+            "TEMPORAL_RESEARCH_PAYLOAD_KEY is unset",
         ),
-        ("appeal", _PLAN_DOCS_ON, False),
         (
             "appeal",
-            dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=False, TEMPORAL_PAYLOAD_KEY=""),
-            False,
+            dict(TEMPORAL_PAYLOAD_KEY=_RESEARCH_KEY, **_PLAN_DOCS_ON),
+            "TEMPORAL_RESEARCH_PAYLOAD_KEY shares a key with TEMPORAL_PAYLOAD_KEY",
+        ),
+        ("appeal", _PLAN_DOCS_ON, None),
+        (
+            "appeal",
+            dict(
+                TEMPORAL_PLAN_DOCUMENTS_ENABLED=False, TEMPORAL_RESEARCH_PAYLOAD_KEY=""
+            ),
+            None,
         ),
         (
             "fax",
-            dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_PAYLOAD_KEY=""),
-            False,
+            dict(
+                TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_RESEARCH_PAYLOAD_KEY=""
+            ),
+            None,
         ),
     ],
 )
-def test_the_plan_documents_flag_without_the_payload_key_is_a_warning(
+def test_the_plan_documents_flag_without_a_usable_research_key_is_a_warning(
     role, flags, warned
 ):
     """The flag alone looks like it should turn the queue on, so the worker
     says why it stays dark."""
     lines = _warnings_at_start_up(role, **flags)
-    found = [line for line in lines if "TEMPORAL_PAYLOAD_KEY is unset" in line]
-    assert bool(found) is warned
+    found = [
+        line
+        for line in lines
+        if "TEMPORAL_PLAN_DOCUMENTS_ENABLED is on but" in line
+        and "so shared plan documents stay off" in line
+    ]
+    if warned is None:
+        assert found == []
+    else:
+        assert len(found) == 1 and warned in found[0]
 
 
 def test_the_fax_role_never_hosts_the_plan_documents_queue():
@@ -1221,14 +1299,31 @@ def test_the_appeal_manifest_names_the_plan_documents_queue_and_leaves_the_flag_
     assert m.group(1).startswith("fhi-")
     assert not re.search(r"name: TEMPORAL_PLAN_DOCUMENTS_ENABLED\b", text)
     assert not re.search(r"name: TEMPORAL_PAYLOAD_KEY\b", text)
+    assert not re.search(r"name: TEMPORAL_RESEARCH_PAYLOAD_KEY\b", text)
+    # The research namespace, pinned to the default the web pods use.
+    ns = re.search(r'name: TEMPORAL_RESEARCH_NAMESPACE\s*\n\s*value: "([^"]+)"', text)
+    assert ns, "appeal-worker.yaml must name the research namespace"
+    default_ns = re.search(r'"TEMPORAL_RESEARCH_NAMESPACE", "([^"]+)"', settings_src)
+    assert default_ns and ns.group(1) == default_ns.group(1) == "fhi-research"
 
 
 @pytest.mark.parametrize(
     "flags, expected",
     [
         (_PLAN_DOCS_ON, True),
-        (dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_PAYLOAD_KEY=""), False),
-        (dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=False, TEMPORAL_PAYLOAD_KEY="k"), False),
+        (
+            dict(
+                TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_RESEARCH_PAYLOAD_KEY=""
+            ),
+            False,
+        ),
+        (
+            dict(
+                TEMPORAL_PLAN_DOCUMENTS_ENABLED=False,
+                TEMPORAL_RESEARCH_PAYLOAD_KEY=_RESEARCH_KEY,
+            ),
+            False,
+        ),
     ],
 )
 def test_the_sweep_schedule_is_kept_in_step_after_connecting(flags, expected):
@@ -1281,3 +1376,156 @@ def test_a_failing_sweep_schedule_call_does_not_stop_hosting():
     assert [k["task_queue"] for k in kwargs] == ["q-plan-docs"]
     assert any("plan documents sweep" in line and "RuntimeError" in line for line in lines)
     assert not any(secret in line for line in lines)
+
+
+# --- The research namespace ------------------------------------------------------
+
+
+def test_the_plan_documents_worker_and_schedule_use_the_research_client():
+    """The research namespace, over the worker's one connection; every other
+    Worker and the chat policy Schedule keep the default client."""
+    from unittest.mock import AsyncMock, Mock
+
+    default = Mock(name="default-client")
+    connect = AsyncMock(return_value=default)
+    ensure_policy = AsyncMock(return_value="created")
+    ensure_plan_docs = AsyncMock(return_value="created")
+    calls = _run_calls(
+        {"queues": "all"},
+        connect=connect,
+        ensure=ensure_policy,
+        ensure_plan_docs=ensure_plan_docs,
+        TEMPORAL_CHAT_POLICY_ENABLED=True,
+        **_PLAN_DOCS_ON,
+    )
+    by_queue = {c.kwargs["task_queue"]: c.args[0] for c in calls}
+    research = by_queue.pop("q-plan-docs")
+    assert by_queue == {"q-fax": default, "q-appeal": default, "q-policy": default}
+    assert research.namespace == "test-research-ns"
+    assert research.service_client is default.service_client
+    assert research.data_converter.payload_codec is not None
+    assert ensure_plan_docs.await_args.args == (research,)
+    assert ensure_policy.await_args.args == (default,)
+    connect.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=False),
+        dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_RESEARCH_PAYLOAD_KEY=""),
+    ],
+)
+def test_with_plan_documents_off_no_connection_is_opened_for_them(flags):
+    """One connection, the worker's own; the research client only pauses
+    the Schedule over it."""
+    from unittest.mock import AsyncMock, Mock
+
+    default = Mock(name="default-client")
+    connect = AsyncMock(return_value=default)
+    ensure_plan_docs = AsyncMock(return_value="paused")
+    exists = AsyncMock(return_value=True)
+    with pytest.raises(asyncio.TimeoutError):
+        _run_calls(
+            {"queues": "appeal"},
+            connect=connect,
+            ensure_plan_docs=ensure_plan_docs,
+            exists=exists,
+            TEMPORAL_APPEAL_JOURNEY_ENABLED=False,
+            **flags,
+        )
+    connect.assert_awaited_once()
+    assert "profile" not in connect.await_args.kwargs
+    exists.assert_not_awaited()
+    (research,) = ensure_plan_docs.await_args.args
+    assert research.namespace == "test-research-ns"
+    assert research.service_client is default.service_client
+    assert ensure_plan_docs.await_args.kwargs == {"enabled": False}
+
+
+def test_a_missing_research_namespace_keeps_the_other_queues_running():
+    """A Worker in a namespace that does not exist fails as it starts and
+    would take the appeal Workers down with it, so the queue stays dark and
+    the worker says why."""
+    from unittest.mock import AsyncMock
+
+    from loguru import logger
+
+    ensure_plan_docs = AsyncMock(return_value="absent")
+    lines: list = []
+    sink = logger.add(lambda m: lines.append(str(m)), level="WARNING")
+    try:
+        kwargs = _run_capture(
+            {"queues": "appeal"},
+            ensure_plan_docs=ensure_plan_docs,
+            exists=AsyncMock(return_value=False),
+            **_PLAN_DOCS_ON,
+        )
+    finally:
+        logger.remove(sink)
+    assert [k["task_queue"] for k in kwargs] == ["q-appeal"]
+    assert ensure_plan_docs.await_args.kwargs == {"enabled": False}
+    assert any(
+        "'test-research-ns' does not exist" in line and "README" in line
+        for line in lines
+    )
+
+
+def test_a_missing_research_namespace_with_nothing_else_on_idles():
+    from unittest.mock import AsyncMock
+
+    with pytest.raises(asyncio.TimeoutError):
+        _run_capture(
+            {"queues": "appeal"},
+            exists=AsyncMock(return_value=False),
+            TEMPORAL_APPEAL_JOURNEY_ENABLED=False,
+            **_PLAN_DOCS_ON,
+        )
+
+
+def test_an_unchecked_research_namespace_leaves_the_schedule_alone():
+    """A failed check must not pause a Schedule another replica is hosting."""
+    from unittest.mock import AsyncMock
+
+    from loguru import logger
+
+    secret = "text that must not reach a log"
+    ensure_plan_docs = AsyncMock(return_value="paused")
+    lines: list = []
+    sink = logger.add(lambda m: lines.append(str(m)), level="DEBUG")
+    try:
+        kwargs = _run_capture(
+            {"queues": "appeal"},
+            ensure_plan_docs=ensure_plan_docs,
+            exists=AsyncMock(side_effect=RuntimeError(secret)),
+            **_PLAN_DOCS_ON,
+        )
+    finally:
+        logger.remove(sink)
+    assert [k["task_queue"] for k in kwargs] == ["q-appeal"]
+    ensure_plan_docs.assert_not_awaited()
+    assert any("could not be checked (RuntimeError)" in line for line in lines)
+    assert not any(secret in line for line in lines)
+
+
+def test_a_research_key_that_is_not_a_fernet_key_keeps_the_other_queues_running():
+    from unittest.mock import AsyncMock
+
+    ensure_plan_docs = AsyncMock(return_value="created")
+    kwargs = _run_capture(
+        {"queues": "appeal"},
+        ensure_plan_docs=ensure_plan_docs,
+        TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
+        TEMPORAL_RESEARCH_PAYLOAD_KEY="not-a-fernet-key",
+    )
+    assert [k["task_queue"] for k in kwargs] == ["q-appeal"]
+    ensure_plan_docs.assert_not_awaited()
+
+
+def test_sigterm_drains_the_plan_documents_worker_alongside_the_others():
+    import signal
+
+    calls = _run_until_signal(
+        "all", signal.SIGTERM, TEMPORAL_CHAT_POLICY_ENABLED=True, **_PLAN_DOCS_ON
+    )
+    assert sorted(calls) == ["q-appeal", "q-fax", "q-plan-docs", "q-policy"]

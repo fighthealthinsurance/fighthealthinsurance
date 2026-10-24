@@ -21,7 +21,8 @@ Worker of its own when TEMPORAL_CHAT_POLICY_ENABLED is on, and keeps the
 ``chat-routing-policy`` Schedule in step with that flag at start-up. It
 hosts the shared plan documents queue the same way when
 temporal_client.plan_documents_enabled() is true, and keeps the
-``plan-documents-sweep`` Schedule in step with it.
+``plan-documents-sweep`` Schedule in step with it, both in the research
+namespace through a client that shares this process's connection.
 """
 
 import asyncio
@@ -104,6 +105,54 @@ def app_metrics_server() -> str | None:
         )
         return None
     return bind
+
+
+async def plan_documents_client(client: Any, enabled: bool) -> tuple[Any, bool]:
+    """The client for shared plan documents, and whether to host their queue.
+
+    The client shares ``client``'s connection but works in the research
+    namespace with the research payload key. The queue is hosted only when
+    ``enabled`` and that namespace exists: a Worker in a missing namespace
+    fails as it starts and would take this process's other Workers down
+    with it. The client is None when it can't be made or the namespace
+    can't be checked, so the Schedule is left as it is rather than paused
+    under a replica that hosts it.
+    """
+    from fighthealthinsurance.temporal_client import (
+        RESEARCH_PROFILE,
+        client_for_profile,
+        namespace_exists,
+        temporal_namespace,
+    )
+
+    namespace = temporal_namespace(RESEARCH_PROFILE)
+    try:
+        research = client_for_profile(client, RESEARCH_PROFILE)
+    except Exception as e:
+        logger.warning(
+            f"Shared plan documents stay off: no client for the {namespace!r} "
+            f"namespace ({type(e).__name__})"
+        )
+        return None, False
+    if not enabled:
+        return research, False
+    try:
+        exists = await asyncio.wait_for(
+            namespace_exists(research), timeout=SCHEDULE_ENSURE_TIMEOUT_SECONDS
+        )
+    except Exception as e:
+        logger.warning(
+            f"Shared plan documents stay off until the next start: the "
+            f"{namespace!r} namespace could not be checked ({type(e).__name__})"
+        )
+        return None, False
+    if not exists:
+        logger.warning(
+            f"Shared plan documents stay off: the Temporal namespace {namespace!r} "
+            "does not exist yet (k8s/temporal/README.md says how to create it)"
+        )
+        return research, False
+    return research, True
 
 
 def install_shutdown_handlers(workers, stop, log, tasks=None) -> None:
@@ -261,6 +310,7 @@ class Command(BaseCommand):
             ensure_plan_documents_schedule,
             get_temporal_client,
             plan_documents_enabled,
+            research_payload_key_problem,
         )
         from fighthealthinsurance.workflows.generate_appeal import (
             GenerateAppealWorkflow,
@@ -316,21 +366,21 @@ class Command(BaseCommand):
         policy_enabled = chat_policy_schedule_enabled()
         policy_queue = settings.TEMPORAL_CHAT_POLICY_TASK_QUEUE
         hosts_policy = role in ("appeal", "all")
-        # Shared plan documents: the same shape as the policy, with a flag
-        # that also needs the payload key. --task-queue never changes it.
+        # Shared plan documents: like the policy, in the research namespace
+        # and needing the research key. --task-queue never changes it.
         plan_documents_on = plan_documents_enabled()
         plan_documents_queue = settings.TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE
         hosts_plan_documents = role in ("appeal", "all")
-        if (
-            hosts_plan_documents
-            and getattr(settings, "TEMPORAL_PLAN_DOCUMENTS_ENABLED", False)
-            and not getattr(settings, "TEMPORAL_PAYLOAD_KEY", "")
+        if hosts_plan_documents and getattr(
+            settings, "TEMPORAL_PLAN_DOCUMENTS_ENABLED", False
         ):
-            # The flag alone looks on; say why the queue stays dark.
-            logger.warning(
-                "TEMPORAL_PLAN_DOCUMENTS_ENABLED is on but TEMPORAL_PAYLOAD_KEY "
-                "is unset, so shared plan documents stay off"
-            )
+            problem = research_payload_key_problem()
+            if problem:
+                # The flag alone looks on; say why the queue stays dark.
+                logger.warning(
+                    f"TEMPORAL_PLAN_DOCUMENTS_ENABLED is on but {problem}, "
+                    "so shared plan documents stay off"
+                )
 
         # The connect is raced against stop: a SIGTERM that lands while the
         # connection is still pending must not be discarded (review), and a
@@ -346,13 +396,19 @@ class Command(BaseCommand):
             return
         stopped.cancel()
         client = connect.result()
+        research_client: Any = None
+        if hosts_plan_documents:
+            research_client, plan_documents_on = await plan_documents_client(
+                client, plan_documents_on
+            )
         self.stdout.write(
             f"Connected to Temporal at {settings.TEMPORAL_HOST} "
             f"(namespace={settings.TEMPORAL_NAMESPACE}); role={role}; appeal "
             f"journey {'ENABLED' if journey_enabled else 'disabled'}; chat "
             f"policy {'ENABLED' if policy_enabled and hosts_policy else 'disabled'}; "
             f"plan documents "
-            f"{'ENABLED' if plan_documents_on and hosts_plan_documents else 'disabled'}; "
+            f"{'ENABLED' if plan_documents_on and hosts_plan_documents else 'disabled'} "
+            f"(namespace={settings.TEMPORAL_RESEARCH_NAMESPACE}); "
             f"metrics {os.environ.get(METRICS_BIND_ENV) if runtime else 'off'}; "
             f"app metrics {app_metrics or 'off'}"
         )
@@ -373,12 +429,14 @@ class Command(BaseCommand):
                     "Could not keep the chat routing policy schedule in step: "
                     f"{type(e).__name__}"
                 )
-        if hosts_plan_documents:
-            # The same for the plan documents sweep: created or updated when
-            # the flags allow, paused when not, only where its queue is hosted.
+        if hosts_plan_documents and research_client is not None:
+            # The same for the sweep, in the research namespace: set when the
+            # flags allow, paused when not, only where its queue is hosted.
             try:
                 outcome = await asyncio.wait_for(
-                    ensure_plan_documents_schedule(client, enabled=plan_documents_on),
+                    ensure_plan_documents_schedule(
+                        research_client, enabled=plan_documents_on
+                    ),
                     timeout=SCHEDULE_ENSURE_TIMEOUT_SECONDS,
                 )
                 self.stdout.write(f"Plan documents sweep schedule: {outcome}")
@@ -501,7 +559,7 @@ class Command(BaseCommand):
                     workflow_registry.plan_documents_workflows()
                 )
                 plan_documents_worker = Worker(
-                    client,
+                    research_client,
                     task_queue=plan_documents_queue,
                     workflows=plan_documents_workflows,
                     activities=[
@@ -533,7 +591,8 @@ class Command(BaseCommand):
                     "and TEMPORAL_APPEAL_JOURNEY_ENABLED, "
                     "TEMPORAL_CHAT_POLICY_ENABLED or "
                     "TEMPORAL_PLAN_DOCUMENTS_ENABLED (with "
-                    "TEMPORAL_PAYLOAD_KEY) are set and the process restarts)."
+                    "TEMPORAL_RESEARCH_PAYLOAD_KEY) are set and the process "
+                    "restarts)."
                 )
                 await stop.wait()
                 return

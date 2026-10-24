@@ -251,11 +251,12 @@ class Base(Configuration):
         os.getenv("TEMPORAL_CHAT_POLICY_ENABLED", "false").lower() == "true"
     )
     # Reading shared plan documents (SharedPlanDocumentsWorkflow) and the
-    # hourly plan documents sweep, gated on their own. They take effect only
-    # with TEMPORAL_ENABLED and TEMPORAL_PAYLOAD_KEY also set, since these
-    # runs name shares of documents. With it on, the appeal-worker process
-    # hosts their queue and keeps the sweep's Schedule running, and the Ray
-    # email loop leaves the share page's reminders to the sweep.
+    # hourly plan documents sweep, gated on their own. They run in the
+    # research namespace and take effect only with TEMPORAL_ENABLED and
+    # TEMPORAL_RESEARCH_PAYLOAD_KEY also set, since these runs name shares
+    # of documents. With it on, the appeal-worker process hosts their queue
+    # and keeps the sweep's Schedule running, and the Ray email loop leaves
+    # the share page's reminders to the sweep.
     TEMPORAL_PLAN_DOCUMENTS_ENABLED = (
         os.getenv("TEMPORAL_PLAN_DOCUMENTS_ENABLED", "false").lower() == "true"
     )
@@ -506,6 +507,10 @@ class Base(Configuration):
     FHI_CHAT_JEV_GATE_DEMOTE_FAILED = _env_flag("FHI_CHAT_JEV_GATE_DEMOTE_FAILED", "1")
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
+    # Namespace for research runs (shared plan documents), apart from patient ones.
+    TEMPORAL_RESEARCH_NAMESPACE = os.getenv(
+        "TEMPORAL_RESEARCH_NAMESPACE", "fhi-research"
+    )
     TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")
     # Appeal generation runs on its own task queue so several slow
     # generations can never occupy the fax worker's activity slots
@@ -538,6 +543,8 @@ class Base(Configuration):
     # python -c "from cryptography.fernet import Fernet;
     # print(Fernet.generate_key().decode())".
     TEMPORAL_PAYLOAD_KEY = os.getenv("TEMPORAL_PAYLOAD_KEY", "")
+    # Fernet key(s) for the research namespace alone, rotated the same way.
+    TEMPORAL_RESEARCH_PAYLOAD_KEY = os.getenv("TEMPORAL_RESEARCH_PAYLOAD_KEY", "")
     TEMPORAL_TLS = os.getenv("TEMPORAL_TLS", "false").lower() == "true"
     TEMPORAL_CLIENT_CERT_PATH = os.getenv("TEMPORAL_CLIENT_CERT_PATH", "")
     TEMPORAL_CLIENT_KEY_PATH = os.getenv("TEMPORAL_CLIENT_KEY_PATH", "")

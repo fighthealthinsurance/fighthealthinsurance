@@ -386,7 +386,7 @@ class TheRayLoopLeavesRemindersToTheSweepTest(TestCase):
         with override_settings(
             TEMPORAL_ENABLED=True,
             TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
-            TEMPORAL_PAYLOAD_KEY="k",
+            TEMPORAL_RESEARCH_PAYLOAD_KEY="k",
         ):
             async_to_sync(actor._send_plan_documents_reminders)()
         actor.plan_documents_reminder_sender.afind_candidates.assert_not_awaited()
@@ -398,7 +398,8 @@ class TheRayLoopLeavesRemindersToTheSweepTest(TestCase):
                 with override_settings(
                     TEMPORAL_ENABLED=True,
                     TEMPORAL_PLAN_DOCUMENTS_ENABLED=not key,
-                    TEMPORAL_PAYLOAD_KEY=key,
+                    TEMPORAL_RESEARCH_PAYLOAD_KEY=key,
+                    TEMPORAL_PAYLOAD_KEY="shared",
                 ):
                     async_to_sync(actor._send_plan_documents_reminders)()
                 actor.plan_documents_reminder_sender.afind_candidates.assert_awaited_once()
