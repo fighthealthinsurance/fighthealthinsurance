@@ -554,10 +554,12 @@ async def _ensure_schedule(
     schedule_id: str,
     schedule: Callable[[], Any],
     enabled: bool,
-    flag: str,
+    off_note: str,
+    on_note: str,
 ) -> str:
     """Make the Schedule ``schedule_id`` match its flag. Idempotent, and
-    safe for several workers to run at once.
+    safe for several workers to run at once. ``off_note`` and ``on_note``
+    are the notes a pause and an unpause leave on it.
 
     * Enabled: create it; if it already exists, replace its spec, action and
       policy with ``schedule()`` and unpause it. Returns ``"created"`` or
@@ -577,7 +579,7 @@ async def _ensure_schedule(
     handle = client.get_schedule_handle(schedule_id)
     if not enabled:
         try:
-            await handle.pause(note=f"{flag} is off", rpc_timeout=rpc_timeout)
+            await handle.pause(note=off_note, rpc_timeout=rpc_timeout)
         except RPCError as e:
             if e.status == RPCStatusCode.NOT_FOUND:
                 return SCHEDULE_ABSENT
@@ -601,7 +603,7 @@ async def _ensure_schedule(
 
     await handle.update(_replace, rpc_timeout=rpc_timeout)
     if was_paused:
-        await handle.unpause(note=f"{flag} is on", rpc_timeout=rpc_timeout)
+        await handle.unpause(note=on_note, rpc_timeout=rpc_timeout)
     logger.info(f"Updated the {schedule_id} schedule")
     return SCHEDULE_UPDATED
 
@@ -614,7 +616,8 @@ async def ensure_chat_policy_schedule(client: Any, enabled: bool) -> str:
         CHAT_POLICY_SCHEDULE_ID,
         chat_policy_schedule,
         enabled,
-        "TEMPORAL_CHAT_POLICY_ENABLED",
+        off_note="TEMPORAL_CHAT_POLICY_ENABLED is off",
+        on_note="TEMPORAL_CHAT_POLICY_ENABLED is on",
     )
 
 
@@ -693,6 +696,10 @@ def dispatch_shared_plan_documents(share_batch: str) -> bool:
 # One Schedule, kept by the appeal-worker process at start-up and by
 # `manage.py ensure_temporal_schedules`, like the chat policy's.
 PLAN_DOCUMENTS_SCHEDULE_ID = "plan-documents-sweep"
+PLAN_DOCUMENTS_OFF_NOTE = (
+    "plan_documents_enabled() is false (it needs TEMPORAL_ENABLED, "
+    "TEMPORAL_PLAN_DOCUMENTS_ENABLED and TEMPORAL_PAYLOAD_KEY)"
+)
 # Scheduled runs get this id with the scheduled time appended by Temporal.
 PLAN_DOCUMENTS_SWEEP_WORKFLOW_ID = "plan-documents-sweep-run"
 # Hourly: a reminder goes within the hour it falls due, and a share whose
@@ -751,7 +758,9 @@ async def ensure_plan_documents_schedule(client: Any, enabled: bool) -> str:
         PLAN_DOCUMENTS_SCHEDULE_ID,
         plan_documents_schedule,
         enabled,
-        "TEMPORAL_PLAN_DOCUMENTS_ENABLED",
+        # The flag alone is not the whole condition.
+        off_note=PLAN_DOCUMENTS_OFF_NOTE,
+        on_note="plan_documents_enabled() is true",
     )
 
 

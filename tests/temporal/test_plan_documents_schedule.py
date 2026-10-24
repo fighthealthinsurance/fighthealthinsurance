@@ -118,7 +118,7 @@ def test_enabled_with_a_paused_schedule_updates_and_unpauses_it():
     assert client.updates == [plan_documents_schedule()]
     client.handle.unpause.assert_awaited_once()
     note = client.handle.unpause.await_args.kwargs["note"]
-    assert note == "TEMPORAL_PLAN_DOCUMENTS_ENABLED is on"
+    assert note == "plan_documents_enabled() is true"
 
 
 def test_disabled_pauses_the_schedule_and_never_creates_one():
@@ -128,8 +128,12 @@ def test_disabled_pauses_the_schedule_and_never_creates_one():
     )
     assert client.paused is True
     assert client.created == [] and client.updates == []
+    # The note names the whole condition, not the one flag.
     note = client.handle.pause.await_args.kwargs["note"]
-    assert note == "TEMPORAL_PLAN_DOCUMENTS_ENABLED is off"
+    assert note == (
+        "plan_documents_enabled() is false (it needs TEMPORAL_ENABLED, "
+        "TEMPORAL_PLAN_DOCUMENTS_ENABLED and TEMPORAL_PAYLOAD_KEY)"
+    )
 
 
 def test_disabled_with_no_schedule_does_nothing():

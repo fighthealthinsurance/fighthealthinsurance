@@ -1097,6 +1097,49 @@ def test_plan_documents_need_the_flag_temporal_and_the_payload_key(flags):
         _run_with("appeal", **{"TEMPORAL_APPEAL_JOURNEY_ENABLED": False, **flags})
 
 
+def _warnings_at_start_up(role, **flags):
+    from loguru import logger
+
+    lines: list = []
+    sink = logger.add(lambda m: lines.append(str(m)), level="WARNING")
+    try:
+        _run_capture({"queues": role}, **flags)
+    finally:
+        logger.remove(sink)
+    return lines
+
+
+@pytest.mark.parametrize(
+    "role, flags, warned",
+    [
+        (
+            "appeal",
+            dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_PAYLOAD_KEY=""),
+            True,
+        ),
+        ("appeal", _PLAN_DOCS_ON, False),
+        (
+            "appeal",
+            dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=False, TEMPORAL_PAYLOAD_KEY=""),
+            False,
+        ),
+        (
+            "fax",
+            dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_PAYLOAD_KEY=""),
+            False,
+        ),
+    ],
+)
+def test_the_plan_documents_flag_without_the_payload_key_is_a_warning(
+    role, flags, warned
+):
+    """The flag alone looks like it should turn the queue on, so the worker
+    says why it stays dark."""
+    lines = _warnings_at_start_up(role, **flags)
+    found = [line for line in lines if "TEMPORAL_PAYLOAD_KEY is unset" in line]
+    assert bool(found) is warned
+
+
 def test_the_fax_role_never_hosts_the_plan_documents_queue():
     assert _run_with("fax", **_PLAN_DOCS_ON) == ["q-fax"]
 

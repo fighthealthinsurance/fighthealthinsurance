@@ -321,6 +321,16 @@ class Command(BaseCommand):
         plan_documents_on = plan_documents_enabled()
         plan_documents_queue = settings.TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE
         hosts_plan_documents = role in ("appeal", "all")
+        if (
+            hosts_plan_documents
+            and getattr(settings, "TEMPORAL_PLAN_DOCUMENTS_ENABLED", False)
+            and not getattr(settings, "TEMPORAL_PAYLOAD_KEY", "")
+        ):
+            # The flag alone looks on; say why the queue stays dark.
+            logger.warning(
+                "TEMPORAL_PLAN_DOCUMENTS_ENABLED is on but TEMPORAL_PAYLOAD_KEY "
+                "is unset, so shared plan documents stay off"
+            )
 
         # The connect is raced against stop: a SIGTERM that lands while the
         # connection is still pending must not be discarded (review), and a

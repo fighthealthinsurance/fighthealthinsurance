@@ -441,7 +441,9 @@ the share page's 30-day reminders in place of the Ray email loop.
 
 - **Flag:** takes effect only with `TEMPORAL_ENABLED` and
   `TEMPORAL_PAYLOAD_KEY` also set, so these runs only ever exist in
-  encrypted history. It does not need the journey flags.
+  encrypted history. It does not need the journey flags. With the flag on
+  and no payload key, the worker logs a warning at start-up, and the paused
+  Schedule's note names all three settings.
 - **Where it runs:** the `fhi-appeal-worker` pods host the queue as a
   Worker of its own with one activity slot, so reading a file never takes
   an appeal generation's slot, and only one PDF child process (capped at
