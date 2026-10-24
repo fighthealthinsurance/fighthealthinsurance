@@ -144,16 +144,15 @@ def _phones(text: str) -> list[tuple[int, int]]:
     return spans
 
 
-def _overlaps_kept(span: tuple[int, int], kept: list[tuple[int, int]]) -> bool:
-    # kept is sorted and its spans never overlap, so only the one starting
-    # just before span's end can reach into it.
-    at = bisect.bisect_left(kept, (span[1], -1)) - 1
-    return at >= 0 and kept[at][1] > span[0]
+def _inside_kept(span: tuple[int, int], kept: list[tuple[int, int]]) -> bool:
+    # kept is sorted and disjoint, so only one span can hold it.
+    at = bisect.bisect_right(kept, span[0], key=lambda kept_span: kept_span[0]) - 1
+    return at >= 0 and kept[at][1] >= span[1]
 
 
 def removal_spans(text: str) -> list[tuple[int, int]]:
-    """Where :func:`scrub` replaces text: sorted, merged, and clear of the
-    plan facts it keeps."""
+    """Where :func:`scrub` replaces text: sorted and merged. A detail wholly
+    inside a plan fact it keeps stays; one that runs past it goes."""
     kept = _values(_KEPT_RULE, text)
     found = (
         _email_spans(text)
@@ -167,7 +166,7 @@ def removal_spans(text: str) -> list[tuple[int, int]]:
     )
     spans: list[tuple[int, int]] = []
     for span in sorted(found):
-        if _overlaps_kept(span, kept):
+        if _inside_kept(span, kept):
             continue
         if spans and span[0] <= spans[-1][1]:
             spans[-1] = (spans[-1][0], max(spans[-1][1], span[1]))

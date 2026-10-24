@@ -124,6 +124,20 @@ def test_plan_facts_are_kept(text):
     assert scrub(text) == text
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Email: rebecca.crumpler@plan.example.com", f"Email: {REMOVED}"),
+        (
+            "Home address: 12 Plan Street, Boston MA 02108",
+            f"Home address: {REMOVED}",
+        ),
+    ],
+)
+def test_a_detail_that_runs_past_a_plan_fact_is_removed(text, expected):
+    assert scrub(text) == expected
+
+
 def test_a_summary_of_benefits_keeps_its_facts_and_loses_the_person():
     text = (
         "Crumpler Mutual Health: Gold PPO\n"
