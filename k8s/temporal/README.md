@@ -479,13 +479,13 @@ the share page's 30-day reminders in place of the Ray email loop.
   namespace matchers include `fhi-research`.
 - **Turning it on,** in this order:
   1. Deploy, so migration 0248 has added the reading's columns.
-  2. Create the namespace, once, with a retention of 90 days, through the
+  2. Create the namespace, once, with a retention of 30 days, through the
      admin tools pod:
 
      ```sh
      kubectl -n totallylegitco exec -i deploy/temporal-admintools -- \
        temporal operator namespace create --address temporal-frontend:7233 \
-       --namespace fhi-research --retention 2160h
+       --namespace fhi-research --retention 720h
      ```
 
   3. Set `TEMPORAL_RESEARCH_PAYLOAD_KEY` (a new Fernet key) and
@@ -540,10 +540,9 @@ Workflow payloads are claim-check style by contract: opaque
 
 - **Retention is the storage bound.** The `default` namespace is created
   with `--retention 720h`, so closed-workflow histories are deleted by the
-  server after 30 days; `fhi-research` keeps them for 90 days
-  (`--retention 2160h`). History is a debugging window, not a data store
-  (the durable data lives in Django); raise it deliberately, not by
-  default.
+  server after 30 days, and `fhi-research` is created the same way.
+  History is a debugging window, not a data store (the durable data lives
+  in Django); raise it deliberately, not by default.
 - **Payload encryption.** Set `TEMPORAL_PAYLOAD_KEY` (a Fernet key) in the
   app/worker environment and every payload in `default` is encrypted
   client-side; `fhi-research` uses `TEMPORAL_RESEARCH_PAYLOAD_KEY` instead
