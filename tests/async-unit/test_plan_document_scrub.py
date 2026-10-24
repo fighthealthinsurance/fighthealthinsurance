@@ -166,3 +166,14 @@ def test_a_long_document_is_cleaned_quickly():
     assert time.monotonic() - started < 10
     assert "W123456789" not in cleaned and "617-555-0142" not in cleaned
     assert cleaned.count("1234567890") == text.count("1234567890")
+
+
+@pytest.mark.parametrize(
+    "label", ["Plan", "Group number", "Member ID", "Member name", "DOB", "SSN"]
+)
+def test_a_long_run_of_spaces_after_a_label_is_cleaned_quickly(label):
+    # Text pulled from a PDF table can hold long runs of spaces.
+    text = f"{label}{' ' * 20_000}!"
+    started = time.monotonic()
+    assert scrub(text) == text
+    assert time.monotonic() - started < 1

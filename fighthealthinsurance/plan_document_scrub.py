@@ -36,7 +36,8 @@ _FLAGS = re.IGNORECASE | re.MULTILINE
 # Spaces or tabs, never a line break: a label's value is on its own line.
 _SP = r"[^\S\n]"
 # What sits between a label and its value: spaces, then at most one of : # . -
-_SEP = rf"{_SP}*[:#.-]?{_SP}*"
+# Each run of spaces has one quantifier, so a long run cannot backtrack.
+_SEP = rf"{_SP}*(?:[:#.-]{_SP}*)?"
 _PERSON = (
     r"(?:member|patient|subscriber|insured|enrollee|employee|dependent"
     rf"|beneficiary|participant|policy{_SP}?holder)"
@@ -81,7 +82,7 @@ _NEXT_LABEL = r"(?i:(?!(?:dob|date|id|ssn|member|group|address|phone|plan|policy
 _CAPITALISED = r"[^\W\d_a-z][\w'.-]"
 _NAME_VALUE = rf"(?P<value>{_CAPITALISED}{{1,30}}(?:{_SP}{_NEXT_LABEL}{_CAPITALISED}{{0,30}}){{0,3}})"
 _NAME_RULE = re.compile(
-    rf"(?i:\b{_PERSON}(?:'s)?{_SP}+name{_SP}*:?|\b{_PERSON_ALONE}{_SP}*:"
+    rf"(?i:\b{_PERSON}(?:'s)?{_SP}+name(?:{_SP}*:)?|\b{_PERSON_ALONE}{_SP}*:"
     rf"|^{_SP}*name{_SP}*:){_SP}*{_NAME_VALUE}",
     re.MULTILINE,
 )
@@ -114,8 +115,8 @@ _ADDRESS_RULE = re.compile(
 
 # Plan facts kept even where they look like a phone number or an identifier.
 _KEPT_RULE = re.compile(
-    rf"\b(?:group|plan|policy|payer|rx{_SP}*(?:bin|pcn|grp|group))\b{_SP}*"
-    rf"{_NUMBER_WORD}?{_SEP}(?P<value>[a-z0-9-]{{1,30}})",
+    rf"\b(?:group|plan|policy|payer|rx{_SP}*(?:bin|pcn|grp|group))\b"
+    rf"(?:{_SP}*{_NUMBER_WORD})?{_SEP}(?P<value>[a-z0-9-]{{1,30}})",
     _FLAGS,
 )
 
