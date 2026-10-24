@@ -139,6 +139,16 @@ class TestParityTemplateRestsOnEnforcedLaw(unittest.TestCase):
         self.assertIn("29 CFR 2590.712(c)(4)(i)", paragraph)
         self.assertIn("45 CFR 146.136(c)(4)(i)", paragraph)
 
+    def test_letter_bans_limits_that_apply_only_to_mental_health_care(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "1. ")
+        self.assertIn("may not impose limits that apply only to this care", paragraph)
+        self.assertIn("29 U.S.C. § 1185a(a)(3)(A)(ii)", paragraph)
+        self.assertIn("42 U.S.C. § 300gg-26(a)(3)(A)(ii)", paragraph)
+
+    def test_letter_stays_short(self):
+        # It grew to almost 900 words; keep it readable.
+        self.assertLess(len(MentalHealthParityAppeal.static_appeal().split()), 600)
+
     def test_hint_pins_the_2013_test_to_paragraph_c_4_i(self):
         rule = [c for c in MentalHealthParityAppeal.citations if "2013" in c]
         self.assertEqual(len(rule), 1)
@@ -146,7 +156,7 @@ class TestParityTemplateRestsOnEnforcedLaw(unittest.TestCase):
 
     def test_claims_rule_applies_directly_only_to_erisa_plans(self):
         opening = _paragraph(
-            MentalHealthParityAppeal.static_appeal(), "I am formally appealing"
+            MentalHealthParityAppeal.static_appeal(), "I am appealing"
         )
         self.assertIn("private employer plans covered by ERISA", opening)
 
@@ -180,28 +190,27 @@ class TestParityTemplateRestsOnEnforcedLaw(unittest.TestCase):
 
 
 class TestParityLetterScopesCommercialRules(unittest.TestCase):
-    """The letter is picked before the plan type is known, so the ERISA,
-    PHSA and ACA duties are limited to the plans they bind and Medicaid and
-    Medicare Advantage readers are pointed to their own paragraph."""
+    """The letter is picked before the plan type is known, so each duty names its plans."""
 
     def test_opening_limits_parity_and_claims_rules_to_the_plans_they_bind(self):
         opening = _paragraph(
-            MentalHealthParityAppeal.static_appeal(), "I am formally appealing"
+            MentalHealthParityAppeal.static_appeal(), "I am appealing"
         )
         self.assertIn(
             "For most employer, individual, Marketplace, and state or local "
-            "government plans, federal mental health parity law and the federal "
-            "claims and appeals rules set the standards",
+            "government plans, federal parity law and the federal claims rule "
+            "govern this claim",
             opening,
         )
-        self.assertIn(
-            "paragraph 5 covers Medicaid managed care and Medicare Advantage plans",
-            opening,
+
+    def test_letter_has_no_paragraph_cross_references(self):
+        self.assertNotRegex(
+            MentalHealthParityAppeal.static_appeal(), r"(?i)\bparagraphs? \d"
         )
 
     def test_comparative_analysis_duty_is_limited_to_plans_under_mhpaea(self):
         paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "2. ")
-        self.assertIn("requires a plan subject to MHPAEA to perform", paragraph)
+        self.assertIn("A plan subject to MHPAEA must document", paragraph)
 
     def test_external_review_request_does_not_assume_a_commercial_plan(self):
         closing = _paragraph(
