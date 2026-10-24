@@ -287,6 +287,26 @@ class UnderstandPolicyForm(BaseConsentForm):
         return file
 
 
+class _OptionalDecimalField(forms.DecimalField):
+    """An optional amount whose invalid answer is dropped, not refused."""
+
+    def clean(self, value: Any) -> Any:
+        try:
+            return super().clean(value)
+        except forms.ValidationError:
+            return None
+
+
+class _OptionalChoiceField(forms.ChoiceField):
+    """An optional choice whose answer off the list is dropped, not refused."""
+
+    def clean(self, value: Any) -> Any:
+        try:
+            return super().clean(value)
+        except forms.ValidationError:
+            return ""
+
+
 class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
     """Plan documents shared for research. Only the files and the agreement
     are required: no name, and an email only so a removal request finds them."""
@@ -307,7 +327,6 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
     )
     # The most a premium can be, in dollars, however often it is paid.
     MAX_PREMIUM = 100_000
-    _PREMIUM_RANGE = f"Enter an amount from 0 to {MAX_PREMIUM:,} dollars."
 
     # Required is checked in clean_plan_documents: an empty list passes the field.
     plan_documents = MultipleFileField(
@@ -342,7 +361,9 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
         },
     )
     state = forms.ChoiceField(required=False, choices=(), label="State")
-    premium_amount = forms.DecimalField(
+    # A bad premium answer is dropped, never the share; the amount's limits
+    # still give the box its min, max and step, so the browser asks first.
+    premium_amount = _OptionalDecimalField(
         required=False,
         min_value=0,
         max_value=MAX_PREMIUM,
@@ -350,26 +371,16 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
         decimal_places=2,
         label="What you pay for the plan (your share of the premium), in dollars",
         help_text="If you know it. This helps us show what plans cost over time.",
-        error_messages={
-            "invalid": "Enter an amount in dollars, like 250 or 250.50.",
-            "min_value": _PREMIUM_RANGE,
-            "max_value": _PREMIUM_RANGE,
-            "max_digits": _PREMIUM_RANGE,
-            "max_whole_digits": _PREMIUM_RANGE,
-            "max_decimal_places": "Enter dollars and cents, like 250.50.",
-        },
     )
-    premium_period = forms.ChoiceField(
+    premium_period = _OptionalChoiceField(
         required=False,
         choices=[("", "Choose how often")] + PolicyDocument.PREMIUM_PERIOD_CHOICES,
         label="How often you pay it",
-        error_messages={"invalid_choice": "Choose how often from the list."},
     )
-    who_is_covered = forms.ChoiceField(
+    who_is_covered = _OptionalChoiceField(
         required=False,
         choices=[("", "Choose who it covers")] + PolicyDocument.WHO_IS_COVERED_CHOICES,
         label="Who the plan covers",
-        error_messages={"invalid_choice": "Choose who the plan covers from the list."},
     )
     email = forms.EmailField(
         required=False,

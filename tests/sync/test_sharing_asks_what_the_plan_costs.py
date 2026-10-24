@@ -1,12 +1,13 @@
 """The share page asks what the plan costs, if people know.
 
 Under "About the plan", three optional questions: what you pay for the plan,
-how often, and who it covers. Leaving any of them out never stops a share: an
-amount with no "how often" is kept with the period blank, and $0 is a real
-answer. Each file shared together keeps the same answers, a share that is
-asked to try again keeps them, staff see them in the admin, error reports
-leave them out, and remove-my-data takes them with the files. The opt-in
-boxes on other pages don't ask.
+how often, and who it covers. No answer to them ever stops a share: one left
+out is kept blank, an amount with no "how often" is kept with the period
+blank, an answer the checks can't use is dropped, and $0 is a real answer.
+Each file shared together keeps the same answers, a share that is asked to try
+again keeps them, staff see them in the admin, error reports leave them out,
+and remove-my-data takes them with the files. The opt-in boxes on other pages
+don't ask.
 """
 
 from decimal import Decimal
@@ -154,29 +155,24 @@ class ThePremiumIsKeptWithTheFilesTest(_PremiumTestCase):
         self.assertFalse(PolicyDocument.objects.exists())
 
 
-class ThePremiumIsCheckedTest(_PremiumTestCase):
-    def assertRefusedOn(self, field, response):
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(PolicyDocument.objects.count(), 0)
-        soup = self.soup(response)
-        note = soup.find(id=f"id_{field}_error")
-        self.assertTrue(note.get_text(strip=True))
-        # The section opens so the person sees what to fix.
-        self.assertTrue(soup.find("details", id="about-the-plan").has_attr("open"))
-        return note.get_text(strip=True)
+class ABadPremiumAnswerIsDroppedAndTheShareKeptTest(_PremiumTestCase):
+    def assertShared(self, response):
+        self.assertRedirects(response, self.url + "?shared=1")
+        return PolicyDocument.objects.get()
 
-    def test_an_amount_below_zero_is_refused(self):
+    def test_an_amount_below_zero_is_dropped_and_the_share_kept(self):
         response = self.share([pdf()], premium_amount="-5", premium_period="monthly")
-        self.assertEqual(
-            self.assertRefusedOn("premium_amount", response),
-            "Enter an amount from 0 to 100,000 dollars.",
-        )
+        doc = self.assertShared(response)
+        self.assertIsNone(doc.premium_amount)
+        self.assertEqual(doc.premium_period, "monthly")
 
-    def test_an_amount_over_the_limit_is_refused(self):
+    def test_an_amount_over_the_limit_is_dropped_and_the_share_kept(self):
         response = self.share(
             [pdf()], premium_amount="100000.01", premium_period="yearly"
         )
-        self.assertRefusedOn("premium_amount", response)
+        doc = self.assertShared(response)
+        self.assertIsNone(doc.premium_amount)
+        self.assertEqual(doc.premium_period, "yearly")
 
     def test_the_limit_itself_is_taken(self):
         response = self.share(
@@ -184,31 +180,47 @@ class ThePremiumIsCheckedTest(_PremiumTestCase):
             premium_amount=str(SharePlanDocumentsForm.MAX_PREMIUM),
             premium_period="yearly",
         )
-        self.assertRedirects(response, self.url + "?shared=1")
+        doc = self.assertShared(response)
+        self.assertEqual(doc.premium_amount, SharePlanDocumentsForm.MAX_PREMIUM)
 
-    def test_an_amount_that_isnt_a_number_is_refused(self):
+    def test_an_amount_that_isnt_a_number_is_dropped_and_the_share_kept(self):
         response = self.share([pdf()], premium_amount="lots", premium_period="monthly")
-        self.assertEqual(
-            self.assertRefusedOn("premium_amount", response),
-            "Enter an amount in dollars, like 250 or 250.50.",
-        )
+        doc = self.assertShared(response)
+        self.assertIsNone(doc.premium_amount)
+        self.assertEqual(doc.premium_period, "monthly")
 
-    def test_fractions_of_a_cent_are_refused(self):
+    def test_fractions_of_a_cent_are_dropped_and_the_share_kept(self):
         response = self.share(
             [pdf()], premium_amount="250.505", premium_period="monthly"
         )
-        self.assertRefusedOn("premium_amount", response)
+        doc = self.assertShared(response)
+        self.assertIsNone(doc.premium_amount)
+        self.assertEqual(doc.premium_period, "monthly")
 
-
-    def test_a_how_often_not_on_the_list_is_refused(self):
+    def test_a_how_often_not_on_the_list_is_dropped_and_the_share_kept(self):
         response = self.share(
             [pdf()], premium_amount="250", premium_period="every_full_moon"
         )
-        self.assertRefusedOn("premium_period", response)
+        doc = self.assertShared(response)
+        self.assertEqual(doc.premium_amount, Decimal("250"))
+        self.assertEqual(doc.premium_period, "")
 
-    def test_a_who_it_covers_not_on_the_list_is_refused(self):
-        response = self.share([pdf()], who_is_covered="the_neighbours")
-        self.assertRefusedOn("who_is_covered", response)
+    def test_a_who_it_covers_not_on_the_list_is_dropped_and_the_share_kept(self):
+        response = self.share(
+            [pdf()], premium_amount="250", who_is_covered="the_neighbours"
+        )
+        doc = self.assertShared(response)
+        self.assertEqual(doc.premium_amount, Decimal("250"))
+        self.assertEqual(doc.who_is_covered, "")
+
+    def test_the_amount_box_still_asks_the_browser_to_check_it(self):
+        # So people can fix an amount before they send it.
+        soup = self.soup(self.client.get(self.url))
+        amount = soup.find("input", attrs={"name": "premium_amount"})
+        self.assertEqual(
+            (amount["type"], amount["min"], amount["max"], amount["step"]),
+            ("number", "0", "100000", "0.01"),
+        )
 
 
 class ThePremiumIsKeptWhenAskedToTryAgainTest(_PremiumTestCase):
