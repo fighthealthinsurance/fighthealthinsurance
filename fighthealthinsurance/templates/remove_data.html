@@ -10,6 +10,7 @@ Delete Your Data
         {% include "partials/page_title.html" with title="Delete your Data" %}
         <p>We take several steps to protect your data privacy. You can learn more about our <a href="{% url 'privacy_policy' %}" target="_blank" rel="noopener noreferrer">privacy practices in our privacy policy.</a></p>
             <p>To help us delete your data, please provide the email address you used. We'll send a confirmation link to verify your request.</p>
+        <p id="shared-plan-documents-deletion">If you shared plan documents with us for research, we delete those files. What we've learned about the plan, like what kind of plan it is, stays, because it describes the plan, not you.</p>
         {% if error %}
         <div class="fhi-notice fhi-notice-danger" role="alert">
             {{ error }}

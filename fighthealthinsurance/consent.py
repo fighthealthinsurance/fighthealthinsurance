@@ -44,7 +44,7 @@ BOXES: dict[str, str] = {
 # The agreement to share plan documents for research, on the share page and
 # as the opt-in box on Explain Policy and the appeal's plan documents step.
 # Give SHARING_VERSION a new date whenever any of these words change.
-SHARING_VERSION = datetime.date(2026, 10, 23)
+SHARING_VERSION = datetime.date(2026, 10, 24)
 _SHARING_BODY = (
     "We combine them with documents from other people to learn how plans "
     "work, and we share what we learn publicly. AI models read them, including "
@@ -63,7 +63,8 @@ SHARING_OPT_IN_TERMS = (
     "If you tick the box, you agree to share a copy of these documents, and "
     "what you've told us about the plan, with Fight Health Insurance. "
     + _SHARING_BODY
-    + " If you ask us to delete your data, we delete this copy too."
+    + " If you ask us to delete your data, we delete this copy too. What we've "
+    "learned about the plan stays, because it describes the plan, not you."
 )
 SHARING_OPT_IN_CHECKBOX = "Yes, also share a copy with Fight Health Insurance."
 

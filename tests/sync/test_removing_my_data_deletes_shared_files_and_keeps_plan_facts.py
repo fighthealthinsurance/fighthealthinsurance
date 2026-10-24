@@ -9,20 +9,25 @@ describe the plan, not the person, and the row is marked removed so no
 reading writes to it again. Who the plan covers and how often it is paid
 stay only with the premium they describe. A row with no fact about the plan
 is deleted whole. Other people's shares, shares given with no email, and the
-person's own Explain Policy upload are handled as before.
+person's own Explain Policy upload are handled as before. Every page that
+says what a removal request does with shared documents says this.
 """
 
 from decimal import Decimal
 from unittest.mock import patch
 
+from bs4 import BeautifulSoup
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.forms.models import model_to_dict
 from django.test import TestCase
+from django.urls import reverse
 from django.utils import timezone
 
-from fighthealthinsurance import shared_plan_documents
+from fighthealthinsurance import consent, shared_plan_documents
+from fighthealthinsurance.chat_forms import SharePlanDocumentsForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.models import (
+    DeleteToken,
     Denial,
     InsuranceCompany,
     InsurancePlan,
@@ -244,3 +249,49 @@ class EveryFieldIsDecidedTest(TestCase):
         fields = {field.name for field in PolicyDocument._meta.concrete_fields}
         self.assertEqual(decided, fields)
 
+
+# What the remove-data pages say about shared plan documents.
+REMOVE_DATA_NOTE = (
+    "If you shared plan documents with us for research, we delete those files. "
+    "What we've learned about the plan, like what kind of plan it is, stays, "
+    "because it describes the plan, not you."
+)
+DASHES = ("\u2014", "\u2013")
+
+
+class TheCopySaysWhatIsDeletedAndWhatStaysTest(TestCase):
+    def note(self, response):
+        soup = BeautifulSoup(response.content, "html.parser")
+        return soup.find(id="shared-plan-documents-deletion").get_text(strip=True)
+
+    def test_the_remove_data_page_says_it(self):
+        response = self.client.get(reverse("remove_data"))
+        self.assertEqual(self.note(response), REMOVE_DATA_NOTE)
+
+    def test_the_confirmation_page_says_it(self):
+        email = "rebecca.crumpler@example.com"
+        token = DeleteToken.objects.create(hashed_email=Denial.get_hashed_email(email))
+        response = self.client.get(
+            reverse("confirm_delete_data"), {"token": token.token, "email": email}
+        )
+        self.assertEqual(self.note(response), REMOVE_DATA_NOTE)
+
+    def test_the_share_pages_email_hint_says_it(self):
+        self.assertEqual(
+            SharePlanDocumentsForm().fields["email"].help_text,
+            "We keep only a scrambled form of it, so we can find these files if "
+            "you ask us to delete them. What we've learned about the plan, like "
+            "what it costs, stays, because it describes the plan, not you. We "
+            "can't use your email to write to you.",
+        )
+
+    def test_none_of_it_uses_a_long_dash(self):
+        words = (
+            REMOVE_DATA_NOTE,
+            str(SharePlanDocumentsForm().fields["email"].help_text),
+            consent.SHARING_OPT_IN_TERMS,
+        )
+        for text in words:
+            for dash in DASHES:
+                with self.subTest(text=text[:40], dash=dash):
+                    self.assertNotIn(dash, text)

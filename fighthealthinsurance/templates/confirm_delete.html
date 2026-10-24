@@ -9,6 +9,7 @@ Confirm Data Deletion
     <div class="fhi-page fhi-page-centred">
         {% include "partials/page_title.html" with title="Confirm Data Deletion" %}
         <p>You are about to permanently delete all data associated with <strong>{{ email }}</strong>.</p>
+        <p id="shared-plan-documents-deletion">If you shared plan documents with us for research, we delete those files. What we've learned about the plan, like what kind of plan it is, stays, because it describes the plan, not you.</p>
         <p>This action cannot be undone.</p>
         <form class="fhi-stack" action="{% url 'confirm_delete_data' %}" method="post">
             {% csrf_token %}

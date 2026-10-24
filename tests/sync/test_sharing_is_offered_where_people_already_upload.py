@@ -135,8 +135,10 @@ class TheBoxIsOfferedUntickedAndStandsOutTest(TestCase):
             more.find(id="share-for-research-who-reads").get_text(" ", strip=True),
             "We keep the files encrypted. Our team and AI models, including "
             "outside services, read them with documents from many other people, "
-            "and we share what we learn publicly. You can ask us to delete your "
-            "data at any time, and we delete the copy too.",
+            "and we share what we learn publicly. If you ask us to delete your "
+            "data, we delete your files, including this copy. What we've learned "
+            "about the plan, like what kind of plan it is, stays, because it "
+            "describes the plan, not you.",
         )
         link = more.find("a", id="share-for-research-read-more")
         self.assertEqual(
@@ -209,11 +211,14 @@ class TheBoxIsOfferedUntickedAndStandsOutTest(TestCase):
         self.assertIn(body, terms)
         self.assertTrue(
             terms.endswith(
-                "If you ask us to delete your data, we delete this copy too."
+                "If you ask us to delete your data, we delete this copy too. "
+                "What we've learned about the plan stays, because it describes "
+                "the plan, not you."
             )
         )
         for words in (terms, consent.SHARING_OPT_IN_CHECKBOX):
             self.assertNotIn("\u2014", words)
+            self.assertNotIn("\u2013", words)
 
 
 class ExplainPolicyTest(_UploadsTestCase):

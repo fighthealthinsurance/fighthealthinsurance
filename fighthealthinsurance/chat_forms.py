@@ -388,7 +388,9 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
         label="Your email",
         help_text=(
             "We keep only a scrambled form of it, so we can find these files "
-            "if you ask us to delete them. We can't use it to write to you."
+            "if you ask us to delete them. What we've learned about the plan, "
+            "like what it costs, stays, because it describes the plan, not "
+            "you. We can't use your email to write to you."
         ),
     )
     agree = forms.BooleanField(
