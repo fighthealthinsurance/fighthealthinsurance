@@ -31,6 +31,65 @@ def test_identifiers_after_their_labels_are_removed(text, expected):
 @pytest.mark.parametrize(
     "text, expected",
     [
+        ("Medicare Number: 1EG4-TE5-MK73", f"Medicare Number: {REMOVED}"),
+        ("MBI: 1EG4-TE5-MK73", f"MBI: {REMOVED}"),
+        ("Medicare ID 1EG4TE5MK73", f"Medicare ID {REMOVED}"),
+        ("Medicaid ID #: 123456789012", f"Medicaid ID #: {REMOVED}"),
+        ("Cardholder ID: W123456789", f"Cardholder ID: {REMOVED}"),
+        ("Cardholder Name: Rebecca Lee Crumpler", f"Cardholder Name: {REMOVED}"),
+        ("Beneficiary: Rebecca Lee Crumpler", f"Beneficiary: {REMOVED}"),
+        ("Recipient ID: 12345678901", f"Recipient ID: {REMOVED}"),
+        ("Recipient: Mary Eliza Mahoney", f"Recipient: {REMOVED}"),
+        ("ID Number: W123456789", f"ID Number: {REMOVED}"),
+        ("Identification Number: 123456789", f"Identification Number: {REMOVED}"),
+        ("ID# W123 456 789", f"ID# {REMOVED}"),
+        (
+            "Group 0012345   ID# W123 456 789",
+            f"Group 0012345   ID# {REMOVED}",
+        ),
+        ("Patient Account Number: 000123456", f"Patient Account Number: {REMOVED}"),
+        ("Patient Account #: A123456", f"Patient Account #: {REMOVED}"),
+    ],
+)
+def test_medicare_medicaid_card_and_account_numbers_are_removed(text, expected):
+    assert scrub(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Policy Number: XYZ 123 456", f"Policy Number: {REMOVED}"),
+        ("Policy number: 5551234567", f"Policy number: {REMOVED}"),
+        ("Policy #: 0012345", f"Policy #: {REMOVED}"),
+        ("Policy ID 00123456789", f"Policy ID {REMOVED}"),
+        ("Policy: W123456789", f"Policy: {REMOVED}"),
+        ("Claim Number: 2026ABC123", f"Claim Number: {REMOVED}"),
+    ],
+)
+def test_policy_and_claim_numbers_are_removed(text, expected):
+    # On a plan bought alone, a policy number can point to one person.
+    assert scrub(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Plan ID Number: 12345MA0010001",
+        "Group ID #: 0012345",
+        "RxBIN: 610014 RxPCN: MEDDPRIME RxGRP: RX1234",
+        "Payer ID: 12345",
+        "ERISA plan number: 501",
+        "Policy year: 2026",
+        "Policy period: 01/01/2026 - 12/31/2026",
+    ],
+)
+def test_plan_numbers_next_to_the_new_labels_are_kept(text):
+    assert scrub(text) == text
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
         ("Patient: Rebecca Lee Crumpler", f"Patient: {REMOVED}"),
         ("Member name: Elizabeth Blackwell", f"Member name: {REMOVED}"),
         ("PATIENT NAME: MARY SEACOLE", f"PATIENT NAME: {REMOVED}"),
@@ -153,7 +212,6 @@ def test_toll_free_numbers_are_kept(number):
     [
         "Group Number: 1234567890",
         "Group #: 0042-77",
-        "Policy number: 5551234567",
         "Plan name: Crumpler Gold PPO",
         "Plan ID 12345MA0010001",
         "Employer: Lee Crumpler Clinic",
@@ -231,6 +289,7 @@ def test_a_long_document_is_cleaned_quickly():
 
 LONG_RUN_LABELS = [
     "Plan",
+    "Plan ID",
     "Group number",
     "Member ID",
     "Member name",
@@ -239,6 +298,14 @@ LONG_RUN_LABELS = [
     "SSN",
     "Home address:",
     "Name:",
+    "Medicare Number",
+    "MBI",
+    "ID#",
+    "ID Number",
+    "Patient Account",
+    "Policy",
+    "Cardholder Name",
+    "ID# W123",
 ]
 
 
@@ -254,8 +321,8 @@ def test_a_long_run_of_spaces_after_a_label_is_cleaned_quickly(label, gap):
     started = time.monotonic()
     cleaned = scrub(text)
     assert time.monotonic() - started < 1
-    # Only a lone "!" after a label and its colon can be taken for a value.
-    assert cleaned in (text, text[:-1] + REMOVED)
+    # The run itself is never taken for a value.
+    assert gap in cleaned
 
 
 def test_a_long_run_of_spaces_inside_a_surname_first_name_is_cleaned_quickly():
