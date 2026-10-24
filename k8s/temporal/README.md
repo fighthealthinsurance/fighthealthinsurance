@@ -447,9 +447,16 @@ the share page's 30-day reminders in place of the Ray email loop.
   an appeal generation's slot. The reader threads and child processes are
   its own too. The fax worker never hosts it. The `fhi-.*` queue alerts in
   `worker-alerts.yaml` cover it with no change.
-- **Turning it on:** set the flag in the shared secret, which the web pods
-  and the workers both read, then restart `fhi-appeal-worker`: a worker
-  reads its flags only at start-up.
+- **Turning it on:** deploy first, so migration 0248 has added the
+  reading's columns. Then set the flag in the shared
+  `fight-health-insurance-secret`, next to `TEMPORAL_ENABLED` and
+  `TEMPORAL_PAYLOAD_KEY`, and restart `fhi-appeal-worker`, the web pods and
+  the Ray pods: each reads the secret only when it starts. The worker then
+  hosts the queue and creates the Schedule, the web pods start readings,
+  and the Ray email loop stops sending the share page's reminders. Shares
+  saved while it was off are still waiting, and the sweep reads up to 50 of
+  them an hour. To turn it off, set the flag to false and restart the same
+  pods; the worker pauses the Schedule.
 - **Retries:** a reading gets three tries; after that the row is marked
   unreadable, and staff still have the original file.
 - **The sweep Schedule:** id `plan-documents-sweep`; an interval of one
