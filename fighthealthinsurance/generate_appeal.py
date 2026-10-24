@@ -238,8 +238,9 @@ class SpecializedDenialTemplate(object):
             "When writing the appeal, ground the argument in the following "
             "authorities and cite them by name where they support the patient's "
             f"position:\n{bullets}\n"
-            "Where an authority is marked for certain plans only, cite it only "
-            "when the patient's plan is one of them.\n"
+            "Where an authority is marked for certain plans or benefits only, "
+            "cite it only when the patient's plan and the denied benefit are "
+            "among them.\n"
             f"{notes}"
             "Do not fabricate case numbers, regulatory paragraphs, or quote text "
             "you cannot verify; cite the laws/rules by name and section only."
@@ -258,9 +259,11 @@ _CLAIMS_RULE_CITATION = (
     "(paragraph (h)(3)(iii))"
 )
 
-# CMS's algorithm guidance binds Medicare Advantage plans only.
+# CMS's algorithm guidance binds Medicare Advantage Part A and B benefits only.
 _MEDICARE_ADVANTAGE_ONLY_CITATION = (
-    "Medicare Advantage plans only: 42 CFR 422.101(c)(1)(i) (medical necessity "
+    "Medicare Advantage plans only, for Part A and Part B benefits, not Part D "
+    "prescription drugs (those follow 42 CFR Part 423, Subpart M): "
+    "42 CFR 422.101(c)(1)(i) (medical necessity "
     "decisions must rest on the enrollee's medical history, physician "
     "recommendations, and clinical notes), 422.101(b)(6) (internal coverage "
     "criteria must be public, with their supporting evidence), 422.566(d) and "
@@ -273,9 +276,21 @@ _MEDICARE_ADVANTAGE_ONLY_CITATION = (
 )
 
 
-def _automated_review_paragraph(number: int, tool: str) -> str:
+def _automated_review_paragraph(number: int, tool: str, drug: bool = False) -> str:
     """The letter's request about automated tools, worded to hold for
     commercial plans and Medicare Advantage alike."""
+    # Part 422 covers Part B drugs; Part D drugs follow Part 423.
+    ma_scope = (
+        "For a Part B drug covered by a Medicare Advantage plan"
+        if drug
+        else "For a Medicare Advantage plan"
+    )
+    part_d = (
+        " A denial under a Medicare Advantage plan's Part D prescription drug "
+        "benefit follows separate rules (42 CFR Part 423, Subpart M)."
+        if drug
+        else ""
+    )
     return (
         f"{number}. Automated review tools. If {tool} was used in deciding "
         "this claim, please identify it and provide its output, the criteria "
@@ -284,12 +299,13 @@ def _automated_review_paragraph(number: int, tool: str) -> str:
         "making the decision are part of the claim file, and the denial must "
         "explain, or provide on request, the clinical judgment applied to the "
         "patient's circumstances (29 CFR 2560.503-1(g)(1)(v)(B) and (m)(8); "
-        "45 CFR 147.136). For a Medicare Advantage plan, the decision must "
+        f"45 CFR 147.136). {ma_scope}, the decision must "
         "rest on the patient's medical history, the treating physician's "
         "recommendations, and the clinical notes (42 CFR 422.101(c)(1)(i)), "
         "and CMS has told Medicare Advantage plans that an algorithm may "
         "assist with, but cannot replace, that individual assessment (CMS "
-        "memo to Medicare Advantage organizations, February 6, 2024).\n\n"
+        f"memo to Medicare Advantage organizations, February 6, 2024).{part_d}"
+        "\n\n"
     )
 
 
@@ -360,9 +376,12 @@ class MentalHealthParityAppeal(SpecializedDenialTemplate):
             "Dear {insurance_company},\n\n"
             "I am formally appealing the denial of coverage for {procedure} "
             "(diagnosis: {diagnosis}). This denial concerns mental health or "
-            "substance use disorder services, so federal mental health parity "
-            "law and the federal claims and appeals rules set the standards "
-            "for deciding it. The claims rule cited below, 29 CFR 2560.503-1, "
+            "substance use disorder services. For most employer, individual, "
+            "Marketplace, and state or local government plans, federal mental "
+            "health parity law and the federal claims and appeals rules set "
+            "the standards for deciding it, as paragraphs 1 to 4 explain; "
+            "paragraph 5 covers Medicaid managed care and Medicare Advantage "
+            "plans. The claims rule cited below, 29 CFR 2560.503-1, "
             "applies to employer plans directly and to most individual and "
             "state or local government plans through 45 CFR 147.136.\n\n"
             "1. Mental Health Parity and Addiction Equity Act (MHPAEA). "
@@ -384,7 +403,8 @@ class MentalHealthParityAppeal(SpecializedDenialTemplate):
             "(29 U.S.C. § 1185a(a)(3)(A)(ii); "
             "42 U.S.C. § 300gg-26(a)(3)(A)(ii)).\n\n"
             "2. Request for the parity comparative analysis and criteria. "
-            "Federal law requires the plan to perform and document a "
+            "Federal law requires a plan subject to MHPAEA to perform and "
+            "document a "
             "comparative analysis of each nonquantitative treatment limitation "
             "it applies to mental health or substance use disorder benefits "
             "(29 U.S.C. § 1185a(a)(8); 42 U.S.C. § 300gg-26(a)(8)). Please "
@@ -433,16 +453,19 @@ class MentalHealthParityAppeal(SpecializedDenialTemplate):
             "decided by someone with appropriate clinical expertise who was "
             "not involved in the original decision (42 CFR 438.406(b)(2)). If "
             "my coverage is a Medicare Advantage plan, federal parity law does "
-            "not apply, but the decision must rest on my medical history, my "
-            "physician's recommendations, and my clinical notes, and an appeal "
-            "of a medical necessity denial must be decided by a physician with "
-            "appropriate expertise (42 CFR 422.101(c)(1)(i) and "
-            "422.590(h)(2)).\n\n"
+            "not apply. For a service or a Part B drug, the decision must rest "
+            "on my medical history, my physician's recommendations, and my "
+            "clinical notes, and an appeal of a medical necessity denial must "
+            "be decided by a physician with appropriate expertise "
+            "(42 CFR 422.101(c)(1)(i) and 422.590(h)(2)). A denial under the "
+            "plan's Part D prescription drug benefit follows separate rules "
+            "(42 CFR Part 423, Subpart M).\n\n"
             "I respectfully request that you (a) overturn this denial, "
             "(b) send the comparative analysis, criteria, and documents listed "
             "above, (c) tell me in writing what role, if any, an automated "
             "tool played in this decision, and (d) if the denial is upheld, "
-            "tell me how to request an independent external review "
+            "tell me the next level of review available to me, including any "
+            "independent external review my plan must offer "
             "(45 CFR 147.136; 29 CFR 2590.715-2719).\n\n"
             "Sincerely,\n[Name]\n"
         )
@@ -558,7 +581,7 @@ class SpecialtyMedicationAppeal(SpecializedDenialTemplate):
             "internal rule, guideline, protocol, or similar criterion that "
             "was used. Generic 'not medically necessary' language without "
             "this disclosure does not satisfy the regulation.\n\n"
-            + _automated_review_paragraph(3, "an automated tool")
+            + _automated_review_paragraph(3, "an automated tool", drug=True)
             + "I respectfully request that the denial be overturned and the "
             "medication authorized without further delay.\n\n"
             "Sincerely,\n[Name]\n"
@@ -789,7 +812,7 @@ class GLP1WeightLossAppeal(SpecializedDenialTemplate):
             "stabilized on this therapy, I request continuity-of-care "
             "protection so that treatment is not interrupted during this "
             "appeal.\n\n"
-            + _automated_review_paragraph(4, "an automated tool")
+            + _automated_review_paragraph(4, "an automated tool", drug=True)
             + "I respectfully request that the denial be overturned and the "
             "medication authorized without further delay.\n\n"
             "Sincerely,\n[Name]\n"

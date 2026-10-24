@@ -155,6 +155,41 @@ class TestParityTemplateRestsOnEnforcedLaw(unittest.TestCase):
         self.assertNotIn("\u2014", MentalHealthParityAppeal.static_appeal())
 
 
+class TestParityLetterScopesCommercialRules(unittest.TestCase):
+    """The letter is picked before the plan type is known, so the ERISA,
+    PHSA and ACA duties are limited to the plans they bind and Medicaid and
+    Medicare Advantage readers are pointed to their own paragraph."""
+
+    def test_opening_limits_parity_and_claims_rules_to_the_plans_they_bind(self):
+        opening = _paragraph(
+            MentalHealthParityAppeal.static_appeal(), "I am formally appealing"
+        )
+        self.assertIn(
+            "For most employer, individual, Marketplace, and state or local "
+            "government plans, federal mental health parity law and the federal "
+            "claims and appeals rules set the standards",
+            opening,
+        )
+        self.assertIn(
+            "paragraph 5 covers Medicaid managed care and Medicare Advantage plans",
+            opening,
+        )
+
+    def test_comparative_analysis_duty_is_limited_to_plans_under_mhpaea(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "2. ")
+        self.assertIn("requires a plan subject to MHPAEA to perform", paragraph)
+
+    def test_external_review_request_does_not_assume_a_commercial_plan(self):
+        closing = _paragraph(
+            MentalHealthParityAppeal.static_appeal(), "I respectfully request"
+        )
+        self.assertIn(
+            "the next level of review available to me, including any "
+            "independent external review my plan must offer",
+            closing,
+        )
+
+
 class TestAdvancedImagingAppealMatches(unittest.TestCase):
     def test_matches_mri_in_text(self):
         self.assertTrue(
@@ -389,6 +424,33 @@ class TestAlgorithmGuidanceIsMedicareAdvantageOnly(unittest.TestCase):
             with self.subTest(template=cls.__name__):
                 self.assertRegex(text, r"(?i)automated (?:review )?tool")
                 self.assertIn("29 CFR 2560.503-1", text)
+
+    def test_medicare_advantage_citations_exclude_part_d_drugs(self):
+        checked = 0
+        for cls in SPECIALIZED_DENIAL_TEMPLATES:
+            for citation in cls.citations:
+                if citation.startswith("Medicare Advantage plans only"):
+                    checked += 1
+                    with self.subTest(template=cls.__name__):
+                        self.assertIn(
+                            "for Part A and Part B benefits, not Part D", citation
+                        )
+        self.assertGreater(checked, 0)
+
+    def test_drug_letters_apply_part_422_only_to_part_b_drugs(self):
+        # Part 422 and the CMS memo cover Part A and B benefits only.
+        for cls in (
+            MentalHealthParityAppeal,
+            SpecialtyMedicationAppeal,
+            GLP1WeightLossAppeal,
+        ):
+            text = cls.static_appeal()
+            with self.subTest(template=cls.__name__):
+                self.assertIn("42 CFR Part 423, Subpart M", text)
+            for sentence in re.split(r"(?<=\.)\s", text):
+                if "422.101" in sentence:
+                    with self.subTest(template=cls.__name__, text=sentence[:60]):
+                        self.assertIn("Part B drug", sentence)
 
 
 class TestMatchingFlags(unittest.TestCase):
