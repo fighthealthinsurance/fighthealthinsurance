@@ -172,6 +172,8 @@ class SpecializedDenialTemplate(object):
     diagnosis_patterns: tuple[str, ...] = ()
     negative_patterns: tuple[str, ...] = ()
     citations: tuple[str, ...] = ()
+    # Extra instructions for the model, after the citation list.
+    prompt_notes: tuple[str, ...] = ()
 
     # IGNORECASE for forgiving matching across denial-letter prose;
     # DOTALL so `.*` between key phrases (used in multi-keyword patterns
@@ -230,14 +232,45 @@ class SpecializedDenialTemplate(object):
     @classmethod
     def model_prompt_hint(cls) -> str:
         bullets = "\n".join(f"- {c}" for c in cls.citations)
+        notes = "".join(f"{n}\n" for n in cls.prompt_notes)
         return (
             f"This denial appears to involve {cls.name}. "
             "When writing the appeal, ground the argument in the following "
             "authorities and cite them by name where they support the patient's "
             f"position:\n{bullets}\n"
+            "Where an authority is marked for certain plans only, cite it only "
+            "when the patient's plan is one of them.\n"
+            f"{notes}"
             "Do not fabricate case numbers, regulatory paragraphs, or quote text "
             "you cannot verify; cite the laws/rules by name and section only."
         )
+
+
+# Authority for asking how a commercial plan decided a claim.
+_CLAIMS_RULE_CITATION = (
+    "Federal claims and appeals rules, 29 CFR 2560.503-1 (employer plans) and "
+    "45 CFR 147.136 (most individual and state or local government plans): "
+    "the internal rule or guideline relied on and the clinical judgment "
+    "applied to the patient's circumstances (paragraph (g)(1)(v)); free access "
+    "to all relevant documents, including those generated in deciding the "
+    "claim (paragraphs (h)(2)(iii) and (m)(8)); and, on appeal, consultation "
+    "with a health care professional with appropriate training and experience "
+    "(paragraph (h)(3)(iii))"
+)
+
+# CMS's algorithm guidance binds Medicare Advantage plans only.
+_MEDICARE_ADVANTAGE_ONLY_CITATION = (
+    "Medicare Advantage plans only: 42 CFR 422.101(c)(1)(i) (medical necessity "
+    "decisions must rest on the enrollee's medical history, physician "
+    "recommendations, and clinical notes), 422.101(b)(6) (internal coverage "
+    "criteria must be public, with their supporting evidence), 422.566(d) and "
+    "422.590(h)(2) (review of a medical necessity denial by a physician or "
+    "other appropriate health care professional), as amended by CMS-4201-F, "
+    "the Contract Year 2024 Medicare Advantage final rule (88 FR 22120, "
+    "April 12, 2023); CMS memo to Medicare Advantage organizations, "
+    "February 6, 2024 (an algorithm may assist with, but cannot replace, "
+    "that individual assessment)"
+)
 
 
 class MentalHealthParityAppeal(SpecializedDenialTemplate):
@@ -260,15 +293,44 @@ class MentalHealthParityAppeal(SpecializedDenialTemplate):
         r"ptsd|adhd|autism|substance\s+use\s+disorder|alcohol\s+use\s+disorder|"
         r"eating\s+disorder|anorexia|bulimia)\b",
     )
+    # Statute and 2013 rule only; the 2024 rule's new parts go unenforced.
     citations = (
-        "Mental Health Parity and Addiction Equity Act of 2008 (MHPAEA), "
-        "29 U.S.C. § 1185a",
-        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
-        "in coverage determinations",
-        "Affordable Care Act Essential Health Benefits, "
-        "42 U.S.C. § 18022(b)(1)(E) (mental health and substance use disorder services)",
-        "Department of Labor 2024 MHPAEA Final Rules on Nonquantitative Treatment "
-        "Limitations (NQTLs)",
+        "Mental Health Parity and Addiction Equity Act (MHPAEA): ERISA § 712, "
+        "29 U.S.C. § 1185a (private employer plans); Public Health Service Act "
+        "§ 2726, 42 U.S.C. § 300gg-26 (individual and Marketplace coverage, "
+        "insured group coverage, and state and local government plans)",
+        "MHPAEA 2013 final rule, 29 CFR 2590.712, 45 CFR 146.136, and "
+        "45 CFR 147.160: nonquantitative treatment limitations must be "
+        "comparable to, and applied no more stringently than, those for "
+        "medical/surgical benefits, as written and in operation (paragraph "
+        "(c)(4)); medical necessity criteria and the reason for a denial must "
+        "be available on request (paragraph (d))",
+        "MHPAEA comparative analysis requirement added by the Consolidated "
+        "Appropriations Act, 2021: ERISA § 712(a)(8), 29 U.S.C. § 1185a(a)(8); "
+        "PHSA § 2726(a)(8), 42 U.S.C. § 300gg-26(a)(8); participants may "
+        "request the analyses (Departments of Labor, HHS, and the Treasury, "
+        "FAQs about Mental Health and Substance Use Disorder Parity "
+        "Implementation and the Consolidated Appropriations Act, 2021, Part 45, "
+        "Q6, April 2, 2021; for employer plans, also ERISA § 104(b)(4), "
+        "29 U.S.C. § 1024(b)(4))",
+        _CLAIMS_RULE_CITATION,
+        "ACA essential health benefits, for non-grandfathered individual and "
+        "small-group coverage only: 42 U.S.C. § 18022(b)(1)(E); "
+        "42 U.S.C. § 300gg-6(a); 45 CFR 156.110(a)(5) and 156.115(a)(4)",
+        "Medicaid managed care plans only: 42 CFR 438.910(d) and 438.915 "
+        "(parity and disclosure of criteria); 42 CFR 438.210(b)(3) and "
+        "438.406(b)(2) and (b)(5) (clinical expertise for denials and appeals; "
+        "free case file)",
+        _MEDICARE_ADVANTAGE_ONLY_CITATION,
+    )
+    prompt_notes = (
+        "Do not cite the 2024 MHPAEA final rule (89 FR 77586, September 23, "
+        "2024) as a source of obligations: on May 15, 2025 the Departments of "
+        "Labor, HHS, and the Treasury said they will not enforce its provisions "
+        "that are new relative to the 2013 rule. Rely on the statute, as "
+        "amended by the Consolidated Appropriations Act, 2021, and the 2013 "
+        "rule.",
+        "MHPAEA does not apply to Medicare, including Medicare Advantage.",
     )
 
     @classmethod
@@ -277,38 +339,91 @@ class MentalHealthParityAppeal(SpecializedDenialTemplate):
             "Re: Appeal of denied behavioral-health claim {claim_id}\n\n"
             "Dear {insurance_company},\n\n"
             "I am formally appealing the denial of coverage for {procedure} "
-            "(diagnosis: {diagnosis}). Because this denial concerns mental "
-            "health or substance use disorder services, it is governed by "
-            "behavioral-health parity protections that the carrier must satisfy "
-            "before any adverse determination can stand.\n\n"
-            "1. Mental Health Parity and Addiction Equity Act (MHPAEA, "
-            "29 U.S.C. § 1185a). Any nonquantitative treatment limitation "
-            "(NQTL) applied here — including medical-necessity criteria, "
-            "prior-authorization rules, fail-first/step-therapy protocols, "
-            "concurrent review, network composition, or reimbursement "
-            "methodology — must be no more restrictive in writing or in "
-            "operation than the comparable NQTLs applied to medical/surgical "
-            "benefits in the same classification. Please produce the "
-            "comparative analysis required by ERISA § 712(a)(8) and the "
-            "2024 DOL Final Rules for the NQTL relied upon in this denial.\n\n"
-            "2. CMS 2024 Final Rule on algorithmic coverage determinations. "
-            "If an algorithm, predictive model, or AI tool contributed to "
-            "this denial, the determination must still rest on an "
-            "individualized clinical assessment by a qualified human reviewer "
-            "applying the patient's full clinical picture; the algorithm may "
-            "not be the sole basis for the adverse decision. Please disclose "
-            "whether such a tool was used, identify it, and provide the "
-            "human reviewer's clinical reasoning.\n\n"
-            "3. Affordable Care Act Essential Health Benefits "
-            "(42 U.S.C. § 18022(b)(1)(E)). Mental health and substance use "
-            "disorder services, including behavioral-health treatment, are "
-            "designated essential health benefits and may not be effectively "
-            "excluded by NQTLs that are more restrictive than those used on "
-            "the medical/surgical side.\n\n"
+            "(diagnosis: {diagnosis}). This denial concerns mental health or "
+            "substance use disorder services, so federal mental health parity "
+            "law and the federal claims and appeals rules set the standards "
+            "for deciding it. The claims rule cited below, 29 CFR 2560.503-1, "
+            "applies to employer plans directly and to most individual and "
+            "state or local government plans through 45 CFR 147.136.\n\n"
+            "1. Mental Health Parity and Addiction Equity Act (MHPAEA). "
+            "MHPAEA applies to most employer group health plans (ERISA § 712, "
+            "29 U.S.C. § 1185a) and to individual, Marketplace, and state and "
+            "local government plans (Public Health Service Act § 2726, "
+            "42 U.S.C. § 300gg-26). When a plan covers mental health or "
+            "substance use disorder benefits, it may not apply a "
+            "nonquantitative treatment limitation to them, such as medical "
+            "necessity criteria, prior authorization, concurrent review, step "
+            "therapy, or standards for admitting providers to its network, "
+            "unless the processes, strategies, evidentiary standards, and "
+            "other factors behind that limitation are comparable to, and "
+            "applied no more stringently than, those used for medical and "
+            "surgical benefits in the same classification, both as written "
+            "and in operation (29 CFR 2590.712(c)(4); 45 CFR 146.136(c)(4)). "
+            "The plan also may not impose treatment limitations that apply "
+            "only to mental health or substance use disorder benefits "
+            "(29 U.S.C. § 1185a(a)(3)(A)(ii); "
+            "42 U.S.C. § 300gg-26(a)(3)(A)(ii)).\n\n"
+            "2. Request for the parity comparative analysis and criteria. "
+            "Federal law requires the plan to perform and document a "
+            "comparative analysis of each nonquantitative treatment limitation "
+            "it applies to mental health or substance use disorder benefits "
+            "(29 U.S.C. § 1185a(a)(8); 42 U.S.C. § 300gg-26(a)(8)). Please "
+            "send me, free of charge: (a) the comparative analysis for each "
+            "limitation relied on in this denial; (b) the medical necessity "
+            "criteria used for my claim and the criteria used for comparable "
+            "medical and surgical benefits (29 U.S.C. § 1185a(a)(4); "
+            "29 CFR 2590.712(d)); and (c) any internal rule, guideline, or "
+            "protocol relied on, and all other documents, records, and "
+            "information relevant to my claim (29 CFR 2560.503-1(g)(1)(v) and "
+            "(h)(2)(iii)). Federal guidance confirms that these documents "
+            "include any analysis the plan performed of how the limitation "
+            "complies with MHPAEA (Departments of Labor, Health and Human "
+            "Services, and the Treasury, FAQs Part 45, Q6, April 2, 2021). If "
+            "my plan is an employer plan covered by ERISA, please also treat "
+            "this letter as a written request for plan documents under "
+            "ERISA § 104(b)(4), 29 U.S.C. § 1024(b)(4), and forward it to the "
+            "plan administrator if that is not you.\n\n"
+            "3. Individual clinical review and automated tools. A denial based "
+            "on medical necessity must include, or provide free of charge on "
+            "request, an explanation of the scientific or clinical judgment "
+            "for the decision, applying the terms of the plan to my medical "
+            "circumstances (29 CFR 2560.503-1(g)(1)(v)(B)); I request that "
+            "explanation. In deciding this appeal, the plan must consult a "
+            "health care professional with appropriate training and "
+            "experience in the relevant field of medicine and must identify "
+            "any medical experts whose advice it obtained (29 CFR "
+            "2560.503-1(h)(3)(iii) and (iv)). Please tell me whether an "
+            "algorithm, predictive model, or other automated tool was used in "
+            "reviewing my claim. If one was, please identify it and provide "
+            "its output and the criteria it applied, since documents "
+            "generated in making the decision are part of my claim file "
+            "(29 CFR 2560.503-1(m)(8)). Please also tell me the name and "
+            "specialty of the clinician who reviewed my records.\n\n"
+            "4. Essential health benefits. If my coverage is a "
+            "non-grandfathered individual, Marketplace, or small-group plan, "
+            "mental health and substance use disorder services, including "
+            "behavioral health treatment, are an essential health benefit the "
+            "plan must cover (42 U.S.C. § 18022(b)(1)(E); "
+            "42 U.S.C. § 300gg-6(a); 45 CFR 156.110(a)(5)), and that coverage "
+            "must meet the parity requirements described above "
+            "(45 CFR 156.115(a)(4)).\n\n"
+            "5. Medicaid and Medicare Advantage plans. If my coverage is a "
+            "Medicaid managed care plan, parity and disclosure rules apply "
+            "through 42 CFR 438.910 and 438.915, and my appeal must be "
+            "decided by someone with appropriate clinical expertise who was "
+            "not involved in the original decision (42 CFR 438.406(b)(2)). If "
+            "my coverage is a Medicare Advantage plan, federal parity law does "
+            "not apply, but the decision must rest on my medical history, my "
+            "physician's recommendations, and my clinical notes, and an appeal "
+            "of a medical necessity denial must be decided by a physician with "
+            "appropriate expertise (42 CFR 422.101(c)(1)(i) and "
+            "422.590(h)(2)).\n\n"
             "I respectfully request that you (a) overturn this denial, "
-            "(b) provide the MHPAEA NQTL comparative analysis for the "
-            "criterion applied, and (c) confirm in writing what role, if any, "
-            "an algorithm or AI tool played in the determination.\n\n"
+            "(b) send the comparative analysis, criteria, and documents listed "
+            "above, (c) tell me in writing what role, if any, an automated "
+            "tool played in this decision, and (d) if the denial is upheld, "
+            "tell me how to request an independent external review "
+            "(45 CFR 147.136; 29 CFR 2590.715-2719).\n\n"
             "Sincerely,\n[Name]\n"
         )
 

@@ -63,7 +63,7 @@ class TestMentalHealthParityAppealMatches(unittest.TestCase):
         text = MentalHealthParityAppeal.static_appeal()
         self.assertIn("MHPAEA", text)
         self.assertIn("29 U.S.C. § 1185a", text)
-        self.assertIn("CMS 2024 Final Rule", text)
+        self.assertIn("42 U.S.C. § 300gg-26", text)
         self.assertIn("42 U.S.C. § 18022(b)(1)(E)", text)
 
     def test_static_appeal_uses_substitution_placeholders(self):
@@ -77,8 +77,81 @@ class TestMentalHealthParityAppealMatches(unittest.TestCase):
     def test_model_prompt_hint_includes_citations(self):
         hint = MentalHealthParityAppeal.model_prompt_hint()
         self.assertIn("MHPAEA", hint)
-        self.assertIn("CMS 2024 Final Rule", hint)
+        self.assertIn("Medicare Advantage plans only", hint)
         self.assertIn("Mental Health Parity", hint)
+
+
+# Signs the text leans on the 2024 MHPAEA rule's new provisions.
+_PARITY_2024_RULE_MARKERS = (
+    r"89 FR 77586",
+    r"2024[^.;]*(?:MHPAEA|[Pp]arity|NQTL|DOL)",
+    r"(?:MHPAEA|[Pp]arity|NQTL|DOL)[^.;]*2024",
+    r"2590\.712-1|146\.137|54\.9812-2",
+    r"no more restrictive",
+    r"meaningful benefit",
+    r"material difference",
+    r"network composition",
+)
+
+
+def _paragraph(text, start):
+    """The letter paragraph that begins with ``start``."""
+    for paragraph in text.split("\n\n"):
+        if paragraph.startswith(start):
+            return paragraph
+    raise AssertionError(f"no paragraph starts with {start!r}")
+
+
+class TestParityTemplateRestsOnEnforcedLaw(unittest.TestCase):
+    """On May 15, 2025 the Departments said they will not enforce the 2024
+    MHPAEA rule's new provisions, so the letter and the model's citations
+    rest on the statute and the 2013 rule."""
+
+    def test_letter_and_citations_do_not_rely_on_the_2024_rule(self):
+        texts = (MentalHealthParityAppeal.static_appeal(),)
+        texts += MentalHealthParityAppeal.citations
+        for text in texts:
+            for marker in _PARITY_2024_RULE_MARKERS:
+                with self.subTest(marker=marker, text=text[:60]):
+                    self.assertNotRegex(text, marker)
+
+    def test_hint_names_the_2024_rule_only_to_rule_it_out(self):
+        hint = MentalHealthParityAppeal.model_prompt_hint()
+        self.assertIn("Do not cite the 2024 MHPAEA final rule", hint)
+        self.assertIn("May 15, 2025", hint)
+
+    def test_letter_cites_the_statute_for_employer_and_individual_plans(self):
+        text = MentalHealthParityAppeal.static_appeal()
+        self.assertIn("ERISA § 712, 29 U.S.C. § 1185a", text)
+        self.assertIn("Public Health Service Act § 2726, 42 U.S.C. § 300gg-26", text)
+
+    def test_letter_asks_for_the_statutory_comparative_analysis(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "2. ")
+        self.assertIn("comparative analysis", paragraph)
+        self.assertIn("29 U.S.C. § 1185a(a)(8)", paragraph)
+        self.assertIn("42 U.S.C. § 300gg-26(a)(8)", paragraph)
+        self.assertIn("FAQs Part 45, Q6", paragraph)
+
+    def test_letter_uses_the_2013_rule_standard(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "1. ")
+        self.assertIn("comparable to, and applied no more stringently than", paragraph)
+        self.assertIn("29 CFR 2590.712(c)(4)", paragraph)
+
+    def test_essential_health_benefits_are_limited_to_the_plans_they_bind(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "4. ")
+        self.assertIn("42 U.S.C. § 18022(b)(1)(E)", paragraph)
+        self.assertIn("non-grandfathered individual, Marketplace, or small-group", paragraph)
+        ehb = [c for c in MentalHealthParityAppeal.citations if "18022" in c]
+        self.assertEqual(len(ehb), 1)
+        self.assertIn("non-grandfathered individual and small-group", ehb[0])
+
+    def test_letter_says_parity_law_does_not_reach_medicare_advantage(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "5. ")
+        self.assertIn("Medicare Advantage plan, federal parity law does not apply", paragraph)
+        self.assertIn("42 CFR 438.910", paragraph)
+
+    def test_letter_has_no_em_dashes(self):
+        self.assertNotIn("\u2014", MentalHealthParityAppeal.static_appeal())
 
 
 class TestAdvancedImagingAppealMatches(unittest.TestCase):
