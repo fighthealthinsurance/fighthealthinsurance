@@ -160,6 +160,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="staff_policy_document_text",
     ),
     path(
+        "timbit/help/policy_documents/<uuid:pk>/cleaned_text",
+        staff_member_required(staff_views.PolicyDocumentCleanedTextView.as_view()),
+        name="staff_policy_document_cleaned_text",
+    ),
+    path(
         "timbit/help/policy_documents/<uuid:pk>/download",
         staff_member_required(staff_views.PolicyDocumentDownloadView.as_view()),
         name="staff_policy_document_download",

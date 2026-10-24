@@ -238,6 +238,15 @@ class PolicyDocumentDownloadView(View):
 _NOTHING_RUNS = "default-src 'none'; sandbox"
 
 
+def _plain_text(body: str) -> HttpResponse:
+    """``body`` as plain text that a browser shows and never runs."""
+    response = HttpResponse(body, content_type="text/plain; charset=utf-8")
+    response["Content-Security-Policy"] = _NOTHING_RUNS
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Content-Disposition"] = "inline"
+    return response
+
+
 @method_decorator(never_cache, name="dispatch")
 class PolicyDocumentTextView(View):
     """A policy document's text, for staff reviewing it, as plain text that
@@ -272,13 +281,7 @@ class PolicyDocumentTextView(View):
         header = f"Policy document {pk} ({ext or 'no extension'})\n"
         if note:
             header += f"{note}\n"
-        response = HttpResponse(
-            header + "\n" + text, content_type="text/plain; charset=utf-8"
-        )
-        response["Content-Security-Policy"] = _NOTHING_RUNS
-        response["X-Content-Type-Options"] = "nosniff"
-        response["Content-Disposition"] = "inline"
-        return response
+        return _plain_text(header + "\n" + text)
 
     def _text(self, ext: str, content: bytes) -> tuple[str, str]:
         """The file's text and a note about it, such as that it was cut short."""
@@ -345,6 +348,44 @@ class PolicyDocumentTextView(View):
                 f"Only the first {self.MAX_CHARS:,} characters are shown."
             )
         return text, note
+
+
+@method_decorator(never_cache, name="dispatch")
+class PolicyDocumentCleanedTextView(View):
+    """A shared policy document's cleaned text: what its reading stored,
+    with personal details taken out as best we could
+    (plan_documents_processing). Served like the text view, as plain text
+    that can't run anything. Routed behind staff_member_required."""
+
+    NOTES = {
+        PolicyDocument.PROCESSING_RECEIVED: "Not read yet.",
+        PolicyDocument.PROCESSING_UNREADABLE: (
+            "No text could be read from this file. It may be scanned pages. "
+            "Download the original."
+        ),
+    }
+
+    def get(self, request, pk) -> HttpResponseBase:
+        doc = (
+            PolicyDocument.objects.filter(
+                pk=pk, source__in=PolicyDocument.SHARED_SOURCES
+            )
+            .only("pk", "processing_status", "processed_at", "cleaned_text")
+            .first()
+        )
+        if doc is None:
+            raise Http404("No shared policy document by that id")
+        logger.info(
+            f"Staff user {request.user.pk} read policy document {pk}'s cleaned text"
+        )
+        status = doc.get_processing_status_display() or "Not read"
+        header = f"Policy document {pk}, cleaned text\nStatus: {status}\n"
+        if doc.processed_at:
+            header += f"Read: {doc.processed_at:%Y-%m-%d %H:%M} UTC\n"
+        note = self.NOTES.get(doc.processing_status, "")
+        if note:
+            header += f"{note}\n"
+        return _plain_text(header + "\n" + doc.cleaned_text)
 
 
 class StaffDashboardView(generic.TemplateView):

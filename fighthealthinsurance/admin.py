@@ -1272,13 +1272,20 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "source",
         "document_type",
         "plan_category",
+        "processing_status",
         "created_at",
         "file",
     )
-    list_filter = ("source", "document_type", "plan_category", "created_at")
+    list_filter = (
+        "source",
+        "processing_status",
+        "document_type",
+        "plan_category",
+        "created_at",
+    )
     search_fields = ("filename", "hashed_email", "insurer_name", "employer_name")
-    # Staff reach the file through the links below, never the raw field, and
-    # the cleaned text, which runs long, is never a form field either.
+    # Staff reach the file and its cleaned text through the links below,
+    # never the raw fields; the cleaned text runs long.
     exclude = ("document_enc", "cleaned_text")
     readonly_fields = (
         "id",
@@ -1311,11 +1318,19 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         # Text first: reading it opens nothing a stranger made.
         if not obj.pk or not obj.document_enc:
             return "-"
-        return format_html(
+        links = format_html(
             '<a href="{}">Read as text</a> or <a href="{}">download the original</a>',
             reverse("staff_policy_document_text", kwargs={"pk": obj.pk}),
             reverse("staff_policy_document_download", kwargs={"pk": obj.pk}),
         )
+        if obj.processing_status == PolicyDocument.PROCESSING_READY:
+            # The cleaned text first: it has personal details taken out.
+            links = format_html(
+                '<a href="{}">Read the cleaned text</a>, {}',
+                reverse("staff_policy_document_cleaned_text", kwargs={"pk": obj.pk}),
+                links,
+            )
+        return links
 
 
 @admin.register(PolicyDocumentAnalysis)
