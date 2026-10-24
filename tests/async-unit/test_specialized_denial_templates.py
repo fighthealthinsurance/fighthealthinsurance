@@ -136,7 +136,31 @@ class TestParityTemplateRestsOnEnforcedLaw(unittest.TestCase):
     def test_letter_uses_the_2013_rule_standard(self):
         paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "1. ")
         self.assertIn("comparable to, and applied no more stringently than", paragraph)
-        self.assertIn("29 CFR 2590.712(c)(4)", paragraph)
+        self.assertIn("29 CFR 2590.712(c)(4)(i)", paragraph)
+        self.assertIn("45 CFR 146.136(c)(4)(i)", paragraph)
+
+    def test_hint_pins_the_2013_test_to_paragraph_c_4_i(self):
+        rule = [c for c in MentalHealthParityAppeal.citations if "2013" in c]
+        self.assertEqual(len(rule), 1)
+        self.assertIn("(paragraph (c)(4)(i))", rule[0])
+
+    def test_claims_rule_applies_directly_only_to_erisa_plans(self):
+        opening = _paragraph(
+            MentalHealthParityAppeal.static_appeal(), "I am formally appealing"
+        )
+        self.assertIn("private employer plans covered by ERISA", opening)
+
+    def test_criteria_request_cites_both_disclosure_rules(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "2. ")
+        self.assertIn("29 CFR 2590.712(d); 45 CFR 146.136(d)", paragraph)
+
+    def test_erisa_document_request_also_goes_to_the_plan_administrator(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "2. ")
+        self.assertIn(
+            "sending a copy to the plan administrator named in my summary plan "
+            "description",
+            paragraph,
+        )
 
     def test_essential_health_benefits_are_limited_to_the_plans_they_bind(self):
         paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "4. ")
