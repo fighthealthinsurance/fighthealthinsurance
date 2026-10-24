@@ -4,7 +4,9 @@ Reading the text of Word (.docx) files in one pass.
 :func:`docx_text` streams word/document.xml through an XML pull parser and
 keeps only the elements still open, so it reads the body once, in order.
 Paragraphs, tabs, line breaks and non-breaking hyphens keep their places, so
-a table reads cell by cell. It stops at the caps it is given: characters
+a table reads cell by cell. Content saved in more than one form
+(mc:AlternateContent, as Word saves a text box) is read once, from its first
+mc:Choice. It stops at the caps it is given: characters
 collected, seconds spent and bytes unpacked. It logs nothing and raises
 nothing, so nothing from inside a file reaches the logs or an error report. It has no Django imports, so any
 worker can use it as is.
@@ -34,6 +36,10 @@ _BREAKS = {
     _W + "cr": "\n",
     _W + "noBreakHyphen": "-",
 }
+_MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+_ALTERNATE_CONTENT = _MC + "AlternateContent"
+_CHOICE = _MC + "Choice"
+_FALLBACK = _MC + "Fallback"
 _CHUNK_BYTES = 1024 * 1024
 
 
@@ -46,9 +52,16 @@ def docx_text(
     unpacked = 0
     status = WHOLE
     deadline = time.monotonic() + max_seconds
+    # Depth inside an alternative that repeats one already read.
+    skipping = 0
+    # For each open mc:AlternateContent, whether one of its alternatives was read.
+    choice_read: list[bool] = []
     try:
         parser = etree.XMLPullParser(
-            events=("end",), resolve_entities=False, no_network=True, load_dtd=False
+            events=("start", "end"),
+            resolve_entities=False,
+            no_network=True,
+            load_dtd=False,
         )
         with (
             zipfile.ZipFile(io.BytesIO(content)) as archive,
@@ -65,11 +78,28 @@ def docx_text(
                     status = PARTIAL
                     break
                 parser.feed(chunk)
-                for _, element in parser.read_events():
-                    if element.tag == _W + "t":
+                for event, element in parser.read_events():
+                    tag = element.tag
+                    if event == "start":
+                        if skipping:
+                            skipping += 1
+                        elif tag == _ALTERNATE_CONTENT:
+                            choice_read.append(False)
+                        elif tag in (_CHOICE, _FALLBACK) and choice_read:
+                            if choice_read[-1]:
+                                skipping = 1
+                            else:
+                                choice_read[-1] = True
+                        continue
+                    if skipping:
+                        skipping -= 1
+                        piece = ""
+                    elif tag == _W + "t":
                         piece = element.text or ""
                     else:
-                        piece = _BREAKS.get(element.tag, "")
+                        if tag == _ALTERNATE_CONTENT:
+                            choice_read.pop()
+                        piece = _BREAKS.get(tag, "")
                     if piece:
                         pieces.append(piece)
                         chars += len(piece)
