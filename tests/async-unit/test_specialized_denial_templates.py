@@ -449,6 +449,17 @@ class TestAlgorithmGuidanceIsMedicareAdvantageOnly(unittest.TestCase):
                 self.assertRegex(text, r"(?i)automated (?:review )?tool")
                 self.assertIn("29 CFR 2560.503-1", text)
 
+    def test_clinical_judgment_duty_is_tied_to_medical_necessity_denials(self):
+        # 29 CFR 2560.503-1(g)(1)(v)(B) reaches only those denials.
+        checked = 0
+        for cls in SPECIALIZED_DENIAL_TEMPLATES:
+            for sentence in re.split(r"(?<=\.)\s", cls.static_appeal()):
+                if "clinical judgment" in sentence:
+                    checked += 1
+                    with self.subTest(template=cls.__name__, text=sentence[:60]):
+                        self.assertIn("based on medical necessity", sentence)
+        self.assertGreaterEqual(checked, len(SPECIALIZED_DENIAL_TEMPLATES))
+
     def test_medicare_advantage_citations_exclude_part_d_drugs(self):
         checked = 0
         for cls in SPECIALIZED_DENIAL_TEMPLATES:

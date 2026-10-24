@@ -277,8 +277,7 @@ _MEDICARE_ADVANTAGE_ONLY_CITATION = (
 
 
 def _automated_review_paragraph(number: int, tool: str, drug: bool = False) -> str:
-    """The letter's request about automated tools, worded to hold for
-    commercial plans and Medicare Advantage alike."""
+    """The letter's request about automated tools, for any plan type."""
     # Part 422 covers Part B drugs; Part D drugs follow Part 423.
     ma_scope = (
         "For a Part B drug covered by a Medicare Advantage plan"
@@ -296,10 +295,12 @@ def _automated_review_paragraph(number: int, tool: str, drug: bool = False) -> s
         "this claim, please identify it and provide its output, the criteria "
         "it applied, and the reviewing clinician's rationale for this case. "
         "For employer plans and most individual plans, documents generated in "
-        "making the decision are part of the claim file, and the denial must "
-        "explain, or provide on request, the clinical judgment applied to the "
-        "patient's circumstances (29 CFR 2560.503-1(g)(1)(v)(B) and (m)(8); "
-        f"45 CFR 147.136). {ma_scope}, the decision must "
+        "making the decision are part of the claim file (29 CFR "
+        "2560.503-1(m)(8)), and a denial based on medical necessity, "
+        "experimental treatment, or a similar limit must explain, or provide "
+        "on request, the clinical judgment applied to the patient's "
+        "circumstances (29 CFR 2560.503-1(g)(1)(v)(B); 45 CFR 147.136). "
+        f"{ma_scope}, the decision must "
         "rest on the patient's medical history, the treating physician's "
         "recommendations, and the clinical notes (42 CFR 422.101(c)(1)(i)), "
         "and CMS has told Medicare Advantage plans that an algorithm may "
