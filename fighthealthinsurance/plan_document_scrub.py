@@ -40,9 +40,10 @@ TOLL_FREE_AREA_CODES = frozenset({"800", "833", "844", "855", "866", "877", "888
 _FLAGS = re.IGNORECASE | re.MULTILINE
 # Spaces or tabs, never a line break: a label's value is on its own line.
 _SP = r"[^\S\n]"
-# What sits between a label and its value: spaces, then at most one of : # . -
+# What sits between a label and its value: spaces, a short note in brackets
+# ("Date of Birth (MM/DD/YYYY):"), then at most one of : # . -
 # Each run of spaces has one quantifier, so a long run cannot backtrack.
-_SEP = rf"{_SP}*(?:[:#.-]{_SP}*)?"
+_SEP = rf"{_SP}*(?:\([^()\n]{{0,20}}\){_SP}*)?(?:[:#.-]{_SP}*)?"
 # A label line that ends after its label: the value is on the next line.
 _NEXT_LINE = rf"(?:\n{_SP}*)?"
 _PERSON = (
@@ -165,10 +166,10 @@ _ADDRESS_RULE = re.compile(
 
 # Plan facts kept even where they look like a phone number or an identifier.
 # A provider's NPI is ten digits, like a phone number, and names no member.
-# A "Group Policy" number is the group's.
+# A "Group Policy" number is the group's, and an EIN the employer's.
 _KEPT_RULE = re.compile(
     rf"\b(?:group(?:{_SP}*(?:/{_SP}*)?policy)?|plan|payer|npi"
-    rf"|rx{_SP}*(?:bin|pcn|grp|group))\b"
+    rf"|employer{_SP}+identification|rx{_SP}*(?:bin|pcn|grp|group))\b"
     rf"(?:{_SP}*{_NUMBER_WORDS})?{_SEP}(?P<value>[a-z0-9-]{{1,30}})",
     _FLAGS,
 )

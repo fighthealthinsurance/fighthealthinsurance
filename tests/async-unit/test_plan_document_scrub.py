@@ -224,6 +224,40 @@ def test_social_security_numbers_are_removed(text, expected):
     assert scrub(text) == expected
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "Date of Birth (MM/DD/YYYY): 02/08/1831",
+            f"Date of Birth (MM/DD/YYYY): {REMOVED}",
+        ),
+        ("DOB (mm/dd/yyyy):\n02/08/1831", f"DOB (mm/dd/yyyy):\n{REMOVED}"),
+        ("Medicare Number (MBI): 1EG4-TE5-MK73", f"Medicare Number (MBI): {REMOVED}"),
+        (
+            "Medicare Beneficiary Identifier (MBI): 1EG4-TE5-MK73",
+            f"Medicare Beneficiary Identifier (MBI): {REMOVED}",
+        ),
+        (
+            "Social Security Number (SSN): 123456789",
+            f"Social Security Number (SSN): {REMOVED}",
+        ),
+    ],
+)
+def test_a_short_note_in_brackets_after_a_label_is_passed_over(text, expected):
+    assert scrub(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Employer Identification Number (EIN): 12-3456789",
+        "Group Policy Number (if any): 0012345",
+    ],
+)
+def test_a_plan_fact_after_a_note_in_brackets_is_kept(text):
+    assert scrub(text) == text
+
+
 def test_an_address_after_its_label_is_removed():
     text = "Address: 12 Beacon Street, Boston MA 02108\nPlan year 2026"
     assert scrub(text) == f"Address: {REMOVED}\nPlan year 2026"
@@ -380,6 +414,10 @@ LONG_RUN_LABELS = [
     "Home address:",
     "Name:",
     "Medicare Number",
+    "Medicare Number (MBI)",
+    "Date of Birth (MM/DD/YYYY)",
+    "Employer Identification Number (EIN)",
+    "DOB (",
     "MBI",
     "ID#",
     "ID Number",
