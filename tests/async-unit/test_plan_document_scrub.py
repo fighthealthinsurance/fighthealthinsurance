@@ -105,6 +105,94 @@ def test_a_group_policy_number_is_kept_as_a_group_number(text):
 @pytest.mark.parametrize(
     "text, expected",
     [
+        (
+            "Member: REBECCA L CRUMPLER   ID: W123456789",
+            f"Member: {REMOVED}   ID: {REMOVED}",
+        ),
+        (
+            "Name: Rebecca Lee Crumpler   ID W123456789   Group 0012345",
+            f"Name: {REMOVED}   ID {REMOVED}   Group 0012345",
+        ),
+        (
+            "Member: Mary Eliza Mahoney\t\tID: W123456789",
+            f"Member: {REMOVED}\t\tID: {REMOVED}",
+        ),
+    ],
+)
+def test_an_id_two_or_more_spaces_along_a_line_is_removed(text, expected):
+    # ID cards set the ID beside the name, a wide gap apart.
+    assert scrub(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Group   ID: 0012345",
+        "Plan   ID 12345MA0010001",
+        "Payer   ID: 12345",
+    ],
+)
+def test_a_plan_id_two_or_more_spaces_along_a_line_is_kept(text):
+    assert scrub(text) == text
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Case Name: Rebecca Lee Crumpler", f"Case Name: {REMOVED}"),
+        ("Case Number: 1234567", f"Case Number: {REMOVED}"),
+        ("Client ID: 12345678A", f"Client ID: {REMOVED}"),
+        ("Medicaid Client ID: 12345678A", f"Medicaid Client ID: {REMOVED}"),
+        (
+            "Client Index Number (CIN): AB12345C",
+            f"Client Index Number (CIN): {REMOVED}",
+        ),
+        ("CIN: AB12345C", f"CIN: {REMOVED}"),
+        ("Head of Household: Mary Eliza Mahoney", f"Head of Household: {REMOVED}"),
+        (
+            "Head of Household Name: Mary Eliza Mahoney",
+            f"Head of Household Name: {REMOVED}",
+        ),
+        ("Applicant Name: Rebecca Lee Crumpler", f"Applicant Name: {REMOVED}"),
+    ],
+)
+def test_medicaid_notice_labels_are_removed(text, expected):
+    assert scrub(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Guarantor: Rebecca Lee Crumpler", f"Guarantor: {REMOVED}"),
+        ("Account #: 00123456", f"Account #: {REMOVED}"),
+        ("Account Number: 123456789", f"Account Number: {REMOVED}"),
+        ("MRN: 00123456", f"MRN: {REMOVED}"),
+        ("Medical Record Number: MRN123456", f"Medical Record Number: {REMOVED}"),
+    ],
+)
+def test_guarantors_accounts_and_medical_record_numbers_are_removed(text, expected):
+    assert scrub(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Dependent 01: Mary Eliza Mahoney", f"Dependent 01: {REMOVED}"),
+        ("Dependents: Mary Eliza Mahoney", f"Dependents: {REMOVED}"),
+        ("Spouse: Mary Eliza Mahoney", f"Spouse: {REMOVED}"),
+        (
+            "Member: Rebecca Lee Crumpler Spouse: Mary Eliza Mahoney",
+            f"Member: {REMOVED} Spouse: {REMOVED}",
+        ),
+    ],
+)
+def test_dependents_and_spouses_are_removed(text, expected):
+    assert scrub(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
         ("Patient: Rebecca Lee Crumpler", f"Patient: {REMOVED}"),
         ("Member name: Elizabeth Blackwell", f"Member name: {REMOVED}"),
         ("PATIENT NAME: MARY SEACOLE", f"PATIENT NAME: {REMOVED}"),
@@ -430,6 +518,22 @@ LONG_RUN_LABELS = [
     "Your address on file",
     "NPI",
     "Dear",
+    "Rebecca  ID",
+    "Case Number",
+    "Case Name",
+    "Client ID",
+    "Client Index Number",
+    "CIN",
+    "Head of Household",
+    "Applicant Name",
+    "Guarantor",
+    "Account #",
+    "Account Number",
+    "MRN",
+    "Medical Record Number",
+    "Dependent 01",
+    "Dependents:",
+    "Spouse",
 ]
 
 

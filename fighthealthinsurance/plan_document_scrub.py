@@ -8,23 +8,35 @@ a filled-in form. :func:`scrub` replaces these with ``[removed]``:
   844, 855, 866, 877 and 888, which are the plan's own lines), found the way
   ml/letter_quality finds them;
 * the value after a label naming a person or their records, on the label's
-  line or, when the label ends its line, on the next one: member,
-  subscriber, cardholder, beneficiary, recipient and other IDs and numbers
-  ("ID#", "ID Number"), Medicare and Medicaid numbers and MBIs, policy and
-  claim numbers, patient account numbers, names (also "Surname, Given"),
-  dates of birth, Social Security numbers, and a member's address after
-  "Address", "Home Address", "Mailing Address" and the like, with or
-  without a colon;
+  line or, when the label ends its line, on the next one, and past a short
+  note in brackets ("Date of Birth (MM/DD/YYYY):"):
+
+  - IDs and numbers of a member, subscriber, cardholder, beneficiary,
+    recipient, client, guarantor or other person, "ID#" and "ID Number",
+    and a bare "ID" at the start of a line or two or more spaces along it,
+    as on ID cards;
+  - Medicare and Medicaid numbers, MBIs, Client Index Numbers and CINs;
+  - policy, claim, case and account numbers, and medical record numbers
+    and MRNs;
+  - names, also written "Surname, Given", after labels such as Patient,
+    Member Name, Case Name, Applicant Name, Head of Household, Guarantor,
+    Spouse, Dependents and "Dependent 01";
+  - dates of birth and Social Security numbers;
+  - a member's address after "Address", "Home Address", "Mailing Address"
+    and the like, with or without a colon;
+
 * a Social Security number written as 123-45-6789 anywhere;
 * the name after "Dear" at the start of a letter, unless the greeting is
   to everyone ("Dear Member", "Dear Plan Participant").
 
-It keeps what makes the document useful: group numbers, plan names and plan
-IDs, Rx BIN, PCN and group, payer IDs, provider NPIs, the employer and
-insurer, dollar amounts and the dates of a coverage period. Pure Python with no model calls;
-every pattern is a bounded scan, with one quantifier for each run of spaces,
-since the text can run to millions of characters. Best effort: the tests
-show what it catches.
+It keeps what makes the document useful: group numbers (also after "Group
+Policy Number"), plan names and plan IDs, Rx BIN, PCN and group, payer IDs,
+provider NPIs, the employer and its EIN, the insurer, dollar amounts and
+the dates of a coverage period. Pure Python with no model calls; every
+pattern is a bounded scan, with one quantifier for each run of spaces,
+since the text can run to millions of characters.
+
+Best effort: the tests show what it catches.
 """
 
 import bisect
@@ -46,20 +58,26 @@ _SP = r"[^\S\n]"
 _SEP = rf"{_SP}*(?:\([^()\n]{{0,20}}\){_SP}*)?(?:[:#.-]{_SP}*)?"
 # A label line that ends after its label: the value is on the next line.
 _NEXT_LINE = rf"(?:\n{_SP}*)?"
+_HOUSEHOLD_HEAD = rf"head{_SP}+of{_SP}+household"
 _PERSON = (
     r"(?:member|patient|subscriber|insured|enrollee|employee|dependent"
-    rf"|beneficiary|participant|cardholder|recipient|policy{_SP}?holder)"
+    r"|beneficiary|participant|cardholder|recipient|client|applicant"
+    rf"|guarantor|spouse|{_HOUSEHOLD_HEAD}|policy{_SP}?holder)"
 )
 # The person labels that also stand alone before a colon ("Patient: ...").
 _PERSON_ALONE = (
-    r"(?:member|patient|subscriber|insured|enrollee|dependent|beneficiary"
-    rf"|cardholder|recipient|policy{_SP}?holder)"
+    r"(?:member|patient|subscriber|insured|enrollee|dependents?|beneficiary"
+    rf"|cardholder|recipient|guarantor|spouse|{_HOUSEHOLD_HEAD}"
+    rf"|policy{_SP}?holder)"
 )
 _NUMBER_WORD = r"(?:id(?:entification)?|identifier|number|no\b\.?|#)"
 # A number word, and a second one as in "ID Number" or "ID #".
 _NUMBER_WORDS = rf"{_NUMBER_WORD}(?:{_SP}*(?:number|no\b\.?|#))?"
 # Whose number it is: a person's, or one of their records.
-_RECORD = rf"(?:{_PERSON}|claim|policy|medicare|medicaid|patient{_SP}+account)"
+_RECORD = (
+    rf"(?:{_PERSON}|case|claim|policy|medicare|medicaid|account"
+    rf"|medical{_SP}+record|client{_SP}+index)"
+)
 
 # An identifier: up to five letters and a space in front, then a run of
 # letters, digits and dashes holding at least one digit, and up to three
@@ -68,9 +86,12 @@ _ID_PART = r"[a-z0-9-]{0,29}\d[a-z0-9-]{0,29}"
 _ID_VALUE = (
     rf"(?P<value>(?:[a-z]{{1,5}}{_SP})?{_ID_PART}(?:{_SP}{_ID_PART}(?![\w/-])){{0,3}})"
 )
+# A bare "ID" starts a line, or sits two or more spaces along one, as on
+# ID cards.
 _ID_RULE = re.compile(
-    rf"(?:\b{_RECORD}(?:'s)?{_SP}*{_NUMBER_WORDS}|\bpolicy(?={_SP}*:)|\bmbi\b"
-    rf"|\bid(?:entification)?{_SP}*(?:number|no\b\.?|#)|^{_SP}*id\b)"
+    rf"(?:\b{_RECORD}(?:'s)?{_SP}*{_NUMBER_WORDS}|\bpolicy(?={_SP}*:)"
+    rf"|\b(?:mbi|cin|mrn)\b|\bid(?:entification)?{_SP}*(?:number|no\b\.?|#)"
+    rf"|(?:^{_SP}*|(?<={_SP}{_SP}))id\b)"
     rf"{_SEP}{_NEXT_LINE}{_ID_VALUE}",
     _FLAGS,
 )
@@ -98,7 +119,8 @@ _DOB_RULE = re.compile(
 # "Patient: you pay 20%" is left alone; the labels ignore it.
 _NEXT_LABEL = (
     r"(?i:(?!(?:dob|date|id|ssn|member|subscriber|patient|cardholder|medicare"
-    r"|medicaid|mbi|claim|group|address|phone|plan|policy)\b))"
+    r"|medicaid|mbi|claim|group|address|phone|plan|policy|guarantor|spouse"
+    r"|dependents?|client|applicant|account|mrn|cin)\b))"
 )
 _CAPITALISED = rf"{_NEXT_LABEL}[^\W\d_a-z][\w'.-]"
 _FULL_NAME = rf"{_CAPITALISED}{{1,30}}(?:{_SP}{_CAPITALISED}{{0,30}}){{0,3}}"
@@ -107,8 +129,10 @@ _NAME_VALUE = (
     rf"(?P<value>{_FULL_NAME}"
     rf"(?:,{_SP}?{_CAPITALISED}{{0,30}}(?:{_SP}{_CAPITALISED}{{0,30}}){{0,2}})?)"
 )
+# A person label can carry a number before its colon ("Dependent 01:").
 _NAME_RULE = re.compile(
-    rf"(?i:\b{_PERSON}(?:'s)?{_SP}+name(?:{_SP}*:)?|\b{_PERSON_ALONE}{_SP}*:"
+    rf"(?i:\b(?:{_PERSON}|case)(?:'s)?{_SP}+name(?:{_SP}*:)?"
+    rf"|\b{_PERSON_ALONE}{_SP}*(?:\d{{1,2}}{_SP}*)?:"
     rf"|^{_SP}*name{_SP}*:){_SP}*{_NEXT_LINE}{_NAME_VALUE}",
     re.MULTILINE,
 )
