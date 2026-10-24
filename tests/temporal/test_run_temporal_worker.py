@@ -1454,14 +1454,14 @@ def test_with_plan_documents_off_no_connection_is_opened_for_them(flags):
 def test_a_missing_research_namespace_keeps_the_other_queues_running():
     """A Worker in a namespace that does not exist fails as it starts and
     would take the appeal Workers down with it, so the queue stays dark and
-    the worker says why."""
+    the worker says why, at error level."""
     from unittest.mock import AsyncMock
 
     from loguru import logger
 
     ensure_plan_docs = AsyncMock(return_value="absent")
     lines: list = []
-    sink = logger.add(lambda m: lines.append(str(m)), level="WARNING")
+    sink = logger.add(lambda m: lines.append(str(m)), level="ERROR")
     try:
         kwargs = _run_capture(
             {"queues": "appeal"},

@@ -467,7 +467,7 @@ the share page's 30-day reminders in place of the Ray email loop.
   in encrypted history. It does not need the journey flags. With the flag
   on and no usable research key, the worker logs a warning at start-up,
   and the paused Schedule's note names all three settings. With the flag
-  on and no `fhi-research` namespace, the worker logs a warning and hosts
+  on and no `fhi-research` namespace, the worker logs an error and hosts
   the rest of its queues without this one.
 - **Where it runs:** the `fhi-appeal-worker` pods host the queue as a
   Worker of its own with one activity slot, so reading a file never takes
@@ -492,7 +492,9 @@ the share page's 30-day reminders in place of the Ray email loop.
      `TEMPORAL_PLAN_DOCUMENTS_ENABLED=true` in the shared
      `fight-health-insurance-secret`, next to `TEMPORAL_ENABLED`.
   4. Restart `fhi-appeal-worker`, the web pods and the Ray pods: each
-     reads the secret only when it starts.
+     reads the secret only when it starts. Until the namespace exists, the
+     share page's reminders stop, so create it before setting the flag and
+     restarting.
 
   The worker then hosts the queue and creates the Schedule in
   `fhi-research`, the web pods start readings there, and the Ray email

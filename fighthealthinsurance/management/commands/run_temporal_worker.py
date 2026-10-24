@@ -147,7 +147,7 @@ async def plan_documents_client(client: Any, enabled: bool) -> tuple[Any, bool]:
         )
         return None, False
     if not exists:
-        logger.warning(
+        logger.error(
             f"Shared plan documents stay off: the Temporal namespace {namespace!r} "
             "does not exist yet (k8s/temporal/README.md says how to create it)"
         )
