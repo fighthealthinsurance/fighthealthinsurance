@@ -54,9 +54,13 @@ WINDOWS: Tuple[Tuple[str, datetime.timedelta], ...] = (
 
 # Connections by app name: past this many names in an hour, a new name
 # counts as OTHER_CLIENT, so a client that sends a new name every time can't
-# grow the table. A client that gives no name counts as "".
+# grow the table. A client that gives no name counts as "", and one whose
+# name cleans to nothing (no ASCII letters, say) as UNREADABLE_CLIENT. Both
+# bucket names hold a "*", which no cleaned name can, so no client can land
+# its own connections in one.
 MAX_CLIENTS_PER_HOUR = 20
-OTHER_CLIENT = "other"
+OTHER_CLIENT = "*other*"
+UNREADABLE_CLIENT = "*unreadable*"
 
 
 def _hour(moment: datetime.datetime) -> datetime.datetime:
@@ -114,6 +118,8 @@ def bump_connect(client: str, now: Optional[datetime.datetime] = None) -> None:
     now = now or timezone.now()
     hour = _hour(now)
     label = client_label(client)
+    if not label and isinstance(client, str) and client.strip():
+        label = UNREADABLE_CLIENT
     this_hour = McpClientConnectCount.objects.filter(hour=hour)
     if (
         not this_hour.filter(client=label).exists()
