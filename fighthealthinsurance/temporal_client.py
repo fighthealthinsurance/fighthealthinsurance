@@ -1,5 +1,6 @@
 """Temporal client connection, fax-dispatch helpers, the chat policy
-Schedule and the shared plan documents flag.
+Schedule, and starting the reading of shared plan documents with the
+Schedule that sweeps them.
 
 All ``temporalio`` imports are done lazily inside the functions so that simply
 importing this module (e.g. from ``fax_helpers``) does not require ``temporalio``
@@ -10,7 +11,7 @@ leaving the existing Ray path entirely untouched.
 
 import asyncio
 from datetime import timedelta
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from asgiref.sync import async_to_sync
 from django.conf import settings
@@ -548,13 +549,19 @@ def chat_policy_schedule() -> Any:
     )
 
 
-async def ensure_chat_policy_schedule(client: Any, enabled: bool) -> str:
-    """Make the ``chat-routing-policy`` Schedule match the flag. Idempotent,
-    and safe for several workers to run at once.
+async def _ensure_schedule(
+    client: Any,
+    schedule_id: str,
+    schedule: Callable[[], Any],
+    enabled: bool,
+    flag: str,
+) -> str:
+    """Make the Schedule ``schedule_id`` match its flag. Idempotent, and
+    safe for several workers to run at once.
 
     * Enabled: create it; if it already exists, replace its spec, action and
-      policy with :func:`chat_policy_schedule` and unpause it. Returns
-      ``"created"`` or ``"updated"``.
+      policy with ``schedule()`` and unpause it. Returns ``"created"`` or
+      ``"updated"``.
     * Disabled: pause it (``"paused"``), or do nothing when there is none
       (``"absent"``). A paused Schedule starts no runs, so a flag flip plus
       a worker restart is the operator control; the staff Temporal UI is
@@ -567,24 +574,20 @@ async def ensure_chat_policy_schedule(client: Any, enabled: bool) -> str:
     from temporalio.service import RPCError, RPCStatusCode
 
     rpc_timeout = timedelta(seconds=SCHEDULE_RPC_TIMEOUT_SECONDS)
-    handle = client.get_schedule_handle(CHAT_POLICY_SCHEDULE_ID)
+    handle = client.get_schedule_handle(schedule_id)
     if not enabled:
         try:
-            await handle.pause(
-                note="TEMPORAL_CHAT_POLICY_ENABLED is off", rpc_timeout=rpc_timeout
-            )
+            await handle.pause(note=f"{flag} is off", rpc_timeout=rpc_timeout)
         except RPCError as e:
             if e.status == RPCStatusCode.NOT_FOUND:
                 return SCHEDULE_ABSENT
             raise
-        logger.info(f"Paused the {CHAT_POLICY_SCHEDULE_ID} schedule")
+        logger.info(f"Paused the {schedule_id} schedule")
         return SCHEDULE_PAUSED
 
     try:
-        await client.create_schedule(
-            CHAT_POLICY_SCHEDULE_ID, chat_policy_schedule(), rpc_timeout=rpc_timeout
-        )
-        logger.info(f"Created the {CHAT_POLICY_SCHEDULE_ID} schedule")
+        await client.create_schedule(schedule_id, schedule(), rpc_timeout=rpc_timeout)
+        logger.info(f"Created the {schedule_id} schedule")
         return SCHEDULE_CREATED
     except ScheduleAlreadyRunningError:
         pass
@@ -594,15 +597,25 @@ async def ensure_chat_policy_schedule(client: Any, enabled: bool) -> str:
     def _replace(update_input: Any) -> Any:
         nonlocal was_paused
         was_paused = bool(update_input.description.schedule.state.paused)
-        return ScheduleUpdate(schedule=chat_policy_schedule())
+        return ScheduleUpdate(schedule=schedule())
 
     await handle.update(_replace, rpc_timeout=rpc_timeout)
     if was_paused:
-        await handle.unpause(
-            note="TEMPORAL_CHAT_POLICY_ENABLED is on", rpc_timeout=rpc_timeout
-        )
-    logger.info(f"Updated the {CHAT_POLICY_SCHEDULE_ID} schedule")
+        await handle.unpause(note=f"{flag} is on", rpc_timeout=rpc_timeout)
+    logger.info(f"Updated the {schedule_id} schedule")
     return SCHEDULE_UPDATED
+
+
+async def ensure_chat_policy_schedule(client: Any, enabled: bool) -> str:
+    """Make the ``chat-routing-policy`` Schedule match
+    TEMPORAL_CHAT_POLICY_ENABLED (see :func:`_ensure_schedule`)."""
+    return await _ensure_schedule(
+        client,
+        CHAT_POLICY_SCHEDULE_ID,
+        chat_policy_schedule,
+        enabled,
+        "TEMPORAL_CHAT_POLICY_ENABLED",
+    )
 
 
 # --- Shared plan documents ----------------------------------------------------
@@ -616,6 +629,129 @@ def plan_documents_enabled() -> bool:
         getattr(settings, "TEMPORAL_ENABLED", False)
         and getattr(settings, "TEMPORAL_PLAN_DOCUMENTS_ENABLED", False)
         and getattr(settings, "TEMPORAL_PAYLOAD_KEY", "")
+    )
+
+
+# The longest a share waits on Temporal for its reading to start, connecting
+# included. Past it the share is done all the same, and the sweep starts the
+# reading later.
+PLAN_DOCUMENTS_START_WAIT_SECONDS = 3.0
+
+
+async def start_shared_plan_documents_workflow(
+    share_batch: str, client: Any = None
+) -> str:
+    """Start ``SharedPlanDocumentsWorkflow`` for one share. Raises
+    WorkflowAlreadyStartedError when one is open for it. A closed run can be
+    followed by a new one, which reads only the rows still waiting."""
+    from fighthealthinsurance.workflows.shared_plan_documents import (
+        shared_plan_documents_workflow_id,
+    )
+    from fighthealthinsurance.workflows.types import SharedPlanDocumentsInput
+
+    if client is None:
+        client = await get_temporal_client()
+    handle = await client.start_workflow(
+        "SharedPlanDocumentsWorkflow",
+        SharedPlanDocumentsInput(share_batch=str(share_batch)),
+        id=shared_plan_documents_workflow_id(str(share_batch)),
+        task_queue=settings.TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE,
+        rpc_timeout=timedelta(seconds=PLAN_DOCUMENTS_START_WAIT_SECONDS),
+    )
+    return str(handle.id)
+
+
+def dispatch_shared_plan_documents(share_batch: str) -> bool:
+    """Start reading a share's files, best effort, from the request that
+    saved them. True when Temporal has the share (a run already open for it
+    counts), False when the flags are off or the start failed. Never raises,
+    and waits PLAN_DOCUMENTS_START_WAIT_SECONDS at most: a lost start only
+    means the hourly sweep starts it instead."""
+    if not plan_documents_enabled():
+        return False
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    async def _start() -> str:
+        return await asyncio.wait_for(
+            start_shared_plan_documents_workflow(str(share_batch)),
+            PLAN_DOCUMENTS_START_WAIT_SECONDS,
+        )
+
+    try:
+        async_to_sync(_start)()
+        return True
+    except WorkflowAlreadyStartedError:
+        return True
+    except Exception as e:
+        # Class name only; the sweep is the retry.
+        logger.warning(
+            f"Shared plan documents not started on Temporal: {type(e).__name__}"
+        )
+        return False
+
+
+# One Schedule, kept by the appeal-worker process at start-up and by
+# `manage.py ensure_temporal_schedules`, like the chat policy's.
+PLAN_DOCUMENTS_SCHEDULE_ID = "plan-documents-sweep"
+# Scheduled runs get this id with the scheduled time appended by Temporal.
+PLAN_DOCUMENTS_SWEEP_WORKFLOW_ID = "plan-documents-sweep-run"
+# Hourly: a reminder goes within the hour it falls due, and a share whose
+# start was lost waits about an hour at most.
+PLAN_DOCUMENTS_SWEEP_EVERY = timedelta(hours=1)
+# After a Temporal outage only a run missed in the last hour is made up, so
+# an outage ends in one run at most.
+PLAN_DOCUMENTS_SWEEP_CATCHUP_WINDOW = timedelta(hours=1)
+# A run is a few lookups, up to fifty one-minute sends and some starts.
+PLAN_DOCUMENTS_SWEEP_RUN_TIMEOUT = timedelta(minutes=30)
+
+
+def plan_documents_schedule() -> Any:
+    """The ``plan-documents-sweep`` Schedule as it should be: once an hour,
+    skip a run while the last one is still going, make up at most one hour
+    of missed runs, and start PlanDocumentsSweepWorkflow on the plan
+    documents task queue with a 30-minute execution timeout."""
+    from temporalio.client import (
+        Schedule,
+        ScheduleActionStartWorkflow,
+        ScheduleIntervalSpec,
+        ScheduleOverlapPolicy,
+        SchedulePolicy,
+        ScheduleSpec,
+        ScheduleState,
+    )
+
+    from fighthealthinsurance.workflows.types import PlanDocumentsSweepInput
+
+    return Schedule(
+        action=ScheduleActionStartWorkflow(
+            "PlanDocumentsSweepWorkflow",
+            PlanDocumentsSweepInput(),
+            id=PLAN_DOCUMENTS_SWEEP_WORKFLOW_ID,
+            task_queue=settings.TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE,
+            execution_timeout=PLAN_DOCUMENTS_SWEEP_RUN_TIMEOUT,
+        ),
+        spec=ScheduleSpec(
+            intervals=[ScheduleIntervalSpec(every=PLAN_DOCUMENTS_SWEEP_EVERY)]
+        ),
+        policy=SchedulePolicy(
+            overlap=ScheduleOverlapPolicy.SKIP,
+            catchup_window=PLAN_DOCUMENTS_SWEEP_CATCHUP_WINDOW,
+        ),
+        state=ScheduleState(
+            note="Kept in step with temporal_client.plan_documents_enabled()"
+        ),
+    )
+
+
+async def ensure_plan_documents_schedule(client: Any, enabled: bool) -> str:
+    """Make the ``plan-documents-sweep`` Schedule match
+    :func:`plan_documents_enabled` (see :func:`_ensure_schedule`)."""
+    return await _ensure_schedule(
+        client,
+        PLAN_DOCUMENTS_SCHEDULE_ID,
+        plan_documents_schedule,
+        enabled,
+        "TEMPORAL_PLAN_DOCUMENTS_ENABLED",
     )
 
 

@@ -242,18 +242,20 @@ class Base(Configuration):
     INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY = (
         os.getenv("INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY", "false").lower() == "true"
     )
-    # The chat routing policy Schedule (ChatRoutingPolicyWorkflow, every ten
-    # minutes) is gated on its own, independent of the journey flags. It
+    # The chat routing policy Schedule (ChatRoutingPolicyWorkflow, once a
+    # day) is gated on its own, independent of the journey flags. It
     # only takes effect when TEMPORAL_ENABLED is also true. With it on, the
     # appeal-worker process hosts the policy queue and keeps the Schedule
     # running; with it off, that process pauses the Schedule at start-up.
     TEMPORAL_CHAT_POLICY_ENABLED = (
         os.getenv("TEMPORAL_CHAT_POLICY_ENABLED", "false").lower() == "true"
     )
-    # Reading shared plan documents (SharedPlanDocumentsWorkflow), gated on
-    # its own. It takes effect only with TEMPORAL_ENABLED and
-    # TEMPORAL_PAYLOAD_KEY also set, since these runs name shares of
-    # documents. With it on, the appeal-worker process hosts its queue.
+    # Reading shared plan documents (SharedPlanDocumentsWorkflow) and the
+    # hourly plan documents sweep, gated on their own. They take effect only
+    # with TEMPORAL_ENABLED and TEMPORAL_PAYLOAD_KEY also set, since these
+    # runs name shares of documents. With it on, the appeal-worker process
+    # hosts their queue and keeps the sweep's Schedule running, and the Ray
+    # email loop leaves the share page's reminders to the sweep.
     TEMPORAL_PLAN_DOCUMENTS_ENABLED = (
         os.getenv("TEMPORAL_PLAN_DOCUMENTS_ENABLED", "false").lower() == "true"
     )

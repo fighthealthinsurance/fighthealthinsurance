@@ -75,11 +75,14 @@ _BASE_SETTINGS = dict(
 )
 
 _ENSURE = "fighthealthinsurance.temporal_client.ensure_chat_policy_schedule"
+_ENSURE_PLAN_DOCS = (
+    "fighthealthinsurance.temporal_client.ensure_plan_documents_schedule"
+)
 
 
-def _run_capture(options, ensure=None, connect=None, **flags):
+def _run_capture(options, ensure=None, connect=None, ensure_plan_docs=None, **flags):
     """Run _run with stand-ins for the Worker class, the client connect and
-    the Schedule call; return each Worker's construction kwargs."""
+    the Schedule calls; return each Worker's construction kwargs."""
     from django.test import override_settings
     from unittest.mock import AsyncMock, Mock
 
@@ -93,6 +96,7 @@ def _run_capture(options, ensure=None, connect=None, **flags):
             connect or AsyncMock(return_value=Mock()),
         ),
         patch(_ENSURE, ensure or AsyncMock(return_value="created")),
+        patch(_ENSURE_PLAN_DOCS, ensure_plan_docs or AsyncMock(return_value="absent")),
         override_settings(**settings),
     ):
         asyncio.run(asyncio.wait_for(Command()._run(options), timeout=2))
@@ -515,6 +519,7 @@ def _run_until_signal(role, sig, command=None, **flags):
         ),
         patch.object(cmd, "install_shutdown_handlers", _install_and_signal_ready),
         patch(_ENSURE, AsyncMock(return_value="created")),
+        patch(_ENSURE_PLAN_DOCS, AsyncMock(return_value="absent")),
         override_settings(**settings),
     ):
         asyncio.run(main())
@@ -1096,8 +1101,14 @@ def test_the_fax_role_never_hosts_the_plan_documents_queue():
     assert _run_with("fax", **_PLAN_DOCS_ON) == ["q-fax"]
 
 
-def test_the_plan_documents_worker_registers_only_its_workflow_and_activities():
-    from fighthealthinsurance.activities import shared_plan_documents
+def test_the_plan_documents_worker_registers_only_its_workflows_and_activities():
+    from fighthealthinsurance.activities import (
+        plan_documents_sweep,
+        shared_plan_documents,
+    )
+    from fighthealthinsurance.workflows.plan_documents_sweep import (
+        PlanDocumentsSweepWorkflow,
+    )
     from fighthealthinsurance.workflows.shared_plan_documents import (
         READ_TIMEOUT,
         SharedPlanDocumentsWorkflow,
@@ -1106,11 +1117,17 @@ def test_the_plan_documents_worker_registers_only_its_workflow_and_activities():
     kwargs = _run_capture({"queues": "appeal"}, **_PLAN_DOCS_ON)
     by_queue = {k["task_queue"]: k for k in kwargs}
     plan_docs = by_queue["q-plan-docs"]
-    assert plan_docs["workflows"] == [SharedPlanDocumentsWorkflow]
+    assert plan_docs["workflows"] == [
+        SharedPlanDocumentsWorkflow,
+        PlanDocumentsSweepWorkflow,
+    ]
     assert plan_docs["activities"] == [
         shared_plan_documents.list_shared_plan_documents,
         shared_plan_documents.process_shared_plan_document,
         shared_plan_documents.mark_shared_plan_document_unreadable,
+        plan_documents_sweep.find_due_plan_documents_reminders,
+        plan_documents_sweep.send_plan_documents_reminder,
+        plan_documents_sweep.find_waiting_share_batches,
     ]
     assert plan_docs["max_concurrent_activities"] == 2
     # Its own Worker: nothing of it rides on the appeal Worker.
@@ -1160,3 +1177,63 @@ def test_the_appeal_manifest_names_the_plan_documents_queue_and_leaves_the_flag_
     assert m.group(1).startswith("fhi-")
     assert not re.search(r"name: TEMPORAL_PLAN_DOCUMENTS_ENABLED\b", text)
     assert not re.search(r"name: TEMPORAL_PAYLOAD_KEY\b", text)
+
+
+@pytest.mark.parametrize(
+    "flags, expected",
+    [
+        (_PLAN_DOCS_ON, True),
+        (dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_PAYLOAD_KEY=""), False),
+        (dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=False, TEMPORAL_PAYLOAD_KEY="k"), False),
+    ],
+)
+def test_the_sweep_schedule_is_kept_in_step_after_connecting(flags, expected):
+    from unittest.mock import AsyncMock
+
+    ensure = AsyncMock(return_value="created")
+    _run_capture({"queues": "appeal"}, ensure_plan_docs=ensure, **flags)
+    ensure.assert_awaited_once()
+    assert ensure.await_args.kwargs == {"enabled": expected}
+
+
+def test_the_idle_appeal_role_still_pauses_the_sweep_schedule():
+    from unittest.mock import AsyncMock
+
+    ensure = AsyncMock(return_value="paused")
+    with pytest.raises(asyncio.TimeoutError):
+        _run_capture(
+            {"queues": "appeal"},
+            ensure_plan_docs=ensure,
+            TEMPORAL_APPEAL_JOURNEY_ENABLED=False,
+        )
+    assert ensure.await_args.kwargs == {"enabled": False}
+
+
+def test_the_fax_role_never_touches_the_sweep_schedule():
+    from unittest.mock import AsyncMock
+
+    ensure = AsyncMock(return_value="created")
+    _run_capture({"queues": "fax"}, ensure_plan_docs=ensure, **_PLAN_DOCS_ON)
+    ensure.assert_not_awaited()
+
+
+def test_a_failing_sweep_schedule_call_does_not_stop_hosting():
+    from unittest.mock import AsyncMock
+
+    from loguru import logger
+
+    secret = "text that must not reach a log"
+    lines: list = []
+    sink = logger.add(lambda m: lines.append(str(m)), level="DEBUG")
+    try:
+        kwargs = _run_capture(
+            {"queues": "appeal"},
+            ensure_plan_docs=AsyncMock(side_effect=RuntimeError(secret)),
+            TEMPORAL_APPEAL_JOURNEY_ENABLED=False,
+            **_PLAN_DOCS_ON,
+        )
+    finally:
+        logger.remove(sink)
+    assert [k["task_queue"] for k in kwargs] == ["q-plan-docs"]
+    assert any("plan documents sweep" in line and "RuntimeError" in line for line in lines)
+    assert not any(secret in line for line in lines)

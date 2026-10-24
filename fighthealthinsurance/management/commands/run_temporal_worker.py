@@ -20,7 +20,8 @@ The appeal role (and ``all``) also hosts the chat routing policy queue as a
 Worker of its own when TEMPORAL_CHAT_POLICY_ENABLED is on, and keeps the
 ``chat-routing-policy`` Schedule in step with that flag at start-up. It
 hosts the shared plan documents queue the same way when
-temporal_client.plan_documents_enabled() is true.
+temporal_client.plan_documents_enabled() is true, and keeps the
+``plan-documents-sweep`` Schedule in step with it.
 """
 
 import asyncio
@@ -251,11 +252,13 @@ class Command(BaseCommand):
             chat_routing_policy as policy_activities,
             fax as fax_activities,
             intake_journey as intake_activities,
+            plan_documents_sweep as sweep_activities,
             shared_plan_documents as plan_document_activities,
         )
         from fighthealthinsurance.temporal_client import (
             chat_policy_schedule_enabled,
             ensure_chat_policy_schedule,
+            ensure_plan_documents_schedule,
             get_temporal_client,
             plan_documents_enabled,
         )
@@ -358,6 +361,20 @@ class Command(BaseCommand):
                 # Class name only. Hosting goes on; the next start retries.
                 logger.warning(
                     "Could not keep the chat routing policy schedule in step: "
+                    f"{type(e).__name__}"
+                )
+        if hosts_plan_documents:
+            # The same for the plan documents sweep: created or updated when
+            # the flags allow, paused when not, only where its queue is hosted.
+            try:
+                outcome = await asyncio.wait_for(
+                    ensure_plan_documents_schedule(client, enabled=plan_documents_on),
+                    timeout=SCHEDULE_ENSURE_TIMEOUT_SECONDS,
+                )
+                self.stdout.write(f"Plan documents sweep schedule: {outcome}")
+            except Exception as e:
+                logger.warning(
+                    "Could not keep the plan documents sweep schedule in step: "
                     f"{type(e).__name__}"
                 )
 
@@ -480,6 +497,9 @@ class Command(BaseCommand):
                         plan_document_activities.list_shared_plan_documents,
                         plan_document_activities.process_shared_plan_document,
                         plan_document_activities.mark_shared_plan_document_unreadable,
+                        sweep_activities.find_due_plan_documents_reminders,
+                        sweep_activities.send_plan_documents_reminder,
+                        sweep_activities.find_waiting_share_batches,
                     ],
                     max_concurrent_activities=2,
                     # Covers a reading's three-minute start_to_close, inside

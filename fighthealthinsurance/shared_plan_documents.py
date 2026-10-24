@@ -32,7 +32,7 @@ from django.http import HttpRequest
 from django.utils import timezone
 from loguru import logger
 
-from fighthealthinsurance import consent
+from fighthealthinsurance import consent, temporal_client
 from fighthealthinsurance.chat_forms import policy_document_extension
 from fighthealthinsurance.models import PolicyDocument, SharedPlanDocumentsDay
 
@@ -217,8 +217,9 @@ def save_shared_documents(
     document_type: str = "other",
 ) -> list[PolicyDocument]:
     """One encrypted PolicyDocument per file, all or none, each marked
-    received. Only stores: no model reads the files here, and their text is
-    read later, away from the request (plan_documents_processing).
+    received. Only stores: no model reads the files here. Once the rows
+    commit, their reading is started on Temporal when it is on
+    (temporal_client.dispatch_shared_plan_documents), away from the request.
 
     ``details`` holds what is known about the plan: plan_category,
     plan_year, state, insurer_name, employer_name, premium_amount,
@@ -275,6 +276,11 @@ def save_shared_documents(
                 )
         raise
     logger.info(f"Saved {len(saved)} shared plan document(s) from {source}")
+    share_batch = str(shared["share_batch"])
+    # Best effort and never raises; the hourly sweep starts a lost one.
+    transaction.on_commit(
+        lambda: temporal_client.dispatch_shared_plan_documents(share_batch)
+    )
     return saved
 
 

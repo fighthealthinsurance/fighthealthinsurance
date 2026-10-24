@@ -11,12 +11,14 @@ workflow tests in tests/temporal stub them.
 """
 
 import datetime
-from unittest.mock import patch
+import time
+from unittest.mock import AsyncMock, patch
 
 from asgiref.sync import async_to_sync
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.forms.models import model_to_dict
-from django.test import TransactionTestCase
+from django.test import TestCase, TransactionTestCase, override_settings
+from django.urls import reverse
 from django.utils import timezone
 from loguru import logger
 from temporalio.exceptions import ApplicationError
@@ -25,7 +27,11 @@ from fighthealthinsurance import plan_documents_processing as processing
 from fighthealthinsurance.activities import shared_plan_documents as activities
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.models import Denial, PolicyDocument
-from fighthealthinsurance.shared_plan_documents import save_shared_documents
+from fighthealthinsurance import temporal_client
+from fighthealthinsurance.shared_plan_documents import (
+    render_token,
+    save_shared_documents,
+)
 from tests.pdf_fixtures import make_pdf_bytes
 from tests.sync.test_word_text import paragraph, word_file
 
@@ -258,3 +264,78 @@ class ShareBatchesTest(_ReadingTest):
             share_batch="4f9a2b6c-2d0e-4c55-9a39-8d1b8f3d2e11",
         )
         self.assertEqual(self.waiting(), [])
+
+
+class ReadingStartsOnceTheRowsCommitTest(TestCase):
+    """The request that saved a share starts its reading once the rows have
+    committed, from every way in: the share page and both ticked boxes all
+    save through save_shared_documents. The start never holds up or breaks
+    the share; the hourly sweep picks up one that was lost."""
+
+    def tearDown(self):
+        for doc in PolicyDocument.objects.all():
+            if doc.document_enc:
+                doc.document_enc.delete(save=False)
+
+    def test_the_share_page_starts_the_reading_of_its_batch_after_commit(self):
+        seen = []
+
+        def dispatch(share_batch):
+            # Called after commit: the rows are there to read.
+            seen.append((share_batch, PolicyDocument.objects.count()))
+            return True
+
+        with patch.object(temporal_client, "dispatch_shared_plan_documents", dispatch):
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self.client.post(
+                    reverse("share_plan_documents"),
+                    {
+                        "plan_documents": [upload("a.txt", b"$1,500"), upload("b.txt", b"$30")],
+                        "agree": "on",
+                        "rendered": render_token(at=time.time() - 60),
+                    },
+                )
+        self.assertEqual(response.status_code, 302)
+        batch = PolicyDocument.objects.values_list("share_batch", flat=True).first()
+        self.assertEqual(seen, [(str(batch), 2)])
+
+    def test_every_way_in_starts_a_reading(self):
+        for source in PolicyDocument.SHARED_SOURCES:
+            with self.subTest(source=source):
+                with (
+                    patch.object(
+                        temporal_client, "dispatch_shared_plan_documents"
+                    ) as dispatch,
+                    self.captureOnCommitCallbacks(execute=True),
+                ):
+                    (doc,) = save_shared_documents(
+                        [upload("plan.txt", b"$1,500")],
+                        source=source,
+                        details={},
+                        hashed_email=None,
+                    )
+                dispatch.assert_called_once_with(str(doc.share_batch))
+
+    def test_a_share_that_fails_to_save_starts_nothing(self):
+        with (
+            patch.object(temporal_client, "dispatch_shared_plan_documents") as dispatch,
+            patch(
+                "fighthealthinsurance.shared_plan_documents.fingerprint",
+                side_effect=OSError,
+            ),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            with self.assertRaises(OSError):
+                share(upload("plan.txt", b"$1,500"))
+        dispatch.assert_not_called()
+
+    @override_settings(TEMPORAL_ENABLED=True, TEMPORAL_PLAN_DOCUMENTS_ENABLED=False)
+    def test_with_the_flag_off_a_share_never_contacts_temporal(self):
+        connect = AsyncMock()
+        with (
+            patch.object(temporal_client, "get_temporal_client", connect),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            share(upload("plan.txt", b"$1,500"))
+        connect.assert_not_awaited()
+        self.assertEqual(PolicyDocument.objects.count(), 1)

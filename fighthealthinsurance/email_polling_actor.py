@@ -168,9 +168,14 @@ class EmailPollingActor:
         return None
 
     async def _send_plan_documents_reminders(self) -> None:
-        """Send the share page's reminders that are due. Catches its own
-        errors, so a failure here never trips the loop's backoff."""
+        """Send the share page's reminders that are due, unless the plan
+        documents sweep on Temporal sends them. Catches its own errors, so a
+        failure here never trips the loop's backoff."""
         try:
+            from fighthealthinsurance.temporal_client import plan_documents_enabled
+
+            if plan_documents_enabled():
+                return
             due = await self.plan_documents_reminder_sender.afind_candidates()
             if due:
                 sent = await self.plan_documents_reminder_sender.asend_all(

@@ -45,6 +45,9 @@ from fighthealthinsurance.workflows.chat_routing_policy import (
 )
 from fighthealthinsurance.workflows.generate_appeal import GenerateAppealWorkflow
 from fighthealthinsurance.workflows.intake_journey import IntakeJourneyWorkflow
+from fighthealthinsurance.workflows.plan_documents_sweep import (
+    PlanDocumentsSweepWorkflow,
+)
 from fighthealthinsurance.workflows.send_fax import SendFaxWorkflow
 from fighthealthinsurance.workflows.shared_plan_documents import (
     SharedPlanDocumentsWorkflow,
@@ -54,6 +57,7 @@ from fighthealthinsurance.workflows.types import (
     ChatRoutingPolicyInput,
     GenerateAppealInput,
     IntakeJourneyInput,
+    PlanDocumentsSweepInput,
     SendFaxInput,
     SharedPlanDocumentsInput,
 )
@@ -252,6 +256,27 @@ def _shared_plan_documents_activities():
     ]
 
 
+def _plan_documents_sweep_activities():
+    @activity.defn(name="find_due_plan_documents_reminders")
+    async def find_due_plan_documents_reminders(limit: int) -> list[int]:
+        return [41, 42]
+
+    @activity.defn(name="send_plan_documents_reminder")
+    async def send_plan_documents_reminder(reminder_id: int) -> bool:
+        # The second was removed before its send, so nothing went.
+        return reminder_id == 41
+
+    @activity.defn(name="find_waiting_share_batches")
+    async def find_waiting_share_batches(received_minutes: int, limit: int) -> list[str]:
+        return ["5b7d1f0e-6a43-4f8e-9c1d-2e3f4a5b6c7d"]
+
+    return [
+        find_due_plan_documents_reminders,
+        send_plan_documents_reminder,
+        find_waiting_share_batches,
+    ]
+
+
 def _assistant_activities():
     @activity.defn(name="read_letter")
     async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
@@ -405,6 +430,15 @@ async def test_capture_baseline_histories():
                 SharedPlanDocumentsInput(
                     share_batch="5b7d1f0e-6a43-4f8e-9c1d-2e3f4a5b6c7d"
                 ),
+            ),
+            (
+                "plan_documents_sweep_completed",
+                # The real reading, so the child the sweep starts runs too.
+                [PlanDocumentsSweepWorkflow, SharedPlanDocumentsWorkflow],
+                _plan_documents_sweep_activities()
+                + _shared_plan_documents_activities(),
+                PlanDocumentsSweepWorkflow.run,
+                PlanDocumentsSweepInput(),
             ),
         ]
         for name, workflows, activities, entry, arg in plans:

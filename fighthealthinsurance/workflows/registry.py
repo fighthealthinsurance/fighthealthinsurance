@@ -19,6 +19,9 @@ from fighthealthinsurance.workflows.chat_routing_policy import (
 )
 from fighthealthinsurance.workflows.generate_appeal import GenerateAppealWorkflow
 from fighthealthinsurance.workflows.intake_journey import IntakeJourneyWorkflow
+from fighthealthinsurance.workflows.plan_documents_sweep import (
+    PlanDocumentsSweepWorkflow,
+)
 from fighthealthinsurance.workflows.send_fax import SendFaxWorkflow
 from fighthealthinsurance.workflows.shared_plan_documents import (
     SharedPlanDocumentsWorkflow,
@@ -63,13 +66,15 @@ def chat_policy_workflows() -> List[type]:
 
 
 def plan_documents_workflows() -> List[type]:
-    """Workflows hosted on the plan documents task queue.
+    """Workflows hosted on the plan documents task queue: the reading of a
+    share, and the hourly sweep that sends due reminders and starts
+    readings a share's own start missed.
 
     The appeal-worker process hosts this queue as its own Worker, like the
     chat policy's, so reading a file never waits behind an appeal
     generation for a slot. Registered only when its flag is on.
     """
-    return [SharedPlanDocumentsWorkflow]
+    return [SharedPlanDocumentsWorkflow, PlanDocumentsSweepWorkflow]
 
 
 def workflows_for_role(

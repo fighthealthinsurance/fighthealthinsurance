@@ -48,6 +48,11 @@ READ_RETRY = RetryPolicy(
 READ_TIMEOUT = timedelta(minutes=3)
 
 
+def shared_plan_documents_workflow_id(share_batch: str) -> str:
+    """One open reading per share, whoever starts it."""
+    return f"shared-plan-documents-{share_batch}"
+
+
 @workflow.defn
 class SharedPlanDocumentsWorkflow:
     @workflow.run

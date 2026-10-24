@@ -94,3 +94,15 @@ class SharedPlanDocumentsInput:
     fingerprints, the insurer, the employer, a file name or any text."""
 
     share_batch: str
+
+
+@dataclass
+class PlanDocumentsSweepInput:
+    """Input for ``PlanDocumentsSweepWorkflow``, the hourly plan documents
+    sweep. Numbers only: how many due reminders one run sends at most, how
+    many waiting shares it starts readings for at most, and how many
+    minutes a share waits before the sweep starts its reading."""
+
+    max_reminders: int = 50
+    max_batches: int = 50
+    received_minutes: int = 15

@@ -356,7 +356,8 @@ required.
   available via `delay_send`).
 - **Behind its own flag:** the `chat-routing-policy` Schedule (below), the
   first Temporal Schedule here.
-- **Behind its own flag:** reading shared plan documents (below).
+- **Behind its own flag:** reading shared plan documents and the hourly
+  `plan-documents-sweep` Schedule (below).
 - **Next:** point fax creation at `delay_send=True` to retire the
   `FaxPollingActor`; then convert the refresh/prefetch actors to Temporal
   Schedules and the email-polling actor to a workflow. See the migration notes
@@ -426,6 +427,12 @@ stores the cleaned text on the row as ready for review. A row with no text
 to read, such as a scanned PDF, is marked unreadable. The raw text is never
 stored. Staff read the cleaned text from the admin.
 
+The request that saved a share starts its reading once the rows commit, as
+`shared-plan-documents-{share batch}`. That start is best effort: it waits
+three seconds at most and never fails the share. `PlanDocumentsSweepWorkflow`,
+on the `plan-documents-sweep` Schedule, makes up for a lost start, and sends
+the share page's 30-day reminders in place of the Ray email loop.
+
 | Setting | Default | Where |
 | --- | --- | --- |
 | `TEMPORAL_PLAN_DOCUMENTS_ENABLED` | off | shared app secret, next to the journey flags |
@@ -445,11 +452,30 @@ stored. Staff read the cleaned text from the admin.
   reads its flags only at start-up.
 - **Retries:** a reading gets three tries; after that the row is marked
   unreadable, and staff still have the original file.
+- **The sweep Schedule:** id `plan-documents-sweep`; an interval of one
+  hour; overlap SKIP; a catch-up window of one hour, so an outage makes up
+  at most one run; each run has a 30-minute execution timeout. A run sends
+  up to 50 due reminders, one activity each, run once and never retried,
+  then starts readings, as children it does not wait for, for up to 50
+  shares still waiting 15 minutes after they were saved. A share whose
+  reading is already running is left to it. Each `fhi-appeal-worker` pod
+  creates or updates the Schedule at start-up when the flags allow, and
+  pauses it when they don't; `manage.py ensure_temporal_schedules` does the
+  same by hand.
+- **Reminders:** the activity claims a reminder by deleting its row, reads
+  the address from that row and sends one email, so the address never
+  reaches history and a reminder goes at most once. While
+  `plan_documents_enabled()` is true the Ray `EmailPollingActor` leaves
+  these reminders alone; while it is false it sends them as before. If the
+  Ray pods and the worker disagree about the flags for a while, the claim
+  still sends each reminder once.
 - **Deletion:** remove-my-data deletes the rows as before. Every activity
   looks its row up by id when it runs, so a run that finds its rows gone
   writes nothing.
-- **History:** the share's uuid, the rows' ids and their statuses. No text,
-  file names, emails, insurers or employers.
+- **History:** the share's uuid, the rows' ids and their statuses; for the
+  sweep, its three numbers, the reminders' row ids, true or false for
+  each, the shares' uuids and two counts. No text, file names, emails,
+  insurers or employers.
 
 ## Protecting user data in workflow history
 

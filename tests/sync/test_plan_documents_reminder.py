@@ -12,17 +12,20 @@ and signed render time, and its address is never the share form's email.
 import datetime
 import sys
 import time
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from asgiref.sync import async_to_sync
 
 from bs4 import BeautifulSoup
 from django.core import mail
 from django.db import DatabaseError
 from django.db.models.deletion import Collector
-from django.test import Client, TestCase, override_settings
+from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
 from fighthealthinsurance import plan_documents_reminder
+from fighthealthinsurance.activities import plan_documents_sweep
 from fighthealthinsurance.chat_forms import PlanDocumentsReminderForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.models import PlanDocumentsReminder, PolicyDocument
@@ -263,9 +266,9 @@ class SendingTheReminderTest(_ReminderTestCase):
         held = []
 
         def fail(*args, **kwargs):
-            # What an error report would show of the sender's own variables.
+            # What an error report would show of the claim's own variables.
             frame = sys._getframe()
-            while frame.f_code.co_name != "dosend":
+            while frame.f_code.co_name != "claim":
                 frame = frame.f_back
             held.extend(repr(value) for value in frame.f_locals.values())
             raise DatabaseError(f"could not delete the reminder for {EMAIL}")
@@ -293,3 +296,109 @@ class SendingTheReminderTest(_ReminderTestCase):
         RemoveDataHelper.remove_data_for_email(EMAIL.upper())
         self.assertEqual(self.run_due(self.asked_at + datetime.timedelta(days=31)), [])
         self.assertEqual(len(mail.outbox), 0)
+
+
+class TheSweepSendsTheReminderTest(TransactionTestCase):
+    """With plan documents on Temporal, the hourly sweep sends what is due:
+    one activity per reminder, given only the row's id. It claims the row
+    by deleting it and reads the address from it, as the Ray loop does."""
+
+    def setUp(self):
+        self.reminder = PlanDocumentsReminder.objects.create(
+            email=EMAIL, send_after=timezone.now() - datetime.timedelta(minutes=1)
+        )
+
+    def send(self, reminder_id=None):
+        return async_to_sync(plan_documents_sweep.send_plan_documents_reminder)(
+            reminder_id or self.reminder.pk
+        )
+
+    def due(self, limit=50):
+        return async_to_sync(
+            plan_documents_sweep.find_due_plan_documents_reminders
+        )(limit)
+
+    def test_due_reminders_are_found_by_row_id_only(self):
+        PlanDocumentsReminder.objects.create(
+            email="mary.mahoney@test-fhi.com",
+            send_after=timezone.now() + datetime.timedelta(days=1),
+        )
+        self.assertEqual(self.due(), [self.reminder.pk])
+
+    def test_a_due_reminder_goes_once_to_the_person_alone_and_the_address_goes(self):
+        # True itself: the activity's result is history, so never the address.
+        self.assertIs(self.send(), True)
+        self.assertEqual(len(mail.outbox), 1)
+        message = mail.outbox[0]
+        self.assertEqual(message.to, [EMAIL])
+        self.assertFalse(message.cc)
+        self.assertFalse(message.bcc)
+        self.assertIn(PAGE, message.body.splitlines())
+        self.assertFalse(PlanDocumentsReminder.objects.exists())
+        self.assertFalse(self.send())
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_a_reminder_not_yet_due_is_not_sent(self):
+        PlanDocumentsReminder.objects.update(
+            send_after=timezone.now() + datetime.timedelta(days=1)
+        )
+        self.assertFalse(self.send())
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertTrue(PlanDocumentsReminder.objects.exists())
+
+    def test_a_reminder_removed_before_the_sweep_reaches_it_sends_nothing(self):
+        RemoveDataHelper.remove_data_for_email(EMAIL)
+        self.assertFalse(self.send())
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_a_failed_send_is_not_retried_and_logs_no_address(self):
+        with patch(
+            "django.core.mail.EmailMultiAlternatives.send",
+            side_effect=OSError("mail server said no to rebecca.crumpler"),
+        ), patch.object(plan_documents_reminder, "logger") as logged:
+            self.assertFalse(self.send())
+        self.assertFalse(PlanDocumentsReminder.objects.exists())
+        self.assertNotIn("crumpler", str(logged.mock_calls).lower())
+
+
+class TheRayLoopLeavesRemindersToTheSweepTest(TestCase):
+    """EmailPollingActor sends the reminders only while plan documents are
+    not on Temporal, so the two never both look for them."""
+
+    def actor(self):
+        from fighthealthinsurance.email_polling_actor import EmailPollingActor
+
+        metadata = getattr(EmailPollingActor, "__ray_metadata__", None)
+        actor_class = metadata.modified_class if metadata else EmailPollingActor
+        with (
+            patch("fighthealthinsurance.email_polling_actor.time.sleep"),
+            patch("configurations.wsgi.get_wsgi_application"),
+        ):
+            built = actor_class()
+        built._logger = MagicMock()
+        built.plan_documents_reminder_sender.afind_candidates = AsyncMock(
+            return_value=[]
+        )
+        return built
+
+    def test_with_plan_documents_on_temporal_the_loop_sends_none(self):
+        actor = self.actor()
+        with override_settings(
+            TEMPORAL_ENABLED=True,
+            TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
+            TEMPORAL_PAYLOAD_KEY="k",
+        ):
+            async_to_sync(actor._send_plan_documents_reminders)()
+        actor.plan_documents_reminder_sender.afind_candidates.assert_not_awaited()
+
+    def test_otherwise_the_loop_sends_them_as_before(self):
+        for key in ("", "k"):
+            with self.subTest(payload_key=key):
+                actor = self.actor()
+                with override_settings(
+                    TEMPORAL_ENABLED=True,
+                    TEMPORAL_PLAN_DOCUMENTS_ENABLED=not key,
+                    TEMPORAL_PAYLOAD_KEY=key,
+                ):
+                    async_to_sync(actor._send_plan_documents_reminders)()
+                actor.plan_documents_reminder_sender.afind_candidates.assert_awaited_once()

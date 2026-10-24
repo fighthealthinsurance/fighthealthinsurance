@@ -69,6 +69,7 @@ def test_all_enabled_is_the_maximal_set_the_replay_gate_must_cover():
         "ChatRoutingPolicyWorkflow",
         "AssistantAppealWorkflow",
         "SharedPlanDocumentsWorkflow",
+        "PlanDocumentsSweepWorkflow",
     }
 
 
@@ -130,7 +131,7 @@ def test_the_plan_documents_workflow_appears_only_with_its_own_flag():
             intake_enabled=False,
             plan_documents_enabled=True,
         )
-    ) == ["SharedPlanDocumentsWorkflow"]
+    ) == ["SharedPlanDocumentsWorkflow", "PlanDocumentsSweepWorkflow"]
 
 
 def test_the_fax_role_never_hosts_the_plan_documents_workflow():
