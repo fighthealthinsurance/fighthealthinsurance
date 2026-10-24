@@ -4,17 +4,21 @@ What a reading stored (the file's text with personal details taken out as
 best we could) is shown to staff the same safe way as the raw text view:
 plain text that runs nothing, never cached, behind the staff login. The
 admin lists shared files by where their reading is, offers the cleaned text
-first, and never puts the cleaned text in its form.
+first, never puts the cleaned text in its form, and can set files marked
+unreadable back to waiting so they are read again.
 """
 
+import datetime
 import time
 
+from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+from fighthealthinsurance import plan_documents_processing as processing
 from fighthealthinsurance.models import PolicyDocument
 from fighthealthinsurance.shared_plan_documents import render_token
 
@@ -145,6 +149,63 @@ class TheAdminFindsFilesByTheirReadingTest(_CleanedTextTestCase):
         ).content.decode()
         self.assertNotIn(
             reverse("staff_policy_document_cleaned_text", kwargs={"pk": doc.pk}), page
+        )
+
+
+class StaffCanAskForAFileToBeReadAgainTest(_CleanedTextTestCase):
+    """The admin's "Read again" sets shared files marked unreadable back to
+    waiting, so the hourly sweep reads them again. Nothing else changes."""
+
+    def setUp(self):
+        super().setUp()
+        self.admin = User.objects.create_superuser(
+            username="mary_eliza_mahoney", password="pw-for-tests"
+        )
+        self.client.force_login(self.admin)
+
+    def read_again(self, *docs):
+        return self.client.post(
+            reverse("admin:fighthealthinsurance_policydocument_changelist"),
+            {"action": "read_again", "_selected_action": [str(d.pk) for d in docs]},
+            follow=True,
+        )
+
+    def test_unreadable_shared_files_go_back_to_waiting(self):
+        unreadable = self.shared(status=PolicyDocument.PROCESSING_UNREADABLE, cleaned="")
+        response = self.read_again(unreadable)
+        unreadable.refresh_from_db()
+        self.assertEqual(unreadable.processing_status, PolicyDocument.PROCESSING_RECEIVED)
+        self.assertIsNone(unreadable.processed_at)
+        self.assertContains(response, "1 file(s) will be read again")
+
+    def test_other_files_are_left_as_they_are(self):
+        ready = self.shared()
+        waiting = self.shared(status=PolicyDocument.PROCESSING_RECEIVED, cleaned="")
+        not_shared = PolicyDocument.objects.create(
+            source=PolicyDocument.SOURCE_EXPLAIN_POLICY
+        )
+        response = self.read_again(ready, waiting, not_shared)
+        self.assertContains(response, "0 file(s) will be read again")
+        ready.refresh_from_db()
+        self.assertEqual(
+            (ready.processing_status, ready.cleaned_text),
+            (PolicyDocument.PROCESSING_READY, CLEANED),
+        )
+        for doc in (waiting, not_shared):
+            before = doc.processing_status
+            doc.refresh_from_db()
+            self.assertEqual(doc.processing_status, before)
+
+    def test_the_sweep_finds_them_again(self):
+        unreadable = self.shared(status=PolicyDocument.PROCESSING_UNREADABLE, cleaned="")
+        PolicyDocument.objects.filter(pk=unreadable.pk).update(
+            shared_at=timezone.now() - datetime.timedelta(days=2)
+        )
+        self.assertEqual(async_to_sync(processing.awaiting_batches)(15, 10), [])
+        self.read_again(unreadable)
+        self.assertEqual(
+            async_to_sync(processing.awaiting_batches)(15, 10),
+            [str(unreadable.share_batch)],
         )
 
 

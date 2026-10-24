@@ -1299,6 +1299,24 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "processing_status",
         "processed_at",
     )
+    actions = ("read_again",)
+
+    @admin.action(description="Read again (shared files marked unreadable)")
+    def read_again(self, request, queryset):
+        # Back to waiting: the hourly sweep starts a new reading for them.
+        updated = queryset.filter(
+            source__in=PolicyDocument.SHARED_SOURCES,
+            processing_status=PolicyDocument.PROCESSING_UNREADABLE,
+        ).update(
+            processing_status=PolicyDocument.PROCESSING_RECEIVED,
+            processed_at=None,
+            cleaned_text="",
+        )
+        self.message_user(
+            request,
+            f"{updated} file(s) will be read again by the next hourly sweep; "
+            f"{queryset.count() - updated} were not shared files marked unreadable.",
+        )
 
     def changelist_view(self, request, extra_context=None):
         # How many shared files there are, and how many different documents.

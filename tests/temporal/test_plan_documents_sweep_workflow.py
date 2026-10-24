@@ -14,7 +14,7 @@ import uuid
 
 import pytest
 from temporalio import activity, workflow
-from temporalio.api.enums.v1 import ParentClosePolicy
+from temporalio.api.enums.v1 import ParentClosePolicy, WorkflowIdReusePolicy
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
@@ -213,6 +213,33 @@ async def test_a_share_whose_reading_is_running_is_left_to_it():
             "release"
         )
     assert result == {"reminders_sent": 0, "readings_started": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_share_whose_earlier_reading_has_closed_is_read_again():
+    """Staff "Read again" sets rows back to waiting; the sweep then starts a
+    new run under the id of one that has already closed."""
+
+    async def an_earlier_reading_that_closed(env, task_queue):
+        earlier = await env.client.start_workflow(
+            "SharedPlanDocumentsWorkflow",
+            SharedPlanDocumentsInput(share_batch=BATCH_A),
+            id=f"shared-plan-documents-{BATCH_A}",
+            task_queue=task_queue,
+        )
+        await earlier.result()
+
+    stubs = _Stubs(due=[], batches=[BATCH_A])
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        handle, result = await _run(env, stubs, before=an_earlier_reading_that_closed)
+        history = await handle.fetch_history()
+    assert result == {"reminders_sent": 0, "readings_started": 1}
+    (start,) = _child_starts(history)
+    assert start.workflow_id == f"shared-plan-documents-{BATCH_A}"
+    assert (
+        start.workflow_id_reuse_policy
+        == WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE
+    )
 
 
 def _decoded_payloads(history):

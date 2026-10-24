@@ -10,9 +10,10 @@ A run does two things, and a failure in the first never stops the second:
    address never reaches history, and a reminder goes at most once.
 2. Starts a reading (SharedPlanDocumentsWorkflow) for each share still
    waiting a while after it was saved: its start from the request was lost,
-   or a run failed. The readings are children the sweep does not wait for
-   (parent close policy ABANDON). A share whose reading is already running
-   is left to it.
+   or a run failed, or staff asked for files to be read again. The readings
+   are children the sweep does not wait for (parent close policy ABANDON).
+   A share whose reading is already running is left to it; one whose
+   earlier reading has closed gets a new run under the same id.
 
 History holds the run's numbers, the reminders' row ids, true or false for
 each, the shares' uuids and two counts.
@@ -21,7 +22,7 @@ each, the shares' uuids and two counts.
 from datetime import timedelta
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy
+from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import ActivityError, WorkflowAlreadyStartedError
 
 from fighthealthinsurance.workflows.shared_plan_documents import (
@@ -103,6 +104,9 @@ class PlanDocumentsSweepWorkflow:
                     SharedPlanDocumentsInput(share_batch=share_batch),
                     id=shared_plan_documents_workflow_id(share_batch),
                     parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                    # A closed run never blocks a new one: rows set back to
+                    # waiting (staff "Read again") are read again.
+                    id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
                 )
             except WorkflowAlreadyStartedError:
                 continue

@@ -462,7 +462,10 @@ the share page's 30-day reminders in place of the Ray email loop.
   them an hour. To turn it off, set the flag to false and restart the same
   pods; the worker pauses the Schedule.
 - **Retries:** a reading gets three tries; after that the row is marked
-  unreadable, and staff still have the original file.
+  unreadable, and staff still have the original file. In the admin, staff
+  can select such rows and choose "Read again": they go back to waiting,
+  and the next hourly sweep starts a new reading for their share, even
+  though an earlier run used the same workflow id.
 - **The sweep Schedule:** id `plan-documents-sweep`; an interval of one
   hour; overlap SKIP; a catch-up window of one hour, so an outage makes up
   at most one run; each run has a 30-minute execution timeout. A run sends
