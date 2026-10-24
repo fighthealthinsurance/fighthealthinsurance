@@ -484,8 +484,9 @@ class Command(BaseCommand):
                 queues.append(policy_queue)
             if hosts_plan_documents and plan_documents_on:
                 # Its own Worker, so reading files never takes an appeal
-                # generation's slot. Two at a time: each holds a file of up
-                # to 32MB and a reader thread or child process.
+                # generation's slot. One at a time: a reading holds a file of
+                # up to 32MB and may start a PDF child of up to 1GB, inside
+                # the appeal worker's memory.
                 plan_documents_workflows: List[type] = (
                     workflow_registry.plan_documents_workflows()
                 )
@@ -501,7 +502,7 @@ class Command(BaseCommand):
                         sweep_activities.send_plan_documents_reminder,
                         sweep_activities.find_waiting_share_batches,
                     ],
-                    max_concurrent_activities=2,
+                    max_concurrent_activities=1,
                     # Covers a reading's three-minute start_to_close, inside
                     # the appeal Worker's 300s drain and the pod's grace.
                     graceful_shutdown_timeout=timedelta(minutes=3),

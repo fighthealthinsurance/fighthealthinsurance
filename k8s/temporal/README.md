@@ -443,9 +443,11 @@ the share page's 30-day reminders in place of the Ray email loop.
   `TEMPORAL_PAYLOAD_KEY` also set, so these runs only ever exist in
   encrypted history. It does not need the journey flags.
 - **Where it runs:** the `fhi-appeal-worker` pods host the queue as a
-  Worker of its own with two activity slots, so reading a file never takes
-  an appeal generation's slot. The reader threads and child processes are
-  its own too. The fax worker never hosts it. The `fhi-.*` queue alerts in
+  Worker of its own with one activity slot, so reading a file never takes
+  an appeal generation's slot, and only one PDF child process (capped at
+  1GB) runs for it at a time inside the appeal worker. A reading waiting
+  for the slot is not counted against its time limit. The reader threads
+  and child processes are its own too. The fax worker never hosts it. The `fhi-.*` queue alerts in
   `worker-alerts.yaml` cover it with no change.
 - **Turning it on:** deploy first, so migration 0248 has added the
   reading's columns. Then set the flag in the shared
