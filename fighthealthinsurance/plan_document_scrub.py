@@ -16,11 +16,12 @@ a filled-in form. :func:`scrub` replaces these with ``[removed]``:
   "Address", "Home Address", "Mailing Address" and the like, with or
   without a colon;
 * a Social Security number written as 123-45-6789 anywhere;
-* the name after "Dear" at the start of a letter.
+* the name after "Dear" at the start of a letter, unless the greeting is
+  to everyone ("Dear Member", "Dear Plan Participant").
 
 It keeps what makes the document useful: group numbers, plan names and plan
-IDs, Rx BIN, PCN and group, payer IDs, the employer and insurer, dollar
-amounts and the dates of a coverage period. Pure Python with no model calls;
+IDs, Rx BIN, PCN and group, payer IDs, provider NPIs, the employer and
+insurer, dollar amounts and the dates of a coverage period. Pure Python with no model calls;
 every pattern is a bounded scan, with one quantifier for each run of spaces,
 since the text can run to millions of characters. Best effort: the tests
 show what it catches.
@@ -117,17 +118,37 @@ _GENERIC_SALUTATIONS = frozenset(
         "member",
         "members",
         "customer",
+        "customers",
         "participant",
         "participants",
         "subscriber",
+        "subscribers",
+        "employee",
+        "employees",
         "enrollee",
+        "enrollees",
+        "retiree",
+        "retirees",
+        "insured",
+        "health",
         "valued",
         "sir",
         "madam",
+        "colleague",
+        "colleagues",
+        "parent",
+        "parents",
+        "guardian",
+        "friend",
+        "friends",
         "provider",
+        "providers",
         "patient",
+        "patients",
         "policyholder",
+        "policyholders",
         "beneficiary",
+        "beneficiaries",
     }
 )
 
@@ -143,8 +164,9 @@ _ADDRESS_RULE = re.compile(
 )
 
 # Plan facts kept even where they look like a phone number or an identifier.
+# A provider's NPI is ten digits, like a phone number, and names no member.
 _KEPT_RULE = re.compile(
-    rf"\b(?:group|plan|payer|rx{_SP}*(?:bin|pcn|grp|group))\b"
+    rf"\b(?:group|plan|payer|npi|rx{_SP}*(?:bin|pcn|grp|group))\b"
     rf"(?:{_SP}*{_NUMBER_WORDS})?{_SEP}(?P<value>[a-z0-9-]{{1,30}})",
     _FLAGS,
 )

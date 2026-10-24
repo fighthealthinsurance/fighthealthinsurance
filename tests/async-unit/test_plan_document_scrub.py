@@ -149,6 +149,35 @@ def test_a_label_on_the_line_below_is_not_taken_for_a_value(text):
     assert scrub(text) == text
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Dear Member,",
+        "Dear Employee,",
+        "Dear Plan Participant,",
+        "Dear Participant:",
+        "Dear Subscriber,",
+        "Dear Customer,",
+        "Dear Medicare Beneficiary,",
+        "Dear Parent or Guardian,",
+    ],
+)
+def test_a_greeting_to_everyone_is_kept(text):
+    assert scrub(text) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "NPI: 1234567890",
+        "Provider NPI #: 1234567890",
+        "Your doctor, Mary Eliza Mahoney MD, NPI 1234567890",
+    ],
+)
+def test_a_providers_npi_is_kept(text):
+    assert scrub(text) == text
+
+
 def test_a_name_stops_before_the_next_label():
     assert scrub("Patient: Rebecca Crumpler DOB: 02/08/1831") == (
         f"Patient: {REMOVED} DOB: {REMOVED}"
@@ -344,6 +373,8 @@ LONG_RUN_LABELS = [
     "Mailing address",
     "Address",
     "Your address on file",
+    "NPI",
+    "Dear",
 ]
 
 
