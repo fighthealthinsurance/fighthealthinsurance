@@ -4,7 +4,7 @@ readable identifiers.
 Workflow inputs are already claim-check style -- opaque ``(hashed_email,
 uuid)`` pairs, never case content -- but a hashed email is still a
 user-linked identifier, and it sits in Temporal's own database until
-namespace retention (720h, see ``k8s/temporal/README.md``) expires it. With ``TEMPORAL_PAYLOAD_KEY`` set, every payload (inputs,
+the namespace's retention (see ``k8s/temporal/README.md``) expires it. With ``TEMPORAL_PAYLOAD_KEY`` set, every payload (inputs,
 results, and the values inside errors) is Fernet-encrypted by the client
 before it reaches the Temporal server, so:
 
