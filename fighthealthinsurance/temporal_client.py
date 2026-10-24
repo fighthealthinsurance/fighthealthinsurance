@@ -1,5 +1,5 @@
-"""Temporal client connection, fax-dispatch helpers and the chat policy
-Schedule.
+"""Temporal client connection, fax-dispatch helpers, the chat policy
+Schedule and the shared plan documents flag.
 
 All ``temporalio`` imports are done lazily inside the functions so that simply
 importing this module (e.g. from ``fax_helpers``) does not require ``temporalio``
@@ -603,6 +603,20 @@ async def ensure_chat_policy_schedule(client: Any, enabled: bool) -> str:
         )
     logger.info(f"Updated the {CHAT_POLICY_SCHEDULE_ID} schedule")
     return SCHEDULE_UPDATED
+
+
+# --- Shared plan documents ----------------------------------------------------
+
+
+def plan_documents_enabled() -> bool:
+    """Whether shared plan documents are read on Temporal: TEMPORAL_ENABLED,
+    TEMPORAL_PLAN_DOCUMENTS_ENABLED and a TEMPORAL_PAYLOAD_KEY, so these runs
+    only ever exist in encrypted history. Independent of the journey flags."""
+    return bool(
+        getattr(settings, "TEMPORAL_ENABLED", False)
+        and getattr(settings, "TEMPORAL_PLAN_DOCUMENTS_ENABLED", False)
+        and getattr(settings, "TEMPORAL_PAYLOAD_KEY", "")
+    )
 
 
 # The fire-and-forget dispatch/signal helpers that used to live here were

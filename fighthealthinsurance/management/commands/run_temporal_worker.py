@@ -18,7 +18,9 @@ installs.
 
 The appeal role (and ``all``) also hosts the chat routing policy queue as a
 Worker of its own when TEMPORAL_CHAT_POLICY_ENABLED is on, and keeps the
-``chat-routing-policy`` Schedule in step with that flag at start-up.
+``chat-routing-policy`` Schedule in step with that flag at start-up. It
+hosts the shared plan documents queue the same way when
+temporal_client.plan_documents_enabled() is true.
 """
 
 import asyncio
@@ -249,11 +251,13 @@ class Command(BaseCommand):
             chat_routing_policy as policy_activities,
             fax as fax_activities,
             intake_journey as intake_activities,
+            shared_plan_documents as plan_document_activities,
         )
         from fighthealthinsurance.temporal_client import (
             chat_policy_schedule_enabled,
             ensure_chat_policy_schedule,
             get_temporal_client,
+            plan_documents_enabled,
         )
         from fighthealthinsurance.workflows.generate_appeal import (
             GenerateAppealWorkflow,
@@ -309,6 +313,11 @@ class Command(BaseCommand):
         policy_enabled = chat_policy_schedule_enabled()
         policy_queue = settings.TEMPORAL_CHAT_POLICY_TASK_QUEUE
         hosts_policy = role in ("appeal", "all")
+        # Shared plan documents: the same shape as the policy, with a flag
+        # that also needs the payload key. --task-queue never changes it.
+        plan_documents_on = plan_documents_enabled()
+        plan_documents_queue = settings.TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE
+        hosts_plan_documents = role in ("appeal", "all")
 
         # The connect is raced against stop: a SIGTERM that lands while the
         # connection is still pending must not be discarded (review), and a
@@ -329,6 +338,8 @@ class Command(BaseCommand):
             f"(namespace={settings.TEMPORAL_NAMESPACE}); role={role}; appeal "
             f"journey {'ENABLED' if journey_enabled else 'disabled'}; chat "
             f"policy {'ENABLED' if policy_enabled and hosts_policy else 'disabled'}; "
+            f"plan documents "
+            f"{'ENABLED' if plan_documents_on and hosts_plan_documents else 'disabled'}; "
             f"metrics {os.environ.get(METRICS_BIND_ENV) if runtime else 'off'}; "
             f"app metrics {app_metrics or 'off'}"
         )
@@ -454,19 +465,44 @@ class Command(BaseCommand):
                 runs.append(policy_worker.run())
                 workers.append(policy_worker)
                 queues.append(policy_queue)
+            if hosts_plan_documents and plan_documents_on:
+                # Its own Worker, so reading files never takes an appeal
+                # generation's slot. Two at a time: each holds a file of up
+                # to 32MB and a reader thread or child process.
+                plan_documents_workflows: List[type] = (
+                    workflow_registry.plan_documents_workflows()
+                )
+                plan_documents_worker = Worker(
+                    client,
+                    task_queue=plan_documents_queue,
+                    workflows=plan_documents_workflows,
+                    activities=[
+                        plan_document_activities.list_shared_plan_documents,
+                        plan_document_activities.process_shared_plan_document,
+                        plan_document_activities.mark_shared_plan_document_unreadable,
+                    ],
+                    max_concurrent_activities=2,
+                    # Covers a reading's three-minute start_to_close, inside
+                    # the appeal Worker's 300s drain and the pod's grace.
+                    graceful_shutdown_timeout=timedelta(minutes=3),
+                )
+                runs.append(plan_documents_worker.run())
+                workers.append(plan_documents_worker)
+                queues.append(plan_documents_queue)
             if not runs:
-                # role=appeal with the journey and policy flags dark. Idle
-                # instead of exiting: an exit would crash-loop the
-                # Deployment, but this pod being inert IS the kill switch
-                # working -- flipping the flags and restarting the
-                # Deployment brings it live.
+                # role=appeal with the journey, policy and plan documents
+                # flags dark. Idle instead of exiting: an exit would
+                # crash-loop the Deployment, but this pod being inert IS the
+                # kill switch working -- flipping the flags and restarting
+                # the Deployment brings it live.
                 self.stdout.write(
-                    "Appeal worker role selected but the appeal journey and "
-                    "chat policy flags are OFF; idling (this process will host "
-                    "nothing until TEMPORAL_ENABLED and "
-                    "TEMPORAL_APPEAL_JOURNEY_ENABLED or "
-                    "TEMPORAL_CHAT_POLICY_ENABLED are set and the process "
-                    "restarts)."
+                    "Appeal worker role selected but the appeal journey, "
+                    "chat policy and plan documents flags are OFF; idling "
+                    "(this process will host nothing until TEMPORAL_ENABLED "
+                    "and TEMPORAL_APPEAL_JOURNEY_ENABLED, "
+                    "TEMPORAL_CHAT_POLICY_ENABLED or "
+                    "TEMPORAL_PLAN_DOCUMENTS_ENABLED (with "
+                    "TEMPORAL_PAYLOAD_KEY) are set and the process restarts)."
                 )
                 await stop.wait()
                 return

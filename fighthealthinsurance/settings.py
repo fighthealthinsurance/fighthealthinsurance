@@ -250,6 +250,13 @@ class Base(Configuration):
     TEMPORAL_CHAT_POLICY_ENABLED = (
         os.getenv("TEMPORAL_CHAT_POLICY_ENABLED", "false").lower() == "true"
     )
+    # Reading shared plan documents (SharedPlanDocumentsWorkflow), gated on
+    # its own. It takes effect only with TEMPORAL_ENABLED and
+    # TEMPORAL_PAYLOAD_KEY also set, since these runs name shares of
+    # documents. With it on, the appeal-worker process hosts its queue.
+    TEMPORAL_PLAN_DOCUMENTS_ENABLED = (
+        os.getenv("TEMPORAL_PLAN_DOCUMENTS_ENABLED", "false").lower() == "true"
+    )
 
     # TypeSafe System One letter scoring (ml/letter_quality.py). Inert until
     # BOTH the key and the flag are set: the key alone must not start sending
@@ -508,6 +515,12 @@ class Base(Configuration):
     # appeal Worker's slots never delays it.
     TEMPORAL_CHAT_POLICY_TASK_QUEUE = os.getenv(
         "TEMPORAL_CHAT_POLICY_TASK_QUEUE", "fhi-chat-policy"
+    )
+    # Shared plan documents have their own queue too, hosted as their own
+    # Worker in the appeal-worker process, so reading files never takes an
+    # appeal generation's slot.
+    TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE = os.getenv(
+        "TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE", "fhi-plan-documents"
     )
     # In-cluster address of the Temporal Web UI, reached only through the
     # staff-only reverse proxy at /timbit/temporal/ (never exposed directly).

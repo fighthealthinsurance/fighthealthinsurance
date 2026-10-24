@@ -71,9 +71,9 @@ spec:
             - name: TEMPORAL_ENABLED
               value: "true"
             # TEMPORAL_APPEAL_JOURNEY_ENABLED / TEMPORAL_INTAKE_JOURNEY_ENABLED
-            # / TEMPORAL_CHAT_POLICY_ENABLED intentionally NOT set here: they
-            # come from the app secrets and default OFF, so applying this
-            # manifest does not enable anything.
+            # / TEMPORAL_CHAT_POLICY_ENABLED / TEMPORAL_PLAN_DOCUMENTS_ENABLED
+            # intentionally NOT set here: they come from the app secrets and
+            # default OFF, so applying this manifest does not enable anything.
             # The chat routing policy's own queue, hosted as a separate Worker
             # in this process while TEMPORAL_CHAT_POLICY_ENABLED is on. Keep it
             # equal to the settings default (anything that starts or updates
@@ -81,6 +81,12 @@ spec:
             # from a web pod, reads the same setting).
             - name: TEMPORAL_CHAT_POLICY_TASK_QUEUE
               value: "fhi-chat-policy"
+            # The shared plan documents queue, hosted the same way while
+            # TEMPORAL_PLAN_DOCUMENTS_ENABLED is on (with TEMPORAL_ENABLED and
+            # TEMPORAL_PAYLOAD_KEY). Keep it equal to the settings default:
+            # the web pods start runs on the queue their settings name.
+            - name: TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE
+              value: "fhi-plan-documents"
             - name: TEMPORAL_HOST
               value: "temporal-frontend:7233"
             - name: TEMPORAL_NAMESPACE

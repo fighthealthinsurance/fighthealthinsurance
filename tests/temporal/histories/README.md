@@ -85,6 +85,10 @@ FHI_CAPTURE_HISTORY=1 tox -e py313-django52-temporal -- \
 The command rewrites every baseline. Commit only the files for the workflow
 you meant to change, and put the rest back with `git checkout`.
 
+Captures name the worker and client `test-worker` and `test-client`, and
+drop the stack trace of any failure a stub raises, so no machine name or
+file path is written into a fixture. Check a new file for both anyway.
+
 Only when a workflow change is intentional and the new command sequence has
 been reviewed. Overwriting the baseline is how you tell CI "this drift is
 expected" — doing it reflexively defeats the gate.

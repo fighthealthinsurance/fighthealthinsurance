@@ -356,6 +356,7 @@ required.
   available via `delay_send`).
 - **Behind its own flag:** the `chat-routing-policy` Schedule (below), the
   first Temporal Schedule here.
+- **Behind its own flag:** reading shared plan documents (below).
 - **Next:** point fax creation at `delay_send=True` to retire the
   `FaxPollingActor`; then convert the refresh/prefetch actors to Temporal
   Schedules and the email-polling actor to a workflow. See the migration notes
@@ -412,6 +413,43 @@ is never on the chat path, so chat behaves the same with all of this off.
   same process share.
 - **History:** a number of minutes and the run's id in, the new row's id
   out. No chat text.
+
+## Shared plan documents
+
+`SharedPlanDocumentsWorkflow` reads the files of one share of plan
+documents: from the share page, or a ticked box on Explain Policy or the
+appeal's plan documents step. For each row still waiting it pulls out the
+text with the bounded readers (a PDF in a child process with page,
+character and time caps, a Word file in one pass, a text file decoded),
+takes out personal details as best it can (`plan_document_scrub.py`), and
+stores the cleaned text on the row as ready for review. A row with no text
+to read, such as a scanned PDF, is marked unreadable. The raw text is never
+stored. Staff read the cleaned text from the admin.
+
+| Setting | Default | Where |
+| --- | --- | --- |
+| `TEMPORAL_PLAN_DOCUMENTS_ENABLED` | off | shared app secret, next to the journey flags |
+| `TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE` | `fhi-plan-documents` | `appeal-worker.yaml` |
+| `TEMPORAL_PAYLOAD_KEY` | unset | shared app secret; required for this flag |
+
+- **Flag:** takes effect only with `TEMPORAL_ENABLED` and
+  `TEMPORAL_PAYLOAD_KEY` also set, so these runs only ever exist in
+  encrypted history. It does not need the journey flags.
+- **Where it runs:** the `fhi-appeal-worker` pods host the queue as a
+  Worker of its own with two activity slots, so reading a file never takes
+  an appeal generation's slot. The reader threads and child processes are
+  its own too. The fax worker never hosts it. The `fhi-.*` queue alerts in
+  `worker-alerts.yaml` cover it with no change.
+- **Turning it on:** set the flag in the shared secret, which the web pods
+  and the workers both read, then restart `fhi-appeal-worker`: a worker
+  reads its flags only at start-up.
+- **Retries:** a reading gets three tries; after that the row is marked
+  unreadable, and staff still have the original file.
+- **Deletion:** remove-my-data deletes the rows as before. Every activity
+  looks its row up by id when it runs, so a run that finds its rows gone
+  writes nothing.
+- **History:** the share's uuid, the rows' ids and their statuses. No text,
+  file names, emails, insurers or employers.
 
 ## Protecting user data in workflow history
 

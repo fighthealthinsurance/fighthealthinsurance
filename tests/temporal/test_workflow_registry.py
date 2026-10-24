@@ -68,6 +68,7 @@ def test_all_enabled_is_the_maximal_set_the_replay_gate_must_cover():
         "IntakeJourneyWorkflow",
         "ChatRoutingPolicyWorkflow",
         "AssistantAppealWorkflow",
+        "SharedPlanDocumentsWorkflow",
     }
 
 
@@ -110,6 +111,35 @@ def test_the_fax_role_never_hosts_the_policy_workflow():
     assert _names(
         registry.workflows_for_role(
             "fax", journey_enabled=True, intake_enabled=True, policy_enabled=True
+        )
+    ) == ["SendFaxWorkflow"]
+
+
+def test_the_plan_documents_workflow_appears_only_with_its_own_flag():
+    """Its own kill switch, independent of the journey and policy flags."""
+    for role in ("appeal", "all"):
+        assert "SharedPlanDocumentsWorkflow" not in _names(
+            registry.workflows_for_role(
+                role, journey_enabled=True, intake_enabled=True, policy_enabled=True
+            )
+        )
+    assert _names(
+        registry.workflows_for_role(
+            "appeal",
+            journey_enabled=False,
+            intake_enabled=False,
+            plan_documents_enabled=True,
+        )
+    ) == ["SharedPlanDocumentsWorkflow"]
+
+
+def test_the_fax_role_never_hosts_the_plan_documents_workflow():
+    assert _names(
+        registry.workflows_for_role(
+            "fax",
+            journey_enabled=True,
+            intake_enabled=True,
+            plan_documents_enabled=True,
         )
     ) == ["SendFaxWorkflow"]
 

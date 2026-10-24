@@ -67,6 +67,9 @@ _BASE_SETTINGS = dict(
     TEMPORAL_TASK_QUEUE="q-fax",
     TEMPORAL_APPEAL_TASK_QUEUE="q-appeal",
     TEMPORAL_CHAT_POLICY_TASK_QUEUE="q-policy",
+    TEMPORAL_PLAN_DOCUMENTS_ENABLED=False,
+    TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE="q-plan-docs",
+    TEMPORAL_PAYLOAD_KEY="",
     TEMPORAL_HOST="test-host",
     TEMPORAL_NAMESPACE="test-ns",
 )
@@ -1049,3 +1052,111 @@ def test_the_appeal_manifest_names_the_policy_queue_and_leaves_the_flag_off():
     default = re.search(r'"TEMPORAL_CHAT_POLICY_TASK_QUEUE", "([^"]+)"', settings_src)
     assert default and m.group(1) == default.group(1)
     assert not re.search(r"name: TEMPORAL_CHAT_POLICY_ENABLED\b", text)
+
+
+# --- The shared plan documents queue -------------------------------------------
+#
+# Hosted by the appeal-worker process (roles appeal and all) as a Worker of
+# its own, gated on TEMPORAL_ENABLED, TEMPORAL_PLAN_DOCUMENTS_ENABLED and a
+# TEMPORAL_PAYLOAD_KEY, independent of the journey and policy flags.
+
+_PLAN_DOCS_ON = dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_PAYLOAD_KEY="k")
+
+
+def test_appeal_role_with_only_plan_documents_on_hosts_only_their_queue():
+    assert _run_with(
+        "appeal", TEMPORAL_APPEAL_JOURNEY_ENABLED=False, **_PLAN_DOCS_ON
+    ) == ["q-plan-docs"]
+
+
+def test_all_role_with_everything_on_hosts_every_queue():
+    assert _run_with("all", TEMPORAL_CHAT_POLICY_ENABLED=True, **_PLAN_DOCS_ON) == [
+        "q-fax",
+        "q-appeal",
+        "q-policy",
+        "q-plan-docs",
+    ]
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=True, TEMPORAL_PAYLOAD_KEY=""),
+        dict(TEMPORAL_PLAN_DOCUMENTS_ENABLED=False, TEMPORAL_PAYLOAD_KEY="k"),
+        dict(TEMPORAL_ENABLED=False, **_PLAN_DOCS_ON),
+    ],
+)
+def test_plan_documents_need_the_flag_temporal_and_the_payload_key(flags):
+    """Without all three the dark appeal role hosts nothing and idles."""
+    with pytest.raises(asyncio.TimeoutError):
+        _run_with("appeal", **{"TEMPORAL_APPEAL_JOURNEY_ENABLED": False, **flags})
+
+
+def test_the_fax_role_never_hosts_the_plan_documents_queue():
+    assert _run_with("fax", **_PLAN_DOCS_ON) == ["q-fax"]
+
+
+def test_the_plan_documents_worker_registers_only_its_workflow_and_activities():
+    from fighthealthinsurance.activities import shared_plan_documents
+    from fighthealthinsurance.workflows.shared_plan_documents import (
+        READ_TIMEOUT,
+        SharedPlanDocumentsWorkflow,
+    )
+
+    kwargs = _run_capture({"queues": "appeal"}, **_PLAN_DOCS_ON)
+    by_queue = {k["task_queue"]: k for k in kwargs}
+    plan_docs = by_queue["q-plan-docs"]
+    assert plan_docs["workflows"] == [SharedPlanDocumentsWorkflow]
+    assert plan_docs["activities"] == [
+        shared_plan_documents.list_shared_plan_documents,
+        shared_plan_documents.process_shared_plan_document,
+        shared_plan_documents.mark_shared_plan_document_unreadable,
+    ]
+    assert plan_docs["max_concurrent_activities"] == 2
+    # Its own Worker: nothing of it rides on the appeal Worker.
+    appeal = by_queue["q-appeal"]
+    assert SharedPlanDocumentsWorkflow not in appeal["workflows"]
+    # The drain covers a reading's start_to_close and fits inside the
+    # appeal Worker's, which the pod's grace period is sized for.
+    assert (
+        READ_TIMEOUT
+        <= plan_docs["graceful_shutdown_timeout"]
+        <= appeal["graceful_shutdown_timeout"]
+    )
+
+
+def test_task_queue_override_leaves_the_plan_documents_queue_alone():
+    kwargs = _run_with_options(
+        {"queues": "appeal", "task_queue": "custom"}, **_PLAN_DOCS_ON
+    )
+    assert [k["task_queue"] for k in kwargs] == ["custom", "q-plan-docs"]
+
+
+def test_sigterm_drains_the_plan_documents_worker_too():
+    import signal
+
+    calls = _run_until_signal(
+        "appeal", signal.SIGTERM, TEMPORAL_APPEAL_JOURNEY_ENABLED=False, **_PLAN_DOCS_ON
+    )
+    assert calls == ["q-plan-docs"]
+
+
+def test_the_appeal_manifest_names_the_plan_documents_queue_and_leaves_the_flag_off():
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    text = (root / "k8s" / "temporal" / "appeal-worker.yaml").read_text()
+    m = re.search(
+        r'name: TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE\s*\n\s*value: "([^"]+)"', text
+    )
+    assert m, "appeal-worker.yaml must name the plan documents queue"
+    settings_src = (root / "fighthealthinsurance" / "settings.py").read_text()
+    default = re.search(
+        r'"TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE", "([^"]+)"', settings_src
+    )
+    assert default and m.group(1) == default.group(1)
+    # fhi-* so the queue alerts in worker-alerts.yaml cover it.
+    assert m.group(1).startswith("fhi-")
+    assert not re.search(r"name: TEMPORAL_PLAN_DOCUMENTS_ENABLED\b", text)
+    assert not re.search(r"name: TEMPORAL_PAYLOAD_KEY\b", text)

@@ -20,6 +20,9 @@ from fighthealthinsurance.workflows.chat_routing_policy import (
 from fighthealthinsurance.workflows.generate_appeal import GenerateAppealWorkflow
 from fighthealthinsurance.workflows.intake_journey import IntakeJourneyWorkflow
 from fighthealthinsurance.workflows.send_fax import SendFaxWorkflow
+from fighthealthinsurance.workflows.shared_plan_documents import (
+    SharedPlanDocumentsWorkflow,
+)
 
 QUEUE_ROLES = ("fax", "appeal", "all")
 
@@ -59,6 +62,16 @@ def chat_policy_workflows() -> List[type]:
     return [ChatRoutingPolicyWorkflow]
 
 
+def plan_documents_workflows() -> List[type]:
+    """Workflows hosted on the plan documents task queue.
+
+    The appeal-worker process hosts this queue as its own Worker, like the
+    chat policy's, so reading a file never waits behind an appeal
+    generation for a slot. Registered only when its flag is on.
+    """
+    return [SharedPlanDocumentsWorkflow]
+
+
 def workflows_for_role(
     role: str,
     *,
@@ -66,6 +79,7 @@ def workflows_for_role(
     intake_enabled: bool,
     policy_enabled: bool = False,
     drafts_enabled: bool = False,
+    plan_documents_enabled: bool = False,
 ) -> List[type]:
     """Every workflow a worker with this role registers under these flags."""
     registered: List[type] = []
@@ -79,6 +93,8 @@ def workflows_for_role(
         )
     if role in ("appeal", "all") and policy_enabled:
         registered.extend(chat_policy_workflows())
+    if role in ("appeal", "all") and plan_documents_enabled:
+        registered.extend(plan_documents_workflows())
     return registered
 
 
@@ -93,4 +109,5 @@ def all_enabled_workflows() -> List[type]:
         intake_enabled=True,
         policy_enabled=True,
         drafts_enabled=True,
+        plan_documents_enabled=True,
     )
