@@ -185,6 +185,42 @@ def test_an_address_after_its_label_is_removed():
     assert scrub(text) == f"Address: {REMOVED}\nPlan year 2026"
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "Mailing Address: 12 Beacon Street, Boston MA 02108",
+            f"Mailing Address: {REMOVED}",
+        ),
+        ("Mailing address: PO Box 77, Boston MA 02108", f"Mailing address: {REMOVED}"),
+        ("Address 12 Beacon Street, Boston MA 02108", f"Address {REMOVED}"),
+        ("Home Address 12 Beacon Street", f"Home Address {REMOVED}"),
+        ("Home Address\n12 Beacon Street", f"Home Address\n{REMOVED}"),
+        (
+            "Your address on file: 12 Beacon Street, Boston MA",
+            f"Your address on file: {REMOVED}",
+        ),
+    ],
+)
+def test_a_members_address_is_removed_with_or_without_a_colon(text, expected):
+    assert scrub(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Send appeals to: Crumpler Mutual Health, Attn: Appeals, PO Box 9, "
+        "Boston MA 02108",
+        "Mail to: Crumpler Mutual Health Appeals, PO Box 9, Boston MA 02108",
+        "Plan address: PO Box 9, Boston MA 02108",
+        "Plan Sponsor: Lee Crumpler Clinic, 100 Main Street, Boston, MA 02108",
+        "Address changes must be made in writing.",
+    ],
+)
+def test_the_plans_own_mailing_lines_are_kept(text):
+    assert scrub(text) == text
+
+
 def test_emails_and_local_phone_numbers_are_removed():
     text = "Write to rebecca.crumpler@example.com or call (617) 555-0142."
     assert scrub(text) == f"Write to {REMOVED} or call {REMOVED}."
@@ -218,7 +254,6 @@ def test_toll_free_numbers_are_kept(number):
         "Insurer: Crumpler Mutual Health",
         "Deductible $1,500 per person, $3,000 per family",
         "Coverage Period: 01/01/2026 - 12/31/2026",
-        "Mailing address: PO Box 9, Crumpler Mutual Health",
         "Show your Member ID card at the pharmacy.",
         "The patient pays 20% coinsurance.",
         "Patient: you pay $30 per visit.",
@@ -306,6 +341,9 @@ LONG_RUN_LABELS = [
     "Policy",
     "Cardholder Name",
     "ID# W123",
+    "Mailing address",
+    "Address",
+    "Your address on file",
 ]
 
 

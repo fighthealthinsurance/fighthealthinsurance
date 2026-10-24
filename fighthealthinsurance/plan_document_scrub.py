@@ -12,7 +12,9 @@ a filled-in form. :func:`scrub` replaces these with ``[removed]``:
   subscriber, cardholder, beneficiary, recipient and other IDs and numbers
   ("ID#", "ID Number"), Medicare and Medicaid numbers and MBIs, policy and
   claim numbers, patient account numbers, names (also "Surname, Given"),
-  dates of birth, Social Security numbers, and an address after "Address:";
+  dates of birth, Social Security numbers, and a member's address after
+  "Address", "Home Address", "Mailing Address" and the like, with or
+  without a colon;
 * a Social Security number written as 123-45-6789 anywhere;
 * the name after "Dear" at the start of a letter.
 
@@ -129,9 +131,14 @@ _GENERIC_SALUTATIONS = frozenset(
     }
 )
 
+# A member's address, the rest of its line. Labels the plan uses for its own
+# mail ("Send appeals to", "Plan address") are not among these. With no
+# colon the value has to start with a street or box number.
 _ADDRESS_RULE = re.compile(
-    rf"(?:\b(?:home|member|patient|subscriber|employee|your|street|residential)"
-    rf"{_SP}+address|^{_SP}*address){_SP}*:{_SP}*{_NEXT_LINE}(?P<value>\S[^\n]{{0,99}})",
+    rf"(?:\b(?:home|mailing|member|patient|subscriber|employee|your|street"
+    rf"|residential){_SP}+address(?:{_SP}+on{_SP}+file)?|^{_SP}*address)"
+    rf"{_SP}*(?P<colon>:{_SP}*)?{_NEXT_LINE}"
+    rf"(?P<value>(?(colon)\S|\d)[^\n]{{0,99}})",
     _FLAGS,
 )
 
