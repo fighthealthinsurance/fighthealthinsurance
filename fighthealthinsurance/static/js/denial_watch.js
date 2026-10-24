@@ -131,13 +131,17 @@ const DM={
 const HELP=ROOT.dataset.stateHelp||'';
 const helpLink=s=>HELP?`<div class="dw-readout-line"><a href="${esc(HELP+NAMES[s].toLowerCase().replace(/ /g,'-')+'/')}">Where to get help in ${esc(NAMES[s])}</a></div>`:'';
 const line1=h=>`<div class="dw-readout-line">${h}</div>`;
+/* Grey states: why there's no figure here, and where to look instead. */
+const OWN=s=>`${NAMES[s]} isn't in this data: it runs its own marketplace, so its insurers aren't in the HealthCare.gov figures this page uses.`;
+const ELSEWHERE={CA:['#appeals',"See how California's independent reviews turned out"]};
+const elsewhere=s=>ELSEWHERE[s]?`<div class="dw-readout-line"><a href="${esc(ELSEWHERE[s][0])}">${esc(ELSEWHERE[s][1])}</a></div>`:'';
 /* From the rounded rates, so the two figures shown subtract to it. */
 const chg=(a,b)=>{const d=Math.round(a*1000)-Math.round(b*1000);return d===0?'the same':(d>0?'up ':'down ')+(Math.abs(d)/10).toFixed(1)+' points';};
 function allRead(s,r){const a=r.all;
   return line1(a.rate!=null?`<b class="dw-num">${pct(a.rate)}</b> of all claims denied, in and out of network (${big(a.denied)} of ${big(a.claims)})`:
     a.why==='error'?`No all-claims figure for ${NAMES[s]}: ${esc(cantBe(a.left_out))}.`:'No all-claims figure: no insurer here reported both kinds of claims.');}
 function dRead(s){dsel=s;const r=ST[s];let h=`<div class="dw-readout-state">${NAMES[s]}</div>`;
-  if(!r)h+=`<div class="dw-readout-line">Not in this data. ${NAMES[s]} runs its own marketplace, or had no HealthCare.gov insurers reporting.</div>`;
+  if(!r)h+=line1(OWN(s))+elsewhere(s);
   else h+=(dm==='all'?allRead(s,r):'')+`<div class="dw-readout-line"><b class="dw-num">${pct(r.rate)}</b> of in-network claims denied (${big(r.denied)} of ${big(r.claims)})</div>`+
     (r.prev!=null?`<div class="dw-readout-line">2023: <span class="dw-num">${pct(r.prev)}</span> (${chg(r.rate,r.prev)})</div>`:'')+
     (BYST[s]?line1(span(s)?`Its insurers in the table: <b class="dw-num">${pct(span(s)[0])}</b> to <b class="dw-num">${pct(span(s)[1])}</b>, lowest to highest`:'One insurer in the table'):'')+
@@ -194,7 +198,7 @@ $('istate').innerHTML='<option value="" disabled hidden>Pick a state</option>'+s
 let ipin=dsel;
 function iDraw(){const s=$('istate').value;
   const mx=Math.max(...IS.map(i=>i.r));
-  if(!s){$('icount').textContent='';$('itable').innerHTML=`<tbody><tr><td>${esc(NAMES[ipin]||'')} isn't in this data: it runs its own marketplace, or had no HealthCare.gov insurers reporting.</td></tr></tbody>`;return;}
+  if(!s){$('icount').textContent='';$('itable').innerHTML=`<tbody><tr><td>${NAMES[ipin]?OWN(ipin)+elsewhere(ipin):''}</td></tr></tbody>`;return;}
   /* One state: no State column, since the picker names it. */
   const rows=IS.filter(i=>i.s===s).sort((a,b)=>b.r-a.r);$('icount').textContent=rows.length+(rows.length>1?' insurers in ':' insurer in ')+NAMES[s];
   $('itable').innerHTML='<thead><tr><th>Insurer</th><th>Denial rate</th><th class="dw-r">Claims</th><th class="dw-r">Appeals won</th></tr></thead><tbody>'+

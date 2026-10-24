@@ -563,10 +563,19 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
         self.assertIn("$('istate').value=BYST[dsel]?dsel:states[0];", self.js)
         self.assertIn("$('dmap')._onPin=s=>{ipin=s;$('istate').value=BYST[s]?s:'';iDraw();};", self.js)
         # A state with no insurers in the table says so, instead of leaving the last state's rows.
-        self.assertIn("isn't in this data: it runs its own marketplace, or had no HealthCare.gov insurers reporting.", self.js)
+        self.assertIn("isn't in this data: it runs its own marketplace, so its insurers aren't in the HealthCare.gov figures this page uses.", self.js)
         self.assertIn("if(svg._onPin)svg._onPin(g.dataset.s);", self.js)
         self.assertNotIn("highest and lowest 10", self.js)
         self.assertNotIn("slice(0,10)", self.js)
+
+    def test_a_grey_state_points_to_where_its_data_is(self):
+        # California has no HealthCare.gov figures, so its readout links to the page's independent review results.
+        self.assertIn("ELSEWHERE={CA:['#appeals',\"See how California's independent reviews turned out\"]", self.js)
+        self.assertIn("if(!r)h+=line1(OWN(s))+elsewhere(s);", self.js)
+        template = (
+            REPO / "fighthealthinsurance" / "templates" / "denial_watch.html"
+        ).read_text()
+        self.assertIn('id="appeals"', template)
 
     def test_map_tiles_show_each_states_insurer_range_in_network_only(self):
         # The heatmap carries what the ranked bars did; the range is of in-network insurer rates.
