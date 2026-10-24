@@ -124,6 +124,40 @@ class SharedRowsAreReadAndCleanedTest(_ReadingTest):
         self.assertEqual(doc.cleaned_text, "")
         self.assertIsNotNone(doc.processed_at)
 
+    def test_a_locked_or_broken_pdf_is_unreadable_not_a_failure(self):
+        for name, content in (
+            ("locked", make_pdf_bytes(["Member ID: W123456789"], user_password="pw")),
+            ("broken", b"%PDF-1.7 Rebecca Lee Crumpler, not a PDF after all"),
+        ):
+            with self.subTest(name):
+                status, doc = self.read("plan.pdf", content)
+                self.assertEqual(status, UNREADABLE)
+                self.assertEqual(doc.cleaned_text, "")
+
+    def test_a_pdf_read_that_times_out_or_cannot_run_is_tried_again(self):
+        """Only the PDF reader's own report of a bad file ends a reading;
+        anything else fails the attempt, so the activity's retries apply."""
+        for error in (
+            TimeoutError("PDF text extraction did not finish"),
+            OSError("could not start the PDF reader"),
+            RuntimeError("PDF worker exited with status -9"),
+        ):
+            with self.subTest(type(error).__name__):
+                (doc,) = share(upload("plan.pdf", make_pdf_bytes(["Gold PPO"])))
+                with patch(
+                    "fighthealthinsurance.pdf_text.aextract_pdf_page_texts",
+                    AsyncMock(side_effect=error),
+                ):
+                    with self.assertRaises(ApplicationError) as raised:
+                        self.process(doc)
+                self.assertFalse(raised.exception.non_retryable)
+                self.assertEqual(
+                    raised.exception.message,
+                    f"{type(error).__name__} for shared plan document {doc.pk}",
+                )
+                doc.refresh_from_db()
+                self.assertEqual(doc.processing_status, RECEIVED)
+
     def test_a_word_file_is_read(self):
         content = word_file(
             paragraph("Member ID: W123456789") + paragraph("Overall deductible: $1,500")

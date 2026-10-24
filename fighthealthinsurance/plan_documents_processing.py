@@ -113,8 +113,8 @@ async def _apdf_text(content: bytes) -> str:
         pages = await aextract_pdf_page_texts(
             content, MAX_PAGES, MAX_CHARS, READ_SECONDS, executor=_READERS
         )
-    except Exception:
-        # Too slow, locked, broken or too big: nothing to read.
+    except ValueError:
+        # The child's own report: locked, broken or too big to read.
         return ""
     return "\n\n".join(
         f"[Page {number}]\n{page.strip()}"
@@ -172,7 +172,9 @@ async def _astore(document_id: str, status: str, cleaned_text: str) -> str:
 
 async def aprocess_document(document_id: str) -> str:
     """Read, clean and store one shared row. Returns its status, or GONE.
-    Raises FileNotRead when the stored file can't be read back."""
+    Raises FileNotRead when the stored file can't be read back, and lets a
+    PDF read that timed out or could not run raise, so the activity's
+    retries apply."""
     doc = await _shared_rows().filter(pk=document_id).afirst()
     if doc is None:
         return GONE
