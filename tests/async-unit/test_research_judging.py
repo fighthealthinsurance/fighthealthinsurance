@@ -324,3 +324,60 @@ class TestJudgeArticlesForADenial:
             denial, articles, searched=True
         )
         assert kept == articles
+
+
+@pytest.mark.django_db
+class TestJudgingWithinTheCallersBudget:
+    def test_slow_judging_does_not_cost_the_context_its_articles(self):
+        # The caller gives up on the whole call after its budget; judging
+        # that still runs then would lose the articles already found.
+        denial = _denial()
+        article = _article("1")
+
+        async def slow_post(state, questions, timeout):
+            await asyncio.sleep(30)
+
+        async def build():
+            return await asyncio.wait_for(
+                PubMedTools().find_context_for_denial(denial, budget=2.0),
+                timeout=2.0,
+            )
+
+        with override_settings(**ENABLED), patch.object(
+            rj, "_post", slow_post
+        ), patch(
+            "fighthealthinsurance.pubmed_tools._SUMMARY_RESERVE_SECONDS", 0.5
+        ), patch.object(
+            PubMedTools,
+            "find_pubmed_articles_for_denial",
+            new=AsyncMock(return_value=[article]),
+        ), patch(
+            "fighthealthinsurance.pubmed_tools.ml_router.summarize",
+            new=AsyncMock(return_value=None),
+        ):
+            context = async_to_sync(build)()
+        assert "Title 1" in context
+
+    def test_a_slow_summary_does_not_cost_the_context_its_articles(self):
+        denial = _denial()
+        article = _article("2", abstract=ABSTRACT * 3)
+
+        async def slow_summary(**kwargs):
+            await asyncio.sleep(30)
+
+        async def build():
+            return await asyncio.wait_for(
+                PubMedTools().find_context_for_denial(denial, budget=2.0),
+                timeout=2.0,
+            )
+
+        with patch.object(
+            PubMedTools,
+            "find_pubmed_articles_for_denial",
+            new=AsyncMock(return_value=[article]),
+        ), patch(
+            "fighthealthinsurance.pubmed_tools.ml_router.summarize",
+            new=slow_summary,
+        ):
+            context = async_to_sync(build)()
+        assert "Title 2" in context

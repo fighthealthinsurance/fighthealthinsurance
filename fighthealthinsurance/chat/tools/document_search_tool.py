@@ -46,6 +46,7 @@ _FOLLOWUP_INSTRUCTIONS = (
     "document is stored, so never ask the user to paste it again. The user's "
     "message was:\n\n"
 )
+_FENCE_CLOSE = f"\n{_EXCERPTS_END}\n\n{_FOLLOWUP_INSTRUCTIONS}"
 
 
 def _users_message(current_message_for_llm: str) -> str:
@@ -58,7 +59,10 @@ def _users_message(current_message_for_llm: str) -> str:
     so only the user's message, which that prompt ends with, is kept.
     """
     if current_message_for_llm.startswith(_RESULT_HEADER):
-        _, found, rest = current_message_for_llm.partition(_FOLLOWUP_INSTRUCTIONS)
+        # Split at the fence's own END line, never one inside the results
+        # (build_followup_prompt rewrites those), so a document quoting the
+        # instructions can't pass its text off as the user's message.
+        _, found, rest = current_message_for_llm.partition(_FENCE_CLOSE)
         if found:
             return rest
     return current_message_for_llm
@@ -151,6 +155,6 @@ class DocumentSearchTool(JsonFollowupTool):
         # fence early and pass what follows off as the system's.
         fenced = note.replace(_EXCERPTS_END, "(END line quoted from the document)")
         return (
-            f"{_RESULT_HEADER}\n\n{_EXCERPTS_BEGIN}\n{fenced}\n{_EXCERPTS_END}"
-            f"\n\n{_FOLLOWUP_INSTRUCTIONS}{_users_message(current_message_for_llm)}"
+            f"{_RESULT_HEADER}\n\n{_EXCERPTS_BEGIN}\n{fenced}{_FENCE_CLOSE}"
+            f"{_users_message(current_message_for_llm)}"
         )

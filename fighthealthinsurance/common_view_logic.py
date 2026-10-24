@@ -6187,6 +6187,9 @@ class AppealsBackendHelper:
             # the citation barrier watches both; the refresh then hands the
             # inline generate_citations call a warm in-memory denial, and
             # that helper applies its own candidate->main freshness/promotion.
+            # How long an inline context fetch is waited for.
+            inline_timeout = 40
+
             def warmed_context(
                 readiness_fields,
                 refresh_fields,
@@ -6201,7 +6204,7 @@ class AppealsBackendHelper:
                     refresh_fields=refresh_fields,
                     barrier_timeout=barrier_timeout,
                     fetch=lambda: tracked_awaitable(
-                        asyncio.wait_for(inline_coro(), timeout=40),
+                        asyncio.wait_for(inline_coro(), timeout=inline_timeout),
                         substep=substep,
                         done_msg=done_msg,
                     ),
@@ -6213,7 +6216,9 @@ class AppealsBackendHelper:
                 refresh_fields=["pubmed_context"],
                 substep="pubmed",
                 done_msg="PubMed search complete",
-                inline_coro=lambda: cls.pmt.find_context_for_denial(denial),
+                inline_coro=lambda: cls.pmt.find_context_for_denial(
+                    denial, budget=inline_timeout
+                ),
             )
 
             ml_citation_context_awaitable = warmed_context(

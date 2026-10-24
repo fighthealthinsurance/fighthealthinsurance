@@ -64,6 +64,9 @@ T = TypeVar("T")
 # judgments (ml/research_judging.py) before going on with the articles as
 # they are; judgments that landed in time are stored either way.
 JUDGING_BUDGET_SECONDS = 15.0
+# What judging leaves of a caller's budget for summarizing the articles
+# (the summary itself is cut at the budget, keeping the articles unsummarized).
+_SUMMARY_RESERVE_SECONDS = 5.0
 
 
 def judgment_rows(pmids: list[str], key: str) -> "QuerySet[PubMedArticleJudgment]":
@@ -974,8 +977,14 @@ class PubMedTools(object):
         logger.debug(f"Found {articles} for denial {denial}")
         return articles
 
-    async def find_context_for_denial(self, denial: Denial, timeout=70.0) -> str:
-        result = await self._find_context_for_denial(denial, timeout)
+    async def find_context_for_denial(
+        self, denial: Denial, timeout=70.0, budget: Optional[float] = None
+    ) -> str:
+        """``budget``: how long the caller waits for this whole call, if it
+        cuts it off; judging and the summary then get only what's left of it,
+        so neither can push the call past the cut and lose the articles
+        already found."""
+        result = await self._find_context_for_denial(denial, timeout, budget)
         if result is not None and len(result) > 1:
             await self._this_letter(denial).aupdate(pubmed_context=result)
         return result
@@ -993,10 +1002,13 @@ class PubMedTools(object):
             denial_id=denial.denial_id, denial_text=denial.denial_text
         )
 
-    async def _find_context_for_denial(self, denial: Denial, timeout=70.0) -> str:
+    async def _find_context_for_denial(
+        self, denial: Denial, timeout=70.0, budget: Optional[float] = None
+    ) -> str:
         """
         Kind of hacky RAG routine that uses PubMed.
         """
+        started = asyncio.get_running_loop().time()
         if denial.pubmed_context and len(denial.pubmed_context) > 1:
             return denial.pubmed_context
         procedure_opt = denial.procedure if denial.procedure else ""
@@ -1087,8 +1099,16 @@ class PubMedTools(object):
                 await self._this_letter(denial).aupdate(pubmed_ids_json=selected_pmids)
 
         if articles:
+            judging_budget = JUDGING_BUDGET_SECONDS
+            if budget is not None:
+                left = budget - (asyncio.get_running_loop().time() - started)
+                judging_budget = min(judging_budget, left - _SUMMARY_RESERVE_SECONDS)
             articles = await self._judged_for_context(
-                denial, articles, searched=searched, selected=selected_pmids
+                denial,
+                articles,
+                searched=searched,
+                selected=selected_pmids,
+                budget=judging_budget,
             )
 
         # Format the articles for context
@@ -1100,9 +1120,21 @@ class PubMedTools(object):
             if len(joined_contexts) < 100:
                 logger.debug("Not much input, skpping summary step.")
                 return joined_contexts
-            r: Optional[str] = await ml_router.summarize(
-                title="Combined contexts", text=joined_contexts
-            )
+            summary_budget = None
+            if budget is not None:
+                # Leave a moment before the caller's own cut.
+                elapsed = asyncio.get_running_loop().time() - started
+                summary_budget = max(budget - elapsed - 0.5, 0.0)
+            try:
+                r: Optional[str] = await asyncio.wait_for(
+                    ml_router.summarize(
+                        title="Combined contexts", text=joined_contexts
+                    ),
+                    timeout=summary_budget,
+                )
+            except asyncio.TimeoutError:
+                logger.debug("Summary ran out of time; using the articles as is")
+                return joined_contexts
             logger.debug("Summarized combined contexts")
             if r is None:
                 return joined_contexts
@@ -1190,6 +1222,7 @@ class PubMedTools(object):
         *,
         searched: bool,
         selected: Optional[list[str]] = None,
+        budget: float = JUDGING_BUDGET_SECONDS,
     ) -> list[PubMedArticleSummarized]:
         """The articles to quote, ordered by how strongly Jev finds each
         supports the treatment. Articles our search found that Jev finds off
@@ -1198,13 +1231,16 @@ class PubMedTools(object):
         the person's own) is only reordered, never cut. ``selected`` is the
         list written to the row for this build: an id in it whose article
         was not fetched in time (the fetch is cut by the timeout) was never
-        judged, so it stays on the row. Waits at most
-        JUDGING_BUDGET_SECONDS; past that, or on any failure, the articles
+        judged, so it stays on the row. Waits at most ``budget`` seconds
+        (none left: no judging); past that, or on any failure, the articles
         go on as they are."""
+        if budget <= 0:
+            logger.debug("article judging skipped: no time left")
+            return articles
         try:
             judgments = await asyncio.wait_for(
                 self.judge_articles(denial, articles),
-                timeout=JUDGING_BUDGET_SECONDS,
+                timeout=budget,
             )
         except asyncio.CancelledError:
             raise
