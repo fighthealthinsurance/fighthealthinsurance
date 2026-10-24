@@ -1,11 +1,12 @@
 """The share page asks what the plan costs, if people know.
 
 Under "About the plan", three optional questions: what you pay for the plan,
-how often, and who it covers. They never stop a share on their own, though
-an amount above zero needs to say how often. Each file shared together keeps
-the same answers, a share that is asked to try again keeps them, staff see
-them in the admin, error reports leave them out, and remove-my-data takes
-them with the files. The opt-in boxes on other pages don't ask.
+how often, and who it covers. Leaving any of them out never stops a share: an
+amount with no "how often" is kept with the period blank, and $0 is a real
+answer. Each file shared together keeps the same answers, a share that is
+asked to try again keeps them, staff see them in the admin, error reports
+leave them out, and remove-my-data takes them with the files. The opt-in
+boxes on other pages don't ask.
 """
 
 from decimal import Decimal
@@ -48,6 +49,15 @@ class ThePremiumQuestionsAreOptionalTest(_PremiumTestCase):
                 self.assertIsNotNone(about.find(attrs={"name": name}))
         self.assertTrue(
             set(PREMIUM_FIELDS) <= set(SharePlanDocumentsForm.ABOUT_THE_PLAN)
+        )
+
+    def test_the_amount_asks_for_your_share_of_the_premium(self):
+        soup = self.soup(self.client.get(self.url))
+        amount = soup.find("input", attrs={"name": "premium_amount"})
+        label = soup.find("label", attrs={"for": amount["id"]})
+        self.assertEqual(
+            label.get_text(strip=True),
+            "What you pay for the plan (your share of the premium), in dollars",
         )
 
     def test_the_amount_says_why_we_ask(self):
@@ -120,6 +130,14 @@ class ThePremiumIsKeptWithTheFilesTest(_PremiumTestCase):
         self.assertEqual(doc.premium_amount, Decimal("0"))
         self.assertEqual(doc.premium_period, "")
 
+    def test_an_amount_with_no_how_often_is_kept_with_a_blank_period(self):
+        response = self.share([pdf(), txt()], premium_amount="250")
+        self.assertRedirects(response, self.url + "?shared=1")
+        for doc in PolicyDocument.objects.all():
+            with self.subTest(doc=doc.filename):
+                self.assertEqual(doc.premium_amount, Decimal("250"))
+                self.assertEqual(doc.premium_period, "")
+
     def test_who_it_covers_can_be_given_alone(self):
         self.share([pdf()], who_is_covered="family")
         self.assertEqual(PolicyDocument.objects.get().who_is_covered, "family")
@@ -181,12 +199,6 @@ class ThePremiumIsCheckedTest(_PremiumTestCase):
         )
         self.assertRefusedOn("premium_amount", response)
 
-    def test_an_amount_needs_how_often(self):
-        response = self.share([pdf()], premium_amount="250")
-        self.assertEqual(
-            self.assertRefusedOn("premium_period", response),
-            "Choose how often you pay that amount.",
-        )
 
     def test_a_how_often_not_on_the_list_is_refused(self):
         response = self.share(

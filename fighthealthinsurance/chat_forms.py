@@ -348,7 +348,7 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
         max_value=MAX_PREMIUM,
         max_digits=8,
         decimal_places=2,
-        label="What you pay for the plan (the premium), in dollars",
+        label="What you pay for the plan (your share of the premium), in dollars",
         help_text="If you know it. This helps us show what plans cost over time.",
         error_messages={
             "invalid": "Enter an amount in dollars, like 250 or 250.50.",
@@ -416,9 +416,6 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
 
     def clean(self) -> dict[str, Any]:
         cleaned = super().clean() or {}
-        # An amount can't be compared without how often it is paid.
-        if cleaned.get("premium_amount") and not cleaned.get("premium_period"):
-            self.add_error("premium_period", "Choose how often you pay that amount.")
         # Only the scrambled form is kept, so the address goes no further.
         email = (cleaned.pop("email", "") or "").strip().lower()
         cleaned["hashed_email"] = Denial.get_hashed_email(email) if email else None
