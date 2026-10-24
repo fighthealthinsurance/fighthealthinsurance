@@ -16,6 +16,7 @@ from fighthealthinsurance import word_text
 from tests.sync.test_shared_uploads_are_checked_on_the_way_in import zip_bytes
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 ROOM = {"max_chars": 1_000_000, "max_seconds": 60, "max_unpacked_bytes": 10**8}
 
 
@@ -47,6 +48,47 @@ def docx_with_a_table():
     return out.getvalue()
 
 
+def text_box(text):
+    """A run holding a text box the way Word saves one: as a shape, then
+    again as a VML picture for readers that do not know shapes."""
+    box = f"<w:txbxContent><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:txbxContent>"
+    return (
+        f'<w:r xmlns:w="{W}">'
+        f'<mc:AlternateContent xmlns:mc="{MC}">'
+        '<mc:Choice Requires="wps"><w:drawing>'
+        '<wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/'
+        'wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0" '
+        'simplePos="0" relativeHeight="1" behindDoc="0" locked="0" '
+        'layoutInCell="1" allowOverlap="1">'
+        '<wp:simplePos x="0" y="0"/><wp:extent cx="2743200" cy="914400"/>'
+        '<wp:docPr id="1" name="Text Box 1"/>'
+        '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/'
+        'wordprocessingShape">'
+        '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/'
+        'wordprocessingShape"><wps:cNvSpPr txBox="1"/><wps:spPr/>'
+        f"<wps:txbx>{box}</wps:txbx><wps:bodyPr/></wps:wsp>"
+        "</a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice>"
+        '<mc:Fallback><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml" '
+        'id="Text Box 1" type="#_x0000_t202" style="width:216pt;height:72pt">'
+        f"<v:textbox>{box}</v:textbox></v:shape></w:pict></mc:Fallback>"
+        "</mc:AlternateContent></w:r>"
+    )
+
+
+def docx_with_a_text_box(text):
+    import docx
+    from docx.oxml.parser import parse_xml
+
+    document = docx.Document()
+    document.add_paragraph("Summary of Benefits")
+    document.add_paragraph()._p.append(parse_xml(text_box(text)))
+    document.add_paragraph("Exclusions")
+    out = io.BytesIO()
+    document.save(out)
+    return out.getvalue()
+
+
 def paragraph(text):
     return f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"
 
@@ -71,6 +113,42 @@ def test_tabs_and_line_breaks_keep_their_places():
         "<w:t>Copay</w:t></w:r></w:p>"
     )
     assert read(word_file(body)) == ("Deductible\t$500\nCopay", word_text.WHOLE)
+
+
+def test_non_breaking_hyphens_and_position_tabs_read_as_text():
+    body = (
+        "<w:p><w:r><w:t>out</w:t><w:noBreakHyphen/><w:t>of</w:t>"
+        "<w:noBreakHyphen/><w:t>network</w:t></w:r></w:p>"
+        '<w:p><w:r><w:t>Copay</w:t><w:ptab w:alignment="left" '
+        'w:relativeTo="margin" w:leader="none"/><w:t>$50</w:t></w:r></w:p>'
+    )
+    assert read(word_file(body)) == ("out-of-network\nCopay\t$50", word_text.WHOLE)
+
+
+def test_a_text_box_saved_in_both_forms_reads_once():
+    content = docx_with_a_text_box("Call the Crumpler Cooperative first")
+    assert read(content) == (
+        "Summary of Benefits\nCall the Crumpler Cooperative first\n\nExclusions",
+        word_text.WHOLE,
+    )
+
+
+def test_only_the_first_choice_is_read():
+    def alternatives(first, second, fallback):
+        return (
+            f'<mc:AlternateContent xmlns:mc="{MC}">'
+            f'<mc:Choice Requires="wps">{first}</mc:Choice>'
+            f'<mc:Choice Requires="w14">{second}</mc:Choice>'
+            f"<mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent>"
+        )
+
+    nested = alternatives(paragraph("Copay"), paragraph("again"), paragraph("again"))
+    body = (
+        paragraph("Deductible")
+        + alternatives(nested, paragraph("again"), paragraph("again"))
+        + paragraph("Exclusions")
+    )
+    assert read(word_file(body)) == ("Deductible\nCopay\nExclusions", word_text.WHOLE)
 
 
 def test_it_stops_reading_at_the_character_cap():
@@ -110,6 +188,20 @@ def test_a_body_that_breaks_off_keeps_what_was_read():
     text, status = read(word_file(body))
     assert status == word_text.PARTIAL
     assert text.startswith("Crumpler line 0\nCrumpler line 1\n")
+
+
+def test_a_body_that_ends_before_it_closes_is_partial():
+    # Every read succeeds; only the end of the body shows it is cut short.
+    content = zip_bytes(
+        {
+            "word/document.xml": (
+                f'<w:document xmlns:w="{W}"><w:body>'
+                f"{paragraph('Rebecca Lee Crumpler Cooperative')}"
+                "<w:p><w:r><w:t>Exclusions: cosmetic"
+            ).encode("utf-8")
+        }
+    )
+    assert read(content) == ("Rebecca Lee Crumpler Cooperative", word_text.PARTIAL)
 
 
 def test_entities_are_left_unexpanded():
