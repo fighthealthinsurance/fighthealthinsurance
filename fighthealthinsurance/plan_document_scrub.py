@@ -38,6 +38,8 @@ _SP = r"[^\S\n]"
 # What sits between a label and its value: spaces, then at most one of : # . -
 # Each run of spaces has one quantifier, so a long run cannot backtrack.
 _SEP = rf"{_SP}*(?:[:#.-]{_SP}*)?"
+# A label line that ends after its label: the value is on the next line.
+_NEXT_LINE = rf"(?:\n{_SP}*)?"
 _PERSON = (
     r"(?:member|patient|subscriber|insured|enrollee|employee|dependent"
     rf"|beneficiary|participant|policy{_SP}?holder)"
@@ -53,12 +55,12 @@ _NUMBER_WORD = r"(?:id(?:entification)?|identifier|number|no\b\.?|#)"
 _ID_VALUE = rf"(?P<value>(?:[a-z]{{1,5}}{_SP})?[a-z0-9-]{{0,29}}\d[a-z0-9-]{{0,29}})"
 _ID_RULE = re.compile(
     rf"(?:\b(?:{_PERSON}|claim)(?:'s)?{_SP}*{_NUMBER_WORD}"
-    rf"(?:{_SP}*(?:number|no\b\.?|#))?|^{_SP}*id\b){_SEP}{_ID_VALUE}",
+    rf"(?:{_SP}*(?:number|no\b\.?|#))?|^{_SP}*id\b){_SEP}{_NEXT_LINE}{_ID_VALUE}",
     _FLAGS,
 )
 
 _SSN_RULE = re.compile(
-    rf"\b(?:ssn|ss#|social{_SP}+security(?:{_SP}+(?:number|no\b\.?|#))?){_SEP}"
+    rf"\b(?:ssn|ss#|social{_SP}+security(?:{_SP}+(?:number|no\b\.?|#))?){_SEP}{_NEXT_LINE}"
     rf"(?P<value>[\dx*](?:[\dx*-]|{_SP}){{6,12}}[\dx*])",
     _FLAGS,
 )
@@ -70,23 +72,28 @@ _DATE = (
     rf"|\d{{1,2}}{_SP}+[a-z]{{3,9}}\.?,?{_SP}+\d{{2,4}})"
 )
 _DOB_RULE = re.compile(
-    rf"(?:\bdate{_SP}+of{_SP}+birth|\bbirth{_SP}*date|\bd\.?o\.?b\b\.?){_SEP}"
+    rf"(?:\bdate{_SP}+of{_SP}+birth|\bbirth{_SP}*date|\bd\.?o\.?b\b\.?){_SEP}{_NEXT_LINE}"
     rf"(?P<value>{_DATE})",
     _FLAGS,
 )
 
 # A name is one to four words, each starting with a capital letter, one
-# space apart, stopping before a word that starts the next label. Matched
-# with case, so "Patient: you pay 20%" is left alone; the labels ignore it.
+# space apart, never a word that starts a label. Matched with case, so
+# "Patient: you pay 20%" is left alone; the labels ignore it.
 _NEXT_LABEL = r"(?i:(?!(?:dob|date|id|ssn|member|group|address|phone|plan|policy)\b))"
-_CAPITALISED = r"[^\W\d_a-z][\w'.-]"
-_NAME_VALUE = rf"(?P<value>{_CAPITALISED}{{1,30}}(?:{_SP}{_NEXT_LABEL}{_CAPITALISED}{{0,30}}){{0,3}})"
+_CAPITALISED = rf"{_NEXT_LABEL}[^\W\d_a-z][\w'.-]"
+_FULL_NAME = rf"{_CAPITALISED}{{1,30}}(?:{_SP}{_CAPITALISED}{{0,30}}){{0,3}}"
+# After a label a name can also be "Surname, Given", as on ID cards.
+_NAME_VALUE = (
+    rf"(?P<value>{_FULL_NAME}"
+    rf"(?:,{_SP}?{_CAPITALISED}{{0,30}}(?:{_SP}{_CAPITALISED}{{0,30}}){{0,2}})?)"
+)
 _NAME_RULE = re.compile(
     rf"(?i:\b{_PERSON}(?:'s)?{_SP}+name(?:{_SP}*:)?|\b{_PERSON_ALONE}{_SP}*:"
-    rf"|^{_SP}*name{_SP}*:){_SP}*{_NAME_VALUE}",
+    rf"|^{_SP}*name{_SP}*:){_SP}*{_NEXT_LINE}{_NAME_VALUE}",
     re.MULTILINE,
 )
-_DEAR_RULE = re.compile(rf"^{_SP}*(?i:dear){_SP}+{_NAME_VALUE}", re.MULTILINE)
+_DEAR_RULE = re.compile(rf"^{_SP}*(?i:dear){_SP}+(?P<value>{_FULL_NAME})", re.MULTILINE)
 # Salutations that name nobody.
 _GENERIC_SALUTATIONS = frozenset(
     {
@@ -109,7 +116,7 @@ _GENERIC_SALUTATIONS = frozenset(
 
 _ADDRESS_RULE = re.compile(
     rf"(?:\b(?:home|member|patient|subscriber|employee|your|street|residential)"
-    rf"{_SP}+address|^{_SP}*address){_SP}*:{_SP}*(?P<value>\S[^\n]{{0,99}})",
+    rf"{_SP}+address|^{_SP}*address){_SP}*:{_SP}*{_NEXT_LINE}(?P<value>\S[^\n]{{0,99}})",
     _FLAGS,
 )
 

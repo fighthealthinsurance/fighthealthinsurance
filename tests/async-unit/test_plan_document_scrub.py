@@ -43,6 +43,53 @@ def test_names_after_their_labels_are_removed(text, expected):
     assert scrub(text) == expected
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("MEMBER: CRUMPLER, REBECCA L", f"MEMBER: {REMOVED}"),
+        ("Subscriber: Crumpler, Rebecca L", f"Subscriber: {REMOVED}"),
+        ("PATIENT NAME: BLACKWELL, ELIZABETH", f"PATIENT NAME: {REMOVED}"),
+        (
+            "Member name: La Flesche, Susan\nGroup Number: 1234567890",
+            f"Member name: {REMOVED}\nGroup Number: 1234567890",
+        ),
+    ],
+)
+def test_a_surname_first_name_after_a_label_is_removed_whole(text, expected):
+    assert scrub(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Member ID:\nW123456789", f"Member ID:\n{REMOVED}"),
+        ("Subscriber ID\n  XYZ123456789", f"Subscriber ID\n  {REMOVED}"),
+        ("Member Name:\nRebecca Lee Crumpler", f"Member Name:\n{REMOVED}"),
+        ("Patient:\nCRUMPLER, REBECCA", f"Patient:\n{REMOVED}"),
+        ("Date of Birth\n02/08/1831", f"Date of Birth\n{REMOVED}"),
+        ("DOB:\nFebruary 8, 1831", f"DOB:\n{REMOVED}"),
+        ("SSN:\n123456789", f"SSN:\n{REMOVED}"),
+        ("Home Address:\n12 Beacon Street", f"Home Address:\n{REMOVED}"),
+    ],
+)
+def test_a_value_on_the_line_after_its_label_is_removed(text, expected):
+    # Text pulled from PDF forms and tables often puts the value below.
+    assert scrub(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Patient Name\nDate of Service: 03/04/2026",
+        "Member ID\nGroup Number: 1234567890",
+        "Member Name:\nPlan: Gold PPO",
+        "Member ID\n\nOverall deductible: $1,500",
+    ],
+)
+def test_a_label_on_the_line_below_is_not_taken_for_a_value(text):
+    assert scrub(text) == text
+
+
 def test_a_name_stops_before_the_next_label():
     assert scrub("Patient: Rebecca Crumpler DOB: 02/08/1831") == (
         f"Patient: {REMOVED} DOB: {REMOVED}"
@@ -182,12 +229,37 @@ def test_a_long_document_is_cleaned_quickly():
     assert cleaned.count("1234567890") == text.count("1234567890")
 
 
+LONG_RUN_LABELS = [
+    "Plan",
+    "Group number",
+    "Member ID",
+    "Member name",
+    "Member:",
+    "DOB",
+    "SSN",
+    "Home address:",
+    "Name:",
+]
+
+
+@pytest.mark.parametrize("label", LONG_RUN_LABELS)
 @pytest.mark.parametrize(
-    "label", ["Plan", "Group number", "Member ID", "Member name", "DOB", "SSN"]
+    "gap",
+    [" " * 20_000, " " * 20_000 + "\n" + " " * 20_000, "\t" * 20_000],
+    ids=["spaces", "spaces-line-spaces", "tabs"],
 )
-def test_a_long_run_of_spaces_after_a_label_is_cleaned_quickly(label):
+def test_a_long_run_of_spaces_after_a_label_is_cleaned_quickly(label, gap):
     # Text pulled from a PDF table can hold long runs of spaces.
-    text = f"{label}{' ' * 20_000}!"
+    text = f"{label}{gap}!"
     started = time.monotonic()
-    assert scrub(text) == text
+    cleaned = scrub(text)
+    assert time.monotonic() - started < 1
+    # Only a lone "!" after a label and its colon can be taken for a value.
+    assert cleaned in (text, text[:-1] + REMOVED)
+
+
+def test_a_long_run_of_spaces_inside_a_surname_first_name_is_cleaned_quickly():
+    text = "Member: Crumpler," + " " * 20_000 + "!"
+    started = time.monotonic()
+    scrub(text)
     assert time.monotonic() - started < 1
