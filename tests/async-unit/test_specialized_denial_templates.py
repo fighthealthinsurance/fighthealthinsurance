@@ -8,6 +8,7 @@ to the highest-quality internal model so the strongest model gets a
 chance to use the targeted citations.
 """
 
+import re
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -187,7 +188,7 @@ class TestAdvancedImagingAppealMatches(unittest.TestCase):
         text = AdvancedImagingAppeal.static_appeal()
         self.assertIn("ACR Appropriateness Criteria", text)
         self.assertIn("CMS National Coverage Determinations", text)
-        self.assertIn("CMS 2024 Final Rule", text)
+        self.assertIn("Medicare Advantage", text)
 
 
 class TestSpecialtyMedicationAppealMatches(unittest.TestCase):
@@ -216,7 +217,7 @@ class TestSpecialtyMedicationAppealMatches(unittest.TestCase):
         text = SpecialtyMedicationAppeal.static_appeal()
         self.assertIn("step therapy", text.lower())
         self.assertIn("ERISA", text)
-        self.assertIn("CMS 2024 Final Rule", text)
+        self.assertIn("Medicare Advantage", text)
 
 
 class TestPhysicalTherapyContinuationAppealMatches(unittest.TestCase):
@@ -238,7 +239,7 @@ class TestPhysicalTherapyContinuationAppealMatches(unittest.TestCase):
         text = PhysicalTherapyContinuationAppeal.static_appeal()
         self.assertIn("Jimmo", text)
         self.assertIn("42 U.S.C. § 18022(b)(1)(G)", text)
-        self.assertIn("CMS 2024 Final Rule", text)
+        self.assertIn("Medicare Advantage", text)
 
 
 class TestPostSurgicalRehabAppealMatches(unittest.TestCase):
@@ -292,7 +293,7 @@ class TestPostSurgicalRehabAppealMatches(unittest.TestCase):
         text = PostSurgicalRehabAppeal.static_appeal()
         self.assertIn("Medicare Benefit Policy Manual", text)
         self.assertIn("Jimmo", text)
-        self.assertIn("CMS 2024 Final Rule", text)
+        self.assertIn("Medicare Advantage", text)
 
 
 class TestGLP1WeightLossAppealMatches(unittest.TestCase):
@@ -344,7 +345,7 @@ class TestGLP1WeightLossAppealMatches(unittest.TestCase):
         text = GLP1WeightLossAppeal.static_appeal()
         self.assertIn("H-440.842", text)
         self.assertIn("42 U.S.C. § 18116", text)
-        self.assertIn("CMS 2024 Final Rule", text)
+        self.assertIn("Medicare Advantage", text)
 
     def test_static_appeal_uses_substitution_placeholders(self):
         text = GLP1WeightLossAppeal.static_appeal()
@@ -352,6 +353,42 @@ class TestGLP1WeightLossAppealMatches(unittest.TestCase):
         self.assertIn("{claim_id}", text)
         self.assertIn("{procedure}", text)
         self.assertIn("{diagnosis}", text)
+
+
+class TestAlgorithmGuidanceIsMedicareAdvantageOnly(unittest.TestCase):
+    """CMS's algorithm guidance (CMS-4201-F and its February 6, 2024 memo)
+    binds Medicare Advantage plans only, so no template presents it as a
+    rule for every plan, and each letter grounds the request for other plans
+    in the claims rule."""
+
+    def test_no_template_cites_a_cms_2024_algorithm_rule(self):
+        for cls in SPECIALIZED_DENIAL_TEMPLATES:
+            for text in (cls.static_appeal(),) + cls.citations:
+                with self.subTest(template=cls.__name__, text=text[:60]):
+                    self.assertNotIn("CMS 2024 Final Rule", text)
+
+    def test_algorithm_citations_are_marked_medicare_advantage_only(self):
+        for cls in SPECIALIZED_DENIAL_TEMPLATES:
+            for citation in cls.citations:
+                if re.search(r"algorithm|artificial intelligence", citation, re.I):
+                    with self.subTest(template=cls.__name__, text=citation[:60]):
+                        self.assertTrue(
+                            citation.startswith("Medicare Advantage plans only")
+                        )
+
+    def test_letters_tie_cms_algorithm_guidance_to_medicare_advantage(self):
+        for cls in SPECIALIZED_DENIAL_TEMPLATES:
+            for sentence in re.split(r"(?<=\.)\s", cls.static_appeal()):
+                if "CMS" in sentence and "algorithm" in sentence:
+                    with self.subTest(template=cls.__name__, text=sentence[:60]):
+                        self.assertIn("Medicare Advantage", sentence)
+
+    def test_letters_ground_the_tool_request_in_the_claims_rule(self):
+        for cls in SPECIALIZED_DENIAL_TEMPLATES:
+            text = cls.static_appeal()
+            with self.subTest(template=cls.__name__):
+                self.assertRegex(text, r"(?i)automated (?:review )?tool")
+                self.assertIn("29 CFR 2560.503-1", text)
 
 
 class TestMatchingFlags(unittest.TestCase):

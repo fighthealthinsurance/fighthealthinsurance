@@ -273,6 +273,26 @@ _MEDICARE_ADVANTAGE_ONLY_CITATION = (
 )
 
 
+def _automated_review_paragraph(number: int, tool: str) -> str:
+    """The letter's request about automated tools, worded to hold for
+    commercial plans and Medicare Advantage alike."""
+    return (
+        f"{number}. Automated review tools. If {tool} was used in deciding "
+        "this claim, please identify it and provide its output, the criteria "
+        "it applied, and the reviewing clinician's rationale for this case. "
+        "For employer plans and most individual plans, documents generated in "
+        "making the decision are part of the claim file, and the denial must "
+        "explain, or provide on request, the clinical judgment applied to the "
+        "patient's circumstances (29 CFR 2560.503-1(g)(1)(v)(B) and (m)(8); "
+        "45 CFR 147.136). For a Medicare Advantage plan, the decision must "
+        "rest on the patient's medical history, the treating physician's "
+        "recommendations, and the clinical notes (42 CFR 422.101(c)(1)(i)), "
+        "and CMS has told Medicare Advantage plans that an algorithm may "
+        "assist with, but cannot replace, that individual assessment (CMS "
+        "memo to Medicare Advantage organizations, February 6, 2024).\n\n"
+    )
+
+
 class MentalHealthParityAppeal(SpecializedDenialTemplate):
     name = "Mental Health Parity / behavioral-health denial"
     text_patterns = (
@@ -450,8 +470,8 @@ class AdvancedImagingAppeal(SpecializedDenialTemplate):
         "American College of Radiology (ACR) Appropriateness Criteria",
         "CMS National Coverage Determinations for diagnostic imaging "
         "(NCD Manual chapter 220)",
-        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
-        "in coverage determinations",
+        _CLAIMS_RULE_CITATION,
+        _MEDICARE_ADVANTAGE_ONLY_CITATION,
     )
 
     @classmethod
@@ -474,14 +494,8 @@ class AdvancedImagingAppeal(SpecializedDenialTemplate):
             "CMS NCDs set the community standard for advanced imaging "
             "coverage and the requested study satisfies the relevant NCD's "
             "indications.\n\n"
-            "3. CMS 2024 Final Rule on algorithmic coverage determinations. "
-            "If an automated utilization-management tool drove this denial, "
-            "the carrier must still produce an individualized clinical "
-            "review by a qualified human reviewer; the algorithm cannot be "
-            "the sole basis for the adverse decision. Please disclose "
-            "whether such a tool was used and provide the reviewer's "
-            "clinical rationale.\n\n"
-            "Delaying or denying this imaging risks missed diagnoses and "
+            + _automated_review_paragraph(3, "an automated utilization-management tool")
+            + "Delaying or denying this imaging risks missed diagnoses and "
             "downstream cost from lower-yield workups. I respectfully "
             "request that the denial be overturned.\n\n"
             "Sincerely,\n[Name]\n"
@@ -518,8 +532,7 @@ class SpecialtyMedicationAppeal(SpecializedDenialTemplate):
         "State step-therapy override statutes (where applicable; the "
         "exception is required when stepping has been tried, is "
         "contraindicated, or is expected to be ineffective)",
-        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
-        "in coverage determinations",
+        _MEDICARE_ADVANTAGE_ONLY_CITATION,
     )
 
     @classmethod
@@ -545,12 +558,8 @@ class SpecialtyMedicationAppeal(SpecializedDenialTemplate):
             "internal rule, guideline, protocol, or similar criterion that "
             "was used. Generic 'not medically necessary' language without "
             "this disclosure does not satisfy the regulation.\n\n"
-            "3. CMS 2024 Final Rule on algorithmic coverage determinations. "
-            "If an automated tool flagged this prescription, the final "
-            "denial must still rest on an individualized clinical review by "
-            "a qualified human reviewer applying this patient's full "
-            "clinical picture, not solely on an algorithmic output.\n\n"
-            "I respectfully request that the denial be overturned and the "
+            + _automated_review_paragraph(3, "an automated tool")
+            + "I respectfully request that the denial be overturned and the "
             "medication authorized without further delay.\n\n"
             "Sincerely,\n[Name]\n"
         )
@@ -586,8 +595,8 @@ class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
         "Affordable Care Act Essential Health Benefits, "
         "42 U.S.C. § 18022(b)(1)(G) (rehabilitative and habilitative "
         "services and devices)",
-        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
-        "in coverage determinations",
+        _CLAIMS_RULE_CITATION,
+        _MEDICARE_ADVANTAGE_ONLY_CITATION,
     )
 
     @classmethod
@@ -612,13 +621,8 @@ class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
             "A blanket session cap that prevents continued medically "
             "necessary therapy effectively excludes a covered EHB and is "
             "not enforceable as written.\n\n"
-            "3. CMS 2024 Final Rule on algorithmic coverage determinations. "
-            "If a utilization-management algorithm flagged this case as "
-            "having reached its visit limit, the final denial must still "
-            "rest on an individualized clinical review by a qualified human "
-            "reviewer; the algorithm may not be the sole basis for the "
-            "adverse decision.\n\n"
-            "I respectfully request the denial be overturned and the "
+            + _automated_review_paragraph(3, "a utilization-management algorithm")
+            + "I respectfully request the denial be overturned and the "
             "additional sessions authorized.\n\n"
             "Sincerely,\n[Name]\n"
         )
@@ -658,8 +662,8 @@ class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
         "Affordable Care Act Essential Health Benefits, "
         "42 U.S.C. § 18022(b)(1)(G) (rehabilitative and habilitative "
         "services and devices)",
-        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
-        "in coverage determinations",
+        _CLAIMS_RULE_CITATION,
+        _MEDICARE_ADVANTAGE_ONLY_CITATION,
     )
 
     @classmethod
@@ -691,12 +695,10 @@ class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
             "services and devices are essential health benefits and cannot "
             "be effectively excluded through restrictive utilization "
             "management.\n\n"
-            "4. CMS 2024 Final Rule on algorithmic coverage determinations. "
-            "If a length-of-stay algorithm or similar tool drove the "
-            "denial, the carrier must produce an individualized human "
-            "clinical review; the algorithm cannot be the sole basis for "
-            "the adverse decision.\n\n"
-            "I respectfully request that the denial be overturned and the "
+            + _automated_review_paragraph(
+                4, "a length-of-stay algorithm or similar tool"
+            )
+            + "I respectfully request that the denial be overturned and the "
             "post-surgical rehabilitation authorized.\n\n"
             "Sincerely,\n[Name]\n"
         )
@@ -747,8 +749,7 @@ class GLP1WeightLossAppeal(SpecializedDenialTemplate):
         "ERISA § 503 / 29 C.F.R. § 2560.503-1 (full and fair review — "
         "disclosure of the clinical criteria, reviewer credentials, and the "
         "exact plan-exclusion language relied upon)",
-        "CMS 2024 Final Rule on the use of algorithms and artificial "
-        "intelligence in coverage determinations",
+        _MEDICARE_ADVANTAGE_ONLY_CITATION,
     )
 
     @classmethod
@@ -788,13 +789,8 @@ class GLP1WeightLossAppeal(SpecializedDenialTemplate):
             "stabilized on this therapy, I request continuity-of-care "
             "protection so that treatment is not interrupted during this "
             "appeal.\n\n"
-            "4. CMS 2024 Final Rule on algorithmic coverage determinations. "
-            "If an automated tool contributed to this denial, the final "
-            "decision must still rest on an individualized clinical review by "
-            "a qualified human reviewer; the algorithm may not be the sole "
-            "basis for the adverse determination. Please disclose whether such "
-            "a tool was used and identify it.\n\n"
-            "I respectfully request that the denial be overturned and the "
+            + _automated_review_paragraph(4, "an automated tool")
+            + "I respectfully request that the denial be overturned and the "
             "medication authorized without further delay.\n\n"
             "Sincerely,\n[Name]\n"
         )
