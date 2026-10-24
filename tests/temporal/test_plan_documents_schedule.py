@@ -176,6 +176,41 @@ def test_the_command_keeps_both_schedules_in_step(flags, expected):
     assert "plan-documents-sweep: created" in out.getvalue()
 
 
+@pytest.mark.parametrize("failing", ["policy", "plan_documents"])
+def test_the_command_tries_every_schedule_and_fails_if_one_did(failing):
+    from django.core.management.base import CommandError
+
+    secret = "text that must not be printed"
+    ensures = {
+        "policy": AsyncMock(return_value="paused"),
+        "plan_documents": AsyncMock(return_value="created"),
+    }
+    ensures[failing] = AsyncMock(side_effect=RuntimeError(secret))
+    out = io.StringIO()
+    with (
+        override_settings(TEMPORAL_ENABLED=True),
+        patch.object(temporal_client, "ensure_chat_policy_schedule", ensures["policy"]),
+        patch.object(
+            temporal_client, "ensure_plan_documents_schedule", ensures["plan_documents"]
+        ),
+        patch.object(
+            temporal_client, "get_temporal_client", AsyncMock(return_value=Mock())
+        ),
+    ):
+        with pytest.raises(CommandError) as raised:
+            call_command("ensure_temporal_schedules", stdout=out)
+    for ensure in ensures.values():
+        ensure.assert_awaited_once()
+    lines = out.getvalue().splitlines()
+    expected = {
+        "policy": "chat-routing-policy: paused",
+        "plan_documents": "plan-documents-sweep: created",
+    }
+    expected[failing] = expected[failing].split(":")[0] + ": failed (RuntimeError)"
+    assert lines == [expected["policy"], expected["plan_documents"]]
+    assert secret not in out.getvalue() and secret not in str(raised.value)
+
+
 # --- Against a real (local dev) server ----------------------------------------
 
 

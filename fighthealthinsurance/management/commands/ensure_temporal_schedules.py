@@ -8,14 +8,17 @@ process does the same at start-up, so this command is for doing it by hand,
 for example after changing a flag without restarting the workers. It is
 idempotent.
 
-With TEMPORAL_ENABLED off it does nothing and does not connect.
+Each Schedule is tried on its own, so one failing never stops the other.
+It prints one line per Schedule, its outcome or the error's class name,
+and exits non-zero when any failed. With TEMPORAL_ENABLED off it does
+nothing and does not connect.
 """
 
 import asyncio
 from typing import Any
 
 from django.conf import settings
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 
 class Command(BaseCommand):
@@ -25,10 +28,15 @@ class Command(BaseCommand):
         if not getattr(settings, "TEMPORAL_ENABLED", False):
             self.stdout.write("TEMPORAL_ENABLED is off; not contacting Temporal.")
             return
-        for schedule_id, outcome in asyncio.run(self._ensure()):
+        failed = []
+        for schedule_id, outcome, ok in asyncio.run(self._ensure()):
             self.stdout.write(f"{schedule_id}: {outcome}")
+            if not ok:
+                failed.append(schedule_id)
+        if failed:
+            raise CommandError(f"Not kept in step: {', '.join(failed)}")
 
-    async def _ensure(self) -> list[tuple[str, str]]:
+    async def _ensure(self) -> list[tuple[str, str, bool]]:
         from fighthealthinsurance.temporal_client import (
             CHAT_POLICY_SCHEDULE_ID,
             PLAN_DOCUMENTS_SCHEDULE_ID,
@@ -40,13 +48,24 @@ class Command(BaseCommand):
         )
 
         client = await get_temporal_client()
-        policy = await ensure_chat_policy_schedule(
-            client, enabled=chat_policy_schedule_enabled()
-        )
-        plan_documents = await ensure_plan_documents_schedule(
-            client, enabled=plan_documents_enabled()
-        )
-        return [
-            (CHAT_POLICY_SCHEDULE_ID, policy),
-            (PLAN_DOCUMENTS_SCHEDULE_ID, plan_documents),
-        ]
+        results = []
+        for schedule_id, ensure, enabled in (
+            (
+                CHAT_POLICY_SCHEDULE_ID,
+                ensure_chat_policy_schedule,
+                chat_policy_schedule_enabled(),
+            ),
+            (
+                PLAN_DOCUMENTS_SCHEDULE_ID,
+                ensure_plan_documents_schedule,
+                plan_documents_enabled(),
+            ),
+        ):
+            try:
+                outcome = await ensure(client, enabled=enabled)
+            except Exception as e:
+                # Class name only, as the worker logs it.
+                results.append((schedule_id, f"failed ({type(e).__name__})", False))
+            else:
+                results.append((schedule_id, outcome, True))
+        return results
