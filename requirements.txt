@@ -37,6 +37,7 @@ git+https://github.com/fighthealthinsurance/django-encrypted-model-fields.git@d9
 git+https://github.com/fighthealthinsurance/llm-result-utils.git@f24e0bf7fa485d682fe3e42df831623c55844462
 icd10-cm
 loguru
+lxml==6.1.3  # word_text.py reads Word files with it directly
 mcp>=1.30,<2  # MCP server at /mcp (mcp_server.py). 2.x renames FastMCP and needs newer bs4 and seleniumbase first
 metapub==0.5.12
 packaging>=20.0
