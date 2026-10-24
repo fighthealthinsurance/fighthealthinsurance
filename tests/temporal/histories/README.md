@@ -29,7 +29,8 @@ an untracked path first, redact it, and only then copy the sanitised file in
 (external review).
 
 ```sh
-# 1. Export somewhere untracked.
+# 1. Export somewhere untracked. Shared plan documents runs live in
+#    --namespace fhi-research instead of default.
 kubectl -n totallylegitco exec deploy/temporal-admintools -- \
   temporal workflow show \
     --address temporal-frontend:7233 --namespace default \
@@ -40,7 +41,8 @@ kubectl -n totallylegitco exec deploy/temporal-admintools -- \
 #    are Fernet-encrypted (binary/encrypted-fernet, see
 #    fighthealthinsurance/temporal_codec.py); histories written without a key
 #    are plaintext and pass through unchanged. The script reads the key from
-#    the environment and never prints it.
+#    the environment and never prints it. For an fhi-research history, give
+#    it TEMPORAL_RESEARCH_PAYLOAD_KEY's value as TEMPORAL_PAYLOAD_KEY.
 python scripts/decode_temporal_history.py \
   < /tmp/history-raw.json > /tmp/history-plain.json
 
