@@ -67,6 +67,15 @@ class TestMedicaidEligibilityLandingPage(TestCase):
         self.assertNotIn("Caregiving (varies by state)", self.content)
         self.assertIn("Groups Exempt in Every State", self.content)
 
+    def test_warning_names_each_way_to_meet_the_rule(self):
+        from bs4 import BeautifulSoup
+
+        warning = BeautifulSoup(self.content, "html.parser").select_one(".callout-card")
+        self.assertIsNotNone(warning)
+        text = warning.get_text(" ", strip=True)
+        for option in ("80 hours per month", "school at least half-time", "$580"):
+            self.assertIn(option, text)
+
 
 class TestMedicaidEligibilityFunnelIntoChat(TestCase):
     """The CTA's microsite_slug must survive the whole path into chat."""
