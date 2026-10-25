@@ -20,6 +20,7 @@ nothing here runs in the app.
    | `places_county.csv` | `https://data.cdc.gov/api/v3/views/i46a-9kgh/export.csv` (the old `rows.csv?accessType=DOWNLOAD` link was retired in October 2026) |
    | `effectuated_monthly.csv` | The CSV on [data.cms.gov's Health Insurance Exchanges Monthly Effectuated Enrollment page](https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/health-insurance-marketplace/health-insurance-exchanges-monthly-effectuated-enrollment), renamed (the current build used `Health Insurance Exchanges Monthly Effectuated Enrollment Data_asof_20260505.csv`) |
    | `<YEAR>-oep-state-level-public-use-file.zip` (optional) | The `file` link in each row of `marketplace_signups.csv`, not renamed; when it's here the build checks it against that row's sha256 |
+   | None (`open_enrollment_history.csv` is checked in) | Each row's `source_url`: CMS's OEP state-level public use file zips for 2017 to 2026 (all listed on [CMS's marketplace products page](https://www.cms.gov/data-research/statistics-trends-and-reports/marketplace-products)) and HHS ASPE's enrollment reports for 2014 to 2016. The build doesn't read them; reopen one to check a row |
 
 2. Build:
 
@@ -80,6 +81,21 @@ nothing here runs in the app.
   the build also stops on a count that isn't above 0, two rows for one year,
   a file with no rows, a year with no February count, or a missing row for
   either of the last two Februaries.
+- `open_enrollment_history.csv` holds plans picked in every open enrollment
+  from 2014, with the HealthCare.gov and state-run parts, for the open
+  enrollment page's long line. 2017 on is the Total/All row of each year's CMS
+  OEP State-Level Public Use File. CMS has no all-marketplace file before
+  2017, so 2014 to 2016 come from HHS ASPE's enrollment reports, whose tables
+  cite CMS; `publisher` says which (`CMS` or `HHS ASPE, from CMS data`). The
+  build puts it under the marketplace entry as `history` and stops on a gap
+  in the years from 2014, a count that isn't above 0, a total that isn't
+  HealthCare.gov plus state-run, another publisher, a `source_url` that isn't
+  https on www.cms.gov or aspe.hhs.gov, a missing `source_file`, or a year
+  whose count differs from `marketplace_signups.csv`. The windows and CMS's
+  definition of a plan pick changed over the years (2018 and 2022), which the
+  page's note and Sources and method say, so reread them when a year is
+  added. The HealthCare.gov and state-run parts shift when a state changes
+  platform, so only the total is charted.
 - `file_sha256` is a record of the zip the count was read from, taken when it
   was downloaded. The zips stay out of git: put them in the raw directory
   under their own names (`2026-oep-state-level-public-use-file.zip`) and the
