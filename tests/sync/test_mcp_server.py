@@ -497,6 +497,7 @@ class AppealRightsTest(TestCase):
         self.assertFalse(result.isError)
         names = [h["name"] for h in result.structuredContent["laws_that_may_help"]]
         self.assertTrue(names)
+        self.assertTrue(any("CMS-4201-F" in n for n in names))
         self.assertFalse(
             any("Massachusetts" in n for n in names),
             "a state insurance law does not bind Medicare Advantage",
@@ -581,7 +582,7 @@ class AppealRightsTest(TestCase):
         data = await self.appeal_rights("Employer -- Private")
         names = " ".join(h["name"] for h in data["laws_that_may_help"])
         self.assertNotIn("CMS-0057-F", names)
-        self.assertNotIn("artificial intelligence in coverage", names)
+        self.assertNotIn("CMS-4201-F", names)
         self.assertIn("California", names)
         about = data["about_these_laws"]
         self.assertIn(mcp_server.LAWS_FRAMING, about)
@@ -591,7 +592,7 @@ class AppealRightsTest(TestCase):
         data = await self.appeal_rights("Don't know")
         names = " ".join(h["name"] for h in data["laws_that_may_help"])
         self.assertNotIn("CMS-0057-F", names)
-        self.assertNotIn("artificial intelligence in coverage", names)
+        self.assertNotIn("CMS-4201-F", names)
         self.assertIn(
             "left out until the kind of plan is known", data["about_these_laws"]
         )
@@ -602,7 +603,7 @@ class AppealRightsTest(TestCase):
         data = await self.appeal_rights("State Marketplace / Affordable Care Act")
         names = " ".join(h["name"] for h in data["laws_that_may_help"])
         self.assertIn("CMS-0057-F", names)
-        self.assertNotIn("artificial intelligence in coverage", names)
+        self.assertNotIn("CMS-4201-F", names)
         self.assertIn(
             "not plans from a state's own marketplace", data["about_these_laws"]
         )

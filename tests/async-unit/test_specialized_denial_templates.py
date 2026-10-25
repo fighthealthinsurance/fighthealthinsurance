@@ -8,6 +8,7 @@ to the highest-quality internal model so the strongest model gets a
 chance to use the targeted citations.
 """
 
+import re
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -63,7 +64,7 @@ class TestMentalHealthParityAppealMatches(unittest.TestCase):
         text = MentalHealthParityAppeal.static_appeal()
         self.assertIn("MHPAEA", text)
         self.assertIn("29 U.S.C. § 1185a", text)
-        self.assertIn("CMS 2024 Final Rule", text)
+        self.assertIn("42 U.S.C. § 300gg-26", text)
         self.assertIn("42 U.S.C. § 18022(b)(1)(E)", text)
 
     def test_static_appeal_uses_substitution_placeholders(self):
@@ -77,8 +78,149 @@ class TestMentalHealthParityAppealMatches(unittest.TestCase):
     def test_model_prompt_hint_includes_citations(self):
         hint = MentalHealthParityAppeal.model_prompt_hint()
         self.assertIn("MHPAEA", hint)
-        self.assertIn("CMS 2024 Final Rule", hint)
+        self.assertIn("Medicare Advantage plans only", hint)
         self.assertIn("Mental Health Parity", hint)
+
+
+# Signs the text leans on the 2024 MHPAEA rule's new provisions.
+_PARITY_2024_RULE_MARKERS = (
+    r"89 FR 77586",
+    r"2024[^.;]*(?:MHPAEA|[Pp]arity|NQTL|DOL)",
+    r"(?:MHPAEA|[Pp]arity|NQTL|DOL)[^.;]*2024",
+    r"2590\.712-1|146\.137|54\.9812-2",
+    r"no more restrictive",
+    r"meaningful benefit",
+    r"material difference",
+    r"network composition",
+)
+
+
+def _paragraph(text, start):
+    """The letter paragraph that begins with ``start``."""
+    for paragraph in text.split("\n\n"):
+        if paragraph.startswith(start):
+            return paragraph
+    raise AssertionError(f"no paragraph starts with {start!r}")
+
+
+class TestParityTemplateRestsOnEnforcedLaw(unittest.TestCase):
+    """On May 15, 2025 the Departments said they will not enforce the 2024
+    MHPAEA rule's new provisions, so the letter and the model's citations
+    rest on the statute and the 2013 rule."""
+
+    def test_letter_and_citations_do_not_rely_on_the_2024_rule(self):
+        texts = (MentalHealthParityAppeal.static_appeal(),)
+        texts += MentalHealthParityAppeal.citations
+        for text in texts:
+            for marker in _PARITY_2024_RULE_MARKERS:
+                with self.subTest(marker=marker, text=text[:60]):
+                    self.assertNotRegex(text, marker)
+
+    def test_hint_names_the_2024_rule_only_to_rule_it_out(self):
+        hint = MentalHealthParityAppeal.model_prompt_hint()
+        self.assertIn("Do not cite the 2024 MHPAEA final rule", hint)
+        self.assertIn("May 15, 2025", hint)
+
+    def test_letter_cites_the_statute_for_employer_and_individual_plans(self):
+        text = MentalHealthParityAppeal.static_appeal()
+        self.assertIn("ERISA § 712, 29 U.S.C. § 1185a", text)
+        self.assertIn("Public Health Service Act § 2726, 42 U.S.C. § 300gg-26", text)
+
+    def test_letter_asks_for_the_statutory_comparative_analysis(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "2. ")
+        self.assertIn("comparative analysis", paragraph)
+        self.assertIn("29 U.S.C. § 1185a(a)(8)", paragraph)
+        self.assertIn("42 U.S.C. § 300gg-26(a)(8)", paragraph)
+        self.assertIn("FAQs Part 45, Q6", paragraph)
+
+    def test_letter_uses_the_2013_rule_standard(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "1. ")
+        self.assertIn("comparable to, and applied no more stringently than", paragraph)
+        self.assertIn("29 CFR 2590.712(c)(4)(i)", paragraph)
+        self.assertIn("45 CFR 146.136(c)(4)(i)", paragraph)
+
+    def test_letter_bans_limits_that_apply_only_to_mental_health_care(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "1. ")
+        self.assertIn("may not impose limits that apply only to this care", paragraph)
+        self.assertIn("29 U.S.C. § 1185a(a)(3)(A)(ii)", paragraph)
+        self.assertIn("42 U.S.C. § 300gg-26(a)(3)(A)(ii)", paragraph)
+
+    def test_letter_stays_short(self):
+        # It grew to almost 900 words; keep it readable.
+        self.assertLess(len(MentalHealthParityAppeal.static_appeal().split()), 600)
+
+    def test_hint_pins_the_2013_test_to_paragraph_c_4_i(self):
+        rule = [c for c in MentalHealthParityAppeal.citations if "2013" in c]
+        self.assertEqual(len(rule), 1)
+        self.assertIn("(paragraph (c)(4)(i))", rule[0])
+
+    def test_claims_rule_applies_directly_only_to_erisa_plans(self):
+        opening = _paragraph(
+            MentalHealthParityAppeal.static_appeal(), "I am appealing"
+        )
+        self.assertIn("private employer plans covered by ERISA", opening)
+
+    def test_criteria_request_cites_both_disclosure_rules(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "2. ")
+        self.assertIn("29 CFR 2590.712(d); 45 CFR 146.136(d)", paragraph)
+
+    def test_erisa_document_request_also_goes_to_the_plan_administrator(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "2. ")
+        self.assertIn(
+            "sending a copy to the plan administrator named in my summary plan "
+            "description",
+            paragraph,
+        )
+
+    def test_essential_health_benefits_are_limited_to_the_plans_they_bind(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "4. ")
+        self.assertIn("42 U.S.C. § 18022(b)(1)(E)", paragraph)
+        self.assertIn("non-grandfathered individual, Marketplace, or small-group", paragraph)
+        ehb = [c for c in MentalHealthParityAppeal.citations if "18022" in c]
+        self.assertEqual(len(ehb), 1)
+        self.assertIn("non-grandfathered individual and small-group", ehb[0])
+
+    def test_letter_says_parity_law_does_not_reach_medicare_advantage(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "5. ")
+        self.assertIn("Medicare Advantage plan, federal parity law does not apply", paragraph)
+        self.assertIn("42 CFR 438.910", paragraph)
+
+    def test_letter_has_no_em_dashes(self):
+        self.assertNotIn("\u2014", MentalHealthParityAppeal.static_appeal())
+
+
+class TestParityLetterScopesCommercialRules(unittest.TestCase):
+    """The letter is picked before the plan type is known, so each duty names its plans."""
+
+    def test_opening_limits_parity_and_claims_rules_to_the_plans_they_bind(self):
+        opening = _paragraph(
+            MentalHealthParityAppeal.static_appeal(), "I am appealing"
+        )
+        self.assertIn(
+            "For most employer, individual, Marketplace, and state or local "
+            "government plans, federal parity law and the federal claims rule "
+            "govern this claim",
+            opening,
+        )
+
+    def test_letter_has_no_paragraph_cross_references(self):
+        self.assertNotRegex(
+            MentalHealthParityAppeal.static_appeal(), r"(?i)\bparagraphs? \d"
+        )
+
+    def test_comparative_analysis_duty_is_limited_to_plans_under_mhpaea(self):
+        paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "2. ")
+        self.assertIn("A plan subject to MHPAEA must document", paragraph)
+
+    def test_external_review_request_does_not_assume_a_commercial_plan(self):
+        closing = _paragraph(
+            MentalHealthParityAppeal.static_appeal(), "I respectfully request"
+        )
+        self.assertIn(
+            "the next level of review available to me, including any "
+            "independent external review my plan must offer",
+            closing,
+        )
 
 
 class TestAdvancedImagingAppealMatches(unittest.TestCase):
@@ -114,7 +256,7 @@ class TestAdvancedImagingAppealMatches(unittest.TestCase):
         text = AdvancedImagingAppeal.static_appeal()
         self.assertIn("ACR Appropriateness Criteria", text)
         self.assertIn("CMS National Coverage Determinations", text)
-        self.assertIn("CMS 2024 Final Rule", text)
+        self.assertIn("Medicare Advantage", text)
 
 
 class TestSpecialtyMedicationAppealMatches(unittest.TestCase):
@@ -143,7 +285,7 @@ class TestSpecialtyMedicationAppealMatches(unittest.TestCase):
         text = SpecialtyMedicationAppeal.static_appeal()
         self.assertIn("step therapy", text.lower())
         self.assertIn("ERISA", text)
-        self.assertIn("CMS 2024 Final Rule", text)
+        self.assertIn("Medicare Advantage", text)
 
 
 class TestPhysicalTherapyContinuationAppealMatches(unittest.TestCase):
@@ -165,7 +307,7 @@ class TestPhysicalTherapyContinuationAppealMatches(unittest.TestCase):
         text = PhysicalTherapyContinuationAppeal.static_appeal()
         self.assertIn("Jimmo", text)
         self.assertIn("42 U.S.C. § 18022(b)(1)(G)", text)
-        self.assertIn("CMS 2024 Final Rule", text)
+        self.assertIn("Medicare Advantage", text)
 
 
 class TestPostSurgicalRehabAppealMatches(unittest.TestCase):
@@ -219,7 +361,7 @@ class TestPostSurgicalRehabAppealMatches(unittest.TestCase):
         text = PostSurgicalRehabAppeal.static_appeal()
         self.assertIn("Medicare Benefit Policy Manual", text)
         self.assertIn("Jimmo", text)
-        self.assertIn("CMS 2024 Final Rule", text)
+        self.assertIn("Medicare Advantage", text)
 
 
 class TestGLP1WeightLossAppealMatches(unittest.TestCase):
@@ -271,7 +413,7 @@ class TestGLP1WeightLossAppealMatches(unittest.TestCase):
         text = GLP1WeightLossAppeal.static_appeal()
         self.assertIn("H-440.842", text)
         self.assertIn("42 U.S.C. § 18116", text)
-        self.assertIn("CMS 2024 Final Rule", text)
+        self.assertIn("Medicare Advantage", text)
 
     def test_static_appeal_uses_substitution_placeholders(self):
         text = GLP1WeightLossAppeal.static_appeal()
@@ -279,6 +421,80 @@ class TestGLP1WeightLossAppealMatches(unittest.TestCase):
         self.assertIn("{claim_id}", text)
         self.assertIn("{procedure}", text)
         self.assertIn("{diagnosis}", text)
+
+
+class TestAlgorithmGuidanceIsMedicareAdvantageOnly(unittest.TestCase):
+    """CMS's algorithm guidance (CMS-4201-F and its February 6, 2024 memo)
+    binds Medicare Advantage plans only, so no template presents it as a
+    rule for every plan, and each letter grounds the request for other plans
+    in the claims rule."""
+
+    def test_no_template_cites_a_cms_2024_algorithm_rule(self):
+        for cls in SPECIALIZED_DENIAL_TEMPLATES:
+            for text in (cls.static_appeal(),) + cls.citations:
+                with self.subTest(template=cls.__name__, text=text[:60]):
+                    self.assertNotIn("CMS 2024 Final Rule", text)
+
+    def test_algorithm_citations_are_marked_medicare_advantage_only(self):
+        for cls in SPECIALIZED_DENIAL_TEMPLATES:
+            for citation in cls.citations:
+                if re.search(r"algorithm|artificial intelligence", citation, re.I):
+                    with self.subTest(template=cls.__name__, text=citation[:60]):
+                        self.assertTrue(
+                            citation.startswith("Medicare Advantage plans only")
+                        )
+
+    def test_letters_tie_cms_algorithm_guidance_to_medicare_advantage(self):
+        for cls in SPECIALIZED_DENIAL_TEMPLATES:
+            for sentence in re.split(r"(?<=\.)\s", cls.static_appeal()):
+                if "CMS" in sentence and "algorithm" in sentence:
+                    with self.subTest(template=cls.__name__, text=sentence[:60]):
+                        self.assertIn("Medicare Advantage", sentence)
+
+    def test_letters_ground_the_tool_request_in_the_claims_rule(self):
+        for cls in SPECIALIZED_DENIAL_TEMPLATES:
+            text = cls.static_appeal()
+            with self.subTest(template=cls.__name__):
+                self.assertRegex(text, r"(?i)automated (?:review )?tool")
+                self.assertIn("29 CFR 2560.503-1", text)
+
+    def test_clinical_judgment_duty_is_tied_to_medical_necessity_denials(self):
+        # 29 CFR 2560.503-1(g)(1)(v)(B) reaches only those denials.
+        checked = 0
+        for cls in SPECIALIZED_DENIAL_TEMPLATES:
+            for sentence in re.split(r"(?<=\.)\s", cls.static_appeal()):
+                if "clinical judgment" in sentence:
+                    checked += 1
+                    with self.subTest(template=cls.__name__, text=sentence[:60]):
+                        self.assertIn("based on medical necessity", sentence)
+        self.assertGreaterEqual(checked, len(SPECIALIZED_DENIAL_TEMPLATES))
+
+    def test_medicare_advantage_citations_exclude_part_d_drugs(self):
+        checked = 0
+        for cls in SPECIALIZED_DENIAL_TEMPLATES:
+            for citation in cls.citations:
+                if citation.startswith("Medicare Advantage plans only"):
+                    checked += 1
+                    with self.subTest(template=cls.__name__):
+                        self.assertIn(
+                            "for Part A and Part B benefits, not Part D", citation
+                        )
+        self.assertGreater(checked, 0)
+
+    def test_drug_letters_apply_part_422_only_to_part_b_drugs(self):
+        # Part 422 and the CMS memo cover Part A and B benefits only.
+        for cls in (
+            MentalHealthParityAppeal,
+            SpecialtyMedicationAppeal,
+            GLP1WeightLossAppeal,
+        ):
+            text = cls.static_appeal()
+            with self.subTest(template=cls.__name__):
+                self.assertIn("42 CFR Part 423, Subpart M", text)
+            for sentence in re.split(r"(?<=\.)\s", text):
+                if "422.101" in sentence:
+                    with self.subTest(template=cls.__name__, text=sentence[:60]):
+                        self.assertIn("Part B drug", sentence)
 
 
 class TestMatchingFlags(unittest.TestCase):
