@@ -714,7 +714,7 @@ def denial_watch_teaser() -> dict[str, typing.Any]:
         "per_day": per_day,
         "per_day_text": f"{per_day:,}",
         "picks_year": picks["y"],
-        "picks_text": f"{picks['n'] / 1e6:.1f} million",
+        "picks_text": f"{picks['n'] / 1e6:.1f}M",
     }
 
 

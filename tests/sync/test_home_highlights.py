@@ -124,16 +124,16 @@ class TestHomeHighlights(TestCase):
         stat = self._card("open-enrollment-home").select_one(".home-highlight-stat")
         self.assertEqual(
             stat.select_one(".home-highlight-num").get_text(strip=True),
-            f"{_millions(picks[year])} marketplace plans",
+            f"{_millions(picks[year]).removesuffix(' million')}M marketplace plans",
         )
         self.assertIn(f"picked for {year} in open enrollment", stat.get_text(" ", strip=True))
 
     def test_enrollment_number_matches_the_open_enrollment_pages_tile(self):
         tile = _between(_get("open-enrollment", IN_SEASON), 'id="enroll-numbers"', "</b>")
         num = self._card("open-enrollment-home").select_one(".home-highlight-num").get_text(strip=True)
-        # The big text is the tile's figure plus the words "marketplace plans".
-        self.assertTrue(num.endswith(" marketplace plans"), num)
-        self.assertTrue(tile.endswith(num.removesuffix(" marketplace plans")), (tile, num))
+        # Same figure, with "million" shortened to M on the card.
+        self.assertTrue(num.endswith("M marketplace plans"), num)
+        self.assertTrue(tile.endswith(num.removesuffix("M marketplace plans") + " million"), (tile, num))
 
     def test_cards_link_to_their_pages(self):
         for card_id, name in (("denial-watch-home", "denial-watch"), ("open-enrollment-home", "open-enrollment")):
