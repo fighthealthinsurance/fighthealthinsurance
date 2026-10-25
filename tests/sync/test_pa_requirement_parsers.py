@@ -342,6 +342,14 @@ class PDFParserTests(TestCase):
         reqs = parse_pdf_pa_list(pdf)
         self.assertEqual([r.cpt_hcpcs_code for r in reqs], ["72148"])
 
+    def test_a_page_with_a_table_and_a_pa_line_yields_both_codes(self):
+        pdf = make_table_pdf_bytes(
+            [["CPT Code", "Description"], ["72148", "MRI lumbar spine"]],
+            text="Prior authorization required for 97110",
+        )
+        codes = {r.cpt_hcpcs_code for r in parse_pdf_pa_list(pdf, "payer.pdf")}
+        self.assertEqual(codes, {"72148", "97110"})
+
     def test_a_list_that_takes_too_long_yields_nothing(self):
         pdf = make_table_pdf_bytes([["CPT Code", "Description"], ["72148", "MRI"]])
         with patch.object(pa_requirement_parsers, "MAX_PA_PDF_SECONDS", 0.01):

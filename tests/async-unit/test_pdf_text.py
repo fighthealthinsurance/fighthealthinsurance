@@ -8,8 +8,10 @@ import signal
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from unittest.mock import patch
 
+import pymupdf
 import pytest
 from pypdf import PdfReader
 
@@ -120,6 +122,65 @@ class TestMupdfPages:
         (page,) = pdf_text.mupdf_pages(pdf, max_pages=10, max_chars=1 + header, tables=True)
 
         assert page == {"text": "", "tables": [[rows[0]]]}
+
+    def test_pages_past_the_page_cap_are_never_loaded(self):
+        pdf = make_pdf_bytes(["Page one", "Page two", "Page three"])
+
+        with loads_failing_from(2) as loaded:
+            pages = pdf_text.mupdf_pages(pdf, max_pages=2, max_chars=10_000, tables=False)
+
+        assert loaded == [0, 1]
+        assert "Page two" in pages[1]["text"]
+
+    def test_pages_past_the_character_cap_are_never_loaded(self):
+        pdf = make_pdf_bytes(["First page words", "Second page words"])
+        (first, _) = pdf_text.mupdf_pages(pdf, max_pages=10, max_chars=10_000, tables=False)
+
+        with loads_failing_from(1) as loaded:
+            pages = pdf_text.mupdf_pages(
+                pdf, max_pages=10, max_chars=len(first["text"]), tables=False
+            )
+
+        assert loaded == [0]
+        assert pages == [first]
+
+    def test_text_is_not_read_once_tables_use_up_the_cap(self):
+        rows = [["CPT Code", "Description"], ["72148", "MRI lumbar spine"]]
+        pdf = make_table_pdf_bytes(rows, text="Prior authorization list")
+        header = 1 + sum(len(cell) + 1 for cell in rows[0])
+        real_get_text = pymupdf.Page.get_text
+        calls = []
+
+        # The table finder reads words and blocks itself; count the text reads.
+        def get_text(page, option="text", **kwargs):
+            if option == "text":
+                calls.append(page.number)
+            return real_get_text(page, option, **kwargs)
+
+        with patch.object(pymupdf.Page, "get_text", get_text):
+            (page,) = pdf_text.mupdf_pages(
+                pdf, max_pages=10, max_chars=1 + header, tables=True
+            )
+
+        assert calls == []
+        assert page == {"text": "", "tables": [[rows[0]]]}
+
+
+@contextmanager
+def loads_failing_from(first_bad_page):
+    """Record each page PyMuPDF loads; loading ``first_bad_page`` or a later
+    one fails, as a malformed page would."""
+    real_load_page = pymupdf.Document.load_page
+    loaded = []
+
+    def load_page(doc, page_id):
+        loaded.append(page_id)
+        if page_id >= first_bad_page:
+            raise RuntimeError(f"malformed page {page_id}")
+        return real_load_page(doc, page_id)
+
+    with patch.object(pymupdf.Document, "load_page", load_page):
+        yield loaded
 
 
 class TestReadMupdfPages:

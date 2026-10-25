@@ -119,9 +119,11 @@ def mupdf_pages(
     pages: List[dict] = []
     chars_left = max_chars
     with pymupdf.open(stream=content, filetype="pdf") as doc:
-        for page_number, page in enumerate(doc):
-            if page_number >= max_pages or chars_left <= 0:
+        # By index, so no page past the caps is ever loaded.
+        for page_number in range(min(max_pages, doc.page_count)):
+            if chars_left <= 0:
                 break
+            page = doc.load_page(page_number)
             found: List[List[List[str]]] = []
             finder = page.find_tables() if tables else None
             for table in finder.tables if finder else []:
@@ -138,7 +140,7 @@ def mupdf_pages(
                     rows.append(cells)
                     chars_left -= cost
                 found.append(rows)
-            text = page.get_text()[: max(chars_left, 0)]
+            text = page.get_text()[:chars_left] if chars_left > 0 else ""
             chars_left -= len(text)
             pages.append({"text": text, "tables": found})
     return pages

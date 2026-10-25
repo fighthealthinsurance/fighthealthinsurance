@@ -379,9 +379,10 @@ def parse_pdf_pa_list(
             MAX_PA_PDF_SECONDS,
             tables=True,
         )
-    except Exception:
-        logger.opt(exception=True).warning(
-            f"Failed to parse PDF PA list: {source_name!r}"
+    except Exception as e:
+        # The type only: the child's message and the traceback can carry the PDF.
+        logger.warning(
+            f"Failed to parse PDF PA list {source_name!r}: {type(e).__name__}"
         )
         return []
 
