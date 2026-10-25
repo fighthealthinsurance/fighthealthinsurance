@@ -156,3 +156,42 @@ class AppealAttachmentTests(TestCase):
         )
         self.assertEqual(response.status_code, 204)
         self.assertFalse(AppealAttachment.objects.filter(id=attachment.id).exists())
+
+    def test_owner_download_returns_decrypted_file(self):
+        upload = self.client.post(
+            reverse("appeal_attachments-list"),
+            {"appeal_id": self.appeal.id, "file": self.test_file},
+            format="multipart",
+        )
+        self.assertEqual(upload.status_code, 201)
+        attachment_id = upload.json()["id"]
+
+        response = self.client.get(
+            reverse("appeal_attachments-detail", kwargs={"pk": attachment_id})
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), b"file_content")
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn('filename="test.pdf"', response["Content-Disposition"])
+
+    def test_other_professional_cannot_download_attachment(self):
+        attachment = AppealAttachment.objects.create(
+            appeal=self.appeal,
+            file=self.test_file,
+            filename="test.pdf",
+            mime_type="application/pdf",
+        )
+        outsider = User.objects.create_user(
+            username="rebecca.crumpler@example.com",
+            email="rebecca.crumpler@example.com",
+            password=self.user_password,
+        )
+        ProfessionalUser.objects.create(user=outsider, active=True)
+        self.client.force_login(outsider)
+
+        response = self.client.get(
+            reverse("appeal_attachments-detail", kwargs={"pk": attachment.id})
+        )
+
+        self.assertEqual(response.status_code, 404)

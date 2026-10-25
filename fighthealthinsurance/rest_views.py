@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import random
 import typing
@@ -7,7 +8,7 @@ from typing import Optional
 from django.core.exceptions import SuspiciousFileOperation
 from django.db import IntegrityError, models
 from django.db.models import Count, Q
-from django.http import FileResponse, StreamingHttpResponse
+from django.http import FileResponse, Http404, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -1788,10 +1789,13 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
         attachment = get_object_or_404(
             AppealAttachment.filter_to_allowed_attachments(current_user), id=pk
         )
-        file = attachment.document_enc.open()
-        content = Cryptographer.decrypted(file.read())
+        if not attachment.file:
+            raise Http404("Attachment has no file")
+        with attachment.file.open("rb") as file:
+            content = Cryptographer.decrypted(file.read())
+        # FileResponse needs a file-like object; raw bytes stream as digits.
         response = FileResponse(
-            content,
+            io.BytesIO(content),
             content_type=attachment.mime_type,
             as_attachment=True,
             filename=attachment.filename,
