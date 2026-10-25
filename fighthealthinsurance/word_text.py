@@ -62,10 +62,19 @@ _OFFICE_DOCUMENT_TYPES = {
 }
 
 
+def _open_xml_part(archive: zipfile.ZipFile, name: str) -> zipfile.ZipExtFile:
+    part = archive.getinfo(name)
+    # ZipExtFile bounds DEFLATE output per read; BZIP2 and LZMA can allocate
+    # the whole expanded part before read(size) returns its first chunk.
+    if part.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+        raise ValueError("Unsupported ZIP compression")
+    return archive.open(part)
+
+
 def _main_part(archive: zipfile.ZipFile) -> str:
     """The body's part name from _rels/.rels, or Word's default."""
     try:
-        with archive.open("_rels/.rels") as rels:
+        with _open_xml_part(archive, "_rels/.rels") as rels:
             raw = rels.read(_RELS_BYTES + 1)
         if len(raw) > _RELS_BYTES:
             return _DEFAULT_BODY
@@ -120,7 +129,7 @@ def docx_text(
         )
         with (
             zipfile.ZipFile(io.BytesIO(content)) as archive,
-            archive.open(_main_part(archive)) as body,
+            _open_xml_part(archive, _main_part(archive)) as body,
         ):
             while chars < max_chars:
                 chunk = body.read(_CHUNK_BYTES)

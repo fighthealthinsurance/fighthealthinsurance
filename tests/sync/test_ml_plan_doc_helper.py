@@ -623,10 +623,15 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
         member = Member(100 * chunk)
 
         class Archive:
-            def open(self, name):
+            def getinfo(self, name):
+                import zipfile
+
                 # No package relationships, so the reader opens Word's default body.
                 if name != "word/document.xml":
                     raise KeyError(name)
+                return zipfile.ZipInfo(name)
+
+            def open(self, part):
                 return member
 
             def __enter__(self):

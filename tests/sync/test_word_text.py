@@ -347,6 +347,34 @@ def test_a_relationship_outside_the_package_falls_back_to_the_default_body():
     assert read(content) == ("Crumpler default", word_text.WHOLE)
 
 
+@pytest.mark.parametrize("compression", [zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA])
+@pytest.mark.parametrize(
+    "part", ["word/document.xml", "_rels/.rels", "word/media/unused.bin"]
+)
+def test_unbounded_compression_is_never_opened(compression, part, monkeypatch):
+    document = f'<w:document xmlns:w="{W}"><w:body>{paragraph("Covered care")}</w:body></w:document>'
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as archive:
+        if part != "word/document.xml":
+            archive.writestr("word/document.xml", document)
+        archive.writestr(part, document, compress_type=compression)
+
+    opened = []
+    original_open = zipfile.ZipFile.open
+
+    def watched(archive, name, *args, **kwargs):
+        opened.append(name.filename if isinstance(name, zipfile.ZipInfo) else name)
+        return original_open(archive, name, *args, **kwargs)
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", watched)
+    result = read(out.getvalue())
+    assert part not in opened
+    if part == "word/document.xml":
+        assert result == ("", word_text.UNREADABLE)
+    else:
+        assert result == ("Covered care", word_text.WHOLE)
+
+
 def test_a_file_that_is_not_a_word_file_is_unreadable():
     assert read(b"Rebecca Lee Crumpler, not a zip") == ("", word_text.UNREADABLE)
 
