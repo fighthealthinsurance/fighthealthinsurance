@@ -2797,27 +2797,29 @@ def dw_colour(name: str) -> tuple[int, int, int]:
 
 # (ink, ground, minimum, where): words at 4.5:1, marks at 3:1.
 DW_PAIRS = (
-    ("--dw-bad", "--dw-paper", 4.5, "the denial trend's end label"),
+    ("--dw-deny-deep", "--dw-paper", 4.5, "the denial trend's end label"),
+    ("--dw-deny", "--dw-paper", 3.0, "the denial trend line"),
     ("--dw-good-ink", "--dw-paper", 4.5, "the independent review chart's end label"),
     ("--dw-count", "--dw-paper", 4.5, "the marketplace chart's end label"),
     ("--dw-count-deep", "--dw-count-tint", 4.5, "the Medicare price tag"),
     ("--dw-na-ink", "--dw-na", 4.5, "a no-data tile's state code"),
     ("--dw-na-ink", "--dw-gone", 4.5, "a left-out tile's state code"),
-    ("--dw-bad", "--dw-track", 3.0, "a red bar on its track"),
-    ("--dw-bad-deep", "--dw-track", 3.0, "a highlighted denial reason's bar"),
+    ("--dw-deny", "--dw-track", 3.0, "an orange denial bar on its track"),
+    ("--dw-deny-deep", "--dw-track", 3.0, "a highlighted denial reason's bar"),
+    ("--dw-bad", "--dw-track", 3.0, "a red bar for a rise"),
     ("--dw-good", "--dw-paper", 3.0, "the independent review line"),
     ("--dw-good", "--dw-track", 3.0, "a green bar on its track"),
-    ("--dw-cost", "--dw-track", 3.0, "a drug spending bar"),
+    ("--dw-count", "--dw-track", 3.0, "a drug spending or uninsured bar"),
     ("--dw-health-4", "--dw-track", 3.0, "a health measure bar"),
     ("--dw-count", "--dw-count-tint", 3.0, "the coverage fill on the plan picks track"),
 )
 
-DW_RAMPS = ("bad", "good", "health")
+DW_RAMPS = ("deny", "count", "bad", "good", "health")
 DW_TILE_INKS = ("--dw-paper", "--dw-tile-ink")
 
 
 def _dw_tile_grounds() -> list[str]:
-    """Every colour a map tile can take: the three ramps, the change scale's middle, and no data."""
+    """Every colour a map tile can take: the five ramps, the change scale's middle, and no data."""
     return [f"--dw-{r}-{i}" for r in DW_RAMPS for i in range(6)] + ["--dw-mid", "--dw-na"]
 
 
