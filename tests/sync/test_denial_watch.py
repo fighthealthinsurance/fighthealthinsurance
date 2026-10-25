@@ -577,12 +577,36 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
 
     def test_a_grey_state_points_to_where_its_data_is(self):
         # California has no HealthCare.gov figures, so its readout links to the page's independent review results.
-        self.assertIn("ELSEWHERE={CA:['#appeals',\"See how California's independent reviews turned out\"]", self.js)
+        self.assertIn(
+            'CA:["", "#appeals", "See how California\'s independent reviews turned out", ""]',
+            self.js,
+        )
         self.assertIn("if(!r)h+=line1(OWN(s))+elsewhere(s);", self.js)
         template = (
             REPO / "fighthealthinsurance" / "templates" / "denial_watch.html"
         ).read_text()
         self.assertIn('id="appeals"', template)
+
+    def test_every_grey_state_has_one_checked_source_line(self):
+        # A state the map leaves grey gets exactly one entry, and nothing the map fills does.
+        bundle = json.loads(
+            (REPO / "fighthealthinsurance" / "static" / "denial_watch.json").read_text()
+        )
+        grey = set(bundle["places"]) - set(bundle["states"])
+        block = self.js[
+            self.js.index("const ELSEWHERE={") : self.js.index("const elsewhere=")
+        ]
+        entries = re.findall(r"^  ([A-Z]{2}):(\[.*\]),?$", block, re.M)
+        self.assertEqual(sorted(s for s, _ in entries), sorted(grey))
+        for state, raw in entries:
+            before, link, text, after = json.loads(raw)
+            self.assertTrue(
+                link == "" or link == "#appeals" or link.startswith("https://"), state
+            )
+            self.assertEqual(bool(link), bool(text), state)
+            for part in (before, text, after):
+                self.assertNotIn("\u2014", part)
+                self.assertNotIn("\u2013", part)
 
     def test_map_tiles_show_each_states_insurer_range_in_network_only(self):
         # The heatmap carries what the ranked bars did; the range is of in-network insurer rates.
