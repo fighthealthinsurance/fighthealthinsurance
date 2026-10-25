@@ -4478,26 +4478,64 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         return f"PolicyDocument: {self.filename or self.id} ({self.document_type})"
 
 
-@receiver(post_delete, sender=PolicyDocument)
-def _delete_policy_document_file(
-    sender: type, instance: "PolicyDocument", **kwargs: typing.Any
+# Models whose stored files go when their row is deleted.
+STORED_FILE_MODELS: tuple[type[models.Model], ...] = (
+    PlanDocuments,
+    FollowUpDocuments,
+    ExtraLinkDocument,
+    FaxesToSend,
+    Appeal,
+    AppealAttachment,
+    PolicyDocument,
+)
+
+
+def _file_field_names(model: type[models.Model]) -> list[str]:
+    return [
+        f.name for f in model._meta.concrete_fields if isinstance(f, models.FileField)
+    ]
+
+
+def _stored_file_in_use(name: str) -> bool:
+    """True when any row still points at this stored file."""
+    return any(
+        model._default_manager.filter(**{field: name}).exists()
+        for model in STORED_FILE_MODELS
+        for field in _file_field_names(model)
+    )
+
+
+def _delete_stored_files(
+    sender: type[models.Model], instance: models.Model, **kwargs: typing.Any
 ) -> None:
-    """Remove the encrypted file blob after the row delete commits."""
-    if not instance.document_enc:
+    """Remove the row's stored files after the row delete commits."""
+    files = [getattr(instance, f) for f in _file_field_names(sender)]
+    files = [f for f in files if f]
+    if not files:
         return
+    pk = instance.pk
 
-    document_field = instance.document_enc
-    using = kwargs.get("using")
+    def _delete_files() -> None:
+        for field_file in files:
+            try:
+                # A fax row can share its appeal's document file.
+                if _stored_file_in_use(field_file.name):
+                    continue
+                field_file.delete(save=False)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Failed to delete a stored file for {sender.__name__} {pk}"
+                )
 
-    def _delete_file() -> None:
-        try:
-            document_field.delete(save=False)
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to delete PolicyDocument file for {instance.pk}"
-            )
+    transaction.on_commit(_delete_files, using=kwargs.get("using"))
 
-    transaction.on_commit(_delete_file, using=using)
+
+for _model in STORED_FILE_MODELS:
+    post_delete.connect(
+        _delete_stored_files,
+        sender=_model,
+        dispatch_uid=f"delete_stored_files_{_model.__name__}",
+    )
 
 
 class PolicyDocumentAnalysis(ExportModelOperationsMixin("PolicyDocumentAnalysis"), models.Model):  # type: ignore
