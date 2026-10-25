@@ -19,6 +19,7 @@ import io
 import posixpath
 import time
 import zipfile
+from typing import IO
 
 from lxml import etree
 
@@ -62,7 +63,7 @@ _OFFICE_DOCUMENT_TYPES = {
 }
 
 
-def _open_xml_part(archive: zipfile.ZipFile, name: str) -> zipfile.ZipExtFile:
+def _open_xml_part(archive: zipfile.ZipFile, name: str) -> IO[bytes]:
     part = archive.getinfo(name)
     # ZipExtFile bounds DEFLATE output per read; BZIP2 and LZMA can allocate
     # the whole expanded part before read(size) returns its first chunk.
