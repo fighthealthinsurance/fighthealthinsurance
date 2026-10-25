@@ -60,3 +60,61 @@ class TestChooseAppealPostRecovery(TestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("scan"))
+
+
+class TestChooseAppealEmptyLetterKeepsTheCase(TestCase):
+    """Emptying the letter before choosing it sends a real case back to its
+    drafts. It used to land on the upload page, as if the appeal were gone."""
+
+    EMAIL = "owner@example.com"
+
+    def setUp(self):
+        self.client = Client()
+        self.denial = models.Denial.objects.create(
+            denial_id=4343,
+            denial_text="denied",
+            semi_sekret="sekret",
+            hashed_email=models.Denial.get_hashed_email(self.EMAIL),
+        )
+
+    def choose(self, appeal_text="", **overrides):
+        data = {
+            "denial_id": self.denial.denial_id,
+            "email": self.EMAIL,
+            "semi_sekret": self.denial.semi_sekret,
+            "appeal_text": appeal_text,
+        }
+        data.update(overrides)
+        return self.client.post(reverse("choose_appeal"), data)
+
+    def assertBackToTheAppealsPage(self, response):
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            response.url.startswith(reverse("generate_appeal") + "?ref="),
+            response.url,
+        )
+
+    def test_an_empty_letter_goes_back_to_the_appeals_page(self):
+        self.assertBackToTheAppealsPage(self.choose(""))
+
+    def test_a_letter_of_only_spaces_goes_back_to_the_appeals_page(self):
+        self.assertBackToTheAppealsPage(self.choose("   \n  "))
+
+    def test_the_appeals_page_it_goes_back_to_opens_the_same_case(self):
+        page = self.client.get(self.choose("").url)
+        self.assertEqual(page.status_code, 200)
+        self.assertTemplateUsed(page, "appeals.html")
+        self.assertEqual(str(page.context["denial_id"]), str(self.denial.denial_id))
+
+    def test_the_way_back_carries_no_email_or_secret(self):
+        url = self.choose("").url
+        self.assertNotIn("owner", url)
+        self.assertNotIn(self.denial.semi_sekret, url)
+
+    def test_a_case_with_another_email_still_goes_to_scan(self):
+        response = self.choose("", email="someone-else@example.com")
+        self.assertEqual(response.url, reverse("scan"))
+
+    def test_a_case_with_the_wrong_secret_still_goes_to_scan(self):
+        response = self.choose("", semi_sekret="not-the-secret")
+        self.assertEqual(response.url, reverse("scan"))
