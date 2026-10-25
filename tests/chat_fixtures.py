@@ -53,11 +53,11 @@ SECOND_OPINION_REPLY = (
 # matters: is_canned_reply demands the whole block, because the prompt also
 # tells the model to link that FAQ on any work-requirements answer.
 CANNED_MEDICAID_REPLY = (
-    "New federal rules require many adults (ages 19-64) to complete at least "
-    "80 hours per month of work, job training, school, or community service "
-    "to keep Medicaid coverage. These requirements go into effect by "
-    "January 1, 2027. For detailed information, visit: "
-    "[Medicaid Work Requirements FAQ](/faq/medicaid/)"
+    "New federal rules require many adults (ages 19-64) who got Medicaid "
+    "through the ACA expansion to meet a work rule. Each month, any one of "
+    "these counts: 80 hours per month of work, job training or volunteering, "
+    "half-time school, or at least $580 in household income. For details, "
+    "visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)"
 )
 
 
