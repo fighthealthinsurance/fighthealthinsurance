@@ -887,10 +887,11 @@ class TestDenialWatchEveryStateChart(TestCase):
     def test_chart_sits_after_the_map_with_its_caveat_and_table(self):
         order = [
             self.page.index(f'id="{i}"')
-            for i in ("map-denials", "every-state", "every-bars", "every-other-title", "every-caveat", "every-other-key", "every-other-bars", "every-alt", "insurers")
+            for i in ("map-denials", "every-state", "every-measure", "every-bars", "every-other-title", "every-caveat", "every-other-key", "every-other-bars", "every-alt", "insurers")
         ]
         self.assertEqual(order, sorted(order))
-        self.assertIn('<h3 id="every-state-title">Every state we have an in-network denial rate for</h3>', self.section)
+        self.assertIn('<h3 id="every-state-title">Share of in-network claims denied, by state</h3>', self.section)
+        self.assertIn("Each bar is the % of in-network claims insurers denied in that state.", _text(self.section))
         five = {5: "Five"}[len(DATA["state_reports"]) + len(DATA["earlier"])]
         self.assertIn(f'<h4 class="dw-every-sub" id="every-other-title">{five} grey states, from other sources or years</h4>', self.section)
         self.assertIn("<summary>Show these figures as a table</summary>", self.section)
