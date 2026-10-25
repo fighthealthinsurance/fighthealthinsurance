@@ -644,6 +644,7 @@ class BasePostInferedForm(DenialRefForm):
         required=False,
         label="Type of denial",
         help_text="Select all that apply. If unsure, leave blank.",
+        widget=CheckboxList,
     )
     denial_type_text = forms.CharField(
         required=False,
@@ -702,6 +703,7 @@ class BasePostInferedForm(DenialRefForm):
         required=False,
         label="How do you get your insurance?",
         help_text="Select all that apply.",
+        widget=CheckboxList,
     )
     employer_name = forms.CharField(
         required=False,

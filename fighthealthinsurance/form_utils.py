@@ -50,6 +50,29 @@ class MultipleFileField(forms.FileField):
         return result
 
 
+class CheckboxList(forms.CheckboxSelectMultiple):
+    """A pick-several field as tick boxes, one row each (widgets/check_list.html)."""
+
+    template_name = "widgets/check_list.html"
+    option_template_name = "widgets/check_list_option.html"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.group_label = ""
+        self.group_help = False
+
+    def name_from(self, field: forms.Field) -> None:
+        """Name the group after its field: the table layout's label has no for=."""
+        self.group_label = str(field.label or "")
+        self.group_help = bool(field.help_text)
+
+    def get_context(self, name, value, attrs):
+        context = super().get_context(name, value, attrs)
+        context["widget"]["group_label"] = self.group_label
+        context["widget"]["group_help"] = self.group_help
+        return context
+
+
 #: Widget types that are not text boxes and take the tick-box class.
 _TICKABLE = (forms.CheckboxInput, forms.RadioSelect, forms.CheckboxSelectMultiple)
 #: Widget types that get no class at all.
@@ -77,6 +100,8 @@ def style_widgets(fields) -> None:
             continue
         if widget.__class__.__module__.startswith("django_recaptcha"):
             continue
+        if isinstance(widget, CheckboxList):
+            widget.name_from(field)
         wanted = CHECK_CLASS if isinstance(widget, _TICKABLE) else FIELD_CLASS
         existing = widget.attrs.get("class", "")
         if wanted in existing.split():
