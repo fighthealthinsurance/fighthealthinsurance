@@ -133,15 +133,45 @@ const helpLink=s=>HELP?`<div class="dw-readout-line"><a href="${esc(HELP+NAMES[s
 const line1=h=>`<div class="dw-readout-line">${h}</div>`;
 /* Grey states: why there's no figure here, and where to look instead. */
 const OWN=s=>`${NAMES[s]} isn't in this data: it runs its own marketplace, so its insurers aren't in the HealthCare.gov figures this page uses.`;
-const ELSEWHERE={CA:['#appeals',"See how California's independent reviews turned out"]};
-const elsewhere=s=>ELSEWHERE[s]?`<div class="dw-readout-line"><a href="${esc(ELSEWHERE[s][0])}">${esc(ELSEWHERE[s][1])}</a></div>`:'';
+/* Each grey state's best checked public source: text before, link, link text, text after. Checked 2026-10-25. */
+const ELSEWHERE={
+  CA:["California's marketplace insurers fill in the same federal claims form as HealthCare.gov insurers. The 8 with usable reports for 2024 claims reported denying 16.8% of in-network claims on the individual plans they report to ", "https://www.hbex.ca.gov/insurance-companies/denied-claims/", "Covered California", " (6.7 million of 40.1 million; FHI's calculation from those reports).", "", "#appeals", "See how California's independent reviews turned out", ""],
+  CO:["Colorado posts ", "https://doi.colorado.gov/insurance-complaint-ratio-and-complaint-index-information", "complaint counts by insurer", "."],
+  CT:["Connecticut's ", "https://portal.ct.gov/cid/department-resources/cid-reports/consumer-report-card", "yearly insurer report card", " lists each insurer's denials, appeals and independent review results."],
+  DC:["DC publishes no denial or appeal results by insurer. ", "https://healthcareombudsman.dc.gov/sites/default/files/dc/sites/Office%20of%20Health%20Care%20Ombudsman%20and%20Bill%20of%20Rights/publication/attachments/FY2022%20SUMMARY%20OF%20CASES_0.pdf", "The health care ombudsman's latest case summary", " covers fiscal 2022."],
+  GA:["Georgia has no state independent review report. Some insurers, such as ", "https://www.ambetterhealth.com/en/ga/provider-resources/manuals-and-forms/", "Ambetter", ", post their own prior authorization denials."],
+  ID:["Idaho's ", "https://doi.idaho.gov/consumers/health-insurance/external-review/", "independent review results", " stop at 2020."],
+  IL:["In 2025, independent reviewers in Illinois overturned all or part of 47% of the denials they reviewed (", "https://www.ilga.gov/Documents/Reports/ReportsSubmitted/6529RSGAEmail14491RSGAAttach2025%20OCHI%20Report.pdf", "Illinois Department of Insurance", ")."],
+  KY:["Kentucky publishes no current denial or independent review results.", "", "", ""],
+  MA:["Massachusetts' ", "https://masshpc.gov/sites/default/files/2024%20Annual%20OPP%20Report.pdf", "Office of Patient Protection", " reports independent review results each year."],
+  MD:["Maryland's ", "https://insurance.maryland.gov/Consumer/Appeals%20and%20Grievances%20Reports/Health-Care-Appeals-and-Grievance-Law-2024-Report-Insurance-Article-15-10A-06-b-3.pdf", "yearly appeals report", " shows each insurer's medical-necessity denials and how often appeals overturned them."],
+  ME:["Maine's ", "https://www.maine.gov/pfr/insurance/sites/maine.gov.pfr.insurance/files/inline-files/2024%20Annual%20Report%20of%20the%20Superintendent4.16.26.pdf", "2024 insurance report", " shows independent review results by insurer."],
+  MN:["Insurers post their own prior authorization denials, such as ", "https://www.medica.com/-/media/Documents/Wellness/HMG1002973-Minnesota-Prior-Authorization-Requests-Data.pdf", "Medica's", ", which covers individual plans."],
+  NJ:["New Jersey reports ", "https://www.nj.gov/dobi/division_insurance/managedcare/omc/55thihcaprpt.pdf", "how often independent reviewers overturned each insurer's denials", "."],
+  NM:["New Mexico posts ", "https://www.osi.state.nm.us/en/insurance-professionals/life-and-health-division/resource-binder/utilization-management/", "prior authorization denials by insurer", "."],
+  NV:["Nevada posts ", "https://doi.nv.gov/Consumers/Consumer_Complaint_Report", "complaint records", ", including denied-claim complaints and how they ended."],
+  NY:["New York publishes ", "https://www.dfs.ny.gov/public-appeal/search", "every external appeal decision", ", with the health plan and whether the denial was overturned."],
+  PA:["In 2024, the 11 insurers in ", "https://www.pa.gov/content/dam/copapwp-pagov/en/insurance/documents/posted-filings-reports-orders/posted-reports/aca-plan-transparency-reports/transparency-coverage-report-aca-health-plans-2025.pdf", "Pennsylvania's own report", " denied 14.2% of in-network claims (FHI's calculation from the Pennsylvania Insurance Department's data)."],
+  RI:["Rhode Island collects denial data from insurers but doesn't publish it.", "", "", ""],
+  VA:["In 2024, independent reviewers in Virginia overturned about half of the denials of medical care they reviewed (", "https://rga.lis.virginia.gov/Published/2025/RD721/PDF", "Virginia Bureau of Insurance", ")."],
+  VT:["Each Vermont insurer files a ", "https://dfr.vermont.gov/industry/insurance/health-insurance/reports", "yearly report", " on claims denied, appeals and independent reviews overturned."],
+  WA:["Washington's ", "https://fortress.wa.gov/oic/consumertoolkit/search.aspx?searchtype=indrev", "independent review search", " shows each decision by insurer."]
+};
+/* Each four items are one line, so a state can carry a figure and a pointer. */
+const elsewhere=s=>{const e=ELSEWHERE[s];if(!e)return '';let h='';
+  for(let i=0;i<e.length;i+=4)h+=`<div class="dw-readout-line">${esc(e[i])}${e[i+1]?`<a href="${esc(e[i+1])}">${esc(e[i+2])}</a>`:''}${esc(e[i+3])}</div>`;
+  return h;};
+/* A grey state's figure from the last year CMS's files include it: an older year, so it stays off the 2024 map. */
+const EARLIER=D.earlier||{};
+const earlier=s=>{const e=EARLIER[s];if(!e)return '';
+  return line1(`${esc(NAMES[s])} isn't on the ${T.year} map: it now runs its own marketplace.`)+line1(`When ${esc(NAMES[s])} still used HealthCare.gov, its ${e.issuers===1?'one reporting insurer':e.issuers+' reporting insurers'} denied <b class="dw-num">${pct(e.rate)}</b> of in-network claims in ${e.year} (FHI's calculation from CMS's data).${e.span?` Among those with at least 50,000 such claims, rates ran from <b class="dw-num">${pct(e.span[0])}</b> to <b class="dw-num">${pct(e.span[1])}</b>.`:''}`);};
 /* From the rounded rates, so the two figures shown subtract to it. */
 const chg=(a,b)=>{const d=Math.round(a*1000)-Math.round(b*1000);return d===0?'the same':(d>0?'up ':'down ')+(Math.abs(d)/10).toFixed(1)+' points';};
 function allRead(s,r){const a=r.all;
   return line1(a.rate!=null?`<b class="dw-num">${pct(a.rate)}</b> of all claims denied, in and out of network (${big(a.denied)} of ${big(a.claims)})`:
     a.why==='error'?`No all-claims figure for ${NAMES[s]}: ${esc(cantBe(a.left_out))}.`:'No all-claims figure: no insurer here reported both kinds of claims.');}
 function dRead(s){dsel=s;const r=ST[s];let h=`<div class="dw-readout-state">${NAMES[s]}</div>`;
-  if(!r)h+=line1(OWN(s))+elsewhere(s);
+  if(!r)h+=(earlier(s)||line1(OWN(s)))+elsewhere(s);
   else h+=(dm==='all'?allRead(s,r):'')+`<div class="dw-readout-line"><b class="dw-num">${pct(r.rate)}</b> of in-network claims denied (${big(r.denied)} of ${big(r.claims)})</div>`+
     (r.prev!=null?`<div class="dw-readout-line">2023: <span class="dw-num">${pct(r.prev)}</span> (${chg(r.rate,r.prev)})</div>`:'')+
     (BYST[s]?line1(span(s)?`Its insurers in the table: <b class="dw-num">${pct(span(s)[0])}</b> to <b class="dw-num">${pct(span(s)[1])}</b>, lowest to highest`:'One insurer in the table'):'')+
