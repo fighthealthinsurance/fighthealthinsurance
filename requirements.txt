@@ -45,7 +45,7 @@ pandas
 paramiko
 Pillow
 pyarrow
-pymupdf
+pymupdf==1.28.2
 python-docx==1.1.2
 pyOpenSSL
 pypdf[crypto]>=6.19.0,<7
