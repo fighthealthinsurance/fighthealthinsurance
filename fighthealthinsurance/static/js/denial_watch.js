@@ -151,7 +151,7 @@ const ELSEWHERE={
   NM:["New Mexico posts ", "https://www.osi.state.nm.us/en/insurance-professionals/life-and-health-division/resource-binder/utilization-management/", "prior authorization denials by insurer", "."],
   NV:["Nevada posts ", "https://doi.nv.gov/Consumers/Consumer_Complaint_Report", "complaint records", ", including denied-claim complaints and how they ended."],
   NY:["New York publishes ", "https://www.dfs.ny.gov/public-appeal/search", "every external appeal decision", ", with the health plan and whether the denial was overturned."],
-  PA:["Pennsylvania's ", "https://www.pa.gov/content/dam/copapwp-pagov/en/insurance/documents/posted-filings-reports-orders/posted-reports/aca-plan-transparency-reports/transparency-coverage-report-aca-health-plans-2025.pdf", "own report on the same federal form", " shows each insurer's 2024 denials and appeals."],
+  PA:["In 2024, the 11 insurers in ", "https://www.pa.gov/content/dam/copapwp-pagov/en/insurance/documents/posted-filings-reports-orders/posted-reports/aca-plan-transparency-reports/transparency-coverage-report-aca-health-plans-2025.pdf", "Pennsylvania's own report", " denied 14.2% of in-network claims (FHI's calculation from the Pennsylvania Insurance Department's data)."],
   RI:["Rhode Island collects denial data from insurers but doesn't publish it.", "", "", ""],
   VA:["In 2024, independent reviewers in Virginia overturned about half of the denials of medical care they reviewed (", "https://rga.lis.virginia.gov/Published/2025/RD721/PDF", "Virginia Bureau of Insurance", ")."],
   VT:["Each Vermont insurer files a ", "https://dfr.vermont.gov/industry/insurance/health-insurance/reports", "yearly report", " on claims denied, appeals and independent reviews overturned."],
@@ -159,13 +159,17 @@ const ELSEWHERE={
 };
 const elsewhere=s=>{const e=ELSEWHERE[s];if(!e)return '';
   return `<div class="dw-readout-line">${esc(e[0])}${e[1]?`<a href="${esc(e[1])}">${esc(e[2])}</a>`:''}${esc(e[3])}</div>`;};
+/* A grey state's figure from the last year CMS's files include it: an older year, so it stays off the 2024 map. */
+const EARLIER=D.earlier||{};
+const earlier=s=>{const e=EARLIER[s];if(!e)return '';
+  return line1(`${esc(NAMES[s])} isn't on the ${T.year} map: it now runs its own marketplace.`)+line1(`When ${esc(NAMES[s])} still used HealthCare.gov, its ${e.issuers===1?'one reporting insurer':e.issuers+' reporting insurers'} denied <b class="dw-num">${pct(e.rate)}</b> of in-network claims in ${e.year} (FHI's calculation from CMS's data).${e.span?` Among those with at least 50,000 such claims, rates ran from <b class="dw-num">${pct(e.span[0])}</b> to <b class="dw-num">${pct(e.span[1])}</b>.`:''}`);};
 /* From the rounded rates, so the two figures shown subtract to it. */
 const chg=(a,b)=>{const d=Math.round(a*1000)-Math.round(b*1000);return d===0?'the same':(d>0?'up ':'down ')+(Math.abs(d)/10).toFixed(1)+' points';};
 function allRead(s,r){const a=r.all;
   return line1(a.rate!=null?`<b class="dw-num">${pct(a.rate)}</b> of all claims denied, in and out of network (${big(a.denied)} of ${big(a.claims)})`:
     a.why==='error'?`No all-claims figure for ${NAMES[s]}: ${esc(cantBe(a.left_out))}.`:'No all-claims figure: no insurer here reported both kinds of claims.');}
 function dRead(s){dsel=s;const r=ST[s];let h=`<div class="dw-readout-state">${NAMES[s]}</div>`;
-  if(!r)h+=line1(OWN(s))+elsewhere(s);
+  if(!r)h+=(earlier(s)||line1(OWN(s)))+elsewhere(s);
   else h+=(dm==='all'?allRead(s,r):'')+`<div class="dw-readout-line"><b class="dw-num">${pct(r.rate)}</b> of in-network claims denied (${big(r.denied)} of ${big(r.claims)})</div>`+
     (r.prev!=null?`<div class="dw-readout-line">2023: <span class="dw-num">${pct(r.prev)}</span> (${chg(r.rate,r.prev)})</div>`:'')+
     (BYST[s]?line1(span(s)?`Its insurers in the table: <b class="dw-num">${pct(span(s)[0])}</b> to <b class="dw-num">${pct(span(s)[1])}</b>, lowest to highest`:'One insurer in the table'):'')+

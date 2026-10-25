@@ -263,6 +263,25 @@ def state_rates(issuers):
     }
 
 
+def in_table(i):
+    """An insurer the insurer table lists, so one the map's lowest-to-highest range covers."""
+    return bool(i["rec_in"] and i["rec_in"] >= MIN_ISSUER_CLAIMS and i["den_in"] is not None)
+
+
+def earlier_states(per_year, shown):
+    """Each state off the latest map, from the last year CMS's files include it, kept apart from the latest year."""
+    out = {}
+    for py in sorted(per_year, reverse=True):
+        issuers = per_year[py][0]
+        for st, v in state_rates(issuers).items():
+            if st in shown or st in out:
+                continue
+            r = sorted(round(i["den_in"] / i["rec_in"], 4) for i in issuers if i["state"] == st and in_table(i))
+            out[st] = dict(year=CLAIMS_YEAR[py], py=py, rate=v["rate"], claims=v["claims"], denied=v["denied"],
+                           issuers=v["issuers"], span=[r[0], r[-1]] if len(r) > 1 else None)
+    return out
+
+
 def build_denials():
     trend, per_year = [], {}
     for py, cy in CLAIMS_YEAR.items():
@@ -294,7 +313,7 @@ def build_denials():
 
     table = []
     for i in issuers:
-        if not (i["rec_in"] and i["rec_in"] >= MIN_ISSUER_CLAIMS and i["den_in"] is not None):
+        if not in_table(i):
             continue
         # a without o: enough appeals, but CMS withheld the number won.
         ok = i["ap_filed"] is not None and i["ap_filed"] >= MIN_APPEALS_FOR_RATE
@@ -310,7 +329,7 @@ def build_denials():
     reason_rows = sorted(({"k": REASONS[k], "v": v} for k, v in reasons.items()), key=lambda x: -x["v"])
     return dict(trend=trend, states=states, issuers=table, reasons=reason_rows,
                 reason_meta=dict(entries=sum(reasons.values()), plan_denied_in=plan_denied),
-                oon_meta=oon_meta(issuers, types))
+                oon_meta=oon_meta(issuers, types), earlier=earlier_states(per_year, set(states)))
 
 
 def oon_meta(issuers, types):
@@ -726,6 +745,9 @@ def main(argv=None):
         for x in t["left_out"]:
             print("  left out of out and all:", x["s"], x["id"], x["n"], f"{x['denied']:,.0f} denied of {x['claims']:,.0f}")
     print("states with no all-claims rate", {k: v["all"]["left_out"] for k, v in bundle["states"].items() if v["all"]["why"]})
+    for k, e in bundle["earlier"].items():
+        print("earlier", k, e["year"], f"(plan year {e['py']})", f"in {e['denied']:,.0f} of {e['claims']:,.0f} = {e['rate']:.2%}",
+              f"({e['issuers']} insurers)", "lowest to highest", e["span"])
     om = bundle["oon_meta"]
     print("out-of-network by 2024 plan types: network-only", om["net_only"], "other", om["other"], "unknown", om["unknown_plan_types"])
     print("closed-network reason", f"{om['closed_network']['denied']:,.0f}", f"= {om['closed_network']['share']:.1%} of out-of-network denials")

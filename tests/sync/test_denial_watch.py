@@ -581,11 +581,19 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
             'CA:["", "#appeals", "See how California\'s independent reviews turned out", ""]',
             self.js,
         )
-        self.assertIn("if(!r)h+=line1(OWN(s))+elsewhere(s);", self.js)
+        self.assertIn("if(!r)h+=(earlier(s)||line1(OWN(s)))+elsewhere(s);", self.js)
         template = (
             REPO / "fighthealthinsurance" / "templates" / "denial_watch.html"
         ).read_text()
         self.assertIn('id="appeals"', template)
+
+    def test_pennsylvania_line_names_its_insurers_and_publisher(self):
+        # FHI's sum over the 11 insurers in the state's report, for 2024 claims; not CMS data.
+        self.assertIn(
+            '" denied 14.2% of in-network claims (FHI\'s calculation from the Pennsylvania Insurance Department\'s data)."',
+            self.js,
+        )
+        self.assertIn('PA:["In 2024, the 11 insurers in ", ', self.js)
 
     def test_every_grey_state_has_one_checked_source_line(self):
         # A state the map leaves grey gets exactly one entry, and nothing the map fills does.
@@ -633,6 +641,106 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
     def test_counter_can_be_paused(self):
         self.assertIn("prefers-reduced-motion", self.js)
         self.assertIn('id="tickpause"', Client().get(reverse("denial-watch")).content.decode())
+
+
+class TestDenialWatchEarlierYears(TestCase):
+    """Grey states that used HealthCare.gov before: CMS's last year for each, shown only when picked."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.b = _load_builder()
+        cls.js = (
+            REPO / "fighthealthinsurance" / "static" / "js" / "denial_watch.js"
+        ).read_text()
+
+    def _row(self, state, rec_in, den_in):
+        """An insurer as read_puf returns it, for the in-network rules."""
+        return dict(state=state, rec_in=rec_in, den_in=den_in, ap_filed=None, ap_over=None)
+
+    def test_earlier_figures_are_only_for_grey_states(self):
+        grey = set(DATA["places"]) - set(DATA["states"])
+        self.assertTrue(DATA["earlier"])
+        self.assertLessEqual(set(DATA["earlier"]), grey)
+
+    def test_each_earlier_year_is_before_the_map_year_and_matches_its_file(self):
+        latest = DATA["trend"][-1]["year"]
+        for state, e in DATA["earlier"].items():
+            self.assertLess(e["year"], latest, state)
+            self.assertEqual(self.b.CLAIMS_YEAR[e["py"]], e["year"], state)
+
+    def test_earlier_rates_are_proportions_of_their_counts(self):
+        for state, e in DATA["earlier"].items():
+            self.assertTrue(0 < e["rate"] < 1, state)
+            self.assertAlmostEqual(e["rate"], e["denied"] / e["claims"], places=12, msg=state)
+            self.assertGreaterEqual(e["issuers"], 1, state)
+            if e["span"] is not None:
+                lo, hi = e["span"]
+                self.assertTrue(0 <= lo <= hi <= 1, state)
+
+    def test_builder_takes_the_last_year_a_state_is_in(self):
+        per_year = {
+            2023: ([self._row("XX", 1000.0, 300.0)], {}, 0.0),
+            2025: ([self._row("XX", 1000.0, 100.0)], {}, 0.0),
+            2026: ([self._row("YY", 1000.0, 200.0)], {}, 0.0),
+        }
+        e = self.b.earlier_states(per_year, {"YY"})["XX"]
+        self.assertEqual((e["year"], e["py"], e["rate"]), (2023, 2025, 0.1))
+
+    def test_builder_leaves_out_states_on_the_latest_map(self):
+        per_year = {
+            2025: ([self._row("YY", 1000.0, 100.0)], {}, 0.0),
+            2026: ([self._row("YY", 1000.0, 200.0)], {}, 0.0),
+        }
+        self.assertEqual(self.b.earlier_states(per_year, {"YY"}), {})
+
+    def test_builder_rate_leaves_out_suppressed_cells(self):
+        rows = [self._row("XX", 1000.0, 100.0), self._row("XX", 1000.0, None)]
+        e = self.b.earlier_states({2025: (rows, {}, 0.0)}, set())["XX"]
+        self.assertEqual((e["rate"], e["issuers"]), (0.1, 1))
+
+    def test_builder_range_covers_the_insurers_the_table_would_list(self):
+        rows = [
+            self._row("XX", 60_000.0, 6_000.0),
+            self._row("XX", 80_000.0, 24_000.0),
+            self._row("XX", 40_000.0, 36_000.0),  # under the table's 50,000 claims
+        ]
+        e = self.b.earlier_states({2025: (rows, {}, 0.0)}, set())["XX"]
+        self.assertEqual(e["span"], [0.1, 0.3])
+        self.assertEqual(e["issuers"], 3)
+
+    def test_builder_range_needs_two_table_insurers(self):
+        rows = [self._row("XX", 60_000.0, 6_000.0), self._row("XX", 40_000.0, 36_000.0)]
+        self.assertIsNone(self.b.earlier_states({2025: (rows, {}, 0.0)}, set())["XX"]["span"])
+
+    def test_grey_state_readout_reads_the_earlier_figures(self):
+        self.assertIn("const EARLIER=D.earlier||{};", self.js)
+        self.assertIn("if(!r)h+=(earlier(s)||line1(OWN(s)))+elsewhere(s);", self.js)
+        self.assertIn("When ${esc(NAMES[s])} still used HealthCare.gov, its ", self.js)
+        self.assertIn("of in-network claims in ${e.year} (FHI's calculation from CMS's data).", self.js)
+        # The copy's threshold is the builder's.
+        self.assertEqual(self.b.MIN_ISSUER_CLAIMS, 50_000)
+        self.assertIn("Among those with at least 50,000 such claims, rates ran from", self.js)
+
+    def test_earlier_figures_stay_off_the_map_and_national_figures(self):
+        # Read in one place, the grey-state line: never a map view, range, trend or table.
+        self.assertEqual(self.js.count("EARLIER"), 2)
+        self.assertEqual(self.js.count("earlier(s)"), 1)
+        # A state with an earlier figure says it's off the map now, not that it was never in HealthCare.gov's data.
+        self.assertIn("isn't on the ${T.year} map: it now runs its own marketplace.", self.js)
+        self.assertFalse(set(DATA["earlier"]) & set(DATA["states"]))
+
+    def test_method_note_says_where_the_earlier_figures_come_from(self):
+        note = _text(_between(_page(), 'id="method-who-denies"', "</div>"))
+        names = sorted((self.b.STATE_NAMES[s], e["year"]) for s, e in DATA["earlier"].items())
+        picks = ", ".join(n for n, _ in names[:-1]) + " or " + names[-1][0]
+        years = ", ".join(f"{y} for {n}" for n, y in names).replace(" for ", " claims for ", 1)
+        self.assertIn(
+            f"Picking {picks} also shows its in-network denial rate from the latest CMS file that includes its insurers ({years}), "
+            f"FHI's calculation from CMS's data on the same measure as the map. Those are older years, so don't "
+            f"rank them against the {DATA['trend'][-1]['year']} states.",
+            note,
+        )
 
 
 class TestDenialWatchEnrollment(TestCase):
