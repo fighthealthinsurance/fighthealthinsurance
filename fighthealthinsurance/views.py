@@ -652,7 +652,7 @@ def denial_watch_teaser() -> dict[str, typing.Any]:
     }
 
 
-# Checked 2026-10-22. CMS set HealthCare.gov's 2027 dates, but the court ruling behind them is under appeal, so the box links out and ends on the last posted day.
+# Checked 2026-10-22. CMS set HealthCare.gov's 2027 dates, but the court ruling behind them is under appeal, so the pages link out and the season ends on the last posted day.
 DENIAL_WATCH_MEDICARE_ENROLLMENT = (date(2026, 10, 15), date(2026, 12, 7))
 DENIAL_WATCH_ENROLLMENT_BOX_ENDS = date(2027, 1, 15)
 # Hawaii's date, so the box doesn't change hours early for the rest of the country.
@@ -664,7 +664,8 @@ DENIAL_WATCH_HERO_UNTIL = date(2026, 11, 2)
 
 
 def denial_watch_enrollment(today: date) -> dict[str, typing.Any] | None:
-    """The open-enrollment box Denial Watch shows on `today`, or None out of season."""
+    """The open enrollment season on `today`, for Denial Watch's card and the
+    open enrollment page, or None out of season."""
     starts, medicare_ends = DENIAL_WATCH_MEDICARE_ENROLLMENT
     if not starts <= today <= DENIAL_WATCH_ENROLLMENT_BOX_ENDS:
         return None
@@ -688,9 +689,13 @@ class DenialWatchView(StaticIshView):
 
     template_name = "denial_watch.html"
 
+    def page_data(self) -> dict:
+        """The numbers the page's script draws from, embedded with json_script."""
+        return _denial_watch_data()
+
     def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
         context = super().get_context_data(**kwargs)
-        context["denial_watch_data"] = _denial_watch_data()
+        context["denial_watch_data"] = self.page_data()
         context["enrollment"] = denial_watch_enrollment(
             timezone.localdate(timezone=DENIAL_WATCH_LAST_TIME_ZONE)
         )
@@ -713,6 +718,28 @@ class DenialWatchView(StaticIshView):
             return cached_view(request, *args, **kwargs)
 
         return view
+
+
+class OpenEnrollmentView(DenialWatchView):
+    """Open enrollment, split out of Denial Watch: the season's dates and
+    steps, the marketplace numbers and the questions people ask. Built from
+    the same bundle and staged behind the same flag."""
+
+    template_name = "open_enrollment.html"
+
+    def page_data(self) -> dict:
+        # The page draws only the marketplace chart, so it embeds only those numbers.
+        return {"marketplace": _denial_watch_data()["marketplace"]}
+
+    def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
+        context = super().get_context_data(**kwargs)
+        enrollment = context["enrollment"]
+        context["heading"] = (
+            f"Open enrollment for {enrollment['plan_year']}"
+            if enrollment
+            else "Signing up for marketplace coverage"
+        )
+        return context
 
 
 class PBSNewsHourView(StaticIshView):

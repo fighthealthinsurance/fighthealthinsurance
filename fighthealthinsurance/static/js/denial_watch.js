@@ -1,10 +1,19 @@
 // Denial Watch page (templates/denial_watch.html). Plain script, no build step:
 // it draws the tile maps, line charts and bar lists from the JSON that the
 // view embeds with json_script (static/denial_watch.json, built by
-// scripts/denial_watch/build_bundle.py).
+// scripts/denial_watch/build_bundle.py), with js/denial_watch_charts.js's
+// line chart and number formats.
 (function(){
+/* Links shared before the open enrollment page existed land on the same part there; the old chart section on its top. */
+const MOVED=new Map([['marketplace-trend','enroll'],['marketplace-trend-title','enroll'],['lost-coverage','lost-coverage'],['enroll-renewing','enroll-renewing'],['denials-bridge','denials-bridge'],['mkline','mkline'],['mknote','mknote'],['mktable','mktable'],['mkpicks','mkpicks']]);
+const OE_URL=document.currentScript&&document.currentScript.dataset.openEnrollment;
+const MOVED_TO=MOVED.get(location.hash.slice(1));
+if(OE_URL&&MOVED_TO){location.replace(OE_URL+'#'+MOVED_TO);return;}
 const DATA_EL=document.getElementById('dw-data');const ROOT=document.querySelector('.dw');
-if(!DATA_EL||!ROOT)return;
+if(!DATA_EL||!ROOT||!window.DWCharts)return;
+const {foldLinks,fmt,pct,tok,line}=window.DWCharts;
+/* Before the data is read, so a bad bundle or a chart that throws can't leave a link stuck on a closed fold. */
+foldLinks();
 const D=JSON.parse(DATA_EL.textContent);
 const $=id=>document.getElementById(id);
 const NAMES={AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',CO:'Colorado',CT:'Connecticut',DE:'Delaware',DC:'District of Columbia',FL:'Florida',GA:'Georgia',HI:'Hawaii',ID:'Idaho',IL:'Illinois',IN:'Indiana',IA:'Iowa',KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',MD:'Maryland',MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',MS:'Mississippi',MO:'Missouri',MT:'Montana',NE:'Nebraska',NV:'Nevada',NH:'New Hampshire',NJ:'New Jersey',NM:'New Mexico',NY:'New York',NC:'North Carolina',ND:'North Dakota',OH:'Ohio',OK:'Oklahoma',OR:'Oregon',PA:'Pennsylvania',RI:'Rhode Island',SC:'South Carolina',SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',VT:'Vermont',VA:'Virginia',WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming'};
@@ -12,16 +21,13 @@ const BYNAME=Object.fromEntries(Object.entries(NAMES).map(([k,v])=>[v,k]));
 const GRID=[['AK',0,0],['ME',0,11],['VT',1,10],['NH',1,11],['WA',2,1],['ID',2,2],['MT',2,3],['ND',2,4],['MN',2,5],['IL',2,6],['WI',2,7],['MI',2,8],['NY',2,9],['RI',2,10],['MA',2,11],['OR',3,1],['NV',3,2],['WY',3,3],['SD',3,4],['IA',3,5],['IN',3,6],['OH',3,7],['PA',3,8],['NJ',3,9],['CT',3,10],['CA',4,1],['UT',4,2],['CO',4,3],['NE',4,4],['MO',4,5],['KY',4,6],['WV',4,7],['VA',4,8],['MD',4,9],['DE',4,10],['AZ',5,2],['NM',5,3],['KS',5,4],['AR',5,5],['TN',5,6],['NC',5,7],['SC',5,8],['DC',5,9],['OK',6,4],['LA',6,5],['MS',6,6],['AL',6,7],['GA',6,8],['HI',7,0],['TX',7,4],['FL',7,9]];
 const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const safeUrl=u=>/^https:\/\//.test(String(u))?esc(u):'#';
-const fmt=n=>Math.round(n).toLocaleString('en-US');
-const pct=(x,d=1)=>(x*100).toFixed(d)+'%';
 const big=n=>n>=1e9?(n/1e9).toFixed(1)+' billion':n>=1e6?(n/1e6).toFixed(1)+' million':fmt(n);
 const money=n=>n>=1e9?'$'+(n/1e9).toFixed(1)+'B':n>=1e6?'$'+(n/1e6).toFixed(0)+'M':'$'+n.toLocaleString('en-US',n<100?{minimumFractionDigits:2,maximumFractionDigits:2}:{maximumFractionDigits:0});
-const css=v=>getComputedStyle(ROOT).getPropertyValue(v).trim();
 /* WCAG relative luminance, to pick the tile label ink with the higher contrast. */
 const lin=c=>{c/=255;return c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4)};
 const relLum=hex=>{const m=hex.replace('#','');if(m.length<6)return 1;return 0.2126*lin(parseInt(m.substr(0,2),16))+0.7152*lin(parseInt(m.substr(2,2),16))+0.0722*lin(parseInt(m.substr(4,2),16))};
-const DARK_INK='#15202b';
-const inkOn=bg=>{const l=relLum(bg);return (1.05/(l+0.05))>=((l+0.05)/(relLum(DARK_INK)+0.05))?'#ffffff':DARK_INK};
+const PAPER=tok('--dw-paper'),DARK_INK=tok('--dw-tile-ink');
+const inkOn=bg=>{const l=relLum(bg);return ((relLum(PAPER)+0.05)/(l+0.05))>=((l+0.05)/(relLum(DARK_INK)+0.05))?PAPER:DARK_INK};
 
 /* ticker */
 const T=D.trend[D.trend.length-1];
@@ -38,22 +44,23 @@ if(pauseBtn)pauseBtn.addEventListener('click',()=>run(!timer));
 /* stats */
 const inRate=T.in_rate, apShare=T.appeals_all/T.in_denied, won=T.overturned/T.appeals;
 const imr25=D.imr_trend.find(r=>r.y===2025);
+/* Red edge for what's bad for patients, green for what's good; the words "denied" and "won" say it without colour. */
 $('stats').innerHTML=[
-  [pct(inRate,0),'claims denied','in-network, on HealthCare.gov plans, '+T.year],
+  [pct(inRate,0),'claims denied','in-network, on HealthCare.gov plans, '+T.year,'bad'],
   /* Tens, matching the page's "about 1 for every 320". */
-  [fmt(Math.round(1/apShare/10)*10),'denials per appeal',T.year+': '+big(T.in_denied)+' in-network denials, '+fmt(T.appeals_all)+' internal appeals'],
-  [pct(won,0),'appeals won','at the insurer, '+T.year],
-  [pct(imr25.r,0),'reviews won','by patients at California\'s independent review']
-].map(([b,l,s])=>`<div class="dw-stat"><p class="dw-stat-head"><b class="dw-num">${b}</b> <strong>${l}</strong></p><span>${s}</span></div>`).join('');
+  [fmt(Math.round(1/apShare/10)*10),'denials per appeal',T.year+': '+big(T.in_denied)+' in-network denials, '+fmt(T.appeals_all)+' internal appeals','bad'],
+  [pct(won,0),'appeals won','at the insurer, '+T.year,'good'],
+  [pct(imr25.r,0),'reviews won','by patients at California\'s independent review','good']
+].map(([b,l,s,k])=>`<div class="dw-stat dw-stat-${k}"><p class="dw-stat-head"><b class="dw-num">${b}</b> <strong>${l}</strong></p><span>${s}</span></div>`).join('');
 
 /* tile map engine */
 const S=48,G=2.5,OX=6,OY=6;
-/* goneOf: states in the data that a view leaves out, drawn as outlined tiles, not "no data" grey. */
-function drawMap(svg,valueOf,scale,labelOf,onPick,sel,naOf=()=>', no data',goneOf=()=>false,subOf=()=>''){
+/* goneOf: states in the data that a view leaves out, drawn as outlined tiles, not "no data" grey. dirOf: on a change scale, 'up' or 'down', drawn as a triangle so the direction reads without colour. */
+function drawMap(svg,valueOf,scale,labelOf,onPick,sel,naOf=()=>', no data',goneOf=()=>false,subOf=()=>'',dirOf=()=>''){
   if(!svg.dataset.built){
     let h='';
     for(const [st,r,c] of GRID){const x=OX+c*(S+G), y=OY+r*(S+G);
-      h+=`<g data-s="${st}" tabindex="0" role="button"><rect x="${x}" y="${y}" width="${S}" height="${S}" rx="3"/><text x="${x+S/2}" y="${y+21}" text-anchor="middle" class="dw-code">${st}</text><text class="dw-v" x="${x+S/2}" y="${y+37}" text-anchor="middle"></text><text class="dw-sub" x="${x+S/2}" y="${y+44}" text-anchor="middle"></text></g>`;}
+      h+=`<g data-s="${st}" tabindex="0" role="button"><rect x="${x}" y="${y}" width="${S}" height="${S}" rx="3"/><text x="${x+S/2}" y="${y+21}" text-anchor="middle" class="dw-code">${st}</text><text class="dw-v" x="${x+S/2}" y="${y+37}" text-anchor="middle"></text><text class="dw-sub" x="${x+S/2}" y="${y+44}" text-anchor="middle"></text><path class="dw-mark" data-x="${x}" data-y="${y}"/></g>`;}
     svg.innerHTML=h;svg.dataset.built='1';svg._pinned=sel;
     svg.querySelectorAll('g').forEach(g=>{
       /* _onPin: a pick, not a hover, so the insurer table follows the map. */
@@ -67,27 +74,41 @@ function drawMap(svg,valueOf,scale,labelOf,onPick,sel,naOf=()=>', no data',goneO
   }
   svg._pick=onPick;svg._sel=sel;
   svg.querySelectorAll('g').forEach(g=>{
-    const st=g.dataset.s, v=valueOf(st), gone=v==null&&goneOf(st), col=gone?css('--dw-gone'):v==null?css('--dw-na'):scale(v);
-    const ink=v==null?css('--dw-na-ink'):inkOn(col);
+    const st=g.dataset.s, v=valueOf(st), gone=v==null&&goneOf(st), col=gone?tok('--dw-gone'):v==null?tok('--dw-na'):scale(v);
+    const ink=v==null?tok('--dw-na-ink'):inkOn(col);
     g.classList.toggle('dw-sel',st===sel);g.classList.toggle('dw-gone',gone);
     g.querySelector('rect').setAttribute('fill',col);
     const [t1,t2,t3]=g.querySelectorAll('text'),sub=v==null?'':subOf(st);
     t1.style.fill=ink;t2.style.fill=ink;t3.style.fill=ink;t2.textContent=v==null?'':labelOf(v);t3.textContent=sub;g.classList.toggle('dw-3',!!sub);
+    const mk=g.querySelector('.dw-mark'),dir=v==null?'':dirOf(v),mx=+mk.dataset.x+S-12,my=+mk.dataset.y+3;
+    mk.setAttribute('d',dir==='up'?`M${mx} ${my+8}h9l-4.5-8z`:dir==='down'?`M${mx} ${my}h9l-4.5 8z`:'');mk.style.fill=ink;
     g.setAttribute('aria-label',NAMES[st]+(v==null?naOf(st):', '+labelOf(v)+(sub?', insurers '+sub+'%':'')));
   });
 }
 function binScale(breaks,colors){return v=>{let i=0;while(i<breaks.length&&v>=breaks[i])i++;return colors[i];};}
-function legend(el,breaks,colors,lab,na='No data',gone=''){ /* ranges include the lower bound */
-  const parts=[];for(let i=0;i<colors.length;i++){const lo=i===0?null:breaks[i-1],hi=i<breaks.length?breaks[i]:null;
-    parts.push(`<div><i style="background:${colors[i]}"></i><span class="dw-num">${lo==null?'< '+lab(hi):hi==null?lab(lo)+'+':lab(lo)+'–'+lab(hi)}</span></div>`);}
-  parts.push(`<div><i style="background:${css('--dw-na')}"></i><span>${na}</span></div>`);
+/* A change scale's direction: the middle bin is about the same, below it down, above it up. */
+const dirBy=b=>v=>v>=b[2]?'up':v<b[1]?'down':'';
+/* The key's first line says in words what the colours mean; a change scale's bins carry the tiles' triangles. */
+function legend(el,breaks,colors,lab,na='No data',gone='',key='',dir=null){ /* ranges include the lower bound */
+  const parts=key?[`<p class="dw-legend-key">${key}</p>`]:[];
+  for(let i=0;i<colors.length;i++){const lo=i===0?null:breaks[i-1],hi=i<breaks.length?breaks[i]:null,d=dir?dir(lo==null?hi-1:lo):'';
+    parts.push(`<div><i style="background:${colors[i]}"></i><span class="dw-num">${d==='up'?'▲ ':d==='down'?'▼ ':''}${lo==null?'< '+lab(hi):hi==null?lab(lo)+'+':lab(lo)+'–'+lab(hi)}</span></div>`);}
+  parts.push(`<div><i style="background:${tok('--dw-na')}"></i><span>${na}</span></div>`);
   if(gone)parts.push(`<div><i class="dw-gone-key"></i><span>${gone}</span></div>`);
   el.innerHTML=parts.join('');
 }
-const DC=['--dw-d0','--dw-d1','--dw-d2','--dw-d3','--dw-d4','--dw-d5'].map(css);
-const UC=['--dw-u0','--dw-u1','--dw-u2','--dw-u3','--dw-u4','--dw-u5'].map(css);
-const HC=['--dw-h0','--dw-h1','--dw-h2','--dw-h3','--dw-h4','--dw-h5'].map(css);
-const DIV=['#1f5fa8','#88afdb','#e6e9ee','#f09a72','#b8321f'];
+/* Every state's figure for the view as a table, highest first, so no one has to tell the tiles apart by colour. */
+function mapTable(el,name,valueOf,labelOf,naOf=()=>', no data'){
+  const why=s=>{const t=naOf(s).replace(/^, /,'');return esc(t.charAt(0).toUpperCase()+t.slice(1));};
+  const rows=GRID.map(([s])=>[s,valueOf(s)]).sort((a,b)=>(a[1]==null)-(b[1]==null)||(a[1]==null?NAMES[a[0]].localeCompare(NAMES[b[0]]):b[1]-a[1]));
+  el.innerHTML=`<caption class="fhi-visually-hidden">${esc(name)}, every state</caption><thead><tr><th scope="col">State</th><th scope="col" class="dw-r">${esc(name)}</th></tr></thead><tbody>`+
+    rows.map(([s,v])=>`<tr><th scope="row">${NAMES[s]}</th><td class="dw-r${v==null?' dw-note':' dw-num'}">${v==null?why(s):labelOf(v)}</td></tr>`).join('')+'</tbody>';
+}
+/* The ramps run light to dark in one hue: red for what's bad for patients, green for what's good, purple for health measures. */
+const ramp=name=>[0,1,2,3,4,5].map(i=>tok(`--dw-${name}-${i}`));
+const BAD=ramp('bad'),GOOD=ramp('good'),HEALTH=ramp('health');
+/* Change: falls in green, rises in red, about the same in warm white, never the grey of no data. */
+const DIV=[GOOD[4],GOOD[2],tok('--dw-mid'),BAD[2],BAD[4]];
 
 /* Network views: in-network first everywhere; a figure a view leaves out says why where it would be. */
 const OM=D.oon_meta, IS=D.issuers;
@@ -116,15 +137,15 @@ const BOTH=Object.keys(ST).filter(s=>ST[s].all.rate!=null), gap=s=>ST[s].all.rat
 const NEAR=BOTH.filter(s=>Math.abs(gap(s))<=.03).length;
 const WIDE=BOTH.slice().sort((a,b)=>gap(b)-gap(a)).slice(0,3).map(s=>NAMES[s]);
 const DM={
-  in:{v:s=>ST[s]?ST[s].rate:null,b:RB,c:DC,l:x=>pct(x,0),t:x=>pct(x,1),sub:spanLab,
+  in:{v:s=>ST[s]?ST[s].rate:null,b:RB,c:BAD,l:x=>pct(x,0),t:x=>pct(x,1),sub:spanLab,name:'In-network claims denied, '+T.year,key:'Share of in-network claims denied: darker red, more denied.',
     note:`In-network claims: care from doctors, hospitals and pharmacies that have a contract with the plan. <span class="dw-sub-key">The small type on a tile is the lowest to highest rate among the state's insurers in the table below.</span>`},
-  all:{v:s=>ST[s]&&ST[s].all.rate!=null?ST[s].all.rate:null,gone:s=>!!ST[s],b:RB,c:DC,l:x=>pct(x,0),t:x=>pct(x,1),gk:'Left out',
+  all:{v:s=>ST[s]&&ST[s].all.rate!=null?ST[s].all.rate:null,gone:s=>!!ST[s],b:RB,c:BAD,l:x=>pct(x,0),t:x=>pct(x,1),gk:'Left out',name:'All claims denied, '+T.year,key:'Share of all claims denied: darker red, more denied.',
     naOf:s=>!ST[s]?', no data':ST[s].all.why==='error'?', no figure: '+cantBe(ST[s].all.left_out):', no figure',
     note:`In-network and out-of-network claims together: ${pct(T.all_rate,0)} denied in ${T.year}. About ${inTen} in 10 claims are in network, so in ${NEAR} of ${BOTH.length} states these rates sit within 3 points of the in-network ones. They run higher where more claims are out of network, or more of those are denied, as in ${andList(WIDE)}, partly because of the kinds of plans sold there.`+
       (ALLGONE.length?` ${andList(ALLGONE.map(s=>NAMES[s]))} ${ALLGONE.length>1?'show':'shows'} no figure here, because ${esc(cantBe(ALLGONE.flatMap(s=>ST[s].all.left_out)))}.`:'')},
-  chg:{v:s=>ST[s]&&ST[s].prev!=null?ST[s].rate-ST[s].prev:null,b:[-.03,-.01,.01,.03],c:DIV,l:x=>(x>0?'+':'')+(x*100).toFixed(0)+' pt',t:x=>(x>0?'+':'')+(x*100).toFixed(1),
+  chg:{v:s=>ST[s]&&ST[s].prev!=null?ST[s].rate-ST[s].prev:null,b:[-.03,-.01,.01,.03],c:DIV,mk:true,l:x=>(x>0?'+':'')+(x*100).toFixed(0)+' pt',t:x=>(x>0?'+':'')+(x*100).toFixed(1),tt:x=>(x>0?'+':'')+(x*100).toFixed(1)+' points',name:'Change in in-network denial rate since 2023',key:'▲ Red: rose, more denied. ▼ Green: fell, fewer denied. Pale: about the same.',
     note:'Change in each state\'s in-network denial rate since 2023, in percentage points.'},
-  won:{v:s=>ST[s]&&ST[s].won!=null?ST[s].won:null,b:[.15,.25,.35,.45,.55],c:UC,l:x=>pct(x,0),t:x=>pct(x,1),
+  won:{v:s=>ST[s]&&ST[s].won!=null?ST[s].won:null,b:[.15,.25,.35,.45,.55],c:GOOD,l:x=>pct(x,0),t:x=>pct(x,1),name:'Internal appeals won, '+T.year,key:'Share of internal appeals won: darker green, more won.',
     note:`Share of internal appeals that insurers reversed in ${T.year}, for states with at least 50 appeals.`}
 };
 /* FHI's state help page, at the slug state_help.json uses: the name, lower case, hyphens for spaces. */
@@ -148,24 +169,11 @@ function dRead(s){dsel=s;const r=ST[s];let h=`<div class="dw-readout-state">${NA
     `<div class="dw-readout-line">${r.won!=null?`<b class="dw-num">${pct(r.won,0)}</b> of internal appeals won (${fmt(r.overturned)} of ${fmt(r.appeals)})`:'Too few appeals reported to show a win rate'} · ${r.issuers} reporting insurer${r.issuers>1?'s':''}${r.issuers===1?', so these are that company\'s figures':r.issuers===2?', so these are those companies\' figures':''}</div>`;
   if(BYST[s])h+=line1(`<a href="#insurers">See ${esc(NAMES[s])}'s insurers</a>`);
   $('dread').innerHTML=h+helpLink(s);drawD();}
-function drawD(){const m=DM[dm];drawMap($('dmap'),m.v,binScale(m.b,m.c),m.t,dRead,dsel,m.naOf,m.gone,m.sub);legend($('dleg'),m.b,m.c,m.l,'No data',m.gk);$('dnote').innerHTML=m.note;}
+function drawD(){const m=DM[dm],dir=m.mk?dirBy(m.b):undefined;drawMap($('dmap'),m.v,binScale(m.b,m.c),m.t,dRead,dsel,m.naOf,m.gone,m.sub,dir);legend($('dleg'),m.b,m.c,m.l,'No data',m.gk,m.key,dir);$('dnote').innerHTML=m.note;
+  mapTable($('dtable'),m.name,m.v,m.tt||m.t,m.naOf);}
 document.querySelectorAll('#dmode button').forEach(b=>b.onclick=()=>{dm=b.dataset.m;document.querySelectorAll('#dmode button').forEach(x=>x.setAttribute('aria-pressed',x===b));dRead(dsel);});
 dRead(dsel);
 
-/* line chart */
-function line(svg,pts,{ymin,ymax,fmtY,ticks,color,label,open}){
-  const W=560,H=270,L=46,R=16,Tp=18,B=34;const xs=pts.map(p=>p.x);const x0=Math.min(...xs),x1=Math.max(...xs);
-  const X=x=>L+(x-x0)/(x1-x0||1)*(W-L-R), Y=y=>Tp+(1-(y-ymin)/(ymax-ymin))*(H-Tp-B);
-  let h='<g class="dw-axis">';for(const t of ticks){h+=`<line x1="${L}" x2="${W-R}" y1="${Y(t)}" y2="${Y(t)}"/><text x="${L-8}" y="${Y(t)+4}" text-anchor="end" font-size="12">${fmtY(t)}</text>`;}h+='</g>';
-  /* Every step-th year and the last, leaving out a step year that would crowd the last. */
-  const step=Math.ceil(pts.length/8),last=pts.length-1;pts.forEach((p,i)=>{if(i===last||(i%step===0&&last-i>=step))h+=`<text x="${X(p.x)}" y="${H-10}" text-anchor="middle" font-size="12">${p.x}</text>`;});
-  h+=`<path d="${pts.map((p,i)=>(i?'L':'M')+X(p.x).toFixed(1)+' '+Y(p.y).toFixed(1)).join(' ')}" fill="none" stroke="${color}" stroke-width="3" stroke-linejoin="round"/>`;
-  /* A point that isn't final yet (open) is drawn hollow. */
-  pts.forEach((p,i)=>{const o=open&&open(p);h+=`<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${i===pts.length-1?5:3.5}" fill="${o?'#ffffff':color}" stroke="${o?color:'#ffffff'}" stroke-width="${o?2.5:1.5}"/>`;});
-  /* The end label goes under the last point when the line comes down to it, so it doesn't sit on the line. */
-  const lp=pts[last],below=last>0&&pts[last-1].y>lp.y&&Y(lp.y)+26<H-B;h+=`<text class="dw-end" x="${X(lp.x)-8}" y="${Y(lp.y)+(below?26:-12)}" text-anchor="end" font-size="14" font-weight="700" style="fill:${color}">${label(lp.y)}</text>`;
-  svg.innerHTML=h;
-}
 /* trend: the 2020 and 2021 files count in-network claims only, so the other views start in 2022 */
 let tv='in';
 const TV={
@@ -174,7 +182,7 @@ const TV={
   all:{lab:'all-claims',ymin:.10,ymax:.25,ticks:[.10,.15,.20,.25]}
 };
 function tDraw(){const m=TV[tv],rows=D.trend.filter(t=>t[tv+'_rate']!=null),y0=rows[0].year,y1=rows[rows.length-1].year;
-  line($('tline'),rows.map(t=>({x:t.year,y:t[tv+'_rate']})),{ymin:m.ymin,ymax:m.ymax,ticks:m.ticks,fmtY:y=>pct(y,0),color:css('--dw-red'),label:y=>pct(y)+' denied'});
+  line($('tline'),rows.map(t=>({x:t.year,y:t[tv+'_rate']})),{ymin:m.ymin,ymax:m.ymax,ticks:m.ticks,fmtY:y=>pct(y,0),color:tok('--dw-bad'),label:y=>pct(y)+' denied'});
   $('tline').setAttribute('aria-label',`Line chart of the ${m.lab} denial rate by year, ${y0} to ${y1}`);
   /* The out-of-network line is the page's one place for that view: the map and the insurer table point here. */
   $('tnote').innerHTML=tv==='in'?`In-network claims, ${y0} to ${y1}.`:
@@ -185,11 +193,11 @@ function tDraw(){const m=TV[tv],rows=D.trend.filter(t=>t[tv+'_rate']!=null),y0=r
     rows.map(t=>`<tr><td>${t.year}</td>${out?`<td class="dw-r dw-num">${big(t.out_claims)}</td>`:''}<td class="dw-r dw-num">${big(t[tv+'_denied'])}</td><td class="dw-r dw-num">${pct(t[tv+'_rate'])}</td>${out?'':`<td class="dw-r dw-num">${fmt(t.appeals_all)}</td>`}</tr>`).join('')+'</tbody>';}
 document.querySelectorAll('#tmode button').forEach(b=>b.onclick=()=>{tv=b.dataset.m;document.querySelectorAll('#tmode button').forEach(x=>x.setAttribute('aria-pressed',x===b));tDraw();});
 tDraw();
-line($('imrline'),D.imr_trend.map(r=>({x:r.y,y:r.r})),{ymin:.3,ymax:.8,ticks:[.3,.4,.5,.6,.7,.8],fmtY:y=>pct(y,0),color:css('--dw-teal'),label:y=>pct(y,0)+' overturned'});
+line($('imrline'),D.imr_trend.map(r=>({x:r.y,y:r.r})),{ymin:.3,ymax:.8,ticks:[.3,.4,.5,.6,.7,.8],fmtY:y=>pct(y,0),color:tok('--dw-good'),ink:tok('--dw-good-ink'),label:y=>pct(y,0)+' overturned'});
 
-/* reasons */
+/* reasons: all red, as every one is a denial; the two about medical judgment darker and in bold, as the key says */
 const rmax=D.reasons[0].v, rtot=D.reasons.reduce((a,r)=>a+r.v,0);
-$('reasons').innerHTML=D.reasons.map(r=>`<div class="dw-bar ${/medically|Experimental/.test(r.k)?'dw-bar-hl':''}"><div class="dw-bar-name"><span>${esc(r.k)}</span><span class="dw-note dw-num">${big(r.v)}</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${r.v/rmax*100}%"></div></div><div class="dw-bar-value dw-num">${r.v/rtot<0.01?'&lt;1%':pct(r.v/rtot,0)}</div></div>`).join('');
+$('reasons').innerHTML=D.reasons.map(r=>`<div class="dw-bar ${/medically|Experimental/.test(r.k)?'dw-bar-deep':''}"><div class="dw-bar-name"><span>${esc(r.k)}</span><span class="dw-note dw-num">${big(r.v)}</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${r.v/rmax*100}%"></div></div><div class="dw-bar-value dw-num">${r.v/rtot<0.01?'&lt;1%':pct(r.v/rtot,0)}</div></div>`).join('');
 
 /* insurers: in-network only; the note says why there are no out-of-network or all-claims rates */
 const states=[...new Set(IS.map(i=>i.s))].sort((a,b)=>NAMES[a].localeCompare(NAMES[b]));
@@ -221,29 +229,32 @@ document.querySelectorAll('#pamode button').forEach(b=>b.onclick=()=>{document.q
 paDraw('ma');
 
 /* IMR */
-$('imrbars').innerHTML=D.imr_cat.map(r=>`<div class="dw-bar dw-bar-hl"><div class="dw-bar-name"><span>${esc(r.k)}</span><span class="dw-note dw-num">${fmt(r.n)} reviews</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${r.r*100}%"></div></div><div class="dw-bar-value dw-num">${pct(r.r,0)}</div></div>`).join('');
+$('imrbars').innerHTML=D.imr_cat.map(r=>`<div class="dw-bar dw-bar-good"><div class="dw-bar-name"><span>${esc(r.k)}</span><span class="dw-note dw-num">${fmt(r.n)} reviews</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${r.r*100}%"></div></div><div class="dw-bar-value dw-num">${pct(r.r,0)}</div></div>`).join('');
 
 /* coverage map */
 const SA=D.sahie, PL=D.places;
 const sa=(y,s)=>{const r=SA[y][NAMES[s]];return r?r.pct/100:null};
 let cm='unins', csel='TX';
 const CM={
-  unins:{v:s=>sa('2024',s),b:[.06,.08,.10,.12,.15],c:UC,l:x=>pct(x,0),t:x=>pct(x,1),name:'Uninsured under 65, 2024'},
-  uchg:{v:s=>{const a=sa('2024',s),b=sa('2023',s);return a!=null&&b!=null?a-b:null},b:[-.006,-.002,.002,.006],c:DIV,l:x=>(x>0?'+':'')+(x*100).toFixed(1)+' pt',t:x=>(x>0?'+':'')+(x*100).toFixed(1),name:'Change in uninsured rate, 2023 to 2024'},
-  fair_poor_health:{v:s=>PL[s]&&PL[s].fair_poor_health!=null?PL[s].fair_poor_health/100:null,b:[.15,.17,.19,.21,.23],c:HC,l:x=>pct(x,0),t:x=>pct(x,1),name:'Adults in fair or poor health'},
-  diabetes:{v:s=>PL[s]&&PL[s].diabetes!=null?PL[s].diabetes/100:null,b:[.10,.11,.12,.13,.14],c:HC,l:x=>pct(x,0),t:x=>pct(x,1),name:'Adults with diabetes'},
-  depression:{v:s=>PL[s]&&PL[s].depression!=null?PL[s].depression/100:null,b:[.20,.22,.24,.26,.28],c:HC,l:x=>pct(x,0),t:x=>pct(x,1),name:'Adults ever told they have depression'}
+  unins:{v:s=>sa('2024',s),b:[.06,.08,.10,.12,.15],c:BAD,l:x=>pct(x,0),t:x=>pct(x,1),name:'Uninsured under 65, 2024',key:'Share uninsured: darker red, more uninsured.'},
+  uchg:{v:s=>{const a=sa('2024',s),b=sa('2023',s);return a!=null&&b!=null?a-b:null},b:[-.006,-.002,.002,.006],c:DIV,mk:true,l:x=>(x>0?'+':'')+(x*100).toFixed(1)+' pt',t:x=>(x>0?'+':'')+(x*100).toFixed(1),tt:x=>(x>0?'+':'')+(x*100).toFixed(1)+' points',name:'Change in uninsured rate, 2023 to 2024',key:'▲ Red: rose, more uninsured. ▼ Green: fell, fewer uninsured. Pale: about the same.'},
+  fair_poor_health:{v:s=>PL[s]&&PL[s].fair_poor_health!=null?PL[s].fair_poor_health/100:null,b:[.15,.17,.19,.21,.23],c:HEALTH,l:x=>pct(x,0),t:x=>pct(x,1),name:'Adults in fair or poor health',key:'Share of adults in fair or poor health: darker purple, higher.'},
+  diabetes:{v:s=>PL[s]&&PL[s].diabetes!=null?PL[s].diabetes/100:null,b:[.10,.11,.12,.13,.14],c:HEALTH,l:x=>pct(x,0),t:x=>pct(x,1),name:'Adults with diabetes',key:'Share of adults with diabetes: darker purple, higher.'},
+  depression:{v:s=>PL[s]&&PL[s].depression!=null?PL[s].depression/100:null,b:[.20,.22,.24,.26,.28],c:HEALTH,l:x=>pct(x,0),t:x=>pct(x,1),name:'Adults ever told they have depression',key:'Share of adults ever told they have depression: darker purple, higher.'}
 };
 function cRead(s){csel=s;const a=sa('2024',s),b=sa('2023',s),p=PL[s]||{};const n=SA['2024'][NAMES[s]];
   $('cread').innerHTML=`<div class="dw-readout-state">${NAMES[s]}</div>`+
    (a!=null?`<div class="dw-readout-line"><b class="dw-num">${pct(a)}</b> uninsured under 65 (${fmt(n.n)} people), ${b!=null?(a===b?'the same as in 2023':(a>b?'up':'down')+' from '+pct(b)+' in 2023'):''}</div>`:'')+
    (p.fair_poor_health!=null?`<div class="dw-readout-line">Fair or poor health <b class="dw-num">${p.fair_poor_health}%</b> · diabetes <b class="dw-num">${p.diabetes}%</b> · depression <b class="dw-num">${p.depression}%</b></div>`:'<div class="dw-readout-line">No CDC estimates for this state.</div>');
   drawC();}
-function drawC(){const m=CM[cm];drawMap($('cmap'),m.v,binScale(m.b,m.c),m.t,cRead,csel);legend($('cleg'),m.b,m.c,m.l);
+function drawC(){const m=CM[cm],dir=m.mk?dirBy(m.b):undefined;drawMap($('cmap'),m.v,binScale(m.b,m.c),m.t,cRead,csel,undefined,undefined,undefined,dir);legend($('cleg'),m.b,m.c,m.l,'No data','',m.key,dir);
+  mapTable($('ctable'),m.name,m.v,m.tt||m.t);
   const arr=GRID.map(g=>[g[0],m.v(g[0])]).filter(x=>x[1]!=null).sort((a,b)=>b[1]-a[1]);const mx=Math.max(...arr.map(x=>Math.abs(x[1])));
   $('cbarsh').textContent=m.name+': highest and lowest';
-  const row=([s,v],cls)=>`<div class="dw-bar ${cls}"><div class="dw-bar-name"><span>${NAMES[s]}</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${Math.abs(v)/mx*100}%;background:${cm.startsWith('u')?css('--dw-blue'):css('--dw-purple')}"></div></div><div class="dw-bar-value dw-num">${m.l(v)}</div></div>`;
-  $('cbars').innerHTML=arr.slice(0,5).map(x=>row(x,'')).join('')+'<div class="dw-note dw-gap-row">···</div>'+arr.slice(-5).map(x=>row(x,'')).join('');}
+  /* Uninsured in red; a change red when it rose and green when it fell, its sign in the value; health measures in purple. */
+  const cls=v=>cm==='unins'?'':cm==='uchg'?(v<0?'dw-bar-good':''):'dw-bar-health';
+  const row=([s,v])=>`<div class="dw-bar ${cls(v)}"><div class="dw-bar-name"><span>${NAMES[s]}</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${Math.abs(v)/mx*100}%"></div></div><div class="dw-bar-value dw-num">${m.l(v)}</div></div>`;
+  $('cbars').innerHTML=arr.slice(0,5).map(row).join('')+'<div class="dw-note dw-gap-row">···</div>'+arr.slice(-5).map(row).join('');}
 document.querySelectorAll('#cmode button').forEach(b=>b.onclick=()=>{cm=b.dataset.m;document.querySelectorAll('#cmode button').forEach(x=>x.setAttribute('aria-pressed',x===b));drawC();});
 cRead(csel);
 
@@ -254,7 +265,7 @@ const DGM={
   top:{note:'Total Part D spending on each drug in 2024 (Medicare, plans and patients combined, before rebates), by brand-name listing: other forms and generics of the same medicine count separately.',v:d=>d.Tot_Spndng_2024,l:d=>money(d.Tot_Spndng_2024),sub:d=>fmt(d.Tot_Benes_2024)+' people'},
   per:{note:'Total yearly spending per patient in 2024, not what each patient paid out of pocket. Drugs with at least 1,000 Medicare patients.',v:d=>d.Avg_Spnd_Per_Bene_2024,l:d=>money(d.Avg_Spnd_Per_Bene_2024),sub:d=>fmt(d.Tot_Benes_2024)+' people'},
   growth:{note:'Growth in total spending from 2020 to 2024, among drugs with at least $100M of spending in 2020.',v:d=>d.Tot_Spndng_2024/d.Tot_Spndng_2020,l:d=>(d.Tot_Spndng_2024/d.Tot_Spndng_2020).toFixed(1)+'×',sub:d=>money(d.Tot_Spndng_2020)+' → '+money(d.Tot_Spndng_2024)},
-  cheap:{note:'Lowest average total cost per prescription fill, 2024, among drugs taken by at least 2 million Medicare patients.',v:d=>d.Avg_Spnd_Per_Clm_2024,l:d=>money(d.Avg_Spnd_Per_Clm_2024),sub:d=>fmt(d.Tot_Benes_2024)+' people',low:true}
+  cheap:{note:'Lowest average total cost per prescription fill, 2024, among drugs taken by at least 2 million Medicare patients.',v:d=>d.Avg_Spnd_Per_Clm_2024,l:d=>money(d.Avg_Spnd_Per_Clm_2024),sub:d=>fmt(d.Tot_Benes_2024)+' people'}
 };
 /* Same letters means a generic listed under its own name: say it once. */
 const sameName=(a,b)=>String(a).toLowerCase().replace(/[^a-z]/g,'')===String(b).toLowerCase().replace(/[^a-z]/g,'');
@@ -263,17 +274,8 @@ function dgDraw(k){const m=DGM[k],rows=DG[k];const mx=Math.max(...rows.map(m.v))
   $('dgprice').hidden=!rows.some(d=>d.medicare_price);
   /* Only where a drug whose price ends is listed. */
   $('dgends').hidden=!rows.some(d=>d.medicare_price&&d.medicare_price.until);
-  $('dgbars').innerHTML=rows.map(d=>`<div class="dw-bar ${m.low?'dw-bar-low':''}${d.medicare_price?' dw-bar-tagged':''}"><div class="dw-bar-name"><span><b>${esc(d.Brnd_Name)}</b>${d.use?` <span class="dw-drug-use">for ${esc(d.use)}</span>`:''}${sameName(d.Brnd_Name,d.Gnrc_Name)?'':` <span class="dw-note">· ${esc(String(d.Gnrc_Name).toLowerCase())}</span>`}</span><span class="dw-note dw-num">${m.sub(d)}</span></div>${d.medicare_price?`<span class="dw-chip dw-bar-chip">${esc(d.medicare_price.label)}</span>`:''}<div class="dw-bar-track"><div class="dw-bar-fill" style="width:${m.v(d)/mx*100}%"></div></div><div class="dw-bar-value dw-num">${m.l(d)}</div></div>`).join('');}
+  $('dgbars').innerHTML=rows.map(d=>`<div class="dw-bar dw-bar-cost${d.medicare_price?' dw-bar-tagged':''}"><div class="dw-bar-name"><span><b>${esc(d.Brnd_Name)}</b>${d.use?` <span class="dw-drug-use">for ${esc(d.use)}</span>`:''}${sameName(d.Brnd_Name,d.Gnrc_Name)?'':` <span class="dw-note">· ${esc(String(d.Gnrc_Name).toLowerCase())}</span>`}</span><span class="dw-note dw-num">${m.sub(d)}</span></div>${d.medicare_price?`<span class="dw-chip dw-bar-chip">${esc(d.medicare_price.label)}</span>`:''}<div class="dw-bar-track"><div class="dw-bar-fill" style="width:${m.v(d)/mx*100}%"></div></div><div class="dw-bar-value dw-num">${m.l(d)}</div></div>`).join('');}
 document.querySelectorAll('#dgmode button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#dgmode button').forEach(x=>x.setAttribute('aria-pressed',x===b));dgDraw(b.dataset.m);});
 dgDraw('top');
-
-/* marketplace coverage: every February from one CMS file, the year CMS is still counting drawn hollow */
-const MK=D.marketplace;
-if(MK){const F=MK.feb,first=F[0].y,lastY=F[F.length-1].y;
-  line($('mkline'),F.map(r=>({x:r.y,y:r.n})),{ymin:0,ymax:25e6,ticks:[0,5e6,10e6,15e6,20e6,25e6],fmtY:y=>y?(y/1e6)+'M':'0',color:css('--dw-blue'),label:y=>(y/1e6).toFixed(1)+'M',open:p=>p.x===MK.prelim});
-  $('mkline').setAttribute('aria-label',`Line chart of people with marketplace coverage in effect each February, ${first} to ${lastY}${MK.prelim?`. ${MK.prelim} is preliminary`:''}`);
-  const chg=i=>{const c=F[i].n/F[i-1].n-1;return (c>0?'+':'')+pct(c);};
-  $('mktable').innerHTML=`<caption class="fhi-visually-hidden">People with marketplace coverage in effect each February, nationwide, ${first} to ${lastY}</caption><thead><tr><th scope="col">February</th><th scope="col" class="dw-r">Coverage in effect</th><th scope="col" class="dw-r">Change</th></tr></thead><tbody>`+
-    F.map((r,i)=>`<tr><th scope="row">${r.y}${r.y===MK.prelim?' <span class="dw-note">(preliminary)</span>':''}</th><td class="dw-r dw-num">${fmt(r.n)}</td><td class="dw-r dw-num">${i?chg(i):''}</td></tr>`).join('')+'</tbody>';}
 
 })();

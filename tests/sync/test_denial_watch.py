@@ -14,7 +14,6 @@ import json
 import pathlib
 import re
 import tempfile
-from html.parser import HTMLParser
 from datetime import date, datetime, timezone as dt_timezone
 from unittest import mock
 
@@ -112,10 +111,12 @@ class TestDenialWatchPage(TestCase):
         self.assertNotIn("They have to give you the claim file for free", self.content)
 
     def test_page_names_its_sources(self):
-        # Checked outside the embedded JSON, which carries every URL anyway.
+        # Checked outside the embedded JSON, which carries every URL anyway. The marketplace
+        # files are named on the open enrollment page, with the numbers drawn from them.
         visible = _without_data(self.content)
         for source in DATA["sources"]:
-            self.assertIn(f'href="{source["url"]}"', visible)
+            if source["url"] not in MARKETPLACE_SOURCES:
+                self.assertIn(f'href="{source["url"]}"', visible)
 
     def test_page_sits_on_the_wide_column_without_its_own_stylesheet(self):
         self.assertIn('class="fhi-page-wide dw"', self.content)
@@ -587,7 +588,7 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
     def test_map_tiles_show_each_states_insurer_range_in_network_only(self):
         # The heatmap carries what the ranked bars did; the range is of in-network insurer rates.
         self.assertEqual(self.js.count("sub:spanLab"), 1)
-        self.assertIn("in:{v:s=>ST[s]?ST[s].rate:null,b:RB,c:DC,l:x=>pct(x,0),t:x=>pct(x,1),sub:spanLab,", self.js)
+        self.assertIn("in:{v:s=>ST[s]?ST[s].rate:null,b:RB,c:BAD,l:x=>pct(x,0),t:x=>pct(x,1),sub:spanLab,", self.js)
         # The range covers the insurers in the table only, so both lines say so.
         self.assertIn("The small type on a tile is the lowest to highest rate among the state's insurers in the table below.", self.js)
         self.assertIn("Its insurers in the table: <b class=\"dw-num\">${pct(span(s)[0])}</b> to", self.js)
@@ -611,170 +612,152 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
         self.assertIn('id="tickpause"', Client().get(reverse("denial-watch")).content.decode())
 
 
-class TestDenialWatchEnrollment(TestCase):
-    """The open-enrollment box shows only in season; tests pin the date."""
+class TestDenialWatchEnrollmentCard(TestCase):
+    """Open enrollment has its own page: in season Denial Watch keeps a small card for it, and out of season one line."""
 
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        from fighthealthinsurance.views import denial_watch_enrollment
+    # Medicare's window, HealthCare.gov's alone, and the card's last day.
+    SEASON_DAYS = (date(2026, 10, 18), date(2026, 12, 8), date(2027, 1, 15))
 
-        cls.season = staticmethod(denial_watch_enrollment)
+    def _card(self, day):
+        return _between(_page(day), 'id="enroll"', "</section>")
 
-    def test_medicare_line_runs_october_15_to_december_7(self):
-        self.assertTrue(self.season(date(2026, 10, 15))["medicare"])
-        self.assertTrue(self.season(date(2026, 12, 7))["medicare"])
-
-    def test_box_stays_for_healthcare_gov_after_medicare_closes(self):
-        self.assertFalse(self.season(date(2026, 12, 8))["medicare"])
-        self.assertFalse(self.season(date(2027, 1, 15))["medicare"])
-
-    def test_box_is_for_next_years_plans(self):
-        season = self.season(date(2026, 10, 18))
-        self.assertEqual((season["starts"], season["ends"], season["plan_year"]), (date(2026, 10, 15), date(2026, 12, 7), 2027))
-
-    def test_box_is_hidden_out_of_season(self):
-        self.assertIsNone(self.season(date(2026, 10, 14)))
-        self.assertIsNone(self.season(date(2027, 1, 16)))
-
-    def test_page_shows_the_box_in_season(self):
+    def test_card_in_season_is_a_line_one_tile_and_the_link(self):
         html = _page(date(2026, 10, 18))
-        box = _between(html, 'id="enroll"', "</section>")
-        self.assertIn("Medicare open enrollment runs from October 15 to December 7, 2026", _text(box))
-        self.assertIn('href="https://www.medicare.gov/plan-compare/"', box)
-        self.assertIn('href="https://www.healthcare.gov/"', box)
-        self.assertIn('href="#insurers"', box)
-        self.assertIn('href="#prior-auth"', box)
+        card = _between(html, 'id="enroll"', "</section>")
+        self.assertIn('<section class="fhi-card dw-enroll-card" id="enroll" aria-labelledby="enroll-title">', html)
+        self.assertIn('<h2 class="fhi-card-title" id="enroll-title">Open enrollment for 2027</h2>', card)
+        self.assertIn(
+            "Compare plans and costs for 2027, even if you'll be renewed automatically.",
+            _text(_between(card, '<p id="enroll-line">', "</p>")),
+        )
+        self.assertEqual(card.count('<div class="dw-stat">'), 1)
+        self.assertIn(
+            f'<p class="dw-cta"><a href="{reverse("open-enrollment")}">Open enrollment: dates, numbers and what to do</a></p>',
+            card,
+        )
 
-    def test_box_sits_near_the_top(self):
+    def test_card_tile_is_the_latest_plan_picks_in_the_bundle(self):
+        picks = _picks()
+        year = max(picks)
+        tile = re.search(
+            r'<div class="dw-stat"><p class="dw-stat-head"><b class="dw-num">([^<]+)</b> <strong>([^<]+)</strong></p><span>([^<]+)</span></div>',
+            self._card(date(2026, 10, 18)),
+        )
+        self.assertEqual(
+            tile.groups(),
+            (_millions(picks[year]), "picked a marketplace plan", f"for {year} in open enrollment, including people renewed automatically"),
+        )
+
+    def test_card_sits_near_the_top(self):
         html = _page(date(2026, 10, 18))
+        self.assertLess(html.index('id="stats"'), html.index('id="enroll"'))
         self.assertLess(html.index('id="enroll"'), html.index('class="fhi-jump-links"'))
 
-    def test_insurer_section_points_to_healthcare_gov_in_season(self):
-        html = _page(date(2026, 10, 18))
-        section = _between(html, 'id="insurers"', "</section>")
-        self.assertIn("Picking a 2027 HealthCare.gov plan?", section)
+    def test_card_prints_no_healthcare_gov_dates(self):
+        # CMS set the 2027 marketplace dates, but the court ruling behind them is under appeal, so the pages link out.
+        for day in self.SEASON_DAYS:
+            card = self._card(day)
+            for text in ("November 1", "December 15", "January 15"):
+                with self.subTest(day=day, text=text):
+                    self.assertNotIn(text, card)
 
-    def test_oregon_signs_up_at_its_own_marketplace(self):
-        # From November 1, 2026, Oregon enrolls through ExploreHealthOR.gov, not HealthCare.gov.
-        html = _page(date(2026, 10, 18))
-        link = '<a href="https://explorehealthor.gov/">ExploreHealthOR.gov</a>'
-        box = _between(html, 'id="enroll"', "</section>")
-        self.assertIn(f"Oregon now has its own marketplace: for 2027 plans, Oregon residents sign up at {link}.", box)
-        notice = _between(_between(html, 'id="insurers"', "</section>"), "Picking a 2027 HealthCare.gov plan?", "</p>")
-        self.assertIn(f"Oregon residents compare 2027 plans at {link} instead.", notice)
-        sources = _between(html, 'id="sources"', "</section>")
-        self.assertIn('href="https://www.healthcare.gov/marketplace-in-your-state/"', sources)
+    def test_card_stays_through_the_last_day_in_hawaii(self):
+        # 9am UTC on January 16 is still January 15, the card's last day, in Hawaii; 11am is not.
+        for hour, shown in ((9, True), (11, False)):
+            when = datetime(2027, 1, 16, hour, 0, tzinfo=dt_timezone.utc)
+            with self.subTest(hour=hour), mock.patch("django.utils.timezone.now", return_value=when):
+                html = Client().get(reverse("denial-watch")).content.decode()
+                self.assertEqual('class="fhi-card dw-enroll-card"' in html, shown)
 
-    def test_shoppers_hear_that_some_insurers_have_left(self):
-        # The table is 2024 data, and some of its insurers don't sell 2027 plans; no insurer is named.
-        html = _page(date(2026, 10, 18))
-        box = _text(_between(html, 'id="enroll"', "</section>"))
-        self.assertIn("denied claims in 2024", box)
-        self.assertIn("some of those insurers don't sell plans for 2027", box)
-        notice = _between(_between(html, 'id="insurers"', "</section>"), "Picking a 2027 HealthCare.gov plan?", "</p>")
-        self.assertIn("its insurers' 2024 rates", notice)
-        self.assertIn("Some of these insurers don't sell plans for 2027, so check which ones do.", notice)
-        self.assertNotIn("Cigna", box + notice)
-        sources = _between(html, 'id="sources"', "</section>")
-        self.assertIn("tracking-insurer-participation-changes-in-the-aca-marketplaces-in-2027", sources)
+    def test_out_of_season_one_plain_link(self):
+        html = _page(date(2027, 1, 16))
+        self.assertIn(
+            f'<p class="dw-cta" id="enroll"><a href="{reverse("open-enrollment")}">Signing up for marketplace coverage: numbers and what to do</a></p>',
+            html,
+        )
+        for gone in ('class="fhi-card dw-enroll-card"', "Open enrollment for", "Picking a 2027 HealthCare.gov plan?", "<b>Picking a"):
+            self.assertNotIn(gone, html)
 
-    def test_box_prints_no_healthcare_gov_dates(self):
-        # CMS set the 2027 marketplace dates, but the court ruling behind them is under appeal, so the box links out.
-        box = _between(_page(date(2026, 10, 18)), 'id="enroll"', "</section>")
-        for day in ("November 1", "December 15", "January 15"):
-            self.assertNotIn(day, box)
-
-    def test_method_note_says_cms_set_the_dates_and_the_ruling_is_under_appeal(self):
-        html = _page(date(2026, 10, 18))
-        note = _between(html, "<b>Open enrollment:</b>", "</li>")
-        self.assertIn("CMS has set HealthCare.gov's 2027 sign-up dates", _text(note))
-        self.assertIn("but the court ruling behind them is under appeal, so we link to HealthCare.gov rather than print them. Checked October 22, 2026.", _text(note))
-        self.assertIn('href="https://www.cms.gov/files/document/ftr-requirement-py26-27-statement.pdf"', note)
-        for stale in ("in a court case", "are in court"):
-            self.assertNotIn(stale, _without_data(html))
-
-    def test_page_drops_the_medicare_line_after_december_7(self):
-        html = _page(date(2026, 12, 8))
-        self.assertIn('id="enroll"', html)
-        self.assertNotIn("Medicare open enrollment runs", html)
-
-    def test_page_drops_medicare_plan_finder_after_december_7(self):
-        box = _between(_page(date(2026, 12, 8)), 'id="enroll"', "</section>")
-        self.assertNotIn("plan-compare", box)
-        self.assertIn("Then compare plans and costs on HealthCare.gov.", _text(box))
-
-    def test_box_dates_and_year_come_from_the_constants(self):
+    def test_season_words_come_from_the_constants(self):
         # Next fall's update is two constants in views.py, not a hunt through the template.
         with (
             mock.patch("fighthealthinsurance.views.DENIAL_WATCH_MEDICARE_ENROLLMENT", (date(2027, 10, 15), date(2027, 12, 7))),
             mock.patch("fighthealthinsurance.views.DENIAL_WATCH_ENROLLMENT_BOX_ENDS", date(2028, 1, 15)),
         ):
             html = _page(date(2027, 10, 20))
-        box = _text(_between(html, 'id="enroll"', "</section>"))
-        self.assertIn("Picking a plan for 2028?", box)
-        self.assertIn("runs from October 15 to December 7, 2027,", box)
+        card = _between(html, 'id="enroll"', "</section>")
+        self.assertIn('<h2 class="fhi-card-title" id="enroll-title">Open enrollment for 2028</h2>', card)
+        self.assertIn("Compare plans and costs for 2028,", _text(card))
         self.assertIn("Picking a 2028 HealthCare.gov plan?", _between(html, 'id="insurers"', "</section>"))
-        self.assertNotIn("2026", box.replace("checked October 22, 2026", ""))
+        self.assertIn("<b>Picking a 2028 plan:</b>", _between(html, 'id="method-who-denies"', "</div>"))
+        # The tile keeps the data's own year.
+        self.assertIn(f"for {max(_picks())} in open enrollment", card)
 
-    def test_last_day_counts_in_hawaii_not_utc(self):
-        # 5am UTC on December 8 is still December 7 in every state.
-        late = datetime(2026, 12, 8, 5, 0, tzinfo=dt_timezone.utc)
-        with mock.patch("django.utils.timezone.now", return_value=late):
-            html = Client().get(reverse("denial-watch")).content.decode()
-        self.assertIn("Medicare open enrollment runs", html)
+    def test_insurer_section_points_to_healthcare_gov_in_season(self):
+        html = _page(date(2026, 10, 18))
+        section = _between(html, 'id="insurers"', "</section>")
+        self.assertIn("Picking a 2027 HealthCare.gov plan?", section)
 
-    def test_page_has_no_enrollment_box_after_the_season(self):
-        html = _page(date(2027, 1, 16))
-        self.assertNotIn('id="enroll"', html)
-        self.assertNotIn("Picking a 2027 HealthCare.gov plan?", html)
-        self.assertNotIn("<b>Open enrollment:</b>", html)
+    def test_insurer_notice_names_oregon_and_the_insurers_leaving(self):
+        # From November 1, 2026, Oregon enrolls through ExploreHealthOR.gov; the table is 2024 data and no insurer is named.
+        html = _page(date(2026, 10, 18))
+        notice = _between(_between(html, 'id="insurers"', "</section>"), "Picking a 2027 HealthCare.gov plan?", "</p>")
+        self.assertIn("Oregon residents compare 2027 plans at <a href=\"https://explorehealthor.gov/\">ExploreHealthOR.gov</a> instead.", notice)
+        self.assertIn("its insurers' 2024 rates", notice)
+        self.assertIn("Some of these insurers don't sell plans for 2027, so check which ones do.", notice)
+        self.assertNotIn("Cigna", notice)
 
-    # Medicare's window, HealthCare.gov's alone, and the box's last day.
-    SEASON_DAYS = (date(2026, 10, 18), date(2026, 12, 8), date(2027, 1, 15))
-    RENEWING = (
-        "Already have a marketplace plan? During open enrollment, log in, update your income and compare plans, "
-        "even if you'll be renewed automatically. Plans and prices change every year, and a new plan only starts "
-        "once you pay the first premium. For free, unbiased help, find an independent assister near you or call "
-        "1-800-318-2596. Our fall checklist has the rest."
-    )
+    def test_insurer_notice_cites_its_sources_in_season(self):
+        # Both facts in the notice, with the date they were checked, in the insurer table's method group.
+        group = _between(_page(date(2026, 10, 18)), 'id="method-who-denies"', "</div>")
+        note = _between(group, "<b>Picking a 2027 plan:</b>", "</li>")
+        self.assertIn('href="https://www.healthcare.gov/marketplace-in-your-state/"', note)
+        self.assertIn('href="https://www.kff.org/affordable-care-act/tracking-insurer-participation-changes-in-the-aca-marketplaces-in-2027/"', note)
+        self.assertIn("checked October 19, 2026.", _text(note))
 
-    def _renewing(self, day):
-        box = _between(_page(day), 'id="enroll"', "</section>")
-        return box, _between(box, 'id="enroll-renewing"', "</p>")
+    def test_the_questions_chart_and_tiles_moved_off_the_page(self):
+        for day in (date(2026, 10, 18), date(2027, 1, 16)):
+            html = _page(day)
+            for gone in ('id="enroll-questions"', 'id="mkline"', 'id="mktable"', 'id="mkpicks"', 'id="enroll-numbers"', "dw-quote", "dw-meter", 'id="method-enroll"', "Enrollment questions"):
+                with self.subTest(day=day, gone=gone):
+                    self.assertNotIn(gone, html)
+        # The script names the moved ids only to hand old links to the new page, never to draw them.
+        self.assertNotIn("$('mkline')", JS)
+        self.assertNotIn("D.marketplace", JS)
 
-    def test_box_tells_current_enrollees_what_to_do_all_season(self):
-        for day in self.SEASON_DAYS:
+    def test_jump_menu_drops_the_questions(self):
+        nav = _between(_page(date(2026, 10, 18)), 'class="fhi-jump-links"', "</nav>")
+        self.assertNotIn("enroll", nav)
+
+    def test_coverage_points_to_the_open_enrollment_page(self):
+        coverage = _between(_page(), 'id="coverage"', "</section>")
+        self.assertIn('id="cmap"', coverage)
+        pointer = _between(coverage, 'id="coverage-marketplace"', "</p>")
+        self.assertIn(f'<a href="{reverse("open-enrollment")}">the open enrollment page</a>', pointer)
+
+    def test_sources_point_to_the_open_enrollment_pages_method(self):
+        link = f'<a href="{reverse("open-enrollment")}#method-enroll">the open enrollment page\'s sources</a>'
+        latest = max(MK["picks"], key=lambda p: p["y"])
+        for day, names_the_tile in ((date(2026, 10, 18), True), (date(2027, 1, 16), False)):
+            fold = _between(_between(_page(day), 'id="sources"', "</section>"), "<details", "</details>")
+            pointer = _between(fold, '<p class="dw-sources" id="method-enroll-pointer">', "</p>")
             with self.subTest(day=day):
-                box, para = self._renewing(day)
-                self.assertIn(self.RENEWING, _text(para))
-                self.assertIn('href="https://www.healthcare.gov/find-local-help/"', para)
-                self.assertIn(f'href="{reverse("coverage-changes")}#fall-checklist"', para)
-                self.assertIn("Dates, numbers and links checked October 22, 2026.", _text(box))
+                self.assertIn(link, pointer)
+                self.assertIn("<b>Open enrollment and marketplace coverage:</b>", pointer)
+                # In season the card's tile is on the page, so its source is named here too.
+                self.assertEqual(f'href="{latest["url"]}"' in pointer, names_the_tile)
+                if names_the_tile:
+                    self.assertIn(
+                        f"the plan picks at the top of this page are CMS's count, from its {latest['y']} Marketplace Open Enrollment Period public use files.",
+                        _text(pointer),
+                    )
 
-    def test_box_help_line_dials_the_number_it_shows(self):
-        _, para = self._renewing(self.SEASON_DAYS[0])
-        self.assertIn('<a class="dw-tel" href="tel:+18003182596">1-800-318-2596</a>', para)
-
-    def test_box_prints_no_healthcare_gov_dates_on_any_season_day(self):
-        for day in self.SEASON_DAYS:
-            box, para = self._renewing(day)
-            for text in ("November 1", "December 15", "January 15", "2026"):
-                with self.subTest(day=day, text=text):
-                    self.assertNotIn(text, para)
-            for text in ("November 1", "December 15", "January 15"):
-                with self.subTest(day=day, text=text):
-                    self.assertNotIn(text, box)
-
-    def test_box_fall_checklist_link_lands_on_the_checklist(self):
-        guide = Client().get(reverse("coverage-changes")).content.decode()
-        self.assertIn('id="fall-checklist"', guide)
-
-    def test_box_paragraph_has_no_em_dash_or_insurer(self):
-        _, para = self._renewing(self.SEASON_DAYS[0])
-        self.assertNotIn("\u2014", para)
+    def test_card_and_pointer_have_no_em_dash_or_insurer(self):
+        html = _page(date(2026, 10, 18))
+        parts = _between(html, 'id="enroll"', "</section>") + _between(html, 'id="method-enroll-pointer"', "</p>")
+        self.assertNotIn("—", parts)
         for name in {_short(i["n"]) for i in DATA["issuers"]}:
-            self.assertNotIn(name, _text(para))
+            self.assertNotIn(name, _text(parts))
 
 
 class TestDenialWatchWhoToCall(TestCase):
@@ -1027,9 +1010,11 @@ class TestDenialWatchMedicareDrugs(TestCase):
 
         style = (REPO / "fighthealthinsurance" / "templates" / "denial_watch.html").read_text()
         rule = re.search(r"\.dw-chip \{([^}]*)\}", style).group(1)
-        self.assertIn("background-color: var(--dw-u0)", rule)
-        self.assertIn("color: var(--dw-u5)", rule)
-        ink, ground = (parse_colour(re.search(rf"--{name}: (#[0-9a-f]{{6}})", style).group(1)) for name in ("dw-u5", "dw-u0"))
+        self.assertIn("background-color: var(--dw-count-tint)", rule)
+        self.assertIn("color: var(--dw-count-deep)", rule)
+        # The palette is in the styles Denial Watch shares with the open enrollment page.
+        tokens = (REPO / "fighthealthinsurance" / "templates" / "partials" / "denial_watch_style.html").read_text()
+        ink, ground = (parse_colour(re.search(rf"--{name}: (#[0-9a-f]{{6}})", tokens).group(1)) for name in ("dw-count-deep", "dw-count-tint"))
         self.assertGreaterEqual(contrast_ratio(ink[:3], ground[:3]), 4.5)
 
     def test_ending_price_note_shows_only_with_a_drug_whose_price_ends(self):
@@ -1122,7 +1107,6 @@ class TestDenialWatchLinksAndStyle(TestCase):
             "https://www.cms.gov/files/document/2027-announcement.pdf",
             "https://www.cms.gov/files/document/ipay-2028-final-guidance.pdf",
             "https://www.federalregister.gov/documents/2024/02/08/2024-00895/medicare-and-medicaid-programs-patient-protection-and-affordable-care-act-advancing-interoperability",
-            "https://www.cms.gov/newsroom/press-releases/medicare-advantage-medicare-prescription-drug-programs-expected-remain-stable-2027",
             "https://www.cms.gov/Medicare/Appeals-and-Grievances/MMCAG/Downloads/Parts-C-and-D-Enrollee-Grievances-Organization-Coverage-Determinations-and-Appeals-Guidance.pdf",
             "https://www.ecfr.gov/current/title-29/subtitle-B/chapter-XXV/subchapter-G/part-2560/section-2560.503-1",
             "https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-C/part-438/subpart-F/section-438.406",
@@ -1131,6 +1115,8 @@ class TestDenialWatchLinksAndStyle(TestCase):
 
 
 JS = (REPO / "fighthealthinsurance" / "static" / "js" / "denial_watch.js").read_text()
+# The fold opener, number formats and line chart, shared with the open enrollment page.
+CHARTS_JS = (REPO / "fighthealthinsurance" / "static" / "js" / "denial_watch_charts.js").read_text()
 
 
 def _short(name: str) -> str:
@@ -1542,13 +1528,13 @@ class TestDenialWatchCharts(TestCase):
 
     def test_end_label_goes_under_a_falling_line(self):
         # Above the point, "18.7% denied" sat on the 2023 to 2024 line.
-        self.assertIn("below=last>0&&pts[last-1].y>lp.y", JS)
-        self.assertIn('y="${Y(lp.y)+(below?26:-12)}"', JS)
-        self.assertIn('<text class="dw-end"', JS)
+        self.assertIn("below=last>0&&pts[last-1].y>lp.y", CHARTS_JS)
+        self.assertIn('y="${Y(lp.y)+(below?26:-12)}"', CHARTS_JS)
+        self.assertIn('<text class="dw-end"', CHARTS_JS)
 
     def test_last_year_label_is_not_crowded(self):
         # California's chart showed "2024 2025" side by side.
-        self.assertIn("if(i===last||(i%step===0&&last-i>=step))", JS)
+        self.assertIn("if(i===last||(i%step===0&&last-i>=step))", CHARTS_JS)
 
 
 THEMES = [
@@ -1632,15 +1618,11 @@ class TestDenialWatchThemes(TestCase):
 
 
 MK = DATA["marketplace"]
-KFF_MARKET = "https://www.kff.org/affordable-care-act/individual-market-enrollment-continues-to-fall-through-mid-2026/"
-KFF_SURVEY = "https://www.kff.org/public-opinion/a-follow-up-survey-of-aca-marketplace-enrollees/"
-KFF_SENTENCE = "Enrollment in the individual health insurance market fell 18% between June 2025 and June 2026."
 CMS_EFFECTUATED = "https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/health-insurance-marketplace/health-insurance-exchanges-monthly-effectuated-enrollment"
-CMS_PREMIUM = "plan selections will only become coverage for consumers that effectuate their coverage by paying their first monthly premium"
-KFF_MARKET_DATE = "October 14, 2026"
-KFF_JUNE = (25.2, 20.5)  # millions, June 2025 and June 2026, from the KFF analysis
 # CMS's early 2025 effectuated report counted February 2025 on March 15, 2025, sooner than the file the page uses.
 EARLY_FEB_2025 = 23_393_198
+# The files behind the marketplace numbers, which the open enrollment page names.
+MARKETPLACE_SOURCES = {CMS_EFFECTUATED} | {p["url"] for p in MK["picks"]}
 
 
 def _census_year() -> str:
@@ -1651,66 +1633,8 @@ def _picks() -> dict[int, int]:
     return {p["y"]: p["n"] for p in MK["picks"]}
 
 
-def _table_rows(html: str) -> list[list[str]]:
-    """Each row's cell text, header cells included, spaces collapsed."""
-
-    class Rows(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.rows: list[list[str]] = []
-            self.cell: list[str] | None = None
-
-        def handle_starttag(self, tag, attrs):
-            if tag == "tr":
-                self.rows.append([])
-            elif tag in ("th", "td"):
-                self.cell = []
-
-        def handle_endtag(self, tag):
-            if tag in ("th", "td") and self.cell is not None:
-                self.rows[-1].append(re.sub(r"\s+", " ", "".join(self.cell)).strip())
-                self.cell = None
-
-        def handle_data(self, data):
-            if self.cell is not None:
-                self.cell.append(data)
-
-    parser = Rows()
-    parser.feed(html)
-    return parser.rows
-
-
 def _february() -> dict[int, int]:
     return {r["y"]: r["n"] for r in MK["feb"]}
-
-
-def _section_parents(html: str) -> dict[str | None, str | None]:
-    """Each section's id and the id of the section it sits inside (None at the top)."""
-
-    class Parents(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.stack: list[str | None] = []
-            self.of: dict[str | None, str | None] = {}
-
-        def handle_starttag(self, tag, attrs):
-            if tag == "section":
-                sid = dict(attrs).get("id")
-                self.of[sid] = self.stack[-1] if self.stack else None
-                self.stack.append(sid)
-
-        def handle_endtag(self, tag):
-            if tag == "section":
-                self.stack.pop()
-
-    parser = Parents()
-    parser.feed(html)
-    return parser.of
-
-
-def _yearly_changes() -> dict[int, float]:
-    feb = MK["feb"]
-    return {b["y"]: b["n"] / a["n"] - 1 for a, b in zip(feb, feb[1:])}
 
 
 class TestDenialWatchMarketplaceData(TestCase):
@@ -1973,270 +1897,279 @@ class TestDenialWatchMarketplaceBuilder(TestCase):
         self.assertFalse(out.exists())
 
 
-class TestDenialWatchMarketplacePage(TestCase):
-    """The marketplace section's words, chart and tables agree with the data and say where they come from."""
-
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        cls.content = _page()
-        cls.section = _between(cls.content, 'id="marketplace-trend"', "</section>")
-        cls.text = _text(cls.section)
-        method = _between(cls.content, 'id="method-coverage"', "</div>")
-        cls.method = _text(method[method.index("<b>Marketplace coverage:</b>") : method.index("</ol>")])
-        cls.method_html = method
-        cls.script = _between(JS, "/* marketplace coverage:", "})();")
-
-    def test_section_sits_inside_coverage_after_the_map(self):
-        self.assertEqual(_section_parents(self.content)["marketplace-trend"], "coverage")
-        self.assertLess(self.content.index('id="cmap"'), self.content.index('id="marketplace-trend"'))
-        self.assertIn('<section class="fhi-stack" id="marketplace-trend" aria-labelledby="marketplace-trend-title">', self.content)
+class TestDenialWatchWholePage(TestCase):
+    """Checks across the whole page that outlived the enrollment section's move."""
 
     def test_no_id_is_used_twice_in_season_or_out(self):
-        # The season box already owns id="enroll", so this section names itself differently.
-        self.assertNotIn('id="enroll', self.section)
         for day in (date(2026, 10, 18), date(2027, 1, 16)):
             body = _between(_page(day), '<div class="fhi-page-wide dw"', '<script id="dw-data"')
             ids = re.findall(r'\sid="([^"]+)"', body)
             self.assertEqual(len(ids), len(set(ids)), sorted(i for i in ids if ids.count(i) > 1))
 
-    def test_heading_states_the_biggest_drop_from_the_data(self):
-        changes, feb = _yearly_changes(), _february()
-        last, first = MK["feb"][-1]["y"], MK["feb"][0]["y"]
-        self.assertEqual(min(changes, key=changes.get), last)
-        self.assertEqual(min(changes, key=lambda y: feb[y] - feb[y - 1]), last)
-        self.assertIn(
-            f'<h3 id="marketplace-trend-title">Marketplace coverage fell {round(-changes[last] * 100)}% in {last}, '
-            f"the biggest drop in CMS's monthly count, which goes back to {first}</h3>",
-            self.section,
-        )
-
-    def test_the_only_other_drop_is_small(self):
-        changes, last = _yearly_changes(), MK["feb"][-1]["y"]
-        others = [y for y, c in changes.items() if c < 0 and y != last]
-        self.assertEqual(len(others), 1, others)
-        self.assertLess(abs(changes[others[0]]), 0.01)
-        self.assertIn(f"The only other drop was in {others[0]}, and it was less than 1%.", self.text)
-
-    def test_intro_gives_the_counts(self):
-        a, b = MK["feb"][-2], MK["feb"][-1]
-        self.assertLess(b["n"], a["n"])
-        self.assertIn(f"February is the latest month CMS has published for {b['y']}, so every year is compared on that month.", self.text)
-        self.assertIn(
-            f"From February {a['y']} to February {b['y']} the count fell from {_millions(a['n'])} to {_millions(b['n'])}, "
-            f"about {_millions(a['n'] - b['n'])} fewer people.",
-            self.text,
-        )
-
-    def test_bridge_says_the_denial_rates_scope_and_year(self):
-        year = DATA["trend"][-1]["year"]
-        bridge = _text(_between(self.section, '<p id="denials-bridge">', "</p>"))
-        self.assertEqual(
-            bridge,
-            "The denial rates higher up the page, on the state map and in the insurer table, "
-            f"are for marketplace plans too, but only for HealthCare.gov states and insurers in {year}, "
-            "while the count here covers every marketplace nationwide.",
-        )
-        # The map and insurer table say the same year.
-        self.assertIn(f"Share of in-network claims denied by HealthCare.gov insurers in each state, {year}.", self.content)
-
-    def test_bridge_links_resolve_to_the_denial_sections_above(self):
-        bridge = _between(self.section, 'id="denials-bridge"', "</p>")
-        targets = re.findall(r'href="#([\w-]+)"', bridge)
-        self.assertEqual(targets, ["map-denials", "insurers"])
-        for target in targets:
-            self.assertLess(self.content.index(f'id="{target}"'), self.content.index('id="marketplace-trend"'))
-
-    def test_bridge_has_no_causal_words(self):
-        bridge = _text(_between(self.section, '<p id="denials-bridge">', "</p>")).lower()
-        for words in ("because", "after", "led to", "due to", "caused", "result", "drove", "since", "so "):
-            self.assertNotIn(words, bridge)
-        self.assertNotIn(chr(0x2014), bridge)
-
-    def test_chart_label_before_the_script_runs_names_the_years(self):
-        first, last, prelim = MK["feb"][0]["y"], MK["feb"][-1]["y"], MK["prelim"]
-        self.assertIn(
-            f'aria-label="Line chart of people with marketplace coverage in effect each February, {first} to {last}. {prelim} is preliminary"',
-            self.section,
-        )
-
-    def test_latest_year_is_marked_preliminary(self):
-        prelim = MK["prelim"]
-        self.assertIn(f"The hollow point, {prelim}, is preliminary.", _text(_between(self.section, 'id="mknote"', "</p>")))
-        self.assertIn(f"The {prelim} count isn't final yet", self.text)
-        self.assertIn(f"so {prelim} is preliminary and may change", self.method)
-        self.assertIn("open:p=>p.x===MK.prelim", self.script)
-        self.assertIn("fill=\"${o?'#ffffff':color}\" stroke=\"${o?color:'#ffffff'}\"", JS)
-        self.assertIn("(preliminary)", self.script)
-
-    def test_chart_starts_at_zero_and_fits_every_year(self):
-        call = re.search(r"line\(\$\('mkline'\),.*?\{ymin:(\d+),ymax:([\d.e]+),ticks:\[([^\]]+)\]", self.script)
-        self.assertIsNotNone(call)
-        ymin, ymax = float(call.group(1)), float(call.group(2))
-        self.assertEqual(ymin, 0)
-        self.assertEqual(float(call.group(3).split(",")[-1]), ymax)
-        self.assertTrue(all(r["n"] <= ymax for r in MK["feb"]))
-        self.assertIn("color:css('--dw-blue')", self.script)
-
-    def test_chart_and_table_use_each_february_count(self):
-        # A source check; the browser test reads the drawn points and cells back against the bundle.
-        self.assertIn("const F=MK.feb,", self.script)
-        self.assertIn("line($('mkline'),F.map(r=>({x:r.y,y:r.n})),", self.script)
-        self.assertIn("const chg=i=>{const c=F[i].n/F[i-1].n-1;", self.script)
-        self.assertIn("<td class=\"dw-r dw-num\">${fmt(r.n)}</td><td class=\"dw-r dw-num\">${i?chg(i):''}</td>", self.script)
-
-    def test_script_draws_last_and_only_with_data(self):
-        # Last in the script, so a throw here can't stop another chart.
-        self.assertIn("const MK=D.marketplace;\nif(MK){", JS)
-        self.assertEqual(JS.index("/* marketplace coverage:"), JS.rindex("/* "))
-
-    def test_tables_are_accessible(self):
-        picks = _between(self.section, 'id="mkpicks"', "</table>")
-        self.assertIn('<caption class="fhi-visually-hidden">', picks)
-        self.assertEqual(picks.count('<th scope="col"'), 3)
-        self.assertEqual(picks.count('<th scope="row">'), 2)
-        self.assertIn('<table class="dw-table" id="mktable"></table>', self.section)
-        self.assertIn('<caption class="fhi-visually-hidden">People with marketplace coverage in effect each February', self.script)
-        self.assertIn('<th scope="col">February</th>', self.script)
-        self.assertIn('<tr><th scope="row">${r.y}', self.script)
-        self.assertIn('<svg class="dw-chart" id="mkline" viewBox="0 0 560 270" role="img" aria-label="', self.section)
-
-    def test_plan_picks_table_matches_the_data(self):
-        feb, picks, prelim = _february(), _picks(), MK["prelim"]
-        years = sorted(picks)
-
-        def covered(y):
-            return f"{feb[y]:,} ({_pct(feb[y] / picks[y])}{', preliminary' if y == prelim else ''})"
-
-        table = _between(self.section, 'id="mkpicks"', "</table>")
-        self.assertEqual(
-            _table_rows(table),
-            [
-                ["Count", *map(str, years)],
-                ["People with a plan picked in open enrollment", *(f"{picks[y]:,}" for y in years)],
-                ["People with coverage in effect in February", *map(covered, years)],
-            ],
-        )
-        self.assertIn(f"with coverage in effect that February, {years[0]} and {years[1]}</caption>", table)
-
-    def test_coverage_shares_in_the_words_match_the_data(self):
-        feb, picks = _february(), _picks()
-        (y0, s0), (y1, s1) = sorted((y, _pct(feb[y] / n)) for y, n in picks.items())
-        self.assertIn(f"Coverage in effect in February came to {s0} of those people for {y0}, and {s1} for {y1}.", self.text)
-        self.assertIn(f"The {s0} and {s1} divide each February's coverage by that year's plan picks.", self.method)
-        self.assertIn(f"CMS's early 2025 report gave {_pct(EARLY_FEB_2025 / picks[2025])}, from its earlier February count.", self.method)
-
-    def test_picking_a_plan_is_explained_and_cms_quoted(self):
-        self.assertIn("Picking a plan isn't the same as having coverage.", self.text)
-        self.assertIn("only becomes coverage once the first month's premium is paid, if there is one.", self.text)
-        self.assertIn(f'"{CMS_PREMIUM}"', self.method)
-        self.assertIn('href="https://www.cms.gov/files/document/2026-public-use-files-faqs.pdf"', self.method_html)
-
-    def test_kff_sentence_is_quoted_exactly_and_linked(self):
-        quote = _between(self.section, '<blockquote class="dw-quote"', "</blockquote>")
-        self.assertIn(f'cite="{KFF_MARKET}"><p>{KFF_SENTENCE}</p>', quote)
-        self.assertIn(f'href="{KFF_MARKET}"', self.section)
-        self.assertIn(f"From KFF's analysis of {KFF_MARKET_DATE}.", self.text)
-        self.assertIn(f"(KFF, {KFF_MARKET_DATE})", self.method)
-        self.assertIn("KFF, a nonprofit health policy research, polling, and news organization,", self.text)
-
-    def test_kff_counts_agree_with_its_quoted_drop(self):
-        june25, june26 = KFF_JUNE
-        self.assertIn(f"{june25} million in June 2025 and {june26} million in June 2026", self.method)
-        # The quote rounds to a whole percent, the counts to a tenth of a million: their ranges must overlap.
-        drop = int(re.search(r"fell (\d+)%", KFF_SENTENCE).group(1)) / 100
-        low, high = 1 - (june26 + 0.05) / (june25 - 0.05), 1 - (june26 - 0.05) / (june25 + 0.05)
-        self.assertTrue(low < drop + 0.005 and high >= drop - 0.005, (low, high))
-
-    def test_plan_picks_count_people_including_automatic_renewals(self):
-        # CMS's count is of people, and it includes people renewed without picking again.
-        self.assertIn("CMS counts everyone with a plan picked, including people renewed into one automatically.", self.text)
-        self.assertIn("CMS counts people, not plans, including people renewed into a plan automatically.", self.method)
-        self.assertNotIn("of the plans picked", self.text)
-        rows = re.findall(r'<th scope="row">([^<]+)</th>', _between(self.section, 'id="mkpicks"', "</table>"))
-        self.assertEqual(rows, ["People with a plan picked in open enrollment", "People with coverage in effect in February"])
-
     def test_kff_is_described_the_way_it_asks_everywhere(self):
-        self.assertNotIn("independent health policy research group", self.content)
-        more = _text(_between(self.content, '<a href="https://www.kff.org/">KFF</a>', "</li>"))
+        content = _page()
+        self.assertNotIn("independent health policy research group", content)
+        more = _text(_between(content, '<a href="https://www.kff.org/">KFF</a>', "</li>"))
         self.assertIn("A nonprofit health policy research, polling, and news organization.", more)
 
-    def test_kff_differences_are_named(self):
-        self.assertIn("on the marketplace or off it", self.text)
-        self.assertIn("compares June with June", self.text)
-        self.assertIn("so the two numbers aren't meant to match", self.text)
-
     def test_no_link_to_a_kff_pdf(self):
-        for href in re.findall(r'href="(https://www\.kff\.org/[^"]*)"', self.content):
+        for href in re.findall(r'href="(https://www\.kff\.org/[^"]*)"', _page()):
             self.assertFalse(href.lower().endswith(".pdf"), href)
 
-    def test_survey_figures_say_who_was_asked(self):
-        self.assertIn(f'href="{KFF_SURVEY}"', self.section)
-        self.assertIn("adults who had a marketplace plan in 2025, taken in February and March 2026, 22% said they had moved to other coverage", self.text)
-        self.assertIn("and 9% said they were uninsured.", self.text)
-        # KFF's own caveat on those plans, so the note doesn't reassure more than KFF does.
-        self.assertIn("KFF notes that some plans sold outside the marketplace may cover less and have fewer consumer protections.", self.text)
-        self.assertIn("1,117 adults who had marketplace plans in 2025", self.method)
-        self.assertIn("plus or minus 3.8 points", self.method)
 
-    def test_section_closes_with_what_to_do_after_losing_coverage(self):
-        line = _between(self.section, 'id="lost-coverage"', "</p>")
-        self.assertIn(
-            "Lost coverage, or about to? Losing health coverage can open a special enrollment period, usually from "
-            "60 days before it ends to 60 days after (90 days after, for Medicaid or CHIP), and you may need to send "
-            "proof that you lost it. Medicaid and CHIP take applications any time of year.",
-            _text(line),
+class TestDenialWatchSourcesFold(TestCase):
+    """Sources and method fold into one closed <details>, and a link to anything inside opens it."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.content = _page(date(2026, 10, 18))
+        cls.sources = _between(cls.content, 'id="sources"', "</section>")
+        cls.fold = _between(cls.sources, "<details", "</details>")
+
+    def test_sources_sit_in_one_closed_details_with_the_heading_as_its_summary(self):
+        self.assertEqual(self.sources.count("<details"), 1)
+        tag = re.search(r"<details[^>]*>", self.sources).group(0)
+        self.assertEqual(tag, '<details class="fhi-accordion-item" id="sources-details">')
+        # The summary comes first, so a reader without the script opens it with a click or a key.
+        self.assertRegex(
+            self.sources,
+            r'<details class="fhi-accordion-item" id="sources-details">\s*<summary><h2 class="fhi-accordion-question" id="sources-title">Sources and method</h2></summary>',
         )
-        # Last in the section, after the survey.
-        self.assertGreater(self.section.index('id="lost-coverage"'), self.section.index(f'href="{KFF_SURVEY}"'))
-        self.assertEqual(self.section.rindex("<p"), self.section.index('<p id="lost-coverage"'))
+        self.assertIn('<section class="fhi-stack" id="sources" aria-labelledby="sources-title">', self.content)
 
-    def test_closing_line_links_special_enrollment_and_local_help(self):
-        line = _between(self.section, 'id="lost-coverage"', "</p>")
-        for href in (
-            "https://www.healthcare.gov/coverage-outside-open-enrollment/special-enrollment-period/",
-            "https://www.healthcare.gov/find-local-help/",
-        ):
-            self.assertIn(f'href="{href}"', line)
-
-    def test_closing_line_has_no_em_dash(self):
-        self.assertNotIn(chr(0x2014), _between(self.section, 'id="lost-coverage"', "</p>"))
-
-    def test_census_figures_say_their_year(self):
-        self.assertIn(f"the Census uninsured figures above are for {_census_year()}, before this drop.", self.text)
-
-    def test_causes_stay_off_the_page(self):
-        # Why enrollment fell is contested, so the page shows what changed, not why.
-        for words in ("tax credit", "subsid", "fraud", "improper", "because", "caused", "blame", "enhanced"):
-            self.assertNotIn(words, (self.text + self.method).lower())
-
-    def test_no_insurer_is_named(self):
-        names = {_short(i["n"]) for i in DATA["issuers"]} | {r["n"] for r in DATA["prior_auth"]}
-        for name in names:
-            self.assertNotIn(name, self.text + self.method)
-
-    def test_no_em_dashes_in_the_new_copy(self):
-        for part in (self.section, self.method, self.script):
-            self.assertNotIn("\u2014", part)
-
-    def test_method_note_names_the_file_its_date_and_minnesota(self):
-        a, b = MK["feb"][-2], MK["feb"][-1]
-        without = (b["n"] - b["mn"]) / (a["n"] - a["mn"]) - 1
-        self.assertIn(f'<a href="{CMS_EFFECTUATED}">CMS Health Insurance Exchanges Monthly Effectuated Enrollment</a>', self.method_html)
-        asof = date.fromisoformat(MK["as_of"])
-        self.assertIn(
-            f"the file with data as of {asof:%B} {asof.day}, {asof.year} (Data_asof_{asof:%Y%m%d}), which runs to February {b['y']}",
-            self.method,
+    def test_every_method_group_is_inside_the_fold(self):
+        groups = re.findall(r'<div class="dw-method" id="([\w-]+)">', self.sources)
+        self.assertEqual(
+            groups,
+            ["method-data", "method-why-appeal", "method-who-denies", "method-what-why", "method-coverage", "method-costs", "method-other"],
         )
-        self.assertIn(f"without Minnesota, the {b['y']} drop is {-without * 100:.1f}%", self.method)
-        # CMS redid 2021 onward; the years before that start with the file's first.
-        self.assertIn(f"don't say whether {MK['feb'][0]['y']} to 2020 were counted again the same way", self.method)
-        for p in MK["picks"]:
-            self.assertIn(f'<a href="{p["url"]}">{p["y"]}</a>', self.method_html)
+        for group in groups + ["method-enroll-pointer"]:
+            self.assertIn(f'id="{group}"', self.fold)
 
-    def test_method_note_compares_the_early_count_with_this_file(self):
+    def test_every_link_into_the_sources_lands_inside_the_fold(self):
+        page = _between(self.content, '<div class="fhi-page-wide dw"', '<script id="dw-data"')
+        targets = set(re.findall(r'href="#(method-[\w-]+)"', page + JS))
+        self.assertTrue({"method-why-appeal", "method-who-denies", "method-what-why", "method-coverage", "method-costs", "method-data"} <= targets, targets)
+        for target in targets:
+            self.assertIn(f'id="{target}"', self.fold)
+
+    def test_script_opens_a_closed_details_for_a_link_inside_it(self):
+        opener = _between(CHARTS_JS, "/* Sources and the enrollment questions start closed", "const fmt=")
+        # Every closed <details> around the target opens, the target's own included.
+        self.assertIn("for(let d=el;d;d=d.parentElement)if(d.tagName==='DETAILS'&&!d.open){d.open=true;shut=true;}", opener)
+        # On load, after the charts are drawn; on every hash change; and on a click, before the browser jumps.
+        self.assertIn("setTimeout(landOn,0);window.addEventListener('hashchange',landOn);", opener)
         self.assertIn(
-            f"its early 2025 report had {_millions(EARLY_FEB_2025)} for February 2025 (counted March 15, 2025), "
-            f"against {_millions(_february()[2025])} in this file, so mixing reports would make the drop look bigger.",
-            self.method,
+            "document.addEventListener('click',e=>{const a=e.target.closest&&e.target.closest('a[href^=\"#\"]');if(a)openTo(a.getAttribute('href'));});",
+            opener,
         )
+        self.assertIn("const landOn=()=>{const el=openTo(location.hash);if(el)el.scrollIntoView();};", opener)
+
+    def test_script_opens_before_reading_the_data(self):
+        # A problem with the data, or a chart that throws, can't leave a link stuck on a closed fold.
+        self.assertLess(JS.index("foldLinks();"), JS.index("const D=JSON.parse"))
+        self.assertNotIn("const openTo=", JS)
+
+
+TEMPLATE_DIR = REPO / "fighthealthinsurance" / "templates"
+STYLE_PARTIAL = (TEMPLATE_DIR / "partials" / "denial_watch_style.html").read_text()
+OE_JS = (REPO / "fighthealthinsurance" / "static" / "js" / "open_enrollment.js").read_text()
+HEX = re.compile(r"#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b")
+# Machado, Oliveira and Fernandes (2009), full deuteranopia and protanopia, on linear RGB.
+DEUTAN = ((0.367322, 0.860646, -0.227968), (0.280085, 0.672501, 0.047413), (-0.011820, 0.042940, 0.968881))
+PROTAN = ((0.152286, 1.052583, -0.204868), (0.114503, 0.786281, 0.099216), (-0.003882, -0.048116, 1.051998))
+
+
+def _linear(rgb):
+    return [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in (v / 255 for v in rgb)]
+
+
+def _lab(linear):
+    """CIELAB (D65) from linear RGB, for lightness and colour difference."""
+    r, g, b = (min(max(c, 0.0), 1.0) for c in linear)
+    x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047
+    y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
+    f = lambda t: t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+    return (116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z)))
+
+
+def _lightness(token):
+    from tests.sync.test_contrast import dw_colour
+
+    return _lab(_linear(dw_colour(token)))[0]
+
+
+def _seen_with(matrix, token):
+    """A token's colour in CIELAB as someone with that colour blindness sees it."""
+    from tests.sync.test_contrast import dw_colour
+
+    lin = _linear(dw_colour(token))
+    return _lab([sum(m * c for m, c in zip(row, lin)) for row in matrix])
+
+
+def _delta(a, b):
+    return sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
+
+
+def _style_blocks(name):
+    return re.findall(r"<style>(.*?)</style>", (TEMPLATE_DIR / name).read_text(), re.S)
+
+
+def _view(table, key):
+    """One view's entry in the script's DM or CM table of map views."""
+    body = _between(JS, f"const {table}={{", "\n};")
+    return re.search(rf"^  {key}:\{{(.*?)\}},?$", body, re.M | re.S).group(1)
+
+
+class TestDenialWatchColourMeaning(TestCase):
+    """Red is bad for patients, green good, grey only no data; the rest inform, and colour is never the only cue."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.content = _page()
+
+    def test_chart_colours_are_written_once_as_tokens(self):
+        # Defined in the shared partial and nowhere else, so both pages and every chart move together.
+        declared = re.findall(r"(--dw-[\w-]+):", STYLE_PARTIAL)
+        self.assertEqual(len(declared), len(set(declared)), declared)
+        for name in ("denial_watch.html", "open_enrollment.html"):
+            self.assertNotRegex((TEMPLATE_DIR / name).read_text(), r"--dw-[\w-]+:")
+
+    def test_scripts_write_no_colour_of_their_own(self):
+        for script in (JS, CHARTS_JS, OE_JS):
+            self.assertEqual(HEX.findall(script), [])
+
+    def test_page_styles_write_no_chart_colour_outside_the_tokens(self):
+        # The ticker's white words on the dark panel are the one literal left, and the contrast gate measures it.
+        tokens = _between(STYLE_PARTIAL, ".dw {", "}")
+        for name in ("denial_watch.html", "open_enrollment.html"):
+            for block in _style_blocks(name):
+                self.assertEqual(set(HEX.findall(block)) - {"#fff"}, set(), name)
+        self.assertEqual(set(HEX.findall(STYLE_PARTIAL.replace(tokens, ""))), set())
+
+    def test_bad_things_are_red(self):
+        self.assertIn(".dw-bar-fill { height: 100%; border-radius: 2px; background-color: var(--dw-bad); }", self.content)
+        # The denial trend, the denial maps, prior authorization and the insurers' bars.
+        self.assertIn("color:tok('--dw-bad'),label:y=>pct(y)+' denied'", JS)
+        for view in ("in", "all"):
+            self.assertIn("c:BAD,", _view("DM", view))
+        self.assertIn("c:BAD,", _view("CM", "unins"))
+        self.assertIn('$(\'pabars\').innerHTML=rows.map(r=>`<div class="dw-bar">', JS)
+        self.assertIn("vertical-align: middle; background-color: var(--dw-bad); }", _between(self.content, ".dw-mini {", "\n"))
+
+    def test_good_things_are_green(self):
+        self.assertIn("color:tok('--dw-good'),ink:tok('--dw-good-ink'),label:y=>pct(y,0)+' overturned'", JS)
+        self.assertIn("$('imrbars').innerHTML=D.imr_cat.map(r=>`<div class=\"dw-bar dw-bar-good\">", JS)
+        self.assertIn("c:GOOD,", _view("DM", "won"))
+        self.assertIn(".dw-bar-good .dw-bar-fill { background-color: var(--dw-good); }", self.content)
+
+    def test_informative_measures_take_their_own_colours(self):
+        # Health measures purple, money orange, counts blue: neither good nor bad, and not all one blue.
+        for view in ("fair_poor_health", "diabetes", "depression"):
+            self.assertIn("c:HEALTH,", _view("CM", view))
+        self.assertIn('$(\'dgbars\').innerHTML=rows.map(d=>`<div class="dw-bar dw-bar-cost', JS)
+        self.assertNotIn("dw-bar-low", JS + self.content)
+        self.assertIn("color:tok('--dw-count')", OE_JS)
+        hues = {name: _seen_with(((1, 0, 0), (0, 1, 0), (0, 0, 1)), name) for name in ("--dw-bad", "--dw-good", "--dw-cost", "--dw-health-4", "--dw-count")}
+        for a in hues:
+            for b in hues:
+                if a < b:
+                    self.assertGreater(_delta(hues[a], hues[b]), 20, (a, b))
+
+    def test_a_change_runs_green_through_pale_to_red(self):
+        self.assertIn("const DIV=[GOOD[4],GOOD[2],tok('--dw-mid'),BAD[2],BAD[4]];", JS)
+        self.assertIn("c:DIV,mk:true,", _view("DM", "chg"))
+        self.assertIn("c:DIV,mk:true,", _view("CM", "uchg"))
+        # Each side darkens away from the middle, so the scale reads in grayscale.
+        for side in ("good", "bad"):
+            self.assertGreater(_lightness("--dw-mid"), _lightness(f"--dw-{side}-2") + 15)
+            self.assertGreater(_lightness(f"--dw-{side}-2"), _lightness(f"--dw-{side}-4") + 15)
+
+    def test_grey_means_no_data_and_nothing_else(self):
+        uses = re.findall(r"tok\('--dw-na'\)", JS)
+        self.assertEqual(len(uses), 2)
+        self.assertIn("gone?tok('--dw-gone'):v==null?tok('--dw-na'):scale(v)", JS)
+        self.assertIn("parts.push(`<div><i style=\"background:${tok('--dw-na')}\"></i><span>${na}</span></div>`);", JS)
+        self.assertEqual(re.findall(r"[^\n]*var\(--dw-na\)[^\n]*", self.content), ["  .dw-sw-na { background-color: var(--dw-na); }"])
+        # The change scale's middle is a warm white, apart from the grey in lightness too.
+        self.assertGreater(_lightness("--dw-mid") - _lightness("--dw-na"), 4)
+
+    def test_ramps_step_down_in_lightness(self):
+        for ramp in ("bad", "good", "health"):
+            steps = [_lightness(f"--dw-{ramp}-{i}") for i in range(6)]
+            for lighter, darker in zip(steps, steps[1:]):
+                self.assertGreater(lighter - darker, 8, (ramp, steps))
+
+    def test_red_and_green_stay_apart_with_red_green_colour_blindness(self):
+        # Apart in lightness as well as hue, and still apart as deuteranopes and protanopes see them.
+        self.assertGreater(_lightness("--dw-good") - _lightness("--dw-bad"), 10)
+        for matrix in (DEUTAN, PROTAN):
+            self.assertGreater(_delta(_seen_with(matrix, "--dw-good"), _seen_with(matrix, "--dw-bad")), 20)
+            self.assertGreater(_delta(_seen_with(matrix, "--dw-good-2"), _seen_with(matrix, "--dw-bad-2")), 15)
+
+    def test_change_maps_mark_direction_with_a_triangle(self):
+        self.assertIn('<path class="dw-mark" data-x="${x}" data-y="${y}"/>', JS)
+        self.assertIn("mk.setAttribute('d',dir==='up'?", JS)
+        self.assertIn("const dirBy=b=>v=>v>=b[2]?'up':v<b[1]?'down':'';", JS)
+        self.assertIn("${d==='up'?'▲ ':d==='down'?'▼ ':''}", JS)
+        for table, view in (("DM", "chg"), ("CM", "uchg")):
+            self.assertIn("mk:true,", _view(table, view))
+            key = re.search(r"key:'([^']*)'", _view(table, view)).group(1)
+            self.assertIn("▲ Red: rose", key)
+            self.assertIn("▼ Green: fell", key)
+
+    def test_every_map_view_says_its_colours_in_words(self):
+        self.assertIn("const parts=key?[`<p class=\"dw-legend-key\">${key}</p>`]:[];", JS)
+        for table, views in (("DM", ("in", "all", "chg", "won")), ("CM", ("unins", "uchg", "fair_poor_health", "diabetes", "depression"))):
+            for view in views:
+                entry = _view(table, view)
+                self.assertRegex(entry, r"key:'[^']*(darker|Red|Green)[^']*'", view)
+                self.assertRegex(entry, r"name:'[^']+'", view)
+        self.assertIn("legend($('dleg'),m.b,m.c,m.l,'No data',m.gk,m.key,dir);", JS)
+        self.assertIn("legend($('cleg'),m.b,m.c,m.l,'No data','',m.key,dir);", JS)
+
+    def test_every_map_has_its_figures_as_a_table(self):
+        for leg, alt, table in (("dleg", "dalt", "dtable"), ("cleg", "calt", "ctable")):
+            fold = _between(self.content, f'id="{alt}"', "</details>")
+            self.assertIn(f'<table class="dw-table" id="{table}"></table>', fold)
+            self.assertIn("<summary>Every state's figure, as a table</summary>", fold)
+            self.assertLess(self.content.index(f'id="{leg}"'), self.content.index(f'id="{alt}"'))
+        self.assertIn("mapTable($('dtable'),m.name,m.v,m.tt||m.t,m.naOf);", JS)
+        self.assertIn("mapTable($('ctable'),m.name,m.v,m.tt||m.t);", JS)
+
+    def test_each_chart_has_a_key_in_words(self):
+        keys = {
+            "tkey": ["Share of claims denied"],
+            "imrkey": ["Denials overturned, decided in the patient's favour"],
+            "reasonskey": ["Share of all reasons given for denials", "Darker, in bold: the reasons about medical judgment"],
+            "pakey": ["Share of standard requests denied"],
+            "dgkey": ["Medicare Part D spending, before rebates"],
+        }
+        for ident, words in keys.items():
+            self.assertIn(f'<p class="dw-key" id="{ident}">', self.content)
+            key = _between(self.content, f'<p class="dw-key" id="{ident}">', "</p>")
+            self.assertEqual(re.findall(r'<i class="dw-sw[^"]*"></i>([^<]+)</span>', key), words, ident)
+
+    def test_highlighted_reasons_are_bold_as_well_as_darker(self):
+        self.assertIn(".dw-bar-deep .dw-bar-name > span:first-child { font-weight: 700; }", self.content)
+        self.assertIn("'dw-bar-deep':''", JS)
+
+    def test_tiles_say_denied_or_won_beside_their_colour(self):
+        tiles = re.findall(r"\[[^\[\]]*?'([^']+)',[^\[\]]*?,'(bad|good)'\]", _between(JS, "$('stats').innerHTML=[", "].map("))
+        self.assertEqual([k for _, k in tiles], ["bad", "bad", "good", "good"])
+        for label, kind in tiles:
+            self.assertIn("deni" if kind == "bad" else "won", label)
+        self.assertIn(".dw-stat-bad { border-top-color: var(--dw-bad); }", self.content)
+        self.assertIn(".dw-stat-good { border-top-color: var(--dw-good); }", self.content)
+
+    def test_page_key_names_each_colour_in_words(self):
+        key = _text(_between(self.content, '<p class="dw-key" id="colour-key">', "</p>"))
+        self.assertEqual(
+            key,
+            "Colours in the charts: red, bad for patients, such as denials; green, good for patients, such as appeals won; "
+            "orange, money spent; purple, health measures; grey, no data.",
+        )
+        self.assertLess(self.content.index('class="fhi-jump-links"'), self.content.index('id="colour-key"'))
