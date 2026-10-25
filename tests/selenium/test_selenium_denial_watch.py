@@ -1,14 +1,13 @@
 """Denial Watch's view buttons, run in a browser.
 
 The sync tests read the script's source; these check that switching a view
-changes what a reader sees, that the map buttons wrap on a phone, and that
-the marketplace chart plots each February's count and marks the year CMS is
-still counting.
+changes what a reader sees, that the map buttons wrap on a phone, and that a
+link into the folded sources opens them. The marketplace chart moved to the
+open enrollment page, with its browser tests.
 """
 
 import json
 import pathlib
-import re
 from datetime import date
 from unittest import mock
 
@@ -24,65 +23,22 @@ DATA = json.loads(
     (pathlib.Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "static" / "denial_watch.json").read_text()
 )
 
-# What the marketplace chart and year table drew: points, axis ticks, year labels, the line, the end label and the table's cells.
-MARKETPLACE_DRAWN = """
-var svg = document.getElementById('mkline'), num = (e, a) => Number(e.getAttribute(a)),
-    labels = svg.querySelectorAll('g.dw-axis text');
-return {
-  points: [...svg.querySelectorAll('circle')].map(c => [num(c, 'cx'), num(c, 'cy')]),
-  ticks: [...svg.querySelectorAll('g.dw-axis line')].map((l, i) => [labels[i].textContent, num(l, 'y1')]),
-  years: [...svg.querySelectorAll(':scope > text:not(.dw-end)')].map(t => [t.textContent, num(t, 'x')]),
-  path: svg.querySelector('path').getAttribute('d'),
-  end: svg.querySelector('text.dw-end').textContent,
-  rows: [...document.querySelectorAll('#mktable tbody tr')].map(r => [...r.cells].map(c => c.textContent)),
-};
+# The folded sources are open and the target's top is in view, below the sticky header (a pixel or two of rounding).
+LANDED = """
+var t = document.getElementById(arguments[0]), r = t.getBoundingClientRect(),
+    head = document.querySelector('.navbar-default').getBoundingClientRect().bottom;
+return document.getElementById('sources-details').open && r.top >= head - 2 && r.top < window.innerHeight;
+"""
+
+# A hash change with no jump of the browser's own.
+HASH_CHANGE = """
+history.replaceState(null, '', arguments[0]);
+window.dispatchEvent(new HashChangeEvent('hashchange'));
 """
 
 
-def _marketplace_drawn_problems(drawn, mk):
-    """Where the drawn chart or year table disagrees with the bundle; empty when they agree."""
-    feb, problems = mk["feb"], []
-    # The value scale comes from the drawn axis: each tick's label and the height of its line.
-    ticks = [(float(t.rstrip("M")) * (1e6 if t.endswith("M") else 1), y) for t, y in drawn["ticks"]]
-    (v0, y0), (v1, y1) = ticks[0], ticks[-1]
-
-    def height(v):
-        return y0 + (v - v0) * (y1 - y0) / (v1 - v0)
-
-    problems += [f"tick {v:g} at {y}" for v, y in ticks if abs(y - height(v)) > 1e-6]
-    if len(drawn["points"]) != len(feb):
-        return problems + [f"{len(drawn['points'])} points for {len(feb)} Februaries"]
-    for r, (_, cy) in zip(feb, drawn["points"]):
-        if abs(cy - height(r["n"])) > 1e-6:
-            problems.append(f"{r['y']} drawn at {cy}, not {height(r['n'])}")
-    xs = [cx for cx, _ in drawn["points"]]
-    gaps = [b - a for a, b in zip(xs, xs[1:])]
-    if not all(g > 0 and abs(g - gaps[0]) < 1e-6 for g in gaps):
-        problems.append(f"the years aren't evenly spaced in order: {xs}")
-    x_of = {str(r["y"]): cx for r, cx in zip(feb, xs)}
-    for year, x in drawn["years"]:
-        if year not in x_of or abs(x - x_of[year]) > 1e-6:
-            problems.append(f"year label {year} at {x}, its point at {x_of.get(year)}")
-    path = [tuple(map(float, p.split())) for p in re.split("[ML]", drawn["path"]) if p.strip()]
-    if len(path) != len(xs) or any(abs(a - b) > 0.051 for p, q in zip(path, drawn["points"]) for a, b in zip(p, q)):
-        problems.append(f"the line doesn't run through the points: {drawn['path']}")
-    if drawn["end"] != f"{feb[-1]['n'] / 1e6:.1f}M":
-        problems.append(f"end label {drawn['end']}")
-    rows = []
-    for i, r in enumerate(feb):
-        change = r["n"] / feb[i - 1]["n"] - 1 if i else None
-        rows.append([
-            f"{r['y']} (preliminary)" if r["y"] == mk["prelim"] else str(r["y"]),
-            f"{r['n']:,}",
-            "" if change is None else ("+" if change > 0 else "") + f"{change * 100:.1f}%",
-        ])
-    if drawn["rows"] != rows:
-        problems.append(f"year table {drawn['rows']} isn't {rows}")
-    return problems
-
-
 class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
-    """The map and trend buttons, and the marketplace chart, on /denial-watch."""
+    """The map and trend buttons, and the folded sources, on /denial-watch."""
 
     @classmethod
     def setUpClass(cls):
@@ -100,8 +56,9 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         self.wait_for_page_ready(predicate=lambda d: d.execute_script("return !!document.querySelector('#dmap g')"))
 
     @mock.patch("fighthealthinsurance.views.DENIAL_WATCH_HERO_UNTIL", date(2099, 1, 1))
+    @mock.patch("fighthealthinsurance.views.denial_watch_enrollment", new=lambda today: None)
     def test_home_page_announces_it_with_todays_count(self):
-        # The announcement retires itself on a date, so the check pins it open.
+        # The announcement retires on a date and gives way to open enrollment's, so the check pins it open and the season shut.
         self.set_window_size(1280, 900)
         self.open(f"{self.live_server_url}{reverse('root')}")
         self.assert_text_eventually_contains(
@@ -140,21 +97,43 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         # Alaska and North Dakota report but have no all-claims figure; Ohio has one; California has no data here.
         self.assertEqual(gone, [True, True, False, False])
 
-    def test_marketplace_chart_draws_only_the_preliminary_year_hollow(self):
-        feb, prelim = DATA["marketplace"]["feb"], DATA["marketplace"]["prelim"]
-        self._open()
-        fills, rows = self.execute_script(
-            "return [[...document.querySelectorAll('#mkline circle')].map(c => c.getAttribute('fill')),"
-            " [...document.querySelectorAll('#mktable tbody tr')].map(r => r.cells[0].textContent)];"
-        )
-        # One point and one row per February, in order; only the year without its December is hollow and labelled.
-        self.assertEqual(len(fills), len(feb))
-        self.assertEqual([r["y"] for r, fill in zip(feb, fills) if fill == "#ffffff"], [prelim])
-        self.assertEqual(rows, [f"{r['y']} (preliminary)" if r["y"] == prelim else str(r["y"]) for r in feb])
+    def _sources_open(self):
+        return self.execute_script("return document.getElementById('sources-details').open")
 
-    def test_marketplace_chart_and_table_show_each_february_count(self):
+    def _landed_on(self, ident):
+        # The page scrolls smoothly, and mid-scroll the target passes through the view, so check where it stops.
+        last = []
+
+        def stopped(d):
+            last.append(d.execute_script("return document.getElementById(arguments[0]).getBoundingClientRect().top", ident))
+            return len(last) > 1 and last[-1] == last[-2]
+
+        self.wait_for_page_ready(predicate=stopped)
+        self.assertTrue(self.execute_script(LANDED, ident), f"{ident} stopped at {last[-1]}")
+
+    def test_a_how_we_got_these_numbers_link_opens_the_folded_sources(self):
         self._open()
-        self.assertEqual(_marketplace_drawn_problems(self.execute_script(MARKETPLACE_DRAWN), DATA["marketplace"]), [])
+        self.assertFalse(self._sources_open())
+        # Chromium opens a fold itself on a jump into it, so the jump is cancelled: a listener on window runs
+        # after the page's own on document, which leaves only the page script to open the fold.
+        self.execute_script("window.addEventListener('click', e => e.preventDefault())")
+        self.click('#coverage .dw-how a[href="#method-coverage"]')
+        self.assertTrue(self._sources_open())
+        self.assertEqual(self.execute_script("return location.hash"), "")
+
+    def test_a_hash_change_opens_the_folded_sources_below_the_header(self):
+        # As on back or forward after a reader closed the fold: replaceState neither scrolls nor opens anything.
+        self._open()
+        self.assertFalse(self._sources_open())
+        self.execute_script(HASH_CHANGE, "#method-coverage")
+        self._landed_on("method-coverage")
+
+    def test_opening_the_page_at_a_method_note_opens_the_folded_sources(self):
+        # Chromium may open this one itself; the check is that the reader lands below the header.
+        self.set_window_size(1280, 900)
+        self.open(f"{self.live_server_url}{reverse('denial-watch')}#method-coverage")
+        self.wait_for_page_ready(predicate=lambda d: d.execute_script("return !!document.querySelector('#dmap g')"))
+        self._landed_on("method-coverage")
 
     def _rows(self):
         return self.execute_script("return [...document.querySelectorAll('#itable tbody tr')].map(r => r.cells[0].textContent)")

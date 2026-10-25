@@ -107,6 +107,19 @@ nothing here runs in the app.
   readout shows it, never the map, the national figures or the ranges. The
   page's state-map note names those states and years, so reread it when the
   set changes.
+- `state_reports.csv` holds grey states whose own insurers' reports on CMS's
+  Transparency in Coverage form give an in-network rate for the map's year
+  (California from Covered California's postings, Pennsylvania from its
+  Insurance Department's report), one checked row per state with the source,
+  the date it was read and a note on what was summed or left out. The build
+  puts them under `state_reports` and stops on a state the map or `earlier`
+  already covers, another claims year, more denials than claims, or a row
+  missing its publisher, https source or date. Only the every-state chart and
+  the grey state's readout show them. The readout lines for California and
+  Pennsylvania in `denial_watch.js` are hand-written, and a test ties their
+  numbers and links to the bundle, so reread them when a row changes. These
+  can count plans sold outside the marketplace, which CMS's figures don't, so
+  they never colour the map or join the national figures or ranges.
 - An insurer that reports more out-of-network denials than claims gets no
   out-of-network or all-claims figure, and is left out of those totals
   nationally and for its state; its state gets no all-claims figure.

@@ -6,20 +6,9 @@
 {% block metadescription %}Maps and trends from public records on health coverage in America: who is insured, how often insurers deny claims and prior authorizations, how often appeals win, and what care costs.{% endblock metadescription %}
 
 {% block extra_style %}
-{# The charts' own pieces; everything else is the page kit. The palettes are read by js/denial_watch.js. #}
+{# The tiles, charts and tables this page shares with the open enrollment page, then its own maps, bars and counter; everything else is the page kit. #}
+{% include "partials/denial_watch_style.html" %}
 <style>
-  .dw {
-    --dw-red: #c8321e; --dw-blue: #1f5fa8; --dw-teal: #11796b; --dw-purple: #6a449c;
-    --dw-d0: #fdecdf; --dw-d1: #f9c7a8; --dw-d2: #f09a72; --dw-d3: #dc6445; --dw-d4: #b8321f; --dw-d5: #7f1a12;
-    --dw-u0: #e6eef8; --dw-u1: #bcd1ec; --dw-u2: #88afdb; --dw-u3: #4677ae; --dw-u4: #255fa4; --dw-u5: #123d73;
-    --dw-h0: #efe9f6; --dw-h1: #d6c7ea; --dw-h2: #b69dd7; --dw-h3: #8665b1; --dw-h4: #6a449c; --dw-h5: #43256b;
-    --dw-na: #e3e6ea; --dw-na-ink: #5d6771; --dw-track: #eef1f4; --dw-gone: #ffffff;
-  }
-  /* Clear the sticky header, 143px tall below 992px wide, so a jump to any anchor lands below it. */
-  .dw [id] { scroll-margin-top: calc(2 * var(--fhi-space-11)); }
-  @media (min-width: 992px) { .dw [id] { scroll-margin-top: calc(var(--fhi-space-11) + var(--fhi-space-7)); } }
-  .dw-num { font-variant-numeric: tabular-nums; }
-  .dw-kicker { font-size: var(--fhi-text-small); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fhi-green-ink); }
   .dw-ticker { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--fhi-space-3); padding: var(--fhi-space-5); border-radius: var(--fhi-radius); background-color: var(--fhi-ink); color: #fff; }
   .dw-ticker p { color: #fff; margin: 0; }
   .dw-ticker-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fhi-space-1) var(--fhi-space-3); margin-bottom: var(--fhi-space-2); }
@@ -32,20 +21,11 @@
   .dw-ticker-rate span { font-weight: 700; }
   .dw-ticker .dw-pause { border-color: #fff; color: #fff; }
   .dw-ticker .dw-pause:hover, .dw-ticker .dw-pause:focus { background-color: #fff; color: var(--fhi-ink); }
-  .dw-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--fhi-space-4); }
-  .dw-stat { display: grid; gap: var(--fhi-space-1); align-content: start; padding-top: var(--fhi-space-3); border-top: 3px solid var(--fhi-ink); }
-  .dw-stat-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--fhi-space-2); margin: 0; }
-  .dw-stat b { font-size: 2rem; line-height: 1.1; }
-  .dw-stat strong { font-size: 1.3rem; line-height: 1.15; color: var(--fhi-ink); }
-  .dw-stat span { color: var(--fhi-ink-2); }
-  .dw-two { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: var(--fhi-space-6); align-items: start; }
-  .dw-two > * { display: grid; gap: var(--fhi-space-4); min-width: 0; }
   .dw-toggles { gap: var(--fhi-space-2); }
   .dw-toggles .fhi-button[aria-pressed="true"] { background-color: var(--fhi-ink-2); border-color: var(--fhi-ink-2); color: #fff; }
   .dw-controls { display: flex; flex-wrap: wrap; gap: var(--fhi-space-3) var(--fhi-space-4); align-items: center; justify-content: space-between; }
   .dw-controls .fhi-field { width: auto; max-width: 100%; }
-  .dw-note { font-size: var(--fhi-text-small); color: var(--fhi-muted); }
-  .dw-map, .dw-chart { display: block; width: 100%; height: auto; }
+  .dw-map { display: block; width: 100%; height: auto; }
   .dw-map text { font-size: 14px; font-weight: 700; pointer-events: none; }
   .dw-map text.dw-v { font-size: 12px; font-weight: 500; }
   .dw-map rect { cursor: pointer; stroke: #fff; stroke-width: 2; }
@@ -54,13 +34,13 @@
   .dw-map g.dw-sel rect { stroke: var(--fhi-ink); stroke-width: 2.5; }
   /* Inset, so tiles drawn later don't paint over the ring. */
   .dw-map g:focus-visible { outline: 3px solid var(--fhi-green-deep); outline-offset: -3px; }
-  .dw-chart text { fill: var(--fhi-ink-2); }
-  .dw-axis line { stroke: var(--fhi-line); }
+  .dw-map path.dw-mark { pointer-events: none; }
   .dw-legend { display: flex; flex-wrap: wrap; gap: 2px; font-size: var(--fhi-text-small); color: var(--fhi-ink-2); }
   .dw-legend div { display: grid; gap: 3px; min-width: 4rem; flex: 1 1 4rem; }
   .dw-legend div:only-child { max-width: 8rem; }
   .dw-legend i { display: block; height: 10px; border-radius: 2px; }
   .dw-legend i.dw-gone-key { border: 1px dashed var(--dw-na-ink); background-color: var(--dw-gone); }
+  .dw-legend-key { flex: 1 1 100%; margin: 0 0 var(--fhi-space-1); }
   .dw-readout { min-height: 6rem; display: grid; gap: var(--fhi-space-1); align-content: start; padding-top: var(--fhi-space-3); border-top: 1px solid var(--fhi-line); }
   .dw-readout-state { font-weight: 800; font-size: var(--fhi-text-lead); }
   .dw-readout-line { color: var(--fhi-ink-2); }
@@ -69,45 +49,46 @@
   .dw-bar-name { grid-area: nm; display: flex; justify-content: space-between; gap: var(--fhi-space-2); min-width: 0; overflow-wrap: anywhere; }
   .dw-bar-name > .dw-num { overflow-wrap: normal; }
   .dw-bar-track { grid-area: tr; height: 10px; border-radius: 2px; overflow: hidden; background-color: var(--dw-track); }
-  .dw-bar-fill { height: 100%; border-radius: 2px; background-color: var(--dw-red); }
+  .dw-bar-fill { height: 100%; border-radius: 2px; background-color: var(--dw-bad); }
   .dw-bar-value { grid-area: val; min-width: 3rem; text-align: right; font-weight: 700; }
-  .dw-bar-hl .dw-bar-fill { background-color: var(--dw-teal); }
-  .dw-bar-low .dw-bar-fill { background-color: var(--dw-blue); }
+  /* Red unless the bar says otherwise: green for what's good for patients, purple for health measures, orange for money. */
+  .dw-bar-good .dw-bar-fill { background-color: var(--dw-good); }
+  .dw-bar-health .dw-bar-fill { background-color: var(--dw-health-4); }
+  .dw-bar-cost .dw-bar-fill { background-color: var(--dw-cost); }
+  /* The denial reasons the key names: darker, and in bold, so they stand out without colour. */
+  .dw-bar-deep .dw-bar-fill { background-color: var(--dw-bad-deep); }
+  .dw-bar-deep .dw-bar-name > span:first-child { font-weight: 700; }
+  /* Every-state chart: red for denial rates, each kind of record in its own texture (solid, striped, hollow), and the key says it in words. */
+  .dw-every-key { display: grid; gap: var(--fhi-space-1); margin: 0; padding: 0; list-style: none; font-size: var(--fhi-text-small); color: var(--fhi-ink-2); }
+  .dw-every-key li { display: flex; align-items: baseline; gap: var(--fhi-space-2); }
+  .dw-every-key i { flex: none; width: 2rem; height: 12px; border-radius: 2px; }
+  .dw-every .dw-bar-track { height: 12px; }
+  i.dw-src-cms { background-color: var(--dw-bad); }
+  .dw-src-state .dw-bar-fill, i.dw-src-state { background: repeating-linear-gradient(135deg, var(--dw-bad) 0 3px, var(--dw-bad-1) 3px 6px); }
+  .dw-src-earlier .dw-bar-fill, i.dw-src-earlier { background: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-bad); }
+  .dw-every-tag { display: block; font-size: var(--fhi-text-small); color: var(--fhi-muted); }
+  h4.dw-every-sub { margin: var(--fhi-space-3) 0 0; padding-top: var(--fhi-space-3); border-top: 1px solid var(--fhi-line); }
+  th.dw-every-sub { padding-top: var(--fhi-space-3); font-weight: 700; }
+  /* On a wide screen, name, bar and value share one line, so 35 states don't run three screens long. */
+  @media (min-width: 700px) {
+    .dw-every .dw-bar { grid-template-columns: minmax(9rem, 15rem) minmax(0, 1fr) 3.5rem; grid-template-areas: "nm tr val"; align-items: center; }
+  }
   .dw-gap-row { text-align: center; }
-  .dw-table-wrap { overflow-x: auto; }
-  .dw-table { width: 100%; font-size: var(--fhi-text-small); }
-  .dw-table th { padding: var(--fhi-space-2); border-bottom: 2px solid var(--fhi-ink); color: var(--fhi-ink-2); font-size: var(--fhi-text-micro); letter-spacing: 0.06em; text-transform: uppercase; }
-  .dw-table td { padding: var(--fhi-space-2); border-bottom: 1px solid var(--fhi-line); }
-  .dw-table .dw-r { text-align: right; }
-  /* Row headers read as table text, not as the small capitals of the column headers. */
-  .dw-table tbody th { border-bottom: 1px solid var(--fhi-line); font-size: inherit; font-weight: 600; letter-spacing: normal; text-align: left; text-transform: none; }
   .dw-table .dw-nowrap { white-space: nowrap; }
   .dw-range { position: relative; display: inline-block; width: 90px; height: 8px; margin-right: 6px; border-radius: 2px; vertical-align: middle; background-color: var(--dw-track); }
-  .dw-range-fill { position: absolute; top: 0; bottom: 0; border-radius: 2px; background-color: var(--dw-red); }
+  .dw-range-fill { position: absolute; top: 0; bottom: 0; border-radius: 2px; background-color: var(--dw-bad); }
   .dw-pick { padding: 0; border: 0; background: none; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
-  .dw-mini { display: inline-block; height: 8px; margin-right: 6px; border-radius: 2px; vertical-align: middle; background-color: var(--dw-red); }
-  .dw-sources { display: grid; gap: var(--fhi-space-2); font-size: var(--fhi-text-small); color: var(--fhi-ink-2); }
-  .dw-tel, .dw-day { white-space: nowrap; }
+  .dw-mini { display: inline-block; height: 8px; margin-right: 6px; border-radius: 2px; vertical-align: middle; background-color: var(--dw-bad); }
   .dw-readout a { font-weight: 700; text-decoration: underline; }
-  .dw-chip { display: inline-block; padding: 0 var(--fhi-space-2); border-radius: 6px; background-color: var(--dw-u0); color: var(--dw-u5); font-size: var(--fhi-text-small); font-weight: 700; line-height: 1.4; overflow-wrap: normal; }
+  .dw-chip { display: inline-block; padding: 0 var(--fhi-space-2); border-radius: 6px; background-color: var(--dw-count-tint); color: var(--dw-count-deep); font-size: var(--fhi-text-small); font-weight: 700; line-height: 1.4; overflow-wrap: normal; }
   .dw-bar-tagged { grid-template-areas: "nm val" "ch ch" "tr tr"; }
   .dw-bar-chip { grid-area: ch; justify-self: start; }
-  .dw-list { display: grid; gap: var(--fhi-space-3); margin: 0; padding-left: 1.25rem; }
-  .dw-enroll > * { margin-block: 0; }
-  .dw-enroll { display: grid; gap: var(--fhi-space-2); }
-  .dw-two .dw-note { margin-block: 0; }
+  /* The open enrollment card: its line and link beside the one tile, and under it on a narrow screen. */
+  .dw-enroll-card { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: var(--fhi-space-2) var(--fhi-space-6); align-items: start; }
+  .dw-enroll-card > .dw-stat { grid-column: 2; grid-row: 1 / span 3; }
   .dw-theme { padding-top: var(--fhi-space-6); border-top: 3px solid var(--fhi-ink); }
   .dw-theme > h2 { margin: 0; padding-bottom: 0; }
   .dw-theme > p { margin-block: 0; }
-  .dw-answer { max-width: 46rem; font-size: var(--fhi-text-lead); font-weight: 700; line-height: 1.35; color: var(--fhi-ink); }
-  .dw-how { font-size: var(--fhi-text-small); }
-  .dw-how a, .dw-cta a { font-weight: 700; }
-  .dw-back { margin: 0; font-size: var(--fhi-text-small); }
-  .dw-back a { font-weight: 600; text-decoration: underline; }
-  .dw-method { display: grid; gap: var(--fhi-space-2); }
-  .dw-picks { max-width: 40rem; }
-  .dw-quote { margin: 0; padding-left: var(--fhi-space-4); border-left: 3px solid var(--fhi-line); }
-  .dw-quote p { margin: 0; font-size: var(--fhi-text-lead); }
   /* A third line on the tile, its insurer range, only where the map is big enough to read it. */
   .dw-map text.dw-sub, .dw-sub-key { display: none; }
   .dw-map text.dw-sub { font-size: 12px; font-weight: 500; }
@@ -118,7 +99,8 @@
     .dw-map g.dw-3 text.dw-v { transform: translateY(-7px); }
   }
   @media (max-width: 860px) {
-    .dw-two { grid-template-columns: minmax(0, 1fr); }
+    .dw-enroll-card { grid-template-columns: minmax(0, 1fr); }
+    .dw-enroll-card > .dw-stat { grid-column: auto; grid-row: auto; }
   }
   /* Two columns on a narrow laptop leave the map too small for tile values. */
   @media (min-width: 861px) and (max-width: 1100px) {
@@ -127,29 +109,20 @@
   }
   @media (max-width: 560px) {
     .dw-ticker { padding: var(--fhi-space-4); }
-    /* The counter and the four numbers on a phone's first screen: tighter type, the tiles two by two, and the lede, which repeats them, left to wider screens. */
+    /* The counter and the four numbers on a phone's first screen: tighter type, and the lede, which repeats them, left to wider screens. */
     .dw .fhi-page-lede { display: none; }
     .dw-ticker-head + p { font-size: var(--fhi-text-small); }
     .dw-ticker-label { flex-basis: 100%; }
-    .dw-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--fhi-space-3); }
-    .dw-stat b { font-size: 1.6rem; }
-    .dw-stat strong { font-size: 1.05rem; }
-    .dw-stat span { font-size: var(--fhi-text-small); }
     /* On a phone the tile values are too small to read: bigger codes, values in the readout. */
     .dw-map text { font-size: 20px; }
     .dw-map text.dw-v { display: none; }
     .dw-map text.dw-code { transform: translateY(9px); }
-    /* The charts shrink to about half size on a phone, so their text gets a boost; the edge labels may run a few pixels past the drawing. */
-    .dw-chart { overflow: visible; }
-    .dw-chart text { font-size: 20px; }
-    .dw-chart text.dw-end { font-size: 22px; }
   }
-  /* On a phone the bars and padding push the insurer table's last column out of its box; the numbers carry it. */
+  /* On a phone the bars push the insurer table's last column out of its box; the numbers carry it. */
   @media (max-width: 480px) {
     .dw-range, .dw-mini { display: none; }
     .dw-table .dw-nowrap { white-space: normal; }
-    .dw-table th, .dw-table td { padding-inline: var(--fhi-space-1); }
-    .dw-table td:first-child { overflow-wrap: anywhere; }
+    #every-table thead th { letter-spacing: normal; }
   }
 </style>
 {% endblock extra_style %}
@@ -177,14 +150,16 @@
 
         <div class="dw-stats" id="stats"></div>
 
+        {# Open enrollment has its own page: in season a card here points to it, and out of season one line. #}
         {% if enrollment %}
-        <section class="fhi-notice fhi-notice-info dw-enroll" id="enroll" aria-labelledby="enroll-title">
-            <h2 class="fhi-callout-title" id="enroll-title">Picking a plan for {{ enrollment.plan_year }}?</h2>
-            <p>{% if enrollment.medicare %}Medicare open enrollment runs from <span class="dw-day">{{ enrollment.starts|date:"F j" }}</span> to <span class="dw-day">{{ enrollment.ends|date:"F j, Y" }}</span>, for coverage that starts January 1. {% endif %}For HealthCare.gov plans, check <a href="https://www.healthcare.gov/quick-guide/dates-and-deadlines/">HealthCare.gov's dates</a>. State-run marketplaces may have different dates. Oregon now has its own marketplace: for {{ enrollment.plan_year }} plans, Oregon residents sign up at <a href="https://explorehealthor.gov/">ExploreHealthOR.gov</a>.</p>
-            <p>Before you pick, see how often each HealthCare.gov insurer in your state denied claims in 2024 (<a href="#insurers">insurer by insurer</a>) and how often large plans denied <a href="#prior-auth">prior authorization</a>. That's one thing to weigh, not a quality rating, and some of those insurers don't sell plans for {{ enrollment.plan_year }}. Then compare plans and costs {% if enrollment.medicare %}in <a href="https://www.medicare.gov/plan-compare/">Medicare Plan Finder</a> or {% endif %}on <a href="https://www.healthcare.gov/">HealthCare.gov</a>.</p>
-            <p id="enroll-renewing"><b>Already have a marketplace plan?</b> During open enrollment, log in, update your income and compare plans, even if you'll be renewed automatically. Plans and prices change every year, and a new plan only starts once you pay the first premium. For free, unbiased help, <a href="https://www.healthcare.gov/find-local-help/">find an independent assister near you</a> or call <a class="dw-tel" href="tel:+18003182596">1-800-318-2596</a>. <a href="{% url 'coverage-changes' %}#fall-checklist">Our fall checklist</a> has the rest.</p>
-            <p class="dw-note">Dates, numbers and links checked October 22, 2026.</p>
+        <section class="fhi-card dw-enroll-card" id="enroll" aria-labelledby="enroll-title">
+            <h2 class="fhi-card-title" id="enroll-title">Open enrollment for {{ enrollment.plan_year }}</h2>
+            <p id="enroll-line">Compare plans and costs for {{ enrollment.plan_year }}, even if you'll be renewed automatically.</p>
+            <div class="dw-stat"><p class="dw-stat-head"><b class="dw-num">23.1 million</b> <strong>picked a marketplace plan</strong></p><span>for 2026 in open enrollment, including people renewed automatically</span></div>
+            <p class="dw-cta"><a href="{% url 'open-enrollment' %}">Open enrollment: dates, numbers and what to do</a></p>
         </section>
+        {% else %}
+        <p class="dw-cta" id="enroll"><a href="{% url 'open-enrollment' %}">Signing up for marketplace coverage: numbers and what to do</a></p>
         {% endif %}
 
         <nav class="fhi-jump-links" aria-label="On this page">
@@ -197,6 +172,8 @@
             <a href="#more-data">More data and sources</a>
         </nav>
 
+        <p class="dw-key" id="colour-key"><b>Colours in the charts:</b> <span><i class="dw-sw"></i>red, bad for patients, such as denials;</span> <span><i class="dw-sw dw-sw-good"></i>green, good for patients, such as appeals won;</span> <span><i class="dw-sw dw-sw-cost"></i>orange, money spent;</span> <span><i class="dw-sw dw-sw-health"></i>purple, health measures;</span> <span><i class="dw-sw dw-sw-na"></i>grey, no data.</span></p>
+
         <section class="fhi-stack dw-theme" id="why-appeal" aria-labelledby="why-appeal-title">
             <h2 id="why-appeal-title">Why should I appeal?</h2>
             <p class="dw-answer">Very few denials are appealed, and about a third of appeals win.</p>
@@ -205,6 +182,7 @@
                 <h3 id="appeals-title">When a denial reaches independent doctors in California, patients usually win</h3>
                 <p>Independent review is the step after an insurer's own appeal, when outside doctors who don't work for the insurer decide. In 2025 they overturned 72% of the denials they reviewed, up from 47% in 2017. These are cases people chose to take that far, and that qualified, so the rate isn't the chance that any denial would be reversed.</p>
                 <div class="fhi-card">
+                    <p class="dw-key" id="imrkey"><span><i class="dw-sw dw-sw-good"></i>Denials overturned, decided in the patient's favour</span></p>
                     <div class="dw-two">
                         <div>
                             <h4>Denials overturned at independent review, California</h4>
@@ -246,12 +224,60 @@
                             </div>
                             <svg class="dw-map" id="dmap" viewBox="0 0 620 410" role="group" aria-label="Tile map of US states. Select a state for details."></svg>
                             <div class="dw-legend" id="dleg"></div>
+                            <details class="dw-years" id="dalt">
+                                <summary>Every state's figure, as a table</summary>
+                                <div class="dw-table-wrap"><table class="dw-table" id="dtable"></table></div>
+                            </details>
                         </div>
                         <div>
                             <div class="dw-readout" id="dread" aria-live="polite"></div>
                             <p class="dw-note" id="dnote"></p>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            {# Drawn here from the view, not by the script, so the bars and the table read without it. #}
+            <section class="fhi-stack" id="every-state" aria-labelledby="every-state-title">
+                <h3 id="every-state-title">Share of in-network claims denied, by state</h3>
+                <p>The 30 HealthCare.gov states from the map, highest first. Below them, on the same scale but listed apart, are five grey states we found a figure for elsewhere: California and Pennsylvania from their insurers' own reports for 2024 claims on the same federal form, and Georgia, Illinois and Virginia from the last year CMS's files include them.</p>
+                <div class="fhi-card fhi-stack">
+                    <ul class="dw-every-key" id="every-key">
+                        <li><i class="dw-src-cms"></i><span>HealthCare.gov insurers, {{ every_state.year }} claims (FHI's calculation from CMS's data)</span></li>
+                    </ul>
+                    <p class="dw-note" id="every-measure">Each bar is the % of in-network claims insurers denied in that state.</p>
+                    <div class="dw-bars dw-every" id="every-bars">
+                        {% for r in every_state.rows %}<div class="dw-bar dw-src-{{ r.group }}" data-s="{{ r.code }}"><div class="dw-bar-name"><span>{{ r.name }}{% if r.group != "cms" %} <span class="dw-every-tag">{{ r.source }}, {{ r.year }} claims</span>{% endif %}</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:{{ r.width }}%"></div></div><div class="dw-bar-value dw-num">{{ r.pct }}</div></div>
+                        {% endfor %}
+                    </div>
+                    <h4 class="dw-every-sub" id="every-other-title">Five grey states, from other sources or years</h4>
+                    <p class="dw-note" id="every-caveat">These sources and years aren't strictly comparable: California's and Pennsylvania's reports can count plans sold outside their marketplaces, which CMS's figures leave out, and Georgia, Illinois and Virginia are from earlier years, so don't rank those five against the 2024 states.</p>
+                    <ul class="dw-every-key" id="every-other-key">
+                        <li><i class="dw-src-state"></i><span>California and Pennsylvania insurers' own reports for 2024 claims on the same federal form (FHI's calculation from Covered California's and the Pennsylvania Insurance Department's data)</span></li>
+                        <li><i class="dw-src-earlier"></i><span>HealthCare.gov insurers in the last year CMS's files include the state, given on the bar (FHI's calculation from CMS's data)</span></li>
+                    </ul>
+                    <div class="dw-bars dw-every" id="every-other-bars">
+                        {% for r in every_state.others %}<div class="dw-bar dw-src-{{ r.group }}" data-s="{{ r.code }}"><div class="dw-bar-name"><span>{{ r.name }}{% if r.group != "cms" %} <span class="dw-every-tag">{{ r.source }}, {{ r.year }} claims</span>{% endif %}</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:{{ r.width }}%"></div></div><div class="dw-bar-value dw-num">{{ r.pct }}</div></div>
+                        {% endfor %}
+                    </div>
+                    <details class="dw-years" id="every-alt">
+                        <summary>Show these figures as a table</summary>
+                        <div class="dw-table-wrap">
+                            <table class="dw-table" id="every-table">
+                                <caption class="fhi-visually-hidden">In-network denial rates by state: the HealthCare.gov states highest first, then five grey states from other sources or years, with whose data FHI calculated each rate from and the claims year</caption>
+                                <thead><tr><th scope="col">State</th><th scope="col" class="dw-r">Denied</th><th scope="col">FHI's calculation from</th></tr></thead>
+                                <tbody>
+                                    {% for r in every_state.rows %}<tr data-s="{{ r.code }}"><th scope="row">{{ r.name }}</th><td class="dw-r dw-num">{{ r.pct }}</td><td>{{ r.source }}, {{ r.year }} claims</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                                <tbody id="every-other-rows">
+                                    <tr><th scope="colgroup" colspan="3" class="dw-every-sub">Five grey states, from other sources or years</th></tr>
+                                    {% for r in every_state.others %}<tr data-s="{{ r.code }}"><th scope="row">{{ r.name }}</th><td class="dw-r dw-num">{{ r.pct }}</td><td>{{ r.source }}, {{ r.year }} claims</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </details>
                 </div>
             </section>
 
@@ -282,6 +308,7 @@
                         <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="ffs">State Medicaid</button>
                     </div>
                     <p class="dw-note" id="panote"></p>
+                    <p class="dw-key" id="pakey"><span><i class="dw-sw"></i>Share of standard requests denied</span></p>
                     <div class="dw-bars" id="pabars"></div>
                 </div>
                 <div class="fhi-card" id="plan-clock">
@@ -316,6 +343,7 @@
                                 <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="all">All claims</button>
                             </div>
                             <svg class="dw-chart" id="tline" viewBox="0 0 560 270" role="img" aria-label="Line chart of the in-network denial rate by year, 2020 to 2024"></svg>
+                            <p class="dw-key" id="tkey"><span><i class="dw-sw"></i>Share of claims denied</span></p>
                             <p class="dw-note" id="tnote"></p>
                         </div>
                         <div class="dw-table-wrap"><table class="dw-table" id="ttable"></table></div>
@@ -326,7 +354,10 @@
             <section class="fhi-stack" id="why" aria-labelledby="why-title">
                 <h3 id="why-title">"Not medically necessary" is a small share of the reasons given</h3>
                 <p>Reasons insurers reported for denied in-network claims in 2024, as a share of all reasons reported. A claim can be counted under more than one reason, so these are shares of reasons, not of claims. "Other" is the largest group, which means many denials aren't explained in this data. "Not medically necessary" is 5.0% of all reasons (4.0 million of 78.6 million).</p>
-                <div class="fhi-card"><div class="dw-bars" id="reasons"></div></div>
+                <div class="fhi-card">
+                    <p class="dw-key" id="reasonskey"><span><i class="dw-sw"></i>Share of all reasons given for denials</span> <span><i class="dw-sw dw-sw-deep"></i>Darker, in bold: the reasons about medical judgment</span></p>
+                    <div class="dw-bars" id="reasons"></div>
+                </div>
             </section>
         </section>
 
@@ -347,6 +378,10 @@
                         </div>
                         <svg class="dw-map" id="cmap" viewBox="0 0 620 410" role="group" aria-label="Tile map of US states. Select a state for details."></svg>
                         <div class="dw-legend" id="cleg"></div>
+                        <details class="dw-years" id="calt">
+                            <summary>Every state's figure, as a table</summary>
+                            <div class="dw-table-wrap"><table class="dw-table" id="ctable"></table></div>
+                        </details>
                     </div>
                     <div>
                         <div class="dw-readout" id="cread" aria-live="polite"></div>
@@ -355,38 +390,7 @@
                     </div>
                 </div>
             </div>
-
-            <section class="fhi-stack" id="marketplace-trend" aria-labelledby="marketplace-trend-title">
-                <h3 id="marketplace-trend-title">Marketplace coverage fell 12% in 2026, the biggest drop in CMS's monthly count, which goes back to 2016</h3>
-                <p>This is everyone with a HealthCare.gov or state-run marketplace plan in effect in February, nationwide. February is the latest month CMS has published for 2026, so every year is compared on that month. From February 2025 to February 2026 the count fell from 21.8 million to 19.2 million, about 2.6 million fewer people. The only other drop was in 2019, and it was less than 1%.</p>
-                <p>The 2026 count isn't final yet: CMS keeps updating a year's numbers until its December data are in. And the Census uninsured figures above are for 2024, before this drop.</p>
-                <p id="denials-bridge">The denial rates higher up the page, on the <a href="#map-denials">state map</a> and in the <a href="#insurers">insurer table</a>, are for marketplace plans too, but only for HealthCare.gov states and insurers in 2024, while the count here covers every marketplace nationwide.</p>
-                <div class="fhi-card">
-                    <div class="dw-two">
-                        <div>
-                            <svg class="dw-chart" id="mkline" viewBox="0 0 560 270" role="img" aria-label="Line chart of people with marketplace coverage in effect each February, 2016 to 2026. 2026 is preliminary"></svg>
-                            <p class="dw-note" id="mknote">People with marketplace coverage in effect each February, nationwide. The hollow point, 2026, is preliminary.</p>
-                        </div>
-                        <div class="dw-table-wrap"><table class="dw-table" id="mktable"></table></div>
-                    </div>
-                </div>
-                <p><b>Picking a plan isn't the same as having coverage.</b> A plan picked in open enrollment only becomes coverage once the first month's premium is paid, if there is one. CMS counts everyone with a plan picked, including people renewed into one automatically. Coverage in effect in February came to 90% of those people for 2025, and 83% for 2026.</p>
-                <div class="dw-table-wrap dw-picks">
-                    <table class="dw-table" id="mkpicks">
-                        <caption class="fhi-visually-hidden">People with a plan picked in open enrollment, and with coverage in effect that February, 2025 and 2026</caption>
-                        <thead><tr><th scope="col"><span class="fhi-visually-hidden">Count</span></th><th scope="col" class="dw-r">2025</th><th scope="col" class="dw-r">2026</th></tr></thead>
-                        <tbody>
-                            <tr><th scope="row">People with a plan picked in open enrollment</th><td class="dw-r dw-num">24,319,713</td><td class="dw-r dw-num">23,130,860</td></tr>
-                            <tr><th scope="row">People with coverage in effect in February</th><td class="dw-r dw-num">21,776,626 <span class="dw-note">(90%)</span></td><td class="dw-r dw-num">19,169,147 <span class="dw-note">(83%, preliminary)</span></td></tr>
-                        </tbody>
-                    </table>
-                </div>
-                <p><b>Another count shows the drop too.</b> KFF, a nonprofit health policy research, polling, and news organization, counts people who buy their own health plan, on the marketplace or off it, from insurers' filings, and compares June with June:</p>
-                <blockquote class="dw-quote" cite="https://www.kff.org/affordable-care-act/individual-market-enrollment-continues-to-fall-through-mid-2026/"><p>Enrollment in the individual health insurance market fell 18% between June 2025 and June 2026.</p></blockquote>
-                <p class="dw-note">From <a href="https://www.kff.org/affordable-care-act/individual-market-enrollment-continues-to-fall-through-mid-2026/">KFF's analysis of October 14, 2026</a>. It counts a wider group in a later month than the CMS count above, so the two numbers aren't meant to match.</p>
-                <p><b>Leaving the marketplace doesn't always mean going uninsured.</b> In a <a href="https://www.kff.org/public-opinion/a-follow-up-survey-of-aca-marketplace-enrollees/">KFF survey</a> of adults who had a marketplace plan in 2025, taken in February and March 2026, 22% said they had moved to other coverage, such as through a job, Medicare, Medicaid or a plan bought outside the marketplace, and 9% said they were uninsured. KFF notes that some plans sold outside the marketplace may cover less and have fewer consumer protections.</p>
-                <p id="lost-coverage"><b>Lost coverage, or about to?</b> Losing health coverage can open a special enrollment period, usually from 60 days before it ends to 60 days after (90 days after, for Medicaid or CHIP), and you may need to send proof that you lost it. Medicaid and CHIP take applications any time of year. See <a href="https://www.healthcare.gov/coverage-outside-open-enrollment/special-enrollment-period/">what counts</a> on HealthCare.gov, or <a href="https://www.healthcare.gov/find-local-help/">find free help near you</a>.</p>
-            </section>
+            <p id="coverage-marketplace">Marketplace coverage, year by year, is on <a href="{% url 'open-enrollment' %}">the open enrollment page</a>.</p>
         </section>
 
         <section class="fhi-stack" id="costs" aria-labelledby="costs-title">
@@ -403,6 +407,7 @@
                 </div>
                 <p class="dw-note" id="dgnote"></p>
                 <p class="dw-note" id="dgprice">A <span class="dw-chip">Medicare price</span> tag marks a drug whose price Medicare negotiated with the drugmaker, or picked for a price that starts in 2028. That price caps what Medicare drug plans pay for the drug, plus a pharmacy fee, and it's not your copay: your plan sets your share, based on that price, so ask your plan how it affects you. <span id="dgends">Xarelto's ends after 2026 because a generic is now sold.</span> <a href="https://www.medicare.gov/health-drug-plans/part-d/what-drug-plans-cover/how-drug-plans-work">Medicare's list of negotiated drugs</a>.</p>
+                <p class="dw-key" id="dgkey"><span><i class="dw-sw dw-sw-cost"></i>Medicare Part D spending, before rebates</span></p>
                 <div class="dw-bars" id="dgbars"></div>
             </div>
             <div class="fhi-card" id="drug-help">
@@ -468,76 +473,83 @@
 
         <section class="fhi-stack" id="sources" aria-labelledby="sources-title">
             <p class="dw-kicker">Where the numbers come from</p>
-            <h2 id="sources-title">Sources and method</h2>
-            <p>How we got the numbers in each section, and the choices we made.</p>
-            <div class="dw-method" id="method-data">
-                <h3 class="fhi-card-title">The denial and appeal records</h3>
-                <ol class="dw-sources">
-                    <li><b>Denials and appeals:</b> <a href="https://www.cms.gov/marketplace/resources/data/public-use-files">CMS Transparency in Coverage public use files</a>, plan years 2022 to 2026, which report claims from 2020 to 2024. Individual-market medical plans only, in states using HealthCare.gov. Insurers report these figures to CMS themselves. Numbers are FHI's totals of issuer-level figures, not CMS's own, and closely match <a href="https://www.kff.org/patient-consumer-protections/claims-denials-and-appeals-in-aca-marketplace-plans-in-2024/">KFF's 2024 analysis</a> (KFF leaves out insurers with 1,000 or fewer claims, so it counts 39 fewer appeals). The headline figures count in-network claims, as KFF does: 84.5 million denials in 2024, 19% of in-network claims, and 263,021 internal appeals, about 1 for every 320 of those denials. The map and the trend chart open on in-network claims too. The trend chart can switch to out-of-network claims or all claims, and the map to all claims; the insurer table counts in-network claims only. Cells CMS suppresses for small counts are left out.</li>
-                </ol>
-            </div>
-            <div class="dw-method" id="method-why-appeal">
-                <h3 class="fhi-card-title">Why should I appeal?</h3>
-                <ol class="dw-sources">
-                    <li><b>Source:</b> the <a href="#method-data">denial and appeal records</a> above.</li>
-                    <li><b>Appeals:</b> the counts aren't split by network, so the 1-in-320 figure compares two totals, as KFF's does. Appeal win rates count only insurers that reported both appeals filed and appeals won, and an appeal won in part counts as won. Nine insurers' 2024 appeals-won counts look like reporting errors, so we leave them out too. Four reported none of their 346 to 1,813 appeals won, after winning a quarter to nearly half the year before. For three, CMS marked the win rate as suppressed but printed the counts anyway. Two reported exactly the same counts as in 2023. Their appeals still count as filed. With them, the 2024 rate would be 33.6%. We show only the latest year's win rate, because the insurers reporting change from year to year.</li>
-                    <li><b>Independent medical review:</b> <a href="https://data.chhs.ca.gov/dataset/independent-medical-review-imr-determinations-trend">California DMHC IMR determinations</a>, via the CalHHS Open Data Portal, 2010 to 2025 (file as published June 2026), with exact duplicate records removed. That's the step after an insurer's own appeal. Its rate isn't directly comparable with the insurers' own appeal results: different plans, people and review processes.</li>
-                </ol>
-                <p class="dw-back"><a href="#why-appeal">Back to Why should I appeal?</a></p>
-            </div>
-            <div class="dw-method" id="method-who-denies">
-                <h3 class="fhi-card-title">Who is denying the most?</h3>
-                <ol class="dw-sources">
-                    <li><b>Source:</b> the <a href="#method-data">denial and appeal records</a> above.</li>
-                    <li><b>State map:</b> Grey states run their own marketplace, so their insurers don't report to HealthCare.gov and aren't shown. That now includes Georgia and Illinois, which used HealthCare.gov in 2024 but have since moved to their own, so their 2024 claims aren't here either. Picking a grey state links to the best public source that state has, such as independent review results, appeal reports or complaint records, checked October 25, 2026; Rhode Island and Kentucky publish nothing current, so theirs says so with no link. Those figures come from each state, often cover employer plans or other measures, and aren't comparable with CMS's rates. Picking Georgia, Illinois or Virginia also shows its in-network denial rate from the latest CMS file that includes its insurers (2022 claims for Georgia, 2023 for Illinois, 2021 for Virginia), FHI's calculation from CMS's data on the same measure as the map. Those are older years, so don't rank them against the 2024 states. A state that a view leaves out has an outlined tile, and the line under the map says why. In Wyoming one insurer reports, and in Hawaii, Alaska, West Virginia and Montana two do, so those states' figures are those companies' figures. The small type on each tile, shown when the map is wide enough, is the lowest to the highest rate among that state's insurers in the insurer table. The map opens on in-network claims, and we don't map out-of-network claims by state (see What are they denying? below).</li>
-                    <li><b>Insurer table:</b> Each reporting HealthCare.gov insurer that handled at least 50,000 in-network claims in 2024. These are unadjusted rates, not a quality rating: they depend on the kinds of care each plan's members use and how each company counts claims. Appeal win rates are shown only for insurers with at least 30 appeals, and "not reported" means CMS withheld the number won or we left it out as a likely reporting error (see <a href="#method-why-appeal">Why should I appeal?</a> above). Why there are no out-of-network or all-claims rates: see <a href="#method-what-why">What are they denying?</a> below.</li>
-                    <li><b>Prior authorization:</b> each insurer's or state's own 2025 report, posted under the <a href="https://www.cms.gov/initiatives/burden-reduction/overview/interoperability/policies-regulations/cms-interoperability-prior-authorization-final-rule-cms-0057-f">CMS prior authorization rule</a>, copied as posted with a link to the source for every row. Reports whose scope or units weren't clear are left out. We gathered them from insurers' and states' own websites.</li>
-                    <li><b>Prior authorization deadlines:</b> the <a href="https://www.federalregister.gov/documents/2024/02/08/2024-00895/medicare-and-medicaid-programs-patient-protection-and-affordable-care-act-advancing-interoperability">rule as published in the Federal Register</a> (CMS-0057-F, February 2024) and the regulations for each kind of plan: 42&nbsp;CFR&nbsp;422.122, 422.568 and 422.572 (Medicare Advantage), 440.230 and 431.80 (state Medicaid), 438.210 and 438.404 (Medicaid plans), 457.495 and 457.1230 (CHIP), and 45&nbsp;CFR&nbsp;156.223 and 147.136 (HealthCare.gov insurers). Insurers in states that run their own marketplace through HealthCare.gov aren't covered. Medicaid plans' deadlines start with their first contract year beginning on or after January 1, 2026. A state-run CHIP program may follow its state's existing prior authorization law instead. CMS proposed adding prescription drugs in April 2026; we found no final rule. Checked October 23, 2026.</li>
-                </ol>
-                <p class="dw-back"><a href="#who-denies">Back to Who is denying the most?</a></p>
-            </div>
-            <div class="dw-method" id="method-what-why">
-                <h3 class="fhi-card-title">What are they denying, and why?</h3>
-                <ol class="dw-sources">
-                    <li><b>Source:</b> the <a href="#method-data">denial and appeal records</a> above.</li>
-                    <li><b>In network and out:</b> CMS's data dictionary defines the one claims count in the files for 2020 and 2021 as in-network only, so the other two views start in 2022. In 2024 insurers denied 16.4 million of 44.4 million out-of-network claims (37%) and 100.8 million of 494.7 million claims overall (20%), the same national rates KFF reports. For 8.6 million of those out-of-network denials, about half, insurers gave the reason that the plan doesn't cover care outside its network (CMS's closed-network reason, reported per plan; one claim can count under more than one reason). KFF doesn't break out-of-network rates down by state or insurer, and we don't map them by state: in 2024, 120 of the 157 insurers reporting them sold only HMO or EPO plans (from CMS's 2024 plan list), which mostly don't cover out-of-network care by design, so a state's rate would mostly show which kinds of plans its insurers sell, not how they handle claims. We don't show them insurer by insurer either: even among insurers that also sold PPO or POS plans, many had most of their out-of-network claims on HMO or EPO plans, or gave that closed-network reason for most of those denials. The insurer table has no all-claims rates for the same reason: they fold in those out-of-network denials, so an insurer whose plans mostly don't cover out-of-network care could rank worse for that alone. Two insurers reported more out-of-network denials than claims in 2024, which can't be right: Moda Health Plan in Alaska and Blue Cross Blue Shield of North Dakota. We leave them out of the out-of-network and all-claims figures, and the map's all-claims view shows no figure for Alaska or North Dakota. Blue Cross and Blue Shield of Kansas (2022 claims) and Blue Cross Blue Shield of North Dakota (2023) are left out of those years the same way. There's no out-of-network change from 2023, which mostly reflects which insurers reported, and no out-of-network appeals figure. The states and insurers that report change each year (Georgia and Illinois have since left HealthCare.gov, and insurers that leave stop reporting), and rates aren't adjusted for the kinds of care people used.</li>
-                    <li><b>Denial reasons:</b> reported per plan for in-network claims, and one claim can count under several reasons, so they're shown as shares of reasons; like KFF, we leave out CMS's closed-network reason, covered above.</li>
-                </ol>
-                <p class="dw-back"><a href="#what-why">Back to What are they denying, and why?</a></p>
-            </div>
-            <div class="dw-method" id="method-coverage">
-                <h3 class="fhi-card-title">Who doesn't have coverage?</h3>
-                <ol class="dw-sources">
-                    <li><b>Uninsured:</b> <a href="https://www.census.gov/programs-surveys/sahie.html">Census Small Area Health Insurance Estimates</a>, under 65, 2023 and 2024. The national figure adds up the state estimates.</li>
-                    <li><b>Uninsured and health:</b> compared across 48 states and DC (Kentucky and Pennsylvania have no 2023 estimates). The uninsured rate goes with the share of adults in fair or poor health (correlation 0.52), less with diabetes (0.36), and not with depression (-0.10).</li>
-                    <li><b>Health measures:</b> <a href="https://data.cdc.gov/d/i46a-9kgh">CDC PLACES</a> county data, 2025 release (mostly 2023 BRFSS). Adult crude prevalence, county estimates weighted by adult population. Kentucky and Pennsylvania have no 2023 estimates in this release. Use of CDC data does not imply CDC endorsement.</li>
-                    <li><b>Marketplace coverage:</b> <a href="https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/health-insurance-marketplace/health-insurance-exchanges-monthly-effectuated-enrollment">CMS Health Insurance Exchanges Monthly Effectuated Enrollment</a>, the file with data as of May 5, 2026 (Data_asof_20260505), which runs to February 2026. Coverage in effect is what CMS calls effectuated enrollment: an active plan, with its first month's premium paid if it has one. These are national totals for February of each year, HealthCare.gov and state-run marketplaces together, all from this one file. CMS updates each month's count until the year's December data are in, so 2026 is preliminary and may change. Earlier CMS reports counted the same month sooner: its early 2025 report had 23.4 million for February 2025 (counted March 15, 2025), against 21.8 million in this file, so mixing reports would make the drop look bigger. CMS notes that Minnesota's latest data leave out a subgroup of enrollments after a reporting change; without Minnesota, the 2026 drop is 11.9%. CMS revised its 2021 counts for a new method (<a href="https://www.cms.gov/files/document/early-2022-and-full-year-2021-effectuated-enrollment-report.pdf">its early 2022 report</a>), and its notes for this file don't say whether 2016 to 2020 were counted again the same way.</li>
-                    <li><b>Plan picks:</b> CMS's Marketplace Open Enrollment Period public use files for <a href="https://www.cms.gov/data-research/statistics-trends-reports/marketplace-products/2025-marketplace-open-enrollment-period-public-use-files">2025</a> and <a href="https://www.cms.gov/data-research/statistics-trends-reports/marketplace-products/2026-marketplace-open-enrollment-period-public-use-files">2026</a>, the national total from the state-level file, HealthCare.gov and state-run marketplaces together. CMS counts people, not plans, including people renewed into a plan automatically. In CMS's words, "plan selections will only become coverage for consumers that effectuate their coverage by paying their first monthly premium" (<a href="https://www.cms.gov/files/document/2026-public-use-files-faqs.pdf">public use files FAQs</a>). The 90% and 83% divide each February's coverage by that year's plan picks. CMS's early 2025 report gave 96%, from its earlier February count.</li>
-                    <li><b>KFF:</b> Matt McGough, Justin Lo and Cynthia Cox, <a href="https://www.kff.org/affordable-care-act/individual-market-enrollment-continues-to-fall-through-mid-2026/">"Individual Market Enrollment Continues to Fall Through Mid-2026"</a> (KFF, October 14, 2026): plans people buy themselves, on and off the marketplaces, 25.2 million in June 2025 and 20.5 million in June 2026, from insurers' filings compiled by Mark Farrah Associates. The survey is <a href="https://www.kff.org/public-opinion/a-follow-up-survey-of-aca-marketplace-enrollees/">"Cost Concerns and Coverage Changes: A Follow-Up Survey of ACA Marketplace Enrollees"</a> (KFF, March 19, 2026): 1,117 adults who had marketplace plans in 2025, asked from February 12 to March 2, 2026, with a margin of error of plus or minus 3.8 points. Checked October 22, 2026.</li>
-                </ol>
-                <p class="dw-back"><a href="#coverage">Back to Who doesn't have coverage?</a></p>
-            </div>
-            <div class="dw-method" id="method-costs">
-                <h3 class="fhi-card-title">Drug costs</h3>
-                <ol class="dw-sources">
-                    <li><b>Drug spending:</b> <a href="https://data.cms.gov/summary-statistics-on-use-and-payments/medicare-medicaid-spending-by-drug/medicare-part-d-spending-by-drug">CMS Medicare Part D Spending by Drug</a>, 2020 to 2024. Gross spending: what Medicare, plans and patients paid together, before manufacturer rebates. CMS marks some names with an asterisk where spending per dose mixes routes of administration; no per-dose figure is shown here, so the mark is left off. The short "for" label next to each drug is its main approved use, checked against MedlinePlus or the drug's FDA label; many drugs have other uses too.</li>
-                    <li><b>Medicare prices:</b> CMS's <a href="https://www.cms.gov/initiatives/medicare-prescription-drug-affordability/overview/medicare-drug-price-negotiation-program/selected-drugs-negotiated-prices">selected drugs and negotiated prices</a>, with its <a href="https://www.cms.gov/files/document/fact-sheet-negotiated-prices-initial-price-applicability-year-2026.pdf">2026 fact sheet</a>, <a href="https://www.cms.gov/files/document/fact-sheet-negotiated-prices-ipay-2027.pdf">2027 fact sheet</a> and <a href="https://www.cms.gov/files/document/factsheet-medicare-negotiation-selected-drug-list-ipay-2028.pdf">2028 fact sheet</a>. CMS removed Xarelto from the list from January 1, 2027, because a generic is marketed, and is due to publish the 2028 prices by November 30, 2026. The price plans pay can't exceed the negotiated price plus a dispensing fee, and your share is based on it (<a href="https://www.cms.gov/files/document/ipay-2028-final-guidance.pdf">CMS guidance</a>). Ozempic's price also covers Rybelsus and Wegovy. Checked October 23, 2026.</li>
-                    <li><b>Medicare drug help:</b> the out-of-pocket cap from <a href="https://www.cms.gov/files/document/2027-announcement.pdf">CMS's 2027 rate announcement</a> (table V-2) and Medicare.gov's pages on <a href="https://www.medicare.gov/health-drug-plans/part-d/basics/costs">drug costs</a>, <a href="https://www.medicare.gov/basics/costs/help/drug-costs">Extra Help</a> and the <a href="https://www.medicare.gov/prescription-payment-plan">Prescription Payment Plan</a>. Checked October 23, 2026.</li>
-                </ol>
-                <p class="dw-back"><a href="#costs">Back to Drug costs</a></p>
-            </div>
-            <div class="dw-method" id="method-other">
-                <h3 class="fhi-card-title">Everything else</h3>
-                <ol class="dw-sources">
-                    <li><b>Today's counter:</b> 2024 in-network marketplace denials divided by 366 days, counted up from your local midnight. It spreads a yearly total evenly for illustration; it isn't a count of denials happening today.</li>
-                    {% if enrollment %}<li><b>Open enrollment:</b> Medicare's dates from <a href="https://www.cms.gov/newsroom/press-releases/medicare-advantage-medicare-prescription-drug-programs-expected-remain-stable-2027">CMS's announcement</a> (September 28, 2026) and <a href="https://www.medicare.gov/basics/get-started-with-medicare/get-more-coverage/joining-a-plan">Medicare.gov</a>. CMS has set HealthCare.gov's {{ enrollment.plan_year }} sign-up dates (<a href="https://www.cms.gov/files/document/ftr-requirement-py26-27-statement.pdf">its statement of July 27, 2026</a>), but the court ruling behind them is under appeal, so we link to HealthCare.gov rather than print them. Checked October 22, 2026. Oregon's move to its own marketplace is from <a href="https://www.healthcare.gov/marketplace-in-your-state/">HealthCare.gov's state page</a>, and insurers leaving the marketplace for 2027 from <a href="https://www.kff.org/affordable-care-act/tracking-insurer-participation-changes-in-the-aca-marketplaces-in-2027/">KFF's tracker</a>, checked October 19, 2026.</li>{% endif %}
-                    <li><b>Claim files:</b> free from employer and marketplace plans under the federal claims rules (<a href="https://www.ecfr.gov/current/title-29/subtitle-B/chapter-XXV/subchapter-G/part-2560/section-2560.503-1">29&nbsp;CFR&nbsp;2560.503-1</a> and 45&nbsp;CFR&nbsp;147.136) and from Medicaid plans (<a href="https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-C/part-438/subpart-F/section-438.406">42&nbsp;CFR&nbsp;438.406</a>). Medicare Advantage and drug plans may charge a reasonable amount for copying and mailing, under section 50.5.2 of <a href="https://www.cms.gov/Medicare/Appeals-and-Grievances/MMCAG/Downloads/Parts-C-and-D-Enrollee-Grievances-Organization-Coverage-Determinations-and-Appeals-Guidance.pdf">CMS's appeals guidance</a>. Checked October 19, 2026.</li>
-                    <li><b>Phone numbers and other sites:</b> each taken from the office's or group's own page, checked October 23, 2026.</li>
-                </ol>
+            {# Closed until opened; js/denial_watch_charts.js opens it for a link to anything inside. #}
+            <div class="fhi-accordion">
+                <details class="fhi-accordion-item" id="sources-details">
+                    <summary><h2 class="fhi-accordion-question" id="sources-title">Sources and method</h2></summary>
+                    <div class="fhi-accordion-body fhi-stack">
+                        <p>How we got the numbers in each section, and the choices we made.</p>
+                        <div class="dw-method" id="method-data">
+                            <h3 class="fhi-card-title">The denial and appeal records</h3>
+                            <ol class="dw-sources">
+                                <li><b>Denials and appeals:</b> <a href="https://www.cms.gov/marketplace/resources/data/public-use-files">CMS Transparency in Coverage public use files</a>, plan years 2022 to 2026, which report claims from 2020 to 2024. Individual-market medical plans only, in states using HealthCare.gov. Insurers report these figures to CMS themselves. Numbers are FHI's totals of issuer-level figures, not CMS's own, and closely match <a href="https://www.kff.org/patient-consumer-protections/claims-denials-and-appeals-in-aca-marketplace-plans-in-2024/">KFF's 2024 analysis</a> (KFF leaves out insurers with 1,000 or fewer claims, so it counts 39 fewer appeals). The headline figures count in-network claims, as KFF does: 84.5 million denials in 2024, 19% of in-network claims, and 263,021 internal appeals, about 1 for every 320 of those denials. The map and the trend chart open on in-network claims too. The trend chart can switch to out-of-network claims or all claims, and the map to all claims; the insurer table counts in-network claims only. Cells CMS suppresses for small counts are left out.</li>
+                            </ol>
+                        </div>
+                        <p class="dw-sources" id="method-enroll-pointer"><b>Open enrollment and marketplace coverage:</b> {% if enrollment %}the plan picks at the top of this page are CMS's count, from its <a href="https://www.cms.gov/data-research/statistics-trends-reports/marketplace-products/2026-marketplace-open-enrollment-period-public-use-files">2026 Marketplace Open Enrollment Period public use files</a>. The marketplace numbers{% else %}the marketplace numbers{% endif %}, and how we got them, are in <a href="{% url 'open-enrollment' %}#method-enroll">the open enrollment page's sources</a>.</p>
+                        <div class="dw-method" id="method-why-appeal">
+                            <h3 class="fhi-card-title">Why should I appeal?</h3>
+                            <ol class="dw-sources">
+                                <li><b>Source:</b> the <a href="#method-data">denial and appeal records</a> above.</li>
+                                <li><b>Appeals:</b> the counts aren't split by network, so the 1-in-320 figure compares two totals, as KFF's does. Appeal win rates count only insurers that reported both appeals filed and appeals won, and an appeal won in part counts as won. Nine insurers' 2024 appeals-won counts look like reporting errors, so we leave them out too. Four reported none of their 346 to 1,813 appeals won, after winning a quarter to nearly half the year before. For three, CMS marked the win rate as suppressed but printed the counts anyway. Two reported exactly the same counts as in 2023. Their appeals still count as filed. With them, the 2024 rate would be 33.6%. We show only the latest year's win rate, because the insurers reporting change from year to year.</li>
+                                <li><b>Independent medical review:</b> <a href="https://data.chhs.ca.gov/dataset/independent-medical-review-imr-determinations-trend">California DMHC IMR determinations</a>, via the CalHHS Open Data Portal, 2010 to 2025 (file as published June 2026), with exact duplicate records removed. That's the step after an insurer's own appeal. Its rate isn't directly comparable with the insurers' own appeal results: different plans, people and review processes.</li>
+                            </ol>
+                            <p class="dw-back"><a href="#why-appeal">Back to Why should I appeal?</a></p>
+                        </div>
+                        <div class="dw-method" id="method-who-denies">
+                            <h3 class="fhi-card-title">Who is denying the most?</h3>
+                            <ol class="dw-sources">
+                                <li><b>Source:</b> the <a href="#method-data">denial and appeal records</a> above.</li>
+                                <li><b>State map:</b> Grey states run their own marketplace, so their insurers don't report to HealthCare.gov and aren't shown. That now includes Georgia and Illinois, which used HealthCare.gov in 2024 but have since moved to their own, so their 2024 claims aren't here either. Picking a grey state links to the best public source that state has, such as independent review results, appeal reports or complaint records, checked October 25, 2026; Rhode Island and Kentucky publish nothing current, so theirs says so with no link. Those figures come from each state, often cover employer plans or other measures, and aren't comparable with CMS's rates. Picking Georgia, Illinois or Virginia also shows its in-network denial rate from the latest CMS file that includes its insurers (2022 claims for Georgia, 2023 for Illinois, 2021 for Virginia), FHI's calculation from CMS's data on the same measure as the map. Those are older years, so don't rank them against the 2024 states. A state that a view leaves out has an outlined tile, and the line under the map says why. In Wyoming one insurer reports, and in Hawaii, Alaska, West Virginia and Montana two do, so those states' figures are those companies' figures. The small type on each tile, shown when the map is wide enough, is the lowest to the highest rate among that state's insurers in the insurer table. The map opens on in-network claims, and we don't map out-of-network claims by state (see What are they denying? below).</li>
+                                <li id="method-every-state"><b>Every state chart:</b> it puts the map's 2024 rates beside two other kinds of in-network denial rates, both FHI's calculations: from the 2024 claims that 8 insurers in California (the ones with usable reports) and 11 in Pennsylvania reported on the same federal form, posted by <a href="https://www.hbex.ca.gov/insurance-companies/denied-claims/">Covered California</a> and the <a href="https://www.pa.gov/content/dam/copapwp-pagov/en/insurance/documents/posted-filings-reports-orders/posted-reports/aca-plan-transparency-reports/transparency-coverage-report-aca-health-plans-2025.pdf">Pennsylvania Insurance Department</a>, and from the last CMS files that include Georgia, Illinois and Virginia, described above.</li>
+                                <li><b>Insurer table:</b> Each reporting HealthCare.gov insurer that handled at least 50,000 in-network claims in 2024. These are unadjusted rates, not a quality rating: they depend on the kinds of care each plan's members use and how each company counts claims. Appeal win rates are shown only for insurers with at least 30 appeals, and "not reported" means CMS withheld the number won or we left it out as a likely reporting error (see <a href="#method-why-appeal">Why should I appeal?</a> above). Why there are no out-of-network or all-claims rates: see <a href="#method-what-why">What are they denying?</a> below.</li>
+                                {% if enrollment %}<li><b>Picking a {{ enrollment.plan_year }} plan:</b> Oregon's move to its own marketplace is from <a href="https://www.healthcare.gov/marketplace-in-your-state/">HealthCare.gov's state page</a>, and insurers leaving the marketplace for 2027 from <a href="https://www.kff.org/affordable-care-act/tracking-insurer-participation-changes-in-the-aca-marketplaces-in-2027/">KFF's tracker</a>, checked October 19, 2026.</li>{% endif %}
+                                <li><b>Prior authorization:</b> each insurer's or state's own 2025 report, posted under the <a href="https://www.cms.gov/initiatives/burden-reduction/overview/interoperability/policies-regulations/cms-interoperability-prior-authorization-final-rule-cms-0057-f">CMS prior authorization rule</a>, copied as posted with a link to the source for every row. Reports whose scope or units weren't clear are left out. We gathered them from insurers' and states' own websites.</li>
+                                <li><b>Prior authorization deadlines:</b> the <a href="https://www.federalregister.gov/documents/2024/02/08/2024-00895/medicare-and-medicaid-programs-patient-protection-and-affordable-care-act-advancing-interoperability">rule as published in the Federal Register</a> (CMS-0057-F, February 2024) and the regulations for each kind of plan: 42&nbsp;CFR&nbsp;422.122, 422.568 and 422.572 (Medicare Advantage), 440.230 and 431.80 (state Medicaid), 438.210 and 438.404 (Medicaid plans), 457.495 and 457.1230 (CHIP), and 45&nbsp;CFR&nbsp;156.223 and 147.136 (HealthCare.gov insurers). Insurers in states that run their own marketplace through HealthCare.gov aren't covered. Medicaid plans' deadlines start with their first contract year beginning on or after January 1, 2026. A state-run CHIP program may follow its state's existing prior authorization law instead. CMS proposed adding prescription drugs in April 2026; we found no final rule. Checked October 23, 2026.</li>
+                            </ol>
+                            <p class="dw-back"><a href="#who-denies">Back to Who is denying the most?</a></p>
+                        </div>
+                        <div class="dw-method" id="method-what-why">
+                            <h3 class="fhi-card-title">What are they denying, and why?</h3>
+                            <ol class="dw-sources">
+                                <li><b>Source:</b> the <a href="#method-data">denial and appeal records</a> above.</li>
+                                <li><b>In network and out:</b> CMS's data dictionary defines the one claims count in the files for 2020 and 2021 as in-network only, so the other two views start in 2022. In 2024 insurers denied 16.4 million of 44.4 million out-of-network claims (37%) and 100.8 million of 494.7 million claims overall (20%), the same national rates KFF reports. For 8.6 million of those out-of-network denials, about half, insurers gave the reason that the plan doesn't cover care outside its network (CMS's closed-network reason, reported per plan; one claim can count under more than one reason). KFF doesn't break out-of-network rates down by state or insurer, and we don't map them by state: in 2024, 120 of the 157 insurers reporting them sold only HMO or EPO plans (from CMS's 2024 plan list), which mostly don't cover out-of-network care by design, so a state's rate would mostly show which kinds of plans its insurers sell, not how they handle claims. We don't show them insurer by insurer either: even among insurers that also sold PPO or POS plans, many had most of their out-of-network claims on HMO or EPO plans, or gave that closed-network reason for most of those denials. The insurer table has no all-claims rates for the same reason: they fold in those out-of-network denials, so an insurer whose plans mostly don't cover out-of-network care could rank worse for that alone. Two insurers reported more out-of-network denials than claims in 2024, which can't be right: Moda Health Plan in Alaska and Blue Cross Blue Shield of North Dakota. We leave them out of the out-of-network and all-claims figures, and the map's all-claims view shows no figure for Alaska or North Dakota. Blue Cross and Blue Shield of Kansas (2022 claims) and Blue Cross Blue Shield of North Dakota (2023) are left out of those years the same way. There's no out-of-network change from 2023, which mostly reflects which insurers reported, and no out-of-network appeals figure. The states and insurers that report change each year (Georgia and Illinois have since left HealthCare.gov, and insurers that leave stop reporting), and rates aren't adjusted for the kinds of care people used.</li>
+                                <li><b>Denial reasons:</b> reported per plan for in-network claims, and one claim can count under several reasons, so they're shown as shares of reasons; like KFF, we leave out CMS's closed-network reason, covered above.</li>
+                            </ol>
+                            <p class="dw-back"><a href="#what-why">Back to What are they denying, and why?</a></p>
+                        </div>
+                        <div class="dw-method" id="method-coverage">
+                            <h3 class="fhi-card-title">Who doesn't have coverage?</h3>
+                            <ol class="dw-sources">
+                                <li><b>Uninsured:</b> <a href="https://www.census.gov/programs-surveys/sahie.html">Census Small Area Health Insurance Estimates</a>, under 65, 2023 and 2024. The national figure adds up the state estimates.</li>
+                                <li><b>Uninsured and health:</b> compared across 48 states and DC (Kentucky and Pennsylvania have no 2023 estimates). The uninsured rate goes with the share of adults in fair or poor health (correlation 0.52), less with diabetes (0.36), and not with depression (-0.10).</li>
+                                <li><b>Health measures:</b> <a href="https://data.cdc.gov/d/i46a-9kgh">CDC PLACES</a> county data, 2025 release (mostly 2023 BRFSS). Adult crude prevalence, county estimates weighted by adult population. Kentucky and Pennsylvania have no 2023 estimates in this release. Use of CDC data does not imply CDC endorsement.</li>
+                            </ol>
+                            <p class="dw-back"><a href="#coverage">Back to Who doesn't have coverage?</a></p>
+                        </div>
+                        <div class="dw-method" id="method-costs">
+                            <h3 class="fhi-card-title">Drug costs</h3>
+                            <ol class="dw-sources">
+                                <li><b>Drug spending:</b> <a href="https://data.cms.gov/summary-statistics-on-use-and-payments/medicare-medicaid-spending-by-drug/medicare-part-d-spending-by-drug">CMS Medicare Part D Spending by Drug</a>, 2020 to 2024. Gross spending: what Medicare, plans and patients paid together, before manufacturer rebates. CMS marks some names with an asterisk where spending per dose mixes routes of administration; no per-dose figure is shown here, so the mark is left off. The short "for" label next to each drug is its main approved use, checked against MedlinePlus or the drug's FDA label; many drugs have other uses too.</li>
+                                <li><b>Medicare prices:</b> CMS's <a href="https://www.cms.gov/initiatives/medicare-prescription-drug-affordability/overview/medicare-drug-price-negotiation-program/selected-drugs-negotiated-prices">selected drugs and negotiated prices</a>, with its <a href="https://www.cms.gov/files/document/fact-sheet-negotiated-prices-initial-price-applicability-year-2026.pdf">2026 fact sheet</a>, <a href="https://www.cms.gov/files/document/fact-sheet-negotiated-prices-ipay-2027.pdf">2027 fact sheet</a> and <a href="https://www.cms.gov/files/document/factsheet-medicare-negotiation-selected-drug-list-ipay-2028.pdf">2028 fact sheet</a>. CMS removed Xarelto from the list from January 1, 2027, because a generic is marketed, and is due to publish the 2028 prices by November 30, 2026. The price plans pay can't exceed the negotiated price plus a dispensing fee, and your share is based on it (<a href="https://www.cms.gov/files/document/ipay-2028-final-guidance.pdf">CMS guidance</a>). Ozempic's price also covers Rybelsus and Wegovy. Checked October 23, 2026.</li>
+                                <li><b>Medicare drug help:</b> the out-of-pocket cap from <a href="https://www.cms.gov/files/document/2027-announcement.pdf">CMS's 2027 rate announcement</a> (table V-2) and Medicare.gov's pages on <a href="https://www.medicare.gov/health-drug-plans/part-d/basics/costs">drug costs</a>, <a href="https://www.medicare.gov/basics/costs/help/drug-costs">Extra Help</a> and the <a href="https://www.medicare.gov/prescription-payment-plan">Prescription Payment Plan</a>. Checked October 23, 2026.</li>
+                            </ol>
+                            <p class="dw-back"><a href="#costs">Back to Drug costs</a></p>
+                        </div>
+                        <div class="dw-method" id="method-other">
+                            <h3 class="fhi-card-title">Everything else</h3>
+                            <ol class="dw-sources">
+                                <li><b>Today's counter:</b> 2024 in-network marketplace denials divided by 366 days, counted up from your local midnight. It spreads a yearly total evenly for illustration; it isn't a count of denials happening today.</li>
+                                <li><b>Claim files:</b> free from employer and marketplace plans under the federal claims rules (<a href="https://www.ecfr.gov/current/title-29/subtitle-B/chapter-XXV/subchapter-G/part-2560/section-2560.503-1">29&nbsp;CFR&nbsp;2560.503-1</a> and 45&nbsp;CFR&nbsp;147.136) and from Medicaid plans (<a href="https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-C/part-438/subpart-F/section-438.406">42&nbsp;CFR&nbsp;438.406</a>). Medicare Advantage and drug plans may charge a reasonable amount for copying and mailing, under section 50.5.2 of <a href="https://www.cms.gov/Medicare/Appeals-and-Grievances/MMCAG/Downloads/Parts-C-and-D-Enrollee-Grievances-Organization-Coverage-Determinations-and-Appeals-Guidance.pdf">CMS's appeals guidance</a>. Checked October 19, 2026.</li>
+                                <li><b>Phone numbers and other sites:</b> each taken from the office's or group's own page, checked October 23, 2026.</li>
+                            </ol>
+                        </div>
+                    </div>
+                </details>
             </div>
         </section>
     </div>
 </div>
 {{ denial_watch_data|json_script:"dw-data" }}
-<script src="{% static 'js/denial_watch.js' %}" defer></script>
+<script src="{% static 'js/denial_watch_charts.js' %}" defer></script>
+<script src="{% static 'js/denial_watch.js' %}" data-open-enrollment="{% url 'open-enrollment' %}" defer></script>
 {% endblock content %}

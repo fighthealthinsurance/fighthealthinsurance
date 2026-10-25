@@ -282,6 +282,48 @@ def earlier_states(per_year, shown):
     return out
 
 
+STATE_REPORTS_CSV = HERE / "state_reports.csv"
+
+
+def load_state_reports(shown, earlier, path=STATE_REPORTS_CSV):
+    """Grey states' in-network rates from their insurers' own reports on CMS's form, each row checked against its source_url.
+
+    Only the every-state chart and the grey state's readout show them, never the map, the national figures or the ranges.
+    """
+    out, name, year = {}, pathlib.Path(path).name, CLAIMS_YEAR[LATEST_PY]
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            st = r["state"]
+            if st not in STATE_NAMES:
+                sys.exit(f"{name}: {st!r} isn't a state code")
+            if st in out:
+                sys.exit(f"{name}: two rows for {st}")
+            # A state with a CMS figure already has one; a second, from another source, would give it two bars.
+            if st in shown or st in earlier:
+                sys.exit(f"{name}: {st} already has a CMS figure")
+            if r["claims_year"] != str(year):
+                sys.exit(f"{name}: {st} is for {r['claims_year']} claims, and the chart sets these beside the map's {year}")
+            for k in ("insurers", "in_network_claims"):
+                if not re.fullmatch(r"[1-9][0-9]*", r[k]):
+                    sys.exit(f"{name}: {k} must be a count above 0 for {st}, not {r[k]!r}")
+            if not re.fullmatch(r"[0-9]+", r["in_network_denied"]):
+                sys.exit(f"{name}: in_network_denied must be a count for {st}, not {r['in_network_denied']!r}")
+            claims, denied = int(r["in_network_claims"]), int(r["in_network_denied"])
+            if denied > claims:
+                sys.exit(f"{name}: {st} has more in-network denials than claims")
+            if not r["publisher"].strip():
+                sys.exit(f"{name}: {st} needs the publisher the page names")
+            if not r["source_url"].startswith("https://"):
+                sys.exit(f"{name}: source_url must be https for {st}")
+            try:
+                datetime.date.fromisoformat(r["accessed"])
+            except ValueError:
+                sys.exit(f"{name}: accessed must be a date like 2026-10-25 for {st}")
+            out[st] = dict(year=year, rate=denied / claims, claims=claims, denied=denied, insurers=int(r["insurers"]),
+                           publisher=r["publisher"].strip(), url=r["source_url"])
+    return out
+
+
 def build_denials():
     trend, per_year = [], {}
     for py, cy in CLAIMS_YEAR.items():
@@ -327,9 +369,10 @@ def build_denials():
                           out=rate_cell(i, "out", net_only), all=rate_cell(i, "all")))
 
     reason_rows = sorted(({"k": REASONS[k], "v": v} for k, v in reasons.items()), key=lambda x: -x["v"])
+    earlier = earlier_states(per_year, set(states))
     return dict(trend=trend, states=states, issuers=table, reasons=reason_rows,
                 reason_meta=dict(entries=sum(reasons.values()), plan_denied_in=plan_denied),
-                oon_meta=oon_meta(issuers, types), earlier=earlier_states(per_year, set(states)))
+                oon_meta=oon_meta(issuers, types), earlier=earlier, state_reports=load_state_reports(set(states), earlier))
 
 
 def oon_meta(issuers, types):
@@ -748,6 +791,9 @@ def main(argv=None):
     for k, e in bundle["earlier"].items():
         print("earlier", k, e["year"], f"(plan year {e['py']})", f"in {e['denied']:,.0f} of {e['claims']:,.0f} = {e['rate']:.2%}",
               f"({e['issuers']} insurers)", "lowest to highest", e["span"])
+    for k, e in bundle["state_reports"].items():
+        print("state report", k, e["year"], f"in {e['denied']:,} of {e['claims']:,} = {e['rate']:.2%}",
+              f"({e['insurers']} insurers, {e['publisher']})")
     om = bundle["oon_meta"]
     print("out-of-network by 2024 plan types: network-only", om["net_only"], "other", om["other"], "unknown", om["unknown_plan_types"])
     print("closed-network reason", f"{om['closed_network']['denied']:,.0f}", f"= {om['closed_network']['share']:.1%} of out-of-network denials")
