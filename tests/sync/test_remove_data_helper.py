@@ -32,83 +32,84 @@ class TestRemoveDataHelper(TestCase):
     target_email = "test@example.com"
     other_email = "other@example.com"
 
-    def setUp(self):
-        self.target_hash = Denial.get_hashed_email(self.target_email)
-        self.other_hash = Denial.get_hashed_email(self.other_email)
+    @classmethod
+    def setUpTestData(cls):
+        cls.target_hash = Denial.get_hashed_email(cls.target_email)
+        cls.other_hash = Denial.get_hashed_email(cls.other_email)
 
         # --- Target rows (should be deleted) ---------------------------
-        self.target_denial = Denial.objects.create(
+        cls.target_denial = Denial.objects.create(
             denial_id=1,
             semi_sekret="sekret",
-            hashed_email=self.target_hash,
+            hashed_email=cls.target_hash,
         )
-        self.target_appeal = Appeal.objects.create(
-            hashed_email=self.target_hash,
-            for_denial=self.target_denial,
+        cls.target_appeal = Appeal.objects.create(
+            hashed_email=cls.target_hash,
+            for_denial=cls.target_denial,
             appeal_text="target appeal",
         )
         ConsentRecord.objects.create(
-            denial=self.target_denial,
+            denial=cls.target_denial,
             terms_version="2026-09-08",
             privacy_version="2026-09-12",
             boxes=[{"name": "tos", "label": "x", "ticked": True}],
         )
         FollowUp.objects.create(
-            hashed_email=self.target_hash,
-            denial_id=self.target_denial,
+            hashed_email=cls.target_hash,
+            denial_id=cls.target_denial,
         )
         FollowUpSched.objects.create(
-            email=self.target_email,
-            denial_id=self.target_denial,
+            email=cls.target_email,
+            denial_id=cls.target_denial,
             follow_up_date=date.today() + timedelta(days=7),
         )
         # Two fax rows exercising both deletion filters in the helper:
         # one matched by hashed_email, one matched by email.
         FaxesToSend.objects.create(
-            hashed_email=self.target_hash,
+            hashed_email=cls.target_hash,
             email="unused@example.com",
             appeal_text="fax by hash",
             paid=False,
         )
         FaxesToSend.objects.create(
-            hashed_email=self.other_hash,
-            email=self.target_email,
+            hashed_email=cls.other_hash,
+            email=cls.target_email,
             appeal_text="fax by email",
             paid=False,
         )
-        OngoingChat.objects.create(hashed_email=self.target_hash)
+        OngoingChat.objects.create(hashed_email=cls.target_hash)
         ChatLeads.objects.create(
             name="Target Lead",
-            email=self.target_email,
+            email=cls.target_email,
             phone="555-0001",
             company="ACME",
             consent_to_contact=True,
             agreed_to_terms=True,
         )
-        MailingListSubscriber.objects.create(email=self.target_email)
-        DemoRequests.objects.create(email=self.target_email)
+        MailingListSubscriber.objects.create(email=cls.target_email)
+        DemoRequests.objects.create(email=cls.target_email)
 
         # --- Control rows (should survive) -----------------------------
-        self.other_denial = Denial.objects.create(
+        cls.other_denial = Denial.objects.create(
             denial_id=2,
             semi_sekret="sekret2",
-            hashed_email=self.other_hash,
+            hashed_email=cls.other_hash,
         )
         Appeal.objects.create(
-            hashed_email=self.other_hash,
-            for_denial=self.other_denial,
+            hashed_email=cls.other_hash,
+            for_denial=cls.other_denial,
             appeal_text="other appeal",
         )
-        MailingListSubscriber.objects.create(email=self.other_email)
+        MailingListSubscriber.objects.create(email=cls.other_email)
         ChatLeads.objects.create(
             name="Other Lead",
-            email=self.other_email,
+            email=cls.other_email,
             phone="555-0002",
             company="OtherCo",
             consent_to_contact=True,
             agreed_to_terms=True,
         )
-        OngoingChat.objects.create(hashed_email=self.other_hash)
+        OngoingChat.objects.create(hashed_email=cls.other_hash)
 
     def _target_row_counts(self) -> dict:
         """Count the rows that should have been deleted for target_email."""
