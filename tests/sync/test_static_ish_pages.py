@@ -19,7 +19,7 @@ class TestStaticIshViewCaching(TestCase):
         # Early in the day, so midnight doesn't cut the max-age short.
         patcher = mock.patch(
             "fighthealthinsurance.views.page_day",
-            return_value=(date(2027, 1, 15), time.time() + 24 * 60 * 60),
+            return_value=(date(2027, 1, 15), time.time() + 2 * 24 * 60 * 60),
         )
         patcher.start()
         self.addCleanup(patcher.stop)
