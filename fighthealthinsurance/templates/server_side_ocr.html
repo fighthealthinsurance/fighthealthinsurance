@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block title %}
-Upload your Health Insurance Denial - Server Side Processing
+{% if form.errors %}Error: {% endif %}Upload your Health Insurance Denial - Server Side Processing
 {% endblock title %}
 {% load static %}
 {% block content %}
@@ -8,12 +8,6 @@ Upload your Health Insurance Denial - Server Side Processing
     <div style="color:red">
       {{ error }}
     </div>
-    <form class="fhi-stack" method="post" action="{% url 'server_side_ocr' %}" enctype="multipart/form-data">
-        {% csrf_token %}
-        <h2>Transfered to our server for Optical Character Recognition (OCR) (may be temporarily stored)</h2>
-        <label for="uploader">Scan & OCR your health insurance denial (select all pages)</label>
-        <input id="uploader" type="file" name="uploader" multiple>
-        <button type="submit" id="submit" class="fhi-button fhi-button-primary">Submit</button>
-    </form>
+    {% include "partials/server_ocr_form.html" %}
 </div>
 {% endblock content %}

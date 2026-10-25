@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 else:
     _ReCaptchaMixinBase = object
 
+from fighthealthinsurance import consent
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.letter_placeholders import (
     blanks_to_name,
@@ -321,6 +322,17 @@ class DenialForm(BaseDenialForm):
         # The page's own label for it, so an error on it names the field the
         # way the page does.
         self.fields["zip"].label = "ZIP code"
+
+
+class ServerOCRForm(forms.Form):
+    """The intake form's own boxes that /server_side_ocr needs ticked before
+    it reads an upload (consent.SERVER_OCR_BOXES)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        intake = DenialForm()
+        for name in consent.SERVER_OCR_BOXES:
+            self.fields[name] = intake.fields[name]
 
 
 class AssistantTermsForm(ReCaptchaOptionalMixin, DenialForm):

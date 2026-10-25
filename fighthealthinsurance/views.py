@@ -192,13 +192,16 @@ BINGO_PHRASES = [
 ]
 
 
-def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
-    """Render an error page for OCR processing failures."""
+def render_ocr_error(
+    request: HttpRequest, text: str, form: forms.Form
+) -> HttpResponseBase:
+    """Render an error page for OCR processing failures, its boxes as sent."""
     return render(
         request,
         "server_side_ocr_error.html",
         context={
             "error": text,
+            "form": form,
         },
     )
 
@@ -1997,9 +2000,18 @@ class OCRView(View):
             pass
 
     def get(self, request):
-        return render(request, "server_side_ocr.html")
+        return render(
+            request,
+            "server_side_ocr.html",
+            context={"form": core_forms.ServerOCRForm()},
+        )
 
     def post(self, request):
+        # The boxes come first: no upload is read until they are ticked.
+        form = core_forms.ServerOCRForm(request.POST)
+        if not form.is_valid():
+            return render(request, "server_side_ocr.html", context={"form": form})
+        consent.note_server_ocr_consent(request.session, form.cleaned_data)
         try:
             files = dict(request.FILES.lists())
             uploader = files["uploader"]
@@ -2019,10 +2031,10 @@ class OCRView(View):
             )
 
         except AttributeError:
-            return render_ocr_error(request, "Unsupported file")
+            return render_ocr_error(request, "Unsupported file", form)
 
         except KeyError:
-            return render_ocr_error(request, "Missing file")
+            return render_ocr_error(request, "Missing file", form)
 
     def _ocr(self, uploader):
         def ocr_upload(x):
