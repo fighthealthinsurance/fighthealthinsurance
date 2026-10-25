@@ -152,7 +152,7 @@ class AppealAttachmentTests(TestCase):
         )
 
         response = self.client.delete(
-            reverse("appeal_attachments-detail", kwargs={"pk": self.appeal.id})
+            reverse("appeal_attachments-detail", kwargs={"pk": attachment.id})
         )
         self.assertEqual(response.status_code, 204)
         self.assertFalse(AppealAttachment.objects.filter(id=attachment.id).exists())
