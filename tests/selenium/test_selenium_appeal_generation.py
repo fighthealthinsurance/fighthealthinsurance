@@ -81,6 +81,8 @@ class SeleniumTestAppealGeneration(FHISeleniumBase, StaticLiveServerTestCase):
             path_to_image = tmp.name
 
             file_input.send_keys(path_to_image)
+            for box in ("privacy", "tos", "personalonly"):
+                self.click(f"input#{box}")
             self.click("button#submit")
             # The OCR should process the image (even if it doesn't find text)
             # Wait for page to process and redirect
@@ -121,7 +123,7 @@ Cheap-O-Insurance-Corp""",
         self.assert_title_eventually("Categorize Your Denial")
         # This is because channels is needs a different base to work and it's hanging so we manually
         # select the denial type for now.
-        self.select_option_by_value("select#id_denial_type", "2")
+        self.check_if_unchecked('input[name="denial_type"][value="2"]')
         self.type("input#id_procedure", "prep")
         self.type("input#id_diagnosis", "high risk homosexual behaviour")
         self.click("button#submit_cat")
@@ -685,7 +687,7 @@ Cheap-O-Insurance-Corp"""
         self.continue_past_extraction()
         self.assert_title_eventually("Categorize Your Denial")
         # Manually select denial type since channels is not working in test
-        self.select_option_by_value("select#id_denial_type", "2")
+        self.check_if_unchecked('input[name="denial_type"][value="2"]')
         self.type("input#id_procedure", "prep")
         self.type("input#id_diagnosis", "high risk homosexual behaviour")
         self.click("button#submit_cat")
@@ -740,7 +742,7 @@ Cheap-O-Insurance-Corp"""
 
         self.continue_past_extraction()
         self.assert_title_eventually("Categorize Your Denial")
-        self.select_option_by_value("select#id_denial_type", "2")
+        self.check_if_unchecked('input[name="denial_type"][value="2"]')
         self.type("input#id_procedure", "prep")
         self.type("input#id_diagnosis", "high risk homosexual behaviour")
         self.click("button#submit_cat")

@@ -172,6 +172,8 @@ class SpecializedDenialTemplate(object):
     diagnosis_patterns: tuple[str, ...] = ()
     negative_patterns: tuple[str, ...] = ()
     citations: tuple[str, ...] = ()
+    # Extra instructions for the model, after the citation list.
+    prompt_notes: tuple[str, ...] = ()
 
     # IGNORECASE for forgiving matching across denial-letter prose;
     # DOTALL so `.*` between key phrases (used in multi-keyword patterns
@@ -230,14 +232,82 @@ class SpecializedDenialTemplate(object):
     @classmethod
     def model_prompt_hint(cls) -> str:
         bullets = "\n".join(f"- {c}" for c in cls.citations)
+        notes = "".join(f"{n}\n" for n in cls.prompt_notes)
         return (
             f"This denial appears to involve {cls.name}. "
             "When writing the appeal, ground the argument in the following "
             "authorities and cite them by name where they support the patient's "
             f"position:\n{bullets}\n"
+            "Where an authority is marked for certain plans or benefits only, "
+            "cite it only when the patient's plan and the denied benefit are "
+            "among them.\n"
+            f"{notes}"
             "Do not fabricate case numbers, regulatory paragraphs, or quote text "
             "you cannot verify; cite the laws/rules by name and section only."
         )
+
+
+# Authority for asking how a commercial plan decided a claim.
+_CLAIMS_RULE_CITATION = (
+    "Federal claims and appeals rules, 29 CFR 2560.503-1 (employer plans) and "
+    "45 CFR 147.136 (most individual and state or local government plans): "
+    "the internal rule or guideline relied on and the clinical judgment "
+    "applied to the patient's circumstances (paragraph (g)(1)(v)); free access "
+    "to all relevant documents, including those generated in deciding the "
+    "claim (paragraphs (h)(2)(iii) and (m)(8)); and, on appeal, consultation "
+    "with a health care professional with appropriate training and experience "
+    "(paragraph (h)(3)(iii))"
+)
+
+# CMS's algorithm guidance binds Medicare Advantage Part A and B benefits only.
+_MEDICARE_ADVANTAGE_ONLY_CITATION = (
+    "Medicare Advantage plans only, for Part A and Part B benefits, not Part D "
+    "prescription drugs (those follow 42 CFR Part 423, Subpart M): "
+    "42 CFR 422.101(c)(1)(i) (medical necessity "
+    "decisions must rest on the enrollee's medical history, physician "
+    "recommendations, and clinical notes), 422.101(b)(6) (internal coverage "
+    "criteria must be public, with their supporting evidence), 422.566(d) and "
+    "422.590(h)(2) (review of a medical necessity denial by a physician or "
+    "other appropriate health care professional), as amended by CMS-4201-F, "
+    "the Contract Year 2024 Medicare Advantage final rule (88 FR 22120, "
+    "April 12, 2023); CMS memo to Medicare Advantage organizations, "
+    "February 6, 2024 (an algorithm may assist with, but cannot replace, "
+    "that individual assessment)"
+)
+
+
+def _automated_review_paragraph(number: int, tool: str, drug: bool = False) -> str:
+    """The letter's request about automated tools, for any plan type."""
+    # Part 422 covers Part B drugs; Part D drugs follow Part 423.
+    ma_scope = (
+        "For a Part B drug covered by a Medicare Advantage plan"
+        if drug
+        else "For a Medicare Advantage plan"
+    )
+    part_d = (
+        " A denial under a Medicare Advantage plan's Part D prescription drug "
+        "benefit follows separate rules (42 CFR Part 423, Subpart M)."
+        if drug
+        else ""
+    )
+    return (
+        f"{number}. Automated review tools. If {tool} was used in deciding "
+        "this claim, please identify it and provide its output, the criteria "
+        "it applied, and the reviewing clinician's rationale for this case. "
+        "For employer plans and most individual plans, documents generated in "
+        "making the decision are part of the claim file (29 CFR "
+        "2560.503-1(m)(8)), and a denial based on medical necessity, "
+        "experimental treatment, or a similar limit must explain, or provide "
+        "on request, the clinical judgment applied to the patient's "
+        "circumstances (29 CFR 2560.503-1(g)(1)(v)(B); 45 CFR 147.136). "
+        f"{ma_scope}, the decision must "
+        "rest on the patient's medical history, the treating physician's "
+        "recommendations, and the clinical notes (42 CFR 422.101(c)(1)(i)), "
+        "and CMS has told Medicare Advantage plans that an algorithm may "
+        "assist with, but cannot replace, that individual assessment (CMS "
+        f"memo to Medicare Advantage organizations, February 6, 2024).{part_d}"
+        "\n\n"
+    )
 
 
 class MentalHealthParityAppeal(SpecializedDenialTemplate):
@@ -260,15 +330,44 @@ class MentalHealthParityAppeal(SpecializedDenialTemplate):
         r"ptsd|adhd|autism|substance\s+use\s+disorder|alcohol\s+use\s+disorder|"
         r"eating\s+disorder|anorexia|bulimia)\b",
     )
+    # Statute and 2013 rule only; the 2024 rule's new parts go unenforced.
     citations = (
-        "Mental Health Parity and Addiction Equity Act of 2008 (MHPAEA), "
-        "29 U.S.C. § 1185a",
-        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
-        "in coverage determinations",
-        "Affordable Care Act Essential Health Benefits, "
-        "42 U.S.C. § 18022(b)(1)(E) (mental health and substance use disorder services)",
-        "Department of Labor 2024 MHPAEA Final Rules on Nonquantitative Treatment "
-        "Limitations (NQTLs)",
+        "Mental Health Parity and Addiction Equity Act (MHPAEA): ERISA § 712, "
+        "29 U.S.C. § 1185a (private employer plans); Public Health Service Act "
+        "§ 2726, 42 U.S.C. § 300gg-26 (individual and Marketplace coverage, "
+        "insured group coverage, and state and local government plans)",
+        "MHPAEA 2013 final rule, 29 CFR 2590.712, 45 CFR 146.136, and "
+        "45 CFR 147.160: nonquantitative treatment limitations must be "
+        "comparable to, and applied no more stringently than, those for "
+        "medical/surgical benefits, as written and in operation (paragraph "
+        "(c)(4)(i)); medical necessity criteria and the reason for a denial "
+        "must be available on request (paragraph (d))",
+        "MHPAEA comparative analysis requirement added by the Consolidated "
+        "Appropriations Act, 2021: ERISA § 712(a)(8), 29 U.S.C. § 1185a(a)(8); "
+        "PHSA § 2726(a)(8), 42 U.S.C. § 300gg-26(a)(8); participants may "
+        "request the analyses (Departments of Labor, HHS, and the Treasury, "
+        "FAQs about Mental Health and Substance Use Disorder Parity "
+        "Implementation and the Consolidated Appropriations Act, 2021, Part 45, "
+        "Q6, April 2, 2021; for employer plans, also ERISA § 104(b)(4), "
+        "29 U.S.C. § 1024(b)(4))",
+        _CLAIMS_RULE_CITATION,
+        "ACA essential health benefits, for non-grandfathered individual and "
+        "small-group coverage only: 42 U.S.C. § 18022(b)(1)(E); "
+        "42 U.S.C. § 300gg-6(a); 45 CFR 156.110(a)(5) and 156.115(a)(4)",
+        "Medicaid managed care plans only: 42 CFR 438.910(d) and 438.915 "
+        "(parity and disclosure of criteria); 42 CFR 438.210(b)(3) and "
+        "438.406(b)(2) and (b)(5) (clinical expertise for denials and appeals; "
+        "free case file)",
+        _MEDICARE_ADVANTAGE_ONLY_CITATION,
+    )
+    prompt_notes = (
+        "Do not cite the 2024 MHPAEA final rule (89 FR 77586, September 23, "
+        "2024) as a source of obligations: on May 15, 2025 the Departments of "
+        "Labor, HHS, and the Treasury said they will not enforce its provisions "
+        "that are new relative to the 2013 rule. Rely on the statute, as "
+        "amended by the Consolidated Appropriations Act, 2021, and the 2013 "
+        "rule.",
+        "MHPAEA does not apply to Medicare, including Medicare Advantage.",
     )
 
     @classmethod
@@ -276,39 +375,60 @@ class MentalHealthParityAppeal(SpecializedDenialTemplate):
         return (
             "Re: Appeal of denied behavioral-health claim {claim_id}\n\n"
             "Dear {insurance_company},\n\n"
-            "I am formally appealing the denial of coverage for {procedure} "
-            "(diagnosis: {diagnosis}). Because this denial concerns mental "
-            "health or substance use disorder services, it is governed by "
-            "behavioral-health parity protections that the carrier must satisfy "
-            "before any adverse determination can stand.\n\n"
-            "1. Mental Health Parity and Addiction Equity Act (MHPAEA, "
-            "29 U.S.C. § 1185a). Any nonquantitative treatment limitation "
-            "(NQTL) applied here — including medical-necessity criteria, "
-            "prior-authorization rules, fail-first/step-therapy protocols, "
-            "concurrent review, network composition, or reimbursement "
-            "methodology — must be no more restrictive in writing or in "
-            "operation than the comparable NQTLs applied to medical/surgical "
-            "benefits in the same classification. Please produce the "
-            "comparative analysis required by ERISA § 712(a)(8) and the "
-            "2024 DOL Final Rules for the NQTL relied upon in this denial.\n\n"
-            "2. CMS 2024 Final Rule on algorithmic coverage determinations. "
-            "If an algorithm, predictive model, or AI tool contributed to "
-            "this denial, the determination must still rest on an "
-            "individualized clinical assessment by a qualified human reviewer "
-            "applying the patient's full clinical picture; the algorithm may "
-            "not be the sole basis for the adverse decision. Please disclose "
-            "whether such a tool was used, identify it, and provide the "
-            "human reviewer's clinical reasoning.\n\n"
-            "3. Affordable Care Act Essential Health Benefits "
-            "(42 U.S.C. § 18022(b)(1)(E)). Mental health and substance use "
-            "disorder services, including behavioral-health treatment, are "
-            "designated essential health benefits and may not be effectively "
-            "excluded by NQTLs that are more restrictive than those used on "
-            "the medical/surgical side.\n\n"
-            "I respectfully request that you (a) overturn this denial, "
-            "(b) provide the MHPAEA NQTL comparative analysis for the "
-            "criterion applied, and (c) confirm in writing what role, if any, "
-            "an algorithm or AI tool played in the determination.\n\n"
+            "I am appealing the denial of {procedure} (diagnosis: {diagnosis}), a "
+            "mental health or substance use disorder service. For most employer, "
+            "individual, Marketplace, and state or local government plans, federal "
+            "parity law and the federal claims rule govern this claim. That rule, "
+            "29 CFR 2560.503-1, applies directly to private employer plans covered by "
+            "ERISA and to most other plans through 45 CFR 147.136.\n\n"
+            "1. Parity. Under MHPAEA (ERISA § 712, 29 U.S.C. § 1185a; Public Health "
+            "Service Act § 2726, 42 U.S.C. § 300gg-26), a plan may not apply a limit "
+            "such as medical necessity criteria, prior authorization, or concurrent "
+            "review to this care unless the processes, strategies, evidentiary "
+            "standards, and other factors behind it are comparable to, and applied no "
+            "more stringently than, those used for medical and surgical care in the "
+            "same classification, as written and in operation "
+            "(29 CFR 2590.712(c)(4)(i); 45 CFR 146.136(c)(4)(i); 45 CFR 147.160). A plan "
+            "also may not "
+            "impose limits that apply only to this care "
+            "(29 U.S.C. § 1185a(a)(3)(A)(ii); 42 U.S.C. § 300gg-26(a)(3)(A)(ii)).\n\n"
+            "2. Comparative analysis and criteria. A plan subject to MHPAEA must "
+            "document a comparative analysis of each such limit "
+            "(29 U.S.C. § 1185a(a)(8); 42 U.S.C. § 300gg-26(a)(8)). Please send, free "
+            "of charge: (a) that analysis for each limit used in this denial; (b) the "
+            "medical necessity criteria for my claim and for comparable medical and "
+            "surgical care (29 U.S.C. § 1185a(a)(4); 29 CFR 2590.712(d); "
+            "45 CFR 146.136(d)); and (c) every guideline and other document relevant "
+            "to my claim (29 CFR 2560.503-1(g)(1)(v) and (h)(2)(iii); MHPAEA FAQs Part "
+            "45, Q6). If ERISA covers my plan, this is also an ERISA § 104(b)(4) "
+            "request, and I am sending a copy to the plan administrator named in my "
+            "summary plan description.\n\n"
+            "3. Clinical review and automated tools. A denial based on medical "
+            "necessity must explain, on request, the clinical judgment applied to my "
+            "circumstances (29 CFR 2560.503-1(g)(1)(v)(B)); I request it. Please name "
+            "the clinician who reviewed my records, their specialty, and any medical "
+            "experts consulted; my appeal must be decided in consultation with a "
+            "clinician trained in this field (29 CFR 2560.503-1(h)(3)(iii) and (iv)). "
+            "Please also say whether an algorithm or other automated tool was used; if "
+            "so, send its output and criteria, which belong to my claim file "
+            "(29 CFR 2560.503-1(m)(8)).\n\n"
+            "4. Essential health benefits. A non-grandfathered individual, "
+            "Marketplace, or small-group plan must cover this care as an essential "
+            "health benefit, with parity (42 U.S.C. § 18022(b)(1)(E); "
+            "42 U.S.C. § 300gg-6(a); 45 CFR 156.110(a)(5) and 156.115(a)(4)).\n\n"
+            "5. Medicaid and Medicare Advantage. A Medicaid managed care plan must "
+            "meet parity and disclosure rules, and an uninvolved clinician with "
+            "appropriate expertise must decide the appeal (42 CFR 438.910, 438.915, "
+            "and 438.406(b)(2)). If my plan is a Medicare Advantage plan, federal "
+            "parity law does not apply, but for a service or a Part B drug the "
+            "decision must rest on my medical history, physician's recommendations, "
+            "and clinical notes, and a physician with suitable expertise must decide a "
+            "medical necessity appeal (42 CFR 422.101(c)(1)(i) and 422.590(h)(2)). "
+            "Part D drug denials follow 42 CFR Part 423, Subpart M.\n\n"
+            "I respectfully request that you overturn this denial and send the "
+            "documents above. If you uphold it, please tell me the next level of "
+            "review available to me, including any independent external review my plan "
+            "must offer (45 CFR 147.136; 29 CFR 2590.715-2719).\n\n"
             "Sincerely,\n[Name]\n"
         )
 
@@ -335,8 +455,8 @@ class AdvancedImagingAppeal(SpecializedDenialTemplate):
         "American College of Radiology (ACR) Appropriateness Criteria",
         "CMS National Coverage Determinations for diagnostic imaging "
         "(NCD Manual chapter 220)",
-        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
-        "in coverage determinations",
+        _CLAIMS_RULE_CITATION,
+        _MEDICARE_ADVANTAGE_ONLY_CITATION,
     )
 
     @classmethod
@@ -359,14 +479,8 @@ class AdvancedImagingAppeal(SpecializedDenialTemplate):
             "CMS NCDs set the community standard for advanced imaging "
             "coverage and the requested study satisfies the relevant NCD's "
             "indications.\n\n"
-            "3. CMS 2024 Final Rule on algorithmic coverage determinations. "
-            "If an automated utilization-management tool drove this denial, "
-            "the carrier must still produce an individualized clinical "
-            "review by a qualified human reviewer; the algorithm cannot be "
-            "the sole basis for the adverse decision. Please disclose "
-            "whether such a tool was used and provide the reviewer's "
-            "clinical rationale.\n\n"
-            "Delaying or denying this imaging risks missed diagnoses and "
+            + _automated_review_paragraph(3, "an automated utilization-management tool")
+            + "Delaying or denying this imaging risks missed diagnoses and "
             "downstream cost from lower-yield workups. I respectfully "
             "request that the denial be overturned.\n\n"
             "Sincerely,\n[Name]\n"
@@ -403,8 +517,7 @@ class SpecialtyMedicationAppeal(SpecializedDenialTemplate):
         "State step-therapy override statutes (where applicable; the "
         "exception is required when stepping has been tried, is "
         "contraindicated, or is expected to be ineffective)",
-        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
-        "in coverage determinations",
+        _MEDICARE_ADVANTAGE_ONLY_CITATION,
     )
 
     @classmethod
@@ -430,12 +543,8 @@ class SpecialtyMedicationAppeal(SpecializedDenialTemplate):
             "internal rule, guideline, protocol, or similar criterion that "
             "was used. Generic 'not medically necessary' language without "
             "this disclosure does not satisfy the regulation.\n\n"
-            "3. CMS 2024 Final Rule on algorithmic coverage determinations. "
-            "If an automated tool flagged this prescription, the final "
-            "denial must still rest on an individualized clinical review by "
-            "a qualified human reviewer applying this patient's full "
-            "clinical picture, not solely on an algorithmic output.\n\n"
-            "I respectfully request that the denial be overturned and the "
+            + _automated_review_paragraph(3, "an automated tool", drug=True)
+            + "I respectfully request that the denial be overturned and the "
             "medication authorized without further delay.\n\n"
             "Sincerely,\n[Name]\n"
         )
@@ -471,8 +580,8 @@ class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
         "Affordable Care Act Essential Health Benefits, "
         "42 U.S.C. § 18022(b)(1)(G) (rehabilitative and habilitative "
         "services and devices)",
-        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
-        "in coverage determinations",
+        _CLAIMS_RULE_CITATION,
+        _MEDICARE_ADVANTAGE_ONLY_CITATION,
     )
 
     @classmethod
@@ -497,13 +606,8 @@ class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
             "A blanket session cap that prevents continued medically "
             "necessary therapy effectively excludes a covered EHB and is "
             "not enforceable as written.\n\n"
-            "3. CMS 2024 Final Rule on algorithmic coverage determinations. "
-            "If a utilization-management algorithm flagged this case as "
-            "having reached its visit limit, the final denial must still "
-            "rest on an individualized clinical review by a qualified human "
-            "reviewer; the algorithm may not be the sole basis for the "
-            "adverse decision.\n\n"
-            "I respectfully request the denial be overturned and the "
+            + _automated_review_paragraph(3, "a utilization-management algorithm")
+            + "I respectfully request the denial be overturned and the "
             "additional sessions authorized.\n\n"
             "Sincerely,\n[Name]\n"
         )
@@ -543,8 +647,8 @@ class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
         "Affordable Care Act Essential Health Benefits, "
         "42 U.S.C. § 18022(b)(1)(G) (rehabilitative and habilitative "
         "services and devices)",
-        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
-        "in coverage determinations",
+        _CLAIMS_RULE_CITATION,
+        _MEDICARE_ADVANTAGE_ONLY_CITATION,
     )
 
     @classmethod
@@ -576,12 +680,10 @@ class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
             "services and devices are essential health benefits and cannot "
             "be effectively excluded through restrictive utilization "
             "management.\n\n"
-            "4. CMS 2024 Final Rule on algorithmic coverage determinations. "
-            "If a length-of-stay algorithm or similar tool drove the "
-            "denial, the carrier must produce an individualized human "
-            "clinical review; the algorithm cannot be the sole basis for "
-            "the adverse decision.\n\n"
-            "I respectfully request that the denial be overturned and the "
+            + _automated_review_paragraph(
+                4, "a length-of-stay algorithm or similar tool"
+            )
+            + "I respectfully request that the denial be overturned and the "
             "post-surgical rehabilitation authorized.\n\n"
             "Sincerely,\n[Name]\n"
         )
@@ -632,8 +734,7 @@ class GLP1WeightLossAppeal(SpecializedDenialTemplate):
         "ERISA § 503 / 29 C.F.R. § 2560.503-1 (full and fair review — "
         "disclosure of the clinical criteria, reviewer credentials, and the "
         "exact plan-exclusion language relied upon)",
-        "CMS 2024 Final Rule on the use of algorithms and artificial "
-        "intelligence in coverage determinations",
+        _MEDICARE_ADVANTAGE_ONLY_CITATION,
     )
 
     @classmethod
@@ -673,13 +774,8 @@ class GLP1WeightLossAppeal(SpecializedDenialTemplate):
             "stabilized on this therapy, I request continuity-of-care "
             "protection so that treatment is not interrupted during this "
             "appeal.\n\n"
-            "4. CMS 2024 Final Rule on algorithmic coverage determinations. "
-            "If an automated tool contributed to this denial, the final "
-            "decision must still rest on an individualized clinical review by "
-            "a qualified human reviewer; the algorithm may not be the sole "
-            "basis for the adverse determination. Please disclose whether such "
-            "a tool was used and identify it.\n\n"
-            "I respectfully request that the denial be overturned and the "
+            + _automated_review_paragraph(4, "an automated tool", drug=True)
+            + "I respectfully request that the denial be overturned and the "
             "medication authorized without further delay.\n\n"
             "Sincerely,\n[Name]\n"
         )

@@ -297,8 +297,8 @@ class FaxPaymentCancelledView(View):
                 "fax_phone": fax.destination or denial.appeal_fax_number,
                 # The insurer as the person typed it on the fax form, and
                 # whether the health history went, from the reference: the
-                # staged fax keeps neither. Their name is not kept anywhere,
-                # so they type it again.
+                # staged fax keeps neither. Their name is not kept anywhere;
+                # the page fills it in from what this browser holds.
                 "insurance_company": choices.get("insurer") or denial.insurance_company,
                 "include_provided_health_history": choices.get(
                     "include_history", False

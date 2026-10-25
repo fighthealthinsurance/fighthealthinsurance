@@ -7,6 +7,7 @@ import {
 } from "./shared";
 import {
   faxMustWaitForPlaceholders,
+  findUnfilledPlaceholders,
   printUnlessPlaceholders,
 } from "./letter_placeholders";
 import { restorePersonalInfo, type UserInfo } from "./user_info_storage";
@@ -71,7 +72,8 @@ function descrub(force = false) {
   const target = document.getElementById(
     "id_completed_appeal_text",
   ) as HTMLTextAreaElement;
-  var text = (appeal_text as HTMLTextAreaElement)?.value || "";
+  // A letter starts at its first word; space around it is never part of it.
+  var text = ((appeal_text as HTMLTextAreaElement)?.value || "").trim();
 
   // Read from PII panel inputs first, fall back to localStorage
   const fname = getPiiValue("pii_fname", "store_fname", "FirstName");
@@ -203,9 +205,10 @@ function descrub(force = false) {
 function printAppeal() {
   console.log("Starting to print.");
   const childWindow = window.open("", "_blank", "");
-  const completedAppealText =
+  const completedAppealText = (
     (document.getElementById("id_completed_appeal_text") as HTMLTextAreaElement)
-      ?.value || "";
+      ?.value || ""
+  ).trim();
 
   if (childWindow) {
     // The letter is typed by the person and written by a model, so it is
@@ -244,6 +247,122 @@ function printAppeal() {
   }
 }
 
+const COPY_STATUS_ID = "keep-a-copy-status";
+const DOWNLOAD_NAME = "appeal-letter.txt";
+
+function finishedLetter(): HTMLTextAreaElement | null {
+  return document.getElementById("id_completed_appeal_text") as HTMLTextAreaElement | null;
+}
+
+function sayAboutTheCopy(message: string): void {
+  const status = document.getElementById(COPY_STATUS_ID);
+  if (status) {
+    status.textContent = message;
+  }
+}
+
+// A kept copy can have blanks in it, so this says so rather than stopping it.
+function blanksStillToFill(text: string): string {
+  const found = findUnfilledPlaceholders(text);
+  if (found.length === 0) {
+    return "";
+  }
+  const count = found.length === 1 ? "1 blank" : found.length + " blanks";
+  return " It still has " + count + " to fill in before you send it, like " + found[0] + ".";
+}
+
+// The older way to copy, for browsers without the clipboard API. It selects
+// the letter in place, without scrolling away from the message by the button.
+function copyBySelecting(letter: HTMLTextAreaElement): boolean {
+  const start = letter.value.search(/\S/);
+  const end = letter.value.replace(/\s+$/, "").length;
+  letter.focus({ preventScroll: true });
+  letter.setSelectionRange(Math.max(start, 0), end);
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  }
+}
+
+async function copyLetter(button: HTMLElement): Promise<void> {
+  const letter = finishedLetter();
+  const text = letter ? letter.value.trim() : "";
+  if (!letter || text === "") {
+    sayAboutTheCopy("There is no letter to copy yet.");
+    return;
+  }
+  let copied = false;
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {
+      copied = false;
+    }
+  }
+  if (!copied) {
+    copied = copyBySelecting(letter);
+    button.focus({ preventScroll: true });
+  }
+  sayAboutTheCopy(
+    copied
+      ? "Copied. Paste it somewhere safe, like an email to yourself." + blanksStillToFill(text)
+      : "We couldn't copy it for you. Select your letter in the fax form below and copy it yourself.",
+  );
+}
+
+function downloadLetter(): void {
+  const letter = finishedLetter();
+  const text = letter ? letter.value.trim() : "";
+  if (text === "") {
+    sayAboutTheCopy("There is no letter to download yet.");
+    return;
+  }
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = DOWNLOAD_NAME;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  // Not at once: some browsers start the download after click() returns.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  sayAboutTheCopy(
+    "Your letter is downloading as " + DOWNLOAD_NAME + "." + blanksStillToFill(text),
+  );
+}
+
+// The fax cover page needs the person's name, which the details panel
+// already has. The fax form follows the panel until the person types there.
+let faxNameTyped = false;
+
+function panelValue(inputId: string): string {
+  const el = document.getElementById(inputId) as HTMLInputElement | null;
+  return el ? el.value.trim() : "";
+}
+
+function fillFaxName(): void {
+  const field = document.getElementById("id_name") as HTMLInputElement | null;
+  if (!field || faxNameTyped) {
+    return;
+  }
+  field.value = [panelValue("pii_fname"), panelValue("pii_lname")].filter(Boolean).join(" ");
+}
+
+function setupFaxName(): void {
+  const field = document.getElementById("id_name") as HTMLInputElement | null;
+  if (!field) {
+    return;
+  }
+  // A name already there came back from the server: it is what they typed.
+  faxNameTyped = field.value.trim() !== "";
+  field.addEventListener("input", () => {
+    faxNameTyped = field.value.trim() !== "";
+  });
+  fillFaxName();
+}
+
 // Mapping from PII panel input IDs to localStorage keys
 const PII_FIELD_MAP: [string, string][] = [
   ["pii_fname", "store_fname"],
@@ -279,6 +398,7 @@ function setupPiiPanelListeners() {
       // Re-run descrub so the completed appeal textarea reflects the new value.
       // The person is editing their own details here, so this is an ask.
       descrub(true);
+      fillFaxName();
     });
   }
 }
@@ -304,9 +424,20 @@ function setupAppeal() {
     };
   }
 
+  // Copy and Download keep the letter as it is, blanks and all.
+  const copy_button = document.getElementById("copy_appeal");
+  if (copy_button != null) {
+    copy_button.onclick = () => copyLetter(copy_button);
+  }
+  const download_button = document.getElementById("download_appeal");
+  if (download_button != null) {
+    download_button.onclick = () => downloadLetter();
+  }
+
   // Populate PII panel from localStorage and wire up save-on-change
   populatePiiPanel();
   setupPiiPanelListeners();
+  setupFaxName();
 
   const appeal_text = document.getElementById("scrubbed_appeal_text");
   if (appeal_text != null) {

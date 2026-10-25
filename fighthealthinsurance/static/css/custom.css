@@ -1837,7 +1837,7 @@ section:not(.slider) .share-subcopy,
     border-left-color: #a5c422;
 }
 /* A callout's heading takes its box's ink, as the Bootstrap-named boxes'
-   did: green on green 4.56:1, amber 4.96:1, blue 5.03:1, red 4.92:1. */
+   did: green on green 4.56:1, amber 4.96:1, blue 5.03:1. */
 .alert-box-success h2,
 .alert-box-success h4 {
     color: #2e7d32;
@@ -1847,6 +1847,7 @@ section:not(.slider) .share-subcopy,
     border-left-color: #ffc107;
 }
 .alert-box-warning h2,
+.alert-box-warning h3,
 .alert-box-warning h4,
 .alert-box-warning li {
     color: #856404;
@@ -1863,14 +1864,6 @@ section:not(.slider) .share-subcopy,
 .alert-box-info h3,
 .alert-box-info h4 {
     color: #1565c0;
-}
-.alert-box-danger {
-    background: #ffebee;
-    border-left-color: #f44336;
-}
-.alert-box-danger h3,
-.alert-box-danger p {
-    color: #c62828;
 }
 
 /* Navigation/Form actions row */
@@ -4045,6 +4038,20 @@ summary.fhi-nav-link::after {
 }
 .fhi-check-row > :nth-child(n + 3) { grid-column: 2; }
 .fhi-check-row > * { margin: 0; }
+/* A pick-several field (form_utils.CheckboxList): its tick-box rows, two columns where there is room. */
+.fhi-check-list {
+    display: grid;
+    gap: var(--fhi-space-2) var(--fhi-space-4);
+}
+@media (min-width: 768px) {
+    .fhi-check-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+/* Beside a tick-box list, the label sits level with its first row, not halfway down. */
+.fhi-form-table tr:has(.fhi-check-list) > th {
+    vertical-align: top;
+}
 /* A form's buttons, each the full width of the form. */
 .fhi-actions {
     display: grid;
@@ -4158,3 +4165,105 @@ summary.fhi-nav-link::after {
     outline-offset: 2px;
 }
 .fhi-text-success { color: var(--fhi-green-ink); }
+
+/* ---- The progress rail ----------------------------------------------------
+   partials/flow_progress.html: the appeal flow's stages, each a marker over
+   its name, joined by a line that turns green as stages are done. */
+.fhi-progress {
+    display: flex;
+    margin: var(--fhi-space-6) 0 var(--fhi-space-7);
+    padding: 0;
+    list-style: none;
+}
+.fhi-progress-step {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--fhi-space-2);
+    text-align: center;
+}
+/* The line into each stage from the one before, behind the markers. */
+.fhi-progress-step + .fhi-progress-step::before {
+    content: "";
+    position: absolute;
+    top: calc(var(--fhi-space-7) / 2);
+    left: -50%;
+    right: 50%;
+    height: 3px;
+    transform: translateY(-50%);
+    background: var(--fhi-line);
+}
+.fhi-progress-done + .fhi-progress-step::before {
+    background: var(--fhi-green);
+}
+.fhi-progress-marker {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--fhi-space-7);
+    height: var(--fhi-space-7);
+    border-radius: 50%;
+    background: var(--fhi-line);
+    color: var(--fhi-ink-2);
+    font-size: var(--fhi-text-small);
+    font-weight: 700;
+    line-height: 1;
+}
+/* Done and current stages wear the buttons' lime and ink. */
+.fhi-progress-done .fhi-progress-marker,
+.fhi-progress-current .fhi-progress-marker {
+    background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%);
+    background-size: 200% auto;
+    color: var(--fhi-btn-ink);
+}
+.fhi-progress-done .fhi-progress-marker::after {
+    content: "\2713";
+}
+.fhi-progress-current .fhi-progress-marker {
+    box-shadow: 0 0 0 var(--fhi-space-1) rgba(165, 196, 34, 0.25);
+}
+/* The current marker shimmers, for anyone who has not asked for less motion. */
+@media (prefers-reduced-motion: no-preference) {
+    .fhi-progress-current .fhi-progress-marker {
+        animation: fhi-progress-shimmer 2.4s ease-in-out infinite alternate;
+    }
+}
+@keyframes fhi-progress-shimmer {
+    from { background-position: left center; }
+    to { background-position: right center; }
+}
+.fhi-progress-label {
+    font-size: var(--fhi-text-body);
+    line-height: var(--fhi-line-heading);
+    color: var(--fhi-muted);
+}
+.fhi-progress-done .fhi-progress-label,
+.fhi-progress-current .fhi-progress-label {
+    color: var(--fhi-ink);
+}
+.fhi-progress-current .fhi-progress-label {
+    font-weight: 700;
+}
+/* A phone has room for one name: the current stage's. The rest stay readable to screen readers. */
+@media (max-width: 575px) {
+    .fhi-progress-step:not(.fhi-progress-current) .fhi-progress-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+    }
+    .fhi-progress-current .fhi-progress-label {
+        white-space: nowrap;
+    }
+}
+/* On the upload page the rail's own margin sets the gap above the title. */
+.fhi-progress + .fhi-page-title {
+    margin-top: 0;
+}

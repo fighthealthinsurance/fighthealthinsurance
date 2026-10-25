@@ -1,6 +1,6 @@
 'use strict';
 // A hand-written DOM shim: there is no jsdom in this repo and node_modules is
-// gitignored. It covers exactly what these two pages touch, and anything else
+// gitignored. It covers exactly what these pages touch, and anything else
 // throws rather than returning undefined, so a rewrite that starts using a new
 // DOM API fails loudly instead of quietly doing nothing under the test.
 
@@ -198,6 +198,31 @@ class FakeElement {
   }
   focus() {
     this.page.focused = this;
+  }
+  scrollIntoView() {
+    this.page.scrolledTo.push(describe(this));
+  }
+  remove() {
+    if (this.parentNode) this.parentNode.removeChild(this);
+  }
+  contains(node) {
+    for (let at = node; at; at = at.parentNode) {
+      if (at === this) return true;
+    }
+    return false;
+  }
+  get classList() {
+    const el = this;
+    const names = () => String(el.className).split(/\s+/).filter(Boolean);
+    return {
+      add: (name) => {
+        if (names().indexOf(name) < 0) el.className = names().concat(name).join(' ');
+      },
+      remove: (name) => {
+        el.className = names().filter((n) => n !== name).join(' ');
+      },
+      contains: (name) => names().indexOf(name) >= 0,
+    };
   }
   // A textarea's selection, held the way the browser holds it.
   setSelectionRange(start, end) {
@@ -399,8 +424,131 @@ const ESCALATION_MARKUP = `
 </div>
 `;
 
+// Mirrors appeals.html. test_appeal_fetcher_behaviour.py checks these ids
+// against the rendered template.
+const APPEALS_MARKUP = `
+<div id="loading-text" style="text-align:center; padding:1rem;">
+  <h2>Generating Your Appeals</h2>
+</div>
+<div id="loading-spinner"></div>
+<div id="loading-more">
+  <h3>Brewing Your Appeals</h3>
+  <p>First refresh: After 3-5 minutes, try refreshing the page.</p>
+</div>
+<div id="base-form" style="display: none;">
+  <form action="/choose_appeal" method="post" class="fhi-stack" id="form">
+    <input type="hidden" name="proposed_appeal_id" value="" class="proposed_appeal_id" />
+    <input type="hidden" name="draft_unsaved" value="" class="draft_unsaved" />
+    <input type="hidden" name="editted" value="" class="editted" />
+    <input type="hidden" name="presented_ids" value="" class="presented_ids" />
+    <textarea class="fhi-field" rows="20" name="appeal_text" id="appeal_text"></textarea>
+    <button type="submit" id="submit" class="fhi-button fhi-button-primary">Choose This One</button>
+  </form>
+</div>
+<div id="output-container"></div>
+<div id="external-models-prompt" class="alert-box alert-box-warning" style="display:none;">
+  <button type="button" id="request-external-models-btn" class="fhi-button fhi-button-primary">Generate more appeals using external models</button>
+  <div id="external-models-status"></div>
+</div>
+`;
+
+// The jQuery calls appeal_fetcher.ts makes, over the same fake elements.
+// Anything else throws, for the same reason the selectors do.
+class FakeQuery {
+  constructor(elements) {
+    this.elements = elements;
+    this.length = elements.length;
+    elements.forEach((el, i) => {
+      this[i] = el;
+    });
+  }
+  each(fn) {
+    this.elements.forEach(fn);
+    return this;
+  }
+  toArray() {
+    return this.elements.slice();
+  }
+  clone() {
+    return new FakeQuery(this.elements.map((el) => el.cloneNode(true)));
+  }
+  prop(name, value) {
+    return this.each((el) => {
+      el[name] = value;
+    });
+  }
+  attr(name, value) {
+    return this.each((el) => el.setAttribute(name, String(value)));
+  }
+  removeAttr(name) {
+    return this.each((el) => el.removeAttribute(name));
+  }
+  css(map) {
+    return this.each((el) => {
+      for (const key of Object.keys(map)) el.style[camel(key)] = map[key];
+    });
+  }
+  prepend(node) {
+    return this.each((el) => el.insertBefore(node, el.firstChild));
+  }
+  append(node) {
+    const nodes = node instanceof FakeQuery ? node.elements : [node];
+    return this.each((el) => {
+      for (const n of nodes) el.appendChild(n);
+    });
+  }
+  // A tag with one class is the one compound selector the page uses here.
+  find(selector) {
+    const compound = /^([A-Za-z]+)\.([-\w]+)$/.exec(selector);
+    const hits = [];
+    for (const el of this.elements) {
+      const found = compound
+        ? el.querySelectorAll(compound[1]).filter((c) => c.classList.contains(compound[2]))
+        : el.querySelectorAll(selector);
+      hits.push(...found);
+    }
+    return new FakeQuery(hits);
+  }
+  children(selector) {
+    const prefix = /^\[id\^="([^"]*)"\]$/.exec(selector);
+    if (!prefix) throw new Error('fake_page: unsupported children selector ' + selector);
+    const hits = [];
+    for (const el of this.elements) {
+      for (const child of el.childNodes) {
+        if (child.nodeType === 1 && child.id.startsWith(prefix[1])) hits.push(child);
+      }
+    }
+    return new FakeQuery(hits);
+  }
+  on(name, handler) {
+    return this.each((el) => el.addEventListener(name, handler));
+  }
+  val(value) {
+    return this.each((el) => {
+      el.value = value;
+    });
+  }
+  text(value) {
+    return this.each((el) => {
+      el.textContent = value;
+    });
+  }
+  remove() {
+    return this.each((el) => el.remove());
+  }
+}
+
+function makeJquery(page) {
+  return (selector) => {
+    const sel = String(selector);
+    if (!/^#[-\w]+$/.test(sel)) throw new Error('fake_page: unsupported $() selector ' + sel);
+    const el = page.document.getElementById(sel.slice(1));
+    return new FakeQuery(el ? [el] : []);
+  };
+}
+
 function buildPage(markup) {
-  const page = {sockets: [], movedThePerson: [], clock: new Clock()};
+  const page = {sockets: [], movedThePerson: [], scrolledTo: [], clock: new Clock()};
   const body = new FakeElement('body', page);
   page.body = body;
   for (const node of parseFragment(markup || PAGE_MARKUP, page)) body.appendChild(node);
@@ -416,6 +564,11 @@ function buildPage(markup) {
 
   page.document = {
     body,
+    head: new FakeElement('head', page),
+    // What a browser reports when nothing has focus.
+    get activeElement() {
+      return page.focused || body;
+    },
     getElementById: (id) => find(body, id),
     createElement: (tag) => new FakeElement(tag, page),
     createTextNode: (data) => new TextNode(String(data)),
@@ -485,8 +638,10 @@ function install(page) {
 module.exports = {
   buildPage,
   install,
+  makeJquery,
   FakeSocket,
   parseFragment,
   PAGE_MARKUP,
   ESCALATION_MARKUP,
+  APPEALS_MARKUP,
 };

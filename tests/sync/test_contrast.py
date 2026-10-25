@@ -1499,6 +1499,13 @@ EXCEPTIONS: tuple[Exempt, ...] = (
     ),
     Exempt("custom.css", ".share-btn-email", WHITE_ON_BRAND_LIME),
     Exempt("custom.css", ".about-step-number", WHITE_ON_BRAND_LIME),
+    # The progress rail's markers took the buttons' sweep and ink with it.
+    Exempt(
+        "custom.css",
+        ".fhi-progress-done .fhi-progress-marker, "
+        ".fhi-progress-current .fhi-progress-marker",
+        WHITE_ON_BRAND_LIME,
+    ),
 )
 
 

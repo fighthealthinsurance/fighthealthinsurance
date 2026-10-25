@@ -66,7 +66,7 @@ CANNED_REPLY_SIGNATURES = (
     (
         "Medicaid Work Requirements FAQ",
         "80 hours per month",
-        "work, job training, school, or community service",
+        "half-time school",
     ),
 )
 

@@ -100,6 +100,13 @@ nothing here runs in the app.
   data dictionary defines as in-network only ("Does not include out-of-network
   claims"). So the trend's in-network line runs from 2020, and its
   out-of-network and all-claims lines start with 2022 claims.
+- `earlier` holds each state the latest map leaves grey that an older file
+  still includes, from the last year it's in, by the map's rules: the
+  in-network rate and insurer count from `state_rates`, and the lowest to
+  highest rate among insurers the table would list. Only a grey state's
+  readout shows it, never the map, the national figures or the ranges. The
+  page's state-map note names those states and years, so reread it when the
+  set changes.
 - An insurer that reports more out-of-network denials than claims gets no
   out-of-network or all-claims figure, and is left out of those totals
   nationally and for its state; its state gets no all-claims figure.

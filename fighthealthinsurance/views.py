@@ -192,13 +192,16 @@ BINGO_PHRASES = [
 ]
 
 
-def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
-    """Render an error page for OCR processing failures."""
+def render_ocr_error(
+    request: HttpRequest, text: str, form: forms.Form
+) -> HttpResponseBase:
+    """Render an error page for OCR processing failures, its boxes as sent."""
     return render(
         request,
         "server_side_ocr_error.html",
         context={
             "error": text,
+            "form": form,
         },
     )
 
@@ -1629,6 +1632,27 @@ def add_pubmed_article_fields(
 class ChooseAppeal(View):
     """View for selecting and finalizing appeal text before sending."""
 
+    @staticmethod
+    def _appeals_page_for(request) -> typing.Optional[str]:
+        """The appeals page of the case this post names, if that case exists.
+
+        Someone who emptied the letter before choosing it still has their
+        drafts, so they go back to those rather than to a new upload.
+        """
+        ref = core_forms.DenialRefForm(request.POST)
+        if not ref.is_valid():
+            return None
+        denial_id = ref.cleaned_data["denial_id"]
+        email = ref.cleaned_data["email"]
+        semi_sekret = ref.cleaned_data["semi_sekret"]
+        if not models.Denial.objects.filter(
+            denial_id=denial_id,
+            hashed_email=models.Denial.get_hashed_email(email),
+            semi_sekret=semi_sekret,
+        ).exists():
+            return None
+        return build_back_url(request, "generate_appeal", denial_id, email, semi_sekret)
+
     def post(self, request):
         form = core_forms.ChooseAppealForm(request.POST)
 
@@ -1636,9 +1660,8 @@ class ChooseAppeal(View):
             # A bare `return` was a 500 ("view didn't return an
             # HttpResponse"). This fires for real users: clearing the appeal
             # textarea before submitting makes appeal_text fail validation.
-            # Match ChooseEscalationLetter's recovery.
             logger.debug(f"ChooseAppeal: invalid form {form.errors}")
-            return redirect("scan")
+            return redirect(self._appeals_page_for(request) or "scan")
 
         (
             appeal_fax_number,
@@ -2024,9 +2047,18 @@ class OCRView(View):
             pass
 
     def get(self, request):
-        return render(request, "server_side_ocr.html")
+        return render(
+            request,
+            "server_side_ocr.html",
+            context={"form": core_forms.ServerOCRForm()},
+        )
 
     def post(self, request):
+        # The boxes come first: no upload is read until they are ticked.
+        form = core_forms.ServerOCRForm(request.POST)
+        if not form.is_valid():
+            return render(request, "server_side_ocr.html", context={"form": form})
+        consent.note_server_ocr_consent(request.session, form.cleaned_data)
         try:
             files = dict(request.FILES.lists())
             uploader = files["uploader"]
@@ -2046,10 +2078,10 @@ class OCRView(View):
             )
 
         except AttributeError:
-            return render_ocr_error(request, "Unsupported file")
+            return render_ocr_error(request, "Unsupported file", form)
 
         except KeyError:
-            return render_ocr_error(request, "Missing file")
+            return render_ocr_error(request, "Missing file", form)
 
     def _ocr(self, uploader):
         def ocr_upload(x):
