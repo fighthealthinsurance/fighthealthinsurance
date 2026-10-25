@@ -70,7 +70,7 @@ class TestMedicaidEligibilityLandingPage(TestCase):
     def test_warning_names_each_way_to_meet_the_rule(self):
         from bs4 import BeautifulSoup
 
-        warning = BeautifulSoup(self.content, "html.parser").select_one(".callout-card")
+        warning = BeautifulSoup(self.content, "html.parser").select_one("#work-requirements .callout-card")
         self.assertIsNotNone(warning)
         text = warning.get_text(" ", strip=True)
         for option in ("80 hours per month", "school at least half-time", "$580"):
