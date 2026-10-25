@@ -119,7 +119,7 @@ def agent_docs_context(request):
 
 def denial_watch_context(request):
     """Whether to show the links to Denial Watch and its open enrollment page,
-    and the home strip's number.
+    and the home page's pill and highlight cards.
 
     Nothing links to the page until DENIAL_WATCH_PAGE_ENABLED is on, the same
     flag that stops the page itself from serving. Reading the numbers only
@@ -137,6 +137,7 @@ def denial_watch_context(request):
         DENIAL_WATCH_NEW_UNTIL,
         denial_watch_enrollment,
         denial_watch_teaser,
+        open_enrollment_heading,
     )
 
     try:
@@ -148,13 +149,15 @@ def denial_watch_context(request):
         )
         return {"denial_watch_enabled": False}
     today = timezone.localdate(timezone=DENIAL_WATCH_LAST_TIME_ZONE)
+    enrollment = denial_watch_enrollment(today)
     return {
         "denial_watch_enabled": True,
         "denial_watch_teaser": teaser,
         "denial_watch_new": today <= DENIAL_WATCH_NEW_UNTIL,
         "denial_watch_hero": today <= DENIAL_WATCH_HERO_UNTIL,
         # The menu links the open enrollment page while Denial Watch's card does.
-        "open_enrollment_in_season": denial_watch_enrollment(today) is not None,
+        "open_enrollment_in_season": enrollment is not None,
+        "open_enrollment_heading": open_enrollment_heading(enrollment),
     }
 
 

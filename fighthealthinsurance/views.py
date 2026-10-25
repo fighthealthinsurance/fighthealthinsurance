@@ -702,14 +702,19 @@ def denial_watch_every_state() -> dict[str, typing.Any]:
 @functools.lru_cache(maxsize=1)
 def denial_watch_teaser() -> dict[str, typing.Any]:
     """The home page's numbers: the latest year's in-network denial rate on
-    HealthCare.gov plans, as "1 in N", and its average denials a day."""
-    latest = _denial_watch_data()["trend"][-1]
+    HealthCare.gov plans, as "1 in N", its average denials a day, and the
+    latest open enrollment's marketplace plan picks."""
+    data = _denial_watch_data()
+    latest = data["trend"][-1]
     per_day = round(latest["in_denied"] / latest["days"])
+    picks = max(data["marketplace"]["picks"], key=lambda p: p["y"])
     return {
         "one_in": round(1 / latest["in_rate"]),
         "year": latest["year"],
         "per_day": per_day,
         "per_day_text": f"{per_day:,}",
+        "picks_year": picks["y"],
+        "picks_text": f"{picks['n'] / 1e6:.1f} million",
     }
 
 
@@ -736,6 +741,13 @@ def denial_watch_enrollment(today: date) -> dict[str, typing.Any] | None:
         "ends": medicare_ends,
         "plan_year": starts.year + 1,
     }
+
+
+def open_enrollment_heading(enrollment: dict[str, typing.Any] | None) -> str:
+    """The open enrollment page's title, which the home page's card shares."""
+    if enrollment:
+        return f"Open enrollment for {enrollment['plan_year']}"
+    return "Signing up for marketplace coverage"
 
 
 class DenialWatchView(StaticIshView):
@@ -795,12 +807,7 @@ class OpenEnrollmentView(DenialWatchView):
 
     def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
         context = super().get_context_data(**kwargs)
-        enrollment = context["enrollment"]
-        context["heading"] = (
-            f"Open enrollment for {enrollment['plan_year']}"
-            if enrollment
-            else "Signing up for marketplace coverage"
-        )
+        context["heading"] = open_enrollment_heading(context["enrollment"])
         return context
 
 

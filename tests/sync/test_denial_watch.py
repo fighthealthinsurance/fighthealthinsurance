@@ -456,21 +456,21 @@ class TestDenialWatchIsEasyToFind(TestCase):
         self.assertIn(f'<a href="{href}">See how often, on Denial Watch</a>', explain)
 
     @override_settings(DENIAL_WATCH_PAGE_ENABLED=True)
-    def test_the_home_strip_states_the_latest_number(self):
+    def test_the_home_card_states_the_latest_number(self):
         latest = DATA["trend"][-1]
         html = Client().get(reverse("root")).content.decode()
         self.assertIn(
-            f"Insurers denied about 1 in {round(1 / latest['in_rate'])} in-network claims on "
-            f"HealthCare.gov plans in {latest['year']}",
-            html,
+            f"About 1 in {round(1 / latest['in_rate'])} in-network claims on "
+            f"HealthCare.gov plans were denied by insurers in {latest['year']}",
+            _text(_between(html, 'id="denial-watch-home"', "</a>")),
         )
 
     @override_settings(DENIAL_WATCH_PAGE_ENABLED=True)
     def test_the_home_hero_announces_it_with_the_counters_pace(self):
         latest = DATA["trend"][-1]
         per_day = round(latest["in_denied"] / latest["days"])
-        # 9am UTC on November 3 is still November 2, its last day, in Hawaii.
-        last = datetime(2026, 11, 3, 9, 0, tzinfo=dt_timezone.utc)
+        # 9am UTC on October 15 is still October 14 in Hawaii, the last day before open enrollment takes the pill.
+        last = datetime(2026, 10, 15, 9, 0, tzinfo=dt_timezone.utc)
         with mock.patch("django.utils.timezone.now", return_value=last):
             html = Client().get(reverse("root")).content.decode()
         hero = _between(html, 'id="denial-watch-hero"', "</a>")
@@ -487,8 +487,9 @@ class TestDenialWatchIsEasyToFind(TestCase):
         self.assertIn('a.querySelector(".hero-announce-count").textContent = count.toLocaleString("en-US");', html)
 
     @override_settings(DENIAL_WATCH_PAGE_ENABLED=True)
-    def test_the_home_hero_hands_off_to_the_strip_after_november_2(self):
-        after = datetime(2026, 11, 3, 11, 0, tzinfo=dt_timezone.utc)
+    def test_the_home_hero_hands_off_to_the_card_after_november_2(self):
+        # After open enrollment too, so no season pill stands in for it.
+        after = datetime(2027, 1, 16, 11, 0, tzinfo=dt_timezone.utc)
         with mock.patch("django.utils.timezone.now", return_value=after):
             html = Client().get(reverse("root")).content.decode()
         self.assertNotIn('id="denial-watch-hero"', html)

@@ -56,8 +56,9 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         self.wait_for_page_ready(predicate=lambda d: d.execute_script("return !!document.querySelector('#dmap g')"))
 
     @mock.patch("fighthealthinsurance.views.DENIAL_WATCH_HERO_UNTIL", date(2099, 1, 1))
+    @mock.patch("fighthealthinsurance.views.denial_watch_enrollment", new=lambda today: None)
     def test_home_page_announces_it_with_todays_count(self):
-        # The announcement retires itself on a date, so the check pins it open.
+        # The announcement retires on a date and gives way to open enrollment's, so the check pins it open and the season shut.
         self.set_window_size(1280, 900)
         self.open(f"{self.live_server_url}{reverse('root')}")
         self.assert_text_eventually_contains(
