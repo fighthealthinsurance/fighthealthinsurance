@@ -131,13 +131,17 @@ const DM={
 const HELP=ROOT.dataset.stateHelp||'';
 const helpLink=s=>HELP?`<div class="dw-readout-line"><a href="${esc(HELP+NAMES[s].toLowerCase().replace(/ /g,'-')+'/')}">Where to get help in ${esc(NAMES[s])}</a></div>`:'';
 const line1=h=>`<div class="dw-readout-line">${h}</div>`;
+/* Grey states: why there's no figure here, and where to look instead. */
+const OWN=s=>`${NAMES[s]} isn't in this data: it runs its own marketplace, so its insurers aren't in the HealthCare.gov figures this page uses.`;
+const ELSEWHERE={CA:['#appeals',"See how California's independent reviews turned out"]};
+const elsewhere=s=>ELSEWHERE[s]?`<div class="dw-readout-line"><a href="${esc(ELSEWHERE[s][0])}">${esc(ELSEWHERE[s][1])}</a></div>`:'';
 /* From the rounded rates, so the two figures shown subtract to it. */
 const chg=(a,b)=>{const d=Math.round(a*1000)-Math.round(b*1000);return d===0?'the same':(d>0?'up ':'down ')+(Math.abs(d)/10).toFixed(1)+' points';};
 function allRead(s,r){const a=r.all;
   return line1(a.rate!=null?`<b class="dw-num">${pct(a.rate)}</b> of all claims denied, in and out of network (${big(a.denied)} of ${big(a.claims)})`:
     a.why==='error'?`No all-claims figure for ${NAMES[s]}: ${esc(cantBe(a.left_out))}.`:'No all-claims figure: no insurer here reported both kinds of claims.');}
 function dRead(s){dsel=s;const r=ST[s];let h=`<div class="dw-readout-state">${NAMES[s]}</div>`;
-  if(!r)h+=`<div class="dw-readout-line">Not in this data. ${NAMES[s]} runs its own marketplace, or had no HealthCare.gov insurers reporting.</div>`;
+  if(!r)h+=line1(OWN(s))+elsewhere(s);
   else h+=(dm==='all'?allRead(s,r):'')+`<div class="dw-readout-line"><b class="dw-num">${pct(r.rate)}</b> of in-network claims denied (${big(r.denied)} of ${big(r.claims)})</div>`+
     (r.prev!=null?`<div class="dw-readout-line">2023: <span class="dw-num">${pct(r.prev)}</span> (${chg(r.rate,r.prev)})</div>`:'')+
     (BYST[s]?line1(span(s)?`Its insurers in the table: <b class="dw-num">${pct(span(s)[0])}</b> to <b class="dw-num">${pct(span(s)[1])}</b>, lowest to highest`:'One insurer in the table'):'')+
@@ -149,14 +153,15 @@ document.querySelectorAll('#dmode button').forEach(b=>b.onclick=()=>{dm=b.datase
 dRead(dsel);
 
 /* line chart */
-function line(svg,pts,{ymin,ymax,fmtY,ticks,color,label}){
+function line(svg,pts,{ymin,ymax,fmtY,ticks,color,label,open}){
   const W=560,H=270,L=46,R=16,Tp=18,B=34;const xs=pts.map(p=>p.x);const x0=Math.min(...xs),x1=Math.max(...xs);
   const X=x=>L+(x-x0)/(x1-x0||1)*(W-L-R), Y=y=>Tp+(1-(y-ymin)/(ymax-ymin))*(H-Tp-B);
   let h='<g class="dw-axis">';for(const t of ticks){h+=`<line x1="${L}" x2="${W-R}" y1="${Y(t)}" y2="${Y(t)}"/><text x="${L-8}" y="${Y(t)+4}" text-anchor="end" font-size="12">${fmtY(t)}</text>`;}h+='</g>';
   /* Every step-th year and the last, leaving out a step year that would crowd the last. */
   const step=Math.ceil(pts.length/8),last=pts.length-1;pts.forEach((p,i)=>{if(i===last||(i%step===0&&last-i>=step))h+=`<text x="${X(p.x)}" y="${H-10}" text-anchor="middle" font-size="12">${p.x}</text>`;});
   h+=`<path d="${pts.map((p,i)=>(i?'L':'M')+X(p.x).toFixed(1)+' '+Y(p.y).toFixed(1)).join(' ')}" fill="none" stroke="${color}" stroke-width="3" stroke-linejoin="round"/>`;
-  pts.forEach((p,i)=>{h+=`<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${i===pts.length-1?5:3.5}" fill="${color}" stroke="${'#ffffff'}" stroke-width="1.5"/>`;});
+  /* A point that isn't final yet (open) is drawn hollow. */
+  pts.forEach((p,i)=>{const o=open&&open(p);h+=`<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${i===pts.length-1?5:3.5}" fill="${o?'#ffffff':color}" stroke="${o?color:'#ffffff'}" stroke-width="${o?2.5:1.5}"/>`;});
   /* The end label goes under the last point when the line comes down to it, so it doesn't sit on the line. */
   const lp=pts[last],below=last>0&&pts[last-1].y>lp.y&&Y(lp.y)+26<H-B;h+=`<text class="dw-end" x="${X(lp.x)-8}" y="${Y(lp.y)+(below?26:-12)}" text-anchor="end" font-size="14" font-weight="700" style="fill:${color}">${label(lp.y)}</text>`;
   svg.innerHTML=h;
@@ -193,7 +198,8 @@ $('istate').innerHTML='<option value="" disabled hidden>Pick a state</option>'+s
 let ipin=dsel;
 function iDraw(){const s=$('istate').value;
   const mx=Math.max(...IS.map(i=>i.r));
-  if(!s){$('icount').textContent='';$('itable').innerHTML=`<tbody><tr><td>${esc(NAMES[ipin]||'')} isn't in this data: it runs its own marketplace, or had no HealthCare.gov insurers reporting.</td></tr></tbody>`;return;}
+  /* A mapped state with no insurer big enough for the table isn't a grey state. */
+  if(!s){$('icount').textContent='';$('itable').innerHTML=`<tbody><tr><td>${NAMES[ipin]?(ST[ipin]?`None of ${NAMES[ipin]}'s insurers reported the 50,000 in-network claims this table needs.`:OWN(ipin)+elsewhere(ipin)):''}</td></tr></tbody>`;return;}
   /* One state: no State column, since the picker names it. */
   const rows=IS.filter(i=>i.s===s).sort((a,b)=>b.r-a.r);$('icount').textContent=rows.length+(rows.length>1?' insurers in ':' insurer in ')+NAMES[s];
   $('itable').innerHTML='<thead><tr><th>Insurer</th><th>Denial rate</th><th class="dw-r">Claims</th><th class="dw-r">Appeals won</th></tr></thead><tbody>'+
@@ -260,5 +266,14 @@ function dgDraw(k){const m=DGM[k],rows=DG[k];const mx=Math.max(...rows.map(m.v))
   $('dgbars').innerHTML=rows.map(d=>`<div class="dw-bar ${m.low?'dw-bar-low':''}${d.medicare_price?' dw-bar-tagged':''}"><div class="dw-bar-name"><span><b>${esc(d.Brnd_Name)}</b>${d.use?` <span class="dw-drug-use">for ${esc(d.use)}</span>`:''}${sameName(d.Brnd_Name,d.Gnrc_Name)?'':` <span class="dw-note">· ${esc(String(d.Gnrc_Name).toLowerCase())}</span>`}</span><span class="dw-note dw-num">${m.sub(d)}</span></div>${d.medicare_price?`<span class="dw-chip dw-bar-chip">${esc(d.medicare_price.label)}</span>`:''}<div class="dw-bar-track"><div class="dw-bar-fill" style="width:${m.v(d)/mx*100}%"></div></div><div class="dw-bar-value dw-num">${m.l(d)}</div></div>`).join('');}
 document.querySelectorAll('#dgmode button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#dgmode button').forEach(x=>x.setAttribute('aria-pressed',x===b));dgDraw(b.dataset.m);});
 dgDraw('top');
+
+/* marketplace coverage: every February from one CMS file, the year CMS is still counting drawn hollow */
+const MK=D.marketplace;
+if(MK){const F=MK.feb,first=F[0].y,lastY=F[F.length-1].y;
+  line($('mkline'),F.map(r=>({x:r.y,y:r.n})),{ymin:0,ymax:25e6,ticks:[0,5e6,10e6,15e6,20e6,25e6],fmtY:y=>y?(y/1e6)+'M':'0',color:css('--dw-blue'),label:y=>(y/1e6).toFixed(1)+'M',open:p=>p.x===MK.prelim});
+  $('mkline').setAttribute('aria-label',`Line chart of people with marketplace coverage in effect each February, ${first} to ${lastY}${MK.prelim?`. ${MK.prelim} is preliminary`:''}`);
+  const chg=i=>{const c=F[i].n/F[i-1].n-1;return (c>0?'+':'')+pct(c);};
+  $('mktable').innerHTML=`<caption class="fhi-visually-hidden">People with marketplace coverage in effect each February, nationwide, ${first} to ${lastY}</caption><thead><tr><th scope="col">February</th><th scope="col" class="dw-r">Coverage in effect</th><th scope="col" class="dw-r">Change</th></tr></thead><tbody>`+
+    F.map((r,i)=>`<tr><th scope="row">${r.y}${r.y===MK.prelim?' <span class="dw-note">(preliminary)</span>':''}</th><td class="dw-r dw-num">${fmt(r.n)}</td><td class="dw-r dw-num">${i?chg(i):''}</td></tr>`).join('')+'</tbody>';}
 
 })();
