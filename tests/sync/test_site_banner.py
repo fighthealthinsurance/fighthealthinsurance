@@ -289,7 +289,9 @@ class TestSiteBannerAdmin(TestCase):
 
     def test_add_form_loads_admin_helper_js(self):
         response = self.client.get(f"{self.ADMIN_URL}add/")
-        self.assertContains(response, "admin_site_banner.js")
+        self.assertRegex(
+            response.content.decode(), r"/static/js/admin_site_banner\.js\?v=[0-9a-f]{12}"
+        )
 
     def test_create_banner_via_admin(self):
         response = self.client.post(
