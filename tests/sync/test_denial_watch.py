@@ -604,6 +604,13 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
         )
         self.assertIn('PA:["In 2024, the 11 insurers in ", ', self.js)
 
+    def test_method_note_says_which_grey_states_have_no_source_to_link(self):
+        # The JS gives Rhode Island and Kentucky no link, so the note can't promise one for every grey state.
+        self.assertIn("Rhode Island and Kentucky publish nothing current, so theirs says so with no link.", _page())
+        for state in ("RI", "KY"):
+            line = self.js[self.js.index(f"  {state}:[") : self.js.index("\n", self.js.index(f"  {state}:["))]
+            self.assertIn('"", "", ""]', line)
+
     def test_every_grey_state_has_one_checked_source_line(self):
         # A state the map leaves grey gets exactly one entry, and nothing the map fills does.
         bundle = json.loads(
