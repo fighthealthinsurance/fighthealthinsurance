@@ -135,7 +135,7 @@ const line1=h=>`<div class="dw-readout-line">${h}</div>`;
 const OWN=s=>`${NAMES[s]} isn't in this data: it runs its own marketplace, so its insurers aren't in the HealthCare.gov figures this page uses.`;
 /* Each grey state's best checked public source: text before, link, link text, text after. Checked 2026-10-25. */
 const ELSEWHERE={
-  CA:["", "#appeals", "See how California's independent reviews turned out", ""],
+  CA:["California's marketplace insurers fill in the same federal claims form as HealthCare.gov insurers. The 8 with usable reports for 2024 claims reported denying 16.8% of in-network claims on the individual plans they report to ", "https://www.hbex.ca.gov/insurance-companies/denied-claims/", "Covered California", " (6.7 million of 40.1 million; FHI's calculation from those reports).", "", "#appeals", "See how California's independent reviews turned out", ""],
   CO:["Colorado posts ", "https://doi.colorado.gov/insurance-complaint-ratio-and-complaint-index-information", "complaint counts by insurer", "."],
   CT:["Connecticut's ", "https://portal.ct.gov/cid/department-resources/cid-reports/consumer-report-card", "yearly insurer report card", " lists each insurer's denials, appeals and independent review results."],
   DC:["DC publishes no denial or appeal results by insurer. ", "https://healthcareombudsman.dc.gov/sites/default/files/dc/sites/Office%20of%20Health%20Care%20Ombudsman%20and%20Bill%20of%20Rights/publication/attachments/FY2022%20SUMMARY%20OF%20CASES_0.pdf", "The health care ombudsman's latest case summary", " covers fiscal 2022."],
@@ -157,8 +157,10 @@ const ELSEWHERE={
   VT:["Each Vermont insurer files a ", "https://dfr.vermont.gov/industry/insurance/health-insurance/reports", "yearly report", " on claims denied, appeals and independent reviews overturned."],
   WA:["Washington's ", "https://fortress.wa.gov/oic/consumertoolkit/search.aspx?searchtype=indrev", "independent review search", " shows each decision by insurer."]
 };
-const elsewhere=s=>{const e=ELSEWHERE[s];if(!e)return '';
-  return `<div class="dw-readout-line">${esc(e[0])}${e[1]?`<a href="${esc(e[1])}">${esc(e[2])}</a>`:''}${esc(e[3])}</div>`;};
+/* Each four items are one line, so a state can carry a figure and a pointer. */
+const elsewhere=s=>{const e=ELSEWHERE[s];if(!e)return '';let h='';
+  for(let i=0;i<e.length;i+=4)h+=`<div class="dw-readout-line">${esc(e[i])}${e[i+1]?`<a href="${esc(e[i+1])}">${esc(e[i+2])}</a>`:''}${esc(e[i+3])}</div>`;
+  return h;};
 /* A grey state's figure from the last year CMS's files include it: an older year, so it stays off the 2024 map. */
 const EARLIER=D.earlier||{};
 const earlier=s=>{const e=EARLIER[s];if(!e)return '';

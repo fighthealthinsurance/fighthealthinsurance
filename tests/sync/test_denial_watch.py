@@ -578,7 +578,7 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
     def test_a_grey_state_points_to_where_its_data_is(self):
         # California has no HealthCare.gov figures, so its readout links to the page's independent review results.
         self.assertIn(
-            'CA:["", "#appeals", "See how California\'s independent reviews turned out", ""]',
+            '"", "#appeals", "See how California\'s independent reviews turned out", ""],',
             self.js,
         )
         self.assertIn("if(!r)h+=(earlier(s)||line1(OWN(s)))+elsewhere(s);", self.js)
@@ -586,6 +586,15 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
             REPO / "fighthealthinsurance" / "templates" / "denial_watch.html"
         ).read_text()
         self.assertIn('id="appeals"', template)
+
+    def test_california_line_gives_its_insurers_own_reports_and_keeps_the_reviews_link(self):
+        # FHI's sum over the 8 insurers with usable 2024 reports on Covered California's page; not CMS data.
+        line = self.js[self.js.index("  CA:[") : self.js.index("\n", self.js.index("  CA:["))]
+        self.assertIn("reported denying 16.8% of in-network claims", line)
+        self.assertIn("(6.7 million of 40.1 million; FHI's calculation from those reports).", line)
+        self.assertIn('"https://www.hbex.ca.gov/insurance-companies/denied-claims/", "Covered California"', line)
+        self.assertIn('"#appeals"', line)
+        self.assertIn("for(let i=0;i<e.length;i+=4)", self.js)
 
     def test_pennsylvania_line_names_its_insurers_and_publisher(self):
         # FHI's sum over the 11 insurers in the state's report, for 2024 claims; not CMS data.
@@ -607,14 +616,18 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
         entries = re.findall(r"^  ([A-Z]{2}):(\[.*\]),?$", block, re.M)
         self.assertEqual(sorted(s for s, _ in entries), sorted(grey))
         for state, raw in entries:
-            before, link, text, after = json.loads(raw)
-            self.assertTrue(
-                link == "" or link == "#appeals" or link.startswith("https://"), state
-            )
-            self.assertEqual(bool(link), bool(text), state)
-            for part in (before, text, after):
-                self.assertNotIn("\u2014", part)
-                self.assertNotIn("\u2013", part)
+            items = json.loads(raw)
+            self.assertEqual(len(items) % 4, 0, state)
+            for i in range(0, len(items), 4):
+                before, link, text, after = items[i : i + 4]
+                self.assertTrue(
+                    link == "" or link == "#appeals" or link.startswith("https://"),
+                    state,
+                )
+                self.assertEqual(bool(link), bool(text), state)
+                for part in (before, text, after):
+                    self.assertNotIn("\u2014", part)
+                    self.assertNotIn("\u2013", part)
 
     def test_map_tiles_show_each_states_insurer_range_in_network_only(self):
         # The heatmap carries what the ranked bars did; the range is of in-network insurer rates.
