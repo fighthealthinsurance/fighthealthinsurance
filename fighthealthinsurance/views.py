@@ -3,6 +3,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import os
 import random
 import re
@@ -10,7 +11,7 @@ import functools
 import secrets
 import time
 import typing
-from datetime import date, timedelta
+from datetime import date, datetime, time as dt_time, timedelta
 from typing import TypedDict
 from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
@@ -30,12 +31,15 @@ from django.http import (
     JsonResponse,
 )
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.response import SimpleTemplateResponse
 from django.template import loader
 from django.urls import reverse
 from django.utils.decorators import classonlymethod, method_decorator
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.views import View, generic
+from django.utils.cache import get_max_age, patch_cache_control
+from django.utils.http import http_date
 from django.views.decorators.cache import cache_control, cache_page
 from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
@@ -486,6 +490,18 @@ class PublicCachedPageMixin:
         return super().render_to_response(context, **response_kwargs)  # type: ignore[misc]
 
 
+def page_day() -> tuple[date, int]:
+    """Today for dated page copy, and the seconds until it ends.
+
+    Honolulu, the last US time zone, like Denial Watch's own dates.
+    """
+    now = timezone.localtime(timezone=DENIAL_WATCH_LAST_TIME_ZONE)
+    midnight = datetime.combine(
+        now.date() + timedelta(days=1), dt_time.min, tzinfo=now.tzinfo
+    )
+    return now.date(), max(1, math.ceil((midnight - now).total_seconds()))
+
+
 class StaticIshView(PublicCachedPageMixin, generic.TemplateView):
     """Base class for marketing/content pages cached as whole responses.
 
@@ -500,6 +516,10 @@ class StaticIshView(PublicCachedPageMixin, generic.TemplateView):
     ``cache_timeout_seconds`` for pages that can tolerate longer staleness).
     The cache wrapping lives here, in ``as_view``, so ``urls.py`` stays free of
     per-route decorator stacks.
+
+    Every page shows dated copy (base.html's menu links the open enrollment
+    page only in season), so a cached copy never outlives its day: the day
+    is in the cache key, and max-age stops at the next midnight.
     """
 
     cache_timeout_seconds = STATIC_ISH_PAGE_CACHE_SECONDS
@@ -509,7 +529,40 @@ class StaticIshView(PublicCachedPageMixin, generic.TemplateView):
         cls, **initkwargs: typing.Any
     ) -> typing.Callable[..., HttpResponseBase]:
         view = super().as_view(**initkwargs)
-        return cache_control(public=True)(cache_page(cls.cache_timeout_seconds)(view))
+        timeout = cls.cache_timeout_seconds
+
+        @functools.lru_cache(maxsize=2)
+        def cached_for(day: date) -> typing.Callable[..., HttpResponseBase]:
+            return cache_control(public=True)(
+                cache_page(timeout, key_prefix=f"day-{day.isoformat()}")(view)
+            )
+
+        @functools.wraps(view)
+        def dated_view(
+            request: HttpRequest, *args: typing.Any, **kwargs: typing.Any
+        ) -> HttpResponseBase:
+            day, seconds_left = page_day()
+            response = cached_for(day)(request, *args, **kwargs)
+
+            def stop_at_midnight(response: HttpResponseBase) -> None:
+                max_age = get_max_age(response)
+                # A copy from the cache carries Age, which downstream caches subtract.
+                age = int(response.get("Age") or 0)
+                if max_age is not None and max_age - age > seconds_left:
+                    patch_cache_control(response, max_age=age + seconds_left)
+                    response["Expires"] = http_date(time.time() + seconds_left)
+
+            # A fresh page gets its cache headers only once it renders.
+            if (
+                isinstance(response, SimpleTemplateResponse)
+                and not response.is_rendered
+            ):
+                response.add_post_render_callback(stop_at_midnight)
+            else:
+                stop_at_midnight(response)
+            return response
+
+        return dated_view
 
 
 class PatientAccessView(StaticIshView):
