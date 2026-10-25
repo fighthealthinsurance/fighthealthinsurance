@@ -198,7 +198,8 @@ $('istate').innerHTML='<option value="" disabled hidden>Pick a state</option>'+s
 let ipin=dsel;
 function iDraw(){const s=$('istate').value;
   const mx=Math.max(...IS.map(i=>i.r));
-  if(!s){$('icount').textContent='';$('itable').innerHTML=`<tbody><tr><td>${NAMES[ipin]?OWN(ipin)+elsewhere(ipin):''}</td></tr></tbody>`;return;}
+  /* A mapped state with no insurer big enough for the table isn't a grey state. */
+  if(!s){$('icount').textContent='';$('itable').innerHTML=`<tbody><tr><td>${NAMES[ipin]?(ST[ipin]?`None of ${NAMES[ipin]}'s insurers reported the 50,000 in-network claims this table needs.`:OWN(ipin)+elsewhere(ipin)):''}</td></tr></tbody>`;return;}
   /* One state: no State column, since the picker names it. */
   const rows=IS.filter(i=>i.s===s).sort((a,b)=>b.r-a.r);$('icount').textContent=rows.length+(rows.length>1?' insurers in ':' insurer in ')+NAMES[s];
   $('itable').innerHTML='<thead><tr><th>Insurer</th><th>Denial rate</th><th class="dw-r">Claims</th><th class="dw-r">Appeals won</th></tr></thead><tbody>'+

@@ -568,6 +568,13 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
         self.assertNotIn("highest and lowest 10", self.js)
         self.assertNotIn("slice(0,10)", self.js)
 
+    def test_an_empty_insurer_table_calls_only_grey_states_grey(self):
+        # A state on the map with no insurer over the table's floor gets its own line, not the grey-state one.
+        self.assertIn(
+            "${NAMES[ipin]?(ST[ipin]?`None of ${NAMES[ipin]}'s insurers reported the 50,000 in-network claims this table needs.`:OWN(ipin)+elsewhere(ipin)):''}",
+            self.js,
+        )
+
     def test_a_grey_state_points_to_where_its_data_is(self):
         # California has no HealthCare.gov figures, so its readout links to the page's independent review results.
         self.assertIn("ELSEWHERE={CA:['#appeals',\"See how California's independent reviews turned out\"]", self.js)
