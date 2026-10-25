@@ -1306,7 +1306,7 @@ class SiteBannerAdminForm(forms.ModelForm):
     @property
     def media(self) -> forms.Media:
         # Versioned like the templates' scripts, so a CDN can't serve an old copy.
-        return forms.Media(js=[versioned("js/admin_site_banner.js")])
+        return super().media + forms.Media(js=[versioned("js/admin_site_banner.js")])
 
 
 @admin.register(SiteBanner)
