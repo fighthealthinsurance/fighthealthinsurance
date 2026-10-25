@@ -1,8 +1,11 @@
 """
 Reading the text of Word (.docx) files in one pass.
 
-:func:`docx_text` streams word/document.xml through an XML pull parser and
-keeps only the elements still open, so it reads the body once, in order.
+:func:`docx_text` streams the main document part (named by the package's
+officeDocument relationship, word/document.xml by default) through an XML
+pull parser and keeps only the elements still open, so it reads the body
+once, in order. Text a tracked change moved away (w:moveFrom) is skipped;
+it is read where it moved to.
 Paragraphs, tabs, line breaks and non-breaking hyphens keep their places,
 so a table reads cell by cell. Content saved in more than one form
 (mc:AlternateContent, as Word saves a text box) is read once, from its
@@ -13,6 +16,7 @@ Django imports, so any worker can use it as is.
 """
 
 import io
+import posixpath
 import time
 import zipfile
 
@@ -40,7 +44,33 @@ _MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
 _ALTERNATE_CONTENT = _MC + "AlternateContent"
 _CHOICE = _MC + "Choice"
 _FALLBACK = _MC + "Fallback"
+_MOVE_FROM = _W + "moveFrom"
 _CHUNK_BYTES = 1024 * 1024
+_DEFAULT_BODY = "word/document.xml"
+_RELS_BYTES = 64 * 1024
+
+
+def _main_part(archive: zipfile.ZipFile) -> str:
+    """The body's part name from _rels/.rels, or Word's default."""
+    try:
+        with archive.open("_rels/.rels") as rels:
+            raw = rels.read(_RELS_BYTES + 1)
+        if len(raw) > _RELS_BYTES:
+            return _DEFAULT_BODY
+        parser = etree.XMLParser(
+            resolve_entities=False, no_network=True, load_dtd=False
+        )
+        for rel in etree.fromstring(raw, parser):
+            if not str(rel.get("Type", "")).endswith("/officeDocument"):
+                continue
+            if rel.get("TargetMode") == "External":
+                continue
+            target = posixpath.normpath(str(rel.get("Target", "")).lstrip("/"))
+            if target not in ("", ".") and not target.startswith(".."):
+                return target
+    except Exception:
+        pass
+    return _DEFAULT_BODY
 
 
 def docx_text(
@@ -52,7 +82,7 @@ def docx_text(
     unpacked = 0
     status = WHOLE
     deadline = time.monotonic() + max_seconds
-    # Depth inside an alternative that repeats one already read.
+    # Depth inside moved-away text, or an alternative that repeats one already read.
     skipping = 0
     # For each open mc:AlternateContent, whether one of its alternatives was read.
     choice_read: list[bool] = []
@@ -65,7 +95,7 @@ def docx_text(
         )
         with (
             zipfile.ZipFile(io.BytesIO(content)) as archive,
-            archive.open("word/document.xml") as body,
+            archive.open(_main_part(archive)) as body,
         ):
             while chars < max_chars:
                 chunk = body.read(_CHUNK_BYTES)
@@ -83,6 +113,8 @@ def docx_text(
                     if event == "start":
                         if skipping:
                             skipping += 1
+                        elif tag == _MOVE_FROM:
+                            skipping = 1
                         elif tag == _ALTERNATE_CONTENT:
                             choice_read.append(False)
                         elif tag in (_CHOICE, _FALLBACK) and choice_read:

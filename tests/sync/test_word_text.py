@@ -182,6 +182,54 @@ def test_it_stops_at_the_time_limit():
     )
 
 
+def test_text_a_tracked_change_moved_is_read_only_where_it_went():
+    body = (
+        "<w:p><w:r><w:t>Preferred network</w:t></w:r></w:p>"
+        '<w:p><w:moveFrom w:id="1"><w:r><w:t>Clinic A</w:t></w:r></w:moveFrom></w:p>'
+        "<w:p><w:r><w:t>Out-of-network</w:t></w:r></w:p>"
+        '<w:p><w:moveTo w:id="2"><w:r><w:t>Clinic A</w:t></w:r></w:moveTo></w:p>'
+    )
+    text, status = read(word_file(body))
+    assert status == word_text.WHOLE
+    assert text.split() == ["Preferred", "network", "Out-of-network", "Clinic", "A"]
+
+
+def test_the_body_is_found_through_the_package_relationship():
+    rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    document = (
+        f'<w:document xmlns:w="{W}"><w:body>{paragraph("Crumpler main")}</w:body></w:document>'
+    )
+    content = zip_bytes(
+        {
+            "[Content_Types].xml": b"<Types/>",
+            "_rels/.rels": (
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                f'<Relationship Id="rId1" Type="{rel}/officeDocument" Target="/word/main.xml"/>'
+                "</Relationships>"
+            ).encode(),
+            "word/main.xml": document.encode(),
+        }
+    )
+    assert read(content) == ("Crumpler main", word_text.WHOLE)
+
+
+def test_a_relationship_outside_the_package_falls_back_to_the_default_body():
+    rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    content = zip_bytes(
+        {
+            "_rels/.rels": (
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                f'<Relationship Id="rId1" Type="{rel}/officeDocument" Target="../outside.xml"/>'
+                "</Relationships>"
+            ).encode(),
+            "word/document.xml": (
+                f'<w:document xmlns:w="{W}"><w:body>{paragraph("Crumpler default")}</w:body></w:document>'
+            ).encode(),
+        }
+    )
+    assert read(content) == ("Crumpler default", word_text.WHOLE)
+
+
 def test_a_file_that_is_not_a_word_file_is_unreadable():
     assert read(b"Rebecca Lee Crumpler, not a zip") == ("", word_text.UNREADABLE)
 

@@ -624,6 +624,9 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
 
         class Archive:
             def open(self, name):
+                # No package relationships, so the reader opens Word's default body.
+                if name != "word/document.xml":
+                    raise KeyError(name)
                 return member
 
             def __enter__(self):
