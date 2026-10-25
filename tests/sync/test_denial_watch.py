@@ -460,8 +460,8 @@ class TestDenialWatchIsEasyToFind(TestCase):
         latest = DATA["trend"][-1]
         html = Client().get(reverse("root")).content.decode()
         self.assertIn(
-            f"About 1 in {round(1 / latest['in_rate'])} in-network claims on "
-            f"HealthCare.gov plans were denied by insurers in {latest['year']}",
+            f"About 1 in {round(1 / latest['in_rate'])} denied in-network claims on "
+            f"HealthCare.gov plans, by insurers in {latest['year']}",
             _text(_between(html, 'id="denial-watch-home"', "</a>")),
         )
 

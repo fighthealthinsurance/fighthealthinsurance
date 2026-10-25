@@ -114,21 +114,26 @@ class TestHomeHighlights(TestCase):
         stat = self._card("denial-watch-home").select_one(".home-highlight-stat")
         self.assertEqual(
             stat.get_text(" ", strip=True),
-            f"About 1 in {round(1 / latest['in_rate'])} in-network claims on "
-            f"HealthCare.gov plans were denied by insurers in {latest['year']}",
+            f"About 1 in {round(1 / latest['in_rate'])} denied in-network claims on "
+            f"HealthCare.gov plans, by insurers in {latest['year']}",
         )
 
     def test_enrollment_number_is_the_bundles_latest_plan_picks(self):
         picks = _picks()
         year = max(picks)
         stat = self._card("open-enrollment-home").select_one(".home-highlight-stat")
-        self.assertEqual(stat.select_one(".home-highlight-num").get_text(strip=True), _millions(picks[year]))
-        self.assertIn(f"picked a marketplace plan for {year} in open enrollment", stat.get_text(" ", strip=True))
+        self.assertEqual(
+            stat.select_one(".home-highlight-num").get_text(strip=True),
+            f"{_millions(picks[year])} marketplace plans",
+        )
+        self.assertIn(f"picked for {year} in open enrollment", stat.get_text(" ", strip=True))
 
     def test_enrollment_number_matches_the_open_enrollment_pages_tile(self):
         tile = _between(_get("open-enrollment", IN_SEASON), 'id="enroll-numbers"', "</b>")
         num = self._card("open-enrollment-home").select_one(".home-highlight-num").get_text(strip=True)
-        self.assertTrue(tile.endswith(num), (tile, num))
+        # The big text is the tile's figure plus the words "marketplace plans".
+        self.assertTrue(num.endswith(" marketplace plans"), num)
+        self.assertTrue(tile.endswith(num.removesuffix(" marketplace plans")), (tile, num))
 
     def test_cards_link_to_their_pages(self):
         for card_id, name in (("denial-watch-home", "denial-watch"), ("open-enrollment-home", "open-enrollment")):

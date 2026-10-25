@@ -59,7 +59,7 @@
             <div class="fhi-card" id="denial-watch-home">
                 <h3 class="fhi-card-title" id="denial-watch-home-title">Denial Watch</h3>
                 <p>Maps and trends from public records: how often insurers deny claims, how often appeals win, and what care costs.</p>
-                <p class="home-highlight-stat"><b class="home-highlight-num">About 1 in {{ denial_watch_teaser.one_in }}</b> <span>in-network claims on HealthCare.gov plans were denied by insurers in {{ denial_watch_teaser.year }}</span></p>
+                <p class="home-highlight-stat"><b class="home-highlight-num">About 1 in {{ denial_watch_teaser.one_in }} denied</b> <span>in-network claims on HealthCare.gov plans, by insurers in {{ denial_watch_teaser.year }}</span></p>
                 <a class="fhi-button fhi-button-secondary fhi-card-action" href="{% url 'denial-watch' %}">See the numbers on Denial Watch</a>
             </div>
             <div class="fhi-card" id="open-enrollment-home">
@@ -69,7 +69,7 @@
                 {% else %}
                 <p>When you can still sign up, what to do if you lose coverage, and where to get free help.</p>
                 {% endif %}
-                <p class="home-highlight-stat"><b class="home-highlight-num">{{ denial_watch_teaser.picks_text }}</b> <span>people picked a marketplace plan for {{ denial_watch_teaser.picks_year }} in open enrollment, counting automatic renewals</span></p>
+                <p class="home-highlight-stat"><b class="home-highlight-num">{{ denial_watch_teaser.picks_text }} marketplace plans</b> <span>picked for {{ denial_watch_teaser.picks_year }} in open enrollment, counting automatic renewals</span></p>
                 <a class="fhi-button fhi-button-secondary fhi-card-action" href="{% url 'open-enrollment' %}">{% if open_enrollment_in_season %}Open enrollment dates and what to do{% else %}How to sign up outside open enrollment{% endif %}</a>
             </div>
         </div>
