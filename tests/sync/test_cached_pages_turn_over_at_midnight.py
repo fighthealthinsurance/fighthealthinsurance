@@ -5,6 +5,7 @@ in season), so StaticIshView keys its cache by the day and stops max-age at
 the next midnight in Honolulu, where Denial Watch's dates turn over.
 """
 
+import itertools
 import time
 from datetime import date, datetime, timezone as dt_timezone
 from email.utils import parsedate_to_datetime
@@ -33,15 +34,11 @@ class TestPageDay(TestCase):
     def test_the_day_is_honolulus(self):
         # 09:00 UTC on Jan 16 is still 23:00 on Jan 15 in Honolulu.
         with mock.patch("django.utils.timezone.now", return_value=_utc(2027, 1, 16, 9, 0)):
-            self.assertEqual(page_day(), (date(2027, 1, 15), 3600))
+            self.assertEqual(page_day(), (date(2027, 1, 15), _utc(2027, 1, 16, 10, 0).timestamp()))
 
-    def test_seconds_left_round_up_and_never_reach_zero(self):
-        with mock.patch("django.utils.timezone.now", return_value=_utc(2027, 1, 16, 9, 59, 59, 500000)):
-            self.assertEqual(page_day(), (date(2027, 1, 15), 1))
-
-    def test_a_new_day_has_all_its_seconds(self):
+    def test_a_new_day_ends_at_the_next_midnight(self):
         with mock.patch("django.utils.timezone.now", return_value=_utc(2027, 1, 16, 10, 0)):
-            self.assertEqual(page_day(), (date(2027, 1, 16), 24 * 60 * 60))
+            self.assertEqual(page_day(), (date(2027, 1, 16), _utc(2027, 1, 17, 10, 0).timestamp()))
 
 
 @override_settings(CACHES=LOCMEM_CACHE)
@@ -63,7 +60,8 @@ class TestCachedPagesTurnOver(TestCase):
         self.addCleanup(patcher.stop)
 
     def _get(self, day: date, seconds_left: int = 6 * 60 * 60):
-        with mock.patch("fighthealthinsurance.views.page_day", return_value=(day, seconds_left)):
+        midnight = time.time() + seconds_left
+        with mock.patch("fighthealthinsurance.views.page_day", return_value=(day, midnight)):
             return Client().get(reverse("about"))
 
     def test_the_same_day_is_served_from_the_cache(self):
@@ -105,6 +103,15 @@ class TestCachedPagesTurnOver(TestCase):
         self.assertEqual(response["Age"], "1200")
         self.assertEqual(get_max_age(response), 1500)
         self._assert_fresh_for(response, 300, now + 1200)
+
+    def test_a_render_that_crosses_midnight_is_not_fresh(self):
+        now = time.time()
+        # The request arrives a second before midnight; the headers go out two seconds after.
+        clock = itertools.chain([now - 1], itertools.repeat(now + 2))
+        with mock.patch("time.time", side_effect=lambda: next(clock)):
+            response = self._get(date(2027, 1, 15), seconds_left=1)
+        self.assertEqual(get_max_age(response), 0)
+        self.assertLessEqual(parsedate_to_datetime(response["Expires"]).timestamp(), now + 2)
 
     def test_a_cached_copy_keeps_its_own_end_when_that_comes_first(self):
         now = time.time()

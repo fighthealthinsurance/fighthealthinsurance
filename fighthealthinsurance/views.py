@@ -490,8 +490,8 @@ class PublicCachedPageMixin:
         return super().render_to_response(context, **response_kwargs)  # type: ignore[misc]
 
 
-def page_day() -> tuple[date, int]:
-    """Today for dated page copy, and the seconds until it ends.
+def page_day() -> tuple[date, float]:
+    """Today for dated page copy, and when it ends, as a Unix timestamp.
 
     Honolulu, the last US time zone, like Denial Watch's own dates.
     """
@@ -499,7 +499,7 @@ def page_day() -> tuple[date, int]:
     midnight = datetime.combine(
         now.date() + timedelta(days=1), dt_time.min, tzinfo=now.tzinfo
     )
-    return now.date(), max(1, math.ceil((midnight - now).total_seconds()))
+    return now.date(), midnight.timestamp()
 
 
 class StaticIshView(PublicCachedPageMixin, generic.TemplateView):
@@ -541,10 +541,12 @@ class StaticIshView(PublicCachedPageMixin, generic.TemplateView):
         def dated_view(
             request: HttpRequest, *args: typing.Any, **kwargs: typing.Any
         ) -> HttpResponseBase:
-            day, seconds_left = page_day()
+            day, midnight = page_day()
             response = cached_for(day)(request, *args, **kwargs)
 
             def stop_at_midnight(response: HttpResponseBase) -> None:
+                # Measured when the headers go out, in case the render crossed midnight.
+                seconds_left = max(0, math.ceil(midnight - time.time()))
                 max_age = get_max_age(response)
                 # A copy from the cache carries Age, which downstream caches subtract.
                 age = int(response.get("Age") or 0)
