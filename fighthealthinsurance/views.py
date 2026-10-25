@@ -863,6 +863,17 @@ class OpenEnrollmentView(DenialWatchView):
     def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
         context = super().get_context_data(**kwargs)
         context["heading"] = open_enrollment_heading(context["enrollment"])
+        # The year table is drawn here, not by the script, so it reads without it.
+        context["enroll_history"] = [
+            dict(
+                y=r["y"],
+                n=f"{r['n']:,}",
+                fed=f"{r['fed']:,}",
+                sbm=f"{r['sbm']:,}",
+                pub=r["pub"],
+            )
+            for r in context["denial_watch_data"]["marketplace"].get("history", [])
+        ]
         return context
 
 

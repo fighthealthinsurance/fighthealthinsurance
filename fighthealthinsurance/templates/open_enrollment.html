@@ -90,7 +90,7 @@
                 {# Below both columns, so the five-column table gets the card's width. #}
                 <details class="dw-years">
                     <summary>Every open enrollment's count</summary>
-                    <div class="dw-table-wrap"><table class="dw-table" id="pktable"></table></div>
+                    <div class="dw-table-wrap"><table class="dw-table" id="pktable">{% if enroll_history %}<caption class="fhi-visually-hidden">People who picked a marketplace plan in each open enrollment, nationwide, {{ enroll_history.0.y }} to {% with final=enroll_history|last %}{{ final.y }}{% endwith %}</caption><thead><tr><th scope="col">Plan year</th><th scope="col" class="dw-r">Plans picked</th><th scope="col" class="dw-r">HealthCare.gov</th><th scope="col" class="dw-r">State-run</th><th scope="col">Source</th></tr></thead><tbody>{% for r in enroll_history %}<tr><th scope="row">{{ r.y }}</th><td class="dw-r dw-num">{{ r.n }}</td><td class="dw-r dw-num">{{ r.fed }}</td><td class="dw-r dw-num">{{ r.sbm }}</td><td>{{ r.pub }}</td></tr>{% endfor %}</tbody>{% endif %}</table></div>
                 </details>
             </div>
             <p class="dw-how"><a href="#method-enroll">How we got these numbers<span class="fhi-visually-hidden">: Plans picked in each open enrollment</span></a></p>

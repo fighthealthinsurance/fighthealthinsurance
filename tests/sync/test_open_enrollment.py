@@ -1180,8 +1180,9 @@ class TestOpenEnrollmentHistory(TestCase):
             self.assertIn(caveat, self.note)
 
     def test_section_stays_short(self):
-        # 131 words with the caveats, plus a little room.
-        self.assertLessEqual(_words(self.section), 135)
+        # 131 words with the caveats, plus a little room; the folded year table isn't prose.
+        prose = re.sub(r'<table class="dw-table" id="pktable">.*?</table>', "", self.section, flags=re.S)
+        self.assertLessEqual(_words(prose), 135)
 
     def test_script_draws_pkline_from_the_history(self):
         self.assertIn("const H=MK&&MK.history;", self.script)
@@ -1196,23 +1197,22 @@ class TestOpenEnrollmentHistory(TestCase):
         # Every year is final, so no point is drawn hollow.
         self.assertNotIn("open:", self.script)
 
-    def test_table_rows_come_from_the_script(self):
+    def test_table_rows_are_drawn_by_the_view(self):
+        # In the page itself, so the fold reads without the script.
         self.assertIn('<summary>Every open enrollment\'s count</summary>', self.section)
-        self.assertIn('<table class="dw-table" id="pktable"></table>', self.section)
+        table = _between(self.section, '<table class="dw-table" id="pktable">', "</table>")
         self.assertIn(
-            '<caption class="fhi-visually-hidden">People who picked a marketplace plan in each open enrollment, nationwide, ${first} to ${lastY}</caption>',
-            self.script,
+            f'<caption class="fhi-visually-hidden">People who picked a marketplace plan in each open enrollment, nationwide, {HISTORY[0]["y"]} to {HISTORY[-1]["y"]}</caption>',
+            table,
         )
         self.assertIn(
             '<thead><tr><th scope="col">Plan year</th><th scope="col" class="dw-r">Plans picked</th><th scope="col" class="dw-r">HealthCare.gov</th>'
             '<th scope="col" class="dw-r">State-run</th><th scope="col">Source</th></tr></thead>',
-            self.script,
+            table,
         )
-        self.assertIn(
-            '<tr><th scope="row">${r.y}</th><td class="dw-r dw-num">${fmt(r.n)}</td><td class="dw-r dw-num">${fmt(r.fed)}</td>'
-            '<td class="dw-r dw-num">${fmt(r.sbm)}</td><td>${r.pub}</td></tr>',
-            self.script,
-        )
+        rows = re.findall(r'<tr><th scope="row">(\d+)</th><td class="dw-r dw-num">([\d,]+)</td><td class="dw-r dw-num">([\d,]+)</td><td class="dw-r dw-num">([\d,]+)</td><td>([^<]+)</td></tr>', table)
+        self.assertEqual(rows, [(str(h["y"]), f"{h['n']:,}", f"{h['fed']:,}", f"{h['sbm']:,}", h["pub"]) for h in HISTORY])
+        self.assertNotIn("pktable", self.script)
 
     def test_section_links_its_method(self):
         self.assertIn(
