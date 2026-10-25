@@ -229,6 +229,19 @@ def test_every_reply_to_a_turn_is_counted():
     ), "an error doesn't pay off its turn, or pays one off for the replay"
 
 
+def test_a_trial_banner_does_not_finish_the_pending_turn():
+    answered = _block_after(_source(), "if (data.content && data.role) {")
+    terminal = _block_after(answered, 'if (data.role === "assistant") {')
+    assert "noteReply();" in terminal
+    assert answered.count("noteReply();") == 1
+    assert "pendingDebugRef.current = null;" in terminal
+    for field in ("isLoading", "requestStartTime", "statusMessage"):
+        assert re.search(
+            field + r': data.role === "assistant" \? [^:]+ : prev\.' + field,
+            answered,
+        ), f"a system banner clears {field} while the turn is pending"
+
+
 def test_a_retry_is_in_flight_until_no_reply_is_owed():
     src = _source()
     body = _arrow_body(src, "noteReply")

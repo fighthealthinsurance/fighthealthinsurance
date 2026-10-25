@@ -942,8 +942,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
           if (data.role === "assistant" && pendingDebugRef.current) {
             debugInfo = pendingDebugRef.current;
           }
-          pendingDebugRef.current = null;
-          noteReply();
+          if (data.role === "assistant") {
+            pendingDebugRef.current = null;
+            noteReply();
+          }
 
           setState((prev) => ({
             ...prev,
@@ -959,9 +961,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                 status: "done",
               },
             ],
-            isLoading: false,
-            requestStartTime: null, // Clear the timer when we get a response
-            statusMessage: null,
+            // A trial banner is visible, but does not finish the pending turn.
+            isLoading: data.role === "assistant" ? false : prev.isLoading,
+            requestStartTime: data.role === "assistant" ? null : prev.requestStartTime,
+            statusMessage: data.role === "assistant" ? null : prev.statusMessage,
           }));
         } else if (data.status) {
           // This is a status update (typing, etc.)
