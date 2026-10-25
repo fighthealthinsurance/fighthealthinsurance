@@ -52,6 +52,19 @@ class TestMedicaidFaq(SimpleTestCase):
         # 42 CFR 431.221(d) caps it at 90; states can set less.
         self.assertNotIn("up to 90 days", FAQ)
 
+    def test_snap_exclusion_does_not_require_compliance(self):
+        exempt = _section(FAQ, "who-is-exempt")
+        self.assertIn("household receiving SNAP", exempt)
+        self.assertIn("subject to at least one SNAP work requirement", exempt)
+        self.assertIn("does not have to confirm that they met", exempt)
+        self.assertIn("meet their state's TANF work rules", exempt)
+
+    def test_reconsideration_names_the_eligible_discontinuance_and_start_date(self):
+        notices = _section(FAQ, "what-if-i-get-a-notice")
+        self.assertIn("income-based Medicaid (MAGI)", notices)
+        self.assertIn("did not send information requested in a noncompliance notice", notices)
+        self.assertIn("90 days after coverage ended", notices)
+
 
 class TestMedicaidBlogPost(SimpleTestCase):
     """Dated post: only what was wrong when it ran is corrected, with a note."""
@@ -62,6 +75,13 @@ class TestMedicaidBlogPost(SimpleTestCase):
 
     def test_hardship_no_longer_covers_family_emergencies(self):
         self.assertNotIn("family emergency", BLOG)
+
+    def test_hardship_requires_the_federal_disaster_or_extended_treatment_trip(self):
+        for text in (BLOG, _section(FAQ, "who-is-exempt")):
+            self.assertIn("presidentially declared emergency or disaster", text)
+            self.assertIn("extended trip outside your community", text)
+            self.assertIn("you or a dependent", text)
+            self.assertIn("serious or complex condition cannot be treated locally", text)
 
     def test_correction_note_says_what_changed(self):
         self.assertIn("*Correction, October 2026:", BLOG)

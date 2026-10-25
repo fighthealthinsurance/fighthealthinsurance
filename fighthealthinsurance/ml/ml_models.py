@@ -1927,9 +1927,11 @@ Possible kwargs (all optional; function will ask for missing, step-by-step):
       - ssdi_length: int # how many MONTHS they have been receiving SSDI
       - years_worked: int # how many years you or your spouse worked and paid medicare taxes
       - target_year: int  # which year to check besides today's rules (defaults to 2026)
-      # federal work / community engagement requirement (80 qualifying hours per month;
-      # hours from work, school, volunteering, or caregiving all count -- it applies from
-      # 2026 on, so a target_year of 2025 is checked without it):
+      # federal work / community engagement requirement: work, job training, school
+      # and volunteering can count toward 80 hours per month. Caregiving is an
+      # exemption when its conditions are met, not qualifying hours. Start dates
+      # vary by state; most start January 1, 2027. Let the tool check the state
+      # and target year, rather than assuming it applies everywhere in 2026:
       - work_req_exempt_2026: bool                    # true if you know they're exempt (pregnant, disabled/medically frail, on medicare, etc.)
       - avg_monthly_qualifying_hours_last_3mo: float  # average qualifying hours per MONTH (the units the tool asks in)
       - avg_weekly_qualifying_hours_last_3mo: float   # or average per WEEK -- watch the units, never put a monthly number here
