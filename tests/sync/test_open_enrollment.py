@@ -299,8 +299,8 @@ class TestOldDenialWatchLinksHandOff(TestCase):
 
     def test_script_hands_off_before_reading_the_data_to_the_open_enrollment_url(self):
         self.assertLess(JS.index("location.replace(OE_URL+'#'+MOVED_TO)"), JS.index("JSON.parse"))
-        script = f'<script src="/static/js/denial_watch.js" data-open-enrollment="{reverse("open-enrollment")}" defer></script>'
-        self.assertIn(script, _page())
+        script = rf'<script src="/static/js/denial_watch\.js\?v=[0-9a-f]{{12}}" data-open-enrollment="{re.escape(reverse("open-enrollment"))}" defer></script>'
+        self.assertRegex(_page(), script)
 
 
 class TestOpenEnrollmentSeason(TestCase):

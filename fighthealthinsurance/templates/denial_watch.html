@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 
 {% block title %}Denial Watch: Health Coverage in America by the Numbers{% endblock title %}
 {% block metatitle %}Denial Watch: Health Coverage by the Numbers - Fight Health Insurance{% endblock metatitle %}
@@ -550,6 +551,6 @@
     </div>
 </div>
 {{ denial_watch_data|json_script:"dw-data" }}
-<script src="{% static 'js/denial_watch_charts.js' %}" defer></script>
-<script src="{% static 'js/denial_watch.js' %}" data-open-enrollment="{% url 'open-enrollment' %}" defer></script>
+<script src="{% versioned 'js/denial_watch_charts.js' %}" defer></script>
+<script src="{% versioned 'js/denial_watch.js' %}" data-open-enrollment="{% url 'open-enrollment' %}" defer></script>
 {% endblock content %}

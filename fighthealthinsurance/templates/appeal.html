@@ -5,7 +5,7 @@
 <script type="module">
   import * as main from '{% bundle "appeal" %}';
 </script>
-<script src="{% static 'js/pwyw.js' %}"></script>
+<script src="{% versioned 'js/pwyw.js' %}"></script>
 {# UET tracking for Stripe links handled by base.html #}
 {% endblock scriptmagic %}
 {% block title %}

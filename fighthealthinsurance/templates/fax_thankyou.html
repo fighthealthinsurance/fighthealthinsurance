@@ -3,9 +3,10 @@
 {% if missing %}We couldn't find your fax{% else %}Thank you for using Fight Health Insurance & Our Fax Service!{% endif %}
 {% endblock title %}
 {% load static %}
+{% load bundles %}
 {% load absolute %}
 {% block scriptmagic %}
-<script src="{% static 'js/pwyw.js' %}"></script>
+<script src="{% versioned 'js/pwyw.js' %}"></script>
 {% endblock scriptmagic %}
 {% block content %}
 <section id="contact">
