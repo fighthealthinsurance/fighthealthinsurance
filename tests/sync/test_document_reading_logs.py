@@ -62,7 +62,12 @@ def a_file_that_cannot_be_opened():
 
 def a_pdf_that_cannot_be_read():
     error = RuntimeError(f"cannot open {NAME} plan.pdf")
-    with mock.patch.object(extraction.pymupdf, "open", side_effect=error):
+    with mock.patch.object(extraction, "read_mupdf_pages", side_effect=error):
+        assert extraction.extract_text_from_pdf_bytes(b"%PDF-1.4") == ("", {})
+
+
+def a_pdf_that_takes_too_long():
+    with mock.patch.object(extraction, "MAX_PDF_SECONDS", 0.01):
         assert extraction.extract_text_from_pdf_bytes(b"%PDF-1.4") == ("", {})
 
 
@@ -91,6 +96,7 @@ PATHS = [
     pytest.param(a_file_over_the_limit, "larger than", id="over the limit"),
     pytest.param(a_file_that_cannot_be_opened, "FileNotFoundError", id="open"),
     pytest.param(a_pdf_that_cannot_be_read, "RuntimeError", id="pdf"),
+    pytest.param(a_pdf_that_takes_too_long, "TimeoutError", id="pdf timeout"),
     pytest.param(a_text_file_that_cannot_be_decoded, "UnicodeDecodeError", id="text"),
     pytest.param(a_type_with_no_parser, "unsupported type", id="unknown type"),
     pytest.param(a_common_type_with_no_parser, ".rtf file", id="common type"),

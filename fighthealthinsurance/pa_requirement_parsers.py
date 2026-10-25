@@ -348,6 +348,17 @@ def parse_html_pa_table(html: str, source_name: str = "") -> List[ParsedPARequir
 # ---------------------------------------------------------------------------
 
 
+#: The most pages read from one payer's PDF list.
+MAX_PA_PDF_PAGES = 2000
+
+#: The most text kept from one payer's PDF list, tables included.
+MAX_PA_PDF_CHARS = 10_000_000
+
+#: How long reading one payer's PDF list may take. Finding tables is slow, and
+#: this runs in the background refresh, so it gets far longer than an upload.
+MAX_PA_PDF_SECONDS = 600
+
+
 def parse_pdf_pa_list(
     pdf_bytes: bytes, source_name: str = ""
 ) -> List[ParsedPARequirement]:
@@ -355,40 +366,36 @@ def parse_pdf_pa_list(
 
     Prefers pymupdf's structured table extraction; falls back to free-text
     scanning with surrounding-context heuristics for PA / notification cues.
+    The PDF is read in a child process under the caps above (see pdf_text).
     """
-    try:
-        import pymupdf  # type: ignore[import]
-    except ImportError:
-        logger.warning("pymupdf not installed; cannot parse PDF PA lists")
-        return []
+    from fighthealthinsurance.pdf_text import read_mupdf_pages
 
     out: List[ParsedPARequirement] = []
     try:
-        with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
-            for page in doc:
-                tables = page.find_tables()
-                if tables and tables.tables:
-                    for table in tables.tables:
-                        rows = table.extract()
-                        if not rows or len(rows) < 2:
-                            continue
-                        headers = [str(c or "") for c in rows[0]]
-                        col_map = _map_columns(headers)
-                        if any(v == "code" for v in col_map.values()):
-                            data_rows = [[str(c or "") for c in r] for r in rows[1:]]
-                            out.extend(
-                                _rows_to_requirements(col_map, data_rows, source_name)
-                            )
-                            continue
-                text = page.get_text()
-                # Dedupe per-page so a 100-page PDF doesn't accumulate
-                # thousands of near-duplicate context-snippet records
-                # before the final dedup at the bottom.
-                out.extend(_dedupe(_scan_text_for_codes(text, source_name)))
+        pages = read_mupdf_pages(
+            pdf_bytes,
+            MAX_PA_PDF_PAGES,
+            MAX_PA_PDF_CHARS,
+            MAX_PA_PDF_SECONDS,
+            tables=True,
+        )
     except Exception:
         logger.opt(exception=True).warning(
             f"Failed to parse PDF PA list: {source_name!r}"
         )
+        return []
+
+    for page in pages:
+        for rows in page["tables"]:
+            if len(rows) < 2:
+                continue
+            col_map = _map_columns(rows[0])
+            if any(v == "code" for v in col_map.values()):
+                out.extend(_rows_to_requirements(col_map, rows[1:], source_name))
+        # Dedupe per-page so a 100-page PDF doesn't accumulate
+        # thousands of near-duplicate context-snippet records
+        # before the final dedup at the bottom.
+        out.extend(_dedupe(_scan_text_for_codes(page["text"], source_name)))
 
     return _dedupe(out)
 

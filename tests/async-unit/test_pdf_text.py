@@ -18,6 +18,7 @@ from tests.pdf_fixtures import (
     make_pdf_bytes,
     make_shared_long_string_pdf_bytes,
     make_shared_stream_pdf_bytes,
+    make_table_pdf_bytes,
 )
 
 #: The child caps its address space with RLIMIT_AS only on Linux.
@@ -68,6 +69,89 @@ class TestExtractPdfPageTexts:
 
         with pytest.raises(ValueError, match="cannot be decrypted"):
             pdf_text.extract_pdf_page_texts(pdf, max_pages=10, max_chars=10_000)
+
+
+class TestMupdfPages:
+    def test_reads_each_page_in_order(self):
+        pdf = make_pdf_bytes(["First page words", "Second page words"])
+
+        pages = pdf_text.mupdf_pages(pdf, max_pages=10, max_chars=10_000, tables=False)
+
+        assert [("First" in p["text"], "Second" in p["text"]) for p in pages] == [
+            (True, False),
+            (False, True),
+        ]
+        assert [p["tables"] for p in pages] == [[], []]
+
+    def test_stops_reading_at_the_page_cap(self):
+        pdf = make_pdf_bytes(["Page one", "Page two", "Page three"])
+
+        pages = pdf_text.mupdf_pages(pdf, max_pages=2, max_chars=10_000, tables=False)
+
+        assert len(pages) == 2
+
+    def test_stops_reading_once_max_chars_are_collected(self):
+        pdf = make_pdf_bytes(["First page words", "Second page words", "Third"])
+        first, second, _ = [
+            p["text"]
+            for p in pdf_text.mupdf_pages(pdf, max_pages=10, max_chars=10_000, tables=False)
+        ]
+
+        pages = pdf_text.mupdf_pages(
+            pdf, max_pages=10, max_chars=len(first) + 6, tables=False
+        )
+
+        assert [p["text"] for p in pages] == [first, second[:6]]
+
+    def test_finds_tables_when_asked(self):
+        rows = [["CPT Code", "Description"], ["72148", "MRI lumbar spine"]]
+        pdf = make_table_pdf_bytes(rows)
+
+        (page,) = pdf_text.mupdf_pages(pdf, max_pages=10, max_chars=10_000, tables=True)
+
+        assert page["tables"] == [rows]
+
+    def test_table_cells_count_against_the_cap(self):
+        rows = [["CPT Code", "Description"], ["72148", "MRI lumbar spine"]]
+        pdf = make_table_pdf_bytes(rows)
+        # The table, then the header row and its two cells, and no more.
+        header = 1 + sum(len(cell) + 1 for cell in rows[0])
+
+        (page,) = pdf_text.mupdf_pages(pdf, max_pages=10, max_chars=1 + header, tables=True)
+
+        assert page == {"text": "", "tables": [[rows[0]]]}
+
+
+class TestReadMupdfPages:
+    def test_returns_each_page_from_the_child(self):
+        pdf = make_pdf_bytes(["First page words", "Second page words"])
+
+        pages = pdf_text.read_mupdf_pages(pdf, 10, 10_000, timeout_secs=30.0)
+
+        assert len(pages) == 2
+        assert "Second page words" in pages[1]["text"]
+
+    def test_unreadable_pdf_raises_value_error(self):
+        with pytest.raises(ValueError):
+            pdf_text.read_mupdf_pages(b"not a pdf", 10, 10_000, timeout_secs=30.0)
+
+    def test_read_still_running_at_the_timeout_is_stopped(self):
+        pdf = make_pdf_bytes(["Words"])
+        children = []
+        real_popen = subprocess.Popen
+
+        def recording_popen(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
+
+        # Far too short for the child even to import PyMuPDF.
+        with patch.object(subprocess, "Popen", recording_popen):
+            with pytest.raises(TimeoutError, match="did not finish within 0.01 seconds"):
+                pdf_text.read_mupdf_pages(pdf, 10, 10_000, timeout_secs=0.01)
+
+        assert len(children) == 1
+        assert children[0].wait(timeout=5) == -signal.SIGKILL
 
 
 class TestCountPdfPages:

@@ -1,5 +1,6 @@
 """
-Reading and merging fetched PDFs with pypdf.
+Reading and merging PDFs in a child process: fetched PDFs with pypdf, and
+uploaded plan documents and payers' prior authorization lists with PyMuPDF.
 
 pypdf is pure Python and CPU bound, and the time a read takes depends on what
 the pages draw, not on the size of the file: many pages can draw one long
@@ -9,6 +10,11 @@ content stream, for example. So async callers reach it through
 that process at a timeout, so the calling process never parses the PDF. On
 Linux the child also caps its own address space, so a read that needs too much
 memory fails with MemoryError instead.
+
+PyMuPDF is C, so it is quick, but some PDFs make it hang (pymupdf/PyMuPDF
+#5082), and a call that never returns cannot be stopped in the process that
+made it. :func:`read_mupdf_pages` runs it in the same kind of child, for
+callers that are already on a worker thread.
 
 The text a read returns is capped too: a few kilobytes of PDF can draw
 millions of characters, so a text read stops once it has collected the
@@ -26,7 +32,7 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, List, Sequence, Union
+from typing import IO, Any, List, Optional, Sequence, Union
 
 from pypdf import PasswordType, PdfReader, PdfWriter
 
@@ -44,6 +50,10 @@ _JSON_BYTES_PER_CHAR = 12
 #: Bytes json.dump writes around each page's text in a list: two quotes and
 #: a ", " separator.
 _JSON_BYTES_PER_PAGE = 4
+#: Bytes json.dump writes around each page of a PyMuPDF read: its keys and
+#: punctuation. Each table, row and cell is counted as one character of the
+#: cap, which leaves room for its own brackets, quotes and separators.
+_JSON_BYTES_PER_MUPDF_PAGE = 64
 #: Room for the rest of a child's report (the JSON around a result, or an
 #: error message). It is the whole bound for a page count or a merge.
 _REPORT_BYTES = 64 * 1024
@@ -90,6 +100,48 @@ def extract_pdf_page_texts(content: bytes, max_pages: int, max_chars: int) -> Li
         page_texts.append(text)
         chars_left -= len(text)
     return page_texts
+
+
+def mupdf_pages(
+    content: bytes, max_pages: int, max_chars: int, tables: bool
+) -> List[dict]:
+    """Read the first ``max_pages`` pages with PyMuPDF, in order.
+
+    Each page is ``{"text": ..., "tables": [...]}``, a table being a list of
+    rows of cell strings; tables are found only when ``tables`` is set. The
+    pages hold at most ``max_chars`` characters in all, each table, row and
+    cell counting one more: reading stops once they are used, and the last
+    text read is cut to fit.
+    """
+    # Only the child imports it, so a hang inside it never reaches the caller.
+    import pymupdf
+
+    pages: List[dict] = []
+    chars_left = max_chars
+    with pymupdf.open(stream=content, filetype="pdf") as doc:
+        for page_number, page in enumerate(doc):
+            if page_number >= max_pages or chars_left <= 0:
+                break
+            found: List[List[List[str]]] = []
+            finder = page.find_tables() if tables else None
+            for table in finder.tables if finder else []:
+                if chars_left <= 0:
+                    break
+                chars_left -= 1
+                rows: List[List[str]] = []
+                for row in table.extract():
+                    cells = [str(cell or "") for cell in row]
+                    cost = 1 + sum(len(cell) + 1 for cell in cells)
+                    if cost > chars_left:
+                        chars_left = 0
+                        break
+                    rows.append(cells)
+                    chars_left -= cost
+                found.append(rows)
+            text = page.get_text()[: max(chars_left, 0)]
+            chars_left -= len(text)
+            pages.append({"text": text, "tables": found})
+    return pages
 
 
 def count_pdf_pages(content: bytes) -> int:
@@ -195,6 +247,38 @@ def _run_child(
     return report["result"]
 
 
+def read_mupdf_pages(
+    content: bytes,
+    max_pages: int,
+    max_chars: int,
+    timeout_secs: float,
+    tables: bool = False,
+) -> List[dict]:
+    """Run :func:`mupdf_pages` in a child process, from a worker thread.
+
+    Blocks the calling thread, so call it from one that may wait, never the
+    event loop. Raises TimeoutError when it takes longer than
+    ``timeout_secs``, and ValueError for a PDF it could not read. This process
+    reads no more of the child's output than the caps can take, and raises
+    RuntimeError if the child writes more.
+    """
+    max_output_bytes = (
+        _JSON_BYTES_PER_CHAR * max_chars
+        + _JSON_BYTES_PER_MUPDF_PAGE * max_pages
+        + _REPORT_BYTES
+    )
+    arguments = ["mupdf", str(max_pages), str(max_chars), "tables" if tables else ""]
+    try:
+        pages: List[dict] = _run_child(
+            arguments, content, time.monotonic() + timeout_secs, max_output_bytes
+        )
+    except subprocess.TimeoutExpired:
+        raise TimeoutError(
+            f"PDF read did not finish within {timeout_secs:g} seconds"
+        ) from None
+    return pages
+
+
 async def _arun_child(
     executor: ThreadPoolExecutor,
     arguments: Sequence[str],
@@ -290,8 +374,10 @@ def _limit_address_space() -> None:
         pass
 
 
-def _child_main(arguments: List[str]) -> int:
-    """Run the operation named in ``arguments`` and print its result as JSON."""
+def _child_main(arguments: List[str], report: Optional[IO[str]] = None) -> int:
+    """Run the operation named in ``arguments`` and write its result as JSON
+    to ``report``, stdout by default."""
+    report = report or sys.stdout
     _limit_address_space()
     operation, rest = arguments[0], arguments[1:]
     result: Any = None
@@ -299,6 +385,10 @@ def _child_main(arguments: List[str]) -> int:
         if operation == "text":
             result = extract_pdf_page_texts(
                 sys.stdin.buffer.read(), int(rest[0]), int(rest[1])
+            )
+        elif operation == "mupdf":
+            result = mupdf_pages(
+                sys.stdin.buffer.read(), int(rest[0]), int(rest[1]), rest[2] == "tables"
             )
         elif operation == "pages":
             result = count_pdf_pages(sys.stdin.buffer.read())
@@ -309,14 +399,20 @@ def _child_main(arguments: List[str]) -> int:
     except Exception as e:
         error = str(e) or type(e).__name__
     else:
-        json.dump({"result": result}, sys.stdout)
+        json.dump({"result": result}, report)
+        report.flush()
         return 0
     # Written once the except block has let go of the traceback, and with it
     # the failed operation's objects, so a MemoryError still has room to be
     # reported.
-    json.dump({"error": error}, sys.stdout)
+    json.dump({"error": error}, report)
+    report.flush()
     return 1
 
 
 if __name__ == "__main__":
-    sys.exit(_child_main(sys.argv[1:]))
+    # The report gets stdout to itself: PyMuPDF prints hints there, so
+    # anything else written to it goes to stderr, which is discarded.
+    report = os.fdopen(os.dup(sys.stdout.fileno()), "w")
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    sys.exit(_child_main(sys.argv[1:], report))

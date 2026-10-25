@@ -7,6 +7,8 @@ These tests do not touch the database; ``SimpleTestCase`` is used for test
 discovery compatibility with no DB setup overhead.
 """
 
+from unittest.mock import patch
+
 from django.test import SimpleTestCase as TestCase
 
 from fighthealthinsurance.pa_requirement_parsers import (
@@ -20,7 +22,10 @@ from fighthealthinsurance.pa_requirement_parsers import (
     enrichment_for_host,
     parse_csv_pa_list,
     parse_html_pa_table,
+    parse_pdf_pa_list,
 )
+from fighthealthinsurance import pa_requirement_parsers
+from tests.pdf_fixtures import make_pdf_bytes, make_table_pdf_bytes
 
 
 class BoolCellTests(TestCase):
@@ -311,6 +316,39 @@ class CSVParserTests(TestCase):
         )
         reqs = parse_csv_pa_list(csv_data)
         self.assertEqual(len(reqs), 1)
+
+
+class PDFParserTests(TestCase):
+    """PDF lists are read in a child process under a time limit (see pdf_text)."""
+
+    def test_table_rows_become_requirements(self):
+        pdf = make_table_pdf_bytes(
+            [
+                ["CPT Code", "Description", "PA Required"],
+                ["72148", "MRI lumbar spine", "Yes"],
+                ["97110", "Therapeutic exercise", "No"],
+            ]
+        )
+        reqs = {r.cpt_hcpcs_code: r for r in parse_pdf_pa_list(pdf, "payer.pdf")}
+        self.assertEqual(set(reqs), {"72148", "97110"})
+        self.assertTrue(reqs["72148"].requires_pa)
+        self.assertFalse(reqs["97110"].requires_pa)
+        self.assertEqual(reqs["72148"].source_document, "payer.pdf")
+
+    def test_page_text_with_a_pa_cue_is_scanned(self):
+        pdf = make_pdf_bytes(
+            ["The following CPT codes require prior authorization:\n72148 MRI lumbar spine"]
+        )
+        reqs = parse_pdf_pa_list(pdf)
+        self.assertEqual([r.cpt_hcpcs_code for r in reqs], ["72148"])
+
+    def test_a_list_that_takes_too_long_yields_nothing(self):
+        pdf = make_table_pdf_bytes([["CPT Code", "Description"], ["72148", "MRI"]])
+        with patch.object(pa_requirement_parsers, "MAX_PA_PDF_SECONDS", 0.01):
+            self.assertEqual(parse_pdf_pa_list(pdf), [])
+
+    def test_an_unreadable_pdf_yields_nothing(self):
+        self.assertEqual(parse_pdf_pa_list(b"not a pdf"), [])
 
 
 class ScanTextForCodesTests(TestCase):
