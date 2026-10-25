@@ -642,6 +642,64 @@ def _denial_watch_data() -> dict:
 
 
 @functools.lru_cache(maxsize=1)
+def denial_watch_every_state() -> dict[str, typing.Any]:
+    """The every-state chart: each state with an in-network denial rate.
+
+    The map's HealthCare.gov states ("cms") run highest first; grey states' own
+    insurer reports ("state") and CMS's last year for states that left
+    ("earlier") follow in a list of their own, on the same scale, so they
+    aren't ranked against the map's year. Those two show only here and in a
+    grey state's readout.
+    """
+    from fighthealthinsurance.state_help import get_state_help_by_abbreviation
+
+    data = _denial_watch_data()
+    year = data["trend"][-1]["year"]
+    rows: list[dict[str, typing.Any]] = [
+        {"code": s, "rate": v["rate"], "year": year, "group": "cms", "source": "CMS"}
+        for s, v in data["states"].items()
+    ]
+    rows += [
+        {
+            "code": s,
+            "rate": v["rate"],
+            "year": v["year"],
+            "group": "state",
+            "source": v["publisher"],
+        }
+        for s, v in data.get("state_reports", {}).items()
+    ]
+    rows += [
+        {
+            "code": s,
+            "rate": v["rate"],
+            "year": v["year"],
+            "group": "earlier",
+            "source": "CMS",
+        }
+        for s, v in data.get("earlier", {}).items()
+    ]
+    top = max(r["rate"] for r in rows)
+    for r in rows:
+        state = get_state_help_by_abbreviation(r["code"])
+        r["name"] = state.name if state else r["code"]
+        r["pct"] = f"{r['rate'] * 100:.1f}%"
+        r["width"] = f"{r['rate'] / top * 100:.1f}"
+    # The other five go by kind of record, then name: by rate would rank them again.
+    return {
+        "rows": sorted(
+            (r for r in rows if r["group"] == "cms"),
+            key=lambda r: (-r["rate"], r["name"]),
+        ),
+        "others": sorted(
+            (r for r in rows if r["group"] != "cms"),
+            key=lambda r: (r["group"] != "state", r["name"]),
+        ),
+        "year": year,
+    }
+
+
+@functools.lru_cache(maxsize=1)
 def denial_watch_teaser() -> dict[str, typing.Any]:
     """The home page's numbers: the latest year's in-network denial rate on
     HealthCare.gov plans, as "1 in N", and its average denials a day."""
@@ -699,6 +757,7 @@ class DenialWatchView(StaticIshView):
     def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
         context = super().get_context_data(**kwargs)
         context["denial_watch_data"] = self.page_data()
+        context["every_state"] = denial_watch_every_state()
         context["enrollment"] = denial_watch_enrollment(
             timezone.localdate(timezone=DENIAL_WATCH_LAST_TIME_ZONE)
         )

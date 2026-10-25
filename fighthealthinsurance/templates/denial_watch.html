@@ -58,6 +58,21 @@
   /* The denial reasons the key names: darker, and in bold, so they stand out without colour. */
   .dw-bar-deep .dw-bar-fill { background-color: var(--dw-bad-deep); }
   .dw-bar-deep .dw-bar-name > span:first-child { font-weight: 700; }
+  /* Every-state chart: red for denial rates, each kind of record in its own texture (solid, striped, hollow), and the key says it in words. */
+  .dw-every-key { display: grid; gap: var(--fhi-space-1); margin: 0; padding: 0; list-style: none; font-size: var(--fhi-text-small); color: var(--fhi-ink-2); }
+  .dw-every-key li { display: flex; align-items: baseline; gap: var(--fhi-space-2); }
+  .dw-every-key i { flex: none; width: 2rem; height: 12px; border-radius: 2px; }
+  .dw-every .dw-bar-track { height: 12px; }
+  i.dw-src-cms { background-color: var(--dw-bad); }
+  .dw-src-state .dw-bar-fill, i.dw-src-state { background: repeating-linear-gradient(135deg, var(--dw-bad) 0 3px, var(--dw-bad-1) 3px 6px); }
+  .dw-src-earlier .dw-bar-fill, i.dw-src-earlier { background: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-bad); }
+  .dw-every-tag { display: block; font-size: var(--fhi-text-small); color: var(--fhi-muted); }
+  h4.dw-every-sub { margin: var(--fhi-space-3) 0 0; padding-top: var(--fhi-space-3); border-top: 1px solid var(--fhi-line); }
+  th.dw-every-sub { padding-top: var(--fhi-space-3); font-weight: 700; }
+  /* On a wide screen, name, bar and value share one line, so 35 states don't run three screens long. */
+  @media (min-width: 700px) {
+    .dw-every .dw-bar { grid-template-columns: minmax(9rem, 15rem) minmax(0, 1fr) 3.5rem; grid-template-areas: "nm tr val"; align-items: center; }
+  }
   .dw-gap-row { text-align: center; }
   .dw-table .dw-nowrap { white-space: nowrap; }
   .dw-range { position: relative; display: inline-block; width: 90px; height: 8px; margin-right: 6px; border-radius: 2px; vertical-align: middle; background-color: var(--dw-track); }
@@ -107,6 +122,7 @@
   @media (max-width: 480px) {
     .dw-range, .dw-mini { display: none; }
     .dw-table .dw-nowrap { white-space: normal; }
+    #every-table thead th { letter-spacing: normal; }
   }
 </style>
 {% endblock extra_style %}
@@ -218,6 +234,49 @@
                             <p class="dw-note" id="dnote"></p>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            {# Drawn here from the view, not by the script, so the bars and the table read without it. #}
+            <section class="fhi-stack" id="every-state" aria-labelledby="every-state-title">
+                <h3 id="every-state-title">Every state we have an in-network denial rate for</h3>
+                <p>The 30 HealthCare.gov states from the map, highest first. Below them, on the same scale but listed apart, are five grey states we found a figure for elsewhere: California and Pennsylvania from their insurers' own reports for 2024 claims on the same federal form, and Georgia, Illinois and Virginia from the last year CMS's files include them.</p>
+                <div class="fhi-card fhi-stack">
+                    <ul class="dw-every-key" id="every-key">
+                        <li><i class="dw-src-cms"></i><span>HealthCare.gov insurers, {{ every_state.year }} claims (FHI's calculation from CMS's data)</span></li>
+                    </ul>
+                    <div class="dw-bars dw-every" id="every-bars">
+                        {% for r in every_state.rows %}<div class="dw-bar dw-src-{{ r.group }}" data-s="{{ r.code }}"><div class="dw-bar-name"><span>{{ r.name }}{% if r.group != "cms" %} <span class="dw-every-tag">{{ r.source }}, {{ r.year }} claims</span>{% endif %}</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:{{ r.width }}%"></div></div><div class="dw-bar-value dw-num">{{ r.pct }}</div></div>
+                        {% endfor %}
+                    </div>
+                    <h4 class="dw-every-sub" id="every-other-title">Five grey states, from other sources or years</h4>
+                    <p class="dw-note" id="every-caveat">These sources and years aren't strictly comparable: California's and Pennsylvania's reports can count plans sold outside their marketplaces, which CMS's figures leave out, and Georgia, Illinois and Virginia are from earlier years, so don't rank those five against the 2024 states.</p>
+                    <ul class="dw-every-key" id="every-other-key">
+                        <li><i class="dw-src-state"></i><span>California and Pennsylvania insurers' own reports for 2024 claims on the same federal form (FHI's calculation from Covered California's and the Pennsylvania Insurance Department's data)</span></li>
+                        <li><i class="dw-src-earlier"></i><span>HealthCare.gov insurers in the last year CMS's files include the state, given on the bar (FHI's calculation from CMS's data)</span></li>
+                    </ul>
+                    <div class="dw-bars dw-every" id="every-other-bars">
+                        {% for r in every_state.others %}<div class="dw-bar dw-src-{{ r.group }}" data-s="{{ r.code }}"><div class="dw-bar-name"><span>{{ r.name }}{% if r.group != "cms" %} <span class="dw-every-tag">{{ r.source }}, {{ r.year }} claims</span>{% endif %}</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:{{ r.width }}%"></div></div><div class="dw-bar-value dw-num">{{ r.pct }}</div></div>
+                        {% endfor %}
+                    </div>
+                    <details class="dw-years" id="every-alt">
+                        <summary>Show these figures as a table</summary>
+                        <div class="dw-table-wrap">
+                            <table class="dw-table" id="every-table">
+                                <caption class="fhi-visually-hidden">In-network denial rates by state: the HealthCare.gov states highest first, then five grey states from other sources or years, with whose data FHI calculated each rate from and the claims year</caption>
+                                <thead><tr><th scope="col">State</th><th scope="col" class="dw-r">Denied</th><th scope="col">FHI's calculation from</th></tr></thead>
+                                <tbody>
+                                    {% for r in every_state.rows %}<tr data-s="{{ r.code }}"><th scope="row">{{ r.name }}</th><td class="dw-r dw-num">{{ r.pct }}</td><td>{{ r.source }}, {{ r.year }} claims</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                                <tbody id="every-other-rows">
+                                    <tr><th scope="colgroup" colspan="3" class="dw-every-sub">Five grey states, from other sources or years</th></tr>
+                                    {% for r in every_state.others %}<tr data-s="{{ r.code }}"><th scope="row">{{ r.name }}</th><td class="dw-r dw-num">{{ r.pct }}</td><td>{{ r.source }}, {{ r.year }} claims</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </details>
                 </div>
             </section>
 
@@ -440,6 +499,7 @@
                             <ol class="dw-sources">
                                 <li><b>Source:</b> the <a href="#method-data">denial and appeal records</a> above.</li>
                                 <li><b>State map:</b> Grey states run their own marketplace, so their insurers don't report to HealthCare.gov and aren't shown. That now includes Georgia and Illinois, which used HealthCare.gov in 2024 but have since moved to their own, so their 2024 claims aren't here either. Picking a grey state links to the best public source that state has, such as independent review results, appeal reports or complaint records, checked October 25, 2026; Rhode Island and Kentucky publish nothing current, so theirs says so with no link. Those figures come from each state, often cover employer plans or other measures, and aren't comparable with CMS's rates. Picking Georgia, Illinois or Virginia also shows its in-network denial rate from the latest CMS file that includes its insurers (2022 claims for Georgia, 2023 for Illinois, 2021 for Virginia), FHI's calculation from CMS's data on the same measure as the map. Those are older years, so don't rank them against the 2024 states. A state that a view leaves out has an outlined tile, and the line under the map says why. In Wyoming one insurer reports, and in Hawaii, Alaska, West Virginia and Montana two do, so those states' figures are those companies' figures. The small type on each tile, shown when the map is wide enough, is the lowest to the highest rate among that state's insurers in the insurer table. The map opens on in-network claims, and we don't map out-of-network claims by state (see What are they denying? below).</li>
+                                <li id="method-every-state"><b>Every state chart:</b> it puts the map's 2024 rates beside two other kinds of in-network denial rates, both FHI's calculations: from the 2024 claims that 8 insurers in California (the ones with usable reports) and 11 in Pennsylvania reported on the same federal form, posted by <a href="https://www.hbex.ca.gov/insurance-companies/denied-claims/">Covered California</a> and the <a href="https://www.pa.gov/content/dam/copapwp-pagov/en/insurance/documents/posted-filings-reports-orders/posted-reports/aca-plan-transparency-reports/transparency-coverage-report-aca-health-plans-2025.pdf">Pennsylvania Insurance Department</a>, and from the last CMS files that include Georgia, Illinois and Virginia, described above.</li>
                                 <li><b>Insurer table:</b> Each reporting HealthCare.gov insurer that handled at least 50,000 in-network claims in 2024. These are unadjusted rates, not a quality rating: they depend on the kinds of care each plan's members use and how each company counts claims. Appeal win rates are shown only for insurers with at least 30 appeals, and "not reported" means CMS withheld the number won or we left it out as a likely reporting error (see <a href="#method-why-appeal">Why should I appeal?</a> above). Why there are no out-of-network or all-claims rates: see <a href="#method-what-why">What are they denying?</a> below.</li>
                                 {% if enrollment %}<li><b>Picking a {{ enrollment.plan_year }} plan:</b> Oregon's move to its own marketplace is from <a href="https://www.healthcare.gov/marketplace-in-your-state/">HealthCare.gov's state page</a>, and insurers leaving the marketplace for 2027 from <a href="https://www.kff.org/affordable-care-act/tracking-insurer-participation-changes-in-the-aca-marketplaces-in-2027/">KFF's tracker</a>, checked October 19, 2026.</li>{% endif %}
                                 <li><b>Prior authorization:</b> each insurer's or state's own 2025 report, posted under the <a href="https://www.cms.gov/initiatives/burden-reduction/overview/interoperability/policies-regulations/cms-interoperability-prior-authorization-final-rule-cms-0057-f">CMS prior authorization rule</a>, copied as posted with a link to the source for every row. Reports whose scope or units weren't clear are left out. We gathered them from insurers' and states' own websites.</li>

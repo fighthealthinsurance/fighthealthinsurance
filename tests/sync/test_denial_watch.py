@@ -764,6 +764,267 @@ class TestDenialWatchEarlierYears(TestCase):
         )
 
 
+STATE_REPORT_HEADER = "state,claims_year,insurers,in_network_claims,in_network_denied,publisher,source_url,accessed,note\n"
+
+
+def _every_bars(html: str) -> list[dict]:
+    """Each bar of the every-state chart, in page order, with the list it sits in ("map" or "other")."""
+    return [
+        bar
+        for where, start, end in (
+            ("map", 'id="every-bars"', 'id="every-other-title"'),
+            ("other", 'id="every-other-bars"', 'id="every-alt"'),
+        )
+        for bar in _bars_in(_between(html, start, end), where)
+    ]
+
+
+def _bars_in(chart: str, where: str) -> list[dict]:
+    return [
+        dict(where=where, group=g, code=s, name=_text(n), tag=_text(t or ""), width=float(w), value=v)
+        for g, s, n, t, w, v in re.findall(
+            r'<div class="dw-bar dw-src-(\w+)" data-s="(\w+)"><div class="dw-bar-name"><span>([^<]*)'
+            r'(?: <span class="dw-every-tag">([^<]*)</span>)?</span></div>.*?width:([\d.]+)%.*?'
+            r'<div class="dw-bar-value dw-num">([^<]*)</div>',
+            chart,
+            re.S,
+        )
+    ]
+
+
+class TestDenialWatchEveryStateChart(TestCase):
+    """One chart with every state that has an in-network rate: CMS's 2024 states, two states' own reports and CMS's last year for three more."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.page = _page()
+        cls.section = _between(cls.page, 'id="every-state"', 'id="insurers"')
+        cls.bars = _every_bars(cls.page)
+        cls.js = (REPO / "fighthealthinsurance" / "static" / "js" / "denial_watch.js").read_text()
+        cls.year = DATA["trend"][-1]["year"]
+        cls.expected = {
+            **{s: ("cms", v["rate"], cls.year) for s, v in DATA["states"].items()},
+            **{s: ("state", v["rate"], v["year"]) for s, v in DATA["state_reports"].items()},
+            **{s: ("earlier", v["rate"], v["year"]) for s, v in DATA["earlier"].items()},
+        }
+
+    def test_every_bar_value_equals_the_bundle(self):
+        self.assertEqual(sorted(b["code"] for b in self.bars), sorted(self.expected))
+        top = max(rate for _, rate, _ in self.expected.values())
+        for b in self.bars:
+            group, rate, _ = self.expected[b["code"]]
+            self.assertEqual(b["group"], group, b["code"])
+            self.assertEqual(b["value"], f"{rate * 100:.1f}%", b["code"])
+            self.assertAlmostEqual(b["width"], rate / top * 100, delta=0.05, msg=b["code"])
+
+    def test_map_states_run_highest_first_and_the_other_five_sit_apart(self):
+        # The other five aren't ranked against the map's year: they follow in their own list, by kind then name.
+        where = [b["where"] for b in self.bars]
+        self.assertEqual(where, sorted(where))
+        self.assertEqual({b["code"] for b in self.bars if b["where"] == "map"}, set(DATA["states"]))
+        self.assertTrue(all(b["group"] != "cms" for b in self.bars if b["where"] == "other"))
+        rates = [self.expected[b["code"]][1] for b in self.bars if b["where"] == "map"]
+        self.assertEqual(rates, sorted(rates, reverse=True))
+        others = [(b["group"], b["name"]) for b in self.bars if b["where"] == "other"]
+        self.assertEqual(others, sorted(others, key=lambda o: (o[0] != "state", o[1])))
+
+    def test_each_bar_off_the_map_names_its_source_and_year(self):
+        for b in self.bars:
+            group, _, year = self.expected[b["code"]]
+            if group == "cms":
+                self.assertEqual(b["tag"], "", b["code"])
+            elif group == "state":
+                self.assertEqual(b["tag"], f"{DATA['state_reports'][b['code']]['publisher']}, {year} claims")
+            else:
+                self.assertLess(year, self.year, b["code"])
+                self.assertEqual(b["tag"], f"CMS, {year} claims")
+
+    def test_key_names_each_group_in_words_with_publisher_and_year(self):
+        key = [_text(li) for li in re.findall(r"<li><i class=\"dw-src-\w+\"></i>(.*?)</li>", self.section)]
+        self.assertEqual(re.findall(r'<li><i class="dw-src-(\w+)"></i>', self.section), ["cms", "state", "earlier"])
+        # Each key sits with its own list: the map's above it, the other two under the subheading.
+        self.assertEqual(re.findall(r'<li><i class="dw-src-(\w+)"></i>', _between(self.section, 'id="every-key"', 'id="every-bars"')), ["cms"])
+        self.assertEqual(
+            re.findall(r'<li><i class="dw-src-(\w+)"></i>', _between(self.section, 'id="every-other-key"', 'id="every-other-bars"')),
+            ["state", "earlier"],
+        )
+        self.assertEqual(key[0], f"HealthCare.gov insurers, {self.year} claims (FHI's calculation from CMS's data)")
+        years = {v["year"] for v in DATA["state_reports"].values()}
+        self.assertEqual(years, {self.year})
+        self.assertIn(f"own reports for {self.year} claims on the same federal form", key[1])
+        publishers = [v["publisher"] for v in DATA["state_reports"].values()]
+        self.assertIn(
+            "(FHI's calculation from " + "'s and the ".join(publishers) + "'s data)",
+            key[1],
+        )
+        self.assertEqual(
+            key[2],
+            "HealthCare.gov insurers in the last year CMS's files include the state, given on the bar (FHI's calculation from CMS's data)",
+        )
+
+    def test_intro_and_caveat_name_the_states_in_the_bundle(self):
+        text = _text(self.section)
+        names = _load_builder().STATE_NAMES
+        reporting = sorted(names[s] for s in DATA["state_reports"])
+        reports = " and ".join(reporting)
+        reports_own = "'s and ".join(reporting) + "'s"
+        older = sorted(names[s] for s in DATA["earlier"])
+        older = ", ".join(older[:-1]) + " and " + older[-1]
+        five = {5: "five"}[len(DATA["state_reports"]) + len(DATA["earlier"])]
+        self.assertIn(
+            f"The {len(DATA['states'])} HealthCare.gov states from the map, highest first. Below them, on the same scale but listed apart, are {five} grey states we found a figure for elsewhere: "
+            f"{reports} from their insurers' own reports for {self.year} claims on the same federal form, and {older} from the last year CMS's files include them.",
+            text,
+        )
+        self.assertIn(
+            f"These sources and years aren't strictly comparable: {reports_own} reports can count plans sold outside their marketplaces, "
+            f"which CMS's figures leave out, and {older} are from earlier years, so don't rank those {five} against the {self.year} states.",
+            text,
+        )
+
+    def test_chart_sits_after_the_map_with_its_caveat_and_table(self):
+        order = [
+            self.page.index(f'id="{i}"')
+            for i in ("map-denials", "every-state", "every-bars", "every-other-title", "every-caveat", "every-other-key", "every-other-bars", "every-alt", "insurers")
+        ]
+        self.assertEqual(order, sorted(order))
+        self.assertIn('<h3 id="every-state-title">Every state we have an in-network denial rate for</h3>', self.section)
+        five = {5: "Five"}[len(DATA["state_reports"]) + len(DATA["earlier"])]
+        self.assertIn(f'<h4 class="dw-every-sub" id="every-other-title">{five} grey states, from other sources or years</h4>', self.section)
+        self.assertIn("<summary>Show these figures as a table</summary>", self.section)
+
+    def test_table_gives_the_same_values_as_the_bars(self):
+        table = _between(self.section, 'id="every-table"', "</table>")
+        # Every rate is FHI's calculation, so the visible column says so, not just the caption.
+        self.assertIn('<th scope="col">FHI\'s calculation from</th>', table)
+        self.assertNotIn(">Source<", table)
+        map_rows, other_rows = table.split('<tbody id="every-other-rows">')
+        five = {5: "Five"}[len(DATA["state_reports"]) + len(DATA["earlier"])]
+        self.assertIn(f'<th scope="colgroup" colspan="3" class="dw-every-sub">{five} grey states, from other sources or years</th>', other_rows)
+        self.assertEqual(set(re.findall(r'<tr data-s="(\w+)">', map_rows)), set(DATA["states"]))
+        rows = re.findall(
+            r'<tr data-s="(\w+)"><th scope="row">([^<]*)</th><td class="dw-r dw-num">([^<]*)</td><td>([^<]*)</td></tr>',
+            table,
+        )
+        self.assertEqual(
+            [(s, n, v) for s, n, v, _ in rows],
+            [(b["code"], b["name"], b["value"]) for b in self.bars],
+        )
+        for s, _, _, source in rows:
+            group, _, year = self.expected[s]
+            publisher = DATA["state_reports"][s]["publisher"] if group == "state" else "CMS"
+            self.assertEqual(source, f"{publisher}, {year} claims", s)
+
+    def test_chart_names_are_state_names(self):
+        names = _load_builder().STATE_NAMES
+        self.assertEqual({b["code"]: b["name"] for b in self.bars}, {s: names[s] for s in self.expected})
+
+    def test_grey_state_figures_stay_off_the_map_national_figures_and_ranges(self):
+        grey = set(DATA["places"]) - set(DATA["states"])
+        self.assertLessEqual(set(DATA["state_reports"]), grey)
+        self.assertFalse(set(DATA["state_reports"]) & set(DATA["earlier"]))
+        # The script never reads them: no map view, range, trend or table.
+        self.assertNotIn("state_reports", self.js)
+        # The chart's 2024 bars are the map's states, and nothing else carries CMS's year.
+        self.assertEqual({b["code"] for b in self.bars if b["group"] == "cms"}, set(DATA["states"]))
+        # The map's headline range is still the HealthCare.gov states' alone.
+        rates = [s["rate"] for s in DATA["states"].values()]
+        self.assertIn(f"Denial rates run from about {_pct(min(rates))} to {_pct(max(rates))} across", self.page)
+
+    def test_method_note_says_what_the_chart_combines(self):
+        note = _between(self.page, 'id="method-every-state"', "</li>")
+        ca, pa = DATA["state_reports"]["CA"], DATA["state_reports"]["PA"]
+        self.assertIn(
+            f"both FHI's calculations: from the {self.year} claims that {ca['insurers']} insurers in California (the ones with usable reports) "
+            f"and {pa['insurers']} in Pennsylvania reported on the same federal form",
+            _text(note),
+        )
+        names = _load_builder().STATE_NAMES
+        older = sorted(names[s] for s in DATA["earlier"])
+        self.assertIn(f"from the last CMS files that include {', '.join(older[:-1])} and {older[-1]}, described above.", _text(note))
+        self.assertIn(f'<a href="{ca["url"]}">{ca["publisher"]}</a>', note)
+        self.assertIn(f'the <a href="{pa["url"]}">{pa["publisher"]}</a>', note)
+
+    def test_california_and_pennsylvania_readout_lines_match_the_bundle(self):
+        # Hand-written in the script, so tie each number and link to the bundle.
+        def entry(state):
+            i = self.js.index(f"  {state}:[")
+            return json.loads(self.js[i + 5 : self.js.index("\n", i)].rstrip(","))
+
+        ca, pa = DATA["state_reports"]["CA"], DATA["state_reports"]["PA"]
+        e = entry("CA")
+        self.assertIn(f"The {ca['insurers']} with usable reports for {ca['year']} claims reported denying {ca['rate'] * 100:.1f}% of in-network claims", e[0])
+        self.assertEqual(e[1:3], [ca["url"], ca["publisher"]])
+        self.assertEqual(e[3], f" ({_millions(ca['denied'])} of {_millions(ca['claims'])}; FHI's calculation from those reports).")
+        e = entry("PA")
+        self.assertEqual(e[0], f"In {pa['year']}, the {pa['insurers']} insurers in ")
+        self.assertEqual(e[1], pa["url"])
+        self.assertEqual(
+            e[3],
+            f" denied {pa['rate'] * 100:.1f}% of in-network claims (FHI's calculation from the {pa['publisher']}'s data).",
+        )
+
+
+class TestDenialWatchStateReportsBuilder(TestCase):
+    """state_reports.csv: one checked row per grey state, and the build stops on anything it can't show."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.b = _load_builder()
+
+    def _load(self, *rows, shown=(), earlier=()):
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as f:
+            f.write(STATE_REPORT_HEADER + "".join(r + "\n" for r in rows))
+        try:
+            return self.b.load_state_reports(set(shown), dict.fromkeys(earlier), f.name)
+        finally:
+            pathlib.Path(f.name).unlink()
+
+    def _row(self, state="CA", year="2024", claims="1000", denied="150", url="https://example.org/r.pdf"):
+        return f"{state},{year},3,{claims},{denied},A State Office,{url},2026-10-25,checked"
+
+    def test_builder_reads_the_curated_file(self):
+        self.assertEqual(self.b.load_state_reports(set(DATA["states"]), DATA["earlier"]), DATA["state_reports"])
+
+    def test_every_row_cites_an_https_source_and_says_what_was_summed(self):
+        with open(REPO / "scripts" / "denial_watch" / "state_reports.csv", newline="") as f:
+            for r in csv.DictReader(f):
+                self.assertTrue(r["source_url"].startswith("https://"), r["state"])
+                self.assertTrue(r["note"].strip(), r["state"])
+                self.assertNotIn("\u2014", r["note"])
+                self.assertNotIn("\u2013", r["note"])
+
+    def test_rate_is_denials_over_claims(self):
+        e = self._load(self._row())["CA"]
+        self.assertEqual((e["rate"], e["claims"], e["denied"], e["insurers"], e["year"]), (0.15, 1000, 150, 3, 2024))
+
+    def test_a_state_on_the_map_stops_the_build(self):
+        with self.assertRaises(SystemExit):
+            self._load(self._row(), shown={"CA"})
+
+    def test_a_state_with_an_earlier_cms_figure_stops_the_build(self):
+        with self.assertRaises(SystemExit):
+            self._load(self._row(), earlier={"CA"})
+
+    def test_another_claims_year_stops_the_build(self):
+        with self.assertRaises(SystemExit):
+            self._load(self._row(year="2023"))
+
+    def test_more_denials_than_claims_stops_the_build(self):
+        with self.assertRaises(SystemExit):
+            self._load(self._row(claims="100", denied="101"))
+
+    def test_a_source_that_isnt_https_stops_the_build(self):
+        with self.assertRaises(SystemExit):
+            self._load(self._row(url="http://example.org/r.pdf"))
+
+    def test_two_rows_for_one_state_stop_the_build(self):
+        with self.assertRaises(SystemExit):
+            self._load(self._row(), self._row())
+
+
 class TestDenialWatchEnrollment(TestCase):
     """The open-enrollment box shows only in season; tests pin the date."""
 
@@ -2320,6 +2581,13 @@ class TestDenialWatchColourMeaning(TestCase):
             self.assertIn("deni" if kind == "bad" else "won", label)
         self.assertIn(".dw-stat-bad { border-top-color: var(--dw-bad); }", self.content)
         self.assertIn(".dw-stat-good { border-top-color: var(--dw-good); }", self.content)
+
+    def test_every_state_chart_is_red_with_a_texture_per_source(self):
+        # Every bar is a denial rate, so red; solid, striped or hollow says which kind of record, as the keys say in words.
+        self.assertIn("i.dw-src-cms { background-color: var(--dw-bad); }", self.content)
+        self.assertIn(".dw-src-state .dw-bar-fill, i.dw-src-state { background: repeating-linear-gradient(135deg, var(--dw-bad) 0 3px, var(--dw-bad-1) 3px 6px); }", self.content)
+        self.assertIn(".dw-src-earlier .dw-bar-fill, i.dw-src-earlier { background: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-bad); }", self.content)
+        self.assertIn('<details class="dw-years" id="every-alt">', self.content)
 
     def test_page_key_names_each_colour_in_words(self):
         key = _text(_between(self.content, '<p class="dw-key" id="colour-key">', "</p>"))
