@@ -26,6 +26,12 @@
   .ai-checks > li + li { margin-top: var(--fhi-space-2); }
   .ai-checks > li::before { content: "\2713"; position: absolute; left: 0; color: var(--fhi-green-ink); font-weight: 700; }
   .ai-figure-row { display: grid; gap: var(--fhi-space-4); grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); align-items: start; }
+  /* Seven cards, with Start an appeal, ran three, three and one on a
+     desktop; four to a row makes it four and three. Six stay three and
+     three. */
+  @media (min-width: 1200px) {
+    #what-it-does .fhi-cards:has(> :nth-child(7):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
 </style>
 {% endblock extra_style %}
 

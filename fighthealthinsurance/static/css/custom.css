@@ -567,12 +567,14 @@ textarea.fhi-field {
 
 /* A page's jump links to its own sections, as a set of equal tiles rather
    than a row of pills. Join the Fight had five Bootstrap pills that wrapped
-   four and one on a desktop and ragged on a phone. One row of five on a
-   desktop; two columns below that, the odd last tile spanning both so the
-   set ends square; one column on a phone. */
+   four and one on a desktop and ragged on a phone. One row on a desktop,
+   however many tiles there are: a row held to five put Denial Watch's seven
+   in a row of five and a row of two. Two columns below that, the odd last
+   tile spanning both so the set ends square; one column on a phone. */
 .fhi-jump-links {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
     gap: var(--fhi-space-3);
     margin: var(--fhi-space-6) 0 var(--fhi-space-8);
 }
@@ -607,6 +609,7 @@ textarea.fhi-field {
 
 @media (max-width: 991px) {
     .fhi-jump-links {
+        grid-auto-flow: row;
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
@@ -3119,12 +3122,6 @@ textarea,
     z-index: 5;
 }
 
-.letter-header {
-    border-bottom: 2px solid var(--fhi-green-ink);
-    padding-bottom: var(--fhi-space-2);
-    color: var(--fhi-green-ink);
-}
-
 .term-card,
 .term-card:hover {
     text-decoration: none;
@@ -3860,11 +3857,50 @@ summary.fhi-nav-link::after {
     gap: var(--fhi-space-6);
 }
 .fhi-cards-roomy { --fhi-card-min: 20rem; }
-/* Two columns on the wide page and one on a phone, for a pair of groups
-   too long to sit three across, such as the Resources page's. */
-.fhi-cards-wide { --fhi-card-min: 26rem; }
-/* Equal tiles in a lettered index: a letter with one entry keeps a one-tile card. */
-.fhi-cards-tiles { grid-template-columns: repeat(auto-fill, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr)); }
+/* Groups of very different lengths, such as the Resources page's, in two
+   columns that each run down the page like a newspaper's rather than in
+   rows. In a row the shorter of a pair stretched to the taller one's height:
+   Resources drew a government card with 520px of nothing in it. Each card
+   stays whole; one column on a phone. */
+.fhi-cards-flow {
+    columns: 2 26rem;
+    column-gap: var(--fhi-space-6);
+}
+.fhi-cards-flow > * {
+    break-inside: avoid;
+    margin-bottom: var(--fhi-space-6);
+}
+
+/* A lettered index, the glossary and the list of states, is one run of
+   entries down as many columns as fit, as in a printed index, with each
+   letter a small marker where its entries start. Each letter used to open
+   a grid row of its own, so a letter with one or two entries left most of
+   its row empty: on the state list, 14 of the 19 letters ended on a row
+   with gaps in it. A letter's section keeps its id and begins with its
+   marker, so every jump link still lands on it. */
+.fhi-index {
+    columns: var(--fhi-index-min, 14rem);
+    column-gap: var(--fhi-space-6);
+}
+.fhi-index-roomy { --fhi-index-min: 18rem; }
+.fhi-index-letter {
+    /* A marker is never the last thing in a column. */
+    break-after: avoid;
+    margin: 0 0 var(--fhi-space-3);
+    padding-bottom: var(--fhi-space-1);
+    border-bottom: 2px solid var(--fhi-green-ink);
+    color: var(--fhi-green-ink);
+    font-size: var(--fhi-text-lead);
+    line-height: var(--fhi-line-heading);
+}
+.fhi-index-entry {
+    display: block;
+    break-inside: avoid;
+    margin-bottom: var(--fhi-space-4);
+}
+.fhi-index-entry:last-child {
+    margin-bottom: var(--fhi-space-7);
+}
 
 .fhi-card {
     display: flex;
