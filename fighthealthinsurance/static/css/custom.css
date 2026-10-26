@@ -1745,6 +1745,22 @@ section:not(.slider) .share-subcopy,
     text-shadow: none;
 }
 
+/* On the home page the panel sits in the wide column, where every other
+   section is centred. Held to 680px it was pinned to the column's left
+   edge with 428px of nothing beside it, and its four buttons broke three
+   and one. Here it is as wide as one row of its buttons and centred, with
+   its words centred over them. */
+#share .share-panel {
+    width: fit-content;
+    max-width: 100%;
+    margin-inline: auto;
+    text-align: center;
+}
+
+#share .share-buttons {
+    justify-content: center;
+}
+
 /* Mobile responsiveness for share buttons */
 @media (max-width: 768px) {
     .share-buttons {
