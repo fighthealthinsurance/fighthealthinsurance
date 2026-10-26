@@ -62,6 +62,43 @@
             <p class="dw-how"><a href="#method-enroll">How we got these numbers<span class="fhi-visually-hidden">: {% if enrollment %}Open enrollment{% else %}Signing up for marketplace coverage{% endif %}</span></a></p>
             <p class="dw-note">{% if enrollment %}Dates, numbers{% else %}Numbers{% endif %} and links checked October 22, 2026.</p>
 
+            {# The numbers over the years come before what to do, since they are about enrollment itself. #}
+            <section class="fhi-stack" id="enroll-trends" aria-labelledby="enroll-trends-title">
+                <h2 id="enroll-trends-title">Marketplace enrollment over the years</h2>
+                {# The two charts side by side, on the same scale; js/open_enrollment.js draws them and the February table from the bundle. #}
+                <div class="oe-charts">
+                    <div class="fhi-stack">
+                        <div class="fhi-card oe-chart">
+                            <h3 class="fhi-card-title" id="mk-title">People with marketplace coverage each February</h3>
+                            <p class="oe-finding" id="mknote">Coverage climbed almost every year to 21.8 million in February 2025, then fell 12% to 19.2 million in February 2026.</p>
+                            <svg class="dw-chart" id="mkline" viewBox="0 0 560 270" role="img" aria-label="Line chart of people with marketplace coverage in effect each February, 2016 to 2026. 2026 is preliminary"></svg>
+                            <p class="dw-key" id="mkkey"><span><i class="dw-sw dw-sw-count"></i>Coverage in effect</span> <span><i class="dw-sw dw-sw-open"></i>2026, preliminary</span></p>
+                            <details class="dw-years">
+                                <summary>Every February's count</summary>
+                                <div class="dw-table-wrap"><table class="dw-table" id="mktable"></table></div>
+                            </details>
+                        </div>
+                        <p class="dw-how"><a href="#method-enroll">How we got these numbers<span class="fhi-visually-hidden">: People with marketplace coverage each February</span></a></p>
+                    </div>
+
+                    {# Every open enrollment's plan picks; the year table is drawn by the view, so it reads without the script. #}
+                    <section class="fhi-stack" id="enroll-history" aria-labelledby="pk-title">
+                        <div class="fhi-card oe-chart">
+                            <h3 class="fhi-card-title" id="pk-title">Plans picked in each open enrollment</h3>
+                            <p class="oe-finding" id="pknote">Plan picks doubled after 2021, from 12.0 million to 24.3 million for 2025, then dipped to 23.1 million for 2026.</p>
+                            <svg class="dw-chart" id="pkline" viewBox="0 0 560 270" role="img" aria-label="Line chart of people who picked a marketplace plan in each open enrollment, 2014 to 2026"></svg>
+                            <p class="dw-key" id="pkkey"><span><i class="dw-sw dw-sw-count"></i>Plans picked</span></p>
+                            <p class="dw-note" id="pkcaveat">Picks, not paid coverage. Sign-up windows and CMS's counting changed over the years.</p>
+                            <details class="dw-years">
+                                <summary>Every open enrollment's count</summary>
+                                <div class="dw-table-wrap"><table class="dw-table" id="pktable">{% if enroll_history %}<caption class="fhi-visually-hidden">People who picked a marketplace plan in each open enrollment, nationwide, {{ enroll_history.0.y }} to {% with final=enroll_history|last %}{{ final.y }}{% endwith %}</caption><thead><tr><th scope="col">Plan year</th><th scope="col" class="dw-r">Plans picked</th><th scope="col" class="dw-r">HealthCare.gov</th><th scope="col" class="dw-r">State-run</th><th scope="col">Source</th></tr></thead><tbody>{% for r in enroll_history %}<tr><th scope="row">{{ r.y }}</th><td class="dw-r dw-num">{{ r.n }}</td><td class="dw-r dw-num">{{ r.fed }}</td><td class="dw-r dw-num">{{ r.sbm }}</td><td>{{ r.pub }}</td></tr>{% endfor %}</tbody>{% endif %}</table></div>
+                            </details>
+                        </div>
+                        <p class="dw-how"><a href="#method-enroll">How we got these numbers<span class="fhi-visually-hidden">: Plans picked in each open enrollment</span></a></p>
+                    </section>
+                </div>
+            </section>
+
             <section class="fhi-stack" id="enroll-act" aria-labelledby="enroll-steps">
                 <h2 id="enroll-steps">What to do now</h2>
                 <div class="fhi-card">
@@ -79,39 +116,6 @@
                 </div>
                 <p><a href="#enroll-questions">Enrollment questions</a>: renewing, losing coverage, and what these numbers count.</p>
                 <p class="dw-note" id="enroll-act-checked">Links checked October 26, 2026.</p>
-            </section>
-        </div>
-
-        {# The two charts side by side, on the same scale; js/open_enrollment.js draws them and the February table from the bundle. #}
-        <div class="oe-charts">
-            <div class="fhi-stack">
-                <div class="fhi-card oe-chart">
-                    <h2 class="fhi-card-title" id="mk-title">People with marketplace coverage each February</h2>
-                    <p class="oe-finding" id="mknote">CMS's count rose every year but one from 2016 to 2025, then went from 21.8 million in February 2025 to 19.2 million in February 2026, 12% lower.</p>
-                    <svg class="dw-chart" id="mkline" viewBox="0 0 560 270" role="img" aria-label="Line chart of people with marketplace coverage in effect each February, 2016 to 2026. 2026 is preliminary"></svg>
-                    <p class="dw-key" id="mkkey"><span><i class="dw-sw dw-sw-count"></i>Coverage in effect</span> <span><i class="dw-sw dw-sw-open"></i>2026, preliminary</span></p>
-                    <details class="dw-years">
-                        <summary>Every February's count</summary>
-                        <div class="dw-table-wrap"><table class="dw-table" id="mktable"></table></div>
-                    </details>
-                </div>
-                <p class="dw-how"><a href="#method-enroll">How we got these numbers<span class="fhi-visually-hidden">: People with marketplace coverage each February</span></a></p>
-            </div>
-
-            {# Every open enrollment's plan picks; the year table is drawn by the view, so it reads without the script. #}
-            <section class="fhi-stack" id="enroll-history" aria-labelledby="pk-title">
-                <div class="fhi-card oe-chart">
-                    <h2 class="fhi-card-title" id="pk-title">Plans picked in each open enrollment</h2>
-                    <p class="oe-finding" id="pknote">Plan picks held between 11.4 million and 12.7 million a year from 2015 to 2021, then climbed to 24.3 million for 2025 and 23.1 million for 2026.</p>
-                    <svg class="dw-chart" id="pkline" viewBox="0 0 560 270" role="img" aria-label="Line chart of people who picked a marketplace plan in each open enrollment, 2014 to 2026"></svg>
-                    <p class="dw-key" id="pkkey"><span><i class="dw-sw dw-sw-count"></i>Plans picked</span></p>
-                    <p class="dw-note" id="pkcaveat">Picks, not paid coverage. Sign-up windows and CMS's counting changed over the years.</p>
-                    <details class="dw-years">
-                        <summary>Every open enrollment's count</summary>
-                        <div class="dw-table-wrap"><table class="dw-table" id="pktable">{% if enroll_history %}<caption class="fhi-visually-hidden">People who picked a marketplace plan in each open enrollment, nationwide, {{ enroll_history.0.y }} to {% with final=enroll_history|last %}{{ final.y }}{% endwith %}</caption><thead><tr><th scope="col">Plan year</th><th scope="col" class="dw-r">Plans picked</th><th scope="col" class="dw-r">HealthCare.gov</th><th scope="col" class="dw-r">State-run</th><th scope="col">Source</th></tr></thead><tbody>{% for r in enroll_history %}<tr><th scope="row">{{ r.y }}</th><td class="dw-r dw-num">{{ r.n }}</td><td class="dw-r dw-num">{{ r.fed }}</td><td class="dw-r dw-num">{{ r.sbm }}</td><td>{{ r.pub }}</td></tr>{% endfor %}</tbody>{% endif %}</table></div>
-                    </details>
-                </div>
-                <p class="dw-how"><a href="#method-enroll">How we got these numbers<span class="fhi-visually-hidden">: Plans picked in each open enrollment</span></a></p>
             </section>
         </div>
 

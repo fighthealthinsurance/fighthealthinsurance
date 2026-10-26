@@ -519,8 +519,7 @@ class TestOpenEnrollmentTop(TestCase):
             'id="enroll-dates-line"',
             'id="enroll-numbers"',
             'href="#method-enroll"',
-            'id="enroll-steps"',
-            'href="#enroll-questions"',
+            'id="enroll-trends"',
             'id="mk-title"',
             'id="mknote"',
             'id="mkline"',
@@ -533,6 +532,8 @@ class TestOpenEnrollmentTop(TestCase):
             'id="pkkey"',
             'id="pkcaveat"',
             'id="pktable"',
+            'id="enroll-steps"',
+            'href="#enroll-questions"',
             'id="enroll-questions"',
             'id="more-data-enroll"',
             'id="sources"',
@@ -545,8 +546,10 @@ class TestOpenEnrollmentTop(TestCase):
         heads = re.findall(r"<h[12][^>]*>(.*?)</h[12]>", top)
         self.assertEqual(
             [_text(h) for h in heads],
-            ["Open enrollment for 2027", "What to do now", "People with marketplace coverage each February", "Plans picked in each open enrollment"],
+            ["Open enrollment for 2027", "Marketplace enrollment over the years", "What to do now"],
         )
+        charts = re.findall(r'<h3 class="fhi-card-title" id="(?:mk|pk)-title">(.*?)</h3>', top)
+        self.assertEqual(charts, ["People with marketplace coverage each February", "Plans picked in each open enrollment"])
         for part in heads + [_between(self.section, 'id="enroll-dates-line"', "</p>")]:
             for word in ("fell", "drop", "lost", "lower", "fewer", "decline"):
                 self.assertNotIn(word, _text(part).lower(), part)
@@ -638,11 +641,14 @@ class TestOpenEnrollmentTop(TestCase):
         self.assertIn('href="https://www.healthcare.gov/reporting-changes/"', steps)
         self.assertNotIn("keep-or-change-plan", steps)
 
-    def test_steps_are_their_own_section_before_the_charts(self):
+    def test_steps_are_their_own_section_after_the_charts(self):
+        # The numbers are about enrollment itself, so they come first; then what to do.
+        self.assertIn('<section class="fhi-stack" id="enroll-trends" aria-labelledby="enroll-trends-title">', self.section)
+        self.assertIn('<h2 id="enroll-trends-title">Marketplace enrollment over the years</h2>', self.section)
         self.assertIn('<section class="fhi-stack" id="enroll-act" aria-labelledby="enroll-steps">', self.section)
         self.assertIn('<h2 id="enroll-steps">What to do now</h2>', self.section)
-        self.assertLess(self.section.index('id="enroll-numbers"'), self.section.index('id="enroll-act"'))
-        self.assertLess(self.section.index('id="enroll-act"'), self.section.index('id="mk-title"'))
+        self.assertLess(self.section.index('id="enroll-numbers"'), self.section.index('id="enroll-trends"'))
+        self.assertLess(self.section.index('id="pktable"'), self.section.index('id="enroll-act"'))
         self.assertIn("Links checked October 26, 2026.", _text(_between(self.section, 'id="enroll-act"', "</section>")))
 
     def test_each_step_is_one_short_sentence_after_its_lead(self):
@@ -714,12 +720,13 @@ class TestOpenEnrollmentMarketplace(TestCase):
         a, b = MK["feb"][-2], MK["feb"][-1]
         self.assertEqual(min(changes, key=changes.get), b["y"])
         self.assertLess(b["n"], a["n"])
-        self.assertIn('<h2 class="fhi-card-title" id="mk-title">People with marketplace coverage each February</h2>', self.section)
+        self.assertIn('<h3 class="fhi-card-title" id="mk-title">People with marketplace coverage each February</h3>', self.section)
         caption = _text(_between(self.section, 'id="mknote"', "</p>"))
-        self.assertIn(
-            f"then went from {_millions(a['n'])} in February {a['y']} to {_millions(b['n'])} in February {b['y']}, "
-            f"{round(-changes[b['y']] * 100)}% lower.",
-            caption,
+        # The rise first, then the latest year's drop.
+        self.assertEqual(
+            caption.split(">", 1)[-1],
+            f"Coverage climbed almost every year to {_millions(a['n'])} in February {a['y']}, "
+            f"then fell {round(-changes[b['y']] * 100)}% to {_millions(b['n'])} in February {b['y']}.",
         )
         self.assertEqual(feb[b["y"]], b["n"])
 
@@ -728,9 +735,8 @@ class TestOpenEnrollmentMarketplace(TestCase):
         others = [y for y, c in changes.items() if c < 0 and y != last]
         self.assertEqual(len(others), 1, others)
         self.assertLess(abs(changes[others[0]]), 0.01)
-        caption = _text(_between(self.section, 'id="mknote"', "</p>"))
-        # The caption names CMS, since the tiles and chart sit above the sources.
-        self.assertIn(f"CMS's count rose every year but one from {first} to {last - 1}, then went", caption)
+        # Every earlier year rose, which is why the caption needs only the latest year's drop.
+        self.assertTrue(all(changes[y] > 0 for y in range(first + 1, last) if y != others[0]))
 
     def test_intro_gives_the_counts(self):
         # Why February, in the questions; the counts themselves are in the chart's caption (above).
@@ -1245,9 +1251,9 @@ class TestOpenEnrollmentHistory(TestCase):
     def test_section_sits_after_the_february_chart(self):
         for before, after in (('id="mkline"', 'id="enroll-history"'), ('id="mktable"', 'id="pkline"'), ('id="pktable"', 'id="enroll-questions"')):
             self.assertLess(self.content.index(before), self.content.index(after))
-        self.assertIsNone(_section_parents(self.content)["enroll-history"])
+        self.assertEqual(_section_parents(self.content)["enroll-history"], "enroll-trends")
         self.assertIn('<section class="fhi-stack" id="enroll-history" aria-labelledby="pk-title">', self.content)
-        self.assertIn('<h2 class="fhi-card-title" id="pk-title">Plans picked in each open enrollment</h2>', self.section)
+        self.assertIn('<h3 class="fhi-card-title" id="pk-title">Plans picked in each open enrollment</h3>', self.section)
 
     def test_chart_label_before_the_script_runs_names_the_years(self):
         self.assertIn(
@@ -1262,15 +1268,15 @@ class TestOpenEnrollmentHistory(TestCase):
 
     def test_note_says_what_the_line_shows_from_the_bundle(self):
         h = _history()
-        flat = [h[y] for y in range(2015, 2022)]
-        # Flat through 2021, then up every year to the peak, and lower for the latest year.
+        # At least doubled from 2021 to the 2025 peak, up every year between, and lower for the latest year.
         self.assertEqual(max(h, key=h.get), 2025)
+        self.assertGreaterEqual(h[2025], 2 * h[2021])
         self.assertEqual([h[y] for y in range(2021, 2026)], sorted(h[y] for y in range(2021, 2026)))
         self.assertLess(h[2026], h[2025])
         self.assertEqual(
             self.note.split(">", 1)[1],
-            f"Plan picks held between {_millions(min(flat))} and {_millions(max(flat))} a year from 2015 to 2021, "
-            f"then climbed to {_millions(h[2025])} for 2025 and {_millions(h[2026])} for 2026.",
+            f"Plan picks doubled after 2021, from {_millions(h[2021])} to {_millions(h[2025])} for 2025, "
+            f"then dipped to {_millions(h[2026])} for 2026.",
         )
 
     def test_chart_keeps_one_short_caveat(self):
