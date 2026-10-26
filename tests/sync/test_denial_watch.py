@@ -1460,7 +1460,7 @@ class TestDenialWatchMedicareDrugs(TestCase):
 
         style = (REPO / "fighthealthinsurance" / "templates" / "denial_watch.html").read_text()
         rule = re.search(r"\.dw-chip \{([^}]*)\}", style).group(1)
-        # A pale gold, the drug spending colour, with the dark label ink.
+        # A pale pink, the drug spending colour, with the dark label ink.
         self.assertIn("background-color: var(--dw-cost-tint)", rule)
         self.assertIn("color: var(--dw-tile-ink)", rule)
         # The palette is in the styles Denial Watch shares with the open enrollment page.
@@ -2572,7 +2572,7 @@ def _view(table, key):
 
 
 class TestDenialWatchColourMeaning(TestCase):
-    """Blue is denials, green good for patients, purple coverage and health, gold drug spending, red only a rise, grey only no data; colour is never the only cue."""
+    """Blue is denials, green good for patients, purple coverage and health, pink drug spending, red only a rise, grey only no data; colour is never the only cue."""
 
     @classmethod
     def setUpClass(cls):
@@ -2625,7 +2625,7 @@ class TestDenialWatchColourMeaning(TestCase):
         self.assertIn(".dw-bar-health .dw-bar-fill { background-color: var(--dw-health-4); }", self.content)
         self.assertNotIn("COUNT", JS)
 
-    def test_drug_spending_is_gold(self):
+    def test_drug_spending_is_pink(self):
         self.assertIn('$(\'dgbars\').innerHTML=rows.map(d=>`<div class="dw-bar dw-bar-cost', JS)
         self.assertIn(".dw-bar-cost .dw-bar-fill { background-color: var(--dw-cost); }", self.content)
         self.assertIn('<p class="dw-key" id="dgkey"><span><i class="dw-sw dw-sw-cost"></i>', self.content)
@@ -2638,14 +2638,14 @@ class TestDenialWatchColourMeaning(TestCase):
         self.assertLess(lab["--dw-deny"][2], -20)  # blue
         self.assertGreater(lab["--dw-health-4"][1], 20)  # purple: red and blue together
         self.assertLess(lab["--dw-health-4"][2], -20)
-        self.assertGreater(lab["--dw-cost"][2], 50)  # gold: strongly yellow, light enough not to read brown
-        self.assertGreater(lab["--dw-cost"][0], 55)
+        self.assertGreater(lab["--dw-cost"][1], 45)  # pink: strongly magenta-red...
+        self.assertTrue(-25 < lab["--dw-cost"][2] < 10)  # ...neither orange-red nor purple-blue
 
     def test_pressed_toggles_take_their_sections_colour(self):
-        # Never a dark grey: blue for denials, purple for coverage and health, gold for drug spending; aria-pressed says it too.
+        # Never a dark grey: blue for denials, purple for coverage and health, pink for drug spending; aria-pressed says it too.
         self.assertIn('.dw-toggles .fhi-button[aria-pressed="true"] { background-color: var(--dw-deny); border-color: var(--dw-deny); color: var(--dw-paper); }', self.content)
         self.assertIn('.dw-toggles-health .fhi-button[aria-pressed="true"] { background-color: var(--dw-health-4); border-color: var(--dw-health-4); }', self.content)
-        self.assertIn('.dw-toggles-cost .fhi-button[aria-pressed="true"] { background-color: var(--dw-cost); border-color: var(--dw-cost); color: var(--dw-tile-ink); }', self.content)
+        self.assertIn('.dw-toggles-cost .fhi-button[aria-pressed="true"] { background-color: var(--dw-cost); border-color: var(--dw-cost); color: var(--dw-paper); }', self.content)
         groups = {ident: cls for cls, ident in re.findall(r'<div class="fhi-cluster ([\w -]+)" id="(\w+)" role="group"', self.content)}
         self.assertEqual(
             groups,
@@ -2776,6 +2776,6 @@ class TestDenialWatchColourMeaning(TestCase):
         self.assertEqual(
             key,
             "Colours in the charts: blue, denials; green, good for patients, such as appeals won; purple, coverage and health, such as the uninsured; "
-            "gold, drug spending; red, only where something got worse; grey, no data.",
+            "pink, drug spending; red, only where something got worse; grey, no data.",
         )
         self.assertLess(self.content.index('class="fhi-jump-links"'), self.content.index('id="colour-key"'))

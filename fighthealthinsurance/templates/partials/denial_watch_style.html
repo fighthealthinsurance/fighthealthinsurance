@@ -2,7 +2,7 @@
 The chart and tile pieces Denial Watch and its open enrollment page share; each
 page adds its own after this. The tokens below are the only place a chart colour
 is written: blue is denials, green is good for patients, purple is coverage and
-health, gold is drug spending, red only marks something that got worse, and grey
+health, pink is drug spending, red only marks something that got worse, and grey
 only no data. tests/sync/test_contrast.py measures them; the site has no dark mode.
 {% endcomment %}
 <style>
@@ -20,8 +20,8 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
     --dw-mid: #fbf6e9;
     /* Informative, neither good nor bad: coverage and health measures in purple (the uninsured and the CDC measures share one map). */
     --dw-health-0: #efe9f6; --dw-health-1: #d6c7ea; --dw-health-2: #b69dd7; --dw-health-3: #8665b1; --dw-health-4: #6a449c; --dw-health-5: #43256b;
-    /* Drug spending: one gold, no ramp, dark enough for a bar on its track and for dark words on it; the tint backs the Medicare price tag. */
-    --dw-cost: #ad8200; --dw-cost-tint: #f9ecc4;
+    /* Drug spending: the site's pink, deepened, no ramp; dark enough for a bar on its track and for white words on it; the tint backs the Medicare price tag. */
+    --dw-cost: #c2187a; --dw-cost-tint: #fbe3f0;
     /* The open enrollment page's coverage and plan picks share the denial blue: that page shows no denials. */
     --dw-count: var(--dw-deny-4); --dw-count-tint: #cfe8f7;
     /* No data, and only that; a state a view leaves out is outlined on paper instead. */

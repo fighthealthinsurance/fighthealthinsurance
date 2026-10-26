@@ -2809,13 +2809,13 @@ DW_PAIRS = (
     ("--dw-bad", "--dw-track", 3.0, "a red bar for a rise"),
     ("--dw-good", "--dw-paper", 3.0, "the independent review line"),
     ("--dw-good", "--dw-track", 3.0, "a green bar on its track"),
-    ("--dw-cost", "--dw-track", 3.0, "a gold drug spending bar"),
+    ("--dw-cost", "--dw-track", 3.0, "a pink drug spending bar"),
     ("--dw-health-4", "--dw-track", 3.0, "an uninsured or health measure bar"),
     ("--dw-count", "--dw-count-tint", 3.0, "the coverage fill on the plan picks track"),
     # A pressed toggle button is filled with its section's colour.
     ("--dw-paper", "--dw-deny", 4.5, "white words on a pressed denial toggle"),
     ("--dw-paper", "--dw-health-4", 4.5, "white words on a pressed coverage and health toggle"),
-    ("--dw-tile-ink", "--dw-cost", 4.5, "dark words on a pressed drug spending toggle"),
+    ("--dw-paper", "--dw-cost", 4.5, "white words on a pressed drug spending toggle"),
 )
 
 DW_RAMPS = ("deny", "bad", "good", "health")

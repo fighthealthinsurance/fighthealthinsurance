@@ -23,10 +23,10 @@
   .dw-ticker .dw-pause { border-color: #fff; color: #fff; }
   .dw-ticker .dw-pause:hover, .dw-ticker .dw-pause:focus { background-color: #fff; color: var(--fhi-ink); }
   .dw-toggles { gap: var(--fhi-space-2); }
-  /* The pressed button takes its section's colour: blue for denials, purple for coverage and health, gold with dark words for drug spending. */
+  /* The pressed button takes its section's colour: blue for denials, purple for coverage and health, pink for drug spending. */
   .dw-toggles .fhi-button[aria-pressed="true"] { background-color: var(--dw-deny); border-color: var(--dw-deny); color: var(--dw-paper); }
   .dw-toggles-health .fhi-button[aria-pressed="true"] { background-color: var(--dw-health-4); border-color: var(--dw-health-4); }
-  .dw-toggles-cost .fhi-button[aria-pressed="true"] { background-color: var(--dw-cost); border-color: var(--dw-cost); color: var(--dw-tile-ink); }
+  .dw-toggles-cost .fhi-button[aria-pressed="true"] { background-color: var(--dw-cost); border-color: var(--dw-cost); color: var(--dw-paper); }
   .dw-controls { display: flex; flex-wrap: wrap; gap: var(--fhi-space-3) var(--fhi-space-4); align-items: center; justify-content: space-between; }
   .dw-controls .fhi-field { width: auto; max-width: 100%; }
   .dw-map { display: block; width: 100%; height: auto; }
@@ -56,7 +56,7 @@
   .dw-bar-fill { height: 100%; border-radius: 2px; background-color: var(--dw-deny); }
   .dw-bar-value { grid-area: val; min-width: 3rem; text-align: right; font-weight: 700; }
   /* Blue, for denials, unless the bar says otherwise: green for what's good for patients, red for a rise,
-     purple for coverage and health, gold for drug spending. */
+     purple for coverage and health, pink for drug spending. */
   .dw-bar-good .dw-bar-fill { background-color: var(--dw-good); }
   .dw-bar-bad .dw-bar-fill { background-color: var(--dw-bad); }
   .dw-bar-health .dw-bar-fill { background-color: var(--dw-health-4); }
@@ -178,7 +178,7 @@
             <a href="#more-data">More data and sources</a>
         </nav>
 
-        <p class="dw-key" id="colour-key"><b>Colours in the charts:</b> <span><i class="dw-sw"></i>blue, denials;</span> <span><i class="dw-sw dw-sw-good"></i>green, good for patients, such as appeals won;</span> <span><i class="dw-sw dw-sw-health"></i>purple, coverage and health, such as the uninsured;</span> <span><i class="dw-sw dw-sw-cost"></i>gold, drug spending;</span> <span><i class="dw-sw dw-sw-bad"></i>red, only where something got worse;</span> <span><i class="dw-sw dw-sw-na"></i>grey, no data.</span></p>
+        <p class="dw-key" id="colour-key"><b>Colours in the charts:</b> <span><i class="dw-sw"></i>blue, denials;</span> <span><i class="dw-sw dw-sw-good"></i>green, good for patients, such as appeals won;</span> <span><i class="dw-sw dw-sw-health"></i>purple, coverage and health, such as the uninsured;</span> <span><i class="dw-sw dw-sw-cost"></i>pink, drug spending;</span> <span><i class="dw-sw dw-sw-bad"></i>red, only where something got worse;</span> <span><i class="dw-sw dw-sw-na"></i>grey, no data.</span></p>
 
         <section class="fhi-stack dw-theme" id="why-appeal" aria-labelledby="why-appeal-title">
             <h2 id="why-appeal-title">Why should I appeal?</h2>
