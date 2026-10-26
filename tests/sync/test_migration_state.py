@@ -14,13 +14,33 @@ from django.core.management import call_command
 from django.db.migrations.loader import MigrationLoader
 from django.test import TestCase
 
-# Scoped to first-party apps: third-party apps (e.g. django-mfa2) ship
-# migrations that DEFAULT_AUTO_FIELD makes Django want to regenerate, which
-# isn't actionable from this repo.
+# The apps whose migrations live in this repo. A miss here is fixed by
+# running makemigrations; a miss in a third-party app needs its AppConfig
+# pinned instead (see fhi_users/mfa_app_config.py).
 FIRST_PARTY_APPS = ["fighthealthinsurance", "fhi_users", "charts"]
 
 
 class MigrationStateTests(TestCase):
+    def test_no_installed_app_has_model_changes_missing_migrations(self):
+        """build.sh's setup_templates.sh runs an unscoped
+        ``makemigrations --check`` and, when it fails, generates and applies
+        migrations on the spot, so a third-party app's drift (django-mfa2's
+        ids against DEFAULT_AUTO_FIELD) must not make it fail."""
+        try:
+            call_command(
+                "makemigrations",
+                "--check",
+                "--dry-run",
+                verbosity=1,
+                stdout=StringIO(),
+                stderr=StringIO(),
+            )
+        except SystemExit:
+            self.fail(
+                "An installed app has model changes without migrations; for a "
+                "third-party app, pin its AppConfig's default_auto_field"
+            )
+
     def test_no_model_changes_missing_migrations(self):
         try:
             call_command(
