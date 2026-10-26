@@ -17,6 +17,7 @@ import tempfile
 from django.test import TestCase
 from django.urls import reverse
 
+from tests.sync.test_contrast import DW_PAIRS
 from tests.sync.test_denial_watch import DATA, MK, REPO, _between, _load_builder, _millions, _page, _text
 from tests.sync.test_open_enrollment import IN_SEASON, OE_JS, _enroll, _section_parents, _table_rows, _words
 
@@ -555,6 +556,15 @@ class TestCoverageMixColours(TestCase):
     def test_slices_are_coverage_purples(self):
         mix = _between(STYLE, "  .dw-mix-job,", "  .dw-mix-seg.dw-mix-marketplace")
         self.assertEqual(set(re.findall(r"var\((--dw-[\w-]+)\)", mix)) - {"--dw-paper"}, {"--dw-health-1", "--dw-health-2", "--dw-health-3", "--dw-health-5"})
+
+    def test_every_slice_ink_is_a_checked_pair(self):
+        # A slice too narrow for words today can show its share after a refresh, so every slice's ink is checked.
+        mix = _between(STYLE, "  .dw-mix-job,", "  .dw-mix-seg.dw-mix-marketplace")
+        slices = re.findall(r"\{ background-color: var\((--dw-[\w-]+)\);(?: color: var\((--dw-[\w-]+)\);)?", mix)
+        self.assertEqual(len(slices), 5)
+        checked = {(ink, ground) for ink, ground, minimum, _ in DW_PAIRS if minimum >= 4.5}
+        for ground, ink in slices:
+            self.assertIn((ink or "--dw-tile-ink", ground), checked)
 
     def test_marketplace_slice_is_taller_ringed_and_named(self):
         self.assertIn(".dw-mix-seg.dw-mix-marketplace { margin-block: -5px; box-shadow: 0 0 0 2px var(--fhi-ink); }", STYLE)

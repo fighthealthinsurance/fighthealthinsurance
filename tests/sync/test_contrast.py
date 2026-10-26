@@ -2817,6 +2817,8 @@ DW_PAIRS = (
     ("--dw-tile-ink", "--dw-health-1", 4.5, "a name on a pale coverage slice"),
     ("--dw-tile-ink", "--dw-health-2", 4.5, "a name on a mid coverage slice"),
     ("--dw-paper", "--dw-health-3", 4.5, "a name on Medicare's slice"),
+    ("--dw-paper", "--dw-health-5", 4.5, "a share on the marketplace slice"),
+    ("--dw-tile-ink", "--dw-paper", 4.5, "a share on the empty slice for no coverage"),
     ("--dw-health-5", "--dw-paper", 3.0, "the marketplace slice beside its white gaps"),
     ("--dw-health-3", "--dw-paper", 3.0, "the ring of the empty slice for no coverage"),
     # A pressed toggle button is filled with its section's colour.
