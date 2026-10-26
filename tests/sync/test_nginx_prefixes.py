@@ -37,6 +37,9 @@ def _routes(patterns, prefix=""):
         if isinstance(p, URLResolver):
             yield from _routes(p.url_patterns, prefix + str(p.pattern))
         elif isinstance(p, URLPattern):
+            # Django's own static and media file views serve the same files as nginx's locations.
+            if getattr(p.callback, "__name__", "") == "serve" and "static" in getattr(p.callback, "__module__", ""):
+                continue
             yield prefix + str(p.pattern)
 
 
