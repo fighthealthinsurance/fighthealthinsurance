@@ -1173,6 +1173,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       }));
       return;
     }
+    // Moving on past an unsent document drops it, so Retry is for this message.
+    unsentUploadRef.current = null;
 
     // Add the user message to the UI immediately - show the original (unscrubbed) message to the user
     const userMessage: ChatMessage = {
@@ -1189,6 +1191,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       isLoading: true,
       requestStartTime: Date.now(), // Track when the request started
       statusMessage: null,
+      error: null,
     }));
 
   };

@@ -285,3 +285,16 @@ def test_a_new_chat_drops_the_old_chats_unsent_upload():
     assert "unsentUploadRef.current = null;" in body, (
         "a new chat's Retry could send the previous chat's document"
     )
+
+
+def test_a_sent_message_drops_the_unsent_upload_so_retry_resends_the_message():
+    body = _arrow_body(_source(), "handleSendMessage")
+    refused = body.find("if (!didSend) {")
+    cleared = body.find("unsentUploadRef.current = null;")
+    assert -1 < refused < cleared, (
+        "a message sent after an unsent upload leaves the document kept, so "
+        "Retry for that message sends the stale document instead"
+    )
+    assert re.search(r"messages: \[\.\.\.prev\.messages, userMessage\][^}]*error: null", body), (
+        "the 'press Retry to send your document' error outlives the document"
+    )
