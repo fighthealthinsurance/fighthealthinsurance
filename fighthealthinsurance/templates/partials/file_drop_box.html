@@ -1,0 +1,10 @@
+{% comment %} A box for files alone (.fhi-drop-box in custom.css): the
+   browser's own file input, which names what was chosen with or without a
+   script, in a box that file_drop.js makes a place to drop them. A page
+   includes it with name= (the input's name and id) and multiple=True for
+   several files; a form field gets it through form_utils.FileDropInput or
+   MultipleFileInput (widgets/file_drop.html), whose attributes it keeps. {% endcomment %}
+<div class="fhi-drop-box" data-file-drop>
+    <input type="file" name="{{ name }}"{% if widget %}{% include "django/forms/widgets/attrs.html" %}{% else %} id="{{ name }}"{% if multiple %} multiple{% endif %}{% endif %}>
+    <span class="fhi-drop-hint">or drop {% if multiple or widget.attrs.multiple %}the files{% else %}the file{% endif %} here</span>
+</div>

@@ -3,6 +3,7 @@ from typing import Optional
 from django import forms
 from django.core.files.uploadedfile import UploadedFile
 
+from fighthealthinsurance.form_utils import FileDropInput
 from fighthealthinsurance.forms import REFERRAL_SOURCE_CHOICES
 from fighthealthinsurance.models import PolicyDocument
 
@@ -74,9 +75,8 @@ class UnderstandPolicyForm(BaseConsentForm):
 
     policy_document = forms.FileField(
         required=True,
-        widget=forms.FileInput(
+        widget=FileDropInput(
             attrs={
-                "class": "fhi-field",
                 "id": "policy_document",
                 "accept": ".pdf,.docx,.txt",
             }

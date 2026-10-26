@@ -31,9 +31,17 @@ def from_your_letter_hint() -> SafeString:
     return mark_safe(render_to_string("partials/from_your_letter_hint.html").strip())
 
 
+class FileDropInput(forms.FileInput):
+    """A file field drawn as a box that takes the file dropped as well as
+    chosen (partials/file_drop_box.html), like every upload on the site."""
+
+    template_name = "widgets/file_drop.html"
+
+
 # See https://docs.djangoproject.com/en/5.1/topics/http/file-uploads/
 class MultipleFileInput(forms.ClearableFileInput):
     allow_multiple_selected = True
+    template_name = FileDropInput.template_name
 
 
 class MultipleFileField(forms.FileField):

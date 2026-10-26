@@ -21,6 +21,6 @@ Optional: Add Plan Documents
     Anything you pick here is added to {{ plan_document_count|pluralize:"it,them" }}, so there is no need to upload the same file again.
   </p>
   {% endif %}
-  <input id="plan_documents" type="file" name="plan_documents" multiple="true" class="fhi-field">
+  {% include "partials/file_drop_box.html" with name="plan_documents" multiple=True %}
 </div>
 {% endblock formelm %}

@@ -104,33 +104,51 @@
 	{% endif %}
 	{% comment %} The letter comes first, the way most sites that take a
 	   document ask for it: it is what the person came here with. One box
-	   takes it either way, pasted in or as a file dropped on it, and the file
-	   button above the box does the same for a phone or a keyboard, which
-	   cannot drag. {% endcomment %}
+	   takes it every way: typed or pasted in, or as a file chosen with the
+	   button inside the box or dropped on it (partials/letter_box_pick.html).
+	   The step's heading names the box on screen; its label says the same to
+	   a screen reader. {% endcomment %}
 	<section class="fhi-stack">
 	    <h2>Your denial letter</h2>
-	    {% if upload_more %}
-	    <div id="image_select_magic" class="fhi-file-pick">
-		{% comment %} DELIBERATELY has no name= attribute. The browser only includes
-		   a file input in the multipart body when it has a name, and this
-		   input sits inside the /process form. With a name, every denial
-		   document a user attached was uploaded and buffered server-side
-		   even though BaseDenialForm has no field for it and nothing ever
-		   read it -- an unnecessary disclosure of the exact document this
-		   flow is built to keep in the browser. The OCR binds by
-		   getElementById("uploader"), so the id is all it needs. A file
-		   dropped on this step, the button or the box, is handed to this same
-		   input (acceptDroppedFiles in scrub.ts), so a drop posts nothing either.
-		   The input is hidden from sight only: its label is the button people
-		   see, and a keyboard still reaches the input itself. Do not add a
-		   name back without also changing what the copy below promises. {% endcomment %}
-		<input id="uploader" type="file" multiple="true" class="fhi-visually-hidden">
-		<label for="uploader" class="fhi-button fhi-button-secondary"><span>Choose a file<span class="fhi-photo-hint"> or take a photo</span></span></label>
-		<small class="fhi-hint">Add every page. We read it on this device and put the text in the box below.</small>
+	    <div class="fhi-field-group">
+		<label for="denial_text" id="denial_text_label" class="fhi-visually-hidden">Your denial letter</label>
+		<small class="fhi-hint">Take out your name, address and other personal details first, or fill in About you below and press Remove personal details. We keep this text to improve our AI, and people on our team may read it.</small>
+		{% comment %} Just above the box, where a chosen or dropped file is
+		   read: an indicator a screen away from the button is one nobody sees
+		   (review). The first is the element the submit gate toggles. {% endcomment %}
+		{% if upload_more %}
+		<div class="hidden-error-message hidden-progress-message" id="ocr_in_progress" role="alert" aria-live="polite">
+		  We're reading the file you uploaded. A scanned PDF is processed a page at
+		  a time, so this can take a little while. The text will appear in the
+		  box below when it's done. You can also type or paste the denial text
+		  yourself instead of waiting.
+		</div>
+		{% endif %}
+		<div class="hidden-error-message" id="ocr_partial" role="alert" aria-live="polite">
+		  We read some of what you uploaded but not all of it, so check the box
+		  below and add anything that's missing. Clear photos and text PDFs read
+		  better than scans.
+		</div>
+		<div class="hidden-error-message" id="ocr_failed" role="alert" aria-live="polite">
+		  We couldn't read your file, so there's nothing in the box below yet.
+		  Please copy and paste your denial into it. Your file is read on your
+		  own device and is never uploaded to us, so we can't read it for you
+		  on our end. Clear photos and text PDFs read better than scans.
+		</div>
+		<div class="fhi-letter-box"{% if upload_more %} data-file-drop{% endif %}>
+		<textarea name="denial_text" id="denial_text" rows="10" form="fuck_health_insurance_form"
+		    placeholder="Paste the letter's text here"
+		    class="fhi-field"{% if form.denial_text.errors %} aria-invalid="true" aria-describedby="need_denial"{% endif %}{% if from_assistant %} data-from-assistant="true"{% endif %}>{{ocr_result}}</textarea>
+		{% if upload_more %}
+		{% include "partials/letter_box_pick.html" with note="Add every page. We read it on this device and put the text in this box." %}
+		{% endif %}
+		</div>
+		{% include "partials/field_error.html" with id="need_denial" message="Paste your denial letter in the box above. No letter? Describe what was denied, for example: the pharmacy denied my PrEP." errors=form.denial_text.errors %}
+		<small class="fhi-hint">This version, with the personal details we could find removed, is sent to our server.</small>
 	    </div>
-	    {% comment %} After the file button, not above it: the button is the first
-	       thing in the step even when this option is on. It is read when the file
-	       is, so it says to tick it before choosing one. {% endcomment %}
+	    {% comment %} Under the box, not above it: above, its paragraph of fine
+	       print pushed the box and its button most of a phone screen down. It is
+	       read when the file is, so it says to tick it before choosing one. {% endcomment %}
 		{% if advanced_ocr_offered %}
 		<div class="fhi-check-row" id="advanced_ocr_section">
 		    <input type="checkbox" id="advanced_ocr_enabled" class="fhi-check">
@@ -145,39 +163,6 @@
 		    <button type="button" id="advanced_ocr_remove_model" class="fhi-button fhi-button-quiet fhi-button-small" hidden>Remove the downloaded model from this device (about 1 GB)</button>
 		</div>
 		{% endif %}
-	    {% comment %} Sits between the file button and the letter box, where a
-	       chosen or dropped file is read: an indicator a screen away from
-	       the button is one nobody sees (review). Same element the submit
-	       gate toggles. {% endcomment %}
-	    <div class="hidden-error-message hidden-progress-message" id="ocr_in_progress" role="alert" aria-live="polite">
-	      We're reading the file you uploaded. A scanned PDF is processed a page at
-	      a time, so this can take a little while. The text will appear in the
-	      box below when it's done. You can also type or paste the denial text
-	      yourself instead of waiting.
-	    </div>
-	    {% endif %}
-	    {% comment %} How the read went shows here too, for the same reason,
-	       which is also what makes their "the box below" true. {% endcomment %}
-	    <div class="hidden-error-message" id="ocr_partial" role="alert" aria-live="polite">
-	      We read some of what you uploaded but not all of it, so check the box
-	      below and add anything that's missing. Clear photos and text PDFs read
-	      better than scans.
-	    </div>
-	    <div class="hidden-error-message" id="ocr_failed" role="alert" aria-live="polite">
-	      We couldn't read your file, so there's nothing in the box below yet.
-	      Please copy and paste your denial into it. Your file is read on your
-	      own device and is never uploaded to us, so we can't read it for you
-	      on our end. Clear photos and text PDFs read better than scans.
-	    </div>
-	    <div class="fhi-field-group">
-		<label for="denial_text" id="denial_text_label" class="fhi-label">Paste the text of the letter here<span class="fhi-hint fhi-drop-hint">, or drop the file on this box</span></label>
-		<small class="fhi-hint">Take out your name, address and other personal details first, or fill in About you below and press Remove personal details. We keep this text to improve our AI, and people on our team may read it.</small>
-		<textarea name="denial_text" id="denial_text" rows="10" form="fuck_health_insurance_form"
-		    placeholder="Your denial goes here"
-		    class="fhi-field"{% if form.denial_text.errors %} aria-invalid="true" aria-describedby="need_denial"{% endif %}{% if from_assistant %} data-from-assistant="true"{% endif %}>{{ocr_result}}</textarea>
-		{% include "partials/field_error.html" with id="need_denial" message="Paste your denial letter in the box above. No letter? Describe what was denied, for example: the pharmacy denied my PrEP." errors=form.denial_text.errors %}
-		<small class="fhi-hint">This version, with the personal details we could find removed, is sent to our server.</small>
-	    </div>
 	</section>
 	<section class="fhi-stack">
 	    <h2>About you</h2>

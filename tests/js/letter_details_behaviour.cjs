@@ -54,11 +54,13 @@ const INTAKE_MARKUP = `
 <form id="fuck_health_insurance_form">
   <section class="fhi-stack">
     <h2>Your denial letter</h2>
-    <div id="image_select_magic" class="fhi-file-pick">
-      <input id="uploader" type="file" multiple="true" class="fhi-visually-hidden" />
-    </div>
     <div class="fhi-field-group">
-      <textarea name="denial_text" id="denial_text" class="fhi-field"></textarea>
+      <div class="fhi-letter-box" data-file-drop="">
+        <textarea name="denial_text" id="denial_text" class="fhi-field"></textarea>
+        <div class="fhi-letter-box-over">
+          <input id="uploader" type="file" multiple="true" class="fhi-visually-hidden" />
+        </div>
+      </div>
     </div>
   </section>
   <section class="fhi-stack">

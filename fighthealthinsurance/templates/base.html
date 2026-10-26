@@ -334,6 +334,8 @@
          starts every page from a short reset of its own. -->
     <!-- jQuery loads first because the compressed block below needs it. -->
     <script src="{% versioned 'js/jquery.js' %}"></script>
+    <!-- Every box that takes a file takes it dropped too. -->
+    <script src="{% versioned 'js/file_drop.js' %}"></script>
     <!-- Smoothscroll needs jQuery, so it loads after it. The header stays
          at the top of the window through position: sticky in main.css,
          with no script. -->

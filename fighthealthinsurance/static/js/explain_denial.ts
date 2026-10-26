@@ -60,13 +60,11 @@ async function recognizeEvent(event: Event): Promise<void> {
     return;
   }
 
-  // Show processing indicator
-  const uploadLabel = document.querySelector(
-    'label[for="uploader"]'
-  ) as HTMLLabelElement | null;
-  const originalLabelText = uploadLabel?.textContent || "";
-  if (uploadLabel) {
-    uploadLabel.textContent = "Processing...";
+  // Say the file is being read, just above the box it is read into.
+  const status = document.getElementById("ocr_status");
+  if (status) {
+    status.textContent = "We're reading your file. The text will appear in the box below.";
+    status.hidden = false;
   }
 
   try {
@@ -82,9 +80,9 @@ async function recognizeEvent(event: Event): Promise<void> {
       "Error processing file. Please try again or paste text manually."
     );
   } finally {
-    // Restore label text
-    if (uploadLabel) {
-      uploadLabel.textContent = originalLabelText;
+    if (status) {
+      status.hidden = true;
+      status.textContent = "";
     }
     // Clear the input so the same file can be re-uploaded if needed
     input.value = "";
@@ -92,7 +90,9 @@ async function recognizeEvent(event: Event): Promise<void> {
 }
 
 /**
- * Set up OCR event listeners for the explain denial page.
+ * Set up OCR event listeners for the explain denial page. A file dropped on
+ * the letter box comes here too: file_drop.js hands it to the uploader and
+ * fires its change event.
  */
 function setupExplainDenialOCR(): void {
   const uploader = document.getElementById("uploader");
