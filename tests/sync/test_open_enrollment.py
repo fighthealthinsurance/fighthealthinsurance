@@ -63,7 +63,7 @@ def _enroll(day: date | None = None) -> str:
 
 
 def _top(html: str) -> str:
-    """The top of the page: the dates line, tiles, chart, steps and their notes."""
+    """The top of the page: the dates line, tiles, steps, both charts and their notes."""
     return _between(html, '<div class="fhi-stack" id="enroll">', 'id="enroll-questions"')
 
 
@@ -398,7 +398,7 @@ class TestOpenEnrollmentSeason(TestCase):
     def test_page_drops_medicare_plan_finder_after_december_7(self):
         top = _top(_enroll(date(2026, 12, 8)))
         self.assertNotIn("plan-compare", top)
-        self.assertIn("Compare plans and costs on HealthCare.gov or your state's marketplace, even if you'll be renewed automatically. See how often", _text(top))
+        self.assertIn("Compare plans and costs on HealthCare.gov or your state's marketplace, even if you'll be renewed automatically.", _text(top))
 
     def test_dates_and_year_come_from_the_constants(self):
         # Next fall's update is two constants in views.py, not a hunt through the template.
@@ -518,18 +518,23 @@ class TestOpenEnrollmentTop(TestCase):
             "<h1>",
             'id="enroll-dates-line"',
             'id="enroll-numbers"',
-            'id="mkline"',
-            'id="mknote"',
-            'id="mktable"',
+            'href="#method-enroll"',
             'id="enroll-steps"',
             'href="#enroll-questions"',
-            'href="#method-enroll"',
+            'id="mk-title"',
+            'id="mknote"',
+            'id="mkline"',
+            'id="mkkey"',
+            'id="mktable"',
             'id="enroll-history"',
+            'id="pk-title"',
+            'id="pknote"',
             'id="pkline"',
             'id="pkkey"',
-            'id="pknote"',
+            'id="pkcaveat"',
             'id="pktable"',
             'id="enroll-questions"',
+            'id="more-data-enroll"',
             'id="sources"',
         ]
         at = [self.content.index(m) for m in order]
@@ -540,7 +545,7 @@ class TestOpenEnrollmentTop(TestCase):
         heads = re.findall(r"<h[12][^>]*>(.*?)</h[12]>", top)
         self.assertEqual(
             [_text(h) for h in heads],
-            ["Open enrollment for 2027", "People with marketplace coverage each February", "What to do now", "Plans picked in each open enrollment"],
+            ["Open enrollment for 2027", "What to do now", "People with marketplace coverage each February", "Plans picked in each open enrollment"],
         )
         for part in heads + [_between(self.section, 'id="enroll-dates-line"', "</p>")]:
             for word in ("fell", "drop", "lost", "lower", "fewer", "decline"):
@@ -580,8 +585,23 @@ class TestOpenEnrollmentTop(TestCase):
     def test_steps_say_what_to_do_with_links(self):
         steps = _between(self.section, 'id="enroll-steps"', "</ul>")
         leads = re.findall(r"<li[^>]*><b>([^<]+)</b>", steps)
-        self.assertEqual(leads, ["Compare plans and costs", "Pay the first premium.", "Disagree with a marketplace decision?", "Get free help."])
+        self.assertEqual(
+            leads,
+            [
+                "See plans and prices first.",
+                "Update your income and household.",
+                "Compare plans and costs",
+                "Check your doctors and prescriptions.",
+                "Weigh insurers' denial rates.",
+                "Pay the first premium.",
+                "Disagree with a marketplace decision?",
+                "Get free help.",
+            ],
+        )
         for href in (
+            "https://www.healthcare.gov/see-plans/",
+            "https://www.healthcare.gov/keep-or-change-plan/",
+            "https://www.healthcare.gov/choose-a-plan/comparing-plans/",
             "https://www.healthcare.gov/",
             "https://www.healthcare.gov/marketplace-in-your-state/",
             "https://www.medicare.gov/plan-compare/",
@@ -593,6 +613,9 @@ class TestOpenEnrollmentTop(TestCase):
         ):
             self.assertIn(f'href="{href}"', steps)
         text = _text(steps)
+        self.assertIn("HealthCare.gov shows plans and estimated prices for your area, based on your income, before you log in.", text)
+        self.assertIn("Put your expected 2027 income and household on your application, so you get the right savings.", text)
+        self.assertIn("Plans change every year, so look for yours in each plan's doctor and drug lists.", text)
         self.assertIn("A plan you pick only starts once the first month's premium is paid, if there is one.", text)
         self.assertIn("you can appeal to the marketplace, generally within 90 days of the notice.", text)
         # The same deadline as Denial Watch's Who to call card.
@@ -606,7 +629,29 @@ class TestOpenEnrollmentTop(TestCase):
     def test_out_of_season_steps_leave_out_comparing_plans(self):
         top = _top(_enroll(AFTER_SEASON))
         steps = _between(top, 'id="enroll-steps"', "</ul>")
-        self.assertEqual(re.findall(r"<li[^>]*><b>([^<]+)</b>", steps), ["Pay the first premium.", "Disagree with a marketplace decision?", "Get free help."])
+        self.assertEqual(
+            re.findall(r"<li[^>]*><b>([^<]+)</b>", steps),
+            ["Report income and household changes.", "Pay the first premium.", "Disagree with a marketplace decision?", "Get free help."],
+        )
+        # Out of season, changes are reported as they happen, not for next year's plan.
+        self.assertIn('href="https://www.healthcare.gov/reporting-changes/"', steps)
+        self.assertNotIn("keep-or-change-plan", steps)
+
+    def test_steps_are_their_own_section_before_the_charts(self):
+        self.assertIn('<section class="fhi-stack" id="enroll-act" aria-labelledby="enroll-steps">', self.section)
+        self.assertIn('<h2 id="enroll-steps">What to do now</h2>', self.section)
+        self.assertLess(self.section.index('id="enroll-numbers"'), self.section.index('id="enroll-act"'))
+        self.assertLess(self.section.index('id="enroll-act"'), self.section.index('id="mk-title"'))
+        self.assertIn("Links checked October 26, 2026.", _text(_between(self.section, 'id="enroll-act"', "</section>")))
+
+    def test_each_step_is_one_short_sentence_after_its_lead(self):
+        for day in (IN_SEASON, AFTER_SEASON):
+            steps = _between(_top(_enroll(day)), 'id="enroll-steps"', "</ul>")
+            for item in re.findall(r"<li[^>]*>(.*?)</li>", steps, flags=re.S):
+                rest = _text(item.split("</b>", 1)[1])
+                with self.subTest(day=day, item=rest[:40]):
+                    self.assertLessEqual(len(re.findall(r"[.?](?:\s|$)", rest)), 1)
+                    self.assertLessEqual(len(rest.split()), 40)
 
     def test_points_down_to_the_enrollment_questions(self):
         self.assertIn('<a href="#enroll-questions">Enrollment questions</a>', self.section)
@@ -616,9 +661,17 @@ class TestOpenEnrollmentTop(TestCase):
         )
 
     def test_top_stays_short(self):
-        # The enrollment copy had grown far longer than the rest of Denial Watch: 273 words, plus a little room.
+        # The dates, tiles, steps and February chart: 350 words with the eight steps in season, plus a little room.
         # The plan picks history below it has its own budget.
-        self.assertLessEqual(_words(_between(self.section, 'id="enroll"', 'id="enroll-history"')), 280)
+        self.assertLessEqual(_words(_between(self.section, 'id="enroll"', 'id="enroll-history"')), 360)
+
+    def test_each_chart_says_its_finding_in_under_about_40_words(self):
+        # Denial Watch's way: a short title, one sentence of finding, the chart, its key; caveats in Sources and method.
+        mk = _text(_between(self.section, 'id="mknote"', "</p>"))
+        pk = _text(_between(self.section, 'id="pknote"', "</p>")) + " " + _text(_between(self.section, 'id="pkcaveat"', "</p>"))
+        for prose in (mk, pk):
+            self.assertLessEqual(len(prose.split()), 40, prose)
+        self.assertEqual(len(re.findall(r"\.(?:\s|$)", mk)), 1, mk)
 
     def test_sections_are_named_by_their_headings(self):
         self.assertIn('<section class="fhi-stack" id="enroll-questions" aria-labelledby="enroll-questions-title">', self.content)
@@ -676,7 +729,7 @@ class TestOpenEnrollmentMarketplace(TestCase):
         self.assertLess(abs(changes[others[0]]), 0.01)
         caption = _text(_between(self.section, 'id="mknote"', "</p>"))
         # The caption names CMS, since the tiles and chart sit above the sources.
-        self.assertIn(f"CMS's count rose every year from {first} to {last - 1} except {others[0]}, when it dipped less than 1%,", caption)
+        self.assertIn(f"CMS's count rose every year but one from {first} to {last - 1}, then went", caption)
 
     def test_intro_gives_the_counts(self):
         # Why February, in the questions; the counts themselves are in the chart's caption (above).
@@ -724,7 +777,7 @@ class TestOpenEnrollmentMarketplace(TestCase):
 
     def test_latest_year_is_marked_preliminary(self):
         prelim = MK["prelim"]
-        self.assertIn(f"The hollow point, {prelim}, is preliminary.", _text(_between(self.section, 'id="mknote"', "</p>")))
+        self.assertIn(f"{prelim}, preliminary", _text(_between(self.section, 'id="mkkey"', "</p>")))
         self.assertIn(f"The {prelim} count isn't final yet", self.answers)
         self.assertIn(f"so {prelim} is preliminary and may change", self.method)
         self.assertIn("open:p=>p.x===MK.prelim", self.script)
@@ -968,6 +1021,57 @@ class TestOpenEnrollmentQuestions(TestCase):
         )
 
 
+class TestOpenEnrollmentMoreData(TestCase):
+    """Where to find more data like this, after the questions and before the sources, as on Denial Watch."""
+
+    SOURCES = [
+        ("https://www.kff.org/state-health-facts/", "KFF State Health Facts"),
+        ("https://www.cms.gov/data-research/statistics-trends-and-reports/marketplace-products", "CMS Marketplace Products"),
+        ("https://shvs.org/tracking-state-based-marketplace-2026-open-enrollment-data-final-reports/", "State-run marketplace enrollment tracker"),
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.content = _enroll(IN_SEASON)
+        cls.section = _between(cls.content, 'id="more-data-enroll"', "</section>")
+
+    def test_listing_comes_after_the_questions_and_before_the_sources(self):
+        at = [self.content.index(m) for m in ('id="enroll-questions"', 'id="more-data-enroll"', 'id="sources"')]
+        self.assertEqual(at, sorted(at))
+        self.assertIsNone(_section_parents(self.content)["more-data-enroll"])
+
+    def test_listing_has_denial_watchs_kicker_and_heading(self):
+        self.assertIn('<section class="fhi-stack" id="more-data-enroll" aria-labelledby="more-data-enroll-title">', self.content)
+        self.assertIn('<p class="dw-kicker">Beyond this page</p>', self.section)
+        self.assertIn('<h2 id="more-data-enroll-title">Where to find more data like this</h2>', self.section)
+
+    def test_each_source_name_is_a_link(self):
+        names = re.findall(r'<h3 class="fhi-card-title"><a href="(https://[^"]+)">([^<]+)</a></h3>', self.section)
+        self.assertEqual(names, self.SOURCES)
+
+    def test_each_source_says_whether_it_has_ads(self):
+        items = re.findall(r"<li>(.*?)</li>", self.section, flags=re.S)
+        self.assertEqual(len(items), len(self.SOURCES))
+        for item in items:
+            self.assertTrue(_text(item).endswith("No ads."), item)
+
+    def test_sources_link_the_data_they_describe(self):
+        for href in (
+            "https://www.kff.org/affordable-care-act/state-indicator/open-enrollment-marketplace-plan-selections/",
+            "https://www.kff.org/affordable-care-act/state-indicator/effectuated-marketplace-enrollment-and-financial-assistance/",
+            CMS_EFFECTUATED,
+        ):
+            self.assertIn(f'href="{href}"', self.section)
+
+    def test_listing_says_when_it_was_checked(self):
+        self.assertIn('<p class="dw-note">Checked October 26, 2026.</p>', self.section)
+        self.assertIn(f'<a href="{reverse("contact")}">Get in touch</a>', self.section)
+
+    def test_listing_is_there_out_of_season_too(self):
+        self.assertIn('id="more-data-enroll"', _enroll(AFTER_SEASON))
+
+
 class TestOpenEnrollmentSourcesFold(TestCase):
     """The page's own sources and method, the enrollment group alone, in one closed <details> that a link opens."""
 
@@ -1071,7 +1175,7 @@ class TestOpenEnrollmentColours(TestCase):
         key = _between(self.section, '<p class="dw-key" id="mkkey">', "</p>")
         self.assertEqual(
             re.findall(r'<i class="dw-sw ([\w-]+)"></i>([^<]+)', key),
-            [("dw-sw-count", "Coverage in effect"), ("dw-sw-open", "Preliminary")],
+            [("dw-sw-count", "Coverage in effect"), ("dw-sw-open", f"{MK['prelim']}, preliminary")],
         )
         self.assertLess(self.section.index('id="mkline"'), self.section.index('id="mkkey"'))
 
@@ -1162,27 +1266,31 @@ class TestOpenEnrollmentHistory(TestCase):
         self.assertEqual(max(h, key=h.get), 2025)
         self.assertEqual([h[y] for y in range(2021, 2026)], sorted(h[y] for y in range(2021, 2026)))
         self.assertLess(h[2026], h[2025])
-        self.assertIn(
-            f"After {_millions(h[2014])} for 2014, the first open enrollment, plan picks stayed between {_millions(min(flat))} and "
-            f"{_millions(max(flat))} a year through 2021, then climbed to {_millions(h[2025])} for 2025, and {_millions(h[2026])} people "
-            "picked a plan for 2026.",
-            self.note,
+        self.assertEqual(
+            self.note.split(">", 1)[1],
+            f"Plan picks held between {_millions(min(flat))} and {_millions(max(flat))} a year from 2015 to 2021, "
+            f"then climbed to {_millions(h[2025])} for 2025 and {_millions(h[2026])} for 2026.",
         )
 
-    def test_note_carries_the_caveats(self):
+    def test_chart_keeps_one_short_caveat(self):
+        caveat = _text(_between(self.section, 'id="pkcaveat"', "</p>"))
+        self.assertEqual(caveat.split(">", 1)[1], "Picks, not paid coverage. Sign-up windows and CMS's counting changed over the years.")
+
+    def test_the_caveats_are_in_sources_and_method(self):
+        # Moved out of the chart's note, so the chart reads short and the detail stays one click away.
         for caveat in (
-            "These count people with a plan picked, including automatic renewals, not paid coverage.",
-            "The sign-up window changed length: about six months for 2014, about six weeks on HealthCare.gov for 2018 to 2021, "
+            "Each count is of people with a plan picked, including people renewed automatically, not paid coverage",
+            "So the sign-up window was about six months for 2014, about six weeks on HealthCare.gov for 2018 to 2021, "
             "and about eleven weeks there for 2022 to 2026.",
-            "CMS changed how it counts a picked plan for 2018 and again for 2022.",
-            "The 2014 to 2016 counts are from HHS ASPE reports of CMS data.",
+            "CMS counted a picked plan for 2017 if its coverage included March",
+            "so 2014 to 2016 are from HHS ASPE's enrollment reports",
         ):
-            self.assertIn(caveat, self.note)
+            self.assertIn(caveat, self.method)
 
     def test_section_stays_short(self):
-        # 131 words with the caveats, plus a little room; the folded year table isn't prose.
+        # 65 words now the caveats are in Sources and method, plus a little room; the folded year table isn't prose.
         prose = re.sub(r'<table class="dw-table" id="pktable">.*?</table>', "", self.section, flags=re.S)
-        self.assertLessEqual(_words(prose), 135)
+        self.assertLessEqual(_words(prose), 70)
 
     def test_script_draws_pkline_from_the_history(self):
         self.assertIn("const H=MK&&MK.history;", self.script)
