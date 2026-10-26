@@ -120,9 +120,9 @@ nothing here runs in the app.
   still includes, from the last year it's in, by the map's rules: the
   in-network rate and insurer count from `state_rates`, and the lowest to
   highest rate among insurers the table would list. Only a grey state's
-  readout shows it, never the map, the national figures or the ranges. The
-  page's state-map note names those states and years, so reread it when the
-  set changes.
+  readout and its insurer table (`grey_issuers`, below) show it, never the
+  map, the national figures or the ranges. The page's state-map note names
+  those states and years, so reread it when the set changes.
 - `state_reports.csv` holds grey states whose own insurers' reports on CMS's
   Transparency in Coverage form give an in-network rate for the map's year
   (California from Covered California's postings, Pennsylvania from its
@@ -130,12 +130,30 @@ nothing here runs in the app.
   the date it was read and a note on what was summed or left out. The build
   puts them under `state_reports` and stops on a state the map or `earlier`
   already covers, another claims year, more denials than claims, or a row
-  missing its publisher, https source or date. Only the every-state chart and
-  the grey state's readout show them. The readout lines for California and
+  missing its publisher, https source or date. Only the every-state chart, the
+  grey state's readout and its insurer table show them. The readout lines for California and
   Pennsylvania in `denial_watch.js` are hand-written, and a test ties their
   numbers and links to the bundle, so reread them when a row changes. These
   can count plans sold outside the marketplace, which CMS's figures don't, so
   they never colour the map or join the national figures or ranges.
+- `state_report_insurers.csv` holds each insurer behind a `state_reports.csv`
+  row, with the file and page its counts are on, and the insurers a report
+  leaves out, each with the short `left_out` reason the page shows under the
+  table. The build stops unless the counted rows add up to the state's row in
+  `state_reports.csv` (insurers, claims and denials), and on a state with no
+  row there, another claims year, two rows for one insurer, more denials than
+  claims, more appeals overturned than filed, or a counted row with no page.
+  Covered California posts each insurer's plan rows, not its totals, so
+  California's figures add up those rows, and it posts no appeal counts, so
+  its table has no appeals column.
+- `grey_issuers` is the insurer table for grey states: each `earlier` state's
+  insurers from that year's file, and each `state_report_insurers.csv` state's
+  counted insurers, by the table's rules (50,000 in-network claims, and an
+  appeal win rate only on 30 appeals). Each entry carries its claims year and
+  source, which the table states above the rows, and never joins the map, its
+  ranges or the national figures. `DOUBTFUL_WON` covers only the latest year:
+  the earlier states' appeal counts were checked against its three patterns
+  on October 26, 2026 and none matched, so recheck them when `earlier` changes.
 - An insurer that reports more out-of-network denials than claims gets no
   out-of-network or all-claims figure, and is left out of those totals
   nationally and for its state; its state gets no all-claims figure.

@@ -269,6 +269,15 @@ def in_table(i):
     return bool(i["rec_in"] and i["rec_in"] >= MIN_ISSUER_CLAIMS and i["den_in"] is not None)
 
 
+def table_row(i):
+    """An insurer's cells in the insurer table: its in-network rate, and appeals only on enough of them."""
+    # a without o: enough appeals, but the number won was withheld.
+    ok = i["ap_filed"] is not None and i["ap_filed"] >= MIN_APPEALS_FOR_RATE
+    return dict(n=i["issuer"], r=round(i["den_in"] / i["rec_in"], 4), c=int(i["rec_in"]), d=int(i["den_in"]),
+                a=int(i["ap_filed"]) if ok else None,
+                o=int(i["ap_over"]) if ok and i["ap_over"] is not None else None)
+
+
 def earlier_states(per_year, shown):
     """Each state off the latest map, from the last year CMS's files include it, kept apart from the latest year."""
     out = {}
@@ -325,6 +334,77 @@ def load_state_reports(shown, earlier, path=STATE_REPORTS_CSV):
     return out
 
 
+STATE_REPORT_INSURERS_CSV = HERE / "state_report_insurers.csv"
+
+
+def load_state_report_insurers(reports, path=STATE_REPORT_INSURERS_CSV):
+    """Each insurer behind a state_reports.csv row, as read_puf would give it, and the insurers that row leaves out.
+
+    The counted rows must add up to the state's row there, so the insurer table and the every-state chart can't disagree.
+    """
+    out, name = {}, pathlib.Path(path).name
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            st, who = r["state"], r["insurer"].strip()
+            if st not in reports:
+                sys.exit(f"{name}: {st} has no row in {STATE_REPORTS_CSV.name}")
+            if r["claims_year"] != str(reports[st]["year"]):
+                sys.exit(f"{name}: {who} is for {r['claims_year']} claims, and {st}'s report is for {reports[st]['year']}")
+            e = out.setdefault(st, dict(rows=[], left_out=[]))
+            if not who or who in [i["issuer"] for i in e["rows"]] + [x["n"] for x in e["left_out"]]:
+                sys.exit(f"{name}: {st} has a row with no insurer name, or two rows for {who}")
+            if not r["source_url"].startswith("https://"):
+                sys.exit(f"{name}: source_url must be https for {who}")
+            try:
+                datetime.date.fromisoformat(r["accessed"])
+            except ValueError:
+                sys.exit(f"{name}: accessed must be a date like 2026-10-25 for {who}")
+            if r["left_out"].strip():
+                e["left_out"].append(dict(n=who, why=r["left_out"].strip()))
+                continue
+            if not re.fullmatch(r"[1-9][0-9]*", r["in_network_claims"]) or not re.fullmatch(r"[0-9]+", r["in_network_denied"]):
+                sys.exit(f"{name}: {who} needs in-network claims and denials, or a left_out reason")
+            claims, denied = int(r["in_network_claims"]), int(r["in_network_denied"])
+            if denied > claims:
+                sys.exit(f"{name}: {who} has more in-network denials than claims; give it a left_out reason")
+            if not r["page"].strip():
+                sys.exit(f"{name}: {who} needs the page of its source the counts are on")
+            filed, over = r["internal_appeals_filed"], r["internal_appeals_overturned"]
+            if not re.fullmatch(r"([0-9]+)?", filed) or not re.fullmatch(r"([0-9]+)?", over) or (over and not filed):
+                sys.exit(f"{name}: {who}'s appeals must be counts, with appeals filed wherever appeals overturned are given")
+            if over and int(over) > int(filed):
+                sys.exit(f"{name}: {who} has more appeals overturned than filed")
+            e["rows"].append(dict(state=st, issuer=who, rec_in=float(claims), den_in=float(denied),
+                                  ap_filed=float(filed) if filed else None, ap_over=float(over) if over else None))
+    for st, rep in reports.items():
+        rows = out.get(st, {}).get("rows", [])
+        got = (len(rows), sum(i["rec_in"] for i in rows), sum(i["den_in"] for i in rows))
+        if got != (rep["insurers"], rep["claims"], rep["denied"]):
+            sys.exit(f"{name}: {st}'s counted insurers give (insurers, claims, denied) {got}, "
+                     f"and {STATE_REPORTS_CSV.name} has {(rep['insurers'], rep['claims'], rep['denied'])}")
+    return out
+
+
+def grey_issuers(per_year, earlier, reports, report_insurers):
+    """The insurer table for grey states: CMS's last year for each earlier state, and each state report's insurers.
+
+    Same rules as the latest year's table. Each says its year and source, and none joins the map or its ranges.
+    """
+    def entry(rows, **meta):
+        return dict(meta, rows=sorted((table_row(i) for i in rows if in_table(i)), key=lambda x: x["n"]))
+
+    out = {st: entry([i for i in per_year[e["py"]][0] if i["state"] == st], year=e["year"], kind="earlier",
+                     publisher="CMS", url=None, appeals=True, left_out=[])
+           for st, e in earlier.items()}
+    for st, ins in report_insurers.items():
+        rep = reports[st]
+        # A report with no appeal counts, such as Covered California's, gets no appeals column.
+        out[st] = entry(ins["rows"], year=rep["year"], kind="state", publisher=rep["publisher"], url=rep["url"],
+                        appeals=any(i["ap_filed"] is not None for i in ins["rows"]),
+                        left_out=sorted(ins["left_out"], key=lambda x: x["n"]))
+    return out
+
+
 def build_denials():
     trend, per_year = [], {}
     for py, cy in CLAIMS_YEAR.items():
@@ -358,22 +438,18 @@ def build_denials():
     for i in issuers:
         if not in_table(i):
             continue
-        # a without o: enough appeals, but CMS withheld the number won.
-        ok = i["ap_filed"] is not None and i["ap_filed"] >= MIN_APPEALS_FOR_RATE
         pt = types.get((i["state"], i["id"]))
         net_only = network_only(pt)
-        table.append(dict(s=i["state"], n=i["issuer"], r=round(i["den_in"] / i["rec_in"], 4),
-                          c=int(i["rec_in"]), d=int(i["den_in"]),
-                          a=int(i["ap_filed"]) if ok else None,
-                          o=int(i["ap_over"]) if ok and i["ap_over"] is not None else None,
-                          pt=sorted(pt) if pt else None, net_only=net_only,
+        table.append(dict(table_row(i), s=i["state"], pt=sorted(pt) if pt else None, net_only=net_only,
                           out=rate_cell(i, "out", net_only), all=rate_cell(i, "all")))
 
     reason_rows = sorted(({"k": REASONS[k], "v": v} for k, v in reasons.items()), key=lambda x: -x["v"])
     earlier = earlier_states(per_year, set(states))
+    reports = load_state_reports(set(states), earlier)
     return dict(trend=trend, states=states, issuers=table, reasons=reason_rows,
                 reason_meta=dict(entries=sum(reasons.values()), plan_denied_in=plan_denied),
-                oon_meta=oon_meta(issuers, types), earlier=earlier, state_reports=load_state_reports(set(states), earlier))
+                oon_meta=oon_meta(issuers, types), earlier=earlier, state_reports=reports,
+                grey_issuers=grey_issuers(per_year, earlier, reports, load_state_report_insurers(reports)))
 
 
 def oon_meta(issuers, types):
@@ -848,6 +924,9 @@ def main(argv=None):
     for k, e in bundle["state_reports"].items():
         print("state report", k, e["year"], f"in {e['denied']:,} of {e['claims']:,} = {e['rate']:.2%}",
               f"({e['insurers']} insurers, {e['publisher']})")
+    for k, g in bundle["grey_issuers"].items():
+        print("grey insurers", k, g["year"], g["publisher"], f"{len(g['rows'])} listed",
+              [(i["n"], i["r"], i["a"], i["o"]) for i in g["rows"]], "left out", [(x["n"], x["why"]) for x in g["left_out"]])
     om = bundle["oon_meta"]
     print("out-of-network by 2024 plan types: network-only", om["net_only"], "other", om["other"], "unknown", om["unknown_plan_types"])
     print("closed-network reason", f"{om['closed_network']['denied']:,.0f}", f"= {om['closed_network']['share']:.1%} of out-of-network denials")

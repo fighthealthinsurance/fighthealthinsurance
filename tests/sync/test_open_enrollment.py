@@ -380,11 +380,14 @@ class TestOpenEnrollmentSeason(TestCase):
         self.assertIn('href="https://www.healthcare.gov/marketplace-in-your-state/"', sources)
 
     def test_shoppers_hear_that_some_insurers_have_left(self):
-        # The insurer table is 2024 data, and some of its insurers don't sell 2027 plans; no insurer is named.
+        # The insurer table is mostly 2024 data, and some of its insurers don't sell 2027 plans; no insurer is named.
         html = _enroll(IN_SEASON)
         top = _text(_top(html))
-        # The table only has HealthCare.gov insurers, so the pointer says so.
-        self.assertIn("See how often each HealthCare.gov insurer in your state denied claims in 2024", top)
+        # The table has HealthCare.gov insurers for 2024 and five grey states from other sources or years, so the pointer says mostly.
+        years = [DATA["trend"][-1]["year"]] * len({i["s"] for i in DATA["issuers"]}) + [g["year"] for g in DATA["grey_issuers"].values()]
+        self.assertGreater(years.count(2024), len(years) / 2)
+        self.assertIn("See how often your state's insurers denied claims, where we have figures (mostly 2024), and how often", top)
+        self.assertNotIn("each HealthCare.gov insurer", top)
         self.assertIn("some of those insurers don't sell plans for 2027", top)
         self.assertNotIn("Cigna", top)
         sources = _between(html, 'id="sources"', "</section>")
@@ -450,7 +453,7 @@ class TestOpenEnrollmentSeason(TestCase):
     RENEWING = (
         "Already have a marketplace plan? During open enrollment, log in, update your income and compare plans, "
         "even if you'll be renewed automatically. Plans and prices change every year, and a new plan only starts "
-        "once you pay the first premium. For free, unbiased help, find an independent assister near you or call "
+        "once you pay the first premium, if it has one. For free, unbiased help, find an independent assister near you or call "
         "1-800-318-2596. Our fall checklist has the rest."
     )
 
@@ -750,21 +753,30 @@ class TestOpenEnrollmentMarketplace(TestCase):
     def test_bridge_says_the_denial_rates_scope_and_year(self):
         year = DATA["trend"][-1]["year"]
         bridge = _text(_between(self.questions, '<p id="denials-bridge">', "</p>"))
+        # The insurer table and the every-state chart carry the same five grey states, from other sources or years.
+        names = _load_builder().STATE_NAMES
+        grey = DATA["grey_issuers"]
+        self.assertEqual(set(grey), set(DATA["state_reports"]) | set(DATA["earlier"]))
+        reports = sorted(names[s] for s in DATA["state_reports"])
+        older = sorted(names[s] for s in DATA["earlier"])
+        five = {5: "five"}[len(grey)]
         self.assertEqual(
             bridge,
-            "Partly. Denial Watch's denial rates, on its state map and in its insurer table, "
-            f"are for marketplace plans too, but only for HealthCare.gov states and insurers in {year}, "
-            "while CMS's count covers every marketplace nationwide.",
+            f"Partly. The denial rates on Denial Watch's state map are for HealthCare.gov insurers' marketplace plans, from {year} claims. "
+            f"Its every-state chart and insurer table add {five} states that run their own marketplace, from other sources or years: "
+            f"{' and '.join(reports)} from their insurers' own reports for {year}, which can include plans sold outside the marketplace, "
+            f"and {', '.join(older[:-1])} and {older[-1]} from earlier years. CMS's enrollment count covers every marketplace nationwide.",
         )
+        self.assertNotIn("only for HealthCare.gov", bridge)
         self.assertIn("Do Denial Watch's denial rates cover the same plans?", self.answers)
-        # Denial Watch's map and insurer table say the same year.
+        # Denial Watch's map says the same year.
         self.assertIn(f"Share of in-network claims denied by HealthCare.gov insurers in each state, {year}.", _page())
 
     def test_bridge_links_land_on_denial_watchs_sections(self):
         bridge = _between(self.questions, 'id="denials-bridge"', "</p>")
         dw = reverse("denial-watch")
         targets = re.findall(rf'href="{dw}#([\w-]+)"', bridge)
-        self.assertEqual(targets, ["map-denials", "insurers"])
+        self.assertEqual(targets, ["map-denials", "every-state", "insurers"])
         page = _page()
         for target in targets:
             self.assertIn(f'id="{target}"', page)
@@ -846,7 +858,12 @@ class TestOpenEnrollmentMarketplace(TestCase):
     def test_coverage_shares_in_the_words_match_the_data(self):
         feb, picks = _february(), _picks()
         (y0, s0), (y1, s1) = sorted((y, _pct(feb[y] / n)) for y, n in picks.items())
-        self.assertIn(f"Coverage in effect in February came to {s0} of those people for {y0}, and {s1} for {y1}.", self.answers)
+        # February coverage includes people who signed up later too, so it's "as many as", not a share of those who picked.
+        self.assertIn(
+            f"The number with coverage in effect in February was {s0} as many as picked a plan for {y0}, and {s1} as many for {y1}.",
+            self.answers,
+        )
+        self.assertNotIn("of those people", self.answers)
         self.assertIn(f"The {s0} and {s1} divide each February's coverage by that year's plan picks.", self.method)
         self.assertIn(f"CMS's early 2025 report gave {_pct(EARLY_FEB_2025 / picks[2025])}, from its earlier February count.", self.method)
 

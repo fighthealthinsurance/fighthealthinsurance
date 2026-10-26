@@ -126,6 +126,9 @@ const BYST=IS.reduce((a,i)=>{(a[i.s]=a[i.s]||[]).push(i);return a;},{});
 const span=s=>{const g=BYST[s];if(!g||g.length<2)return null;const r=g.map(i=>i.r);return [Math.min(...r),Math.max(...r)];};
 /* No % sign: it would touch the tile's edge, and the rate above has one. */
 const spanLab=s=>{const x=span(s);return x?(x[0]*100).toFixed(0)+'–'+(x[1]*100).toFixed(0):'';};
+/* Grey states' insurers, each state with its own year and source: only the insurer table shows them, never the map or its ranges. */
+const GI=D.grey_issuers||{};
+const rowsOf=s=>BYST[s]||(GI[s]&&GI[s].rows);
 
 /* denial map */
 let dm='in', dsel='FL';
@@ -197,7 +200,7 @@ function dRead(s){dsel=s;const r=ST[s];let h=`<div class="dw-readout-state">${NA
     (r.prev!=null?`<div class="dw-readout-line">2023: <span class="dw-num">${pct(r.prev)}</span> (${chg(r.rate,r.prev)})</div>`:'')+
     (BYST[s]?line1(span(s)?`Its insurers in the table: <b class="dw-num">${pct(span(s)[0])}</b> to <b class="dw-num">${pct(span(s)[1])}</b>, lowest to highest`:'One insurer in the table'):'')+
     `<div class="dw-readout-line">${r.won!=null?`<b class="dw-num">${pct(r.won,0)}</b> of internal appeals won (${fmt(r.overturned)} of ${fmt(r.appeals)})`:'Too few appeals reported to show a win rate'} · ${r.issuers} reporting insurer${r.issuers>1?'s':''}${r.issuers===1?', so these are that company\'s figures':r.issuers===2?', so these are those companies\' figures':''}</div>`;
-  if(BYST[s])h+=line1(`<a href="#insurers">See ${esc(NAMES[s])}'s insurers</a>`);
+  if(rowsOf(s))h+=line1(`<a href="#insurers">See ${esc(NAMES[s])}'s insurers</a>`);
   $('dread').innerHTML=h+helpLink(s);drawD();}
 function drawD(){const m=DM[dm],dir=m.mk?dirBy(m.b):undefined;drawMap($('dmap'),m.v,binScale(m.b,m.c),m.t,dRead,dsel,m.naOf,m.gone,m.sub,dir);legend($('dleg'),m.b,m.c,m.l,'No data',m.gk,m.key,dir);$('dnote').innerHTML=m.note;
   mapTable($('dtable'),m.name,m.v,m.tt||m.t,m.naOf);}
@@ -230,21 +233,38 @@ const rmax=D.reasons[0].v, rtot=D.reasons.reduce((a,r)=>a+r.v,0);
 $('reasons').innerHTML=D.reasons.map(r=>`<div class="dw-bar ${/medically|Experimental/.test(r.k)?'dw-bar-deep':''}"><div class="dw-bar-name"><span>${esc(r.k)}</span><span class="dw-note dw-num">${big(r.v)}</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${r.v/rmax*100}%"></div></div><div class="dw-bar-value dw-num">${r.v/rtot<0.01?'&lt;1%':pct(r.v/rtot,0)}</div></div>`).join('');
 
 /* insurers: in-network only; the note says why there are no out-of-network or all-claims rates */
-const states=[...new Set(IS.map(i=>i.s))].sort((a,b)=>NAMES[a].localeCompare(NAMES[b]));
-$('istate').innerHTML='<option value="" disabled hidden>Pick a state</option>'+states.map(s=>`<option value="${esc(s)}">${esc(NAMES[s]||s)}</option>`).join('');
+const byName=(a,b)=>NAMES[a].localeCompare(NAMES[b]);
+const states=[...new Set(IS.map(i=>i.s))].sort(byName), greys=Object.keys(GI).sort(byName);
+/* Grey states in a group of their own, each with its claims year, so none reads as another of the map's states. */
+$('istate').innerHTML='<option value="" disabled hidden>Pick a state</option>'+`<optgroup label="HealthCare.gov states, ${T.year} claims">`+states.map(s=>`<option value="${esc(s)}">${esc(NAMES[s]||s)}</option>`).join('')+'</optgroup>'+
+  (greys.length?'<optgroup label="States with their own marketplace">'+greys.map(s=>`<option value="${esc(s)}">${esc(NAMES[s])}, ${GI[s].year} claims</option>`).join('')+'</optgroup>':'');
+/* One bar scale for every state, so a bar's length means the same rate in each. */
+const IMAX=Math.max(...IS.map(i=>i.r),...Object.values(GI).flatMap(g=>g.rows.map(i=>i.r)));
+/* Where a state's figures come from, claims year first. */
+const the=p=>/Department|Office|Bureau|Division/.test(p)?'the ':'';
+function iSource(s){const g=GI[s],n=esc(NAMES[s]);
+  if(!g)return `<b>${T.year} claims</b>, from insurers' own reports to CMS for HealthCare.gov. FHI's calculation.`;
+  if(g.kind==='earlier')return `<b>${g.year} claims</b>, from insurers' own reports to CMS, the last year its files include ${n}. FHI's calculation. ${n} now runs its own marketplace, so some of these insurers may not sell there now.`;
+  return `<b>${g.year} claims</b>, from insurers' own reports on the same federal form, posted by ${the(g.publisher)}<a href="${safeUrl(g.url)}">${esc(g.publisher)}</a>. FHI's calculation.${g.appeals?'':' These reports have no appeal counts.'}`;}
+/* A report's insurers that aren't listed, with why, one reason to a group. */
+function iLeft(s){const g=GI[s];if(!g||!g.left_out.length)return '';const by=new Map();
+  for(const x of g.left_out){if(!by.has(x.why))by.set(x.why,[]);by.get(x.why).push(x.n);}
+  return 'Not in the table: '+esc(andList([...by].map(([why,n])=>andList(n)+' ('+why+')')))+'.';}
 /* One state at a time, the one picked on the map or here, so no company is set against another state's. */
 let ipin=dsel;
-function iDraw(){const s=$('istate').value;
-  const mx=Math.max(...IS.map(i=>i.r));
+function iDraw(){const s=$('istate').value,g=GI[s];
   /* A mapped state with no insurer big enough for the table isn't a grey state. */
-  if(!s){$('icount').textContent='';$('itable').innerHTML=`<tbody><tr><td>${NAMES[ipin]?(ST[ipin]?`None of ${NAMES[ipin]}'s insurers reported the 50,000 in-network claims this table needs.`:OWN(ipin)+elsewhere(ipin)):''}</td></tr></tbody>`;return;}
-  /* One state: no State column, since the picker names it. */
-  const rows=IS.filter(i=>i.s===s).sort((a,b)=>b.r-a.r);$('icount').textContent=rows.length+(rows.length>1?' insurers in ':' insurer in ')+NAMES[s];
-  $('itable').innerHTML='<thead><tr><th>Insurer</th><th>Denial rate</th><th class="dw-r">Claims</th><th class="dw-r">Appeals won</th></tr></thead><tbody>'+
-   rows.map(i=>`<tr><td>${esc(i.n)}</td><td class="dw-num dw-nowrap"><span class="dw-mini" style="width:${Math.max(2,i.r/mx*90)}px"></span>${pct(i.r)}</td><td class="dw-r dw-num">${big(i.c)}</td><td class="dw-r dw-num">${i.a!=null&&i.o!=null?pct(i.o/i.a,0)+' <span class="dw-note">('+fmt(i.o)+' of '+fmt(i.a)+')</span>':i.a!=null?'<span class="dw-note">not reported ('+fmt(i.a)+' appeals)</span>':'<span class="dw-note">too few</span>'}</td></tr>`).join('')+'</tbody>';}
-$('istate').value=BYST[dsel]?dsel:states[0];
+  if(!s){$('icount').textContent='';$('isource').hidden=$('ileft').hidden=true;$('itable').innerHTML=`<tbody><tr><td>${NAMES[ipin]?(ST[ipin]?`None of ${NAMES[ipin]}'s insurers reported the 50,000 in-network claims this table needs.`:OWN(ipin)+elsewhere(ipin)):''}</td></tr></tbody>`;return;}
+  /* One state: no State column, since the picker names it. A report with no appeal counts gets no appeals column. */
+  const rows=rowsOf(s).slice().sort((a,b)=>b.r-a.r),ap=!g||g.appeals,left=iLeft(s);
+  $('icount').textContent=rows.length+(rows.length>1?' insurers in ':' insurer in ')+NAMES[s]+(g?', '+g.year+' claims':'');
+  $('isource').innerHTML=iSource(s);$('isource').hidden=false;
+  $('ileft').innerHTML=left;$('ileft').hidden=!left;
+  $('itable').innerHTML='<thead><tr><th>Insurer</th><th>Denial rate</th><th class="dw-r">Claims</th>'+(ap?'<th class="dw-r">Appeals won</th>':'')+'</tr></thead><tbody>'+
+   rows.map(i=>`<tr><td>${esc(i.n)}</td><td class="dw-num dw-nowrap"><span class="dw-mini" style="width:${Math.max(2,i.r/IMAX*90)}px"></span>${pct(i.r)}</td><td class="dw-r dw-num">${big(i.c)}</td>${ap?`<td class="dw-r dw-num">${i.a!=null&&i.o!=null?pct(i.o/i.a,0)+' <span class="dw-note">('+fmt(i.o)+' of '+fmt(i.a)+')</span>':i.a!=null?'<span class="dw-note">not reported ('+fmt(i.a)+' appeals)</span>':'<span class="dw-note">too few</span>'}</td>`:''}</tr>`).join('')+'</tbody>';}
+$('istate').value=rowsOf(dsel)?dsel:states[0];
 $('istate').onchange=()=>{const s=$('istate').value;ipin=s;$('dmap')._pinned=s;dRead(s);iDraw();};
-$('dmap')._onPin=s=>{ipin=s;$('istate').value=BYST[s]?s:'';iDraw();};
+$('dmap')._onPin=s=>{ipin=s;$('istate').value=rowsOf(s)?s:'';iDraw();};
 iDraw();
 
 /* prior authorization */
