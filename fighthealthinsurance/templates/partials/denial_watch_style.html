@@ -1,13 +1,14 @@
 {% comment %}
 The chart and tile pieces Denial Watch and its open enrollment page share; each
 page adds its own after this. The tokens below are the only place a chart colour
-is written: orange is denials, red only marks something that got worse, green is
-good for patients, grey only no data, the rest inform. tests/sync/test_contrast.py measures them; the site has no dark mode.
+is written: blue is denials, green is good for patients, purple is coverage and
+health, gold is drug spending, red only marks something that got worse, and grey
+only no data. tests/sync/test_contrast.py measures them; the site has no dark mode.
 {% endcomment %}
 <style>
   .dw {
-    /* Denials: one orange, light to dark, a concern rather than an alarm; the mark and its emphasis are steps of it. */
-    --dw-deny-0: #fff3e0; --dw-deny-1: #fcd29a; --dw-deny-2: #f6b562; --dw-deny-3: #e08a1e; --dw-deny-4: #a35c00; --dw-deny-5: #7a4500;
+    /* Denials: one blue, light to dark, a concern rather than an alarm; the mark and its emphasis are steps of it; the lightest step is bluer than the no-data grey. */
+    --dw-deny-0: #e0effd; --dw-deny-1: #bcd9ef; --dw-deny-2: #82b7df; --dw-deny-3: #3f8fc8; --dw-deny-4: #0072b2; --dw-deny-5: #123d73;
     --dw-deny: var(--dw-deny-4); --dw-deny-deep: var(--dw-deny-5);
     /* Worse than before: one red, kept for a rise on a change map and its bars, so it still means something. */
     --dw-bad-0: #fdecdf; --dw-bad-1: #f9c7a8; --dw-bad-2: #f09a72; --dw-bad-3: #dc6445; --dw-bad-4: #b8321f; --dw-bad-5: #7f1a12;
@@ -17,10 +18,12 @@ good for patients, grey only no data, the rest inform. tests/sync/test_contrast.
     --dw-good: #009e73; --dw-good-ink: var(--dw-good-4);
     /* The middle of a change scale, about the same: warm white, so it isn't the grey of no data. */
     --dw-mid: #fbf6e9;
-    /* Informative, neither good nor bad: health measures in purple; people and money in blue (coverage, the uninsured, drug spending, and plan picks as its pale tint). */
+    /* Informative, neither good nor bad: coverage and health measures in purple (the uninsured and the CDC measures share one map). */
     --dw-health-0: #efe9f6; --dw-health-1: #d6c7ea; --dw-health-2: #b69dd7; --dw-health-3: #8665b1; --dw-health-4: #6a449c; --dw-health-5: #43256b;
-    --dw-count-0: #e8f2fa; --dw-count-1: #bcd9ef; --dw-count-2: #82b7df; --dw-count-3: #3f8fc8; --dw-count-4: #0072b2; --dw-count-5: #123d73;
-    --dw-count: #0072b2; --dw-count-tint: #cfe8f7; --dw-count-deep: #123d73;
+    /* Drug spending: one gold, no ramp, dark enough for a bar on its track and for dark words on it; the tint backs the Medicare price tag. */
+    --dw-cost: #ad8200; --dw-cost-tint: #f9ecc4;
+    /* The open enrollment page's coverage and plan picks share the denial blue: that page shows no denials. */
+    --dw-count: var(--dw-deny-4); --dw-count-tint: #cfe8f7;
     /* No data, and only that; a state a view leaves out is outlined on paper instead. */
     --dw-na: #e3e6ea; --dw-na-ink: #5d6771;
     /* Not data: the page, the dark label ink on a light tile, and a bar's empty track. */
@@ -37,7 +40,7 @@ good for patients, grey only no data, the rest inform. tests/sync/test_contrast.
   .dw-stat b { font-size: 2rem; line-height: 1.1; }
   .dw-stat strong { font-size: 1.3rem; line-height: 1.15; color: var(--fhi-ink); }
   .dw-stat span { color: var(--fhi-ink-2); }
-  /* A tile about denials or about something good for patients takes that colour; its words say which. */
+  /* A tile about denials (blue) or about something good for patients (green) takes that colour; its words say which. */
   .dw-stat-deny { border-top-color: var(--dw-deny); }
   .dw-stat-good { border-top-color: var(--dw-good); }
   /* A chart's key: a swatch beside the words for what the colour means. */
@@ -48,6 +51,7 @@ good for patients, grey only no data, the rest inform. tests/sync/test_contrast.
   .dw-sw-bad { background-color: var(--dw-bad); }
   .dw-sw-good { background-color: var(--dw-good); }
   .dw-sw-health { background-color: var(--dw-health-4); }
+  .dw-sw-cost { background-color: var(--dw-cost); }
   .dw-sw-count { background-color: var(--dw-count); }
   .dw-sw-picks { background-color: var(--dw-count-tint); box-shadow: inset 0 0 0 1px var(--dw-count); }
   .dw-sw-na { background-color: var(--dw-na); }
@@ -75,7 +79,8 @@ good for patients, grey only no data, the rest inform. tests/sync/test_contrast.
   /* Folded, the sources heading keeps the size of the page's other section headings. */
   .dw #sources-title { font-size: var(--fhi-text-section); }
   .dw-two .dw-note { margin-block: 0; }
-  .dw-answer { max-width: 46rem; font-size: var(--fhi-text-lead); font-weight: 700; line-height: 1.35; color: var(--fhi-ink); }
+  /* A section's one-line answer runs the width of its section, like the cards under it; it is never long enough to need a measure. */
+  .dw-answer { font-size: var(--fhi-text-lead); font-weight: 700; line-height: 1.35; color: var(--fhi-ink); }
   .dw-how { font-size: var(--fhi-text-small); }
   .dw-how a, .dw-cta a { font-weight: 700; }
   .dw-back { margin: 0; font-size: var(--fhi-text-small); }

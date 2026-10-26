@@ -136,19 +136,31 @@ class TestDenialWatchCopyMatchesData(TestCase):
         self.assertIn(
             # "about": the lowest state (South Dakota, 6.55%) rounds to 7% on the
             # map legend but shows as 6.5% in its tooltip.
-            f"Denial rates run from about {_pct(min(rates))} to {_pct(max(rates))}",
+            f"Rates run from about {_pct(min(rates))} to {_pct(max(rates))}",
             self.content,
         )
 
     def test_state_range_headline_says_which_states(self):
         # The map covers only states whose insurers report to HealthCare.gov, not every state.
-        self.assertIn(f"across {len(DATA['states'])} HealthCare.gov states</h3>", self.content)
+        self.assertIn(f"across {len(DATA['states'])} HealthCare.gov states. Share of in-network claims denied", self.content)
         self.assertNotIn("depending on your state", self.content)
 
     def test_california_review_rates(self):
         by_year = {r["y"]: r["r"] for r in DATA["imr_trend"]}
         self.assertIn(f"overturned {_pct(by_year[2025])} of the denials", self.content)
         self.assertIn(f"up from {_pct(by_year[2017])} in 2017", self.content)
+
+    def test_appeals_section_leads_with_the_healthcare_gov_figure_before_california(self):
+        # So the first chart section doesn't read as if the whole page were about California.
+        latest = DATA["trend"][-1]
+        lead = _between(self.content, '<p id="appeals-lead">', "</p>").removeprefix('<p id="appeals-lead">')
+        national = (
+            f"On HealthCare.gov plans, the federal marketplace, insurers reversed {_pct(latest['overturned'] / latest['appeals'])} "
+            f"of the internal appeals they reported in {latest['year']} ({latest['overturned']:,.0f} of {latest['appeals']:,.0f})."
+        )
+        self.assertTrue(lead.startswith(national), lead)
+        self.assertLess(lead.index(national), lead.index("California"))
+        self.assertIn('<h3 id="appeals-title">Independent review in California</h3>', self.content)
 
     def test_appeal_win_rate_is_not_compared_with_2023(self):
         # The insurers reporting changed between years, so it isn't like for like.
@@ -874,7 +886,7 @@ class TestDenialWatchEveryStateChart(TestCase):
         older = ", ".join(older[:-1]) + " and " + older[-1]
         five = {5: "five"}[len(DATA["state_reports"]) + len(DATA["earlier"])]
         self.assertIn(
-            f"The {len(DATA['states'])} HealthCare.gov states from the map, highest first. Below them, on the same scale but listed apart, are {five} grey states we found a figure for elsewhere: "
+            f"Share of in-network claims denied, by state: the {len(DATA['states'])} HealthCare.gov states from the map, highest first. Below them, on the same scale but listed apart, are {five} grey states we found a figure for elsewhere: "
             f"{reports} from their insurers' own reports for {self.year} claims on the same federal form, and {older} from the last year CMS's files include them.",
             text,
         )
@@ -890,7 +902,8 @@ class TestDenialWatchEveryStateChart(TestCase):
             for i in ("map-denials", "every-state", "every-measure", "every-bars", "every-other-title", "every-caveat", "every-other-key", "every-other-bars", "every-alt", "insurers")
         ]
         self.assertEqual(order, sorted(order))
-        self.assertIn('<h3 id="every-state-title">Share of in-network claims denied, by state</h3>', self.section)
+        self.assertIn('<h3 id="every-state-title">Every state\'s denial rate</h3>', self.section)
+        self.assertIn("<p>Share of in-network claims denied, by state: the 30 HealthCare.gov states from the map, highest first.", self.section)
         self.assertIn("Each bar is the % of in-network claims insurers denied in that state.", _text(self.section))
         five = {5: "Five"}[len(DATA["state_reports"]) + len(DATA["earlier"])]
         self.assertIn(f'<h4 class="dw-every-sub" id="every-other-title">{five} grey states, from other sources or years</h4>', self.section)
@@ -932,7 +945,7 @@ class TestDenialWatchEveryStateChart(TestCase):
         self.assertEqual({b["code"] for b in self.bars if b["group"] == "cms"}, set(DATA["states"]))
         # The map's headline range is still the HealthCare.gov states' alone.
         rates = [s["rate"] for s in DATA["states"].values()]
-        self.assertIn(f"Denial rates run from about {_pct(min(rates))} to {_pct(max(rates))} across", self.page)
+        self.assertIn(f"Rates run from about {_pct(min(rates))} to {_pct(max(rates))} across", self.page)
 
     def test_method_note_says_what_the_chart_combines(self):
         note = _between(self.page, 'id="method-every-state"', "</li>")
@@ -1328,6 +1341,24 @@ class TestDenialWatchPlanClockAndPriorAuth(TestCase):
     def test_caveat_comes_before_the_bars(self):
         self.assertLess(self.section.index('id="pa-not-every-plan"'), self.section.index('id="pabars"'))
 
+    def test_every_kind_of_plan_shares_one_scale(self):
+        # The highest rate over every row, not the view's own, so a bar's length compares across clicks.
+        self.assertIn("const PAMAX=Math.max(0,...PA.filter(r=>r.std!=null).map(r=>r.std))||1;", JS)
+        self.assertIn("const mx=PAMAX;", JS)
+        self.assertNotIn("const mx=rows[0].std", JS)
+        self.assertIn(
+            "All four kinds of plan share one scale, up to the highest rate in any of them, so the same rate gets the same length of bar whichever button you pick.",
+            _text(_between(self.section, 'id="pascale"', "</p>")),
+        )
+
+    def test_heading_above_the_bars_names_the_view_picked(self):
+        # The page carries the first view's heading for readers without the script, and the script swaps it on each click.
+        self.assertIn('<h4 id="pahead">Medicare Advantage plans: share of standard requests denied</h4>', self.section)
+        self.assertLess(self.section.index('id="pahead"'), self.section.index('id="pabars"'))
+        self.assertIn("const PAH={ma:'Medicare Advantage plans',mcd:'Medicaid plans',mkt:'HealthCare.gov plans',ffs:'State Medicaid programs'};", JS)
+        self.assertIn("$('pahead').textContent=PAH[k]+': share of standard requests denied';", JS)
+        self.assertEqual(re.findall(r'data-m="(\w+)"', _between(self.section, 'id="pamode"', "</div>")), ["ma", "mcd", "mkt", "ffs"])
+
     def test_section_points_to_the_fuller_collections(self):
         caveat = _between(self.section, 'id="pa-not-every-plan"', "</p>")
         self.assertIn('<a href="https://www.authdenied.com/">AuthDenied</a> has a much fuller collection', caveat)
@@ -1429,11 +1460,12 @@ class TestDenialWatchMedicareDrugs(TestCase):
 
         style = (REPO / "fighthealthinsurance" / "templates" / "denial_watch.html").read_text()
         rule = re.search(r"\.dw-chip \{([^}]*)\}", style).group(1)
-        self.assertIn("background-color: var(--dw-count-tint)", rule)
-        self.assertIn("color: var(--dw-count-deep)", rule)
+        # A pale gold, the drug spending colour, with the dark label ink.
+        self.assertIn("background-color: var(--dw-cost-tint)", rule)
+        self.assertIn("color: var(--dw-tile-ink)", rule)
         # The palette is in the styles Denial Watch shares with the open enrollment page.
         tokens = (REPO / "fighthealthinsurance" / "templates" / "partials" / "denial_watch_style.html").read_text()
-        ink, ground = (parse_colour(re.search(rf"--{name}: (#[0-9a-f]{{6}})", tokens).group(1)) for name in ("dw-count-deep", "dw-count-tint"))
+        ink, ground = (parse_colour(re.search(rf"--{name}: (#[0-9a-f]{{6}})", tokens).group(1)) for name in ("dw-tile-ink", "dw-cost-tint"))
         self.assertGreaterEqual(contrast_ratio(ink[:3], ground[:3]), 4.5)
 
     def test_ending_price_note_shows_only_with_a_drug_whose_price_ends(self):
@@ -2010,6 +2042,26 @@ class TestDenialWatchThemes(TestCase):
         at = [self.content.index(m) for m in order]
         self.assertEqual(at, sorted(at))
         self.assertNotIn("oddsrows", self.content)
+    def test_answers_run_the_width_of_their_section(self):
+        # Melanie: a 46rem cap wrapped one-line answers early beside empty space on a wide screen.
+        rule = re.search(r"\.dw-answer \{([^}]*)\}", STYLE_PARTIAL).group(1)
+        self.assertNotIn("max-width", rule)
+
+    def test_chart_titles_are_short_with_the_finding_leading_the_text(self):
+        # Each chart's heading names the chart; what it shows is the first sentence under it.
+        titles = {
+            "appeals": ("Independent review in California", "On HealthCare.gov plans, the federal marketplace, insurers reversed"),
+            "map-denials": ("Denial rates by state", "Rates run from about"),
+            "every-state": ("Every state's denial rate", "Share of in-network claims denied, by state:"),
+            "insurers": ("Denial rates by insurer", "In some states, one insurer denies four or more times as often as another."),
+            "prior-auth": ("Prior authorization denials", "Insurers now post how often they deny prior authorization, and the spread is wide."),
+            "trend": ("Denials over time", "More denials, in network and out."),
+            "why": ("Reasons given for denials", '"Not medically necessary" is a small share of the reasons given.'),
+        }
+        for ident, (title, lead) in titles.items():
+            section = _between(self.content, f'<section class="fhi-stack" id="{ident}" aria-labelledby="{ident}-title">', "</p>")
+            self.assertRegex(section, rf'<h3 id="{ident}-title">{re.escape(title)}</h3>\s*<p[^>]*>{re.escape(lead)}', ident)
+
     def test_insurer_heading_matches_the_spread_inside_states(self):
         # "Four or more times": the widest gaps in the table, state by state.
         by_state = {}
@@ -2018,7 +2070,7 @@ class TestDenialWatchThemes(TestCase):
         ratios = [max(v) / min(v) for v in by_state.values()]
         self.assertGreaterEqual(sum(r >= 4 for r in ratios), 2, sorted(ratios)[-5:])
         self.assertIn(
-            '<h3 id="insurers-title">In some states, one insurer denies four or more times as often as another</h3>',
+            '<h3 id="insurers-title">Denial rates by insurer</h3>\n                <p>In some states, one insurer denies four or more times as often as another. ',
             self.content,
         )
 
@@ -2520,7 +2572,7 @@ def _view(table, key):
 
 
 class TestDenialWatchColourMeaning(TestCase):
-    """Orange is denials, red only a rise, green good for patients, grey only no data; the rest inform, and colour is never the only cue."""
+    """Blue is denials, green good for patients, purple coverage and health, gold drug spending, red only a rise, grey only no data; colour is never the only cue."""
 
     @classmethod
     def setUpClass(cls):
@@ -2546,7 +2598,7 @@ class TestDenialWatchColourMeaning(TestCase):
                 self.assertEqual(set(HEX.findall(block)) - {"#fff"}, set(), name)
         self.assertEqual(set(HEX.findall(STYLE_PARTIAL.replace(tokens, ""))), set())
 
-    def test_denials_are_orange(self):
+    def test_denials_are_blue(self):
         self.assertIn(".dw-bar-fill { height: 100%; border-radius: 2px; background-color: var(--dw-deny); }", self.content)
         # The denial trend, the denial maps, prior authorization and the insurers' bars.
         self.assertIn("color:tok('--dw-deny'),ink:tok('--dw-deny-deep'),label:y=>pct(y)+' denied'", JS)
@@ -2565,11 +2617,41 @@ class TestDenialWatchColourMeaning(TestCase):
             [".dw-sw-bad { background-color: var(--dw-bad); }", ".dw-bar-bad .dw-bar-fill { background-color: var(--dw-bad); }"],
         )
 
-    def test_the_uninsured_and_money_are_blue(self):
-        self.assertIn("c:COUNT,", _view("CM", "unins"))
-        self.assertIn("cm==='unins'?'dw-bar-count'", JS)
-        self.assertIn('$(\'dgbars\').innerHTML=rows.map(d=>`<div class="dw-bar dw-bar-count', JS)
-        self.assertIn(".dw-bar-count .dw-bar-fill { background-color: var(--dw-count); }", self.content)
+    def test_coverage_and_health_are_purple(self):
+        # The uninsured and the CDC measures share one map, so one purple, and their bars with it.
+        for view in ("unins", "fair_poor_health", "diabetes", "depression"):
+            self.assertIn("c:HEALTH,", _view("CM", view))
+        self.assertIn("const cls=v=>cm==='uchg'?(v<0?'dw-bar-good':'dw-bar-bad'):'dw-bar-health';", JS)
+        self.assertIn(".dw-bar-health .dw-bar-fill { background-color: var(--dw-health-4); }", self.content)
+        self.assertNotIn("COUNT", JS)
+
+    def test_drug_spending_is_gold(self):
+        self.assertIn('$(\'dgbars\').innerHTML=rows.map(d=>`<div class="dw-bar dw-bar-cost', JS)
+        self.assertIn(".dw-bar-cost .dw-bar-fill { background-color: var(--dw-cost); }", self.content)
+        self.assertIn('<p class="dw-key" id="dgkey"><span><i class="dw-sw dw-sw-cost"></i>', self.content)
+        self.assertNotIn("dw-bar-count", JS + self.content)
+
+    def test_each_colour_reads_as_the_hue_the_key_names(self):
+        from tests.sync.test_contrast import dw_colour
+
+        lab = {name: _lab(_linear(dw_colour(name))) for name in ("--dw-deny", "--dw-health-4", "--dw-cost")}
+        self.assertLess(lab["--dw-deny"][2], -20)  # blue
+        self.assertGreater(lab["--dw-health-4"][1], 20)  # purple: red and blue together
+        self.assertLess(lab["--dw-health-4"][2], -20)
+        self.assertGreater(lab["--dw-cost"][2], 50)  # gold: strongly yellow, light enough not to read brown
+        self.assertGreater(lab["--dw-cost"][0], 55)
+
+    def test_pressed_toggles_take_their_sections_colour(self):
+        # Never a dark grey: blue for denials, purple for coverage and health, gold for drug spending; aria-pressed says it too.
+        self.assertIn('.dw-toggles .fhi-button[aria-pressed="true"] { background-color: var(--dw-deny); border-color: var(--dw-deny); color: var(--dw-paper); }', self.content)
+        self.assertIn('.dw-toggles-health .fhi-button[aria-pressed="true"] { background-color: var(--dw-health-4); border-color: var(--dw-health-4); }', self.content)
+        self.assertIn('.dw-toggles-cost .fhi-button[aria-pressed="true"] { background-color: var(--dw-cost); border-color: var(--dw-cost); color: var(--dw-tile-ink); }', self.content)
+        groups = {ident: cls for cls, ident in re.findall(r'<div class="fhi-cluster ([\w -]+)" id="(\w+)" role="group"', self.content)}
+        self.assertEqual(
+            groups,
+            {"dmode": "dw-toggles", "pamode": "dw-toggles", "tmode": "dw-toggles", "cmode": "dw-toggles dw-toggles-health", "dgmode": "dw-toggles dw-toggles-cost"},
+        )
+        self.assertNotIn("fhi-ink-2); color: #fff; }", _between(self.content, ".dw-toggles {", "</style>"))
 
     def test_good_things_are_green(self):
         self.assertIn("color:tok('--dw-good'),ink:tok('--dw-good-ink'),label:y=>pct(y,0)+' overturned'", JS)
@@ -2582,9 +2664,10 @@ class TestDenialWatchColourMeaning(TestCase):
         for view in ("fair_poor_health", "diabetes", "depression"):
             self.assertIn("c:HEALTH,", _view("CM", view))
         self.assertNotIn("dw-bar-low", JS + self.content)
-        self.assertNotIn("dw-cost", JS + self.content + STYLE_PARTIAL)
         self.assertIn("color:tok('--dw-count')", OE_JS)
-        hues = {name: _seen_with(((1, 0, 0), (0, 1, 0), (0, 0, 1)), name) for name in ("--dw-deny", "--dw-bad", "--dw-good", "--dw-health-4", "--dw-count")}
+        # The open enrollment page's coverage blue is the denial blue: that page shows no denials.
+        self.assertIn("--dw-count: var(--dw-deny-4);", STYLE_PARTIAL)
+        hues = {name: _seen_with(((1, 0, 0), (0, 1, 0), (0, 0, 1)), name) for name in ("--dw-deny", "--dw-bad", "--dw-good", "--dw-health-4", "--dw-cost")}
         for a in hues:
             for b in hues:
                 if a < b:
@@ -2609,7 +2692,7 @@ class TestDenialWatchColourMeaning(TestCase):
         self.assertGreater(_lightness("--dw-mid") - _lightness("--dw-na"), 4)
 
     def test_ramps_step_down_in_lightness(self):
-        for ramp in ("deny", "count", "bad", "good", "health"):
+        for ramp in ("deny", "bad", "good", "health"):
             steps = [_lightness(f"--dw-{ramp}-{i}") for i in range(6)]
             for lighter, darker in zip(steps, steps[1:]):
                 self.assertGreater(lighter - darker, 8, (ramp, steps))
@@ -2621,7 +2704,7 @@ class TestDenialWatchColourMeaning(TestCase):
             self.assertGreater(_delta(_seen_with(matrix, "--dw-good"), _seen_with(matrix, "--dw-bad")), 20)
             self.assertGreater(_delta(_seen_with(matrix, "--dw-good-2"), _seen_with(matrix, "--dw-bad-2")), 15)
 
-    def test_orange_and_green_stay_apart_with_red_green_colour_blindness(self):
+    def test_blue_and_green_stay_apart_with_red_green_colour_blindness(self):
         # Denials and appeals won sit side by side in the appeals section and the tiles.
         for matrix in (DEUTAN, PROTAN):
             self.assertGreater(_delta(_seen_with(matrix, "--dw-good"), _seen_with(matrix, "--dw-deny")), 20)
@@ -2681,8 +2764,8 @@ class TestDenialWatchColourMeaning(TestCase):
         self.assertIn(".dw-stat-deny { border-top-color: var(--dw-deny); }", self.content)
         self.assertIn(".dw-stat-good { border-top-color: var(--dw-good); }", self.content)
 
-    def test_every_state_chart_is_orange_with_a_texture_per_source(self):
-        # Every bar is a denial rate, so orange; solid, striped or hollow says which kind of record, as the keys say in words.
+    def test_every_state_chart_is_blue_with_a_texture_per_source(self):
+        # Every bar is a denial rate, so blue; solid, striped or hollow says which kind of record, as the keys say in words.
         self.assertIn("i.dw-src-cms { background-color: var(--dw-deny); }", self.content)
         self.assertIn(".dw-src-state .dw-bar-fill, i.dw-src-state { background: repeating-linear-gradient(135deg, var(--dw-deny) 0 3px, var(--dw-deny-1) 3px 6px); }", self.content)
         self.assertIn(".dw-src-earlier .dw-bar-fill, i.dw-src-earlier { background: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-deny); }", self.content)
@@ -2692,7 +2775,7 @@ class TestDenialWatchColourMeaning(TestCase):
         key = _text(_between(self.content, '<p class="dw-key" id="colour-key">', "</p>"))
         self.assertEqual(
             key,
-            "Colours in the charts: orange, denials; red, only where something got worse; green, good for patients, such as appeals won; "
-            "blue, people and money, such as the uninsured and drug spending; purple, health measures; grey, no data.",
+            "Colours in the charts: blue, denials; green, good for patients, such as appeals won; purple, coverage and health, such as the uninsured; "
+            "gold, drug spending; red, only where something got worse; grey, no data.",
         )
         self.assertLess(self.content.index('class="fhi-jump-links"'), self.content.index('id="colour-key"'))
