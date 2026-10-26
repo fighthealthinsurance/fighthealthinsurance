@@ -67,3 +67,26 @@ def _shared_stream_pdf_bytes(page_count: int, text_operations: bytes) -> bytes:
     pdf_bytes: bytes = doc.tobytes()
     doc.close()
     return pdf_bytes
+
+
+def make_table_pdf_bytes(rows: Sequence[Sequence[str]], text: str = "") -> bytes:
+    """Build a one-page PDF with ``rows`` drawn as a ruled table.
+
+    Each cell is a box with its text inside, so PyMuPDF's table finder sees
+    the lines. ``text``, if given, is written above the table.
+    """
+    doc = pymupdf.open()
+    page = doc.new_page()
+    if text:
+        page.insert_text((72, 60), text)
+    width, height = 160, 24
+    for r, row in enumerate(rows):
+        for c, cell in enumerate(row):
+            box = pymupdf.Rect(
+                72 + c * width, 100 + r * height, 72 + (c + 1) * width, 100 + (r + 1) * height
+            )
+            page.draw_rect(box, color=(0, 0, 0), width=0.8)
+            page.insert_text((box.x0 + 4, box.y1 - 8), cell, fontsize=9)
+    pdf_bytes: bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes

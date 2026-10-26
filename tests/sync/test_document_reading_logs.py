@@ -11,6 +11,7 @@ from unittest import mock
 import pytest
 from loguru import logger
 
+from fighthealthinsurance import pa_requirement_parsers, pdf_text
 from fighthealthinsurance.ml import ml_document_extraction as extraction
 
 NAME = "Rebecca Lee Crumpler"
@@ -62,7 +63,19 @@ def a_file_that_cannot_be_opened():
 
 def a_pdf_that_cannot_be_read():
     error = RuntimeError(f"cannot open {NAME} plan.pdf")
-    with mock.patch.object(extraction.pymupdf, "open", side_effect=error):
+    with mock.patch.object(extraction, "read_mupdf_pages", side_effect=error):
+        assert extraction.extract_text_from_pdf_bytes(b"%PDF-1.4") == ("", {})
+
+
+def a_pa_list_that_cannot_be_read():
+    error = ValueError(f"cannot open {NAME} plan.pdf")
+    pdf = f"%PDF-1.4 {NAME}".encode()
+    with mock.patch.object(pdf_text, "read_mupdf_pages", side_effect=error):
+        assert pa_requirement_parsers.parse_pdf_pa_list(pdf, "payer.pdf") == []
+
+
+def a_pdf_that_takes_too_long():
+    with mock.patch.object(extraction, "MAX_PDF_SECONDS", 0.01):
         assert extraction.extract_text_from_pdf_bytes(b"%PDF-1.4") == ("", {})
 
 
@@ -91,6 +104,8 @@ PATHS = [
     pytest.param(a_file_over_the_limit, "larger than", id="over the limit"),
     pytest.param(a_file_that_cannot_be_opened, "FileNotFoundError", id="open"),
     pytest.param(a_pdf_that_cannot_be_read, "RuntimeError", id="pdf"),
+    pytest.param(a_pdf_that_takes_too_long, "TimeoutError", id="pdf timeout"),
+    pytest.param(a_pa_list_that_cannot_be_read, "ValueError", id="pa pdf"),
     pytest.param(a_text_file_that_cannot_be_decoded, "UnicodeDecodeError", id="text"),
     pytest.param(a_type_with_no_parser, "unsupported type", id="unknown type"),
     pytest.param(a_common_type_with_no_parser, ".rtf file", id="common type"),

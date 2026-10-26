@@ -12,12 +12,12 @@ import asyncio
 import threading
 from typing import Any, Dict, Optional
 
-import pymupdf
 from loguru import logger
 
 from django_encrypted_filefield.crypt import Cryptographer
 
 from fighthealthinsurance import word_text
+from fighthealthinsurance.pdf_text import read_mupdf_pages
 
 
 def read_and_decrypt_file(
@@ -64,24 +64,37 @@ def read_and_decrypt_file(
         return None
 
 
+#: The most pages read from one PDF.
+MAX_PDF_PAGES = 2000
+
+#: The most text kept from one PDF, about a thousand pages, like a .docx.
+MAX_PDF_CHARS = 3_000_000
+
+#: How long reading one PDF may take, in a child process that is then stopped.
+MAX_PDF_SECONDS = 30
+
+
 def extract_text_from_pdf_bytes(data: bytes) -> tuple[str, Dict[int, str]]:
     """
     Extract text from PDF bytes with page number tracking.
 
     Returns (full_text, page_dict) where page_dict maps page numbers to text.
+    Read in a child process under the caps above (see pdf_text).
     """
     full_text = ""
     page_dict: Dict[int, str] = {}
 
     try:
-        with pymupdf.open(stream=data, filetype="pdf") as doc:
-            for page_num, page in enumerate(doc, start=1):
-                page_text = page.get_text()
-                if page_text.strip():
-                    page_dict[page_num] = page_text
-                    full_text += f"\n\n[Page {page_num}]\n{page_text}"
+        pages = read_mupdf_pages(data, MAX_PDF_PAGES, MAX_PDF_CHARS, MAX_PDF_SECONDS)
     except Exception as e:
         logger.warning(f"Could not read text from a PDF: {type(e).__name__}")
+        return full_text, page_dict
+
+    for page_num, page in enumerate(pages, start=1):
+        page_text = page["text"]
+        if page_text.strip():
+            page_dict[page_num] = page_text
+            full_text += f"\n\n[Page {page_num}]\n{page_text}"
 
     return full_text, page_dict
 
