@@ -614,7 +614,8 @@ class TestOpenEnrollmentTop(TestCase):
             self.assertIn(f'href="{href}"', steps)
         text = _text(steps)
         self.assertIn("HealthCare.gov shows plans and estimated prices for your area, based on your income, before you log in.", text)
-        self.assertIn("Put your expected 2027 income and household on your application, so you get the right savings.", text)
+        # Next-year updates open with the marketplace, not with Medicare on October 15.
+        self.assertIn("When your marketplace's enrollment opens, put your expected 2027 income and household on your application, so you get the right savings.", text)
         self.assertIn("Plans change every year, so look for yours in each plan's doctor and drug lists.", text)
         self.assertIn("A plan you pick only starts once the first month's premium is paid, if there is one.", text)
         self.assertIn("you can appeal to the marketplace, generally within 90 days of the notice.", text)
