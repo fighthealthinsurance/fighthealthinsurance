@@ -1741,6 +1741,16 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
     @extend_schema(responses=serializers.AppealAttachmentSerializer)
     def create(self, request: Request) -> Response:
         """Upload a new attachment"""
+        # Refuse an upload that says it's too large before parsing it; the form's own fields take far less than 1 MB.
+        try:
+            declared = int(request.META.get("CONTENT_LENGTH") or 0)
+        except ValueError:
+            declared = 0
+        if declared > serializers.MAX_ATTACHMENT_BYTES + 1024 * 1024:
+            return Response(
+                {"error": "Attachment is too large"},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
         serializer = serializers.AppealAttachmentUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 

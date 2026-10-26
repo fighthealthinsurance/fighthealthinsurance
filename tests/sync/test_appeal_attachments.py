@@ -170,6 +170,20 @@ class AppealAttachmentTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(AppealAttachment.objects.filter(appeal=self.appeal).exists())
 
+    def test_upload_declared_over_the_limit_is_refused_before_parsing(self):
+        with (
+            mock.patch.object(rest_serializers, "MAX_ATTACHMENT_BYTES", -1024 * 1024),
+            mock.patch("rest_framework.request.Request._parse") as parse,
+        ):
+            response = self.client.post(
+                reverse("appeal_attachments-list"),
+                {"appeal_id": self.appeal.id, "file": self.test_file},
+                format="multipart",
+            )
+        self.assertEqual(response.status_code, 413)
+        parse.assert_not_called()
+        self.assertFalse(AppealAttachment.objects.filter(appeal=self.appeal).exists())
+
     def test_download_over_the_size_limit_is_refused_before_decrypting(self):
         upload = self.client.post(
             reverse("appeal_attachments-list"),
