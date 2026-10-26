@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 
 {% block title %}{% if enrollment %}Open Enrollment for {{ enrollment.plan_year }}: Dates, Numbers and What to Do{% else %}Signing Up for Marketplace Coverage: Numbers and What to Do{% endif %}{% endblock title %}
 {% block metatitle %}{% if enrollment %}Open Enrollment for {{ enrollment.plan_year }}{% else %}Signing Up for Marketplace Coverage{% endif %} - Fight Health Insurance{% endblock metatitle %}
@@ -154,6 +155,6 @@
     </div>
 </div>
 {{ denial_watch_data|json_script:"dw-data" }}
-<script src="{% static 'js/denial_watch_charts.js' %}" defer></script>
-<script src="{% static 'js/open_enrollment.js' %}" defer></script>
+<script src="{% versioned 'js/denial_watch_charts.js' %}" defer></script>
+<script src="{% versioned 'js/open_enrollment.js' %}" defer></script>
 {% endblock content %}
