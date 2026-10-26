@@ -2474,8 +2474,12 @@ ASPE_REPORTS = {
     2015: "https://www.aspe.hhs.gov/sites/default/files/migrated_legacy_files/137886/ib_2015mar_enrollment.pdf",
     2016: "https://aspe.hhs.gov/sites/default/files/private/pdf/187866/Finalenrollment2016.pdf",
 }
-# The files behind the marketplace numbers, which the open enrollment page names.
-MARKETPLACE_SOURCES = {CMS_EFFECTUATED, CMS_OEP_PUFS} | {p["url"] for p in MK["picks"]} | set(ASPE_REPORTS.values())
+# The files behind the marketplace numbers and the people under 65 beside them, which the open enrollment page names.
+POPULATION_SOURCES = {
+    "https://www2.census.gov/programs-surveys/popest/datasets/2010-2020/intercensal/national/asrh/nc-est2020int-agesex-res.csv",
+    "https://www2.census.gov/programs-surveys/popest/datasets/2020-2025/national/asrh/nc-est2025-agesex-res.csv",
+}
+MARKETPLACE_SOURCES = {CMS_EFFECTUATED, CMS_OEP_PUFS} | {p["url"] for p in MK["picks"]} | set(ASPE_REPORTS.values()) | POPULATION_SOURCES
 
 
 def _census_year() -> str:

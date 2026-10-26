@@ -182,9 +182,9 @@ class TestOpenEnrollmentPage(TestCase):
         self.assertNotIn(".dw-ticker", self.content)
         self.assertNotIn("denial_watch.css", self.content)
 
-    def test_embeds_only_the_marketplace_numbers(self):
+    def test_embeds_only_the_numbers_its_charts_draw(self):
         embedded = json.loads(_between(self.content, '<script id="dw-data" type="application/json">', "</script>").split(">", 1)[1])
-        self.assertEqual(embedded, {"marketplace": DATA["marketplace"]})
+        self.assertEqual(embedded, {"marketplace": DATA["marketplace"], "population": {"under_65": DATA["population"]["under_65"]}})
 
     def test_loads_the_shared_chart_script_then_its_own(self):
         shared = self.content.index("js/denial_watch_charts.js")
@@ -522,6 +522,12 @@ class TestOpenEnrollmentTop(TestCase):
             'id="enroll-dates-line"',
             'id="enroll-numbers"',
             'href="#method-enroll"',
+            'id="coverage-mix"',
+            'id="mix-finding"',
+            'id="mix-list"',
+            'id="mix-records"',
+            'id="mix-scope"',
+            'id="mix-source"',
             'id="enroll-trends"',
             'id="mk-title"',
             'id="mknote"',
@@ -535,6 +541,13 @@ class TestOpenEnrollmentTop(TestCase):
             'id="pkkey"',
             'id="pkcaveat"',
             'id="pktable"',
+            'id="enroll-population"',
+            'id="pop-title"',
+            'id="popnote"',
+            'id="popline"',
+            'id="popkey"',
+            'id="popcaveat"',
+            'id="poptable"',
             'id="enroll-steps"',
             'href="#enroll-questions"',
             'id="enroll-questions"',
@@ -549,10 +562,14 @@ class TestOpenEnrollmentTop(TestCase):
         heads = re.findall(r"<h[12][^>]*>(.*?)</h[12]>", top)
         self.assertEqual(
             [_text(h) for h in heads],
-            ["Open enrollment for 2027", "Marketplace enrollment over the years", "What to do now"],
+            ["Open enrollment for 2027", "Where people get coverage", "Marketplace enrollment over the years", "What to do now"],
         )
-        charts = re.findall(r'<h3 class="fhi-card-title" id="(?:mk|pk)-title">(.*?)</h3>', top)
-        self.assertEqual(charts, ["People with marketplace coverage each February", "Plans picked in each open enrollment"])
+        charts = re.findall(r'<h3 class="fhi-card-title" id="(?:mk|pk|pop)-title">(.*?)</h3>', top)
+        self.assertEqual(
+            charts,
+            ["People with marketplace coverage each February", "Plans picked in each open enrollment", "Marketplace coverage and people under 65, change since 2016"],
+        )
+        heads += charts
         for part in heads + [_between(self.section, 'id="enroll-dates-line"', "</p>")]:
             for word in ("fell", "drop", "lost", "lower", "fewer", "decline"):
                 self.assertNotIn(word, _text(part).lower(), part)
@@ -672,8 +689,10 @@ class TestOpenEnrollmentTop(TestCase):
 
     def test_top_stays_short(self):
         # The dates, tiles, steps and February chart: 350 words with the eight steps in season, plus a little room.
-        # The plan picks history below it has its own budget.
-        self.assertLessEqual(_words(_between(self.section, 'id="enroll"', 'id="enroll-history"')), 360)
+        # The coverage bar and the plan picks history below have budgets of their own.
+        top = _between(self.section, 'id="enroll"', 'id="enroll-history"')
+        mix = _between(top, '<section class="fhi-stack" id="coverage-mix"', "</section>")
+        self.assertLessEqual(_words(top.replace(mix, "")), 360)
 
     def test_each_chart_says_its_finding_in_under_about_40_words(self):
         # Denial Watch's way: a short title, one sentence of finding, the chart, its key; caveats in Sources and method.
@@ -822,9 +841,11 @@ class TestOpenEnrollmentMarketplace(TestCase):
     def test_script_draws_only_with_data(self):
         self.assertIn("const MK=D.marketplace;\nif(MK){", OE_JS)
         self.assertIn("const H=MK&&MK.history;\nif(H&&H.length){", OE_JS)
-        # The February chart, then the plan picks history, and nothing after.
+        self.assertIn("const U=D.population&&new Map(D.population.under_65.map(r=>[r.y,r.n]));\nif(MK&&U&&U.has(MK.feb[0].y-1)){", OE_JS)
+        # The February chart, then the plan picks history, then coverage beside population, and nothing after.
         self.assertLess(OE_JS.index("/* marketplace coverage:"), OE_JS.index("/* plans picked:"))
-        self.assertEqual(OE_JS.index("/* plans picked:"), OE_JS.rindex("/* "))
+        self.assertLess(OE_JS.index("/* plans picked:"), OE_JS.index("/* coverage and people under 65:"))
+        self.assertEqual(OE_JS.index("/* coverage and people under 65:"), OE_JS.rindex("/* "))
 
     def test_tables_are_accessible(self):
         picks = _between(self.questions, 'id="mkpicks"', "</table>")
@@ -1235,7 +1256,7 @@ class TestOpenEnrollmentHistory(TestCase):
         method = _between(cls.content, 'id="method-enroll"', "</div>")
         cls.method_html = _between(method, "<b>Plans picked, 2014 to 2026:</b>", "</li>")
         cls.method = _text(cls.method_html)
-        cls.script = _between(OE_JS, "/* plans picked:", "})();")
+        cls.script = _between(OE_JS, "/* plans picked:", "/* coverage and people under 65:")
 
     def test_bundle_history_is_the_curated_csv(self):
         with open(HISTORY_CSV, newline="") as f:

@@ -400,7 +400,8 @@
                     </div>
                 </div>
             </div>
-            <p id="coverage-marketplace">Marketplace coverage, year by year, is on <a href="{% url 'open-enrollment' %}">the open enrollment page</a>.</p>
+            {# Where people get coverage, the same bar as the open enrollment page's, with its link to that page. #}
+            {% include "partials/coverage_mix.html" with h=3 here="dw" method="method-coverage" %}
         </section>
 
         <section class="fhi-stack" id="costs" aria-labelledby="costs-title">
@@ -533,6 +534,7 @@
                                 <li><b>Uninsured:</b> <a href="https://www.census.gov/programs-surveys/sahie.html">Census Small Area Health Insurance Estimates</a>, under 65, 2023 and 2024. The national figure adds up the state estimates.</li>
                                 <li><b>Uninsured and health:</b> compared across 48 states and DC (Kentucky and Pennsylvania have no 2023 estimates). The uninsured rate goes with the share of adults in fair or poor health (correlation 0.52), less with diabetes (0.36), and not with depression (-0.10).</li>
                                 <li><b>Health measures:</b> <a href="https://data.cdc.gov/d/i46a-9kgh">CDC PLACES</a> county data, 2025 release (mostly 2023 BRFSS). Adult crude prevalence, county estimates weighted by adult population. Kentucky and Pennsylvania have no 2023 estimates in this release. Use of CDC data does not imply CDC endorsement.</li>
+                                {% include "partials/coverage_mix_method.html" %}
                             </ol>
                             <p class="dw-back"><a href="#coverage">Back to Who doesn't have coverage?</a></p>
                         </div>

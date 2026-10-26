@@ -773,6 +773,80 @@ def denial_watch_teaser() -> dict[str, typing.Any]:
     }
 
 
+# The coverage bar's slices by share: which are wide enough to hold words, and from what screen width (see denial_watch_style.html).
+COVERAGE_MIX_SIZES = (("l", 30), ("m", 15), ("s", 10), ("xs", 6))
+# The coverage bar's names inside a slice, for the slices wide enough to hold one.
+COVERAGE_MIX_SHORT = {
+    "job": "Job-based",
+    "medicare": "Medicare",
+    "medicaid_chip": "Medicaid or CHIP",
+    "uninsured": "Uninsured",
+}
+
+
+@functools.lru_cache(maxsize=1)
+def denial_watch_coverage_mix() -> dict[str, typing.Any]:
+    """Where people get coverage, the bar both pages draw without the script.
+
+    Each slice's share as words and as a width, where it starts (for the
+    marketplace slice's label above the bar), and how much label fits inside,
+    by size from "l" to "xs": the smaller the slice, the wider the screen its
+    name and share need.
+    """
+    mix = _denial_watch_data()["coverage_mix"]
+    rows, start = [], 0.0
+    for r in mix["rows"]:
+        rows.append(
+            dict(
+                k=r["k"],
+                css=r["k"].replace("_", "-"),
+                label=r["label"],
+                pct=f"{r['pct']:.1f}%",
+                width=f"{r['pct']:.2f}",
+                start=f"{start:.2f}",
+                size=next(
+                    (size for size, least in COVERAGE_MIX_SIZES if r["pct"] >= least),
+                    "",
+                ),
+                short=COVERAGE_MIX_SHORT.get(r["k"], ""),
+            )
+        )
+        start += r["pct"]
+    return {
+        "rows": rows,
+        "marketplace": next(r for r in rows if r["k"] == "marketplace"),
+    }
+
+
+def open_enrollment_population(data: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Each February's marketplace coverage beside the people under 65 on the
+    July 1 before it, with each one's change since the first February, for
+    the population chart's label and year table."""
+    mk = data["marketplace"]
+    under_65 = {r["y"]: r["n"] for r in data["population"]["under_65"]}
+    first = mk["feb"][0]
+    base_n, base_pop = first["n"], under_65[first["y"] - 1]
+
+    def change(x: float) -> str:
+        return f"{'+' if x >= 0 else ''}{x * 100:.1f}%"
+
+    rows = []
+    for r in mk["feb"]:
+        pop = under_65[r["y"] - 1]
+        rows.append(
+            dict(
+                y=r["y"],
+                prelim=r["y"] == mk["prelim"],
+                n=f"{r['n']:,}",
+                pop=f"{pop:,}",
+                per100=f"{100 * r['n'] / pop:.1f}",
+                n_chg=change(r["n"] / base_n - 1),
+                pop_chg=change(pop / base_pop - 1),
+            )
+        )
+    return {"rows": rows, "first": rows[0], "last": rows[-1]}
+
+
 # Checked 2026-10-22. CMS set HealthCare.gov's 2027 dates, but the court ruling behind them is under appeal, so the pages link out and the season ends on the last posted day.
 DENIAL_WATCH_MEDICARE_ENROLLMENT = (date(2026, 10, 15), date(2026, 12, 7))
 DENIAL_WATCH_ENROLLMENT_BOX_ENDS = date(2027, 1, 15)
@@ -825,6 +899,7 @@ class DenialWatchView(StaticIshView):
         context = super().get_context_data(**kwargs)
         context["denial_watch_data"] = self.page_data()
         context["every_state"] = denial_watch_every_state()
+        context["coverage_mix"] = denial_watch_coverage_mix()
         context["enrollment"] = denial_watch_enrollment(
             timezone.localdate(timezone=DENIAL_WATCH_LAST_TIME_ZONE)
         )
@@ -857,8 +932,12 @@ class OpenEnrollmentView(DenialWatchView):
     template_name = "open_enrollment.html"
 
     def page_data(self) -> dict:
-        # The page draws only the marketplace chart, so it embeds only those numbers.
-        return {"marketplace": _denial_watch_data()["marketplace"]}
+        # The page draws only the marketplace charts, so it embeds only their numbers.
+        data = _denial_watch_data()
+        return {
+            "marketplace": data["marketplace"],
+            "population": {"under_65": data["population"]["under_65"]},
+        }
 
     def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
         context = super().get_context_data(**kwargs)
@@ -874,6 +953,9 @@ class OpenEnrollmentView(DenialWatchView):
             )
             for r in context["denial_watch_data"]["marketplace"].get("history", [])
         ]
+        context["enroll_population"] = open_enrollment_population(
+            context["denial_watch_data"]
+        )
         return context
 
 

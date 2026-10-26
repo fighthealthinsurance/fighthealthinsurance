@@ -24,6 +24,8 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
     --dw-cost: #c2187a; --dw-cost-tint: #fbe3f0;
     /* The open enrollment page's coverage and plan picks share the denial blue: that page shows no denials. */
     --dw-count: var(--dw-deny-4); --dw-count-tint: #cfe8f7;
+    /* The people under 65 that marketplace coverage is set against: the darkest step, and dashed. */
+    --dw-count-deep: var(--dw-deny-5);
     /* No data, and only that; a state a view leaves out is outlined on paper instead. */
     --dw-na: #e3e6ea; --dw-na-ink: #5d6771;
     /* Not data: the page, the dark label ink on a light tile, and a bar's empty track. */
@@ -54,6 +56,7 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
   .dw-sw-cost { background-color: var(--dw-cost); }
   .dw-sw-count { background-color: var(--dw-count); }
   .dw-sw-picks { background-color: var(--dw-count-tint); box-shadow: inset 0 0 0 1px var(--dw-count); }
+  .dw-sw-dash { height: 4px; border-radius: 0; background: repeating-linear-gradient(90deg, var(--dw-count-deep) 0 7px, var(--dw-paper) 7px 11px); }
   .dw-sw-na { background-color: var(--dw-na); }
   /* The chart's hollow point: a ring, not a fill, so it reads without colour. */
   .dw-sw-open { width: 10px; border-radius: 50%; background-color: var(--dw-paper); box-shadow: inset 0 0 0 2.5px var(--dw-count); }
@@ -86,6 +89,37 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
   .dw-back { margin: 0; font-size: var(--fhi-text-small); }
   .dw-back a { font-weight: 600; text-decoration: underline; }
   .dw-method { display: grid; gap: var(--fhi-space-2); }
+  /* Where people get coverage: one bar, each person in one slice, in the coverage purples. The marketplace slice is the
+     darkest, taller, ringed and named above the bar; no coverage is an empty slice. The list says every share in words. */
+  .dw-mix { display: grid; gap: var(--fhi-space-3); }
+  .dw-mix > * { margin: 0; }
+  .dw-mix-callout { margin: 0; font-size: var(--fhi-text-small); font-weight: 700; color: var(--fhi-ink); }
+  .dw-mix-callout span { display: inline-block; padding: 0 0 var(--fhi-space-2) var(--fhi-space-2); border-left: 2px solid var(--fhi-ink); }
+  .dw-mix-bar { display: flex; min-height: 2.75rem; }
+  /* Each slice exactly its share wide, borders and padding inside, so the label above lands on the marketplace slice. */
+  .dw-mix-seg { box-sizing: border-box; flex: none; display: flex; flex-direction: column; justify-content: center; min-width: 0; overflow: hidden; white-space: nowrap; font-size: var(--fhi-text-small); line-height: 1.15; color: var(--dw-tile-ink); }
+  .dw-mix-seg > * { padding-inline: var(--fhi-space-1); }
+  .dw-mix-seg + .dw-mix-seg { border-left: 2px solid var(--dw-paper); }
+  .dw-mix-seg b { font-weight: 700; }
+  .dw-mix-job, .dw-mix-medicaid-chip { background-color: var(--dw-health-2); }
+  .dw-mix-other-individual, .dw-mix-military-va { background-color: var(--dw-health-1); }
+  .dw-mix-medicare, .dw-mix-more-than-one { background-color: var(--dw-health-3); color: var(--dw-paper); }
+  .dw-mix-marketplace { background-color: var(--dw-health-5); }
+  .dw-mix-uninsured { background-color: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-health-3); }
+  .dw-mix-seg.dw-mix-marketplace { margin-block: -5px; box-shadow: 0 0 0 2px var(--fhi-ink); }
+  .dw-mix-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); gap: var(--fhi-space-1) var(--fhi-space-6); padding: 0; list-style: none; font-size: var(--fhi-text-small); color: var(--fhi-ink-2); }
+  .dw-mix-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--fhi-space-2); align-items: baseline; }
+  .dw-mix-list .dw-num { font-weight: 700; color: var(--fhi-ink); }
+  .dw-mix-sw { width: 1rem; height: 0.75rem; border-radius: 2px; align-self: center; }
+  .dw-mix-hl { font-weight: 700; color: var(--fhi-ink); }
+  .dw-mix-hl .dw-mix-sw { box-shadow: 0 0 0 2px var(--fhi-ink); }
+  /* A slice's name and share only where they fit: the smaller the slice, the wider the screen it needs. */
+  @media (max-width: 1199px) {
+    .dw-mix-m b, .dw-mix-s b { display: none; }
+  }
+  @media (max-width: 380px) {
+    .dw-mix-s span { display: none; }
+  }
   @media (max-width: 860px) {
     .dw-two { grid-template-columns: minmax(0, 1fr); }
   }
@@ -99,6 +133,9 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
     .dw-chart { overflow: visible; }
     .dw-chart text { font-size: 20px; }
     .dw-chart text.dw-end { font-size: 22px; }
+    /* Less padding inside the bar, and no words in the smallest slices; the list has every share. */
+    .dw-mix-seg > * { padding-inline: 2px; }
+    .dw-mix-xs span { display: none; }
   }
   /* On a phone a table's padding pushes its last column out of its box; the numbers carry it. */
   @media (max-width: 480px) {

@@ -21,6 +21,9 @@ nothing here runs in the app.
    | `effectuated_monthly.csv` | The CSV on [data.cms.gov's Health Insurance Exchanges Monthly Effectuated Enrollment page](https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/health-insurance-marketplace/health-insurance-exchanges-monthly-effectuated-enrollment), renamed (the current build used `Health Insurance Exchanges Monthly Effectuated Enrollment Data_asof_20260505.csv`) |
    | `<YEAR>-oep-state-level-public-use-file.zip` (optional) | The `file` link in each row of `marketplace_signups.csv`, not renamed; when it's here the build checks it against that row's sha256 |
    | None (`open_enrollment_history.csv` is checked in) | Each row's `source_url`: CMS's OEP state-level public use file zips for 2017 to 2026 (all listed on [CMS's marketplace products page](https://www.cms.gov/data-research/statistics-trends-and-reports/marketplace-products)) and HHS ASPE's enrollment reports for 2014 to 2016. The build doesn't read them; reopen one to check a row |
+   | `nc-est2020int-agesex-res.csv`, `nc-est2025-agesex-res.csv` (optional) | The `source_url` in `population_under_65.csv`, not renamed; when they're here the build checks each against its sha256 and works the counts out again |
+   | None (`coverage_mix.csv` is checked in) | `asecpub26csv.zip` from [Census's 2026 CPS ASEC page](https://www.census.gov/data/datasets/time-series/demo/cps/cps-asec.2026.html); `cps_coverage_mix.py` tallies it into the CSV (see below) |
+   | None (`coverage_counts.csv` is checked in) | Each row's `source_url`: the Medicare Monthly Enrollment CSV on [data.cms.gov](https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/medicare-and-medicaid-reports/medicare-monthly-enrollment) and the Medicaid and CHIP enrollment release on [data.medicaid.gov](https://data.medicaid.gov/dataset/6165f45b-ca93-5bb5-9d06-db29c692a360); `how` says what was summed |
 
 2. Build:
 
@@ -34,6 +37,36 @@ nothing here runs in the app.
    range, 72% in California, the correlations, the trend's in-network shares, and
    the out-of-network and all-claims totals in Sources and method; the tests check them. When a new year arrives, adding
    it means extending `CLAIMS_YEAR` and `LATEST_PY`, then rereading the copy.
+
+## Marketplace enrollment in context
+
+The open enrollment page and Denial Watch's coverage section share a bar of
+where people get coverage (`templates/partials/coverage_mix.html`), and the
+open enrollment page sets each February's marketplace coverage beside the
+people under 65. Three checked-in files feed them:
+
+| File | What it holds | Source | When to refresh |
+|---|---|---|---|
+| `coverage_mix.csv` | Everyone, each person counted once, at the interview (`now`, February to April) and over the year before (`year`), for all ages, under 65 and 65 and over. The page uses `now`, all ages | FHI's tally of Census's Current Population Survey, Annual Social and Economic Supplement (CPS ASEC) public-use file, by `cps_coverage_mix.py` | Each September, when Census releases the new CPS ASEC |
+| `population_under_65.csv` | People under 65 on July 1, 2015 to 2025, with the total, the series, the file and its sha256 | Census's national population estimates by single year of age: the 2010-2020 intercensal file to 2019, Vintage 2025 from 2020 | Each April, when Census publishes the new vintage by age (Vintage 2026 is due April 2027); its December release has totals only |
+| `coverage_counts.csv` | Medicare and Medicaid and CHIP for the marketplace's latest February | CMS's Medicare Monthly Enrollment file and its Medicaid and CHIP enrollment release | Monthly; update with the marketplace's February, since the build stops on another month |
+
+To retally the survey, download the zip, unzip `pppub26.csv` and
+`asec_csv_repwgt_2026.csv` somewhere outside the repository, then:
+
+```sh
+python -I scripts/denial_watch/cps_coverage_mix.py pppub26.csv asec_csv_repwgt_2026.csv scripts/denial_watch/coverage_mix.csv
+```
+
+It takes about 10 seconds. For a new year, update the file names in its
+docstring, `REFERENCE`, and `COVERAGE_MIX_SURVEY` in `build_bundle.py`, and
+check the totals against Census's published Table 1 of its health insurance
+report and table H-02 before reading the page's copy again.
+
+The copy in `coverage_mix.html` and the open enrollment page's population
+chart names some of these numbers (nearly half job-based only, about 4 in 100
+marketplace, the records counts, more than doubled against about 1%, about 7
+and 4 for every 100 under 65); `tests/sync/test_coverage_mix.py` checks them.
 
 ## Rules the build follows
 
@@ -101,6 +134,23 @@ nothing here runs in the app.
   under their own names (`2026-oep-state-level-public-use-file.zip`) and the
   build checks each against its sha256 and stops on a mismatch. A zip that
   isn't there is reported as not checked.
+- The coverage bar counts each person once: anyone with Medicare under
+  Medicare, anyone else with exactly one kind under that kind, two or more
+  other kinds under "more than one kind". The build stops unless the
+  at-interview, all-ages rows are the eight slices in the page's order and
+  their shares add to 100 within rounding. The bar is a survey estimate and
+  is never drawn with CMS's counts, which come from records.
+- The population is never mixed across vintages: Vintage 2025 redid 2020 on,
+  and pairing the intercensal file with Vintage 2024 would fake a jump of
+  about 1.7 million at 2020. The build stops on a row from another series or
+  file, a gap in the years, or a February with no July before it. A new
+  vintage replaces every year from 2020 (update `POPULATION_SERIES`), and the
+  page's note on where the two series join needs rereading.
+- `coverage_counts.csv` has one row each for Medicare (the 50 states and DC
+  added up, so it matches the marketplace's and Medicaid's geography) and
+  Medicaid and CHIP (the updated count), for the month the marketplace's
+  latest February is. The build stops on another month, a missing row or a
+  row without its https source, file, sha256 and what was summed.
 - KFF's figures are quoted and linked, never redrawn: its content is
   CC BY-NC-ND 4.0, and it asks for links to its pages, not its PDFs.
 - The open-enrollment box's dates and plan year come from `views.py`
