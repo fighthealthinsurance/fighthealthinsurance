@@ -113,6 +113,19 @@ class TestCoverageMixData(TestCase):
         with self.assertRaisesRegex(SystemExit, "the shares add to 101.00%"):
             self._load(one_point_more)
 
+    def test_builder_refuses_a_margin_that_isnt_a_number(self):
+        for bad in ("nan", "inf", "-0.1"):
+            with self.subTest(bad=bad):
+
+                def broken(rows):
+                    for r in rows:
+                        if r["measure"] == "now" and r["age"] == "all" and r["key"] == "uninsured":
+                            r["percent_moe90"] = bad
+                    return rows
+
+                with self.assertRaisesRegex(SystemExit, "margin of error"):
+                    self._load(broken)
+
     def test_builder_refuses_slices_out_of_order(self):
         def swap(rows):
             mine = [i for i, r in enumerate(rows) if r["measure"] == "now" and r["age"] == "all"]
@@ -276,7 +289,7 @@ class TestCoverageMixOnBothPages(TestCase):
         # Prior authorization covers Medicare Advantage, Medicaid plans, state Medicaid and HealthCare.gov insurers, nothing job-based.
         self.assertEqual({r["line"] for r in DATA["prior_auth"]}, {"ma", "mcd", "mkt", "ffs"})
         rest = (
-            "claim denial rates are for marketplace plans, in HealthCare.gov states and five states that run their own marketplace. "
+            "claim denial rates are for marketplace plans in HealthCare.gov states and five states that run their own marketplace, where some figures also count plans sold outside it. "
             "Its prior authorization rates cover large Medicare Advantage plans, Medicaid plans and programs, and HealthCare.gov insurers. "
             "It has no denial rates for job-based plans or Original Medicare."
         )
@@ -328,9 +341,9 @@ class TestCoverageMixOnBothPages(TestCase):
 
     def test_stays_short(self):
         # The heading, finding, list, records, scope and source, with the bar's labels saying some of the list again: 200 words,
-        # and Denial Watch's line to the open enrollment page, plus a little room.
+        # Denial Watch's line to the open enrollment page, and the scope line's note on plans sold outside the marketplace.
         for name, mix in self.pages.items():
-            self.assertLessEqual(_words(mix), 225, name)
+            self.assertLessEqual(_words(mix), 230, name)
 
     def test_no_dashes(self):
         for mix in self.pages.values():

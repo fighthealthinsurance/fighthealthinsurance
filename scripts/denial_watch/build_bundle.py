@@ -879,10 +879,13 @@ def load_coverage_mix(path=COVERAGE_MIX_CSV):
         sys.exit(f"{name}: the at-interview rows give more than one reference period")
     out = []
     for r in rows:
-        n, pct = int(r["people"]), float(r["percent"])
+        n, pct, pct_moe = int(r["people"]), float(r["percent"]), float(r["percent_moe90"])
         if n <= 0 or not 0 < pct < 100:
             sys.exit(f"{name}: {r['key']} has {n:,} people, {pct}%")
-        out.append(dict(k=r["key"], label=r["category"], n=n, moe=int(r["people_moe90"]), pct=pct, pct_moe=float(r["percent_moe90"])))
+        # NaN or infinity would be written as JSON no browser can parse, and every chart on the page would fail.
+        if not (math.isfinite(pct_moe) and pct_moe >= 0) or int(r["people_moe90"]) < 0:
+            sys.exit(f"{name}: {r['key']} has a margin of error of {r['people_moe90']} people, {r['percent_moe90']}%")
+        out.append(dict(k=r["key"], label=r["category"], n=n, moe=int(r["people_moe90"]), pct=pct, pct_moe=pct_moe))
     # Each person is in one slice, so the shares add to 100 but for rounding.
     total = sum(r["pct"] for r in out)
     if abs(total - 100) > 0.05:
@@ -1074,7 +1077,7 @@ def main(argv=None):
     marketplace_lines += coverage_report(bundle)
     bundle["sources"] = SOURCES
     bundle["built"] = datetime.date.today().isoformat()
-    args.out.write_text(json.dumps(bundle, separators=(",", ":"), sort_keys=True) + "\n")
+    args.out.write_text(json.dumps(bundle, separators=(",", ":"), sort_keys=True, allow_nan=False) + "\n")
     print("wrote", args.out)
 
     for t in bundle["trend"]:
