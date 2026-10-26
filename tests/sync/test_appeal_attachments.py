@@ -4,6 +4,9 @@ from rest_framework.test import APIClient
 from fighthealthinsurance.models import *
 from django.urls import reverse
 import json
+from unittest import mock
+
+from fighthealthinsurance import rest_serializers
 
 
 @override_settings(FIGHT_PAPERWORK_ENABLED=True)
@@ -156,6 +159,33 @@ class AppealAttachmentTests(TestCase):
         )
         self.assertEqual(response.status_code, 204)
         self.assertFalse(AppealAttachment.objects.filter(id=attachment.id).exists())
+
+    def test_upload_over_the_size_limit_is_refused(self):
+        with mock.patch.object(rest_serializers, "MAX_ATTACHMENT_BYTES", 4):
+            response = self.client.post(
+                reverse("appeal_attachments-list"),
+                {"appeal_id": self.appeal.id, "file": self.test_file},
+                format="multipart",
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(AppealAttachment.objects.filter(appeal=self.appeal).exists())
+
+    def test_download_over_the_size_limit_is_refused_before_decrypting(self):
+        upload = self.client.post(
+            reverse("appeal_attachments-list"),
+            {"appeal_id": self.appeal.id, "file": self.test_file},
+            format="multipart",
+        )
+        self.assertEqual(upload.status_code, 201)
+        with (
+            mock.patch("fighthealthinsurance.rest_views.attachment_read_limit", return_value=4),
+            mock.patch("fighthealthinsurance.rest_views.Cryptographer.decrypted") as decrypted,
+        ):
+            response = self.client.get(
+                reverse("appeal_attachments-detail", kwargs={"pk": upload.json()["id"]})
+            )
+        self.assertEqual(response.status_code, 413)
+        decrypted.assert_not_called()
 
     def test_owner_download_returns_decrypted_file(self):
         upload = self.client.post(

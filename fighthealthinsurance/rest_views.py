@@ -9,6 +9,7 @@ from django.core.exceptions import SuspiciousFileOperation
 from django.db import IntegrityError, models
 from django.db.models import Count, Q
 from django.http import FileResponse, Http404, StreamingHttpResponse
+from django.http.response import HttpResponseBase
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -1690,6 +1691,11 @@ class SendToUserViewSet(viewsets.ViewSet, SerializerMixin):
         )
 
 
+def attachment_read_limit() -> int:
+    """The most stored bytes a download reads: the upload limit, plus encryption's growth of about a third."""
+    return serializers.MAX_ATTACHMENT_BYTES * 4 // 3 + 1024 * 1024
+
+
 class AppealAttachmentViewSet(viewsets.ViewSet):
     """
     ViewSet for managing file attachments on appeals.
@@ -1783,7 +1789,7 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
         )
 
     @extend_schema(responses=serializers.AppealAttachmentSerializer)
-    def retrieve(self, request: Request, pk: int) -> FileResponse:
+    def retrieve(self, request: Request, pk: int) -> HttpResponseBase:
         """Download an attachment"""
         current_user: User = request.user  # type: ignore
         attachment = get_object_or_404(
@@ -1791,8 +1797,15 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
         )
         if not attachment.file:
             raise Http404("Attachment has no file")
+        limit = attachment_read_limit()
         with attachment.file.open("rb") as file:
-            content = Cryptographer.decrypted(file.read())
+            raw = file.read(limit + 1)
+        if len(raw) > limit:
+            return Response(
+                {"error": "Attachment is too large to download"},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        content = Cryptographer.decrypted(raw)
         # FileResponse needs a file-like object; raw bytes stream as digits.
         response = FileResponse(
             io.BytesIO(content),

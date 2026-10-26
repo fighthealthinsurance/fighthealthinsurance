@@ -588,11 +588,22 @@ class AppealAttachmentSerializer(serializers.ModelSerializer):
         fields = ["id", "filename", "mime_type", "created_at"]
 
 
+#: The largest attachment accepted, like a plan document; downloads decrypt it whole in memory.
+MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+
 class AppealAttachmentUploadSerializer(serializers.Serializer):
     """Serializer for uploading a file attachment to an appeal."""
 
     appeal_id = serializers.IntegerField()
     file = serializers.FileField()
+
+    def validate_file(self, value):  # type: ignore[no-untyped-def]
+        if value.size > MAX_ATTACHMENT_BYTES:
+            raise serializers.ValidationError(
+                f"Attachments can be at most {MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB."
+            )
+        return value
 
 
 class PubMedMiniArticleSerializer(serializers.ModelSerializer):
