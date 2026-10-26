@@ -1,0 +1,163 @@
+# =============================================================================
+# Arize Phoenix, self-hosted: the trace and eval store for letter evals.
+#
+# One pod in its own namespace, storing its data in a `phoenix` database on
+# the app's Postgres (fhi-pg-main-9, so CNPG's backups cover it), reached
+# only inside the cluster (no ingress). Judge jobs send OTLP traces to
+# phoenix.fhi-eval.svc; people open the UI through a port-forward. See
+# README.md here for setup, access and the decisions behind this file.
+#
+# Phoenix's own login and API keys are the access control.
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fhi-eval
+  labels:
+    app: fhi-eval
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix
+  namespace: fhi-eval
+  labels:
+    app: phoenix
+spec:
+  replicas: 1
+  # Phoenix migrates its schema at startup; one pod at a time keeps two
+  # versions from racing on it during an upgrade.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: phoenix
+  template:
+    metadata:
+      labels:
+        app: phoenix
+    spec:
+      # The Service is named phoenix, so service links would inject
+      # PHOENIX_PORT=tcp://<ip>:6006, which Phoenix reads as its own port
+      # setting and refuses to start.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        # distroless :nonroot base image
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: phoenix
+          # version-20.21.4-nonroot, pinned by digest
+          image: arizephoenix/phoenix@sha256:629d842e5d9af2f0d0ae181c4084a33c8fecdbd3405728ae32aef28934f78081
+          ports:
+            - name: http
+              containerPort: 6006
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: metrics
+              containerPort: 9090
+          env:
+            - name: PHOENIX_WORKING_DIR
+              value: /mnt/data
+            - name: PHOENIX_POSTGRES_HOST
+              value: fhi-pg-main-9-rw.totallylegitco.svc
+            - name: PHOENIX_POSTGRES_PORT
+              value: "5432"
+            - name: PHOENIX_POSTGRES_USER
+              value: phoenix
+            - name: PHOENIX_POSTGRES_DB
+              value: phoenix
+            - name: PHOENIX_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: phoenix-secret
+                  key: PHOENIX_POSTGRES_PASSWORD
+            # Login on, with the strong password policy.
+            - name: PHOENIX_ENABLE_AUTH
+              value: "true"
+            - name: PHOENIX_ENABLE_STRONG_PASSWORD_POLICY
+              value: "true"
+            - name: PHOENIX_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: phoenix-secret
+                  key: PHOENIX_SECRET
+            - name: PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: phoenix-secret
+                  key: PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD
+            # Nothing leaves on Phoenix's own initiative: no tracking pixels,
+            # web fonts or sandbox downloads.
+            - name: PHOENIX_TELEMETRY_ENABLED
+              value: "false"
+            - name: PHOENIX_ALLOW_EXTERNAL_RESOURCES
+              value: "false"
+            # No in-app agent: its bash, web and GitHub tools, hosted code
+            # sandboxes, the /mcp server and the CLI login server all stay off.
+            - name: PHOENIX_DISABLE_AGENT_ASSISTANT
+              value: "true"
+            - name: PHOENIX_AGENTS_DISABLE_BASH
+              value: "true"
+            - name: PHOENIX_AGENTS_DISABLE_WEB_ACCESS
+              value: "true"
+            - name: PHOENIX_AGENTS_DISABLE_GITHUB
+              value: "true"
+            - name: PHOENIX_ALLOWED_SANDBOX_PROVIDERS
+              value: "NONE"
+            - name: PHOENIX_ENABLE_MCP_SERVER
+              value: "false"
+            - name: PHOENIX_ENABLE_OAUTH2_AUTHORIZATION_SERVER
+              value: "false"
+          volumeMounts:
+            - name: data
+              mountPath: /mnt/data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        # Scratch space for exports; the data itself is in Postgres.
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: phoenix
+  namespace: fhi-eval
+  labels:
+    app: phoenix
+spec:
+  type: ClusterIP
+  selector:
+    app: phoenix
+  ports:
+    - name: http
+      port: 6006
+      targetPort: http
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
