@@ -14,7 +14,14 @@
   .ai-steps figure,
   .ai-figure { margin: var(--fhi-space-3) 0 0; }
   .ai-steps img,
-  .ai-figure img { max-width: min(100%, 40rem); height: auto; border: 1px solid #d0d0d0; border-radius: var(--fhi-radius); }
+  .ai-figure img { max-width: min(100%, var(--ai-shot-column)); height: auto; border: 1px solid #d0d0d0; border-radius: var(--fhi-radius); }
+  /* A list of set-up steps with screenshots is one column: each step's
+     words wrap at the width of its screenshot, which fills the step. The
+     words used to run the full 1108px with the picture stopping at 640px
+     under them. A screenshot on its own takes the same width. */
+  :root { --ai-shot-column: 42rem; }
+  .ai-steps:has(figure) { max-width: var(--ai-shot-column); }
+  .ai-steps:has(figure) img { max-width: 100%; }
   .ai-steps figcaption,
   .ai-figure figcaption { font-size: var(--fhi-text-small); color: var(--fhi-muted); }
   /* The address and the commands are single runs no browser breaks on its
