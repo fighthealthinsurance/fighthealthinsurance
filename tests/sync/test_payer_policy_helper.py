@@ -159,8 +159,9 @@ class PolicyEntryQueryTests(TestCase):
 
 
 class PayerPolicyContextTests(TestCase):
-    def setUp(self):
-        self.cigna = InsuranceCompany.objects.create(
+    @classmethod
+    def setUpTestData(cls):
+        cls.cigna = InsuranceCompany.objects.create(
             name="Cigna",
             regex=r"cigna",
             medical_policy_url="https://static.cigna.com/medical_a-z.html",
@@ -168,7 +169,7 @@ class PayerPolicyContextTests(TestCase):
             medical_policy_name="Coverage Policies",
             is_major_commercial_payer=True,
         )
-        self.aetna = InsuranceCompany.objects.create(
+        cls.aetna = InsuranceCompany.objects.create(
             name="Aetna",
             regex=r"aetna",
             medical_policy_url="https://www.aetna.com/cpbs",
@@ -176,12 +177,12 @@ class PayerPolicyContextTests(TestCase):
             medical_policy_name="Clinical Policy Bulletins",
             is_major_commercial_payer=True,
         )
-        self.tiny = InsuranceCompany.objects.create(
+        cls.tiny = InsuranceCompany.objects.create(
             name="Tiny Co-op",
             regex=r"tiny",
         )
         PayerPolicyEntry.objects.create(
-            insurance_company=self.cigna,
+            insurance_company=cls.cigna,
             title="Acupuncture",
             url="https://static.cigna.com/acupuncture.pdf",
             payer_policy_id="CPG024",

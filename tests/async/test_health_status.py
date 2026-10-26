@@ -1157,6 +1157,77 @@ class TestProbeEndsConnectCooldown(TestCase):
         assert backend.unavailable_reason() == "refused (HTTP 401)"
 
 
+def _anthropic():
+    """A real direct-Anthropic backend; the caller sets ANTHROPIC_API_KEY."""
+    from fighthealthinsurance.ml.ml_models import RemoteAnthropic
+
+    RemoteAnthropic._rate_limiters.pop("claude-sonnet-4-6", None)
+    return RemoteAnthropic(model="claude-sonnet-4-6")
+
+
+def _models_api(status_code):
+    """Anthropic's Models API answering every check with ``status_code``."""
+    return mock.patch(
+        "fighthealthinsurance.ml.ml_models.requests.get",
+        return_value=mock.MagicMock(status_code=status_code),
+    )
+
+
+class TestAnthropicLiveness(TestCase):
+    """Direct Anthropic is checked against its Models API: the sweep takes it
+    out of routing while Anthropic refuses or cannot answer, and a recheck
+    puts it back once it does. It used to read as up whenever a key was set,
+    so a refused key or an outage never showed until a real call failed."""
+
+    def setUp(self):
+        env = mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_a_refused_key_takes_it_out_of_routing(self):
+        backend = _anthropic()
+        with _models_api(401):
+            status = _swept([backend])
+        assert status.model_ok(backend) is False
+
+    def test_a_refused_key_is_not_counted_alive(self):
+        backend = _anthropic()
+        with _models_api(401):
+            status = _swept([backend])
+        assert status.get_snapshot()["alive_models"] == 0
+
+    def test_a_refused_key_is_listed_as_not_ok(self):
+        backend = _anthropic()
+        with _models_api(401):
+            status = _swept([backend])
+        assert status.get_snapshot()["details"] == [
+            {"name": "claude-sonnet-4-6", "ok": False, "error": "not ok"}
+        ]
+
+    def test_an_answering_api_is_counted_alive(self):
+        backend = _anthropic()
+        with _models_api(200):
+            status = _swept([backend])
+        assert status.get_snapshot()["alive_models"] == 1
+
+    def test_a_recheck_puts_it_back_once_anthropic_answers(self):
+        backend = _anthropic()
+        with _models_api(503):
+            status = _swept([backend])
+        with _models_api(200):
+            status._recheck_down()
+        assert status.model_ok(backend) is True
+
+    def test_a_passing_check_ends_its_connect_cooldown(self):
+        """A run of failed connects cools it down, escalating up to an hour;
+        once Anthropic answers the check it is asked again at once."""
+        backend = _anthropic()
+        _connect_failures(backend)
+        with _models_api(200):
+            _swept([backend])
+        assert backend.is_available() is True
+
+
 class TestBackgroundSweepGate(TestCase):
     """``ML_HEALTH_BACKGROUND_SWEEP`` gates the self-re-arming timer chain.
 

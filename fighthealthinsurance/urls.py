@@ -397,6 +397,12 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.DenialWatchView.as_view(),
         name="denial-watch",
     ),
+    # Denial Watch's open enrollment page, on the same flag.
+    path(
+        "open-enrollment",
+        views.OpenEnrollmentView.as_view(),
+        name="open-enrollment",
+    ),
     path(
         "as-seen-on-pbs",
         views.PBSNewsHourView.as_view(),

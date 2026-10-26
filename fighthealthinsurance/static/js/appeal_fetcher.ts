@@ -346,10 +346,13 @@ function updateStatusIndicator(status: typeof connectionStatus, appealsCount: nu
       statusMessage.style.color = 'var(--fhi-ok)';
     }
     clearAllTimers();
-    setTimeout(() => {
+    indicatorRemovalHandle = setTimeout(() => {
       const indicator = document.getElementById('appeal-status-indicator');
       if (indicator) indicator.style.opacity = '0';
-      setTimeout(() => indicator?.remove(), 300);
+      indicatorRemovalHandle = setTimeout(() => {
+        indicatorRemovalHandle = null;
+        indicator?.remove();
+      }, 300);
     }, 3000);
     return;
   }
@@ -375,7 +378,21 @@ function rotateStatusMessage(): void {
   }
 }
 
+function removeStatusIndicator(): void {
+  if (indicatorRemovalHandle) {
+    clearTimeout(indicatorRemovalHandle);
+    indicatorRemovalHandle = null;
+  }
+  document.getElementById('appeal-status-indicator')?.remove();
+}
+
 function showLoading(): void {
+  // Timers the last run booked to tidy up after itself must not reach this one.
+  if (indicatorRemovalHandle) removeStatusIndicator();
+  if (hideLoadingHandle) {
+    clearTimeout(hideLoadingHandle);
+    hideLoadingHandle = null;
+  }
   if (loadingSpinner && loadingText) {
     loadingSpinner.style.display = "block";
     loadingText.style.display = "block";
@@ -428,7 +445,8 @@ function hideLoading(): void {
   clearAllTimers();
 
   if (loadingSpinner && loadingText && loadingMore) {
-    setTimeout(() => {
+    hideLoadingHandle = setTimeout(() => {
+      hideLoadingHandle = null;
       loadingSpinner.style.display = "none";
       loadingText.style.display = "none";
       loadingMore.style.display = "none";
@@ -461,6 +479,26 @@ let handingOffToRest = false;
 // a second time.
 let wsGaveUp = false;
 let hasAutoScrolledToFirstAppeal = false;
+// Bumped by every doQuery: a socket from an older run, whose events can still
+// land after a retry has started, does nothing.
+let runGeneration = 0;
+// From the start of a run until done() gives its final answer. One at a time.
+let generationRunning = false;
+// The external-models opt-in is about to start a run of its own.
+let externalRequestInFlight = false;
+// Where the run gave up on its transport, and where the server said it failed.
+let runFailed = false;
+let serverReportedFailure = false;
+let indicatorRemovalHandle: ReturnType<typeof setTimeout> | null = null;
+let hideLoadingHandle: ReturnType<typeof setTimeout> | null = null;
+
+// The page's own words for a run that did not finish.
+const COULD_NOT_WRITE =
+  "We could not finish writing your appeal letters. You can have us try again.";
+const COULD_NOT_FINISH =
+  "We could not finish writing all of your appeal letters. The ones below are ready to use, and trying again keeps them.";
+const RETRY_LABEL = "Try writing the letters again";
+const RETRYING = "Writing your letters again...";
 
 // ---------------------------------------------------------------------------
 // Draft ordering. The server scores each saved draft on how well it addresses
@@ -925,10 +963,7 @@ function armHardTimeout(): void {
       wsGaveUp = true;
       closeActiveWebSocket();
       endCurrentAttempt();
-      fadeStatusMessage(
-        'This is taking longer than expected. Please try refreshing the page.',
-        '#dc3545',
-      );
+      runFailed = true;
       done();
     }
   }, WS_HARD_TIMEOUT_MS);
@@ -1105,6 +1140,19 @@ function done(): void {
       clearTimeout(hardTimeoutHandle);
       hardTimeoutHandle = null;
     }
+    generationRunning = false;
+    // A full set is a finished run whatever went wrong on the way to it. A
+    // retry is served the drafts already on the page again, so count those once.
+    const short = appealsSoFar.length < 3;
+    const failed =
+      appealsSoFar.length === 0 || (short && (runFailed || serverReportedFailure));
+    runFailed = false;
+    serverReportedFailure = false;
+    if (failed) {
+      showRetry();
+    } else {
+      updateStatusIndicator('done', appealsSoFar.length);
+    }
     hideLoading();
     // When internal-only generation underdelivered (0-2 appeals), the
     // template emits a hidden prompt offering to opt the denial into
@@ -1122,6 +1170,8 @@ const FEW_APPEALS_THRESHOLD = 2;
 // prompt if the post-opt-in rerun also underdelivers — the user has
 // already made the call, repeating it doesn't help.
 let externalModelsRequested = false;
+// A retry hides the prompt and the run's end shows it again: wire it once.
+let externalPromptWired = false;
 
 function maybeShowExternalModelsPrompt(): void {
   if (externalModelsRequested) {
@@ -1136,20 +1186,21 @@ function maybeShowExternalModelsPrompt(): void {
   if (appealsSoFar.length > FEW_APPEALS_THRESHOLD) {
     return;
   }
-  if (prompt.style.display === "block") {
+  prompt.style.display = "block";
+  if (externalPromptWired) {
     return;
   }
-  prompt.style.display = "block";
   const button = document.getElementById(
     "request-external-models-btn",
   ) as HTMLButtonElement | null;
   if (!button) return;
+  externalPromptWired = true;
   // Deliberately NOT { once: true }: a transient opt-in failure re-enables
   // the button (see the catch in requestExternalModels) and the user must be
   // able to click again. The button.disabled flag set at the start of the
-  // request guards against double-submit while one is in flight, and the
-  // `display === "block"` guard above keeps this listener from being attached
-  // more than once.
+  // request guards against double-submit while one is in flight, and
+  // externalPromptWired keeps this listener from being attached more than
+  // once.
   button.addEventListener("click", () => {
     void requestExternalModels(button, prompt);
   });
@@ -1166,12 +1217,16 @@ async function requestExternalModels(
       statusEl.style.color = color;
     }
   };
+  if (generationRunning || externalRequestInFlight) {
+    return;
+  }
   const url = (window as any).enableExternalModelsUrl as string | undefined;
   if (!url) {
     setStatus("Unable to enable external models right now.", "#dc3545");
     return;
   }
   const csrfToken = (my_data as any).csrfmiddlewaretoken || "";
+  externalRequestInFlight = true;
   button.disabled = true;
   setStatus("Enabling external models and re-running appeals...", "#333");
   try {
@@ -1191,45 +1246,107 @@ async function requestExternalModels(
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
     externalModelsRequested = true;
+    externalRequestInFlight = false;
     setStatus(
       "External models enabled. Generating additional appeals...",
       "var(--fhi-ok)",
     );
     prompt.style.display = "none";
-    // Reset retry/parser state so doQuery starts a fresh generation
-    // pass rather than treating this as a retry of the previous
-    // attempt. Deliberately do NOT clear appealsSoFar or
-    // #output-container: any already-shown internal-only drafts stay
-    // on screen for the user to read while external models stream
-    // additional drafts. processResponseChunk dedups against
-    // appealsSoFar so server-side re-yielded ProposedAppeals don't
-    // append twice, and the >=3 done() check counting old+new is
-    // intentional — we want a total of 3 drafts, not 3 *new* ones.
-    retries = 0;
-    respBuffer = "";
+    // Scroll to the first draft the external models add.
     hasAutoScrolledToFirstAppeal = false;
-    // A fresh generation, not a retry: the ranking's terminal state ends
-    // with the run it belonged to. Scores and an opened fold are kept, the
-    // "every pass is final now" latch is not, or the new drafts would land
-    // under a partial caption with live ordering suppressed (review).
-    finalApplied = false;
-    rankingPending = null;
-    rankingGeneration += 1;
-    // The wait for the next appeal starts now, not when the last pre-rerun
-    // appeal arrived — otherwise the "Current appeal" clock would include
-    // however long the user spent reading drafts before opting in. The
-    // total/first-appeal clocks deliberately keep their original anchor
-    // (see the startTime comment in showLoading).
-    lastAppealArrivedAtMs = Date.now();
-    doQuery(my_backend_url, my_data, my_rest_fallback_url);
+    startFreshGeneration();
   } catch (error) {
     console.error("Failed to enable external models:", error);
+    externalRequestInFlight = false;
     setStatus(
       "Could not enable external models. Please try again later.",
       "#dc3545",
     );
     button.disabled = false;
   }
+}
+
+// The one way a person starts a new run on this page: the retry button and the
+// external-models rerun both come through here, so two never run at once.
+function startFreshGeneration(): boolean {
+  if (generationRunning || externalRequestInFlight) {
+    return false;
+  }
+  const prompt = document.getElementById("external-models-prompt");
+  if (prompt) prompt.style.display = "none";
+  // The first wait's long explainer advises refreshing, which would lose edits.
+  if (loadingMore) loadingMore.style.display = "none";
+  // Reset retry/parser state so doQuery starts a fresh generation
+  // pass rather than treating this as a retry of the previous
+  // attempt. Deliberately do NOT clear appealsSoFar or
+  // #output-container: any drafts already on screen stay there for the
+  // user to read (and keep any edits) while the new run streams.
+  // processResponseChunk dedups against appealsSoFar so server-side
+  // re-yielded ProposedAppeals don't append twice, and the >=3 done() check
+  // counting old+new is intentional — we want a total of 3 drafts, not 3
+  // *new* ones.
+  retries = 0;
+  respBuffer = "";
+  // A fresh generation, not a retry: the ranking's terminal state ends
+  // with the run it belonged to. Scores and an opened fold are kept, the
+  // "every pass is final now" latch is not, or the new drafts would land
+  // under a partial caption with live ordering suppressed (review).
+  finalApplied = false;
+  rankingPending = null;
+  rankingGeneration += 1;
+  // The wait for the next appeal starts now, not when the last pre-rerun
+  // appeal arrived — otherwise the "Current appeal" clock would include
+  // however long the user spent reading drafts before starting again. The
+  // total/first-appeal clocks deliberately keep their original anchor
+  // (see the startTime comment in showLoading).
+  lastAppealArrivedAtMs = Date.now();
+  doQuery(my_backend_url, my_data, my_rest_fallback_url);
+  return true;
+}
+
+// Exists before any failure: a live region only reads out words that change in it.
+function retryPanel(): HTMLElement | null {
+  const existing = document.getElementById("appeal-retry-panel");
+  if (existing) return existing;
+  const container = outputContainer[0] as HTMLElement | undefined;
+  if (!container || !container.parentNode) return null;
+  const panel = document.createElement("div");
+  panel.id = "appeal-retry-panel";
+  panel.setAttribute("role", "status");
+  panel.setAttribute("aria-live", "polite");
+  container.parentNode.insertBefore(panel, container);
+  return panel;
+}
+
+function clearRetry(): void {
+  const panel = retryPanel();
+  if (panel) {
+    panel.className = "";
+    panel.textContent = "";
+  }
+}
+
+function showRetry(): void {
+  // The floating progress panel would sit over the drafts this run kept.
+  removeStatusIndicator();
+  const panel = retryPanel();
+  if (!panel) return;
+  panel.className = "fhi-notice fhi-notice-warning fhi-stack";
+  panel.textContent = "";
+  const message = document.createElement("p");
+  message.textContent = appealsSoFar.length > 0 ? COULD_NOT_FINISH : COULD_NOT_WRITE;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.id = "appeal-retry";
+  button.className = "fhi-button fhi-button-primary";
+  button.textContent = RETRY_LABEL;
+  button.addEventListener("click", () => {
+    if (!startFreshGeneration()) return;
+    const statusMessage = document.getElementById("status-message");
+    if (statusMessage) statusMessage.textContent = RETRYING;
+  });
+  panel.appendChild(message);
+  panel.appendChild(button);
 }
 
 // Turn a thrown fetch failure into something a log reader can act on.
@@ -1387,14 +1504,10 @@ async function fetchFallback(url: string, data: object, csrfToken: string): Prom
       }
     }
     restStage = 'complete';
-    updateStatusIndicator('done', appealsSoFar.length);
   } catch (error) {
     console.error("REST fallback error:", error);
     lastRestErrorMessage = describeFetchError(error);
-    if (statusMessage) {
-      statusMessage.textContent = 'Connection failed. Please try refreshing the page.';
-      statusMessage.style.color = '#dc3545';
-    }
+    runFailed = true;
   } finally {
     if (restIdleHandle) {
       clearTimeout(restIdleHandle);
@@ -1509,6 +1622,7 @@ function processResponseChunk(chunk: string): void {
           } else {
             lastWsErrorMessage = msg;
           }
+          serverReportedFailure = true;
           return;
         }
 
@@ -1691,6 +1805,9 @@ function connectWebSocket(
   processResponseChunk: (chunk: string) => void,
   done: () => void,
 ) {
+  const generation = runGeneration;
+  // False once a newer run has started or this one has given its answer.
+  const current = () => generation === runGeneration && generationRunning;
   const startWebSocket = () => {
     // A REST handoff may have been triggered between when this (re)connect
     // was queued (e.g. ws.onerror's 1s retry firing right as the hard cap
@@ -1748,10 +1865,12 @@ function connectWebSocket(
       console.log(
         `Retrying WebSocket connection (${retries}/${maxRetries})...`,
       );
-      setTimeout(
-        () => connectWebSocket(websocketUrl, data, processResponseChunk, done),
-        1000,
-      );
+      setTimeout(() => {
+        // Checked against the run that booked it, not whichever run is live.
+        if (current()) {
+          connectWebSocket(websocketUrl, data, processResponseChunk, done);
+        }
+      }, 1000);
     };
 
     // Defined inside startWebSocket so it can close `ws` and mark
@@ -1786,6 +1905,7 @@ function connectWebSocket(
           scheduleReconnect();
         } else {
           console.error("Max retries reached. Closing connection.");
+          runFailed = true;
           done();
         }
       }, WS_INACTIVITY_TIMEOUT_MS);
@@ -1811,7 +1931,7 @@ function connectWebSocket(
     ws.onmessage = (event) => {
       // Ignore late frames once we've handed off to REST so we don't
       // re-arm the inactivity timer or append after the switch.
-      if (handingOffToRest) return;
+      if (handingOffToRest || !current()) return;
       resetTimeout();
       const chunk = event.data;
       // Wire stats for the error report. Counted here rather than in
@@ -1830,6 +1950,7 @@ function connectWebSocket(
 
     // Handle connection closure
     ws.onclose = (event) => {
+      if (!current()) return;
       console.log("WebSocket connection closed:", event.code, event.reason);
       lastWsCloseCode = event.code;
       lastWsCloseReason = event.reason || '';
@@ -1846,9 +1967,9 @@ function connectWebSocket(
       if (handingOffToRest || retryScheduled || wsGaveUp) {
         return;
       }
-      // Normal close path: record the attempt duration before done().
+      // Normal close path: record the attempt duration before done(), which
+      // decides whether this was the end and what the page says about it.
       endCurrentAttempt();
-      updateStatusIndicator('done', appealsSoFar.length);
       done();
     };
 
@@ -1857,7 +1978,7 @@ function connectWebSocket(
       // A reconnect/fallback was already scheduled for this socket (e.g. by
       // the inactivity timeout or hard cap closing it), or the hard timeout
       // already gave up and reported; don't double-handle.
-      if (retryScheduled || handingOffToRest || wsGaveUp) return;
+      if (retryScheduled || handingOffToRest || wsGaveUp || !current()) return;
       console.error("WebSocket error:", error);
       lastWsErrorMessage = (error as any)?.message || (error as any)?.type || 'unknown';
       updateStatusIndicator('error', appealsSoFar.length);
@@ -1873,10 +1994,7 @@ function connectWebSocket(
         if (!escalateToRest('websocket errored, retries exhausted')) {
           wsEndReason = 'retries-exhausted';
           console.error("Max retries reached. Closing connection.");
-          fadeStatusMessage(
-            'Our AI took too many coffee breaks. Try refreshing the page.',
-            '#dc3545',
-          );
+          runFailed = true;
           done();
         }
       }
@@ -1886,6 +2004,9 @@ function connectWebSocket(
 }
 
 export function doQuery(backend_url: string, data: AppealQueryData, rest_fallback_url?: string): void {
+  runGeneration += 1;
+  generationRunning = true;
+  clearRetry();
   showLoading();
   my_backend_url = backend_url;
   my_data = data;

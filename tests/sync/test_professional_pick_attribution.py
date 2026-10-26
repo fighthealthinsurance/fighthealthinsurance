@@ -32,8 +32,9 @@ User = get_user_model()
 class ProfessionalPickAttributionTest(APITestCase):
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
-    def setUp(self):
-        self.domain = UserDomain.objects.create(
+    @classmethod
+    def setUpTestData(cls):
+        cls.domain = UserDomain.objects.create(
             name="testdomain",
             visible_phone_number="1234567890",
             internal_phone_number="0987654321",
@@ -46,15 +47,15 @@ class ProfessionalPickAttributionTest(APITestCase):
             address1="123 Test St",
             zipcode="12345",
         )
-        self.pro_user = User.objects.create_user(
-            username=f"prouser🐼{self.domain.id}",
+        cls.pro_user = User.objects.create_user(
+            username=f"prouser🐼{cls.domain.id}",
             password="testpass",
             email="pro@example.com",
         )
-        self.professional = ProfessionalUser.objects.create(
-            user=self.pro_user, active=True, npi_number="1234567890"
+        cls.professional = ProfessionalUser.objects.create(
+            user=cls.pro_user, active=True, npi_number="1234567890"
         )
-        ExtraUserProperties.objects.create(user=self.pro_user, email_verified=True)
+        ExtraUserProperties.objects.create(user=cls.pro_user, email_verified=True)
         patient_user = User.objects.create_user(
             username="patientuser",
             password="patientpass",
@@ -62,35 +63,37 @@ class ProfessionalPickAttributionTest(APITestCase):
             first_name="Test",
             last_name="Patient",
         )
-        self.patient = PatientUser.objects.create(user=patient_user)
-        self.denial = Denial.objects.create(
+        cls.patient = PatientUser.objects.create(user=patient_user)
+        cls.denial = Denial.objects.create(
             denial_text="Test denial text about arthritis and physical therapy",
-            primary_professional=self.professional,
-            creating_professional=self.professional,
-            patient_user=self.patient,
+            primary_professional=cls.professional,
+            creating_professional=cls.professional,
+            patient_user=cls.patient,
             hashed_email=Denial.get_hashed_email(patient_user.email),
             insurance_company="Test Insurance Co",
             procedure="physical therapy",
             diagnosis="rheumatoid arthritis",
-            domain=self.domain,
+            domain=cls.domain,
         )
-        self.client.login(username=self.pro_user.username, password="testpass")
-        session = self.client.session
-        session["domain_id"] = str(self.domain.id)
-        session.save()
         # Drafts the streaming path stored for this denial, from two models.
-        self.draft = ProposedAppeal.objects.create(
-            for_denial=self.denial,
+        cls.draft = ProposedAppeal.objects.create(
+            for_denial=cls.denial,
             appeal_text="Draft letter from model x",
             chosen=False,
             model_name="model-x",
         )
         ProposedAppeal.objects.create(
-            for_denial=self.denial,
+            for_denial=cls.denial,
             appeal_text="Draft letter from model y",
             chosen=False,
             model_name="model-y",
         )
+
+    def setUp(self):
+        self.client.login(username=self.pro_user.username, password="testpass")
+        session = self.client.session
+        session["domain_id"] = str(self.domain.id)
+        session.save()
 
     def _assemble(self, text, **extra):
         payload = {

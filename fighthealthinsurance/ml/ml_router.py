@@ -368,10 +368,10 @@ class MLRouter(object):
           These two are ``can_be_asked``, the test _checked_infer makes.
         * the last cached ``health_status`` sweep — consulted only for models
           that lack a live signal (``health_checked_live`` is False, e.g.
-          DeepInfra and the INTERNAL vLLM backends, which the sweep probes over
-          the network). Models the last sweep marked unhealthy are skipped;
-          ones it hasn't checked yet fail open, so we assume a backend is
-          available until a real check says otherwise.
+          DeepInfra, Anthropic and the INTERNAL vLLM backends, which the sweep
+          probes over the network). Models the last sweep marked unhealthy
+          are skipped; ones it hasn't checked yet fail open, so we assume a
+          backend is available until a real check says otherwise.
 
         Applies to internal backends as much as external ones: an internal
         vLLM the sweep already marked down used to be fanned out to anyway,

@@ -18,6 +18,9 @@ nothing here runs in the app.
    | `partd.csv` | "Medicare Part D Spending by Drug" CSV from [data.cms.gov](https://data.cms.gov/summary-statistics-on-use-and-payments/medicare-medicaid-spending-by-drug/medicare-part-d-spending-by-drug) |
    | `sahie_2023.csv`, `sahie_2024.csv` | `https://www2.census.gov/programs-surveys/sahie/datasets/time-series/estimates-acs/sahie-<YEAR>-csv.zip` (the Census API now needs a key; the zips don't) |
    | `places_county.csv` | `https://data.cdc.gov/api/v3/views/i46a-9kgh/export.csv` (the old `rows.csv?accessType=DOWNLOAD` link was retired in October 2026) |
+   | `effectuated_monthly.csv` | The CSV on [data.cms.gov's Health Insurance Exchanges Monthly Effectuated Enrollment page](https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/health-insurance-marketplace/health-insurance-exchanges-monthly-effectuated-enrollment), renamed (the current build used `Health Insurance Exchanges Monthly Effectuated Enrollment Data_asof_20260505.csv`) |
+   | `<YEAR>-oep-state-level-public-use-file.zip` (optional) | The `file` link in each row of `marketplace_signups.csv`, not renamed; when it's here the build checks it against that row's sha256 |
+   | None (`open_enrollment_history.csv` is checked in) | Each row's `source_url`: CMS's OEP state-level public use file zips for 2017 to 2026 (all listed on [CMS's marketplace products page](https://www.cms.gov/data-research/statistics-trends-and-reports/marketplace-products)) and HHS ASPE's enrollment reports for 2014 to 2016. The build doesn't read them; reopen one to check a row |
 
 2. Build:
 
@@ -47,6 +50,59 @@ nothing here runs in the app.
   doesn't look drugs up, so after a refresh check any newly shown drug against
   CMS's selected-drug lists. Update the file when CMS publishes the 2028 prices
   (due by November 30, 2026) and picks the next drugs (by February 1, 2027).
+- Marketplace coverage is the February count of people whose marketplace plan
+  was in effect, nationally (`State` Total, `Platform` All), every year from
+  one CMS file. CMS's earlier reports counted the same month sooner and give
+  higher numbers (its early 2025 report had 23.4 million for February 2025,
+  the final file 21.8 million), so never mix in a figure from another report.
+- data.cms.gov keeps only its latest effectuated file, so `EFFECTUATED_SHA256`
+  records the one the page was written from and the build stops on any other.
+  For a new file, update `EFFECTUATED_FILE`, `EFFECTUATED_AS_OF` and the
+  sha256, then reread the marketplace copy: its heading says how the latest
+  year compares with every other.
+- CMS updates a year's months until that year's December is in, so the year
+  without a December is marked not final (the page says preliminary). The
+  build stops if any earlier year has no December, if a year is missing, or if
+  the state rows don't add up to the national total.
+- Only the national total is charted: the HealthCare.gov and state-run splits
+  move when a state switches platform (Georgia and Illinois have since moved
+  to their own marketplaces).
+- CMS's methodology says Minnesota's latest data leave out a subgroup of
+  enrollments after a reporting change, so each February row keeps
+  Minnesota's count (`mn`) and the copy gives the drop without it too.
+- CMS revised its 2021 counts for a new method (its Early 2022 effectuated
+  enrollment report, footnote 1). No source says whether the file's 2016 to
+  2020 counts were redone the same way.
+- `marketplace_signups.csv` holds plans picked in each open enrollment (`Cnsmr`
+  in the Total/All row of that year's OEP State-Level Public Use File,
+  HealthCare.gov and state-run marketplaces together), with the CMS page, the
+  zip, its sha256 and the date it was read; the build stops on a row missing
+  any of them. The page compares each year's February coverage with it, so
+  the build also stops on a count that isn't above 0, two rows for one year,
+  a file with no rows, a year with no February count, or a missing row for
+  either of the last two Februaries.
+- `open_enrollment_history.csv` holds plans picked in every open enrollment
+  from 2014, with the HealthCare.gov and state-run parts, for the open
+  enrollment page's long line. 2017 on is the Total/All row of each year's CMS
+  OEP State-Level Public Use File. CMS has no all-marketplace file before
+  2017, so 2014 to 2016 come from HHS ASPE's enrollment reports, whose tables
+  cite CMS; `publisher` says which (`CMS` or `HHS ASPE, from CMS data`). The
+  build puts it under the marketplace entry as `history` and stops on a gap
+  in the years from 2014, a count that isn't above 0, a total that isn't
+  HealthCare.gov plus state-run, another publisher, a `source_url` that isn't
+  https on www.cms.gov or aspe.hhs.gov, a missing `source_file`, or a year
+  whose count differs from `marketplace_signups.csv`. The windows and CMS's
+  definition of a plan pick changed over the years (2018 and 2022), which the
+  page's note and Sources and method say, so reread them when a year is
+  added. The HealthCare.gov and state-run parts shift when a state changes
+  platform, so only the total is charted.
+- `file_sha256` is a record of the zip the count was read from, taken when it
+  was downloaded. The zips stay out of git: put them in the raw directory
+  under their own names (`2026-oep-state-level-public-use-file.zip`) and the
+  build checks each against its sha256 and stops on a mismatch. A zip that
+  isn't there is reported as not checked.
+- KFF's figures are quoted and linked, never redrawn: its content is
+  CC BY-NC-ND 4.0, and it asks for links to its pages, not its PDFs.
 - The open-enrollment box's dates and plan year come from `views.py`
   (`DENIAL_WATCH_MEDICARE_ENROLLMENT`, `DENIAL_WATCH_ENROLLMENT_BOX_ENDS`); the
   box hides itself after the season. Each fall, also recheck its Sources line,
@@ -60,6 +116,26 @@ nothing here runs in the app.
   data dictionary defines as in-network only ("Does not include out-of-network
   claims"). So the trend's in-network line runs from 2020, and its
   out-of-network and all-claims lines start with 2022 claims.
+- `earlier` holds each state the latest map leaves grey that an older file
+  still includes, from the last year it's in, by the map's rules: the
+  in-network rate and insurer count from `state_rates`, and the lowest to
+  highest rate among insurers the table would list. Only a grey state's
+  readout shows it, never the map, the national figures or the ranges. The
+  page's state-map note names those states and years, so reread it when the
+  set changes.
+- `state_reports.csv` holds grey states whose own insurers' reports on CMS's
+  Transparency in Coverage form give an in-network rate for the map's year
+  (California from Covered California's postings, Pennsylvania from its
+  Insurance Department's report), one checked row per state with the source,
+  the date it was read and a note on what was summed or left out. The build
+  puts them under `state_reports` and stops on a state the map or `earlier`
+  already covers, another claims year, more denials than claims, or a row
+  missing its publisher, https source or date. Only the every-state chart and
+  the grey state's readout show them. The readout lines for California and
+  Pennsylvania in `denial_watch.js` are hand-written, and a test ties their
+  numbers and links to the bundle, so reread them when a row changes. These
+  can count plans sold outside the marketplace, which CMS's figures don't, so
+  they never colour the map or join the national figures or ranges.
 - An insurer that reports more out-of-network denials than claims gets no
   out-of-network or all-claims figure, and is left out of those totals
   nationally and for its state; its state gets no all-claims figure.

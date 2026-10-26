@@ -606,7 +606,8 @@ class TheLetterTheServerReadIsInTheBoxTest(TestCase):
         )
         with patch.object(views.OCRView, "_ocr", return_value="Your MRI was denied."):
             response = self.client.post(
-                reverse("server_side_ocr"), {"uploader": upload}
+                reverse("server_side_ocr"),
+                {"uploader": upload, **{n: "on" for n in consent.SERVER_OCR_BOXES}},
             )
         self.assertEqual(response.status_code, 200)
         soup = BeautifulSoup(response.content.decode(), "html.parser")

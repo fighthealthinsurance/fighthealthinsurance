@@ -1,5 +1,7 @@
-"""Dist bundles are linked with a content version, so a CDN can't serve an old one."""
+"""Dist bundles and hand-written scripts are linked with a content version, so
+a CDN or browser can't serve an old one beside a new page."""
 
+import hashlib
 import os
 import re
 import tempfile
@@ -63,6 +65,40 @@ class BundleTagTest(SimpleTestCase):
             self.assertEqual(
                 self.render("nothing_here"), "/static/js/dist/nothing_here.bundle.js"
             )
+
+
+class VersionedTagTest(SimpleTestCase):
+    def setUp(self):
+        bundles._cached_version.cache_clear()
+        self.addCleanup(bundles._cached_version.cache_clear)
+
+    def test_a_script_url_carries_the_contents_hash(self):
+        url = Template("{% load bundles %}{% versioned 'js/denial_watch.js' %}").render(
+            Context()
+        )
+        digest = hashlib.sha256(
+            (REPO / "fighthealthinsurance/static/js/denial_watch.js").read_bytes()
+        ).hexdigest()[:12]
+        self.assertEqual(url, f"/static/js/denial_watch.js?v={digest}")
+
+    def test_a_missing_file_falls_back_to_the_plain_url(self):
+        url = Template("{% load bundles %}{% versioned 'js/not_here.js' %}").render(
+            Context()
+        )
+        self.assertEqual(url, "/static/js/not_here.js")
+
+
+def test_every_template_links_hand_written_scripts_through_the_tag():
+    # Inside {% compress %} a script is folded into a file named by its contents already.
+    compressed = re.compile(r"\{%\s*compress\b.*?\{%\s*endcompress\s*%\}", re.S)
+    plain = re.compile(r"static ['\"]js/(?!dist/)[^'\"]+\.js['\"]")
+    offenders = [
+        str(p.relative_to(REPO))
+        for folder in ("fighthealthinsurance", "fhi_users", "charts")
+        for p in (REPO / folder / "templates").rglob("*.html")
+        if plain.search(compressed.sub("", p.read_text()))
+    ]
+    assert offenders == []
 
 
 def test_every_template_links_dist_bundles_through_the_tag():

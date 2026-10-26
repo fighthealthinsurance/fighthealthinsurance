@@ -1,0 +1,29 @@
+{% load consent %}
+{% comment %} The upload form for /server_side_ocr. Its boxes are the intake
+   page's own, in the same words (consent.SERVER_OCR_BOXES), and the server
+   reads no upload until they are ticked. {% endcomment %}
+<form class="fhi-stack" method="post" action="{% url 'server_side_ocr' %}" enctype="multipart/form-data">
+    {% csrf_token %}
+    <h2>Transfered to our server for Optical Character Recognition (OCR) (may be temporarily stored)</h2>
+    <label for="uploader">Scan & OCR your health insurance denial (select all pages)</label>
+    <input id="uploader" type="file" name="uploader" multiple>
+    <fieldset class="fhi-fieldset fhi-stack" aria-describedby="agreements_hint">
+	<legend><h2>Policies</h2></legend>
+	<p class="fhi-hint" id="agreements_hint">Tick all three boxes to send your file. You can take your personal details out of the text on the next page.</p>
+	<div class="fhi-check-row">
+	<input type="checkbox" id="privacy" name="privacy" class="fhi-check" required{% if form.privacy.value %} checked{% endif %}{% if form.privacy.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
+	<label for="privacy">{% consent_label "privacy" %}</label>
+	</div>
+	<div class="fhi-check-row">
+	<input type="checkbox" id="tos" name="tos" class="fhi-check" required{% if form.tos.value %} checked{% endif %}{% if form.tos.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
+	<label for="tos">{% consent_label "tos" %}</label>
+	</div>
+	<div class="fhi-check-row">
+	<input type="checkbox" id="personalonly" name="personalonly" class="fhi-check" required{% if form.personalonly.value %} checked{% endif %}{% if form.personalonly.errors %} aria-invalid="true" aria-describedby="agree_chk_error"{% endif %}>
+	<label for="personalonly">{% consent_label "personalonly" %}</label>
+	</div>
+	{% firstof form.privacy.errors form.tos.errors form.personalonly.errors as agreements_refused %}
+	{% include "partials/field_error.html" with id="agree_chk_error" message="Please tick each box above to go on." errors=agreements_refused %}
+    </fieldset>
+    <button type="submit" id="submit" class="fhi-button fhi-button-primary">Submit</button>
+</form>

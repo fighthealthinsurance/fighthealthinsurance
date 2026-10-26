@@ -60,29 +60,27 @@
             </div>
         </div>
 
-        <!-- State Grid -->
-        <div class="state-grid fhi-stack">
+        <!-- Every state in one run down the columns, each letter a marker where its states start -->
+        <div class="state-grid fhi-index">
             {% regroup states by name.0 as letter_groups %}
             {% for letter_group in letter_groups %}
             <div id="letter-{{ letter_group.grouper }}" class="letter-section">
-                <h3 class="letter-header">{{ letter_group.grouper }}</h3>
-                <div class="fhi-cards fhi-cards-tiles">
-                    {% for state in letter_group.list %}
-                    <a href="{% url 'state_help' state.slug %}" class="state-card">
-                        <div class="fhi-card">
-                            <div class="fhi-media">
-                                <span class="state-abbrev">{{ state.abbreviation }}</span>
-                                <div>
-                                    <h4>{{ state.name }}</h4>
-                                    {% if state.medicaid.managed_care_ombudsman %}
-                                    <small class="fhi-text-success">Medicaid help line listed</small>
-                                    {% endif %}
-                                </div>
+                <h3 class="fhi-index-letter">{{ letter_group.grouper }}</h3>
+                {% for state in letter_group.list %}
+                <a href="{% url 'state_help' state.slug %}" class="state-card fhi-index-entry">
+                    <div class="fhi-card">
+                        <div class="fhi-media">
+                            <span class="state-abbrev">{{ state.abbreviation }}</span>
+                            <div>
+                                <h4>{{ state.name }}</h4>
+                                {% if state.medicaid.managed_care_ombudsman %}
+                                <small class="fhi-text-success">Medicaid help line listed</small>
+                                {% endif %}
                             </div>
                         </div>
-                    </a>
-                    {% endfor %}
-                </div>
+                    </div>
+                </a>
+                {% endfor %}
             </div>
             {% endfor %}
         </div>
@@ -203,15 +201,7 @@
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
 
-    .letter-header {
-        border-bottom: 2px solid var(--fhi-ok);
-        padding-bottom: 0.5rem;
-        margin-bottom: 1rem;
-        color: var(--fhi-ok);
-    }
-
     .state-card {
-        display: block;
         text-decoration: none;
         color: inherit;
     }

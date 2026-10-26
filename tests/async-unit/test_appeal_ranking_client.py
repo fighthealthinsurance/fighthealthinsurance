@@ -137,14 +137,17 @@ def test_two_scorers_restore_arrival_order_and_say_so_at_the_end():
 
 
 def test_a_fresh_generation_drops_the_final_latch_but_keeps_scores_and_the_open_fold():
-    # The "external models enabled" handler is the one place a NEW generation
-    # starts on the same page (everything else is an automatic retry).
-    start = SRC.index("External models enabled. Generating additional appeals")
-    handler = SRC[start : SRC.index("doQuery(my_backend_url, my_data, my_rest_fallback_url);", start)]
-    assert "retries = 0;" in handler
-    assert "finalApplied = false;" in handler and "rankingPending = null;" in handler
-    assert "rankingGeneration += 1;" in handler
-    assert "draftScores = new Map" not in handler and "showAllDrafts = false" not in handler
+    # startFreshGeneration is the one place a NEW generation starts on the
+    # same page: the external-models opt-in and the retry button both call
+    # it, and everything else is an automatic retry.
+    fresh = _fn("startFreshGeneration")
+    assert "retries = 0;" in fresh
+    assert "finalApplied = false;" in fresh and "rankingPending = null;" in fresh
+    assert "rankingGeneration += 1;" in fresh
+    assert "draftScores = new Map" not in fresh and "showAllDrafts = false" not in fresh
+    external = SRC[SRC.index("External models enabled. Generating additional appeals") :]
+    assert external.index("startFreshGeneration();") < external.index("} catch (error) {")
+    assert "if (!startFreshGeneration()) return;" in _fn("showRetry")
 
 
 def test_caption_makes_no_promise_about_the_outcome():

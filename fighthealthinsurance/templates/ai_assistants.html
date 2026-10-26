@@ -14,7 +14,14 @@
   .ai-steps figure,
   .ai-figure { margin: var(--fhi-space-3) 0 0; }
   .ai-steps img,
-  .ai-figure img { max-width: min(100%, 40rem); height: auto; border: 1px solid #d0d0d0; border-radius: var(--fhi-radius); }
+  .ai-figure img { max-width: min(100%, var(--ai-shot-column)); height: auto; border: 1px solid #d0d0d0; border-radius: var(--fhi-radius); }
+  /* A list of set-up steps with screenshots is one column: each step's
+     words wrap at the width of its screenshot, which fills the step. The
+     words used to run the full 1108px with the picture stopping at 640px
+     under them. A screenshot on its own takes the same width. */
+  :root { --ai-shot-column: 42rem; }
+  .ai-steps:has(figure) { max-width: var(--ai-shot-column); }
+  .ai-steps:has(figure) img { max-width: 100%; }
   .ai-steps figcaption,
   .ai-figure figcaption { font-size: var(--fhi-text-small); color: var(--fhi-muted); }
   /* The address and the commands are single runs no browser breaks on its
@@ -26,6 +33,12 @@
   .ai-checks > li + li { margin-top: var(--fhi-space-2); }
   .ai-checks > li::before { content: "\2713"; position: absolute; left: 0; color: var(--fhi-green-ink); font-weight: 700; }
   .ai-figure-row { display: grid; gap: var(--fhi-space-4); grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); align-items: start; }
+  /* Seven cards, with Start an appeal, ran three, three and one on a
+     desktop; four to a row makes it four and three. Six stay three and
+     three. */
+  @media (min-width: 1200px) {
+    #what-it-does .fhi-cards:has(> :nth-child(7):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
 </style>
 {% endblock extra_style %}
 

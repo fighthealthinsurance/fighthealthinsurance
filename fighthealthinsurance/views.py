@@ -3,6 +3,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import os
 import random
 import re
@@ -10,7 +11,7 @@ import functools
 import secrets
 import time
 import typing
-from datetime import date, timedelta
+from datetime import date, datetime, time as dt_time, timedelta
 from typing import TypedDict
 from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
@@ -30,12 +31,15 @@ from django.http import (
     JsonResponse,
 )
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.response import SimpleTemplateResponse
 from django.template import loader
 from django.urls import reverse
 from django.utils.decorators import classonlymethod, method_decorator
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.views import View, generic
+from django.utils.cache import get_max_age, patch_cache_control
+from django.utils.http import http_date
 from django.views.decorators.cache import cache_control, cache_page
 from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
@@ -192,13 +196,16 @@ BINGO_PHRASES = [
 ]
 
 
-def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
-    """Render an error page for OCR processing failures."""
+def render_ocr_error(
+    request: HttpRequest, text: str, form: forms.Form
+) -> HttpResponseBase:
+    """Render an error page for OCR processing failures, its boxes as sent."""
     return render(
         request,
         "server_side_ocr_error.html",
         context={
             "error": text,
+            "form": form,
         },
     )
 
@@ -483,6 +490,18 @@ class PublicCachedPageMixin:
         return super().render_to_response(context, **response_kwargs)  # type: ignore[misc]
 
 
+def page_day() -> tuple[date, float]:
+    """Today for dated page copy, and when it ends, as a Unix timestamp.
+
+    Honolulu, the last US time zone, like Denial Watch's own dates.
+    """
+    now = timezone.localtime(timezone=DENIAL_WATCH_LAST_TIME_ZONE)
+    midnight = datetime.combine(
+        now.date() + timedelta(days=1), dt_time.min, tzinfo=now.tzinfo
+    )
+    return now.date(), midnight.timestamp()
+
+
 class StaticIshView(PublicCachedPageMixin, generic.TemplateView):
     """Base class for marketing/content pages cached as whole responses.
 
@@ -497,6 +516,10 @@ class StaticIshView(PublicCachedPageMixin, generic.TemplateView):
     ``cache_timeout_seconds`` for pages that can tolerate longer staleness).
     The cache wrapping lives here, in ``as_view``, so ``urls.py`` stays free of
     per-route decorator stacks.
+
+    Every page shows dated copy (base.html's menu links the open enrollment
+    page only in season), so a cached copy never outlives its day: the day
+    is in the cache key, and max-age stops at the next midnight.
     """
 
     cache_timeout_seconds = STATIC_ISH_PAGE_CACHE_SECONDS
@@ -506,7 +529,42 @@ class StaticIshView(PublicCachedPageMixin, generic.TemplateView):
         cls, **initkwargs: typing.Any
     ) -> typing.Callable[..., HttpResponseBase]:
         view = super().as_view(**initkwargs)
-        return cache_control(public=True)(cache_page(cls.cache_timeout_seconds)(view))
+        timeout = cls.cache_timeout_seconds
+
+        @functools.lru_cache(maxsize=2)
+        def cached_for(day: date) -> typing.Callable[..., HttpResponseBase]:
+            return cache_control(public=True)(
+                cache_page(timeout, key_prefix=f"day-{day.isoformat()}")(view)
+            )
+
+        @functools.wraps(view)
+        def dated_view(
+            request: HttpRequest, *args: typing.Any, **kwargs: typing.Any
+        ) -> HttpResponseBase:
+            day, midnight = page_day()
+            response = cached_for(day)(request, *args, **kwargs)
+
+            def stop_at_midnight(response: HttpResponseBase) -> None:
+                # Measured when the headers go out, in case the render crossed midnight.
+                seconds_left = max(0, math.ceil(midnight - time.time()))
+                max_age = get_max_age(response)
+                # A copy from the cache carries Age, which downstream caches subtract.
+                age = int(response.get("Age") or 0)
+                if max_age is not None and max_age - age > seconds_left:
+                    patch_cache_control(response, max_age=age + seconds_left)
+                    response["Expires"] = http_date(time.time() + seconds_left)
+
+            # A fresh page gets its cache headers only once it renders.
+            if (
+                isinstance(response, SimpleTemplateResponse)
+                and not response.is_rendered
+            ):
+                response.add_post_render_callback(stop_at_midnight)
+            else:
+                stop_at_midnight(response)
+            return response
+
+        return dated_view
 
 
 class PatientAccessView(StaticIshView):
@@ -639,20 +697,83 @@ def _denial_watch_data() -> dict:
 
 
 @functools.lru_cache(maxsize=1)
+def denial_watch_every_state() -> dict[str, typing.Any]:
+    """The every-state chart: each state with an in-network denial rate.
+
+    The map's HealthCare.gov states ("cms") run highest first; grey states' own
+    insurer reports ("state") and CMS's last year for states that left
+    ("earlier") follow in a list of their own, on the same scale, so they
+    aren't ranked against the map's year. Those two show only here and in a
+    grey state's readout.
+    """
+    from fighthealthinsurance.state_help import get_state_help_by_abbreviation
+
+    data = _denial_watch_data()
+    year = data["trend"][-1]["year"]
+    rows: list[dict[str, typing.Any]] = [
+        {"code": s, "rate": v["rate"], "year": year, "group": "cms", "source": "CMS"}
+        for s, v in data["states"].items()
+    ]
+    rows += [
+        {
+            "code": s,
+            "rate": v["rate"],
+            "year": v["year"],
+            "group": "state",
+            "source": v["publisher"],
+        }
+        for s, v in data.get("state_reports", {}).items()
+    ]
+    rows += [
+        {
+            "code": s,
+            "rate": v["rate"],
+            "year": v["year"],
+            "group": "earlier",
+            "source": "CMS",
+        }
+        for s, v in data.get("earlier", {}).items()
+    ]
+    top = max(r["rate"] for r in rows)
+    for r in rows:
+        state = get_state_help_by_abbreviation(r["code"])
+        r["name"] = state.name if state else r["code"]
+        r["pct"] = f"{r['rate'] * 100:.1f}%"
+        r["width"] = f"{r['rate'] / top * 100:.1f}"
+    # The other five go by kind of record, then name: by rate would rank them again.
+    return {
+        "rows": sorted(
+            (r for r in rows if r["group"] == "cms"),
+            key=lambda r: (-r["rate"], r["name"]),
+        ),
+        "others": sorted(
+            (r for r in rows if r["group"] != "cms"),
+            key=lambda r: (r["group"] != "state", r["name"]),
+        ),
+        "year": year,
+    }
+
+
+@functools.lru_cache(maxsize=1)
 def denial_watch_teaser() -> dict[str, typing.Any]:
     """The home page's numbers: the latest year's in-network denial rate on
-    HealthCare.gov plans, as "1 in N", and its average denials a day."""
-    latest = _denial_watch_data()["trend"][-1]
+    HealthCare.gov plans, as "1 in N", its average denials a day, and the
+    latest open enrollment's marketplace plan picks."""
+    data = _denial_watch_data()
+    latest = data["trend"][-1]
     per_day = round(latest["in_denied"] / latest["days"])
+    picks = max(data["marketplace"]["picks"], key=lambda p: p["y"])
     return {
         "one_in": round(1 / latest["in_rate"]),
         "year": latest["year"],
         "per_day": per_day,
         "per_day_text": f"{per_day:,}",
+        "picks_year": picks["y"],
+        "picks_text": f"{picks['n'] / 1e6:.1f}M",
     }
 
 
-# Checked 2026-10-18. HealthCare.gov's 2027 dates are in court, so the box ends on its latest posted day.
+# Checked 2026-10-22. CMS set HealthCare.gov's 2027 dates, but the court ruling behind them is under appeal, so the pages link out and the season ends on the last posted day.
 DENIAL_WATCH_MEDICARE_ENROLLMENT = (date(2026, 10, 15), date(2026, 12, 7))
 DENIAL_WATCH_ENROLLMENT_BOX_ENDS = date(2027, 1, 15)
 # Hawaii's date, so the box doesn't change hours early for the rest of the country.
@@ -664,7 +785,8 @@ DENIAL_WATCH_HERO_UNTIL = date(2026, 11, 2)
 
 
 def denial_watch_enrollment(today: date) -> dict[str, typing.Any] | None:
-    """The open-enrollment box Denial Watch shows on `today`, or None out of season."""
+    """The open enrollment season on `today`, for Denial Watch's card and the
+    open enrollment page, or None out of season."""
     starts, medicare_ends = DENIAL_WATCH_MEDICARE_ENROLLMENT
     if not starts <= today <= DENIAL_WATCH_ENROLLMENT_BOX_ENDS:
         return None
@@ -674,6 +796,13 @@ def denial_watch_enrollment(today: date) -> dict[str, typing.Any] | None:
         "ends": medicare_ends,
         "plan_year": starts.year + 1,
     }
+
+
+def open_enrollment_heading(enrollment: dict[str, typing.Any] | None) -> str:
+    """The open enrollment page's title, which the home page's card shares."""
+    if enrollment:
+        return f"Open enrollment for {enrollment['plan_year']}"
+    return "Signing up for marketplace coverage"
 
 
 class DenialWatchView(StaticIshView):
@@ -688,9 +817,14 @@ class DenialWatchView(StaticIshView):
 
     template_name = "denial_watch.html"
 
+    def page_data(self) -> dict:
+        """The numbers the page's script draws from, embedded with json_script."""
+        return _denial_watch_data()
+
     def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
         context = super().get_context_data(**kwargs)
-        context["denial_watch_data"] = _denial_watch_data()
+        context["denial_watch_data"] = self.page_data()
+        context["every_state"] = denial_watch_every_state()
         context["enrollment"] = denial_watch_enrollment(
             timezone.localdate(timezone=DENIAL_WATCH_LAST_TIME_ZONE)
         )
@@ -713,6 +847,34 @@ class DenialWatchView(StaticIshView):
             return cached_view(request, *args, **kwargs)
 
         return view
+
+
+class OpenEnrollmentView(DenialWatchView):
+    """Open enrollment, split out of Denial Watch: the season's dates and
+    steps, the marketplace numbers and the questions people ask. Built from
+    the same bundle and staged behind the same flag."""
+
+    template_name = "open_enrollment.html"
+
+    def page_data(self) -> dict:
+        # The page draws only the marketplace chart, so it embeds only those numbers.
+        return {"marketplace": _denial_watch_data()["marketplace"]}
+
+    def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
+        context = super().get_context_data(**kwargs)
+        context["heading"] = open_enrollment_heading(context["enrollment"])
+        # The year table is drawn here, not by the script, so it reads without it.
+        context["enroll_history"] = [
+            dict(
+                y=r["y"],
+                n=f"{r['n']:,}",
+                fed=f"{r['fed']:,}",
+                sbm=f"{r['sbm']:,}",
+                pub=r["pub"],
+            )
+            for r in context["denial_watch_data"]["marketplace"].get("history", [])
+        ]
+        return context
 
 
 class PBSNewsHourView(StaticIshView):
@@ -1602,6 +1764,27 @@ def add_pubmed_article_fields(
 class ChooseAppeal(View):
     """View for selecting and finalizing appeal text before sending."""
 
+    @staticmethod
+    def _appeals_page_for(request) -> typing.Optional[str]:
+        """The appeals page of the case this post names, if that case exists.
+
+        Someone who emptied the letter before choosing it still has their
+        drafts, so they go back to those rather than to a new upload.
+        """
+        ref = core_forms.DenialRefForm(request.POST)
+        if not ref.is_valid():
+            return None
+        denial_id = ref.cleaned_data["denial_id"]
+        email = ref.cleaned_data["email"]
+        semi_sekret = ref.cleaned_data["semi_sekret"]
+        if not models.Denial.objects.filter(
+            denial_id=denial_id,
+            hashed_email=models.Denial.get_hashed_email(email),
+            semi_sekret=semi_sekret,
+        ).exists():
+            return None
+        return build_back_url(request, "generate_appeal", denial_id, email, semi_sekret)
+
     def post(self, request):
         form = core_forms.ChooseAppealForm(request.POST)
 
@@ -1609,9 +1792,8 @@ class ChooseAppeal(View):
             # A bare `return` was a 500 ("view didn't return an
             # HttpResponse"). This fires for real users: clearing the appeal
             # textarea before submitting makes appeal_text fail validation.
-            # Match ChooseEscalationLetter's recovery.
             logger.debug(f"ChooseAppeal: invalid form {form.errors}")
-            return redirect("scan")
+            return redirect(self._appeals_page_for(request) or "scan")
 
         (
             appeal_fax_number,
@@ -1997,9 +2179,18 @@ class OCRView(View):
             pass
 
     def get(self, request):
-        return render(request, "server_side_ocr.html")
+        return render(
+            request,
+            "server_side_ocr.html",
+            context={"form": core_forms.ServerOCRForm()},
+        )
 
     def post(self, request):
+        # The boxes come first: no upload is read until they are ticked.
+        form = core_forms.ServerOCRForm(request.POST)
+        if not form.is_valid():
+            return render(request, "server_side_ocr.html", context={"form": form})
+        consent.note_server_ocr_consent(request.session, form.cleaned_data)
         try:
             files = dict(request.FILES.lists())
             uploader = files["uploader"]
@@ -2019,10 +2210,10 @@ class OCRView(View):
             )
 
         except AttributeError:
-            return render_ocr_error(request, "Unsupported file")
+            return render_ocr_error(request, "Unsupported file", form)
 
         except KeyError:
-            return render_ocr_error(request, "Missing file")
+            return render_ocr_error(request, "Missing file", form)
 
     def _ocr(self, uploader):
         def ocr_upload(x):

@@ -1,0 +1,4 @@
+{% comment %}form_utils.CheckboxList: a pick-several field as a column of tick boxes, each with its label beside it.{% endcomment %}
+{% with id=widget.attrs.id %}<div{% if id %} id="{{ id }}"{% endif %} class="fhi-check-list" role="group"{% if widget.group_label %} aria-label="{{ widget.group_label }}"{% endif %}{% if id and widget.group_help %} aria-describedby="{{ id }}_helptext"{% endif %}>{% for group, options, index in widget.optgroups %}{% for option in options %}
+  <div class="fhi-check-row">{% include option.template_name with widget=option %}</div>{% endfor %}{% endfor %}
+</div>{% endwith %}

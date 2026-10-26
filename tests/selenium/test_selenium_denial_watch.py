@@ -1,7 +1,9 @@
 """Denial Watch's view buttons, run in a browser.
 
 The sync tests read the script's source; these check that switching a view
-changes what a reader sees, and that the map buttons wrap on a phone.
+changes what a reader sees, that the map buttons wrap on a phone, and that a
+link into the folded sources opens them. The marketplace chart moved to the
+open enrollment page, with its browser tests.
 """
 
 import json
@@ -21,9 +23,22 @@ DATA = json.loads(
     (pathlib.Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "static" / "denial_watch.json").read_text()
 )
 
+# The folded sources are open and the target's top is in view, below the sticky header (a pixel or two of rounding).
+LANDED = """
+var t = document.getElementById(arguments[0]), r = t.getBoundingClientRect(),
+    head = document.querySelector('.navbar-default').getBoundingClientRect().bottom;
+return document.getElementById('sources-details').open && r.top >= head - 2 && r.top < window.innerHeight;
+"""
+
+# A hash change with no jump of the browser's own.
+HASH_CHANGE = """
+history.replaceState(null, '', arguments[0]);
+window.dispatchEvent(new HashChangeEvent('hashchange'));
+"""
+
 
 class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
-    """The map and trend buttons on /denial-watch."""
+    """The map and trend buttons, and the folded sources, on /denial-watch."""
 
     @classmethod
     def setUpClass(cls):
@@ -41,8 +56,9 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         self.wait_for_page_ready(predicate=lambda d: d.execute_script("return !!document.querySelector('#dmap g')"))
 
     @mock.patch("fighthealthinsurance.views.DENIAL_WATCH_HERO_UNTIL", date(2099, 1, 1))
+    @mock.patch("fighthealthinsurance.views.denial_watch_enrollment", new=lambda today: None)
     def test_home_page_announces_it_with_todays_count(self):
-        # The announcement retires itself on a date, so the check pins it open.
+        # The announcement retires on a date and gives way to open enrollment's, so the check pins it open and the season shut.
         self.set_window_size(1280, 900)
         self.open(f"{self.live_server_url}{reverse('root')}")
         self.assert_text_eventually_contains(
@@ -80,6 +96,44 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         )
         # Alaska and North Dakota report but have no all-claims figure; Ohio has one; California has no data here.
         self.assertEqual(gone, [True, True, False, False])
+
+    def _sources_open(self):
+        return self.execute_script("return document.getElementById('sources-details').open")
+
+    def _landed_on(self, ident):
+        # The page scrolls smoothly, and mid-scroll the target passes through the view, so check where it stops.
+        last = []
+
+        def stopped(d):
+            last.append(d.execute_script("return document.getElementById(arguments[0]).getBoundingClientRect().top", ident))
+            return len(last) > 1 and last[-1] == last[-2]
+
+        self.wait_for_page_ready(predicate=stopped)
+        self.assertTrue(self.execute_script(LANDED, ident), f"{ident} stopped at {last[-1]}")
+
+    def test_a_how_we_got_these_numbers_link_opens_the_folded_sources(self):
+        self._open()
+        self.assertFalse(self._sources_open())
+        # Chromium opens a fold itself on a jump into it, so the jump is cancelled: a listener on window runs
+        # after the page's own on document, which leaves only the page script to open the fold.
+        self.execute_script("window.addEventListener('click', e => e.preventDefault())")
+        self.click('#coverage .dw-how a[href="#method-coverage"]')
+        self.assertTrue(self._sources_open())
+        self.assertEqual(self.execute_script("return location.hash"), "")
+
+    def test_a_hash_change_opens_the_folded_sources_below_the_header(self):
+        # As on back or forward after a reader closed the fold: replaceState neither scrolls nor opens anything.
+        self._open()
+        self.assertFalse(self._sources_open())
+        self.execute_script(HASH_CHANGE, "#method-coverage")
+        self._landed_on("method-coverage")
+
+    def test_opening_the_page_at_a_method_note_opens_the_folded_sources(self):
+        # Chromium may open this one itself; the check is that the reader lands below the header.
+        self.set_window_size(1280, 900)
+        self.open(f"{self.live_server_url}{reverse('denial-watch')}#method-coverage")
+        self.wait_for_page_ready(predicate=lambda d: d.execute_script("return !!document.querySelector('#dmap g')"))
+        self._landed_on("method-coverage")
 
     def _rows(self):
         return self.execute_script("return [...document.querySelectorAll('#itable tbody tr')].map(r => r.cells[0].textContent)")

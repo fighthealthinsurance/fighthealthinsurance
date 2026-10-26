@@ -460,13 +460,8 @@ def _make_docx_bytes(nested: bool = False) -> bytes:
     return buffer.getvalue()
 
 
-def _io_bytes_with_a_bad_member(data: bytes) -> bytes:
-    """The same archive plus one member whose stored CRC does not match.
-
-    Written by hand rather than by corrupting a byte, because the point is a
-    member that raises while unpacking, which is what a decoy in a crafted
-    upload does.
-    """
+def _with_a_member(data: bytes, name: str, content: bytes) -> bytes:
+    """The same archive with member ``name`` holding ``content``, stored."""
     import io as _io
     import zipfile
 
@@ -475,14 +470,35 @@ def _io_bytes_with_a_bad_member(data: bytes) -> bytes:
         out, "w", zipfile.ZIP_DEFLATED
     ) as dst:
         for entry in src.infolist():
-            dst.writestr(entry.filename, src.read(entry.filename))
-        info = zipfile.ZipInfo("decoy.bin")
-        dst.writestr(info, b"decoy payload")
-    raw = bytearray(out.getvalue())
-    # Flip a byte of the decoy's stored data so its CRC no longer matches.
-    marker = raw.index(b"decoy payload")
-    raw[marker] ^= 0xFF
+            if entry.filename != name:
+                dst.writestr(entry.filename, src.read(entry.filename))
+        dst.writestr(zipfile.ZipInfo(name), content)
+    return out.getvalue()
+
+
+def _io_bytes_with_a_bad_member(
+    data: bytes, name: str = "decoy.bin", content: bytes = b"decoy payload"
+) -> bytes:
+    """The same archive with member ``name`` holding ``content``, whose
+    stored CRC does not match.
+
+    Written by hand rather than by corrupting a byte, because the point is a
+    member that raises while unpacking, which is what a decoy in a crafted
+    upload does.
+    """
+    raw = bytearray(_with_a_member(data, name, content))
+    # The member is stored, so its bytes are there to flip.
+    raw[raw.index(content)] ^= 0xFF
     return bytes(raw)
+
+
+def _word_body(body_xml: str) -> bytes:
+    """A word/document.xml whose body is ``body_xml``."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w='
+        '"http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{body_xml}</w:body></w:document>"
+    ).encode("utf-8")
 
 
 class WhatComesOutOfADocxTest(TransactionTestCase):
@@ -577,12 +593,12 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
         it has been decompressed, and a crafted archive declares a tiny
         member to get an arbitrarily large allocation first. What bounds it
         is asking for a chunk at a time and stopping at the first chunk that
-        takes the total over, which is why the parser is handed a copy
-        rebuilt from those reads rather than the archive it was sent.
+        takes the total over.
         """
+        from fighthealthinsurance import word_text
         from fighthealthinsurance.ml import ml_document_extraction
 
-        chunk = ml_document_extraction._UNPACK_CHUNK
+        chunk = word_text._CHUNK_BYTES
 
         class Member:
             def __init__(self, total):
@@ -595,7 +611,8 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
                     size = self.left
                 taken = min(size, self.left)
                 self.left -= taken
-                return b"0" * taken
+                # Whitespace before the root element parses without error.
+                return b" " * taken
 
             def __enter__(self):
                 return self
@@ -605,15 +622,16 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
 
         member = Member(100 * chunk)
 
-        class Entry:
-            def is_dir(self):
-                return False
-
         class Archive:
-            def infolist(self):
-                return [Entry()]
+            def getinfo(self, name):
+                import zipfile
 
-            def open(self, entry):
+                # No package relationships, so the reader opens Word's default body.
+                if name != "word/document.xml":
+                    raise KeyError(name)
+                return zipfile.ZipInfo(name)
+
+            def open(self, part):
                 return member
 
             def __enter__(self):
@@ -622,26 +640,19 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
             def __exit__(self, *exc):
                 return False
 
-        class Copy:
-            def writestr(self, *args, **kwargs):
-                pass
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-        def fake_zipfile(target, mode="r", *args, **kwargs):
-            return Archive() if mode == "r" else Copy()
-
-        with mock.patch("zipfile.ZipFile", fake_zipfile), mock.patch.object(
+        with mock.patch(
+            "zipfile.ZipFile", lambda *args, **kwargs: Archive()
+        ), mock.patch.object(
             ml_document_extraction, "MAX_DOCX_UNPACKED_BYTES", 4 * chunk
         ):
-            bounded = ml_document_extraction._bounded_docx(b"not read")
+            full, pages = ml_document_extraction.extract_text_from_docx_bytes(
+                b"not read"
+            )
 
-        self.assertIsNone(bounded, "an oversized archive was handed on anyway")
-        self.assertTrue(member.reads, "nothing was unpacked, so nothing was proven")
+        self.assertEqual((full, pages), ("", {}))
+        self.assertGreaterEqual(
+            len(member.reads), 4, "it stopped before the cap, so nothing was proven"
+        )
         self.assertTrue(
             all(size == chunk for size in member.reads),
             f"a read was not bounded by a chunk: {member.reads}",
@@ -652,47 +663,27 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
             "it kept unpacking after it knew the answer",
         )
 
-    def test_the_parser_is_handed_the_rebuilt_copy(self):
-        """Measuring the original and then parsing it bounds nothing.
-
-        The parser reads each member itself, in a chunk of its own
-        choosing, and a member's output is truncated to its declared size
-        only after it has been decompressed. So what it is given has to be
-        the copy rebuilt from bounded reads, not the upload.
-        """
-        import zipfile
-
+    def test_a_table_reads_cell_by_cell_without_python_docx(self):
+        """Each cell's text comes out once, in the order it was written."""
         import docx
 
         from fighthealthinsurance.ml import ml_document_extraction
 
-        handed = {}
-        real_document = docx.Document
-
-        def watched(stream, *args, **kwargs):
-            handed["bytes"] = stream.getvalue()
-            stream.seek(0)
-            return real_document(stream, *args, **kwargs)
-
         original = _make_docx_bytes()
-        with mock.patch.object(docx, "Document", watched):
-            full, _pages = ml_document_extraction.extract_text_from_docx_bytes(
-                original
-            )
+        with mock.patch.object(
+            docx, "Document", side_effect=AssertionError("python-docx was called")
+        ):
+            full, pages = ml_document_extraction.extract_text_from_docx_bytes(original)
 
-        self.assertIn("Appeal deadline", full, "the document was not read")
-        self.assertIn("bytes", handed, "the parser was never reached")
-        self.assertNotEqual(
-            handed["bytes"], original, "the parser was handed the upload itself"
+        self.assertIn(
+            "Plan overview for medical necessity review.\n"
+            "Appeal deadline\n"
+            "60 days from receipt of this notice\n"
+            "Exclusions follow the criteria above.\n",
+            full,
         )
-        with zipfile.ZipFile(io.BytesIO(handed["bytes"])) as rebuilt:
-            self.assertTrue(rebuilt.infolist(), "the copy is empty")
-            for entry in rebuilt.infolist():
-                self.assertEqual(
-                    entry.compress_type,
-                    zipfile.ZIP_STORED,
-                    f"{entry.filename} did not come from the rebuild",
-                )
+        self.assertEqual(full.count("Appeal deadline"), 1)
+        self.assertEqual(list(pages), [1])
 
     def test_a_vertically_merged_cell_is_read_once(self):
         """A merge down the page repeats across rows, not within one.
@@ -732,29 +723,45 @@ class WhatComesOutOfADocxTest(TransactionTestCase):
         for row in ("Row one", "Row two", "Row three"):
             self.assertIn(row, full)
 
-    def test_a_member_that_will_not_unpack_is_skipped_not_handed_on(self):
-        """Handing the original back would undo the whole bound.
-
-        One member with a bad CRC is enough: the unpack raises, and an
-        except that hands the upload back gives the parser exactly the bytes
-        this exists to keep away from it.
-        """
-        import zipfile
+    def test_a_damaged_part_logs_nothing_from_the_file(self):
+        """No text, part name or parser message from the file is logged."""
+        from loguru import logger
 
         from fighthealthinsurance.ml import ml_document_extraction
 
         good = _make_docx_bytes()
-        broken = _io_bytes_with_a_bad_member(good)
-
-        self.assertIsNone(
-            ml_document_extraction._bounded_docx(broken),
-            "a bad member handed the upload on unbounded",
-        )
-
-        # And the parser is never reached with it.
-        full, pages = ml_document_extraction.extract_text_from_docx_bytes(broken)
-        self.assertEqual(full, "")
-        self.assertEqual(pages, {})
+        files = {
+            "a damaged part the body does not need": _io_bytes_with_a_bad_member(
+                good, name="rebecca.crumpler@test-fhi.com.bin"
+            ),
+            "a damaged body": _io_bytes_with_a_bad_member(
+                good,
+                name="word/document.xml",
+                content=_word_body("<w:p><w:r><w:t>Crumpler</w:t></w:r></w:p>"),
+            ),
+            "a body naming an entity it never declares": _with_a_member(
+                good,
+                "word/document.xml",
+                _word_body("<w:p><w:r><w:t>&rebecca_crumpler;</w:t></w:r></w:p>"),
+            ),
+        }
+        for case, data in files.items():
+            with self.subTest(case):
+                logged: list[str] = []
+                sink = logger.add(
+                    lambda message: logged.append(str(message)), level="DEBUG"
+                )
+                try:
+                    full, _pages = ml_document_extraction.extract_text_from_docx_bytes(
+                        data
+                    )
+                finally:
+                    logger.remove(sink)
+                for line in logged:
+                    for from_the_file in ("crumpler", "document.xml", "crc"):
+                        self.assertNotIn(from_the_file, line.lower())
+                if case == "a damaged part the body does not need":
+                    self.assertIn("Appeal deadline", full)
 
     def test_an_ordinary_document_is_still_read(self):
         """The bound is not a wall in front of real documents."""

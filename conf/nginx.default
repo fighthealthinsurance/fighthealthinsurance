@@ -31,10 +31,10 @@ server {
 	deny all;
     }
 
-    location /static {
+    location /static/ {
 	root /opt/fighthealthinsurance/;
     }
-    location /media {
+    location /media/ {
 	root /opt/fighthealthinsurance/;
     }
 

@@ -58,12 +58,18 @@ AMBIGUOUS_LETTER = (
 
 
 def shown(page, name):
-    """What the review page shows in a field: an input's value, or the
-    values of a select's chosen options."""
+    """What the review page shows in a field: an input's value, the values
+    of a select's chosen options, or the values of the ticked boxes."""
     element = page.find(attrs={"name": name})
     assert element is not None, f"the review page has no {name} field"
     if element.name == "select":
         return [option["value"] for option in element.find_all("option", selected=True)]
+    if element.get("type") == "checkbox":
+        return [
+            box["value"]
+            for box in page.find_all("input", attrs={"name": name})
+            if box.has_attr("checked")
+        ]
     return element.get("value")
 
 

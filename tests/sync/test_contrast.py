@@ -1499,6 +1499,13 @@ EXCEPTIONS: tuple[Exempt, ...] = (
     ),
     Exempt("custom.css", ".share-btn-email", WHITE_ON_BRAND_LIME),
     Exempt("custom.css", ".about-step-number", WHITE_ON_BRAND_LIME),
+    # The progress rail's markers took the buttons' sweep and ink with it.
+    Exempt(
+        "custom.css",
+        ".fhi-progress-done .fhi-progress-marker, "
+        ".fhi-progress-current .fhi-progress-marker",
+        WHITE_ON_BRAND_LIME,
+    ),
 )
 
 
@@ -2757,3 +2764,91 @@ def test_no_brand_button_takes_its_size_from_bootstrap() -> None:
         "these brand buttons are sized by Bootstrap rather than by the scale. "
         "Use fhi-button-small or fhi-button-large:\n  %s" % "\n  ".join(offenders)
     )
+
+
+# ------------------------------------------------ Denial Watch chart colours
+#
+# Denial Watch and its open enrollment page write every chart colour once, as
+# a token on .dw in a shared partial, and their scripts paint SVG and bars from
+# those tokens at runtime, where the rules above can't see them. So the tokens
+# are measured here directly: text tokens against what they sit on at 4.5:1,
+# marks (lines, bars, a meter's fill) at the 3:1 WCAG asks of graphics, and
+# every map tile colour with the label ink the script picks for it.
+
+DW_STYLE = TEMPLATE_DIR / "partials" / "denial_watch_style.html"
+
+
+def dw_tokens() -> dict[str, str]:
+    """The .dw colour tokens, with var() resolved, in source order."""
+    block = _STYLE_BLOCK.search(DW_STYLE.read_text())
+    assert block, "the Denial Watch partial lost its <style> block"
+    raw: dict[str, str] = {}
+    for rule in parse_stylesheet(block.group(1), "partials/denial_watch_style.html"):
+        if rule.selector == ".dw":
+            raw.update((p, v) for p, v, _ in rule.declarations if p.startswith("--"))
+    return {name: resolve_vars(value, raw) for name, value in raw.items()}
+
+
+def dw_colour(name: str) -> tuple[int, int, int]:
+    colour = parse_colour(dw_tokens()[name])
+    assert colour and colour[3] == 1.0, "%s is not an opaque colour" % name
+    return colour[:3]
+
+
+# (ink, ground, minimum, where): words at 4.5:1, marks at 3:1.
+DW_PAIRS = (
+    ("--dw-deny-deep", "--dw-paper", 4.5, "the denial trend's end label"),
+    ("--dw-deny", "--dw-paper", 3.0, "the denial trend line"),
+    ("--dw-good-ink", "--dw-paper", 4.5, "the independent review chart's end label"),
+    ("--dw-count", "--dw-paper", 4.5, "the marketplace chart's end label"),
+    ("--dw-tile-ink", "--dw-cost-tint", 4.5, "the Medicare price tag"),
+    ("--dw-na-ink", "--dw-na", 4.5, "a no-data tile's state code"),
+    ("--dw-na-ink", "--dw-gone", 4.5, "a left-out tile's state code"),
+    ("--dw-deny", "--dw-track", 3.0, "a blue denial bar on its track"),
+    ("--dw-deny-deep", "--dw-track", 3.0, "a highlighted denial reason's bar"),
+    ("--dw-bad", "--dw-track", 3.0, "a red bar for a rise"),
+    ("--dw-good", "--dw-paper", 3.0, "the independent review line"),
+    ("--dw-good", "--dw-track", 3.0, "a green bar on its track"),
+    ("--dw-cost", "--dw-track", 3.0, "a pink drug spending bar"),
+    ("--dw-health-4", "--dw-track", 3.0, "an uninsured or health measure bar"),
+    ("--dw-count", "--dw-count-tint", 3.0, "the coverage fill on the plan picks track"),
+    # A pressed toggle button is filled with its section's colour.
+    ("--dw-paper", "--dw-deny", 4.5, "white words on a pressed denial toggle"),
+    ("--dw-paper", "--dw-health-4", 4.5, "white words on a pressed coverage and health toggle"),
+    ("--dw-paper", "--dw-cost", 4.5, "white words on a pressed drug spending toggle"),
+)
+
+DW_RAMPS = ("deny", "bad", "good", "health")
+DW_TILE_INKS = ("--dw-paper", "--dw-tile-ink")
+
+
+def _dw_tile_grounds() -> list[str]:
+    """Every colour a map tile can take: the five ramps, the change scale's middle, and no data."""
+    return [f"--dw-{r}-{i}" for r in DW_RAMPS for i in range(6)] + ["--dw-mid", "--dw-na"]
+
+
+def test_denial_watch_chart_tokens_meet_their_ratios() -> None:
+    failing = []
+    for ink, ground, minimum, where in DW_PAIRS:
+        ratio = contrast_ratio(dw_colour(ink), dw_colour(ground))
+        if ratio < minimum:
+            failing.append("%s on %s, %s: %.2f:1, needs %.1f:1" % (ink, ground, where, ratio, minimum))
+    assert not failing, "Denial Watch chart colours under their ratio:\n  " + "\n  ".join(failing)
+
+
+def test_denial_watch_map_tiles_get_a_readable_label() -> None:
+    """The script writes each tile's code and value in whichever ink reads better; that one must reach 4.5:1."""
+    failing = []
+    for ground in _dw_tile_grounds():
+        best = max(contrast_ratio(dw_colour(ink), dw_colour(ground)) for ink in DW_TILE_INKS)
+        if best < MINIMUM_RATIO:
+            failing.append("%s: best label ink %.2f:1" % (ground, best))
+    assert not failing, "map tiles whose labels can't be read:\n  " + "\n  ".join(failing)
+
+
+def test_every_denial_watch_colour_token_is_measured() -> None:
+    """A token added to the partial has to join a pair above, or this fails."""
+    measured = {name for pair in DW_PAIRS for name in pair[:2]}
+    measured |= set(_dw_tile_grounds()) | set(DW_TILE_INKS)
+    unmeasured = sorted(set(dw_tokens()) - measured)
+    assert not unmeasured, "Denial Watch colour tokens no contrast check covers: %s" % ", ".join(unmeasured)
