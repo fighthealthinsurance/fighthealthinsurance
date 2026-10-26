@@ -23,7 +23,10 @@
   .dw-ticker .dw-pause { border-color: #fff; color: #fff; }
   .dw-ticker .dw-pause:hover, .dw-ticker .dw-pause:focus { background-color: #fff; color: var(--fhi-ink); }
   .dw-toggles { gap: var(--fhi-space-2); }
-  .dw-toggles .fhi-button[aria-pressed="true"] { background-color: var(--fhi-ink-2); border-color: var(--fhi-ink-2); color: #fff; }
+  /* The pressed button takes its section's colour: blue for denials, purple for coverage and health, pink for drug spending. */
+  .dw-toggles .fhi-button[aria-pressed="true"] { background-color: var(--dw-deny); border-color: var(--dw-deny); color: var(--dw-paper); }
+  .dw-toggles-health .fhi-button[aria-pressed="true"] { background-color: var(--dw-health-4); border-color: var(--dw-health-4); }
+  .dw-toggles-cost .fhi-button[aria-pressed="true"] { background-color: var(--dw-cost); border-color: var(--dw-cost); color: var(--dw-paper); }
   .dw-controls { display: flex; flex-wrap: wrap; gap: var(--fhi-space-3) var(--fhi-space-4); align-items: center; justify-content: space-between; }
   .dw-controls .fhi-field { width: auto; max-width: 100%; }
   .dw-map { display: block; width: 100%; height: auto; }
@@ -52,16 +55,16 @@
   .dw-bar-track { grid-area: tr; height: 10px; border-radius: 2px; overflow: hidden; background-color: var(--dw-track); }
   .dw-bar-fill { height: 100%; border-radius: 2px; background-color: var(--dw-deny); }
   .dw-bar-value { grid-area: val; min-width: 3rem; text-align: right; font-weight: 700; }
-  /* Orange, for denials, unless the bar says otherwise: green for what's good for patients, red for a rise,
-     purple for health measures, blue for people and money. */
+  /* Blue, for denials, unless the bar says otherwise: green for what's good for patients, red for a rise,
+     purple for coverage and health, pink for drug spending. */
   .dw-bar-good .dw-bar-fill { background-color: var(--dw-good); }
   .dw-bar-bad .dw-bar-fill { background-color: var(--dw-bad); }
   .dw-bar-health .dw-bar-fill { background-color: var(--dw-health-4); }
-  .dw-bar-count .dw-bar-fill { background-color: var(--dw-count); }
+  .dw-bar-cost .dw-bar-fill { background-color: var(--dw-cost); }
   /* The denial reasons the key names: darker, and in bold, so they stand out without colour. */
   .dw-bar-deep .dw-bar-fill { background-color: var(--dw-deny-deep); }
   .dw-bar-deep .dw-bar-name > span:first-child { font-weight: 700; }
-  /* Every-state chart: orange for denial rates, each kind of record in its own texture (solid, striped, hollow), and the key says it in words. */
+  /* Every-state chart: blue for denial rates, each kind of record in its own texture (solid, striped, hollow), and the key says it in words. */
   .dw-every-key { display: grid; gap: var(--fhi-space-1); margin: 0; padding: 0; list-style: none; font-size: var(--fhi-text-small); color: var(--fhi-ink-2); }
   .dw-every-key li { display: flex; align-items: baseline; gap: var(--fhi-space-2); }
   .dw-every-key i { flex: none; width: 2rem; height: 12px; border-radius: 2px; }
@@ -83,7 +86,7 @@
   .dw-pick { padding: 0; border: 0; background: none; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
   .dw-mini { display: inline-block; height: 8px; margin-right: 6px; border-radius: 2px; vertical-align: middle; background-color: var(--dw-deny); }
   .dw-readout a { font-weight: 700; text-decoration: underline; }
-  .dw-chip { display: inline-block; padding: 0 var(--fhi-space-2); border-radius: 6px; background-color: var(--dw-count-tint); color: var(--dw-count-deep); font-size: var(--fhi-text-small); font-weight: 700; line-height: 1.4; overflow-wrap: normal; }
+  .dw-chip { display: inline-block; padding: 0 var(--fhi-space-2); border-radius: 6px; background-color: var(--dw-cost-tint); color: var(--dw-tile-ink); font-size: var(--fhi-text-small); font-weight: 700; line-height: 1.4; overflow-wrap: normal; }
   .dw-bar-tagged { grid-template-areas: "nm val" "ch ch" "tr tr"; }
   .dw-bar-chip { grid-area: ch; justify-self: start; }
   /* The open enrollment card: its line and link beside the one tile, and under it on a narrow screen. */
@@ -175,15 +178,15 @@
             <a href="#more-data">More data and sources</a>
         </nav>
 
-        <p class="dw-key" id="colour-key"><b>Colours in the charts:</b> <span><i class="dw-sw"></i>orange, denials;</span> <span><i class="dw-sw dw-sw-bad"></i>red, only where something got worse;</span> <span><i class="dw-sw dw-sw-good"></i>green, good for patients, such as appeals won;</span> <span><i class="dw-sw dw-sw-count"></i>blue, people and money, such as the uninsured and drug spending;</span> <span><i class="dw-sw dw-sw-health"></i>purple, health measures;</span> <span><i class="dw-sw dw-sw-na"></i>grey, no data.</span></p>
+        <p class="dw-key" id="colour-key"><b>Colours in the charts:</b> <span><i class="dw-sw"></i>blue, denials;</span> <span><i class="dw-sw dw-sw-good"></i>green, good for patients, such as appeals won;</span> <span><i class="dw-sw dw-sw-health"></i>purple, coverage and health, such as the uninsured;</span> <span><i class="dw-sw dw-sw-cost"></i>pink, drug spending;</span> <span><i class="dw-sw dw-sw-bad"></i>red, only where something got worse;</span> <span><i class="dw-sw dw-sw-na"></i>grey, no data.</span></p>
 
         <section class="fhi-stack dw-theme" id="why-appeal" aria-labelledby="why-appeal-title">
             <h2 id="why-appeal-title">Why should I appeal?</h2>
             <p class="dw-answer">Very few denials are appealed, and about a third of appeals win.</p>
             <p class="dw-how"><a href="#method-why-appeal">How we got these numbers<span class="fhi-visually-hidden">: Why should I appeal?</span></a></p>
             <section class="fhi-stack" id="appeals" aria-labelledby="appeals-title">
-                <h3 id="appeals-title">When a denial reaches independent doctors in California, patients usually win</h3>
-                <p>Independent review is the step after an insurer's own appeal, when outside doctors who don't work for the insurer decide. In 2025 they overturned 72% of the denials they reviewed, up from 47% in 2017. These are cases people chose to take that far, and that qualified, so the rate isn't the chance that any denial would be reversed.</p>
+                <h3 id="appeals-title">Independent review in California</h3>
+                <p id="appeals-lead">On HealthCare.gov plans, the federal marketplace, insurers reversed 35% of the internal appeals they reported in 2024 (85,560 of 247,951). Independent review is the step after an insurer's own appeal, when outside doctors who don't work for the insurer decide. We show California because its Department of Managed Health Care publishes every independent review decision it oversees, case by case. There, in 2025, outside doctors overturned 72% of the denials they reviewed, up from 47% in 2017. These are cases people chose to take that far, and that qualified, so the rate isn't the chance that any denial would be reversed.</p>
                 <div class="fhi-card">
                     <p class="dw-key" id="imrkey"><span><i class="dw-sw dw-sw-good"></i>Denials overturned, decided in the patient's favour</span></p>
                     <div class="dw-two">
@@ -214,8 +217,8 @@
             <p class="dw-answer">It depends on where you live and which company covers you.</p>
             <p class="dw-how"><a href="#method-who-denies">How we got these numbers<span class="fhi-visually-hidden">: Who is denying the most?</span></a></p>
             <section class="fhi-stack" id="map-denials" aria-labelledby="map-denials-title">
-                <h3 id="map-denials-title">Denial rates run from about 7% to 27% across 30 HealthCare.gov states</h3>
-                <p>Share of in-network claims denied by HealthCare.gov insurers in each state, 2024. Grey states run their own marketplace, so they aren't in this data. Pick a state to see its insurers, or a grey state to see what it publishes instead.</p>
+                <h3 id="map-denials-title">Denial rates by state</h3>
+                <p>Rates run from about 7% to 27% across 30 HealthCare.gov states. Share of in-network claims denied by HealthCare.gov insurers in each state, 2024. Grey states run their own marketplace, so they aren't in this data. Pick a state to see its insurers, or a grey state to see what it publishes instead.</p>
                 <div class="fhi-card">
                     <div class="dw-two">
                         <div>
@@ -242,8 +245,8 @@
 
             {# Drawn here from the view, not by the script, so the bars and the table read without it. #}
             <section class="fhi-stack" id="every-state" aria-labelledby="every-state-title">
-                <h3 id="every-state-title">Share of in-network claims denied, by state</h3>
-                <p>The 30 HealthCare.gov states from the map, highest first. Below them, on the same scale but listed apart, are five grey states we found a figure for elsewhere: California and Pennsylvania from their insurers' own reports for 2024 claims on the same federal form, and Georgia, Illinois and Virginia from the last year CMS's files include them.</p>
+                <h3 id="every-state-title">Every state's denial rate</h3>
+                <p>Share of in-network claims denied, by state: the 30 HealthCare.gov states from the map, highest first. Below them, on the same scale but listed apart, are five grey states we found a figure for elsewhere: California and Pennsylvania from their insurers' own reports for 2024 claims on the same federal form, and Georgia, Illinois and Virginia from the last year CMS's files include them.</p>
                 <div class="fhi-card fhi-stack">
                     <ul class="dw-every-key" id="every-key">
                         <li><i class="dw-src-cms"></i><span>HealthCare.gov insurers, {{ every_state.year }} claims (FHI's calculation from CMS's data)</span></li>
@@ -285,8 +288,8 @@
             </section>
 
             <section class="fhi-stack" id="insurers" aria-labelledby="insurers-title">
-                <h3 id="insurers-title">In some states, one insurer denies four or more times as often as another</h3>
-                <p>In-network denial rates for each HealthCare.gov insurer with at least 50,000 in-network claims in 2024, as each company reported them. They aren't a quality rating: they depend on the kinds of care each plan's members use.</p>
+                <h3 id="insurers-title">Denial rates by insurer</h3>
+                <p>In some states, one insurer denies four or more times as often as another. In-network denial rates for each HealthCare.gov insurer with at least 50,000 in-network claims in 2024, as each company reported them. They aren't a quality rating: they depend on the kinds of care each plan's members use.</p>
                 {% if enrollment %}<p class="fhi-notice fhi-notice-info">Picking a {{ enrollment.plan_year }} HealthCare.gov plan? Choose your state below to see its insurers' 2024 rates, then compare plans on <a href="https://www.healthcare.gov/">HealthCare.gov</a>. Some of these insurers don't sell plans for {{ enrollment.plan_year }}, so check which ones do. Oregon residents compare {{ enrollment.plan_year }} plans at <a href="https://explorehealthor.gov/">ExploreHealthOR.gov</a> instead.</p>{% endif %}
                 <div class="fhi-card">
                     <div class="dw-controls">
@@ -300,8 +303,8 @@
             </section>
 
             <section class="fhi-stack" id="prior-auth" aria-labelledby="prior-auth-title">
-                <h3 id="prior-auth-title">Insurers now post how often they deny prior authorization, and the spread is wide</h3>
-                <p>Prior authorization is when a plan has to approve care before you get it. Since March 2026, Medicare Advantage plans, Medicaid plans, state Medicaid programs and most HealthCare.gov insurers have had to post what share of 2025 requests for medical care and equipment they denied. Prescription drugs aren't included. Insurers count differently, so compare within one kind of plan.</p>
+                <h3 id="prior-auth-title">Prior authorization denials</h3>
+                <p>Insurers now post how often they deny prior authorization, and the spread is wide. Prior authorization is when a plan has to approve care before you get it. Since March 2026, Medicare Advantage plans, Medicaid plans, state Medicaid programs and most HealthCare.gov insurers have had to post what share of 2025 requests for medical care and equipment they denied. Prescription drugs aren't included. Insurers count differently, so compare within one kind of plan.</p>
                 <p id="pa-not-every-plan"><b>Not every plan.</b> Big insurers post one report per contract or state, and these 89 are the largest we found. <a href="https://www.authdenied.com/">AuthDenied</a> has a much fuller collection, more than 1,100 plans, and <a href="https://www.kff.org/patient-consumer-protections/prior-authorization-metrics-provide-new-insights-into-insurer-practices-but-gaps-remain/">KFF</a> compares the largest insurers.</p>
                 <div class="fhi-card">
                     <div class="fhi-cluster dw-toggles" id="pamode" role="group" aria-label="Kind of plan">
@@ -310,8 +313,10 @@
                         <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="mkt">HealthCare.gov plans</button>
                         <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="ffs">State Medicaid</button>
                     </div>
+                    <h4 id="pahead">Medicare Advantage plans: share of standard requests denied</h4>
                     <p class="dw-note" id="panote"></p>
                     <p class="dw-key" id="pakey"><span><i class="dw-sw"></i>Share of standard requests denied</span></p>
+                    <p class="dw-note" id="pascale">All four kinds of plan share one scale, up to the highest rate in any of them, so the same rate gets the same length of bar whichever button you pick.</p>
                     <div class="dw-bars" id="pabars"></div>
                 </div>
                 <div class="fhi-card" id="plan-clock">
@@ -335,8 +340,8 @@
             <p>Most reasons insurers report are paperwork, plan rules or "other".</p>
             <p class="dw-how"><a href="#method-what-why">How we got these numbers<span class="fhi-visually-hidden">: What are they denying, and why?</span></a></p>
             <section class="fhi-stack" id="trend" aria-labelledby="trend-title">
-                <h3 id="trend-title">The trend: more denials, in network and out</h3>
-                <p>HealthCare.gov plans, by the year the claims were made. In-network denials about doubled from 2020 to 2024, to 84.5 million, as enrollment grew. Insurers have reported out-of-network claims only since 2022, and denied 37% of them in 2024, about twice the in-network rate.</p>
+                <h3 id="trend-title">Denials over time</h3>
+                <p>More denials, in network and out. HealthCare.gov plans, by the year the claims were made. In-network denials about doubled from 2020 to 2024, to 84.5 million, as enrollment grew. Insurers have reported out-of-network claims only since 2022, and denied 37% of them in 2024, about twice the in-network rate.</p>
                 <div class="fhi-card">
                     <div class="dw-two">
                         <div>
@@ -355,8 +360,8 @@
             </section>
 
             <section class="fhi-stack" id="why" aria-labelledby="why-title">
-                <h3 id="why-title">"Not medically necessary" is a small share of the reasons given</h3>
-                <p>Reasons insurers reported for denied in-network claims in 2024, as a share of all reasons reported. A claim can be counted under more than one reason, so these are shares of reasons, not of claims. "Other" is the largest group, which means many denials aren't explained in this data. "Not medically necessary" is 5.0% of all reasons (4.0 million of 78.6 million).</p>
+                <h3 id="why-title">Reasons given for denials</h3>
+                <p>"Not medically necessary" is a small share of the reasons given. Reasons insurers reported for denied in-network claims in 2024, as a share of all reasons reported. A claim can be counted under more than one reason, so these are shares of reasons, not of claims. "Other" is the largest group, which means many denials aren't explained in this data. "Not medically necessary" is 5.0% of all reasons (4.0 million of 78.6 million).</p>
                 <div class="fhi-card">
                     <p class="dw-key" id="reasonskey"><span><i class="dw-sw"></i>Share of all reasons given for denials</span> <span><i class="dw-sw dw-sw-deep"></i>Darker, in bold: the reasons about medical judgment</span></p>
                     <div class="dw-bars" id="reasons"></div>
@@ -372,7 +377,7 @@
             <div class="fhi-card">
                 <div class="dw-two">
                     <div>
-                        <div class="fhi-cluster dw-toggles" id="cmode" role="group" aria-label="What the map shows">
+                        <div class="fhi-cluster dw-toggles dw-toggles-health" id="cmode" role="group" aria-label="What the map shows">
                             <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="true" data-m="unins">Uninsured</button>
                             <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="uchg">Change from 2023</button>
                             <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="fair_poor_health">Fair/poor health</button>
@@ -402,7 +407,7 @@
             <p id="drugintro"></p>
             <p class="dw-how"><a href="#method-costs">How we got these numbers<span class="fhi-visually-hidden">: Drug costs</span></a></p>
             <div class="fhi-card">
-                <div class="fhi-cluster dw-toggles" id="dgmode" role="group" aria-label="Which drugs">
+                <div class="fhi-cluster dw-toggles dw-toggles-cost" id="dgmode" role="group" aria-label="Which drugs">
                     <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="true" data-m="top">Biggest total spend</button>
                     <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="per">Most per patient</button>
                     <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="growth">Fastest growing</button>
@@ -410,7 +415,7 @@
                 </div>
                 <p class="dw-note" id="dgnote"></p>
                 <p class="dw-note" id="dgprice">A <span class="dw-chip">Medicare price</span> tag marks a drug whose price Medicare negotiated with the drugmaker, or picked for a price that starts in 2028. That price caps what Medicare drug plans pay for the drug, plus a pharmacy fee, and it's not your copay: your plan sets your share, based on that price, so ask your plan how it affects you. <span id="dgends">Xarelto's ends after 2026 because a generic is now sold.</span> <a href="https://www.medicare.gov/health-drug-plans/part-d/what-drug-plans-cover/how-drug-plans-work">Medicare's list of negotiated drugs</a>.</p>
-                <p class="dw-key" id="dgkey"><span><i class="dw-sw dw-sw-count"></i>Medicare Part D spending, before rebates</span></p>
+                <p class="dw-key" id="dgkey"><span><i class="dw-sw dw-sw-cost"></i>Medicare Part D spending, before rebates</span></p>
                 <div class="dw-bars" id="dgbars"></div>
             </div>
             <div class="fhi-card" id="drug-help">
