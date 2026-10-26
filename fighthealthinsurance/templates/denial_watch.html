@@ -50,23 +50,25 @@
   .dw-bar-name { grid-area: nm; display: flex; justify-content: space-between; gap: var(--fhi-space-2); min-width: 0; overflow-wrap: anywhere; }
   .dw-bar-name > .dw-num { overflow-wrap: normal; }
   .dw-bar-track { grid-area: tr; height: 10px; border-radius: 2px; overflow: hidden; background-color: var(--dw-track); }
-  .dw-bar-fill { height: 100%; border-radius: 2px; background-color: var(--dw-bad); }
+  .dw-bar-fill { height: 100%; border-radius: 2px; background-color: var(--dw-deny); }
   .dw-bar-value { grid-area: val; min-width: 3rem; text-align: right; font-weight: 700; }
-  /* Red unless the bar says otherwise: green for what's good for patients, purple for health measures, orange for money. */
+  /* Orange, for denials, unless the bar says otherwise: green for what's good for patients, red for a rise,
+     purple for health measures, blue for people and money. */
   .dw-bar-good .dw-bar-fill { background-color: var(--dw-good); }
+  .dw-bar-bad .dw-bar-fill { background-color: var(--dw-bad); }
   .dw-bar-health .dw-bar-fill { background-color: var(--dw-health-4); }
-  .dw-bar-cost .dw-bar-fill { background-color: var(--dw-cost); }
+  .dw-bar-count .dw-bar-fill { background-color: var(--dw-count); }
   /* The denial reasons the key names: darker, and in bold, so they stand out without colour. */
-  .dw-bar-deep .dw-bar-fill { background-color: var(--dw-bad-deep); }
+  .dw-bar-deep .dw-bar-fill { background-color: var(--dw-deny-deep); }
   .dw-bar-deep .dw-bar-name > span:first-child { font-weight: 700; }
-  /* Every-state chart: red for denial rates, each kind of record in its own texture (solid, striped, hollow), and the key says it in words. */
+  /* Every-state chart: orange for denial rates, each kind of record in its own texture (solid, striped, hollow), and the key says it in words. */
   .dw-every-key { display: grid; gap: var(--fhi-space-1); margin: 0; padding: 0; list-style: none; font-size: var(--fhi-text-small); color: var(--fhi-ink-2); }
   .dw-every-key li { display: flex; align-items: baseline; gap: var(--fhi-space-2); }
   .dw-every-key i { flex: none; width: 2rem; height: 12px; border-radius: 2px; }
   .dw-every .dw-bar-track { height: 12px; }
-  i.dw-src-cms { background-color: var(--dw-bad); }
-  .dw-src-state .dw-bar-fill, i.dw-src-state { background: repeating-linear-gradient(135deg, var(--dw-bad) 0 3px, var(--dw-bad-1) 3px 6px); }
-  .dw-src-earlier .dw-bar-fill, i.dw-src-earlier { background: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-bad); }
+  i.dw-src-cms { background-color: var(--dw-deny); }
+  .dw-src-state .dw-bar-fill, i.dw-src-state { background: repeating-linear-gradient(135deg, var(--dw-deny) 0 3px, var(--dw-deny-1) 3px 6px); }
+  .dw-src-earlier .dw-bar-fill, i.dw-src-earlier { background: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-deny); }
   .dw-every-tag { display: block; font-size: var(--fhi-text-small); color: var(--fhi-muted); }
   h4.dw-every-sub { margin: var(--fhi-space-3) 0 0; padding-top: var(--fhi-space-3); border-top: 1px solid var(--fhi-line); }
   th.dw-every-sub { padding-top: var(--fhi-space-3); font-weight: 700; }
@@ -77,9 +79,9 @@
   .dw-gap-row { text-align: center; }
   .dw-table .dw-nowrap { white-space: nowrap; }
   .dw-range { position: relative; display: inline-block; width: 90px; height: 8px; margin-right: 6px; border-radius: 2px; vertical-align: middle; background-color: var(--dw-track); }
-  .dw-range-fill { position: absolute; top: 0; bottom: 0; border-radius: 2px; background-color: var(--dw-bad); }
+  .dw-range-fill { position: absolute; top: 0; bottom: 0; border-radius: 2px; background-color: var(--dw-deny); }
   .dw-pick { padding: 0; border: 0; background: none; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
-  .dw-mini { display: inline-block; height: 8px; margin-right: 6px; border-radius: 2px; vertical-align: middle; background-color: var(--dw-bad); }
+  .dw-mini { display: inline-block; height: 8px; margin-right: 6px; border-radius: 2px; vertical-align: middle; background-color: var(--dw-deny); }
   .dw-readout a { font-weight: 700; text-decoration: underline; }
   .dw-chip { display: inline-block; padding: 0 var(--fhi-space-2); border-radius: 6px; background-color: var(--dw-count-tint); color: var(--dw-count-deep); font-size: var(--fhi-text-small); font-weight: 700; line-height: 1.4; overflow-wrap: normal; }
   .dw-bar-tagged { grid-template-areas: "nm val" "ch ch" "tr tr"; }
@@ -173,7 +175,7 @@
             <a href="#more-data">More data and sources</a>
         </nav>
 
-        <p class="dw-key" id="colour-key"><b>Colours in the charts:</b> <span><i class="dw-sw"></i>red, bad for patients, such as denials;</span> <span><i class="dw-sw dw-sw-good"></i>green, good for patients, such as appeals won;</span> <span><i class="dw-sw dw-sw-cost"></i>orange, money spent;</span> <span><i class="dw-sw dw-sw-health"></i>purple, health measures;</span> <span><i class="dw-sw dw-sw-na"></i>grey, no data.</span></p>
+        <p class="dw-key" id="colour-key"><b>Colours in the charts:</b> <span><i class="dw-sw"></i>orange, denials;</span> <span><i class="dw-sw dw-sw-bad"></i>red, only where something got worse;</span> <span><i class="dw-sw dw-sw-good"></i>green, good for patients, such as appeals won;</span> <span><i class="dw-sw dw-sw-count"></i>blue, people and money, such as the uninsured and drug spending;</span> <span><i class="dw-sw dw-sw-health"></i>purple, health measures;</span> <span><i class="dw-sw dw-sw-na"></i>grey, no data.</span></p>
 
         <section class="fhi-stack dw-theme" id="why-appeal" aria-labelledby="why-appeal-title">
             <h2 id="why-appeal-title">Why should I appeal?</h2>
@@ -408,7 +410,7 @@
                 </div>
                 <p class="dw-note" id="dgnote"></p>
                 <p class="dw-note" id="dgprice">A <span class="dw-chip">Medicare price</span> tag marks a drug whose price Medicare negotiated with the drugmaker, or picked for a price that starts in 2028. That price caps what Medicare drug plans pay for the drug, plus a pharmacy fee, and it's not your copay: your plan sets your share, based on that price, so ask your plan how it affects you. <span id="dgends">Xarelto's ends after 2026 because a generic is now sold.</span> <a href="https://www.medicare.gov/health-drug-plans/part-d/what-drug-plans-cover/how-drug-plans-work">Medicare's list of negotiated drugs</a>.</p>
-                <p class="dw-key" id="dgkey"><span><i class="dw-sw dw-sw-cost"></i>Medicare Part D spending, before rebates</span></p>
+                <p class="dw-key" id="dgkey"><span><i class="dw-sw dw-sw-count"></i>Medicare Part D spending, before rebates</span></p>
                 <div class="dw-bars" id="dgbars"></div>
             </div>
             <div class="fhi-card" id="drug-help">

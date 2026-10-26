@@ -46,9 +46,9 @@ const inRate=T.in_rate, apShare=T.appeals_all/T.in_denied, won=T.overturned/T.ap
 const imr25=D.imr_trend.find(r=>r.y===2025);
 /* Red edge for what's bad for patients, green for what's good; the words "denied" and "won" say it without colour. */
 $('stats').innerHTML=[
-  [pct(inRate,0),'claims denied','in-network, on HealthCare.gov plans, '+T.year,'bad'],
+  [pct(inRate,0),'claims denied','in-network, on HealthCare.gov plans, '+T.year,'deny'],
   /* Tens, matching the page's "about 1 for every 320". */
-  [fmt(Math.round(1/apShare/10)*10),'denials per appeal',T.year+': '+big(T.in_denied)+' in-network denials, '+fmt(T.appeals_all)+' internal appeals','bad'],
+  [fmt(Math.round(1/apShare/10)*10),'denials per appeal',T.year+': '+big(T.in_denied)+' in-network denials, '+fmt(T.appeals_all)+' internal appeals','deny'],
   [pct(won,0),'appeals won','at the insurer, '+T.year,'good'],
   [pct(imr25.r,0),'reviews won','by patients at California\'s independent review','good']
 ].map(([b,l,s,k])=>`<div class="dw-stat dw-stat-${k}"><p class="dw-stat-head"><b class="dw-num">${b}</b> <strong>${l}</strong></p><span>${s}</span></div>`).join('');
@@ -104,9 +104,9 @@ function mapTable(el,name,valueOf,labelOf,naOf=()=>', no data'){
   el.innerHTML=`<caption class="fhi-visually-hidden">${esc(name)}, every state</caption><thead><tr><th scope="col">State</th><th scope="col" class="dw-r">${esc(name)}</th></tr></thead><tbody>`+
     rows.map(([s,v])=>`<tr><th scope="row">${NAMES[s]}</th><td class="dw-r${v==null?' dw-note':' dw-num'}">${v==null?why(s):labelOf(v)}</td></tr>`).join('')+'</tbody>';
 }
-/* The ramps run light to dark in one hue: red for what's bad for patients, green for what's good, purple for health measures. */
+/* The ramps run light to dark in one hue: orange for denials, blue for people, green for what's good, purple for health measures; red only for a rise. */
 const ramp=name=>[0,1,2,3,4,5].map(i=>tok(`--dw-${name}-${i}`));
-const BAD=ramp('bad'),GOOD=ramp('good'),HEALTH=ramp('health');
+const DENY=ramp('deny'),COUNT=ramp('count'),BAD=ramp('bad'),GOOD=ramp('good'),HEALTH=ramp('health');
 /* Change: falls in green, rises in red, about the same in warm white, never the grey of no data. */
 const DIV=[GOOD[4],GOOD[2],tok('--dw-mid'),BAD[2],BAD[4]];
 
@@ -137,9 +137,9 @@ const BOTH=Object.keys(ST).filter(s=>ST[s].all.rate!=null), gap=s=>ST[s].all.rat
 const NEAR=BOTH.filter(s=>Math.abs(gap(s))<=.03).length;
 const WIDE=BOTH.slice().sort((a,b)=>gap(b)-gap(a)).slice(0,3).map(s=>NAMES[s]);
 const DM={
-  in:{v:s=>ST[s]?ST[s].rate:null,b:RB,c:BAD,l:x=>pct(x,0),t:x=>pct(x,1),sub:spanLab,name:'In-network claims denied, '+T.year,key:'Share of in-network claims denied: darker red, more denied.',
+  in:{v:s=>ST[s]?ST[s].rate:null,b:RB,c:DENY,l:x=>pct(x,0),t:x=>pct(x,1),sub:spanLab,name:'In-network claims denied, '+T.year,key:'Share of in-network claims denied: darker orange, more denied.',
     note:`In-network claims: care from doctors, hospitals and pharmacies that have a contract with the plan. <span class="dw-sub-key">The small type on a tile is the lowest to highest rate among the state's insurers in the table below.</span>`},
-  all:{v:s=>ST[s]&&ST[s].all.rate!=null?ST[s].all.rate:null,gone:s=>!!ST[s],b:RB,c:BAD,l:x=>pct(x,0),t:x=>pct(x,1),gk:'Left out',name:'All claims denied, '+T.year,key:'Share of all claims denied: darker red, more denied.',
+  all:{v:s=>ST[s]&&ST[s].all.rate!=null?ST[s].all.rate:null,gone:s=>!!ST[s],b:RB,c:DENY,l:x=>pct(x,0),t:x=>pct(x,1),gk:'Left out',name:'All claims denied, '+T.year,key:'Share of all claims denied: darker orange, more denied.',
     naOf:s=>!ST[s]?', no data':ST[s].all.why==='error'?', no figure: '+cantBe(ST[s].all.left_out):', no figure',
     note:`In-network and out-of-network claims together: ${pct(T.all_rate,0)} denied in ${T.year}. About ${inTen} in 10 claims are in network, so in ${NEAR} of ${BOTH.length} states these rates sit within 3 points of the in-network ones. They run higher where more claims are out of network, or more of those are denied, as in ${andList(WIDE)}, partly because of the kinds of plans sold there.`+
       (ALLGONE.length?` ${andList(ALLGONE.map(s=>NAMES[s]))} ${ALLGONE.length>1?'show':'shows'} no figure here, because ${esc(cantBe(ALLGONE.flatMap(s=>ST[s].all.left_out)))}.`:'')},
@@ -212,7 +212,7 @@ const TV={
   all:{lab:'all-claims',ymin:.10,ymax:.25,ticks:[.10,.15,.20,.25]}
 };
 function tDraw(){const m=TV[tv],rows=D.trend.filter(t=>t[tv+'_rate']!=null),y0=rows[0].year,y1=rows[rows.length-1].year;
-  line($('tline'),rows.map(t=>({x:t.year,y:t[tv+'_rate']})),{ymin:m.ymin,ymax:m.ymax,ticks:m.ticks,fmtY:y=>pct(y,0),color:tok('--dw-bad'),label:y=>pct(y)+' denied'});
+  line($('tline'),rows.map(t=>({x:t.year,y:t[tv+'_rate']})),{ymin:m.ymin,ymax:m.ymax,ticks:m.ticks,fmtY:y=>pct(y,0),color:tok('--dw-deny'),ink:tok('--dw-deny-deep'),label:y=>pct(y)+' denied'});
   $('tline').setAttribute('aria-label',`Line chart of the ${m.lab} denial rate by year, ${y0} to ${y1}`);
   /* The out-of-network line is the page's one place for that view: the map and the insurer table point here. */
   $('tnote').innerHTML=tv==='in'?`In-network claims, ${y0} to ${y1}.`:
@@ -225,7 +225,7 @@ document.querySelectorAll('#tmode button').forEach(b=>b.onclick=()=>{tv=b.datase
 tDraw();
 line($('imrline'),D.imr_trend.map(r=>({x:r.y,y:r.r})),{ymin:.3,ymax:.8,ticks:[.3,.4,.5,.6,.7,.8],fmtY:y=>pct(y,0),color:tok('--dw-good'),ink:tok('--dw-good-ink'),label:y=>pct(y,0)+' overturned'});
 
-/* reasons: all red, as every one is a denial; the two about medical judgment darker and in bold, as the key says */
+/* reasons: all orange, as every one is a denial; the two about medical judgment darker and in bold, as the key says */
 const rmax=D.reasons[0].v, rtot=D.reasons.reduce((a,r)=>a+r.v,0);
 $('reasons').innerHTML=D.reasons.map(r=>`<div class="dw-bar ${/medically|Experimental/.test(r.k)?'dw-bar-deep':''}"><div class="dw-bar-name"><span>${esc(r.k)}</span><span class="dw-note dw-num">${big(r.v)}</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${r.v/rmax*100}%"></div></div><div class="dw-bar-value dw-num">${r.v/rtot<0.01?'&lt;1%':pct(r.v/rtot,0)}</div></div>`).join('');
 
@@ -266,7 +266,7 @@ const SA=D.sahie, PL=D.places;
 const sa=(y,s)=>{const r=SA[y][NAMES[s]];return r?r.pct/100:null};
 let cm='unins', csel='TX';
 const CM={
-  unins:{v:s=>sa('2024',s),b:[.06,.08,.10,.12,.15],c:BAD,l:x=>pct(x,0),t:x=>pct(x,1),name:'Uninsured under 65, 2024',key:'Share uninsured: darker red, more uninsured.'},
+  unins:{v:s=>sa('2024',s),b:[.06,.08,.10,.12,.15],c:COUNT,l:x=>pct(x,0),t:x=>pct(x,1),name:'Uninsured under 65, 2024',key:'Share uninsured: darker blue, more uninsured.'},
   uchg:{v:s=>{const a=sa('2024',s),b=sa('2023',s);return a!=null&&b!=null?a-b:null},b:[-.006,-.002,.002,.006],c:DIV,mk:true,l:x=>(x>0?'+':'')+(x*100).toFixed(1)+' pt',t:x=>(x>0?'+':'')+(x*100).toFixed(1),tt:x=>(x>0?'+':'')+(x*100).toFixed(1)+' points',name:'Change in uninsured rate, 2023 to 2024',key:'▲ Red: rose, more uninsured. ▼ Green: fell, fewer uninsured. Pale: about the same.'},
   fair_poor_health:{v:s=>PL[s]&&PL[s].fair_poor_health!=null?PL[s].fair_poor_health/100:null,b:[.15,.17,.19,.21,.23],c:HEALTH,l:x=>pct(x,0),t:x=>pct(x,1),name:'Adults in fair or poor health',key:'Share of adults in fair or poor health: darker purple, higher.'},
   diabetes:{v:s=>PL[s]&&PL[s].diabetes!=null?PL[s].diabetes/100:null,b:[.10,.11,.12,.13,.14],c:HEALTH,l:x=>pct(x,0),t:x=>pct(x,1),name:'Adults with diabetes',key:'Share of adults with diabetes: darker purple, higher.'},
@@ -281,8 +281,8 @@ function drawC(){const m=CM[cm],dir=m.mk?dirBy(m.b):undefined;drawMap($('cmap'),
   mapTable($('ctable'),m.name,m.v,m.tt||m.t);
   const arr=GRID.map(g=>[g[0],m.v(g[0])]).filter(x=>x[1]!=null).sort((a,b)=>b[1]-a[1]);const mx=Math.max(...arr.map(x=>Math.abs(x[1])));
   $('cbarsh').textContent=m.name+': highest and lowest';
-  /* Uninsured in red; a change red when it rose and green when it fell, its sign in the value; health measures in purple. */
-  const cls=v=>cm==='unins'?'':cm==='uchg'?(v<0?'dw-bar-good':''):'dw-bar-health';
+  /* Uninsured in blue; a change red when it rose and green when it fell, its sign in the value; health measures in purple. */
+  const cls=v=>cm==='unins'?'dw-bar-count':cm==='uchg'?(v<0?'dw-bar-good':'dw-bar-bad'):'dw-bar-health';
   const row=([s,v])=>`<div class="dw-bar ${cls(v)}"><div class="dw-bar-name"><span>${NAMES[s]}</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${Math.abs(v)/mx*100}%"></div></div><div class="dw-bar-value dw-num">${m.l(v)}</div></div>`;
   $('cbars').innerHTML=arr.slice(0,5).map(row).join('')+'<div class="dw-note dw-gap-row">···</div>'+arr.slice(-5).map(row).join('');}
 document.querySelectorAll('#cmode button').forEach(b=>b.onclick=()=>{cm=b.dataset.m;document.querySelectorAll('#cmode button').forEach(x=>x.setAttribute('aria-pressed',x===b));drawC();});
@@ -304,7 +304,7 @@ function dgDraw(k){const m=DGM[k],rows=DG[k];const mx=Math.max(...rows.map(m.v))
   $('dgprice').hidden=!rows.some(d=>d.medicare_price);
   /* Only where a drug whose price ends is listed. */
   $('dgends').hidden=!rows.some(d=>d.medicare_price&&d.medicare_price.until);
-  $('dgbars').innerHTML=rows.map(d=>`<div class="dw-bar dw-bar-cost${d.medicare_price?' dw-bar-tagged':''}"><div class="dw-bar-name"><span><b>${esc(d.Brnd_Name)}</b>${d.use?` <span class="dw-drug-use">for ${esc(d.use)}</span>`:''}${sameName(d.Brnd_Name,d.Gnrc_Name)?'':` <span class="dw-note">· ${esc(String(d.Gnrc_Name).toLowerCase())}</span>`}</span><span class="dw-note dw-num">${m.sub(d)}</span></div>${d.medicare_price?`<span class="dw-chip dw-bar-chip">${esc(d.medicare_price.label)}</span>`:''}<div class="dw-bar-track"><div class="dw-bar-fill" style="width:${m.v(d)/mx*100}%"></div></div><div class="dw-bar-value dw-num">${m.l(d)}</div></div>`).join('');}
+  $('dgbars').innerHTML=rows.map(d=>`<div class="dw-bar dw-bar-count${d.medicare_price?' dw-bar-tagged':''}"><div class="dw-bar-name"><span><b>${esc(d.Brnd_Name)}</b>${d.use?` <span class="dw-drug-use">for ${esc(d.use)}</span>`:''}${sameName(d.Brnd_Name,d.Gnrc_Name)?'':` <span class="dw-note">· ${esc(String(d.Gnrc_Name).toLowerCase())}</span>`}</span><span class="dw-note dw-num">${m.sub(d)}</span></div>${d.medicare_price?`<span class="dw-chip dw-bar-chip">${esc(d.medicare_price.label)}</span>`:''}<div class="dw-bar-track"><div class="dw-bar-fill" style="width:${m.v(d)/mx*100}%"></div></div><div class="dw-bar-value dw-num">${m.l(d)}</div></div>`).join('');}
 document.querySelectorAll('#dgmode button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#dgmode button').forEach(x=>x.setAttribute('aria-pressed',x===b));dgDraw(b.dataset.m);});
 dgDraw('top');
 

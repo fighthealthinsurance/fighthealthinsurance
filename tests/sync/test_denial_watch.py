@@ -641,7 +641,7 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
     def test_map_tiles_show_each_states_insurer_range_in_network_only(self):
         # The heatmap carries what the ranked bars did; the range is of in-network insurer rates.
         self.assertEqual(self.js.count("sub:spanLab"), 1)
-        self.assertIn("in:{v:s=>ST[s]?ST[s].rate:null,b:RB,c:BAD,l:x=>pct(x,0),t:x=>pct(x,1),sub:spanLab,", self.js)
+        self.assertIn("in:{v:s=>ST[s]?ST[s].rate:null,b:RB,c:DENY,l:x=>pct(x,0),t:x=>pct(x,1),sub:spanLab,", self.js)
         # The range covers the insurers in the table only, so both lines say so.
         self.assertIn("The small type on a tile is the lowest to highest rate among the state's insurers in the table below.", self.js)
         self.assertIn("Its insurers in the table: <b class=\"dw-num\">${pct(span(s)[0])}</b> to", self.js)
@@ -2443,7 +2443,7 @@ def _view(table, key):
 
 
 class TestDenialWatchColourMeaning(TestCase):
-    """Red is bad for patients, green good, grey only no data; the rest inform, and colour is never the only cue."""
+    """Orange is denials, red only a rise, green good for patients, grey only no data; the rest inform, and colour is never the only cue."""
 
     @classmethod
     def setUpClass(cls):
@@ -2469,15 +2469,30 @@ class TestDenialWatchColourMeaning(TestCase):
                 self.assertEqual(set(HEX.findall(block)) - {"#fff"}, set(), name)
         self.assertEqual(set(HEX.findall(STYLE_PARTIAL.replace(tokens, ""))), set())
 
-    def test_bad_things_are_red(self):
-        self.assertIn(".dw-bar-fill { height: 100%; border-radius: 2px; background-color: var(--dw-bad); }", self.content)
+    def test_denials_are_orange(self):
+        self.assertIn(".dw-bar-fill { height: 100%; border-radius: 2px; background-color: var(--dw-deny); }", self.content)
         # The denial trend, the denial maps, prior authorization and the insurers' bars.
-        self.assertIn("color:tok('--dw-bad'),label:y=>pct(y)+' denied'", JS)
+        self.assertIn("color:tok('--dw-deny'),ink:tok('--dw-deny-deep'),label:y=>pct(y)+' denied'", JS)
         for view in ("in", "all"):
-            self.assertIn("c:BAD,", _view("DM", view))
-        self.assertIn("c:BAD,", _view("CM", "unins"))
+            self.assertIn("c:DENY,", _view("DM", view))
         self.assertIn('$(\'pabars\').innerHTML=rows.map(r=>`<div class="dw-bar">', JS)
-        self.assertIn("vertical-align: middle; background-color: var(--dw-bad); }", _between(self.content, ".dw-mini {", "\n"))
+        self.assertIn("vertical-align: middle; background-color: var(--dw-deny); }", _between(self.content, ".dw-mini {", "\n"))
+
+    def test_red_is_only_for_a_rise(self):
+        # Two red steps on the change scale, a rising bar, and the key's swatch; nothing else reads the red tokens.
+        self.assertEqual(re.findall(r"BAD\[\d\]", JS), ["BAD[2]", "BAD[4]"])
+        self.assertIn("cm==='uchg'?(v<0?'dw-bar-good':'dw-bar-bad')", JS)
+        uses = [u for u in re.findall(r"[^\n]*var\(--dw-bad[^\n]*", self.content) if not u.strip().startswith("--dw-")]
+        self.assertEqual(
+            [u.strip() for u in uses],
+            [".dw-sw-bad { background-color: var(--dw-bad); }", ".dw-bar-bad .dw-bar-fill { background-color: var(--dw-bad); }"],
+        )
+
+    def test_the_uninsured_and_money_are_blue(self):
+        self.assertIn("c:COUNT,", _view("CM", "unins"))
+        self.assertIn("cm==='unins'?'dw-bar-count'", JS)
+        self.assertIn('$(\'dgbars\').innerHTML=rows.map(d=>`<div class="dw-bar dw-bar-count', JS)
+        self.assertIn(".dw-bar-count .dw-bar-fill { background-color: var(--dw-count); }", self.content)
 
     def test_good_things_are_green(self):
         self.assertIn("color:tok('--dw-good'),ink:tok('--dw-good-ink'),label:y=>pct(y,0)+' overturned'", JS)
@@ -2486,13 +2501,13 @@ class TestDenialWatchColourMeaning(TestCase):
         self.assertIn(".dw-bar-good .dw-bar-fill { background-color: var(--dw-good); }", self.content)
 
     def test_informative_measures_take_their_own_colours(self):
-        # Health measures purple, money orange, counts blue: neither good nor bad, and not all one blue.
+        # Health measures purple, people and money blue: neither good nor bad, and each apart from the others.
         for view in ("fair_poor_health", "diabetes", "depression"):
             self.assertIn("c:HEALTH,", _view("CM", view))
-        self.assertIn('$(\'dgbars\').innerHTML=rows.map(d=>`<div class="dw-bar dw-bar-cost', JS)
         self.assertNotIn("dw-bar-low", JS + self.content)
+        self.assertNotIn("dw-cost", JS + self.content + STYLE_PARTIAL)
         self.assertIn("color:tok('--dw-count')", OE_JS)
-        hues = {name: _seen_with(((1, 0, 0), (0, 1, 0), (0, 0, 1)), name) for name in ("--dw-bad", "--dw-good", "--dw-cost", "--dw-health-4", "--dw-count")}
+        hues = {name: _seen_with(((1, 0, 0), (0, 1, 0), (0, 0, 1)), name) for name in ("--dw-deny", "--dw-bad", "--dw-good", "--dw-health-4", "--dw-count")}
         for a in hues:
             for b in hues:
                 if a < b:
@@ -2517,7 +2532,7 @@ class TestDenialWatchColourMeaning(TestCase):
         self.assertGreater(_lightness("--dw-mid") - _lightness("--dw-na"), 4)
 
     def test_ramps_step_down_in_lightness(self):
-        for ramp in ("bad", "good", "health"):
+        for ramp in ("deny", "count", "bad", "good", "health"):
             steps = [_lightness(f"--dw-{ramp}-{i}") for i in range(6)]
             for lighter, darker in zip(steps, steps[1:]):
                 self.assertGreater(lighter - darker, 8, (ramp, steps))
@@ -2528,6 +2543,11 @@ class TestDenialWatchColourMeaning(TestCase):
         for matrix in (DEUTAN, PROTAN):
             self.assertGreater(_delta(_seen_with(matrix, "--dw-good"), _seen_with(matrix, "--dw-bad")), 20)
             self.assertGreater(_delta(_seen_with(matrix, "--dw-good-2"), _seen_with(matrix, "--dw-bad-2")), 15)
+
+    def test_orange_and_green_stay_apart_with_red_green_colour_blindness(self):
+        # Denials and appeals won sit side by side in the appeals section and the tiles.
+        for matrix in (DEUTAN, PROTAN):
+            self.assertGreater(_delta(_seen_with(matrix, "--dw-good"), _seen_with(matrix, "--dw-deny")), 20)
 
     def test_change_maps_mark_direction_with_a_triangle(self):
         self.assertIn('<path class="dw-mark" data-x="${x}" data-y="${y}"/>', JS)
@@ -2577,25 +2597,25 @@ class TestDenialWatchColourMeaning(TestCase):
         self.assertIn("'dw-bar-deep':''", JS)
 
     def test_tiles_say_denied_or_won_beside_their_colour(self):
-        tiles = re.findall(r"\[[^\[\]]*?'([^']+)',[^\[\]]*?,'(bad|good)'\]", _between(JS, "$('stats').innerHTML=[", "].map("))
-        self.assertEqual([k for _, k in tiles], ["bad", "bad", "good", "good"])
+        tiles = re.findall(r"\[[^\[\]]*?'([^']+)',[^\[\]]*?,'(deny|good)'\]", _between(JS, "$('stats').innerHTML=[", "].map("))
+        self.assertEqual([k for _, k in tiles], ["deny", "deny", "good", "good"])
         for label, kind in tiles:
-            self.assertIn("deni" if kind == "bad" else "won", label)
-        self.assertIn(".dw-stat-bad { border-top-color: var(--dw-bad); }", self.content)
+            self.assertIn("deni" if kind == "deny" else "won", label)
+        self.assertIn(".dw-stat-deny { border-top-color: var(--dw-deny); }", self.content)
         self.assertIn(".dw-stat-good { border-top-color: var(--dw-good); }", self.content)
 
-    def test_every_state_chart_is_red_with_a_texture_per_source(self):
-        # Every bar is a denial rate, so red; solid, striped or hollow says which kind of record, as the keys say in words.
-        self.assertIn("i.dw-src-cms { background-color: var(--dw-bad); }", self.content)
-        self.assertIn(".dw-src-state .dw-bar-fill, i.dw-src-state { background: repeating-linear-gradient(135deg, var(--dw-bad) 0 3px, var(--dw-bad-1) 3px 6px); }", self.content)
-        self.assertIn(".dw-src-earlier .dw-bar-fill, i.dw-src-earlier { background: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-bad); }", self.content)
+    def test_every_state_chart_is_orange_with_a_texture_per_source(self):
+        # Every bar is a denial rate, so orange; solid, striped or hollow says which kind of record, as the keys say in words.
+        self.assertIn("i.dw-src-cms { background-color: var(--dw-deny); }", self.content)
+        self.assertIn(".dw-src-state .dw-bar-fill, i.dw-src-state { background: repeating-linear-gradient(135deg, var(--dw-deny) 0 3px, var(--dw-deny-1) 3px 6px); }", self.content)
+        self.assertIn(".dw-src-earlier .dw-bar-fill, i.dw-src-earlier { background: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-deny); }", self.content)
         self.assertIn('<details class="dw-years" id="every-alt">', self.content)
 
     def test_page_key_names_each_colour_in_words(self):
         key = _text(_between(self.content, '<p class="dw-key" id="colour-key">', "</p>"))
         self.assertEqual(
             key,
-            "Colours in the charts: red, bad for patients, such as denials; green, good for patients, such as appeals won; "
-            "orange, money spent; purple, health measures; grey, no data.",
+            "Colours in the charts: orange, denials; red, only where something got worse; green, good for patients, such as appeals won; "
+            "blue, people and money, such as the uninsured and drug spending; purple, health measures; grey, no data.",
         )
         self.assertLess(self.content.index('class="fhi-jump-links"'), self.content.index('id="colour-key"'))

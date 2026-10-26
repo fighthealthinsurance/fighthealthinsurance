@@ -1,22 +1,25 @@
 {% comment %}
 The chart and tile pieces Denial Watch and its open enrollment page share; each
 page adds its own after this. The tokens below are the only place a chart colour
-is written: red is bad for patients, green good, grey only no data, the rest
-inform. tests/sync/test_contrast.py measures them; the site has no dark mode.
+is written: orange is denials, red only marks something that got worse, green is
+good for patients, grey only no data, the rest inform. tests/sync/test_contrast.py measures them; the site has no dark mode.
 {% endcomment %}
 <style>
   .dw {
-    /* Bad for patients: one red, light to dark; the mark and its emphasis are steps of it. */
+    /* Denials: one orange, light to dark, a concern rather than an alarm; the mark and its emphasis are steps of it. */
+    --dw-deny-0: #fff3e0; --dw-deny-1: #fcd29a; --dw-deny-2: #f6b562; --dw-deny-3: #e08a1e; --dw-deny-4: #a35c00; --dw-deny-5: #7a4500;
+    --dw-deny: var(--dw-deny-4); --dw-deny-deep: var(--dw-deny-5);
+    /* Worse than before: one red, kept for a rise on a change map and its bars, so it still means something. */
     --dw-bad-0: #fdecdf; --dw-bad-1: #f9c7a8; --dw-bad-2: #f09a72; --dw-bad-3: #dc6445; --dw-bad-4: #b8321f; --dw-bad-5: #7f1a12;
-    --dw-bad: var(--dw-bad-4); --dw-bad-deep: var(--dw-bad-5);
+    --dw-bad: var(--dw-bad-4);
     /* Good for patients: one bluish green, light to dark; the mark is lighter than the red mark, the ink is for words. */
     --dw-good-0: #e3f4ed; --dw-good-1: #b2e0cd; --dw-good-2: #6fc4a4; --dw-good-3: #2ba67f; --dw-good-4: #00785a; --dw-good-5: #004d3a;
     --dw-good: #009e73; --dw-good-ink: var(--dw-good-4);
     /* The middle of a change scale, about the same: warm white, so it isn't the grey of no data. */
     --dw-mid: #fbf6e9;
-    /* Informative, neither good nor bad: health measures, money spent, and counts (coverage, and plan picks as its pale tint). */
+    /* Informative, neither good nor bad: health measures in purple; people and money in blue (coverage, the uninsured, drug spending, and plan picks as its pale tint). */
     --dw-health-0: #efe9f6; --dw-health-1: #d6c7ea; --dw-health-2: #b69dd7; --dw-health-3: #8665b1; --dw-health-4: #6a449c; --dw-health-5: #43256b;
-    --dw-cost: #bd7500;
+    --dw-count-0: #e8f2fa; --dw-count-1: #bcd9ef; --dw-count-2: #82b7df; --dw-count-3: #3f8fc8; --dw-count-4: #0072b2; --dw-count-5: #123d73;
     --dw-count: #0072b2; --dw-count-tint: #cfe8f7; --dw-count-deep: #123d73;
     /* No data, and only that; a state a view leaves out is outlined on paper instead. */
     --dw-na: #e3e6ea; --dw-na-ink: #5d6771;
@@ -34,16 +37,16 @@ inform. tests/sync/test_contrast.py measures them; the site has no dark mode.
   .dw-stat b { font-size: 2rem; line-height: 1.1; }
   .dw-stat strong { font-size: 1.3rem; line-height: 1.15; color: var(--fhi-ink); }
   .dw-stat span { color: var(--fhi-ink-2); }
-  /* A tile about something bad or good for patients takes that colour; its words say which. */
-  .dw-stat-bad { border-top-color: var(--dw-bad); }
+  /* A tile about denials or about something good for patients takes that colour; its words say which. */
+  .dw-stat-deny { border-top-color: var(--dw-deny); }
   .dw-stat-good { border-top-color: var(--dw-good); }
   /* A chart's key: a swatch beside the words for what the colour means. */
   .dw-key { display: flex; flex-wrap: wrap; gap: var(--fhi-space-1) var(--fhi-space-4); margin: 0; font-size: var(--fhi-text-small); color: var(--fhi-ink-2); }
   .dw-key > span { display: inline-flex; align-items: center; gap: var(--fhi-space-2); }
-  .dw-sw { flex: none; display: inline-block; width: 1.5rem; height: 10px; border-radius: 2px; background-color: var(--dw-bad); }
-  .dw-sw-deep { background-color: var(--dw-bad-deep); }
+  .dw-sw { flex: none; display: inline-block; width: 1.5rem; height: 10px; border-radius: 2px; background-color: var(--dw-deny); }
+  .dw-sw-deep { background-color: var(--dw-deny-deep); }
+  .dw-sw-bad { background-color: var(--dw-bad); }
   .dw-sw-good { background-color: var(--dw-good); }
-  .dw-sw-cost { background-color: var(--dw-cost); }
   .dw-sw-health { background-color: var(--dw-health-4); }
   .dw-sw-count { background-color: var(--dw-count); }
   .dw-sw-picks { background-color: var(--dw-count-tint); box-shadow: inset 0 0 0 1px var(--dw-count); }
