@@ -26,8 +26,8 @@ from the repository root unless a block says otherwise.
 sudo apt-get install -y tesseract-ocr texlive pandoc mkcert git git-lfs
 ```
 
-Install Node.js 20+ separately: the production image uses NodeSource's
-`setup_20.x` (`k8s/Dockerfile`), and nvm also works.
+Install Node.js 20+ separately (22 matches production): the production image uses NodeSource's
+`setup_22.x` (`k8s/Dockerfile`), and nvm also works.
 
 - CI also installs `pkg-config python3-dev`. Add them if pip fails to build a
   package.
