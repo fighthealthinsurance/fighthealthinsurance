@@ -7,6 +7,7 @@ written into its sentences, so these tests check the copy still agrees with
 the data after a refresh, and pin the date wherever the season matters.
 """
 
+import csv
 import json
 import re
 from datetime import date, datetime, timezone as dt_timezone
@@ -17,7 +18,9 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
 from tests.sync.test_denial_watch import (
+    ASPE_REPORTS,
     CHARTS_JS,
+    CMS_OEP_PUFS,
     CMS_EFFECTUATED,
     DATA,
     EARLY_FEB_2025,
@@ -27,6 +30,7 @@ from tests.sync.test_denial_watch import (
     REPO,
     _between,
     _census_year,
+    _load_builder,
     _february,
     _millions,
     _page,
@@ -520,6 +524,11 @@ class TestOpenEnrollmentTop(TestCase):
             'id="enroll-steps"',
             'href="#enroll-questions"',
             'href="#method-enroll"',
+            'id="enroll-history"',
+            'id="pkline"',
+            'id="pkkey"',
+            'id="pknote"',
+            'id="pktable"',
             'id="enroll-questions"',
             'id="sources"',
         ]
@@ -529,7 +538,10 @@ class TestOpenEnrollmentTop(TestCase):
     def test_headings_and_lead_dont_lead_with_a_loss(self):
         top = _between(self.content, '<header class="fhi-page-title">', 'id="enroll-questions"')
         heads = re.findall(r"<h[12][^>]*>(.*?)</h[12]>", top)
-        self.assertEqual([_text(h) for h in heads], ["Open enrollment for 2027", "People with marketplace coverage each February", "What to do now"])
+        self.assertEqual(
+            [_text(h) for h in heads],
+            ["Open enrollment for 2027", "People with marketplace coverage each February", "What to do now", "Plans picked in each open enrollment"],
+        )
         for part in heads + [_between(self.section, 'id="enroll-dates-line"', "</p>")]:
             for word in ("fell", "drop", "lost", "lower", "fewer", "decline"):
                 self.assertNotIn(word, _text(part).lower(), part)
@@ -605,7 +617,8 @@ class TestOpenEnrollmentTop(TestCase):
 
     def test_top_stays_short(self):
         # The enrollment copy had grown far longer than the rest of Denial Watch: 273 words, plus a little room.
-        self.assertLessEqual(_words(self.section), 280)
+        # The plan picks history below it has its own budget.
+        self.assertLessEqual(_words(_between(self.section, 'id="enroll"', 'id="enroll-history"')), 280)
 
     def test_sections_are_named_by_their_headings(self):
         self.assertIn('<section class="fhi-stack" id="enroll-questions" aria-labelledby="enroll-questions-title">', self.content)
@@ -736,7 +749,10 @@ class TestOpenEnrollmentMarketplace(TestCase):
 
     def test_script_draws_only_with_data(self):
         self.assertIn("const MK=D.marketplace;\nif(MK){", OE_JS)
-        self.assertEqual(OE_JS.index("/* marketplace coverage:"), OE_JS.rindex("/* "))
+        self.assertIn("const H=MK&&MK.history;\nif(H&&H.length){", OE_JS)
+        # The February chart, then the plan picks history, and nothing after.
+        self.assertLess(OE_JS.index("/* marketplace coverage:"), OE_JS.index("/* plans picked:"))
+        self.assertEqual(OE_JS.index("/* plans picked:"), OE_JS.rindex("/* "))
 
     def test_tables_are_accessible(self):
         picks = _between(self.questions, 'id="mkpicks"', "</table>")
@@ -984,7 +1000,7 @@ class TestOpenEnrollmentSourcesFold(TestCase):
     def test_enrollment_method_links_back_up(self):
         group = _between(self.fold, 'id="method-enroll"', "</div>")
         self.assertIn('<p class="dw-back"><a href="#enroll">Back to Open enrollment for 2027</a></p>', group)
-        for item in ("<b>Marketplace coverage:</b>", "<b>Plan picks:</b>", "<b>KFF:</b>", "<b>Open enrollment:</b>"):
+        for item in ("<b>Marketplace coverage:</b>", "<b>Plan picks:</b>", "<b>Plans picked, 2014 to 2026:</b>", "<b>KFF:</b>", "<b>Open enrollment:</b>"):
             self.assertIn(item, group)
         after = _between(_enroll(AFTER_SEASON), 'id="method-enroll"', "</div>")
         self.assertIn('<p class="dw-back"><a href="#enroll">Back to Signing up for marketplace coverage</a></p>', after)
@@ -1059,7 +1075,171 @@ class TestOpenEnrollmentColours(TestCase):
         )
         self.assertLess(self.section.index('id="mkline"'), self.section.index('id="mkkey"'))
 
+    def test_history_key_names_the_count(self):
+        key = _between(self.section, '<p class="dw-key" id="pkkey">', "</p>")
+        self.assertEqual(re.findall(r'<i class="dw-sw ([\w-]+)"></i>([^<]+)', key), [("dw-sw-count", "Plans picked")])
+        self.assertLess(self.section.index('id="pkline"'), self.section.index('id="pkkey"'))
+
     def test_no_red_or_green_on_the_page(self):
         for colour in ("--dw-bad", "--dw-good"):
             self.assertNotIn(f"var({colour}", _between(self.content, '<div class="fhi-page-wide dw">', '<script id="dw-data"'))
             self.assertNotIn(colour, OE_JS)
+
+
+HISTORY_CSV = REPO / "scripts" / "denial_watch" / "open_enrollment_history.csv"
+HISTORY = MK["history"]
+FAQ_2022 = "https://www.cms.gov/files/document/2022-public-use-files-faqs.pdf"
+
+
+def _history() -> dict[int, int]:
+    return {h["y"]: h["n"] for h in HISTORY}
+
+
+class TestOpenEnrollmentHistory(TestCase):
+    """Plans picked in every open enrollment from 2014: a line after the February chart, its note and its table, from the bundle."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.content = _enroll(IN_SEASON)
+        cls.section = _between(cls.content, 'id="enroll-history"', "</section>")
+        cls.note = _text(_between(cls.section, 'id="pknote"', "</p>"))
+        method = _between(cls.content, 'id="method-enroll"', "</div>")
+        cls.method_html = _between(method, "<b>Plans picked, 2014 to 2026:</b>", "</li>")
+        cls.method = _text(cls.method_html)
+        cls.script = _between(OE_JS, "/* plans picked:", "})();")
+
+    def test_bundle_history_is_the_curated_csv(self):
+        with open(HISTORY_CSV, newline="") as f:
+            rows = [
+                dict(y=int(r["year"]), n=int(r["plan_selections"]), fed=int(r["healthcare_gov"]), sbm=int(r["state_based"]), pub=r["publisher"])
+                for r in csv.DictReader(f)
+            ]
+        self.assertEqual(HISTORY, rows)
+
+    def test_history_matches_the_plan_picks_where_both_have_a_year(self):
+        picks, history = _picks(), _history()
+        self.assertEqual(sorted(picks), [2025, 2026])
+        for y, n in picks.items():
+            self.assertEqual(history[y], n, y)
+
+    def test_history_runs_every_year_from_2014_and_adds_up(self):
+        self.assertEqual([h["y"] for h in HISTORY], list(range(2014, max(_picks()) + 1)))
+        for h in HISTORY:
+            self.assertEqual(h["n"], h["fed"] + h["sbm"], h["y"])
+
+    def test_cms_from_2017_and_aspe_before(self):
+        self.assertEqual({h["y"]: h["pub"] for h in HISTORY if h["y"] < 2017}, {y: "HHS ASPE, from CMS data" for y in ASPE_REPORTS})
+        self.assertEqual({h["pub"] for h in HISTORY if h["y"] >= 2017}, {"CMS"})
+
+    def test_builder_refuses_history_that_disagrees_with_the_plan_picks(self):
+        wrong = [{**p, "n": p["n"] + 1} for p in MK["picks"]]
+        with self.assertRaisesRegex(SystemExit, "plans picked, and marketplace_signups.csv has"):
+            _load_builder().load_open_enrollment_history(wrong)
+
+    def test_section_sits_after_the_february_chart(self):
+        for before, after in (('id="mkline"', 'id="enroll-history"'), ('id="mktable"', 'id="pkline"'), ('id="pktable"', 'id="enroll-questions"')):
+            self.assertLess(self.content.index(before), self.content.index(after))
+        self.assertIsNone(_section_parents(self.content)["enroll-history"])
+        self.assertIn('<section class="fhi-stack" id="enroll-history" aria-labelledby="pk-title">', self.content)
+        self.assertIn('<h2 class="fhi-card-title" id="pk-title">Plans picked in each open enrollment</h2>', self.section)
+
+    def test_chart_label_before_the_script_runs_names_the_years(self):
+        self.assertIn(
+            f'<svg class="dw-chart" id="pkline" viewBox="0 0 560 270" role="img" aria-label="Line chart of people who picked a marketplace plan '
+            f'in each open enrollment, {HISTORY[0]["y"]} to {HISTORY[-1]["y"]}"></svg>',
+            self.section,
+        )
+        self.assertIn(
+            "$('pkline').setAttribute('aria-label',`Line chart of people who picked a marketplace plan in each open enrollment, ${first} to ${lastY}`);",
+            self.script,
+        )
+
+    def test_note_says_what_the_line_shows_from_the_bundle(self):
+        h = _history()
+        flat = [h[y] for y in range(2015, 2022)]
+        # Flat through 2021, then up every year to the peak, and lower for the latest year.
+        self.assertEqual(max(h, key=h.get), 2025)
+        self.assertEqual([h[y] for y in range(2021, 2026)], sorted(h[y] for y in range(2021, 2026)))
+        self.assertLess(h[2026], h[2025])
+        self.assertIn(
+            f"After {_millions(h[2014])} for 2014, the first open enrollment, plan picks stayed between {_millions(min(flat))} and "
+            f"{_millions(max(flat))} a year through 2021, then climbed to {_millions(h[2025])} for 2025, and {_millions(h[2026])} people "
+            "picked a plan for 2026.",
+            self.note,
+        )
+
+    def test_note_carries_the_caveats(self):
+        for caveat in (
+            "These count people with a plan picked, including automatic renewals, not paid coverage.",
+            "The sign-up window changed length: about six months for 2014, about six weeks on HealthCare.gov for 2018 to 2021, "
+            "and about eleven weeks there for 2022 to 2026.",
+            "CMS changed how it counts a picked plan for 2018 and again for 2022.",
+            "The 2014 to 2016 counts are from HHS ASPE reports of CMS data.",
+        ):
+            self.assertIn(caveat, self.note)
+
+    def test_section_stays_short(self):
+        # 131 words with the caveats, plus a little room; the folded year table isn't prose.
+        prose = re.sub(r'<table class="dw-table" id="pktable">.*?</table>', "", self.section, flags=re.S)
+        self.assertLessEqual(_words(prose), 135)
+
+    def test_script_draws_pkline_from_the_history(self):
+        self.assertIn("const H=MK&&MK.history;", self.script)
+        self.assertIn("line($('pkline'),H.map(r=>({x:r.y,y:r.n})),", self.script)
+        self.assertIn("color:tok('--dw-count')", self.script)
+        call = re.search(r"line\(\$\('pkline'\),.*?\{ymin:(\d+),ymax:([\d.e]+),ticks:\[([^\]]+)\]", self.script)
+        self.assertIsNotNone(call)
+        self.assertEqual(float(call.group(1)), 0)
+        self.assertEqual(float(call.group(2)), 25e6)
+        self.assertEqual(float(call.group(3).split(",")[-1]), 25e6)
+        self.assertTrue(all(h["n"] <= 25e6 for h in HISTORY))
+        # Every year is final, so no point is drawn hollow.
+        self.assertNotIn("open:", self.script)
+
+    def test_table_rows_are_drawn_by_the_view(self):
+        # In the page itself, so the fold reads without the script.
+        self.assertIn('<summary>Every open enrollment\'s count</summary>', self.section)
+        table = _between(self.section, '<table class="dw-table" id="pktable">', "</table>")
+        self.assertIn(
+            f'<caption class="fhi-visually-hidden">People who picked a marketplace plan in each open enrollment, nationwide, {HISTORY[0]["y"]} to {HISTORY[-1]["y"]}</caption>',
+            table,
+        )
+        self.assertIn(
+            '<thead><tr><th scope="col">Plan year</th><th scope="col" class="dw-r">Plans picked</th><th scope="col" class="dw-r">HealthCare.gov</th>'
+            '<th scope="col" class="dw-r">State-run</th><th scope="col">Source</th></tr></thead>',
+            table,
+        )
+        rows = re.findall(r'<tr><th scope="row">(\d+)</th><td class="dw-r dw-num">([\d,]+)</td><td class="dw-r dw-num">([\d,]+)</td><td class="dw-r dw-num">([\d,]+)</td><td>([^<]+)</td></tr>', table)
+        self.assertEqual(rows, [(str(h["y"]), f"{h['n']:,}", f"{h['fed']:,}", f"{h['sbm']:,}", h["pub"]) for h in HISTORY])
+        self.assertNotIn("pktable", self.script)
+
+    def test_section_links_its_method(self):
+        self.assertIn(
+            '<p class="dw-how"><a href="#method-enroll">How we got these numbers<span class="fhi-visually-hidden">: Plans picked in each open enrollment</span></a></p>',
+            self.section,
+        )
+
+    def test_sources_name_every_file(self):
+        self.assertIn(f'<a href="{CMS_OEP_PUFS}">Marketplace Open Enrollment Period state-level public use files</a>', self.method_html)
+        for y, url in ASPE_REPORTS.items():
+            self.assertIn(f'<a href="{url}">{y}</a>', self.method_html)
+        self.assertIn(f'href="{FAQ_2022}"', self.method_html)
+        self.assertIn("so 2014 to 2016 are from HHS ASPE's enrollment reports", self.method)
+        self.assertIn("whose tables cite CMS data.", self.method)
+        self.assertIn("Checked October 25, 2026.", self.method)
+
+    def test_sources_say_how_the_count_changed(self):
+        for words in (
+            "The 2014 window ran from October 1, 2013 to March 31, 2014, and its count includes sign-ups through April 19, 2014.",
+            "HealthCare.gov's deadline was December 15 for 2018 to 2021 and January 15 for 2022 to 2026 (January 16 for 2024);",
+            "For HealthCare.gov, CMS counted a picked plan for 2017 if its coverage included March and wasn't canceled, "
+            "for 2018 to 2021 if any of its coverage wasn't canceled, and for 2022 on only if its coverage ran to at least January 31",
+            "as Georgia did for 2025 and Illinois for 2026.",
+        ):
+            self.assertIn(words, self.method)
+
+    def test_no_dashes(self):
+        for part in (self.section, self.method_html, self.script):
+            for dash in ("\u2014", "\u2013"):
+                self.assertNotIn(dash, part)

@@ -2040,8 +2040,15 @@ MK = DATA["marketplace"]
 CMS_EFFECTUATED = "https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/health-insurance-marketplace/health-insurance-exchanges-monthly-effectuated-enrollment"
 # CMS's early 2025 effectuated report counted February 2025 on March 15, 2025, sooner than the file the page uses.
 EARLY_FEB_2025 = 23_393_198
+# Every open enrollment's plan picks: CMS's files from 2017, HHS ASPE's reports of CMS data before that.
+CMS_OEP_PUFS = "https://www.cms.gov/data-research/statistics-trends-and-reports/marketplace-products"
+ASPE_REPORTS = {
+    2014: "https://www.aspe.hhs.gov/sites/default/files/migrated_legacy_files/44226/ib_2014Apr_enrollment.pdf",
+    2015: "https://www.aspe.hhs.gov/sites/default/files/migrated_legacy_files/137886/ib_2015mar_enrollment.pdf",
+    2016: "https://aspe.hhs.gov/sites/default/files/private/pdf/187866/Finalenrollment2016.pdf",
+}
 # The files behind the marketplace numbers, which the open enrollment page names.
-MARKETPLACE_SOURCES = {CMS_EFFECTUATED} | {p["url"] for p in MK["picks"]}
+MARKETPLACE_SOURCES = {CMS_EFFECTUATED, CMS_OEP_PUFS} | {p["url"] for p in MK["picks"]} | set(ASPE_REPORTS.values())
 
 
 def _census_year() -> str:
@@ -2099,6 +2106,15 @@ class TestDenialWatchMarketplaceData(TestCase):
 
     def test_builder_reads_the_curated_plan_picks(self):
         self.assertEqual(_load_builder().load_marketplace_signups(), MK["picks"])
+
+    def test_builder_reads_the_curated_history(self):
+        self.assertEqual(_load_builder().load_open_enrollment_history(MK["picks"]), MK["history"])
+
+    def test_sources_give_the_history_years(self):
+        years = {s["url"]: s["years"] for s in DATA["sources"]}
+        self.assertEqual(years[CMS_OEP_PUFS], f"2017-{MK['history'][-1]['y']}")
+        for y, url in ASPE_REPORTS.items():
+            self.assertEqual(years[url], str(y))
 
 
 class TestDenialWatchMarketplaceBuilder(TestCase):
@@ -2260,10 +2276,67 @@ class TestDenialWatchMarketplaceBuilder(TestCase):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         with mock.patch.object(self.b, "EFFECTUATED_SHA256", digest):
             with mock.patch.object(self.b, "RAW", self._zip_dir(b"not the zip")), self.assertRaisesRegex(SystemExit, "not the file_sha256 recorded"):
-                self.b.build_marketplace(path, picks)
+                self.b.build_marketplace(path, picks, self._history_rows(2014))
             with mock.patch.object(self.b, "RAW", self._zip_dir(None)):
-                mk = self.b.build_marketplace(path, picks)
+                mk = self.b.build_marketplace(path, picks, self._history_rows(2014))
         self.assertEqual((mk["prelim"], [r["y"] for r in mk["feb"]], [p["y"] for p in mk["picks"]]), (2026, [2025, 2026], [2025, 2026]))
+        self.assertEqual(mk["history"], [dict(y=2014, n=3, fed=2, sbm=1, pub="CMS")])
+
+    HISTORY = dict(
+        year="2014",
+        plan_selections="3",
+        healthcare_gov="2",
+        state_based="1",
+        publisher="CMS",
+        source_url="https://www.cms.gov/files/zip/x.zip",
+        source_file="x.csv",
+    )
+
+    def _history_rows(self, *years, **change):
+        rows = [{**self.HISTORY, "year": str(y), **change} for y in years]
+        lines = [",".join(self.HISTORY)] + [",".join(f'"{v}"' for v in r.values()) for r in rows]
+        return self._temp("\n".join(lines) + "\n", ".csv")
+
+    def test_complete_history_rows_load_in_year_order(self):
+        history = self.b.load_open_enrollment_history([], self._history_rows(2015, 2014, publisher="HHS ASPE, from CMS data"))
+        self.assertEqual(
+            history,
+            [dict(y=2014, n=3, fed=2, sbm=1, pub="HHS ASPE, from CMS data"), dict(y=2015, n=3, fed=2, sbm=1, pub="HHS ASPE, from CMS data")],
+        )
+
+    def test_history_total_must_be_healthcare_gov_plus_state_run(self):
+        with self.assertRaisesRegex(SystemExit, "plan_selections for 2014 isn't healthcare_gov plus state_based"):
+            self.b.load_open_enrollment_history([], self._history_rows(2014, plan_selections="4"))
+
+    def test_history_years_run_from_2014_without_a_gap_or_a_repeat(self):
+        for years in ((2014, 2016), (2015, 2016), (2014, 2015, 2015), ()):
+            with self.subTest(years=years), self.assertRaisesRegex(SystemExit, "years must run from 2014 without a gap or a repeat"):
+                self.b.load_open_enrollment_history([], self._history_rows(*years))
+
+    def test_history_publisher_is_cms_or_aspe_from_cms_data(self):
+        for bad in ("", "KFF", "HHS ASPE", "HHS ASPE (CMS data)", "cms"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(SystemExit, ": publisher must"):
+                self.b.load_open_enrollment_history([], self._history_rows(2014, publisher=bad))
+
+    def test_history_cites_cms_or_aspe_over_https(self):
+        for good in ("https://aspe.hhs.gov/x.pdf", "https://www.aspe.hhs.gov/x.pdf", "https://www.cms.gov/x.zip"):
+            self.assertEqual(len(self.b.load_open_enrollment_history([], self._history_rows(2014, source_url=good))), 1)
+        for bad in ("", "http://www.cms.gov/x.zip", "https://cms.gov.example.org/x.zip", "https://www.kff.org/x", "https://data.cms.gov/x"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(SystemExit, ": source_url must"):
+                self.b.load_open_enrollment_history([], self._history_rows(2014, source_url=bad))
+        with self.assertRaisesRegex(SystemExit, ": source_file must"):
+            self.b.load_open_enrollment_history([], self._history_rows(2014, source_file=" "))
+
+    def test_history_counts_must_be_above_zero(self):
+        for column, bad in (("plan_selections", "0"), ("healthcare_gov", ""), ("state_based", "-1"), ("state_based", "1.0"), ("year", "14")):
+            with self.subTest(column=column, bad=bad), self.assertRaisesRegex(SystemExit, f": {column} must"):
+                self.b.load_open_enrollment_history([], self._history_rows(2014, **{column: bad}))
+
+    def test_history_must_match_the_plan_picks_for_a_year_in_both(self):
+        path = self._history_rows(2014, 2015)
+        self.assertEqual(len(self.b.load_open_enrollment_history([dict(y=2015, n=3, url="https://www.cms.gov/x"), dict(y=2026, n=1, url="")], path)), 2)
+        with self.assertRaisesRegex(SystemExit, "2015 has 3 plans picked, and marketplace_signups.csv has 4"):
+            self.b.load_open_enrollment_history([dict(y=2015, n=4, url="https://www.cms.gov/x")], path)
 
     def _feb(self, *years):
         return [dict(y=y, n=1000 + y, mn=1) for y in years]
@@ -2285,6 +2358,10 @@ class TestDenialWatchMarketplaceBuilder(TestCase):
     def test_one_february_is_not_enough_to_compare(self):
         with self.assertRaisesRegex(SystemExit, "compares two Februaries"):
             self.b.marketplace_entry(self._feb(2026), 2026, self._pick(2026))
+
+    def test_report_lists_each_open_enrollment(self):
+        mk = dict(feb=[], prelim=None, picks=[], history=[dict(y=2014, n=3_000_000, fed=2, sbm=1, pub="HHS ASPE, from CMS data")])
+        self.assertEqual(self.b.marketplace_report(mk), ["open enrollment 2014 3,000,000 picked (HHS ASPE, from CMS data)"])
 
     def test_report_gives_each_change_and_share(self):
         mk = dict(feb=[dict(y=2025, n=200, mn=1), dict(y=2026, n=150, mn=1)], prelim=2026, picks=self._pick(2026))

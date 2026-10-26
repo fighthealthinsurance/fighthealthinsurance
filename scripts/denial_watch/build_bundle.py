@@ -18,6 +18,7 @@ import json
 import math
 import pathlib
 import re
+import urllib.parse
 
 import argparse
 import datetime
@@ -612,6 +613,11 @@ EFFECTUATED_FILE = "Health Insurance Exchanges Monthly Effectuated Enrollment Da
 EFFECTUATED_AS_OF = "2026-05-05"
 EFFECTUATED_SHA256 = "4611c6aa318499668440d7e5b76796d143eecfb895a38646b7eaa46d064c9eb0"
 MARKETPLACE_SIGNUPS_CSV = HERE / "marketplace_signups.csv"
+OE_HISTORY_CSV = HERE / "open_enrollment_history.csv"
+OE_HISTORY_FIRST = 2014
+# CMS has no all-marketplace file before 2017, so 2014 to 2016 come from HHS ASPE's reports, whose tables cite CMS.
+OE_HISTORY_PUBLISHERS = ("CMS", "HHS ASPE, from CMS data")
+OE_HISTORY_HOSTS = ("www.cms.gov", "aspe.hhs.gov", "www.aspe.hhs.gov")
 
 
 def february_totals(rows):
@@ -684,6 +690,41 @@ def load_marketplace_signups(path=MARKETPLACE_SIGNUPS_CSV, zip_dir=None):
     return sorted(rows, key=lambda r: r["y"])
 
 
+def load_open_enrollment_history(picks, path=OE_HISTORY_CSV):
+    """Plans picked in every open enrollment from 2014, with the HealthCare.gov and state-run split.
+
+    A year also in marketplace_signups.csv (picks) must give the same count, so the page's two tables can't disagree.
+    """
+    rows, name = [], pathlib.Path(path).name
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            if not re.fullmatch(r"20[0-9]{2}", r["year"]):
+                sys.exit(f"{name}: year must be a year like 2026, not {r['year']!r}")
+            for k in ("plan_selections", "healthcare_gov", "state_based"):
+                if not re.fullmatch(r"[1-9][0-9]*", r[k]):
+                    sys.exit(f"{name}: {k} must be a count above 0 for {r['year']}, not {r[k]!r}")
+            y, n, fed, sbm = int(r["year"]), int(r["plan_selections"]), int(r["healthcare_gov"]), int(r["state_based"])
+            if n != fed + sbm:
+                sys.exit(f"{name}: plan_selections for {y} isn't healthcare_gov plus state_based ({fed:,} + {sbm:,} = {fed + sbm:,}, not {n:,})")
+            if r["publisher"] not in OE_HISTORY_PUBLISHERS:
+                sys.exit(f"{name}: publisher must be one of {OE_HISTORY_PUBLISHERS} for {y}, not {r['publisher']!r}")
+            url = urllib.parse.urlsplit(r["source_url"])
+            if url.scheme != "https" or url.hostname not in OE_HISTORY_HOSTS:
+                sys.exit(f"{name}: source_url must be https on {', '.join(OE_HISTORY_HOSTS)} for {y}")
+            if not r["source_file"].strip():
+                sys.exit(f"{name}: source_file must name the file the count came from for {y}")
+            rows.append(dict(y=y, n=n, fed=fed, sbm=sbm, pub=r["publisher"]))
+    rows.sort(key=lambda r: r["y"])
+    years = [r["y"] for r in rows]
+    if not years or years != list(range(OE_HISTORY_FIRST, OE_HISTORY_FIRST + len(years))):
+        sys.exit(f"{name}: years must run from {OE_HISTORY_FIRST} without a gap or a repeat, not {years}")
+    counts = {r["y"]: r["n"] for r in rows}
+    for p in picks:
+        if p["y"] in counts and counts[p["y"]] != p["n"]:
+            sys.exit(f"{name}: {p['y']} has {counts[p['y']]:,} plans picked, and {MARKETPLACE_SIGNUPS_CSV.name} has {p['n']:,}")
+    return rows
+
+
 def check_signup_zip(path, sha256, where):
     if not path.exists():
         print(where, f"{path.name} isn't in the raw directory, so its sha256 wasn't checked")
@@ -694,8 +735,11 @@ def check_signup_zip(path, sha256, where):
     print(where, f"{path.name} matches its recorded sha256")
 
 
-def marketplace_entry(feb, prelim, picks):
-    """The bundle's marketplace data, once the plan picks cover the Februaries the page compares."""
+def marketplace_entry(feb, prelim, picks, history=()):
+    """The bundle's marketplace data, once the plan picks cover the Februaries the page compares.
+
+    history is every open enrollment's plan picks, for the page's long line; it isn't compared with February.
+    """
     years = [r["y"] for r in feb]
     extra = sorted({p["y"] for p in picks} - set(years))
     if extra:
@@ -706,7 +750,7 @@ def marketplace_entry(feb, prelim, picks):
     missing = sorted(set(years[-2:]) - {p["y"] for p in picks})
     if missing:
         sys.exit(f"plan picks have no row for {missing}; the page compares February {years[-2]} and {years[-1]} with them")
-    return dict(feb=feb, prelim=prelim, as_of=EFFECTUATED_AS_OF, file=EFFECTUATED_FILE, picks=picks)
+    return dict(feb=feb, prelim=prelim, as_of=EFFECTUATED_AS_OF, file=EFFECTUATED_FILE, picks=picks, history=list(history))
 
 
 def marketplace_report(mk):
@@ -715,10 +759,11 @@ def marketplace_report(mk):
     lines = [f"marketplace February {b['y']} {b['n']:,} {b['n'] / a['n'] - 1:+.2%}" + (" not final" if b["y"] == mk["prelim"] else "")
              for a, b in zip(mk["feb"], mk["feb"][1:])]
     lines += [f"plan picks {p['y']} {p['n']:,} February coverage {feb[p['y']] / p['n']:.1%} of them" for p in mk["picks"]]
+    lines += [f"open enrollment {h['y']} {h['n']:,} picked ({h['pub']})" for h in mk.get("history", [])]
     return lines
 
 
-def build_marketplace(path=None, signups_path=MARKETPLACE_SIGNUPS_CSV):
+def build_marketplace(path=None, signups_path=MARKETPLACE_SIGNUPS_CSV, history_path=OE_HISTORY_CSV):
     path = path or RAW / "effectuated_monthly.csv"
     digest = hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
     if digest != EFFECTUATED_SHA256:
@@ -726,7 +771,8 @@ def build_marketplace(path=None, signups_path=MARKETPLACE_SIGNUPS_CSV):
                  "EFFECTUATED_AS_OF and EFFECTUATED_SHA256, then reread the page's marketplace copy")
     with open(path, newline="", encoding="utf-8-sig") as f:
         feb, prelim = february_totals(csv.DictReader(f))
-    return marketplace_entry(feb, prelim, load_marketplace_signups(signups_path, zip_dir=RAW))
+    picks = load_marketplace_signups(signups_path, zip_dir=RAW)
+    return marketplace_entry(feb, prelim, picks, load_open_enrollment_history(picks, history_path))
 
 
 SOURCES = [
@@ -750,6 +796,14 @@ SOURCES = [
          url="https://www.cms.gov/data-research/statistics-trends-reports/marketplace-products/2025-marketplace-open-enrollment-period-public-use-files"),
     dict(name="CMS Marketplace Open Enrollment Period public use files", years="2026",
          url="https://www.cms.gov/data-research/statistics-trends-reports/marketplace-products/2026-marketplace-open-enrollment-period-public-use-files"),
+    dict(name="CMS Marketplace Open Enrollment Period state-level public use files", years="2017-2026",
+         url="https://www.cms.gov/data-research/statistics-trends-and-reports/marketplace-products"),
+    dict(name="HHS ASPE Health Insurance Marketplace enrollment report, from CMS data", years="2014",
+         url="https://www.aspe.hhs.gov/sites/default/files/migrated_legacy_files/44226/ib_2014Apr_enrollment.pdf"),
+    dict(name="HHS ASPE Health Insurance Marketplace enrollment report, from CMS data", years="2015",
+         url="https://www.aspe.hhs.gov/sites/default/files/migrated_legacy_files/137886/ib_2015mar_enrollment.pdf"),
+    dict(name="HHS ASPE Health Insurance Marketplace enrollment report, from CMS data", years="2016",
+         url="https://aspe.hhs.gov/sites/default/files/private/pdf/187866/Finalenrollment2016.pdf"),
 ]
 
 
