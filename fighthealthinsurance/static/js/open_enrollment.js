@@ -1,6 +1,6 @@
 // Open enrollment page (templates/open_enrollment.html). Plain script, no build
-// step: it draws the marketplace charts and their year tables from the numbers
-// the view embeds with json_script (the marketplace entry of
+// step: it draws the marketplace charts and the February table from the numbers
+// the view embeds with json_script (the marketplace and population entries of
 // static/denial_watch.json), with js/denial_watch_charts.js's line chart.
 (function(){
 const DATA_EL=document.getElementById('dw-data');const ROOT=document.querySelector('.dw');
@@ -25,5 +25,12 @@ const H=MK&&MK.history;
 if(H&&H.length){const first=H[0].y,lastY=H[H.length-1].y;
   line($('pkline'),H.map(r=>({x:r.y,y:r.n})),{ymin:0,ymax:25e6,ticks:[0,5e6,10e6,15e6,20e6,25e6],fmtY:y=>y?(y/1e6)+'M':'0',color:tok('--dw-count'),label:y=>(y/1e6).toFixed(1)+'M'});
   $('pkline').setAttribute('aria-label',`Line chart of people who picked a marketplace plan in each open enrollment, ${first} to ${lastY}`);}
+
+/* coverage and people under 65: each February's change since the first, against the people under 65 on the July 1 before it, dashed in the darker count colour; the label and year table are drawn by the view */
+const U=D.population&&new Map(D.population.under_65.map(r=>[r.y,r.n]));
+if(MK&&U&&U.has(MK.feb[0].y-1)){const F=MK.feb.filter(r=>U.has(r.y-1)),f0=F[0].n,u0=U.get(F[0].y-1);
+  const chg=y=>(y<0?'':'+')+Math.round(y*100)+'%';
+  line($('popline'),F.map(r=>({x:r.y,y:r.n/f0-1})),{ymin:0,ymax:1.25,ticks:[0,0.25,0.5,0.75,1,1.25],fmtY:y=>y?chg(y):'0',color:tok('--dw-count'),label:chg,open:p=>p.x===MK.prelim,
+    also:[{pts:F.map(r=>({x:r.y,y:U.get(r.y-1)/u0-1})),color:tok('--dw-count-deep'),label:y=>'Under 65 '+chg(y),dash:'8 5'}]});}
 
 })();

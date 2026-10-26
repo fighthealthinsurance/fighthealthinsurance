@@ -1,0 +1,47 @@
+measure,reference_period,age,order,key,category,people,people_moe90,percent,percent_moe90
+now,"At interview, Feb-Apr 2026",all,1,job,Job-based plan only,160837422,1275376,47.51,0.38
+now,"At interview, Feb-Apr 2026",all,2,marketplace,Marketplace plan only,13207209,519449,3.9,0.15
+now,"At interview, Feb-Apr 2026",all,3,other_individual,Plan bought outside the marketplace only,7723699,419512,2.28,0.12
+now,"At interview, Feb-Apr 2026",all,4,medicare,"Medicare, alone or with another kind",68462783,472269,20.22,0.14
+now,"At interview, Feb-Apr 2026",all,5,medicaid_chip,Medicaid or CHIP only,44920014,962325,13.27,0.28
+now,"At interview, Feb-Apr 2026",all,6,military_va,Military (TRICARE) only or VA only,7117888,468108,2.1,0.14
+now,"At interview, Feb-Apr 2026",all,7,more_than_one,"More than one kind, no Medicare",7262431,395482,2.15,0.12
+now,"At interview, Feb-Apr 2026",all,8,uninsured,Uninsured,29023442,793876,8.57,0.23
+now,"At interview, Feb-Apr 2026",under65,1,job,Job-based plan only,158568344,1264577,58.01,0.46
+now,"At interview, Feb-Apr 2026",under65,2,marketplace,Marketplace plan only,13199582,519277,4.83,0.19
+now,"At interview, Feb-Apr 2026",under65,3,other_individual,Plan bought outside the marketplace only,7299963,408700,2.67,0.15
+now,"At interview, Feb-Apr 2026",under65,4,medicare,"Medicare, alone or with another kind",6685983,312180,2.45,0.11
+now,"At interview, Feb-Apr 2026",under65,5,medicaid_chip,Medicaid or CHIP only,44920014,962325,16.43,0.35
+now,"At interview, Feb-Apr 2026",under65,6,military_va,Military (TRICARE) only or VA only,6987259,465079,2.56,0.17
+now,"At interview, Feb-Apr 2026",under65,7,more_than_one,"More than one kind, no Medicare",7228298,396073,2.64,0.14
+now,"At interview, Feb-Apr 2026",under65,8,uninsured,Uninsured,28457902,784280,10.41,0.29
+now,"At interview, Feb-Apr 2026",65plus,1,job,Job-based plan only,2269077,163753,3.48,0.25
+now,"At interview, Feb-Apr 2026",65plus,2,marketplace,Marketplace plan only,7627,6318,0.01,0.01
+now,"At interview, Feb-Apr 2026",65plus,3,other_individual,Plan bought outside the marketplace only,423736,70835,0.65,0.11
+now,"At interview, Feb-Apr 2026",65plus,4,medicare,"Medicare, alone or with another kind",61776801,363551,94.74,0.3
+now,"At interview, Feb-Apr 2026",65plus,6,military_va,Military (TRICARE) only or VA only,130629,35975,0.2,0.06
+now,"At interview, Feb-Apr 2026",65plus,7,more_than_one,"More than one kind, no Medicare",34133,16236,0.05,0.02
+now,"At interview, Feb-Apr 2026",65plus,8,uninsured,Uninsured,565541,74194,0.87,0.11
+year,Any time in calendar year 2025 (uninsured = all year),all,1,job,Job-based plan only,160951722,1311167,47.63,0.39
+year,Any time in calendar year 2025 (uninsured = all year),all,2,marketplace,Marketplace plan only,12911836,514652,3.82,0.15
+year,Any time in calendar year 2025 (uninsured = all year),all,3,other_individual,Plan bought outside the marketplace only,7700747,419653,2.28,0.12
+year,Any time in calendar year 2025 (uninsured = all year),all,4,medicare,"Medicare, alone or with another kind",67905556,477636,20.09,0.14
+year,Any time in calendar year 2025 (uninsured = all year),all,5,medicaid_chip,Medicaid or CHIP only,44803462,952910,13.26,0.28
+year,Any time in calendar year 2025 (uninsured = all year),all,6,military_va,Military (TRICARE) only or VA only,6994711,469029,2.07,0.14
+year,Any time in calendar year 2025 (uninsured = all year),all,7,more_than_one,"More than one kind, no Medicare",9980216,444394,2.95,0.13
+year,Any time in calendar year 2025 (uninsured = all year),all,8,uninsured,Uninsured,26674431,764285,7.89,0.23
+year,Any time in calendar year 2025 (uninsured = all year),under65,1,job,Job-based plan only,158441950,1292966,58.1,0.47
+year,Any time in calendar year 2025 (uninsured = all year),under65,2,marketplace,Marketplace plan only,12904209,514862,4.73,0.19
+year,Any time in calendar year 2025 (uninsured = all year),under65,3,other_individual,Plan bought outside the marketplace only,7160707,404774,2.63,0.15
+year,Any time in calendar year 2025 (uninsured = all year),under65,4,medicare,"Medicare, alone or with another kind",6543232,308472,2.4,0.11
+year,Any time in calendar year 2025 (uninsured = all year),under65,5,medicaid_chip,Medicaid or CHIP only,44803462,952910,16.43,0.35
+year,Any time in calendar year 2025 (uninsured = all year),under65,6,military_va,Military (TRICARE) only or VA only,6824176,464085,2.5,0.17
+year,Any time in calendar year 2025 (uninsured = all year),under65,7,more_than_one,"More than one kind, no Medicare",9920936,444124,3.64,0.16
+year,Any time in calendar year 2025 (uninsured = all year),under65,8,uninsured,Uninsured,26116463,750551,9.58,0.28
+year,Any time in calendar year 2025 (uninsured = all year),65plus,1,job,Job-based plan only,2509772,174544,3.85,0.27
+year,Any time in calendar year 2025 (uninsured = all year),65plus,2,marketplace,Marketplace plan only,7627,6318,0.01,0.01
+year,Any time in calendar year 2025 (uninsured = all year),65plus,3,other_individual,Plan bought outside the marketplace only,540040,79685,0.83,0.12
+year,Any time in calendar year 2025 (uninsured = all year),65plus,4,medicare,"Medicare, alone or with another kind",61362323,366201,94.1,0.31
+year,Any time in calendar year 2025 (uninsured = all year),65plus,6,military_va,Military (TRICARE) only or VA only,170536,41990,0.26,0.06
+year,Any time in calendar year 2025 (uninsured = all year),65plus,7,more_than_one,"More than one kind, no Medicare",59280,24529,0.09,0.04
+year,Any time in calendar year 2025 (uninsured = all year),65plus,8,uninsured,Uninsured,557968,74428,0.86,0.11

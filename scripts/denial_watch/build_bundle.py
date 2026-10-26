@@ -269,6 +269,15 @@ def in_table(i):
     return bool(i["rec_in"] and i["rec_in"] >= MIN_ISSUER_CLAIMS and i["den_in"] is not None)
 
 
+def table_row(i):
+    """An insurer's cells in the insurer table: its in-network rate, and appeals only on enough of them."""
+    # a without o: enough appeals, but the number won was withheld.
+    ok = i["ap_filed"] is not None and i["ap_filed"] >= MIN_APPEALS_FOR_RATE
+    return dict(n=i["issuer"], r=round(i["den_in"] / i["rec_in"], 4), c=int(i["rec_in"]), d=int(i["den_in"]),
+                a=int(i["ap_filed"]) if ok else None,
+                o=int(i["ap_over"]) if ok and i["ap_over"] is not None else None)
+
+
 def earlier_states(per_year, shown):
     """Each state off the latest map, from the last year CMS's files include it, kept apart from the latest year."""
     out = {}
@@ -325,6 +334,77 @@ def load_state_reports(shown, earlier, path=STATE_REPORTS_CSV):
     return out
 
 
+STATE_REPORT_INSURERS_CSV = HERE / "state_report_insurers.csv"
+
+
+def load_state_report_insurers(reports, path=STATE_REPORT_INSURERS_CSV):
+    """Each insurer behind a state_reports.csv row, as read_puf would give it, and the insurers that row leaves out.
+
+    The counted rows must add up to the state's row there, so the insurer table and the every-state chart can't disagree.
+    """
+    out, name = {}, pathlib.Path(path).name
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            st, who = r["state"], r["insurer"].strip()
+            if st not in reports:
+                sys.exit(f"{name}: {st} has no row in {STATE_REPORTS_CSV.name}")
+            if r["claims_year"] != str(reports[st]["year"]):
+                sys.exit(f"{name}: {who} is for {r['claims_year']} claims, and {st}'s report is for {reports[st]['year']}")
+            e = out.setdefault(st, dict(rows=[], left_out=[]))
+            if not who or who in [i["issuer"] for i in e["rows"]] + [x["n"] for x in e["left_out"]]:
+                sys.exit(f"{name}: {st} has a row with no insurer name, or two rows for {who}")
+            if not r["source_url"].startswith("https://"):
+                sys.exit(f"{name}: source_url must be https for {who}")
+            try:
+                datetime.date.fromisoformat(r["accessed"])
+            except ValueError:
+                sys.exit(f"{name}: accessed must be a date like 2026-10-25 for {who}")
+            if r["left_out"].strip():
+                e["left_out"].append(dict(n=who, why=r["left_out"].strip()))
+                continue
+            if not re.fullmatch(r"[1-9][0-9]*", r["in_network_claims"]) or not re.fullmatch(r"[0-9]+", r["in_network_denied"]):
+                sys.exit(f"{name}: {who} needs in-network claims and denials, or a left_out reason")
+            claims, denied = int(r["in_network_claims"]), int(r["in_network_denied"])
+            if denied > claims:
+                sys.exit(f"{name}: {who} has more in-network denials than claims; give it a left_out reason")
+            if not r["page"].strip():
+                sys.exit(f"{name}: {who} needs the page of its source the counts are on")
+            filed, over = r["internal_appeals_filed"], r["internal_appeals_overturned"]
+            if not re.fullmatch(r"([0-9]+)?", filed) or not re.fullmatch(r"([0-9]+)?", over) or (over and not filed):
+                sys.exit(f"{name}: {who}'s appeals must be counts, with appeals filed wherever appeals overturned are given")
+            if over and int(over) > int(filed):
+                sys.exit(f"{name}: {who} has more appeals overturned than filed")
+            e["rows"].append(dict(state=st, issuer=who, rec_in=float(claims), den_in=float(denied),
+                                  ap_filed=float(filed) if filed else None, ap_over=float(over) if over else None))
+    for st, rep in reports.items():
+        rows = out.get(st, {}).get("rows", [])
+        got = (len(rows), sum(i["rec_in"] for i in rows), sum(i["den_in"] for i in rows))
+        if got != (rep["insurers"], rep["claims"], rep["denied"]):
+            sys.exit(f"{name}: {st}'s counted insurers give (insurers, claims, denied) {got}, "
+                     f"and {STATE_REPORTS_CSV.name} has {(rep['insurers'], rep['claims'], rep['denied'])}")
+    return out
+
+
+def grey_issuers(per_year, earlier, reports, report_insurers):
+    """The insurer table for grey states: CMS's last year for each earlier state, and each state report's insurers.
+
+    Same rules as the latest year's table. Each says its year and source, and none joins the map or its ranges.
+    """
+    def entry(rows, **meta):
+        return dict(meta, rows=sorted((table_row(i) for i in rows if in_table(i)), key=lambda x: x["n"]))
+
+    out = {st: entry([i for i in per_year[e["py"]][0] if i["state"] == st], year=e["year"], kind="earlier",
+                     publisher="CMS", url=None, appeals=True, left_out=[])
+           for st, e in earlier.items()}
+    for st, ins in report_insurers.items():
+        rep = reports[st]
+        # A report with no appeal counts, such as Covered California's, gets no appeals column.
+        out[st] = entry(ins["rows"], year=rep["year"], kind="state", publisher=rep["publisher"], url=rep["url"],
+                        appeals=any(i["ap_filed"] is not None for i in ins["rows"]),
+                        left_out=sorted(ins["left_out"], key=lambda x: x["n"]))
+    return out
+
+
 def build_denials():
     trend, per_year = [], {}
     for py, cy in CLAIMS_YEAR.items():
@@ -358,22 +438,18 @@ def build_denials():
     for i in issuers:
         if not in_table(i):
             continue
-        # a without o: enough appeals, but CMS withheld the number won.
-        ok = i["ap_filed"] is not None and i["ap_filed"] >= MIN_APPEALS_FOR_RATE
         pt = types.get((i["state"], i["id"]))
         net_only = network_only(pt)
-        table.append(dict(s=i["state"], n=i["issuer"], r=round(i["den_in"] / i["rec_in"], 4),
-                          c=int(i["rec_in"]), d=int(i["den_in"]),
-                          a=int(i["ap_filed"]) if ok else None,
-                          o=int(i["ap_over"]) if ok and i["ap_over"] is not None else None,
-                          pt=sorted(pt) if pt else None, net_only=net_only,
+        table.append(dict(table_row(i), s=i["state"], pt=sorted(pt) if pt else None, net_only=net_only,
                           out=rate_cell(i, "out", net_only), all=rate_cell(i, "all")))
 
     reason_rows = sorted(({"k": REASONS[k], "v": v} for k, v in reasons.items()), key=lambda x: -x["v"])
     earlier = earlier_states(per_year, set(states))
+    reports = load_state_reports(set(states), earlier)
     return dict(trend=trend, states=states, issuers=table, reasons=reason_rows,
                 reason_meta=dict(entries=sum(reasons.values()), plan_denied_in=plan_denied),
-                oon_meta=oon_meta(issuers, types), earlier=earlier, state_reports=load_state_reports(set(states), earlier))
+                oon_meta=oon_meta(issuers, types), earlier=earlier, state_reports=reports,
+                grey_issuers=grey_issuers(per_year, earlier, reports, load_state_report_insurers(reports)))
 
 
 def oon_meta(issuers, types):
@@ -775,6 +851,162 @@ def build_marketplace(path=None, signups_path=MARKETPLACE_SIGNUPS_CSV, history_p
     return marketplace_entry(feb, prelim, picks, load_open_enrollment_history(picks, history_path))
 
 
+# Where people get coverage: FHI's tally of Census's CPS ASEC public-use file, which cps_coverage_mix.py writes.
+COVERAGE_MIX_CSV = HERE / "coverage_mix.csv"
+COVERAGE_MIX_SURVEY = dict(
+    name="Current Population Survey, 2026 Annual Social and Economic Supplement",
+    page="https://www.census.gov/data/datasets/time-series/demo/cps/cps-asec.2026.html",
+    file="https://www2.census.gov/programs-surveys/cps/datasets/2026/march/asecpub26csv.zip",
+    sha256="fe819d0d2fc4470c282e76c247b8aa8b6054811619730307e9f2fe6186707d93",
+    released="2026-09-15",
+)
+# The bar's slices in the page's order; the page names the marketplace one.
+COVERAGE_MIX_KEYS = ("job", "marketplace", "other_individual", "medicare", "medicaid_chip", "military_va", "more_than_one", "uninsured")
+
+
+def load_coverage_mix(path=COVERAGE_MIX_CSV):
+    """Everyone at the survey's interview, each person counted once, for the bar both pages draw.
+
+    The CSV also keeps the calendar-year measure and the under-65 and 65-and-over rows, as a record; the page uses one bar.
+    """
+    name = pathlib.Path(path).name
+    with open(path, newline="") as f:
+        rows = [r for r in csv.DictReader(f) if r["measure"] == "now" and r["age"] == "all"]
+    keys = [r["key"] for r in rows]
+    if keys != list(COVERAGE_MIX_KEYS):
+        sys.exit(f"{name}: the at-interview, all-ages rows must be {', '.join(COVERAGE_MIX_KEYS)} in that order, not {keys}")
+    if len({r["reference_period"] for r in rows}) != 1:
+        sys.exit(f"{name}: the at-interview rows give more than one reference period")
+    out = []
+    for r in rows:
+        n, pct, pct_moe = int(r["people"]), float(r["percent"]), float(r["percent_moe90"])
+        if n <= 0 or not 0 < pct < 100:
+            sys.exit(f"{name}: {r['key']} has {n:,} people, {pct}%")
+        # NaN or infinity would be written as JSON no browser can parse, and every chart on the page would fail.
+        if not (math.isfinite(pct_moe) and pct_moe >= 0) or int(r["people_moe90"]) < 0:
+            sys.exit(f"{name}: {r['key']} has a margin of error of {r['people_moe90']} people, {r['percent_moe90']}%")
+        out.append(dict(k=r["key"], label=r["category"], n=n, moe=int(r["people_moe90"]), pct=pct, pct_moe=pct_moe))
+    # Each person is in one slice, so the shares add to 100 but for rounding.
+    total = sum(r["pct"] for r in out)
+    if abs(total - 100) > 0.05:
+        sys.exit(f"{name}: the shares add to {total:.2f}%, not 100%")
+    return dict(COVERAGE_MIX_SURVEY, period=rows[0]["reference_period"], rows=out)
+
+
+# People under 65 on July 1 of each year, the marketplace chart's comparison: the 2010-2020 intercensal series to 2019 and
+# Vintage 2025 from 2020. Census redoes 2020 on with each vintage, so a newer one replaces Vintage 2025 for every year from 2020.
+POPULATION_CSV = HERE / "population_under_65.csv"
+POPULATION_SERIES = {
+    "2010-2020 intercensal": (range(2010, 2020), "nc-est2020int-agesex-res.csv"),
+    "Vintage 2025": (range(2020, 2026), "nc-est2025-agesex-res.csv"),
+}
+POPULATION_HOST = "www2.census.gov"
+
+
+def load_population(feb_years, path=POPULATION_CSV, raw_dir=None):
+    """People under 65 on July 1, for the July before every February the marketplace chart shows.
+
+    A Census file found in raw_dir is checked against its sha256 and its counts are worked out again.
+    """
+    rows, files, name = [], {}, pathlib.Path(path).name
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            y = int(r["year"])
+            years, file = POPULATION_SERIES.get(r["series"], ((), None))
+            if y not in years or r["source_file"] != file:
+                sys.exit(f"{name}: {y} must come from {next((s for s, (ys, _) in POPULATION_SERIES.items() if y in ys), 'no series')}, not {r['series']} ({r['source_file']})")
+            url = urllib.parse.urlsplit(r["source_url"])
+            if url.scheme != "https" or url.hostname != POPULATION_HOST or not url.path.endswith("/" + file):
+                sys.exit(f"{name}: source_url for {y} must be the {file} link on {POPULATION_HOST}")
+            if not re.fullmatch(r"[0-9a-f]{64}", r["file_sha256"]) or files.setdefault(file, r["file_sha256"]) != r["file_sha256"]:
+                sys.exit(f"{name}: {y} needs the one sha256 of {file}")
+            under_65, total = int(r["under_65"]), int(r["total"])
+            if not 0 < under_65 < total:
+                sys.exit(f"{name}: {y} has {under_65:,} under 65 of {total:,}")
+            rows.append(dict(y=y, n=under_65, total=total, series=r["series"], file=file))
+    rows.sort(key=lambda r: r["y"])
+    years = [r["y"] for r in rows]
+    if not years or years != list(range(years[0], years[0] + len(years))):
+        sys.exit(f"{name}: years must run without a gap or a repeat, not {years}")
+    missing = sorted({y - 1 for y in feb_years} - set(years))
+    if missing:
+        sys.exit(f"{name}: no July {missing} for the Februaries after them")
+    if raw_dir is not None:
+        for file, sha256 in files.items():
+            check_population_file(pathlib.Path(raw_dir) / file, sha256, [r for r in rows if r["file"] == file])
+    return dict(under_65=[dict(y=r["y"], n=r["n"]) for r in rows],
+                files=[dict(series=s, file=f, years=f"{min(r['y'] for r in rows if r['file'] == f)}-{max(r['y'] for r in rows if r['file'] == f)}")
+                       for s, (_, f) in POPULATION_SERIES.items() if f in files])
+
+
+def check_population_file(path, sha256, rows):
+    """Census's national file by single year of age: everyone (SEX 0), ages 0 to 64, in POPESTIMATE<year>."""
+    if not path.exists():
+        print(f"{path.name} isn't in the raw directory, so its counts weren't checked")
+        return
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != sha256:
+        sys.exit(f"{path} has sha256 {digest}, not the one population_under_65.csv records")
+    with open(path, newline="") as f:
+        people = [r for r in csv.DictReader(f) if r["SEX"] == "0"]
+    for r in rows:
+        col = f"POPESTIMATE{r['y']}"
+        total = next(int(p[col]) for p in people if p["AGE"] == "999")
+        under_65 = sum(int(p[col]) for p in people if p["AGE"] != "999" and int(p["AGE"]) < 65)
+        if (under_65, total) != (r["n"], r["total"]):
+            sys.exit(f"{path.name}: July {r['y']} has {under_65:,} under 65 of {total:,}, not {r['n']:,} of {r['total']:,}")
+    print(f"{path.name} matches its sha256 and population_under_65.csv")
+
+
+# The records behind the page's other counts: Medicare and Medicaid and CHIP in the latest marketplace February.
+COVERAGE_COUNTS_CSV = HERE / "coverage_counts.csv"
+COVERAGE_COUNTS = {"Medicare": "medicare", "Medicaid and CHIP": "medicaid_chip"}
+COVERAGE_COUNTS_HOSTS = ("data.cms.gov", "download.medicaid.gov", "data.medicaid.gov")
+
+
+def load_coverage_counts(month, path=COVERAGE_COUNTS_CSV):
+    """Medicare and Medicaid and CHIP for the month given (the latest marketplace February), one checked row each."""
+    out, name = {}, pathlib.Path(path).name
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            key = COVERAGE_COUNTS.get(r["coverage"])
+            if key is None or key in out:
+                sys.exit(f"{name}: one row each for {', '.join(COVERAGE_COUNTS)}, not {r['coverage']!r} again or instead")
+            if r["month"] != month:
+                sys.exit(f"{name}: {r['coverage']} is for {r['month']}, and the page compares {month}")
+            if not re.fullmatch(r"[1-9][0-9]*", r["people"]):
+                sys.exit(f"{name}: {r['coverage']} needs a count above 0, not {r['people']!r}")
+            for col in ("source_url", "source_page"):
+                url = urllib.parse.urlsplit(r[col])
+                if url.scheme != "https" or url.hostname not in COVERAGE_COUNTS_HOSTS:
+                    sys.exit(f"{name}: {col} for {r['coverage']} must be https on {', '.join(COVERAGE_COUNTS_HOSTS)}")
+            if not re.fullmatch(r"[0-9a-f]{64}", r["file_sha256"]) or not r["source_file"].strip() or not r["how"].strip():
+                sys.exit(f"{name}: {r['coverage']} needs the file it came from, its sha256 and how it was counted")
+            try:
+                datetime.date.fromisoformat(r["accessed"])
+            except ValueError:
+                sys.exit(f"{name}: accessed must be a date like 2026-10-26 for {r['coverage']}")
+            out[key] = dict(n=int(r["people"]), page=r["source_page"], file=r["source_file"])
+    if set(out) != set(COVERAGE_COUNTS.values()):
+        sys.exit(f"{name}: needs a row for each of {', '.join(COVERAGE_COUNTS)}")
+    return dict(month=month, **out)
+
+
+def coverage_report(bundle):
+    """The coverage bar's shares and the population comparison, to check by eye against the page's copy."""
+    mix, feb = bundle["coverage_mix"], bundle["marketplace"]["feb"]
+    under_65 = {r["y"]: r["n"] for r in bundle["population"]["under_65"]}
+    lines = [f"coverage {mix['period']}: {r['label']} {r['pct']:.1f}% (MOE {r['pct_moe']})" for r in mix["rows"]]
+    first = feb[0]
+    for r in feb:
+        u = under_65[r["y"] - 1]
+        lines.append(f"February {r['y']} marketplace {r['n'] / first['n'] - 1:+.1%} since {first['y']}, under 65 (July {r['y'] - 1}) "
+                     f"{u / under_65[first['y'] - 1] - 1:+.2%}, {100 * r['n'] / u:.1f} per 100 under 65")
+    counts = bundle["coverage_counts"]
+    lines.append(f"{counts['month']}: Medicare {counts['medicare']['n']:,}, Medicaid and CHIP {counts['medicaid_chip']['n']:,}")
+    return lines
+
+
 SOURCES = [
     dict(name="CMS Transparency in Coverage public use files", years="plan years 2022-2026 (claims 2020-2024)",
          url="https://www.cms.gov/marketplace/resources/data/public-use-files"),
@@ -804,6 +1036,16 @@ SOURCES = [
          url="https://www.aspe.hhs.gov/sites/default/files/migrated_legacy_files/137886/ib_2015mar_enrollment.pdf"),
     dict(name="HHS ASPE Health Insurance Marketplace enrollment report, from CMS data", years="2016",
          url="https://aspe.hhs.gov/sites/default/files/private/pdf/187866/Finalenrollment2016.pdf"),
+    dict(name="Census Current Population Survey, Annual Social and Economic Supplement, public-use file (FHI's tally)", years="2026",
+         url=COVERAGE_MIX_SURVEY["page"]),
+    dict(name="Census population estimates by single year of age, 2010-2020 intercensal", years="July 2015-2019",
+         url="https://www2.census.gov/programs-surveys/popest/datasets/2010-2020/intercensal/national/asrh/nc-est2020int-agesex-res.csv"),
+    dict(name="Census population estimates by single year of age, Vintage 2025", years="July 2020-2025",
+         url="https://www2.census.gov/programs-surveys/popest/datasets/2020-2025/national/asrh/nc-est2025-agesex-res.csv"),
+    dict(name="CMS Medicare Monthly Enrollment", years="February 2026",
+         url="https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/medicare-and-medicaid-reports/medicare-monthly-enrollment"),
+    dict(name="State Medicaid and CHIP Applications, Eligibility Determinations, and Enrollment Data", years="February 2026",
+         url="https://data.medicaid.gov/dataset/6165f45b-ca93-5bb5-9d06-db29c692a360"),
 ]
 
 
@@ -828,9 +1070,14 @@ def main(argv=None):
     bundle["prior_auth"] = build_prior_auth()
     bundle["marketplace"] = build_marketplace()
     marketplace_lines = marketplace_report(bundle["marketplace"])
+    feb = bundle["marketplace"]["feb"]
+    bundle["coverage_mix"] = load_coverage_mix()
+    bundle["population"] = load_population([r["y"] for r in feb], raw_dir=RAW)
+    bundle["coverage_counts"] = load_coverage_counts(f"{feb[-1]['y']}-02")
+    marketplace_lines += coverage_report(bundle)
     bundle["sources"] = SOURCES
     bundle["built"] = datetime.date.today().isoformat()
-    args.out.write_text(json.dumps(bundle, separators=(",", ":"), sort_keys=True) + "\n")
+    args.out.write_text(json.dumps(bundle, separators=(",", ":"), sort_keys=True, allow_nan=False) + "\n")
     print("wrote", args.out)
 
     for t in bundle["trend"]:
@@ -848,6 +1095,9 @@ def main(argv=None):
     for k, e in bundle["state_reports"].items():
         print("state report", k, e["year"], f"in {e['denied']:,} of {e['claims']:,} = {e['rate']:.2%}",
               f"({e['insurers']} insurers, {e['publisher']})")
+    for k, g in bundle["grey_issuers"].items():
+        print("grey insurers", k, g["year"], g["publisher"], f"{len(g['rows'])} listed",
+              [(i["n"], i["r"], i["a"], i["o"]) for i in g["rows"]], "left out", [(x["n"], x["why"]) for x in g["left_out"]])
     om = bundle["oon_meta"]
     print("out-of-network by 2024 plan types: network-only", om["net_only"], "other", om["other"], "unknown", om["unknown_plan_types"])
     print("closed-network reason", f"{om['closed_network']['denied']:,.0f}", f"= {om['closed_network']['share']:.1%} of out-of-network denials")

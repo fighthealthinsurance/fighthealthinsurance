@@ -37,6 +37,18 @@ return {
 };
 """
 
+# What the population chart drew: the axis, each line's stroke, dash and points, and the end labels.
+POPULATION_DRAWN = """
+var svg = document.getElementById('popline'), num = (e, a) => Number(e.getAttribute(a)),
+    labels = svg.querySelectorAll('g.dw-axis text');
+return {
+  ticks: [...svg.querySelectorAll('g.dw-axis line')].map((l, i) => [labels[i].textContent, num(l, 'y1')]),
+  dashes: [...svg.querySelectorAll('path')].map(p => p.getAttribute('stroke-dasharray')),
+  points: [...svg.querySelectorAll('circle')].map(c => num(c, 'cy')),
+  ends: [...svg.querySelectorAll('text.dw-end')].map(t => t.textContent),
+};
+"""
+
 # The target's fold is open and its top is in view, below the sticky header (a pixel or two of rounding).
 OPEN_AND_LANDED = """
 var t = document.getElementById(arguments[0]), r = t.getBoundingClientRect(),
@@ -87,6 +99,31 @@ def _marketplace_drawn_problems(drawn, mk):
     return problems
 
 
+def _population_drawn_problems(drawn, data):
+    """Where the population chart disagrees with the bundle: under 65 dashed and drawn first, then coverage, both as change since the first February."""
+    feb, under_65 = data["marketplace"]["feb"], {r["y"]: r["n"] for r in data["population"]["under_65"]}
+    ticks = [(0.0 if t == "0" else float(t.rstrip("%")) / 100, y) for t, y in drawn["ticks"]]
+    (v0, y0), (v1, y1) = ticks[0], ticks[-1]
+
+    def height(v):
+        return y0 + (v - v0) * (y1 - y0) / (v1 - v0)
+
+    pop = [under_65[r["y"] - 1] / under_65[feb[0]["y"] - 1] - 1 for r in feb]
+    cov = [r["n"] / feb[0]["n"] - 1 for r in feb]
+    problems = []
+    if drawn["dashes"] != ["8 5", None]:
+        problems.append(f"dashes {drawn['dashes']}")
+    if len(drawn["points"]) != 2 * len(feb):
+        return problems + [f"{len(drawn['points'])} points for two lines of {len(feb)}"]
+    for v, cy in zip(pop + cov, drawn["points"]):
+        if abs(cy - height(v)) > 1e-6:
+            problems.append(f"{v:.4f} drawn at {cy}, not {height(v)}")
+    ends = [f"Under 65 +{round(pop[-1] * 100)}%", f"+{round(cov[-1] * 100)}%"]
+    if drawn["ends"] != ends:
+        problems.append(f"end labels {drawn['ends']}, not {ends}")
+    return problems
+
+
 class SeleniumTestOpenEnrollment(FHISeleniumBase, StaticLiveServerTestCase):
     """The marketplace chart, the folded questions and sources, and the phone layout, on /open-enrollment."""
 
@@ -131,6 +168,10 @@ class SeleniumTestOpenEnrollment(FHISeleniumBase, StaticLiveServerTestCase):
     def test_marketplace_chart_and_table_show_each_february_count(self):
         self._open()
         self.assertEqual(_marketplace_drawn_problems(self.execute_script(MARKETPLACE_DRAWN), DATA["marketplace"]), [])
+
+    def test_population_chart_draws_both_changes_on_one_axis(self):
+        self._open()
+        self.assertEqual(_population_drawn_problems(self.execute_script(POPULATION_DRAWN), DATA), [])
 
     def test_a_how_we_got_these_numbers_link_opens_the_folded_sources(self):
         self._open()

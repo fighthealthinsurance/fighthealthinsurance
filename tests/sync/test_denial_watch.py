@@ -574,8 +574,8 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
     def test_insurer_table_shows_the_state_picked_on_the_map(self):
         # Rates are compared within a state, so the table shows one state, the map's, and no all-states ranking.
         self.assertNotIn("All states", self.js)
-        self.assertIn("$('istate').value=BYST[dsel]?dsel:states[0];", self.js)
-        self.assertIn("$('dmap')._onPin=s=>{ipin=s;$('istate').value=BYST[s]?s:'';iDraw();};", self.js)
+        self.assertIn("$('istate').value=rowsOf(dsel)?dsel:states[0];", self.js)
+        self.assertIn("$('dmap')._onPin=s=>{ipin=s;$('istate').value=rowsOf(s)?s:'';iDraw();};", self.js)
         # A state with no insurers in the table says so, instead of leaving the last state's rows.
         self.assertIn("isn't in this data: it runs its own marketplace, so its insurers aren't in the HealthCare.gov figures this page uses.", self.js)
         self.assertIn("if(svg._onPin)svg._onPin(g.dataset.s);", self.js)
@@ -1040,6 +1040,375 @@ class TestDenialWatchStateReportsBuilder(TestCase):
             self._load(self._row(), self._row())
 
 
+STATE_REPORT_INSURERS_CSV = REPO / "scripts" / "denial_watch" / "state_report_insurers.csv"
+INSURER_HEADER = (
+    "state,claims_year,insurer,in_network_claims,in_network_denied,internal_appeals_filed,"
+    "internal_appeals_overturned,left_out,source_url,page,accessed,note\n"
+)
+
+# Each Georgia, Illinois and Virginia insurer in the last CMS file that includes the state: the file, its Ind QHP
+# sheet row, and the in-network claims, denials, internal appeals filed and overturned read there (None where CMS
+# printed *, ** or N/A). Copied by hand from the files, so the table can't drift from them.
+EARLIER_PUF_CELLS = [
+    ("tic2024.xlsx", 365, "GA", "Cigna HealthCare of Georgia, Inc.", 819128, 144773, None, None),
+    ("tic2024.xlsx", 2585, "GA", "UnitedHealthcare of Georgia, Inc.", 297827, 94241, 427, 202),
+    ("tic2024.xlsx", 2607, "GA", "AMGP Georgia Managed Care Company, Inc. dba Anthem Blue Cross and Blue Shield", None, None, None, None),
+    ("tic2024.xlsx", 2746, "GA", "Anthem Blue Cross and Blue Shield", 3813700, 904058, 569, 95),
+    ("tic2024.xlsx", 3201, "GA", "Oscar Health Plan of Georgia", 1956528, 244361, 1071, 439),
+    ("tic2024.xlsx", 3331, "GA", "CareSource Georgia Co.", 1661639, 361615, 29, 14),
+    ("tic2024.xlsx", 3761, "GA", "Ambetter of Peach State Inc.", 17619920, 2410742, 1465, 785),
+    ("tic2024.xlsx", 4261, "GA", "Aetna Health Inc. (a GA corp.)", 189293, 37611, 51, 45),
+    ("tic2024.xlsx", 4271, "GA", "Alliant Health Plans", 455071, 36987, 2772, 310),
+    ("tic2024.xlsx", 4598, "GA", "Kaiser Foundation Health Plan of Georgia", 7974, 822, 60, 26),
+    ("tic2025.xlsx", 123, "IL", "Oscar Health Plan, Inc.", 49013, 10211, 722, 238),
+    ("tic2025.xlsx", 570, "IL", "Health Alliance Medical Plans, Inc.", 1507897, 187861, 221, 88),
+    ("tic2025.xlsx", 823, "IL", "Celtic Insurance Company", 1681947, 230759, 314, 140),
+    ("tic2025.xlsx", 1197, "IL", "Molina Healthcare of Illinois, Inc.", 91489, 31949, 34, 13),
+    ("tic2025.xlsx", 1845, "IL", "Blue Cross Blue Shield of Illinois", 10556396, 2169193, 2232, 694),
+    ("tic2025.xlsx", 2406, "IL", "UnitedHealthcare of Illinois, Inc.", 486710, 181665, 691, 271),
+    ("tic2025.xlsx", 2724, "IL", "Cigna HealthCare of Illinois, Inc.", 347240, 90407, 53, 24),
+    ("tic2025.xlsx", 2899, "IL", "MercyCare HMO, Inc.", 67263, 7524, None, None),
+    ("tic2025.xlsx", 3545, "IL", "Aetna Life Insurance Company", None, None, None, None),
+    ("tic2025.xlsx", 3967, "IL", "Quartz Health Benefit Plans Corporation", 71597, 4921, 18, None),
+    ("tic2025.xlsx", 4492, "IL", "Aetna Health Inc. (a PA corp.)", 167244, 33764, 53, 26),
+    ("tic2023.xlsx", 6035, "VA", "Optima Health Plan", 872033, 250857, 165, 96),
+    ("tic2023.xlsx", 6044, "VA", "Piedmont Community HealthCare HMO, Inc.", 104805, 18799, 79, 32),
+    ("tic2023.xlsx", 6049, "VA", "Aetna Life Insurance Company", None, None, None, None),
+    ("tic2023.xlsx", 6057, "VA", "Cigna Health and Life Insurance Company", 2456029, 323020, 147, 56),
+    ("tic2023.xlsx", 6078, "VA", "Aetna Health Inc. (a PA corp.)", None, None, None, None),
+    ("tic2023.xlsx", 6096, "VA", "CareFirst BlueChoice, Inc.", 57518, 1736, 39, 25),
+    ("tic2023.xlsx", 6101, "VA", "Optimum Choice, Inc.", 47651, 20263, 674, 386),
+    ("tic2023.xlsx", 6115, "VA", "Oscar Insurance Company", 6613, 610, None, None),
+    ("tic2023.xlsx", 6136, "VA", "Group Hospitalization and Medical Services Inc.", 17760, 681, None, 0),
+    ("tic2023.xlsx", 6140, "VA", "Innovation Health Plan, Inc.", None, None, None, None),
+    ("tic2023.xlsx", 6149, "VA", "HealthKeepers, Inc.", 5627954, 887777, 646, 144),
+    ("tic2023.xlsx", 6163, "VA", "Kaiser Foundation Health Plan of the Mid-Atlantic States, Inc.", 33749, 4953, 18, None),
+]
+
+
+def _expected_row(name, claims, denied, filed, over):
+    """An insurer's row by the table's rules: 50,000 in-network claims to be listed, an appeal win rate only on 30 appeals."""
+    if claims is None or denied is None or claims < 50_000:
+        return None
+    a = filed if filed is not None and filed >= 30 else None
+    return dict(n=name, r=round(denied / claims, 4), c=claims, d=denied, a=a, o=over if a is not None else None)
+
+
+def _report_insurers():
+    with open(STATE_REPORT_INSURERS_CSV, newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _count(cell):
+    return int(cell) if cell else None
+
+
+class TestDenialWatchGreyStateInsurers(TestCase):
+    """The insurer table's grey states: each insurer pinned to its source, under the table's rules, with its year."""
+
+    def test_the_five_grey_states_with_a_figure_have_insurers_and_no_others(self):
+        grey = DATA["grey_issuers"]
+        self.assertEqual(set(grey), set(DATA["state_reports"]) | set(DATA["earlier"]))
+        self.assertFalse(set(grey) & set(DATA["states"]))
+        for state in ("NY", "NJ", "MA"):
+            self.assertNotIn(state, grey)
+        for state, g in grey.items():
+            self.assertTrue(g["rows"], state)
+
+    def test_earlier_states_rows_equal_their_puf_cells(self):
+        for state in DATA["earlier"]:
+            pinned = [c for c in EARLIER_PUF_CELLS if c[2] == state]
+            self.assertTrue(pinned, state)
+            self.assertEqual({f"tic{DATA['earlier'][state]['py']}.xlsx"}, {c[0] for c in pinned}, state)
+            expected = sorted(filter(None, (_expected_row(*c[3:]) for c in pinned)), key=lambda r: r["n"])
+            self.assertEqual(DATA["grey_issuers"][state]["rows"], expected, state)
+
+    def test_earlier_states_carry_their_year_and_source(self):
+        latest = DATA["trend"][-1]["year"]
+        for state, e in DATA["earlier"].items():
+            g = DATA["grey_issuers"][state]
+            self.assertEqual((g["year"], g["kind"], g["publisher"]), (e["year"], "earlier", "CMS"), state)
+            self.assertLess(g["year"], latest, state)
+            self.assertTrue(g["appeals"], state)
+
+    def test_earlier_states_rows_match_the_readouts_range(self):
+        # The readout's lowest to highest is over the insurers this table lists.
+        for state, e in DATA["earlier"].items():
+            rates = [r["r"] for r in DATA["grey_issuers"][state]["rows"]]
+            self.assertEqual(e["span"], [min(rates), max(rates)] if len(rates) > 1 else None, state)
+
+    def test_state_report_rows_equal_the_source_csv(self):
+        for state, rep in DATA["state_reports"].items():
+            rows = [r for r in _report_insurers() if r["state"] == state]
+            counted = [r for r in rows if not r["left_out"]]
+            expected = sorted(
+                filter(None, (_expected_row(r["insurer"], _count(r["in_network_claims"]), _count(r["in_network_denied"]),
+                                            _count(r["internal_appeals_filed"]), _count(r["internal_appeals_overturned"]))
+                              for r in counted)),
+                key=lambda r: r["n"],
+            )
+            g = DATA["grey_issuers"][state]
+            self.assertEqual(g["rows"], expected, state)
+            self.assertEqual(
+                g["left_out"],
+                sorted((dict(n=r["insurer"], why=r["left_out"]) for r in rows if r["left_out"]), key=lambda x: x["n"]),
+                state,
+            )
+            self.assertEqual((g["year"], g["kind"], g["publisher"], g["url"]), (rep["year"], "state", rep["publisher"], rep["url"]), state)
+            self.assertEqual(g["appeals"], any(r["internal_appeals_filed"] for r in counted), state)
+
+    def test_state_report_rows_add_up_to_the_every_state_figure(self):
+        for state, rep in DATA["state_reports"].items():
+            counted = [r for r in _report_insurers() if r["state"] == state and not r["left_out"]]
+            self.assertEqual(
+                (len(counted), sum(int(r["in_network_claims"]) for r in counted), sum(int(r["in_network_denied"]) for r in counted)),
+                (rep["insurers"], rep["claims"], rep["denied"]),
+                state,
+            )
+
+    def test_every_source_row_cites_its_file_and_date(self):
+        for r in _report_insurers():
+            who = (r["state"], r["insurer"])
+            self.assertTrue(r["source_url"].startswith("https://"), who)
+            self.assertNotIn(" ", r["source_url"], who)
+            date.fromisoformat(r["accessed"])
+            self.assertTrue(r["note"].strip(), who)
+            if not r["left_out"]:
+                self.assertTrue(r["page"].strip(), who)
+            for part in (r["insurer"], r["left_out"], r["note"]):
+                self.assertNotIn("\u2014", part)
+                self.assertNotIn("\u2013", part)
+
+    def test_california_leaves_out_the_four_insurers_its_state_figure_does(self):
+        # The every-state figure's note names the same four, so the table and the chart can't disagree.
+        g = DATA["grey_issuers"]["CA"]
+        names = [x["n"] for x in g["left_out"]]
+        self.assertEqual(names, ["Aetna CVS Health", "CCHP Health Plan", "Inland Empire Health Plan", "Western Health Advantage"])
+        with open(REPO / "scripts" / "denial_watch" / "state_reports.csv", newline="") as f:
+            note = next(r["note"] for r in csv.DictReader(f) if r["state"] == "CA")
+        left = note[note.index("Left out:") :]
+        for name in names:
+            self.assertIn(name, left)
+        # Covered California posts no appeal counts, so the table has no appeals column for California.
+        self.assertFalse(g["appeals"])
+        self.assertTrue(all(r["a"] is None and r["o"] is None for r in g["rows"]))
+
+    def test_grey_rows_meet_the_table_thresholds(self):
+        for state, g in DATA["grey_issuers"].items():
+            for row in g["rows"]:
+                self.assertGreaterEqual(row["c"], 50_000, (state, row["n"]))
+                self.assertTrue(0 < row["r"] < 1, (state, row["n"]))
+                self.assertEqual(row["r"], round(row["d"] / row["c"], 4), (state, row["n"]))
+                if row["a"] is None:
+                    self.assertIsNone(row["o"], (state, row["n"]))
+                else:
+                    self.assertGreaterEqual(row["a"], 30, (state, row["n"]))
+                    if row["o"] is not None:
+                        self.assertLessEqual(row["o"], row["a"], (state, row["n"]))
+
+    def test_grey_rows_stay_out_of_the_national_table_and_the_map(self):
+        self.assertFalse({i["s"] for i in DATA["issuers"]} & set(DATA["grey_issuers"]))
+        # The map's ranges come from the latest year's table alone.
+        self.assertIn("const BYST=IS.reduce(", JS)
+        self.assertIn("const span=s=>{const g=BYST[s];", JS)
+        self.assertEqual(JS.count("D.grey_issuers"), 1)
+        dm = _between(JS, "const DM={", "/* FHI's state help page")
+        self.assertNotIn("GI", dm)
+
+
+class TestDenialWatchGreyStateInsurersBuilder(TestCase):
+    """load_state_report_insurers and grey_issuers in scripts/denial_watch/build_bundle.py."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.b = _load_builder()
+
+    REPORT = dict(year=2024, rate=0.15, claims=200_000, denied=30_000, insurers=2, publisher="A State Office", url="https://example.org/r.pdf")
+
+    def _row(self, insurer="Rebecca Lee Crumpler Health", claims="100000", denied="15000", filed="40", over="10",
+             left_out="", page="8", year="2024", state="CA"):
+        return f"{state},{year},{insurer},{claims},{denied},{filed},{over},{left_out},https://example.org/r.pdf,{page},2026-10-25,checked"
+
+    def _load(self, *rows, reports=None):
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as f:
+            f.write(INSURER_HEADER + "".join(r + "\n" for r in rows))
+        try:
+            return self.b.load_state_report_insurers({"CA": dict(self.REPORT)} if reports is None else reports, f.name)
+        finally:
+            pathlib.Path(f.name).unlink()
+
+    def _two(self, **second):
+        return [self._row(), self._row(**dict(dict(insurer="Mary Eliza Mahoney Plan"), **second))]
+
+    def test_builder_reads_the_curated_file(self):
+        reports = self.b.load_state_reports(set(DATA["states"]), DATA["earlier"])
+        self.assertEqual(set(self.b.load_state_report_insurers(reports)), set(DATA["state_reports"]))
+
+    def test_counted_rows_and_left_out_rows(self):
+        out = self._load(*self._two(), self._row(insurer="Susan La Flesche Picotte Care", claims="", denied="", filed="", over="", left_out="no report posted", page=""))
+        self.assertEqual([i["issuer"] for i in out["CA"]["rows"]], ["Rebecca Lee Crumpler Health", "Mary Eliza Mahoney Plan"])
+        self.assertEqual(out["CA"]["rows"][0], dict(state="CA", issuer="Rebecca Lee Crumpler Health", rec_in=100000.0, den_in=15000.0, ap_filed=40.0, ap_over=10.0))
+        self.assertEqual(out["CA"]["left_out"], [dict(n="Susan La Flesche Picotte Care", why="no report posted")])
+
+    def test_rows_that_dont_add_up_to_the_state_figure_stop_the_build(self):
+        with self.assertRaises(SystemExit):
+            self._load(*self._two(denied="15001"))
+        with self.assertRaises(SystemExit):
+            self._load(self._row(claims="200000", denied="30000"))
+
+    def test_a_state_report_with_no_insurer_rows_stops_the_build(self):
+        with self.assertRaises(SystemExit):
+            self._load(*self._two(), reports={"CA": dict(self.REPORT), "PA": dict(self.REPORT)})
+
+    def test_a_state_without_a_state_report_stops_the_build(self):
+        with self.assertRaises(SystemExit):
+            self._load(*self._two(), self._row(state="NY"))
+
+    def test_another_claims_year_stops_the_build(self):
+        with self.assertRaises(SystemExit):
+            self._load(*self._two(year="2023"))
+
+    def test_more_denials_than_claims_stops_the_build(self):
+        # The rows add up to the report, so only the denials-over-claims check can stop it.
+        report = dict(self.REPORT, claims=150_000, denied=65_001)
+        with self.assertRaises(SystemExit):
+            self._load(self._row(), self._row(insurer="Mary Eliza Mahoney Plan", claims="50000", denied="50001"), reports={"CA": report})
+
+    def test_more_appeals_overturned_than_filed_stops_the_build(self):
+        with self.assertRaises(SystemExit):
+            self._load(*self._two(filed="40", over="41"))
+
+    def test_a_counted_row_without_its_page_stops_the_build(self):
+        with self.assertRaises(SystemExit):
+            self._load(*self._two(page=""))
+
+    def test_two_rows_for_one_insurer_stop_the_build(self):
+        with self.assertRaises(SystemExit):
+            self._load(self._row(), self._row())
+
+    def test_grey_issuers_use_the_tables_rules(self):
+        def ins(name, claims, denied, filed, over, state="XX"):
+            return dict(state=state, issuer=name, rec_in=claims, den_in=denied, ap_filed=filed, ap_over=over)
+
+        per_year = {2025: ([ins("Big", 60_000.0, 6_000.0, 30.0, 12.0), ins("Few appeals", 80_000.0, 8_000.0, 29.0, 9.0),
+                            ins("Won withheld", 90_000.0, 9_000.0, 50.0, None), ins("Small", 40_000.0, 4_000.0, 300.0, 100.0),
+                            ins("Elsewhere", 70_000.0, 7_000.0, 40.0, 20.0, state="YY")], {}, 0.0)}
+        earlier = {"XX": dict(year=2023, py=2025)}
+        reports = {"ZZ": dict(self.REPORT)}
+        report_rows = {"ZZ": dict(rows=[ins("No appeals", 100_000.0, 15_000.0, None, None, "ZZ")],
+                                  left_out=[dict(n="Zed", why="b"), dict(n="Ada", why="a")])}
+        out = self.b.grey_issuers(per_year, earlier, reports, report_rows)
+        self.assertEqual(
+            out["XX"],
+            dict(year=2023, kind="earlier", publisher="CMS", url=None, appeals=True, left_out=[], rows=[
+                dict(n="Big", r=0.1, c=60_000, d=6_000, a=30, o=12),
+                dict(n="Few appeals", r=0.1, c=80_000, d=8_000, a=None, o=None),
+                dict(n="Won withheld", r=0.1, c=90_000, d=9_000, a=50, o=None),
+            ]),
+        )
+        self.assertFalse(out["ZZ"]["appeals"])
+        self.assertEqual([x["n"] for x in out["ZZ"]["left_out"]], ["Ada", "Zed"])
+        self.assertEqual((out["ZZ"]["kind"], out["ZZ"]["year"], out["ZZ"]["publisher"]), ("state", 2024, "A State Office"))
+
+
+class TestDenialWatchGreyStateInsurersPage(TestCase):
+    """The table says each grey state's year and source, and the copy no longer calls it HealthCare.gov only."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.page = _page()
+        cls.section = _between(cls.page, 'id="insurers"', "</section>")
+        cls.names = _load_builder().STATE_NAMES
+
+    def test_intro_names_the_grey_states_in_the_table(self):
+        reports = " and ".join(sorted(self.names[s] for s in DATA["state_reports"]))
+        older = sorted(self.names[s] for s in DATA["earlier"])
+        year = DATA["trend"][-1]["year"]
+        five = {5: "Five"}[len(DATA["grey_issuers"])]
+        self.assertIn(
+            f"In-network denial rates for each insurer with at least 50,000 in-network claims, as each company reported them. "
+            f"The {len({i['s'] for i in DATA['issuers']})} HealthCare.gov states show {year} claims. {five} states with their own marketplace "
+            f"show figures from other sources or years: {reports} from insurers' own reports for {year} claims, and "
+            f"{', '.join(older[:-1])} and {older[-1]} from the last year CMS's files include them.",
+            _text(self.section),
+        )
+        self.assertNotIn("each HealthCare.gov insurer", self.section)
+
+    def test_source_and_left_out_lines_sit_with_the_table(self):
+        order = [self.section.index(f'id="{i}"') for i in ("istate", "isource", "inote", "itable", "ileft")]
+        self.assertEqual(order, sorted(order))
+        self.assertIn('<p id="isource" hidden></p>', self.section)
+        self.assertIn('<p class="dw-note" id="ileft" hidden></p>', self.section)
+
+    def test_each_view_says_its_claims_year_and_source(self):
+        # Year first and in bold; an earlier state says it now runs its own marketplace.
+        self.assertIn("if(!g)return `<b>${T.year} claims</b>, from insurers' own reports to CMS for HealthCare.gov. FHI's calculation.`;", JS)
+        self.assertIn(
+            "if(g.kind==='earlier')return `<b>${g.year} claims</b>, from insurers' own reports to CMS, the last year its files include ${n}. "
+            "FHI's calculation. ${n} now runs its own marketplace, so some of these insurers may not sell there now.`;",
+            JS,
+        )
+        self.assertIn(
+            "return `<b>${g.year} claims</b>, from insurers' own reports on the same federal form, posted by ${the(g.publisher)}"
+            "<a href=\"${safeUrl(g.url)}\">${esc(g.publisher)}</a>. FHI's calculation.${g.appeals?'':' These reports have no appeal counts.'}`;}",
+            JS,
+        )
+        self.assertEqual({DATA["state_reports"][s]["publisher"] for s in DATA["state_reports"]}, {"Covered California", "Pennsylvania Insurance Department"})
+        self.assertIn("const the=p=>/Department|Office|Bureau|Division/.test(p)?'the ':'';", JS)
+
+    def test_the_year_is_in_the_picker_and_the_count_too(self):
+        self.assertIn("'<optgroup label=\"States with their own marketplace\">'+greys.map(s=>`<option value=\"${esc(s)}\">${esc(NAMES[s])}, ${GI[s].year} claims</option>`)", JS)
+        self.assertIn("`<optgroup label=\"HealthCare.gov states, ${T.year} claims\">`", JS)
+        self.assertIn("NAMES[s]+(g?', '+g.year+' claims':'')", JS)
+
+    def test_left_out_insurers_are_listed_with_why(self):
+        self.assertIn("return 'Not in the table: '+esc(andList([...by].map(([why,n])=>andList(n)+' ('+why+')')))+'.';}", JS)
+        self.assertIn("$('ileft').innerHTML=left;$('ileft').hidden=!left;", JS)
+
+    def test_a_report_without_appeal_counts_gets_no_appeals_column(self):
+        self.assertIn("ap=!g||g.appeals", JS)
+        self.assertIn("(ap?'<th class=\"dw-r\">Appeals won</th>':'')", JS)
+
+    def test_a_grey_states_readout_links_to_its_insurers(self):
+        self.assertIn("const rowsOf=s=>BYST[s]||(GI[s]&&GI[s].rows);", JS)
+        self.assertIn("if(rowsOf(s))h+=line1(`<a href=\"#insurers\">See ${esc(NAMES[s])}'s insurers</a>`);", JS)
+
+    def test_one_bar_scale_for_every_state(self):
+        self.assertIn("const IMAX=Math.max(...IS.map(i=>i.r),...Object.values(GI).flatMap(g=>g.rows.map(i=>i.r)));", JS)
+        self.assertIn("i.r/IMAX*90", JS)
+
+    def test_method_note_says_where_each_states_insurers_come_from(self):
+        note = _text(_between(self.page, 'id="method-insurers"', "</li>"))
+        ca = DATA["grey_issuers"]["CA"]
+        older = sorted((self.names[s], e["year"]) for s, e in DATA["earlier"].items())
+        self.assertIn("Insurer table: Each insurer that handled at least 50,000 in-network claims.", note)
+        self.assertIn("the four California insurers we leave out are named under the table, with why.", note)
+        self.assertEqual(len(ca["left_out"]), 4)
+        self.assertIn("Covered California posts each insurer's plan rows, not its totals, so California's figures add up those rows, and it posts no appeal counts.", note)
+        self.assertIn("California's and Pennsylvania's reports can count plans sold outside the marketplace, which CMS's figures leave out", note)
+        self.assertIn(
+            f"For {', '.join(n for n, _ in older[:-1])} and {older[-1][0]}, it's each insurer in the last CMS file that includes the state "
+            f"({', '.join(str(y) for _, y in older[:-1])} and {older[-1][1]} claims), by the same rules",
+            note,
+        )
+        self.assertNotIn("Each reporting HealthCare.gov insurer", note)
+
+    def test_three_california_insurers_moved_15_points_from_2023(self):
+        # Covered California's 2023 issuer-level reports (Anthem 26.6%, Kaiser 5.1%, L.A. Care 87.3%) against the 2024 table.
+        before = {"Anthem Blue Cross": 0.266, "Kaiser Permanente": 0.051, "L.A. Care Health Plan": 0.873}
+        rows = {r["n"]: r["r"] for r in DATA["grey_issuers"]["CA"]["rows"]}
+        self.assertTrue(all(abs(rows[n] - r) >= 0.15 for n, r in before.items()))
+        self.assertEqual(len(rows), 8)
+        self.assertIn("three of the eight California insurers' rates moved 15 points or more", _text(_between(self.page, 'id="method-insurers"', "</li>")))
+
+    def test_map_intro_says_five_grey_states_have_insurers(self):
+        intro = _text(_between(self.page, 'id="map-denials-title"', "</p>"))
+        self.assertIn("A grey state shows what it publishes instead, and five of them also have insurers in the table below, from other sources or years.", intro)
+        self.assertEqual(len(DATA["grey_issuers"]), 5)
+
+
 class TestDenialWatchEnrollment(TestCase):
     """The open-enrollment box shows only in season; tests pin the date."""
 
@@ -1120,22 +1489,28 @@ class TestDenialWatchEnrollmentCard(TestCase):
         card = _between(html, 'id="enroll"', "</section>")
         self.assertIn('<h2 class="fhi-card-title" id="enroll-title">Open enrollment for 2028</h2>', card)
         self.assertIn("Compare plans and costs for 2028,", _text(card))
-        self.assertIn("Picking a 2028 HealthCare.gov plan?", _between(html, 'id="insurers"', "</section>"))
+        self.assertIn("Picking a 2028 marketplace plan?", _between(html, 'id="insurers"', "</section>"))
         self.assertIn("<b>Picking a 2028 plan:</b>", _between(html, 'id="method-who-denies"', "</div>"))
         # The tile keeps the data's own year.
         self.assertIn(f"for {max(_picks())} in open enrollment", card)
 
     def test_insurer_section_points_to_healthcare_gov_in_season(self):
+        # The table has grey states too, so the notice points to state-run marketplaces as well.
         html = _page(date(2026, 10, 18))
-        section = _between(html, 'id="insurers"', "</section>")
-        self.assertIn("Picking a 2027 HealthCare.gov plan?", section)
+        notice = _between(_between(html, 'id="insurers"', "</section>"), "Picking a 2027 marketplace plan?", "</p>")
+        self.assertIn(
+            'then compare plans on <a href="https://www.healthcare.gov/">HealthCare.gov</a> or '
+            '<a href="https://www.healthcare.gov/marketplace-in-your-state/">your state\'s marketplace</a>.',
+            notice,
+        )
 
     def test_insurer_notice_names_oregon_and_the_insurers_leaving(self):
         # From November 1, 2026, Oregon enrolls through ExploreHealthOR.gov; the table is 2024 data and no insurer is named.
         html = _page(date(2026, 10, 18))
-        notice = _between(_between(html, 'id="insurers"', "</section>"), "Picking a 2027 HealthCare.gov plan?", "</p>")
+        notice = _between(_between(html, 'id="insurers"', "</section>"), "Picking a 2027 marketplace plan?", "</p>")
         self.assertIn("Oregon residents compare 2027 plans at <a href=\"https://explorehealthor.gov/\">ExploreHealthOR.gov</a> instead.", notice)
-        self.assertIn("its insurers' 2024 rates", notice)
+        # Most of the table is 2024 claims; the grey states' own years are in the table.
+        self.assertIn("its insurers' rates (2024 claims in most states)", notice)
         self.assertIn("Some of these insurers don't sell plans for 2027, so check which ones do.", notice)
         self.assertNotIn("Cigna", notice)
 
@@ -2099,8 +2474,12 @@ ASPE_REPORTS = {
     2015: "https://www.aspe.hhs.gov/sites/default/files/migrated_legacy_files/137886/ib_2015mar_enrollment.pdf",
     2016: "https://aspe.hhs.gov/sites/default/files/private/pdf/187866/Finalenrollment2016.pdf",
 }
-# The files behind the marketplace numbers, which the open enrollment page names.
-MARKETPLACE_SOURCES = {CMS_EFFECTUATED, CMS_OEP_PUFS} | {p["url"] for p in MK["picks"]} | set(ASPE_REPORTS.values())
+# The files behind the marketplace numbers and the people under 65 beside them, which the open enrollment page names.
+POPULATION_SOURCES = {
+    "https://www2.census.gov/programs-surveys/popest/datasets/2010-2020/intercensal/national/asrh/nc-est2020int-agesex-res.csv",
+    "https://www2.census.gov/programs-surveys/popest/datasets/2020-2025/national/asrh/nc-est2025-agesex-res.csv",
+}
+MARKETPLACE_SOURCES = {CMS_EFFECTUATED, CMS_OEP_PUFS} | {p["url"] for p in MK["picks"]} | set(ASPE_REPORTS.values()) | POPULATION_SOURCES
 
 
 def _census_year() -> str:

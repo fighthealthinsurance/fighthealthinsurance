@@ -152,10 +152,33 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         self.assertEqual(sorted(self._rows()), texas)
 
     def test_picking_a_state_with_no_insurers_says_so(self):
+        self.assertNotIn("NY", DATA["grey_issuers"])
         self._open()
-        self.click('#dmap g[data-s="CA"]')
-        self.assert_text_eventually_contains("California isn't in this data", "itable")
+        self.click('#dmap g[data-s="NY"]')
+        self.assert_text_eventually_contains("New York isn't in this data", "itable")
         self.assertEqual(self.get_value("#istate"), "")
+        self.assertFalse(self.is_element_visible("#isource"))
+
+    def test_picking_a_grey_state_lists_its_insurers_with_their_year(self):
+        georgia = DATA["grey_issuers"]["GA"]
+        self._open()
+        self.click('#dmap g[data-s="GA"]')
+        self.assert_text_eventually_contains(f"in Georgia, {georgia['year']} claims", "icount")
+        self.assertEqual(self.get_value("#istate"), "GA")
+        self.assertEqual(sorted(self._rows()), sorted(r["n"] for r in georgia["rows"]))
+        self.assertIn(f"{georgia['year']} claims, from insurers' own reports to CMS, the last year its files include Georgia.", self.get_text("#isource"))
+        self.assertIn("See Georgia's insurers", self.get_text("#dread"))
+
+    def test_california_has_no_appeals_column_and_names_who_is_left_out(self):
+        california = DATA["grey_issuers"]["CA"]
+        self._open()
+        self.select_option_by_value("#istate", "CA")
+        self.assert_text_eventually_contains("in California, 2024 claims", "icount")
+        self.assertEqual(sorted(self._rows()), sorted(r["n"] for r in california["rows"]))
+        heads = self.execute_script("return [...document.querySelectorAll('#itable thead th')].map(c => c.textContent)")
+        self.assertEqual(heads, ["Insurer", "Denial rate", "Claims"])
+        self.assertIn("These reports have no appeal counts.", self.get_text("#isource"))
+        self.assertIn("Not in the table: Aetna CVS Health (no 2024 report posted)", self.get_text("#ileft"))
 
     def test_map_buttons_wrap_on_a_phone(self):
         self._open(375, 812)

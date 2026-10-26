@@ -182,9 +182,9 @@ class TestOpenEnrollmentPage(TestCase):
         self.assertNotIn(".dw-ticker", self.content)
         self.assertNotIn("denial_watch.css", self.content)
 
-    def test_embeds_only_the_marketplace_numbers(self):
+    def test_embeds_only_the_numbers_its_charts_draw(self):
         embedded = json.loads(_between(self.content, '<script id="dw-data" type="application/json">', "</script>").split(">", 1)[1])
-        self.assertEqual(embedded, {"marketplace": DATA["marketplace"]})
+        self.assertEqual(embedded, {"marketplace": DATA["marketplace"], "population": {"under_65": DATA["population"]["under_65"]}})
 
     def test_loads_the_shared_chart_script_then_its_own(self):
         shared = self.content.index("js/denial_watch_charts.js")
@@ -380,11 +380,14 @@ class TestOpenEnrollmentSeason(TestCase):
         self.assertIn('href="https://www.healthcare.gov/marketplace-in-your-state/"', sources)
 
     def test_shoppers_hear_that_some_insurers_have_left(self):
-        # The insurer table is 2024 data, and some of its insurers don't sell 2027 plans; no insurer is named.
+        # The insurer table is mostly 2024 data, and some of its insurers don't sell 2027 plans; no insurer is named.
         html = _enroll(IN_SEASON)
         top = _text(_top(html))
-        # The table only has HealthCare.gov insurers, so the pointer says so.
-        self.assertIn("See how often each HealthCare.gov insurer in your state denied claims in 2024", top)
+        # The table has HealthCare.gov insurers for 2024 and five grey states from other sources or years, so the pointer says mostly.
+        years = [DATA["trend"][-1]["year"]] * len({i["s"] for i in DATA["issuers"]}) + [g["year"] for g in DATA["grey_issuers"].values()]
+        self.assertGreater(years.count(2024), len(years) / 2)
+        self.assertIn("See how often your state's insurers denied claims, where we have figures (mostly 2024), and how often", top)
+        self.assertNotIn("each HealthCare.gov insurer", top)
         self.assertIn("some of those insurers don't sell plans for 2027", top)
         self.assertNotIn("Cigna", top)
         sources = _between(html, 'id="sources"', "</section>")
@@ -450,7 +453,7 @@ class TestOpenEnrollmentSeason(TestCase):
     RENEWING = (
         "Already have a marketplace plan? During open enrollment, log in, update your income and compare plans, "
         "even if you'll be renewed automatically. Plans and prices change every year, and a new plan only starts "
-        "once you pay the first premium. For free, unbiased help, find an independent assister near you or call "
+        "once you pay the first premium, if it has one. For free, unbiased help, find an independent assister near you or call "
         "1-800-318-2596. Our fall checklist has the rest."
     )
 
@@ -519,6 +522,12 @@ class TestOpenEnrollmentTop(TestCase):
             'id="enroll-dates-line"',
             'id="enroll-numbers"',
             'href="#method-enroll"',
+            'id="coverage-mix"',
+            'id="mix-finding"',
+            'id="mix-list"',
+            'id="mix-records"',
+            'id="mix-scope"',
+            'id="mix-source"',
             'id="enroll-trends"',
             'id="mk-title"',
             'id="mknote"',
@@ -532,6 +541,13 @@ class TestOpenEnrollmentTop(TestCase):
             'id="pkkey"',
             'id="pkcaveat"',
             'id="pktable"',
+            'id="enroll-population"',
+            'id="pop-title"',
+            'id="popnote"',
+            'id="popline"',
+            'id="popkey"',
+            'id="popcaveat"',
+            'id="poptable"',
             'id="enroll-steps"',
             'href="#enroll-questions"',
             'id="enroll-questions"',
@@ -546,10 +562,14 @@ class TestOpenEnrollmentTop(TestCase):
         heads = re.findall(r"<h[12][^>]*>(.*?)</h[12]>", top)
         self.assertEqual(
             [_text(h) for h in heads],
-            ["Open enrollment for 2027", "Marketplace enrollment over the years", "What to do now"],
+            ["Open enrollment for 2027", "Where people get coverage", "Marketplace enrollment over the years", "What to do now"],
         )
-        charts = re.findall(r'<h3 class="fhi-card-title" id="(?:mk|pk)-title">(.*?)</h3>', top)
-        self.assertEqual(charts, ["People with marketplace coverage each February", "Plans picked in each open enrollment"])
+        charts = re.findall(r'<h3 class="fhi-card-title" id="(?:mk|pk|pop)-title">(.*?)</h3>', top)
+        self.assertEqual(
+            charts,
+            ["People with marketplace coverage each February", "Plans picked in each open enrollment", "Marketplace coverage and people under 65, change since 2016"],
+        )
+        heads += charts
         for part in heads + [_between(self.section, 'id="enroll-dates-line"', "</p>")]:
             for word in ("fell", "drop", "lost", "lower", "fewer", "decline"):
                 self.assertNotIn(word, _text(part).lower(), part)
@@ -669,8 +689,10 @@ class TestOpenEnrollmentTop(TestCase):
 
     def test_top_stays_short(self):
         # The dates, tiles, steps and February chart: 350 words with the eight steps in season, plus a little room.
-        # The plan picks history below it has its own budget.
-        self.assertLessEqual(_words(_between(self.section, 'id="enroll"', 'id="enroll-history"')), 360)
+        # The coverage bar and the plan picks history below have budgets of their own.
+        top = _between(self.section, 'id="enroll"', 'id="enroll-history"')
+        mix = _between(top, '<section class="fhi-stack" id="coverage-mix"', "</section>")
+        self.assertLessEqual(_words(top.replace(mix, "")), 360)
 
     def test_each_chart_says_its_finding_in_under_about_40_words(self):
         # Denial Watch's way: a short title, one sentence of finding, the chart, its key; caveats in Sources and method.
@@ -750,21 +772,30 @@ class TestOpenEnrollmentMarketplace(TestCase):
     def test_bridge_says_the_denial_rates_scope_and_year(self):
         year = DATA["trend"][-1]["year"]
         bridge = _text(_between(self.questions, '<p id="denials-bridge">', "</p>"))
+        # The insurer table and the every-state chart carry the same five grey states, from other sources or years.
+        names = _load_builder().STATE_NAMES
+        grey = DATA["grey_issuers"]
+        self.assertEqual(set(grey), set(DATA["state_reports"]) | set(DATA["earlier"]))
+        reports = sorted(names[s] for s in DATA["state_reports"])
+        older = sorted(names[s] for s in DATA["earlier"])
+        five = {5: "five"}[len(grey)]
         self.assertEqual(
             bridge,
-            "Partly. Denial Watch's denial rates, on its state map and in its insurer table, "
-            f"are for marketplace plans too, but only for HealthCare.gov states and insurers in {year}, "
-            "while CMS's count covers every marketplace nationwide.",
+            f"Partly. The denial rates on Denial Watch's state map are for HealthCare.gov insurers' marketplace plans, from {year} claims. "
+            f"Its every-state chart and insurer table add {five} states that run their own marketplace, from other sources or years: "
+            f"{' and '.join(reports)} from their insurers' own reports for {year}, which can include plans sold outside the marketplace, "
+            f"and {', '.join(older[:-1])} and {older[-1]} from earlier years. CMS's enrollment count covers every marketplace nationwide.",
         )
+        self.assertNotIn("only for HealthCare.gov", bridge)
         self.assertIn("Do Denial Watch's denial rates cover the same plans?", self.answers)
-        # Denial Watch's map and insurer table say the same year.
+        # Denial Watch's map says the same year.
         self.assertIn(f"Share of in-network claims denied by HealthCare.gov insurers in each state, {year}.", _page())
 
     def test_bridge_links_land_on_denial_watchs_sections(self):
         bridge = _between(self.questions, 'id="denials-bridge"', "</p>")
         dw = reverse("denial-watch")
         targets = re.findall(rf'href="{dw}#([\w-]+)"', bridge)
-        self.assertEqual(targets, ["map-denials", "insurers"])
+        self.assertEqual(targets, ["map-denials", "every-state", "insurers"])
         page = _page()
         for target in targets:
             self.assertIn(f'id="{target}"', page)
@@ -810,9 +841,11 @@ class TestOpenEnrollmentMarketplace(TestCase):
     def test_script_draws_only_with_data(self):
         self.assertIn("const MK=D.marketplace;\nif(MK){", OE_JS)
         self.assertIn("const H=MK&&MK.history;\nif(H&&H.length){", OE_JS)
-        # The February chart, then the plan picks history, and nothing after.
+        self.assertIn("const U=D.population&&new Map(D.population.under_65.map(r=>[r.y,r.n]));\nif(MK&&U&&U.has(MK.feb[0].y-1)){", OE_JS)
+        # The February chart, then the plan picks history, then coverage beside population, and nothing after.
         self.assertLess(OE_JS.index("/* marketplace coverage:"), OE_JS.index("/* plans picked:"))
-        self.assertEqual(OE_JS.index("/* plans picked:"), OE_JS.rindex("/* "))
+        self.assertLess(OE_JS.index("/* plans picked:"), OE_JS.index("/* coverage and people under 65:"))
+        self.assertEqual(OE_JS.index("/* coverage and people under 65:"), OE_JS.rindex("/* "))
 
     def test_tables_are_accessible(self):
         picks = _between(self.questions, 'id="mkpicks"', "</table>")
@@ -846,7 +879,12 @@ class TestOpenEnrollmentMarketplace(TestCase):
     def test_coverage_shares_in_the_words_match_the_data(self):
         feb, picks = _february(), _picks()
         (y0, s0), (y1, s1) = sorted((y, _pct(feb[y] / n)) for y, n in picks.items())
-        self.assertIn(f"Coverage in effect in February came to {s0} of those people for {y0}, and {s1} for {y1}.", self.answers)
+        # February coverage includes people who signed up later too, so it's "as many as", not a share of those who picked.
+        self.assertIn(
+            f"The number with coverage in effect in February was {s0} as many as picked a plan for {y0}, and {s1} as many for {y1}.",
+            self.answers,
+        )
+        self.assertNotIn("of those people", self.answers)
         self.assertIn(f"The {s0} and {s1} divide each February's coverage by that year's plan picks.", self.method)
         self.assertIn(f"CMS's early 2025 report gave {_pct(EARLY_FEB_2025 / picks[2025])}, from its earlier February count.", self.method)
 
@@ -1218,7 +1256,7 @@ class TestOpenEnrollmentHistory(TestCase):
         method = _between(cls.content, 'id="method-enroll"', "</div>")
         cls.method_html = _between(method, "<b>Plans picked, 2014 to 2026:</b>", "</li>")
         cls.method = _text(cls.method_html)
-        cls.script = _between(OE_JS, "/* plans picked:", "})();")
+        cls.script = _between(OE_JS, "/* plans picked:", "/* coverage and people under 65:")
 
     def test_bundle_history_is_the_curated_csv(self):
         with open(HISTORY_CSV, newline="") as f:
