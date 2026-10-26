@@ -17,10 +17,22 @@
   #enroll-numbers { display: flex; flex-wrap: wrap; }
   #enroll-numbers > .dw-stat { flex: 1 1 14rem; }
   .dw-picks { max-width: 40rem; }
-  /* The plan picks table's source on one line, so a phone scrolls the table instead of stacking the words. */
-  #pktable td:last-child { white-space: nowrap; }
   .dw-quote { margin: 0; padding-left: var(--fhi-space-4); border-left: 3px solid var(--fhi-line); }
   .dw-quote p { margin: 0; font-size: var(--fhi-text-lead); }
+  /* What to do now: short steps that flow down two columns where they fit. */
+  .oe-steps { display: block; columns: 2 22rem; column-gap: var(--fhi-space-6); }
+  .oe-steps > li { break-inside: avoid; margin-bottom: var(--fhi-space-3); }
+  /* The two charts side by side on the same scale, stacked on narrower screens. */
+  .oe-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--fhi-space-6); align-items: start; }
+  .oe-chart { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--fhi-space-3); }
+  .oe-chart > * { margin: 0; }
+  /* Each chart's one-sentence finding reads as text, not as a muted note. */
+  .oe-finding { color: var(--fhi-ink); }
+  @media (max-width: 860px) {
+    .oe-charts { grid-template-columns: minmax(0, 1fr); }
+    /* Stacked, the plan picks table's source stays on one line, so a phone scrolls the table instead of stacking the words. */
+    #pktable td:last-child { white-space: nowrap; }
+  }
   @media (max-width: 560px) {
     /* The enrollment tiles two by two, so the share wraps to its own row. */
     #enroll-numbers > .dw-stat { flex-basis: calc(50% - var(--fhi-space-3)); }
@@ -47,55 +59,61 @@
                 <div class="dw-stat"><p class="dw-stat-head"><b class="dw-num">19.2 million</b> <strong>had marketplace coverage</strong></p><span>in effect in February 2026, nationwide (preliminary)</span></div>
                 <div class="dw-stat"><p class="dw-stat-head"><b class="dw-num">83%</b> <strong>as many had coverage as picked a plan</strong></p><span class="dw-meter" aria-hidden="true"><i style="width: 83%"></i></span><span class="dw-key" aria-hidden="true"><span><i class="dw-sw dw-sw-count"></i>had coverage</span> <span><i class="dw-sw dw-sw-picks"></i>picked a plan</span></span><span>in February 2026 (preliminary), by our math from CMS's counts</span></div>
             </div>
-            <div class="fhi-card">
-                <div class="dw-two">
-                    <div>
-                        <h2 class="fhi-card-title" id="mk-title">People with marketplace coverage each February</h2>
-                        <svg class="dw-chart" id="mkline" viewBox="0 0 560 270" role="img" aria-label="Line chart of people with marketplace coverage in effect each February, 2016 to 2026. 2026 is preliminary"></svg>
-                        <p class="dw-key" id="mkkey"><span><i class="dw-sw dw-sw-count"></i>Coverage in effect</span> <span><i class="dw-sw dw-sw-open"></i>Preliminary</span></p>
-                        <p class="dw-note" id="mknote">CMS's count rose every year from 2016 to 2025 except 2019, when it dipped less than 1%, then went from 21.8 million in February 2025 to 19.2 million in February 2026, 12% lower. The hollow point, 2026, is preliminary.</p>
-                        <details class="dw-years">
-                            <summary>Every February's count</summary>
-                            <div class="dw-table-wrap"><table class="dw-table" id="mktable"></table></div>
-                        </details>
-                    </div>
-                    <div>
-                        <h2 class="fhi-card-title" id="enroll-steps">What to do now</h2>
-                        <ul class="dw-list">
-                            {% if enrollment %}<li id="enroll-compare"><b>Compare plans and costs</b> on <a href="https://www.healthcare.gov/">HealthCare.gov</a> or <a href="https://www.healthcare.gov/marketplace-in-your-state/">your state's marketplace</a>{% if enrollment.medicare %}, or in <a href="https://www.medicare.gov/plan-compare/">Medicare Plan Finder</a> for Medicare{% endif %}, even if you'll be renewed automatically. See how often <a href="{% url 'denial-watch' %}#insurers">each HealthCare.gov insurer in your state</a> denied claims in 2024 and how often large plans denied <a href="{% url 'denial-watch' %}#prior-auth">prior authorization</a>: one thing to weigh, not a quality rating, and some of those insurers don't sell plans for {{ enrollment.plan_year }}.</li>{% endif %}
-                            <li><b>Pay the first premium.</b> A plan you pick only starts once the first month's premium is paid, if there is one.</li>
-                            <li><b>Disagree with a marketplace decision?</b> If it says you can't buy a plan or get savings, you can <a href="https://www.healthcare.gov/marketplace-appeals/">appeal to the marketplace</a>, generally within 90 days of the notice.</li>
-                            <li><b>Get free help.</b> <a href="https://www.healthcare.gov/find-local-help/">Find an independent assister near you</a> or call <a class="dw-tel" href="tel:+18003182596">1-800-318-2596</a>.</li>
-                        </ul>
-                        <p><a href="#enroll-questions">Enrollment questions</a>: renewing, losing coverage, and what these numbers count.</p>
-                    </div>
-                </div>
-            </div>
             <p class="dw-how"><a href="#method-enroll">How we got these numbers<span class="fhi-visually-hidden">: {% if enrollment %}Open enrollment{% else %}Signing up for marketplace coverage{% endif %}</span></a></p>
             <p class="dw-note">{% if enrollment %}Dates, numbers{% else %}Numbers{% endif %} and links checked October 22, 2026.</p>
+
+            <section class="fhi-stack" id="enroll-act" aria-labelledby="enroll-steps">
+                <h2 id="enroll-steps">What to do now</h2>
+                <div class="fhi-card">
+                    <ul class="dw-list oe-steps">
+                        {% if enrollment %}<li id="enroll-see-plans"><b>See plans and prices first.</b> HealthCare.gov shows <a href="https://www.healthcare.gov/see-plans/">plans and estimated prices</a> for your area, based on your income, before you log in.</li>
+                        <li id="enroll-update"><b>Update your income and household.</b> When your marketplace's enrollment opens, put your expected {{ enrollment.plan_year }} income and household on <a href="https://www.healthcare.gov/keep-or-change-plan/">your application</a>, so you get the right savings.</li>
+                        <li id="enroll-compare"><b>Compare plans and costs</b> on <a href="https://www.healthcare.gov/">HealthCare.gov</a> or <a href="https://www.healthcare.gov/marketplace-in-your-state/">your state's marketplace</a>{% if enrollment.medicare %}, or in <a href="https://www.medicare.gov/plan-compare/">Medicare Plan Finder</a> for Medicare{% endif %}, even if you'll be renewed automatically.</li>
+                        <li id="enroll-doctors"><b>Check your doctors and prescriptions.</b> Plans change every year, so look for yours in <a href="https://www.healthcare.gov/choose-a-plan/comparing-plans/">each plan's doctor and drug lists</a>.</li>
+                        <li id="enroll-insurers"><b>Weigh insurers' denial rates.</b> See how often <a href="{% url 'denial-watch' %}#insurers">each HealthCare.gov insurer in your state</a> denied claims in 2024 and how often large plans denied <a href="{% url 'denial-watch' %}#prior-auth">prior authorization</a>: one thing to weigh, not a quality rating, and some of those insurers don't sell plans for {{ enrollment.plan_year }}.</li>
+                        {% else %}<li id="enroll-update"><b>Report income and household changes.</b> If either changes, <a href="https://www.healthcare.gov/reporting-changes/">update your application</a> as soon as you can, so your savings stay right.</li>
+                        {% endif %}<li><b>Pay the first premium.</b> A plan you pick only starts once the first month's premium is paid, if there is one.</li>
+                        <li><b>Disagree with a marketplace decision?</b> If it says you can't buy a plan or get savings, you can <a href="https://www.healthcare.gov/marketplace-appeals/">appeal to the marketplace</a>, generally within 90 days of the notice.</li>
+                        <li><b>Get free help.</b> <a href="https://www.healthcare.gov/find-local-help/">Find an independent assister near you</a> or call <a class="dw-tel" href="tel:+18003182596">1-800-318-2596</a>.</li>
+                    </ul>
+                </div>
+                <p><a href="#enroll-questions">Enrollment questions</a>: renewing, losing coverage, and what these numbers count.</p>
+                <p class="dw-note" id="enroll-act-checked">Links checked October 26, 2026.</p>
+            </section>
         </div>
 
-        {# Every open enrollment's plan picks, drawn and tabled by js/open_enrollment.js from the bundle's history. #}
-        <section class="fhi-stack" id="enroll-history" aria-labelledby="pk-title">
-            <div class="fhi-card">
-                <h2 class="fhi-card-title" id="pk-title">Plans picked in each open enrollment</h2>
-                <div class="dw-two">
-                    <div>
-                        <svg class="dw-chart" id="pkline" viewBox="0 0 560 270" role="img" aria-label="Line chart of people who picked a marketplace plan in each open enrollment, 2014 to 2026"></svg>
-                        <p class="dw-key" id="pkkey"><span><i class="dw-sw dw-sw-count"></i>Plans picked</span></p>
-                    </div>
-                    <div>
-                        <p class="dw-note" id="pknote">After 8.0 million for 2014, the first open enrollment, plan picks stayed between 11.4 million and 12.7 million a year through 2021, then climbed to 24.3 million for 2025, and 23.1 million people picked a plan for 2026. These count people with a plan picked, including automatic renewals, not paid coverage. The sign-up window changed length: about six months for 2014, about six weeks on HealthCare.gov for 2018 to 2021, and about eleven weeks there for 2022 to 2026. CMS changed how it counts a picked plan for 2018 and again for 2022. The 2014 to 2016 counts are from HHS ASPE reports of CMS data.</p>
-                    </div>
+        {# The two charts side by side, on the same scale; js/open_enrollment.js draws them and the February table from the bundle. #}
+        <div class="oe-charts">
+            <div class="fhi-stack">
+                <div class="fhi-card oe-chart">
+                    <h2 class="fhi-card-title" id="mk-title">People with marketplace coverage each February</h2>
+                    <p class="oe-finding" id="mknote">CMS's count rose every year but one from 2016 to 2025, then went from 21.8 million in February 2025 to 19.2 million in February 2026, 12% lower.</p>
+                    <svg class="dw-chart" id="mkline" viewBox="0 0 560 270" role="img" aria-label="Line chart of people with marketplace coverage in effect each February, 2016 to 2026. 2026 is preliminary"></svg>
+                    <p class="dw-key" id="mkkey"><span><i class="dw-sw dw-sw-count"></i>Coverage in effect</span> <span><i class="dw-sw dw-sw-open"></i>2026, preliminary</span></p>
+                    <details class="dw-years">
+                        <summary>Every February's count</summary>
+                        <div class="dw-table-wrap"><table class="dw-table" id="mktable"></table></div>
+                    </details>
                 </div>
-                {# Below both columns, so the five-column table gets the card's width. #}
-                <details class="dw-years">
-                    <summary>Every open enrollment's count</summary>
-                    <div class="dw-table-wrap"><table class="dw-table" id="pktable">{% if enroll_history %}<caption class="fhi-visually-hidden">People who picked a marketplace plan in each open enrollment, nationwide, {{ enroll_history.0.y }} to {% with final=enroll_history|last %}{{ final.y }}{% endwith %}</caption><thead><tr><th scope="col">Plan year</th><th scope="col" class="dw-r">Plans picked</th><th scope="col" class="dw-r">HealthCare.gov</th><th scope="col" class="dw-r">State-run</th><th scope="col">Source</th></tr></thead><tbody>{% for r in enroll_history %}<tr><th scope="row">{{ r.y }}</th><td class="dw-r dw-num">{{ r.n }}</td><td class="dw-r dw-num">{{ r.fed }}</td><td class="dw-r dw-num">{{ r.sbm }}</td><td>{{ r.pub }}</td></tr>{% endfor %}</tbody>{% endif %}</table></div>
-                </details>
+                <p class="dw-how"><a href="#method-enroll">How we got these numbers<span class="fhi-visually-hidden">: People with marketplace coverage each February</span></a></p>
             </div>
-            <p class="dw-how"><a href="#method-enroll">How we got these numbers<span class="fhi-visually-hidden">: Plans picked in each open enrollment</span></a></p>
-        </section>
+
+            {# Every open enrollment's plan picks; the year table is drawn by the view, so it reads without the script. #}
+            <section class="fhi-stack" id="enroll-history" aria-labelledby="pk-title">
+                <div class="fhi-card oe-chart">
+                    <h2 class="fhi-card-title" id="pk-title">Plans picked in each open enrollment</h2>
+                    <p class="oe-finding" id="pknote">Plan picks held between 11.4 million and 12.7 million a year from 2015 to 2021, then climbed to 24.3 million for 2025 and 23.1 million for 2026.</p>
+                    <svg class="dw-chart" id="pkline" viewBox="0 0 560 270" role="img" aria-label="Line chart of people who picked a marketplace plan in each open enrollment, 2014 to 2026"></svg>
+                    <p class="dw-key" id="pkkey"><span><i class="dw-sw dw-sw-count"></i>Plans picked</span></p>
+                    <p class="dw-note" id="pkcaveat">Picks, not paid coverage. Sign-up windows and CMS's counting changed over the years.</p>
+                    <details class="dw-years">
+                        <summary>Every open enrollment's count</summary>
+                        <div class="dw-table-wrap"><table class="dw-table" id="pktable">{% if enroll_history %}<caption class="fhi-visually-hidden">People who picked a marketplace plan in each open enrollment, nationwide, {{ enroll_history.0.y }} to {% with final=enroll_history|last %}{{ final.y }}{% endwith %}</caption><thead><tr><th scope="col">Plan year</th><th scope="col" class="dw-r">Plans picked</th><th scope="col" class="dw-r">HealthCare.gov</th><th scope="col" class="dw-r">State-run</th><th scope="col">Source</th></tr></thead><tbody>{% for r in enroll_history %}<tr><th scope="row">{{ r.y }}</th><td class="dw-r dw-num">{{ r.n }}</td><td class="dw-r dw-num">{{ r.fed }}</td><td class="dw-r dw-num">{{ r.sbm }}</td><td>{{ r.pub }}</td></tr>{% endfor %}</tbody>{% endif %}</table></div>
+                    </details>
+                </div>
+                <p class="dw-how"><a href="#method-enroll">How we got these numbers<span class="fhi-visually-hidden">: Plans picked in each open enrollment</span></a></p>
+            </section>
+        </div>
 
         <section class="fhi-stack" id="enroll-questions" aria-labelledby="enroll-questions-title">
             <p class="dw-kicker">Signing up for coverage</p>
@@ -155,6 +173,18 @@
             <p class="dw-how"><a href="#method-enroll">How we got these numbers<span class="fhi-visually-hidden">: Enrollment questions</span></a></p>
         </section>
 
+        <section class="fhi-stack" id="more-data-enroll" aria-labelledby="more-data-enroll-title">
+            <p class="dw-kicker">Beyond this page</p>
+            <h2 id="more-data-enroll-title">Where to find more data like this</h2>
+            <ul class="fhi-list">
+                <li><h3 class="fhi-card-title"><a href="https://www.kff.org/state-health-facts/">KFF State Health Facts</a></h3><p>State by state tables from KFF, a nonprofit health policy research, polling, and news organization: <a href="https://www.kff.org/affordable-care-act/state-indicator/open-enrollment-marketplace-plan-selections/">plans picked in each open enrollment</a> from 2014, from the same CMS and HHS ASPE sources as this page, and <a href="https://www.kff.org/affordable-care-act/state-indicator/effectuated-marketplace-enrollment-and-financial-assistance/">coverage in effect</a> from 2017. No ads.</p></li>
+                <li><h3 class="fhi-card-title"><a href="https://www.cms.gov/data-research/statistics-trends-and-reports/marketplace-products">CMS Marketplace Products</a></h3><p>CMS's open enrollment files for every year since 2015, including state and county files of plans picked by age, income, metal level and premium, and quarterly snapshots of coverage in effect by state. The <a href="https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/health-insurance-marketplace/health-insurance-exchanges-monthly-effectuated-enrollment">monthly count of coverage in effect</a>, by state, is where this page's February numbers come from. No ads.</p></li>
+                <li><h3 class="fhi-card-title"><a href="https://shvs.org/tracking-state-based-marketplace-2026-open-enrollment-data-final-reports/">State-run marketplace enrollment tracker</a></h3><p>A map linking to each state-run marketplace's own 2026 open enrollment reports and snapshots, which often come out more often or in more detail than CMS's. Kept by SHADAC for State Health and Value Strategies, a program supported by the Robert Wood Johnson Foundation. No ads.</p></li>
+            </ul>
+            <p class="fhi-notice fhi-notice-info" id="join-forces-enroll">Know a public data source we should include? Send it our way. <a href="{% url 'contact' %}">Get in touch</a>.</p>
+            <p class="dw-note">Checked October 26, 2026.</p>
+        </section>
+
         <section class="fhi-stack" id="sources" aria-labelledby="sources-title">
             <p class="dw-kicker">Where the numbers come from</p>
             {# Closed until opened; js/denial_watch_charts.js opens it for a link to anything inside. #}
@@ -167,7 +197,7 @@
                             <ol class="dw-sources">
                                 <li><b>Marketplace coverage:</b> <a href="https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/health-insurance-marketplace/health-insurance-exchanges-monthly-effectuated-enrollment">CMS Health Insurance Exchanges Monthly Effectuated Enrollment</a>, the file with data as of May 5, 2026 (Data_asof_20260505), which runs to February 2026. Coverage in effect is what CMS calls effectuated enrollment: an active plan, with its first month's premium paid if it has one. These are national totals for February of each year, HealthCare.gov and state-run marketplaces together, all from this one file. CMS updates each month's count until the year's December data are in, so 2026 is preliminary and may change. Earlier CMS reports counted the same month sooner: its early 2025 report had 23.4 million for February 2025 (counted March 15, 2025), against 21.8 million in this file, so mixing reports would make the drop look bigger. CMS notes that Minnesota's latest data leave out a subgroup of enrollments after a reporting change; without Minnesota, the 2026 drop is 11.9%. CMS revised its 2021 counts for a new method (<a href="https://www.cms.gov/files/document/early-2022-and-full-year-2021-effectuated-enrollment-report.pdf">its early 2022 report</a>), and its notes for this file don't say whether 2016 to 2020 were counted again the same way.</li>
                                 <li><b>Plan picks:</b> CMS's Marketplace Open Enrollment Period public use files for <a href="https://www.cms.gov/data-research/statistics-trends-reports/marketplace-products/2025-marketplace-open-enrollment-period-public-use-files">2025</a> and <a href="https://www.cms.gov/data-research/statistics-trends-reports/marketplace-products/2026-marketplace-open-enrollment-period-public-use-files">2026</a>, the national total from the state-level file, HealthCare.gov and state-run marketplaces together. CMS counts people, not plans, including people renewed into a plan automatically. In CMS's words, "plan selections will only become coverage for consumers that effectuate their coverage by paying their first monthly premium" (<a href="https://www.cms.gov/files/document/2026-public-use-files-faqs.pdf">public use files FAQs</a>). The 90% and 83% divide each February's coverage by that year's plan picks. CMS's early 2025 report gave 96%, from its earlier February count.</li>
-                                <li><b>Plans picked, 2014 to 2026:</b> For 2017 to 2026, the national total and its HealthCare.gov and state-run parts from CMS's <a href="https://www.cms.gov/data-research/statistics-trends-and-reports/marketplace-products">Marketplace Open Enrollment Period state-level public use files</a>, one for each year; 2025 and 2026 are the plan picks above. CMS has no file covering every marketplace before 2017, so 2014 to 2016 are from HHS ASPE's enrollment reports for <a href="https://www.aspe.hhs.gov/sites/default/files/migrated_legacy_files/44226/ib_2014Apr_enrollment.pdf">2014</a>, <a href="https://www.aspe.hhs.gov/sites/default/files/migrated_legacy_files/137886/ib_2015mar_enrollment.pdf">2015</a> and <a href="https://aspe.hhs.gov/sites/default/files/private/pdf/187866/Finalenrollment2016.pdf">2016</a>, whose tables cite CMS data. Each count is of people with a plan picked, including people renewed automatically, not paid coverage, and leaves out Basic Health Program plans. The 2014 window ran from October 1, 2013 to March 31, 2014, and its count includes sign-ups through April 19, 2014. HealthCare.gov's deadline was December 15 for 2018 to 2021 and January 15 for 2022 to 2026 (January 16 for 2024); state-run marketplaces set their own deadlines. For HealthCare.gov, CMS counted a picked plan for 2017 if its coverage included March and wasn't canceled, for 2018 to 2021 if any of its coverage wasn't canceled, and for 2022 on only if its coverage ran to at least January 31 (the 2017 file's definitions and <a href="https://www.cms.gov/files/document/2022-public-use-files-faqs.pdf">CMS's 2022 public use files FAQs</a>). CMS doesn't check state-run marketplaces' figures, and the HealthCare.gov and state-run parts shift when a state changes platform, as Georgia did for 2025 and Illinois for 2026. Checked October 25, 2026.</li>
+                                <li><b>Plans picked, 2014 to 2026:</b> For 2017 to 2026, the national total and its HealthCare.gov and state-run parts from CMS's <a href="https://www.cms.gov/data-research/statistics-trends-and-reports/marketplace-products">Marketplace Open Enrollment Period state-level public use files</a>, one for each year; 2025 and 2026 are the plan picks above. CMS has no file covering every marketplace before 2017, so 2014 to 2016 are from HHS ASPE's enrollment reports for <a href="https://www.aspe.hhs.gov/sites/default/files/migrated_legacy_files/44226/ib_2014Apr_enrollment.pdf">2014</a>, <a href="https://www.aspe.hhs.gov/sites/default/files/migrated_legacy_files/137886/ib_2015mar_enrollment.pdf">2015</a> and <a href="https://aspe.hhs.gov/sites/default/files/private/pdf/187866/Finalenrollment2016.pdf">2016</a>, whose tables cite CMS data. Each count is of people with a plan picked, including people renewed automatically, not paid coverage, and leaves out Basic Health Program plans. The 2014 window ran from October 1, 2013 to March 31, 2014, and its count includes sign-ups through April 19, 2014. HealthCare.gov's deadline was December 15 for 2018 to 2021 and January 15 for 2022 to 2026 (January 16 for 2024); state-run marketplaces set their own deadlines. So the sign-up window was about six months for 2014, about six weeks on HealthCare.gov for 2018 to 2021, and about eleven weeks there for 2022 to 2026. For HealthCare.gov, CMS counted a picked plan for 2017 if its coverage included March and wasn't canceled, for 2018 to 2021 if any of its coverage wasn't canceled, and for 2022 on only if its coverage ran to at least January 31 (the 2017 file's definitions and <a href="https://www.cms.gov/files/document/2022-public-use-files-faqs.pdf">CMS's 2022 public use files FAQs</a>). CMS doesn't check state-run marketplaces' figures, and the HealthCare.gov and state-run parts shift when a state changes platform, as Georgia did for 2025 and Illinois for 2026. Checked October 25, 2026.</li>
                                 <li><b>KFF:</b> Matt McGough, Justin Lo and Cynthia Cox, <a href="https://www.kff.org/affordable-care-act/individual-market-enrollment-continues-to-fall-through-mid-2026/">"Individual Market Enrollment Continues to Fall Through Mid-2026"</a> (KFF, October 14, 2026): plans people buy themselves, on and off the marketplaces, 25.2 million in June 2025 and 20.5 million in June 2026, from insurers' filings compiled by Mark Farrah Associates. The survey is <a href="https://www.kff.org/public-opinion/a-follow-up-survey-of-aca-marketplace-enrollees/">"Cost Concerns and Coverage Changes: A Follow-Up Survey of ACA Marketplace Enrollees"</a> (KFF, March 19, 2026): 1,117 adults who had marketplace plans in 2025, asked from February 12 to March 2, 2026, with a margin of error of plus or minus 3.8 points. Checked October 22, 2026.</li>
                                 {% if enrollment %}<li><b>Open enrollment:</b> Medicare's dates from <a href="https://www.cms.gov/newsroom/press-releases/medicare-advantage-medicare-prescription-drug-programs-expected-remain-stable-2027">CMS's announcement</a> (September 28, 2026) and <a href="https://www.medicare.gov/basics/get-started-with-medicare/get-more-coverage/joining-a-plan">Medicare.gov</a>. CMS has set HealthCare.gov's {{ enrollment.plan_year }} sign-up dates (<a href="https://www.cms.gov/files/document/ftr-requirement-py26-27-statement.pdf">its statement of July 27, 2026</a>), but the court ruling behind them is under appeal, so we link to HealthCare.gov rather than print them. Checked October 22, 2026. Oregon's move to its own marketplace is from <a href="https://www.healthcare.gov/marketplace-in-your-state/">HealthCare.gov's state page</a>, and insurers leaving the marketplace for 2027 from <a href="https://www.kff.org/affordable-care-act/tracking-insurer-participation-changes-in-the-aca-marketplaces-in-2027/">KFF's tracker</a>, checked October 19, 2026.</li>{% endif %}
                             </ol>
