@@ -1,0 +1,22 @@
+{% comment %} The file button inside a letter's text box (.fhi-letter-box in
+   custom.css). It goes straight after the box's textarea, in the
+   .fhi-letter-box that holds both and carries data-file-drop, so a file
+   dropped anywhere on the box goes to the same input (file_drop.js). Empty,
+   the box shows the button in its middle with the other ways in under it;
+   with text in it, the button sits at its foot and adds another page.
+
+   The input DELIBERATELY has no name= attribute. The browser only includes
+   a file input in the multipart body when it has a name, and these pages
+   read the letter on this device: with a name, every letter a person
+   attached would be uploaded and buffered by the server for nothing, an
+   unnecessary disclosure of the exact document these pages keep in the
+   browser. The pages' scripts find it by id. Do not add a name back without
+   also changing what the pages promise about the file.
+
+   accept: the file types the picker offers, if limited.
+   note: what the page does with the file, read with the button. {% endcomment %}
+<div class="fhi-letter-box-over">
+    <input id="uploader" type="file" multiple class="fhi-visually-hidden"{% if accept %} accept="{{ accept }}"{% endif %} aria-describedby="uploader_note">
+    <label for="uploader" class="fhi-button fhi-button-secondary"><span class="fhi-letter-box-choose">Choose a file<span class="fhi-photo-hint"> or take a photo</span></span><span class="fhi-letter-box-more">Add a page</span></label>
+    <p class="fhi-letter-box-prompt"><span>or paste the letter's text<span class="fhi-drop-hint">, or drop the file here</span>.</span> <span id="uploader_note">{{ note }}</span></p>
+</div>

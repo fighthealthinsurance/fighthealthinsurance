@@ -368,123 +368,31 @@ def test_the_denial_file_is_never_posted_to_the_server():
     the uploader sits INSIDE the /process form, and a file input with a name
     is included in the multipart body regardless of whether Django binds it
     -- so every attached denial was uploaded and buffered for nothing. The
-    input must stay nameless, and the copy promises exactly that."""
-    tpl = (
-        pathlib.Path(__file__).resolve().parents[2]
-        / "fighthealthinsurance"
-        / "templates"
-        / "scrub.html"
-    ).read_text()
-    tag = re.search(r"<input[^>]*id=\"uploader\"[^>]*>", tpl)
+    input must stay nameless, and the copy promises exactly that. It is drawn
+    by the letter box partial, which Explain Denial shares."""
+    partial = (TEMPLATES / "partials" / "letter_box_pick.html").read_text()
+    tag = re.search(r"<input[^>]*id=\"uploader\"[^>]*>", partial)
     assert tag, "uploader input not found"
     assert "name=" not in tag.group(0), tag.group(0)
-    # No other named file input may sneak into the same form either.
-    for other in re.findall(r"<input[^>]*type=\"file\"[^>]*>", tpl):
-        assert "name=" not in other, other
+    tpl = (TEMPLATES / "scrub.html").read_text()
+    assert '{% include "partials/letter_box_pick.html"' in tpl
+    # No other file input, named or not, may sneak into the same form either.
+    assert re.search(r"<input[^>]*type=\"file\"", tpl) is None
 
 
-def test_a_dropped_denial_file_is_never_posted_to_the_server():
-    """The letter box takes a dropped file too, and that must not open a
-    second way out for the document. The drop handler hands the files to the
-    nameless #uploader (the test above keeps it nameless) and fires its
-    change event, so a dropped file is read by the same on-device listener
-    as a chosen one. Nothing in the handler may send the file, give it a
-    name, or build an input of its own to carry it."""
-    src = (JS / "scrub.ts").read_text()
-    handler = _js_function(src, "function acceptDroppedFiles")
-    assert "uploader.files = event.dataTransfer.files;" in handler, handler
-    assert 'uploader.dispatchEvent(new Event("change"' in handler, handler
-    for way_out in (
-        "fetch(",
-        "XMLHttpRequest",
-        "FormData",
-        "sendBeacon",
-        "WebSocket",
-        ".submit(",
-        ".name",
-        "createElement",
-        "setAttribute",
-        "appendChild",
-    ):
-        assert way_out not in handler, f"the drop handler uses {way_out}:\n{handler}"
-    # The input it is handed is the uploader, the one the change listener
-    # that reads a chosen file is bound to.
-    setup = _js_function(src, "function setupScrub")
+def test_a_dropped_denial_file_is_read_like_a_chosen_one():
+    """The letter box takes a dropped file too. file_drop.js hands it to the
+    nameless #uploader and fires its change event, so it is read by the same
+    on-device listener as a chosen file and never posted
+    (tests/sync/test_file_drop_behaviour.py runs that script). Here: the box
+    is marked as a drop target, and the listener is on the uploader."""
+    tpl = (TEMPLATES / "scrub.html").read_text()
+    box = tpl.index('class="fhi-letter-box"')
+    assert "data-file-drop" in tpl[box : tpl.index("\n", box)]
+    assert tpl.index('id="denial_text"', box) < tpl.index("letter_box_pick", box)
+    setup = _js_function((JS / "scrub.ts").read_text(), "function setupScrub")
     assert 'const elm = document.getElementById("uploader");' in setup, setup
     assert 'elm.addEventListener("change", recognizeEvent);' in setup, setup
-    assert (
-        'acceptDroppedFiles(box.closest("section") ?? box, box, elm as HTMLInputElement);'
-        in setup
-    ), setup
-
-
-def _drop_listeners() -> "list[str]":
-    """acceptDroppedFiles cut into its listeners, each from where it is
-    declared or attached up to the next one."""
-    handler = _js_function((JS / "scrub.ts").read_text(), "function acceptDroppedFiles")
-    return re.split(
-        r"(?=\b\w+\.addEventListener\()|(?=const offerDrop)|(?=const refuseDrop)",
-        handler,
-    )
-
-
-def test_a_dropped_file_is_kept_from_the_browser():
-    """Cancelling the browser's own handling is what stops it opening the
-    file in place of the page, as well as reading it. Without it on the
-    drag-over, the browser refuses the drop and no drop event comes at all."""
-    listeners = _drop_listeners()
-    offer = next(chunk for chunk in listeners if chunk.startswith("const offerDrop"))
-    assert "event.preventDefault();" in offer, offer
-    drop = next(
-        chunk for chunk in listeners if chunk.startswith('zone.addEventListener("drop"')
-    )
-    assert "event.preventDefault();" in drop, drop
-    assert drop.index("event.preventDefault();") < drop.index("uploader.files ="), drop
-
-
-def test_a_file_dropped_on_the_file_button_is_read_too():
-    """The file button is where most people drop a file, and the input behind
-    it is hidden, so it takes no drop of its own. The handler listens on the
-    letter's whole step, and that step holds the button as well as the box."""
-    listeners = _drop_listeners()
-    for event in ("dragenter", "dragover", "dragleave", "drop"):
-        assert any(
-            chunk.startswith(f'zone.addEventListener("{event}"') for chunk in listeners
-        ), f"the step does not listen for {event}"
-    tpl = (
-        pathlib.Path(__file__).resolve().parents[2]
-        / "fighthealthinsurance"
-        / "templates"
-        / "scrub.html"
-    ).read_text()
-    box = tpl.index('id="denial_text"')
-    step = tpl[tpl.rindex("<section", 0, box) : tpl.index("</section>", box)]
-    assert 'for="uploader"' in step, "the file button is outside the letter's step"
-
-
-def test_a_file_dropped_anywhere_else_is_refused_not_opened():
-    """A file let go outside the step would otherwise be opened by the
-    browser in place of the page, taking everything typed so far with it."""
-    listeners = _drop_listeners()
-    refuse = next(chunk for chunk in listeners if chunk.startswith("const refuseDrop"))
-    assert "zone.contains(event.target" in refuse, refuse
-    assert "event.preventDefault();" in refuse, refuse
-    assert 'dropEffect = "none"' in refuse, refuse
-    for event in ("dragover", "drop"):
-        assert f'window.addEventListener("{event}", refuseDrop);' in "".join(listeners)
-
-
-def test_dragging_text_into_the_letter_box_is_left_to_the_browser():
-    """Only a drag that carries files is taken over. Dragging a selection of
-    text into or within the box must still drop the text, so each listener
-    asks before it cancels the browser's own handling."""
-    for listener in _drop_listeners():
-        if "preventDefault()" not in listener:
-            continue
-        assert "carriesFiles(event)" in listener, listener
-        assert listener.index("carriesFiles(event)") < listener.index(
-            "preventDefault()"
-        ), listener
 
 
 def test_a_superseded_selection_does_not_post_a_verdict():

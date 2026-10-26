@@ -118,17 +118,18 @@ class TheIntakePageAsksForTheLetterFirstTest(TestCase):
                 )
 
     @override_settings(ADVANCED_OCR_OFFERED=True)
-    def test_the_file_button_leads_the_step_when_better_reading_is_offered(self):
+    def test_the_better_reading_option_sits_under_the_letter_box(self):
         """The better text recognition option is a tick box with a paragraph
-        of fine print. Above the button it pushed the letter's first control
-        most of a phone screen down, so it follows the button. It is read
+        of fine print. Above the box it pushed the letter's box and its file
+        button most of a phone screen down, so it follows them. It is read
         when the file is, so it says to tick it first."""
         self.setUp()
         option = self._id("advanced_ocr_enabled")
         button = self._at(self.main.find("label", attrs={"for": "uploader"}))
-        self.assertLess(self._heading("Your denial letter"), button)
+        self.assertLess(self._heading("Your denial letter"), self._id("denial_text"))
         self.assertLess(button, option, "the option sits above the file button")
-        self.assertLess(option, self._id("denial_text"))
+        self.assertLess(self._id("denial_text"), option)
+        self.assertLess(option, self._heading("About you"))
         section = self.main.find(id="advanced_ocr_section").get_text(" ", strip=True)
         self.assertIn("Tick this before you choose the file.", section)
 
@@ -177,12 +178,44 @@ class TheIntakePageAsksForTheLetterFirstTest(TestCase):
 
     def test_the_hidden_file_input_is_drawn_as_a_button_that_says_what_it_does(self):
         """The input itself is hidden from sight, so its label is the only
-        part of it anyone sees; without the label the control is gone."""
+        part of it anyone sees; without the label the control is gone. It
+        has two sets of words, and the page's styles show one: Choose a file
+        while the box is empty, Add a page once there is text in it."""
         button = self.main.find("label", attrs={"for": "uploader"})
         self.assertIsNotNone(button)
         self.assertIn("fhi-button", button.get("class", []))
         self.assertEqual(
-            button.get_text(" ", strip=True), "Choose a file or take a photo"
+            button.find(class_="fhi-letter-box-choose").get_text(" ", strip=True),
+            "Choose a file or take a photo",
+        )
+        self.assertEqual(
+            button.find(class_="fhi-letter-box-more").get_text(" ", strip=True),
+            "Add a page",
+        )
+
+    def test_the_file_button_is_inside_the_letter_box(self):
+        """One box takes the letter every way: typed or pasted, or as a file
+        chosen with the button inside it or dropped on it."""
+        box = self.main.find(id="denial_text").parent
+        self.assertIn("fhi-letter-box", box.get("class", []))
+        self.assertIn("data-file-drop", box.attrs)
+        self.assertIn(box, self.main.find(id="uploader").parents)
+        self.assertIn(box, self.main.find("label", attrs={"for": "uploader"}).parents)
+
+    def test_the_box_says_how_to_fill_it_while_it_is_empty(self):
+        """The prompt over the empty box; the placeholder says the same to a
+        screen reader, and the button reads what the file is for."""
+        prompt = self.main.find(class_="fhi-letter-box-prompt")
+        self.assertIsNotNone(prompt)
+        self.assertIn("or paste the letter's text", prompt.get_text())
+        self.assertEqual(
+            self.main.find(id="denial_text").get("placeholder"),
+            "Paste the letter's text here",
+        )
+        note = self.main.find(id="uploader").get("aria-describedby")
+        self.assertEqual(
+            self.main.find(id=note).get_text(strip=True),
+            "Add every page. We read it on this device and put the text in this box.",
         )
 
 
@@ -304,8 +337,15 @@ class EachMessageSitsUnderItsFieldTest(TestCase):
                 self.assertEqual(message.get("aria-live"), "polite")
                 self.assertTrue(message.get("data-message"), "it has no words")
                 self.assertTrue(_follows(self.soup, field, message))
-                # No other control between the field and its message.
-                after = [c for c in controls if _follows(self.soup, field, c)]
+                # No other control between the field and its message. The
+                # letter box's own file button is part of the box.
+                box = field.find_parent(class_="fhi-letter-box")
+                after = [
+                    c
+                    for c in controls
+                    if _follows(self.soup, field, c)
+                    and (box is None or box not in c.parents)
+                ]
                 if after:
                     self.assertTrue(
                         _follows(self.soup, message, after[0]),

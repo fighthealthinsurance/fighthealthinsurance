@@ -1573,7 +1573,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
             {/* Two-line input: first line is textarea, second line is icons (now below, not absolutely positioned) */}
             <Flex direction="column" gap={8} style={{ width: '100%' }}>
               <Box style={{ position: 'relative', width: '100%' }}>
-                <Flex align="flex-end" style={{ background: '#fff', border: '1px solid #e3e8f0', borderRadius: 10, padding: 4, marginTop: 10 }}>
+                {/* A PDF dropped on the box goes to the paperclip's input (file_drop.js). */}
+                <Flex data-file-drop="" className="fhi-drop-zone" align="flex-end" style={{ background: '#fff', border: '1px solid #e3e8f0', borderRadius: 10, padding: 4, marginTop: 10 }}>
                   {/* Textarea with paperclip inside bottom left and send inside bottom right */}
                   <Box style={{ position: 'relative', flex: 1, width: '100%'}}>
                     {state.isLoading ? (
@@ -1640,6 +1641,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                               onChange={handleFileUpload}
                               accept="application/pdf"
                               disabled={state.isProcessingFile}
+                              // FileButton keeps its own disabled off the input; on it, a drop waits too.
+                              inputProps={{ disabled: state.isProcessingFile }}
                             >
                               {(props) => (
                                 <ActionIcon
