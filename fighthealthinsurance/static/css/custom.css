@@ -190,10 +190,10 @@ pre code {
     --fhi-radius: 10px;
     --fhi-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
     /* The two widths a page's content can have. Reading is the column
-       the intake flow already holds; wide is for the four pages that are
-       grids of cards or an index. The measure is how long a line of
-       running text gets inside the reading column: 65 characters, the
-       upper end of what eyes track back from comfortably. */
+       the intake flow and the hero pages' bands hold; wide is for the
+       pages that are grids of cards or an index. The measure is how long
+       a line of running text gets, and the prose pages' column (.fhi-page)
+       is exactly that wide. */
     --fhi-page-reading: 760px;
     --fhi-page-wide: 1140px;
     /* The buffer a column keeps from the window's edge when the window is
@@ -2195,12 +2195,24 @@ section:not(.slider) .share-subcopy,
 .fhi-page,
 .fhi-page-wide {
     width: 100%;
-    max-width: min(var(--fhi-page-reading), 100% - 2 * var(--fhi-page-gutter));
     margin-left: auto;
     margin-right: auto;
     padding: 0 var(--fhi-space-4) var(--fhi-space-10);
 }
 
+/* The reading column is one line of its running text wide, so the title,
+   images and boxes end where the text does and the block sits centred.
+   With a separate cap on the text, the text stopped about 200px short of
+   a 760px column and everything else ran on past it. A ch here is a zero
+   at the column's 1rem and the prose is set at --fhi-text-reading, so the
+   measure is scaled by their ratio, 1.0625. */
+.fhi-page {
+    max-width: min(calc(var(--fhi-measure) * 1.0625 + 2 * var(--fhi-space-4)), 100% - 2 * var(--fhi-page-gutter));
+}
+
+/* The wide column has no measure: its text fills the column like the cards
+   and grids around it, Melanie's call after seeing About Us with 650px
+   paragraphs over 1140px of boxes. */
 .fhi-page-wide {
     max-width: min(var(--fhi-page-wide), 100% - 2 * var(--fhi-page-gutter));
 }
@@ -2211,17 +2223,6 @@ section:not(.slider) .share-subcopy,
     .fhi-page-wide {
         max-width: none;
     }
-}
-
-/* In the reading column, running text stops at the measure while
-   headings, forms and tables use the whole column. The wide column has
-   no measure: its text fills the column like the cards and grids below
-   it, Melanie's call after seeing About Us with 650px paragraphs over
-   1140px of boxes. :where() on the element keeps this at one class of
-   specificity, so a page rule that wants a wider paragraph wins by
-   naming two. */
-.fhi-page :where(p, li) {
-    max-width: var(--fhi-measure);
 }
 
 /* Running prose in the reading column is a step larger. Text that states
@@ -2324,13 +2325,12 @@ main :where(table) {
 }
 
 /* A page whose copy is centred, like Delete Data: the column stacks its
-   children down the middle, so a paragraph at the measure and a form
-   narrower than the column both sit centred. A centred child takes its
-   own width, so each is also capped at the column: an alert holding an
-   unbroken support address was 371px in a 350px phone column. Running
-   text is left out, since the measure above is its cap and a rule that
-   ties with it on specificity would win on source order; :not() also
-   lifts this above the .alert rule's own max-width. */
+   children down the middle, so a paragraph and a form narrower than the
+   column both sit centred. A centred child takes its own width, so each
+   is also capped at the column: an alert holding an unbroken support
+   address was 371px in a 350px phone column. Running text wraps at the
+   column on its own; :not() also lifts this above the .alert rule's own
+   max-width. */
 .fhi-page-centred > :not(p):not(li) {
     max-width: 100%;
 }

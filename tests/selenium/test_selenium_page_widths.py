@@ -1,13 +1,14 @@
 """Every page that has moved onto a page column, in a real browser.
 
-A page's content sits in one of two columns, `.fhi-page` (reading, 760px)
-or `.fhi-page-wide` (1140px), both defined once in custom.css. This walks
-the pages that have moved and holds three things a stylesheet cannot prove
+A page's content sits in one of two columns, `.fhi-page` (reading: one line
+of its running text wide, the measure plus the edge padding) or
+`.fhi-page-wide` (1140px), both defined once in custom.css. This walks the
+pages that have moved and holds three things a stylesheet cannot prove
 about itself: the column is the width its tier says at two desktop sizes and
 is centred; on a phone it is the whole width the browser gives the page,
 with the edge padding inside it, and nothing scrolls sideways; and running
-text inside either column stops at the measure while the column itself
-does not.
+text in the reading column ends at the column's own edge, so the text and
+everything around it share one right edge.
 
 Widths are the column's padding box, which is the box the visitor sees. On
 a phone the reference is the document's own client width rather than the
@@ -33,6 +34,9 @@ SMALL_LAPTOP = (1100, 800)
 TABLET = (800, 1024)
 PHONE = (390, 844)
 
+# A hero page's bands hold .fhi-column at the 760px reading width; a prose
+# page's .fhi-page is the measure wide, which COLUMN_JS works out in the
+# browser because a ch depends on the face.
 TIER_WIDTH = {"reading": 760, "wide": 1140}
 EDGE_PADDING = 16
 # The least a column keeps from the window's edge above phone width (2rem).
@@ -91,7 +95,23 @@ const style = getComputedStyle(column);
 const rect = column.getBoundingClientRect();
 const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
 const viewport = document.documentElement.clientWidth;
+// The measure as the reading column reads it: N zeros at the column's own
+// size, N from --fhi-measure, scaled by the reading size over the body size,
+// then the edge padding. The probe sits on the body, so it cannot widen
+// anything.
+const tokens = getComputedStyle(document.documentElement);
+const probe = document.createElement('span');
+probe.textContent = '0'.repeat(parseFloat(tokens.getPropertyValue('--fhi-measure')));
+probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
+probe.style.fontFamily = style.fontFamily;
+probe.style.fontSize = style.fontSize;
+document.body.appendChild(probe);
+const zeros = probe.getBoundingClientRect().width;
+probe.remove();
+const scale = parseFloat(tokens.getPropertyValue('--fhi-text-reading'))
+  / parseFloat(tokens.getPropertyValue('--fhi-text-body'));
 return {
+  measureOuter: zeros * scale + padding,
   tier: column.matches('.fhi-page-wide, .fhi-column-wide') ? 'wide' : 'reading',
   // The padding box: the column as drawn, edge padding included.
   outer: column.clientWidth,
@@ -187,6 +207,12 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
+    @staticmethod
+    def _expected(c):
+        """The width a page column should be at a desktop: the wide tier's
+        token, or for the reading column the measure plus its padding."""
+        return TIER_WIDTH["wide"] if c["tier"] == "wide" else c["measureOuter"]
+
     def _column(self, page, size, selector=None):
         self.set_window_size(*size)
         self.open(f"{self.live_server_url}{page}")
@@ -201,9 +227,10 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
                 with self.subTest(page=page, width=size[0]):
                     c = self._column(page, size)
                     assert c["tier"] == tier, f"{page} is on the {c['tier']} tier"
-                    assert abs(c["outer"] - TIER_WIDTH[tier]) <= 1, (
+                    expected = self._expected(c)
+                    assert abs(c["outer"] - expected) <= 1, (
                         f"{page} at {size[0]}px: the column is {c['outer']:.0f}px, "
-                        f"not {TIER_WIDTH[tier]}px."
+                        f"not {expected:.0f}px."
                     )
                     assert abs(c["left"] - c["right"]) <= 2, (
                         f"{page} at {size[0]}px: {c['left']:.0f}px on the left, "
@@ -258,9 +285,9 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
             for size in (SMALL_LAPTOP, TABLET):
                 with self.subTest(page=page, width=size[0]):
                     c = self._column(page, size)
-                    assert c["outer"] <= TIER_WIDTH[tier] + 1, (
+                    assert c["outer"] <= self._expected(c) + 1, (
                         f"{page} at {size[0]}px: the column is {c['outer']:.0f}px, wider "
-                        f"than its {TIER_WIDTH[tier]}px tier."
+                        f"than its {self._expected(c):.0f}px tier."
                     )
                     assert min(c["left"], c["right"]) >= LEAST_GUTTER, (
                         f"{page} at {size[0]}px: {c['left']:.0f}px on the left and "
@@ -308,8 +335,9 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
                         f"of a {c['viewport']:.0f}px screen."
                     )
                 else:
-                    assert abs(c["outer"] - TIER_WIDTH["reading"]) <= 1, (
-                        f"Check Your Email at {size[0]}px: the column is {c['outer']:.0f}px."
+                    assert abs(c["outer"] - c["measureOuter"]) <= 1, (
+                        f"Check Your Email at {size[0]}px: the column is {c['outer']:.0f}px, "
+                        f"not the {c['measureOuter']:.0f}px measure."
                     )
                 assert not c["sideways"], "Check Your Email scrolls sideways."
                 assert not c["escapes"], (
@@ -364,7 +392,12 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
                         )
         assert checked, "no page in PAGES has a section heading to compare"
 
-    def test_running_text_stops_at_the_measure_and_the_column_does_not(self):
+    def test_running_text_and_the_column_share_one_edge(self):
+        """The reading column is one line of its prose wide. A paragraph
+        never runs past the measure at its own size, and the widest one
+        reaches the column's edge: no band is left between the text and the
+        headings, pictures and boxes around it, which is what a second cap
+        on the text used to leave (about 200px of a 760px column)."""
         for page, tier in PAGES.items():
             if tier != "reading":
                 continue
@@ -377,19 +410,12 @@ class SeleniumTestPageWidths(FHISeleniumBase, StaticLiveServerTestCase):
                         f"{page}: '{p['text']}...' runs {p['width']:.0f}px, past the "
                         f"{p['measure']:.0f}px measure."
                     )
-                # A paragraph that wraps is exactly as wide as the measure,
-                # so the widest one proves the measure really is the token and
-                # not something narrower that the cap above would also pass.
-                longest = max(paragraphs, key=lambda p: p["width"])
-                assert abs(longest["width"] - longest["measure"]) <= 1, (
-                    f"{page}: the widest paragraph is {longest['width']:.0f}px; the "
-                    f"measure is {longest['measure']:.0f}px, so text is not reaching it."
-                )
-                # The measure is on the text, not on the page: the column
-                # keeps room past the longest line, at least the edge
-                # padding's worth on both sides.
-                widest = max(p["measure"] for p in paragraphs)
-                assert c["inner"] - widest >= 2 * EDGE_PADDING, (
-                    f"{page}: the column ({c['inner']:.0f}px) is no wider than the "
-                    f"measure ({widest:.0f}px); the measure is on the page, not the text."
+                    assert p["width"] <= c["inner"] + 1, (
+                        f"{page}: '{p['text']}...' runs {p['width']:.0f}px in a "
+                        f"{c['inner']:.0f}px column."
+                    )
+                widest = max(p["width"] for p in paragraphs)
+                assert abs(widest - c["inner"]) <= 1, (
+                    f"{page}: the widest paragraph is {widest:.0f}px and the column "
+                    f"{c['inner']:.0f}px, so the text stops short of the column's edge."
                 )
