@@ -167,6 +167,20 @@ Perplexity is context-only: it finds citations and never generates an appeal
 by itself. When DeepInfra or Perplexity has no key, building the router logs a
 `Skipping model ... No token found` warning. That is expected, not a fault.
 
+**Fallback keys.** Every key above can be paired with a second key for the
+same provider, set as `SECONDARY_<name>` (`SECONDARY_ANTHROPIC_API_KEY`,
+`SECONDARY_DEEPINFRA_API`, `SECONDARY_AZURE_OPENAI_API_KEY`, and so on). The
+primary key is sent until the provider refuses it for a rate limit (HTTP 429)
+or for credit or quota that ran out; that request is then sent again with
+the fallback key before anything is filed against the provider, and the
+fallback key keeps serving while the primary is passed over: for the
+response's `Retry-After` (60s without one) after a rate limit, or for an hour
+after a quota refusal (`FHI_KEY_QUOTA_COOLDOWN_SECONDS`). A key answering 2xx
+ends its cooldown at once. Only when every configured key is refused does
+the request fail as it did with one key: a 429 backs the model off, a credit
+refusal pauses the provider for the day. The fallback key is optional and
+never registers a backend on its own: the primary variable must be set.
+
 **Set up Azure-hosted models (Claude and OpenAI):**
 
 1. In the [Azure AI Foundry](https://ai.azure.com/) / Azure OpenAI portal,

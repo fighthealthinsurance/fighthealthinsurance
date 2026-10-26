@@ -36,8 +36,15 @@ _AMBIENT_BACKEND_ENV_VARS = (
     "NEW_HEALTH_BACKEND_HOST",
     "NEW_HEALTH_BACKEND_PORT",
     "PERPLEXITY_API",
+    # The fallback keys (api_keys_from_env): a stray one would change which
+    # key a unit-suite backend sends after a refusal.
+    "SECONDARY_ANTHROPIC_API_KEY",
+    "SECONDARY_AZURE_ANTHROPIC_API_KEY",
+    "SECONDARY_AZURE_OPENAI_API_KEY",
+    "SECONDARY_DEEPINFRA_API",
     "SECONDARY_NEW_HEALTH_BACKEND_HOST",
     "SECONDARY_NEW_HEALTH_BACKEND_PORT",
+    "SECONDARY_PERPLEXITY_API",
     # Not a router backend, but the same hazard: a developer's TypeSafe key in
     # the environment must never let a unit test score a letter for real.
     "TYPESAFE_API_KEY",
