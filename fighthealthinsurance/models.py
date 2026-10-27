@@ -4472,14 +4472,20 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     # documents step, kept apart from the row or appeal it was copied from.
     SOURCE_SHARED_EXPLAIN = "shared_explain"
     SOURCE_SHARED_APPEAL = "shared_appeal"
+    # A link to a public page with the plan's documents, from the share page.
+    # The row has no file, and the server never fetches the link.
+    SOURCE_SHARED_LINK = "shared_link"
     SOURCE_CHOICES = [
         (SOURCE_EXPLAIN_POLICY, "Explain my policy"),
         (SOURCE_SHARED, "Shared for research"),
         (SOURCE_SHARED_EXPLAIN, "Shared for research from Explain my policy"),
         (SOURCE_SHARED_APPEAL, "Shared for research from an appeal"),
+        (SOURCE_SHARED_LINK, "Link shared for research"),
     ]
+    # Every source whose rows hold a shared file, the only rows ever read.
+    SHARED_FILE_SOURCES = (SOURCE_SHARED, SOURCE_SHARED_EXPLAIN, SOURCE_SHARED_APPEAL)
     # Every source whose rows were shared for research.
-    SHARED_SOURCES = (SOURCE_SHARED, SOURCE_SHARED_EXPLAIN, SOURCE_SHARED_APPEAL)
+    SHARED_SOURCES = SHARED_FILE_SOURCES + (SOURCE_SHARED_LINK,)
 
     # Where a shared file is in its reading (plan_documents_processing).
     PROCESSING_RECEIVED = "received"
@@ -4487,11 +4493,14 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     PROCESSING_UNREADABLE = "unreadable"
     # Remove-my-data deleted the file and its text and kept the plan facts.
     PROCESSING_REMOVED = "removed"
+    # A shared link: nothing to read, and the sweep never picks it up.
+    PROCESSING_LINK = "link"
     PROCESSING_STATUS_CHOICES = [
         (PROCESSING_RECEIVED, "Received, not read yet"),
         (PROCESSING_READY, "Read and cleaned, ready for review"),
         (PROCESSING_UNREADABLE, "No text could be read"),
         (PROCESSING_REMOVED, "File and text deleted at the person's request"),
+        (PROCESSING_LINK, "A link, never fetched: staff open it by hand"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -4544,6 +4553,9 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     )
     # Shared uploads only: a keyed SHA-256 of the file, so repeats can be counted.
     fingerprint = models.CharField(max_length=64, blank=True)
+    # Shared links only: the page's address, checked on the way in
+    # (chat_forms.clean_shared_link). Staff open it by hand; nothing fetches it.
+    shared_link = models.URLField(max_length=2000, blank=True, default="")
     # Shared uploads only: the file's text with personal details taken out as
     # best we can, and where its reading is. The raw text is never stored.
     processing_status = models.CharField(

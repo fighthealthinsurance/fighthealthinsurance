@@ -1,3 +1,5 @@
+from urllib.parse import urlsplit
+
 from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
@@ -1276,6 +1278,7 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "processing_status",
         "created_at",
         "file",
+        "link",
     )
     list_filter = (
         "source",
@@ -1284,14 +1287,22 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "plan_category",
         "created_at",
     )
-    search_fields = ("filename", "hashed_email", "insurer_name", "employer_name")
+    search_fields = (
+        "filename",
+        "hashed_email",
+        "insurer_name",
+        "employer_name",
+        "shared_link",
+    )
     # Staff reach the file and its cleaned text through the links below,
-    # never the raw fields; the cleaned text runs long.
-    exclude = ("document_enc", "cleaned_text")
+    # never the raw fields; the cleaned text runs long. A shared link is
+    # shown, never edited.
+    exclude = ("document_enc", "cleaned_text", "shared_link")
     readonly_fields = (
         "id",
         "created_at",
         "file",
+        "link",
         "source",
         "shared_consent_version",
         "shared_at",
@@ -1306,7 +1317,7 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     def read_again(self, request, queryset):
         # Back to waiting: the hourly sweep starts a new reading for them.
         updated = queryset.filter(
-            source__in=PolicyDocument.SHARED_SOURCES,
+            source__in=PolicyDocument.SHARED_FILE_SOURCES,
             processing_status=PolicyDocument.PROCESSING_UNREADABLE,
         ).update(
             processing_status=PolicyDocument.PROCESSING_RECEIVED,
@@ -1320,14 +1331,22 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         )
 
     def changelist_view(self, request, extra_context=None):
-        # How many shared files there are, and how many different documents.
-        shared = PolicyDocument.objects.filter(source__in=PolicyDocument.SHARED_SOURCES)
+        # How many shared files there are, how many different documents, and
+        # how many shared links.
+        shared = PolicyDocument.objects.filter(
+            source__in=PolicyDocument.SHARED_FILE_SOURCES
+        )
         extra_context = {
             **(extra_context or {}),
             "shared_files": shared.count(),
             "shared_documents": shared.exclude(fingerprint="")
             .values("fingerprint")
             .distinct()
+            .count(),
+            "shared_links": PolicyDocument.objects.filter(
+                source=PolicyDocument.SOURCE_SHARED_LINK
+            )
+            .exclude(shared_link="")
             .count(),
         }
         return super().changelist_view(request, extra_context=extra_context)
@@ -1350,6 +1369,23 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
                 links,
             )
         return links
+
+    @admin.display(description="Link")
+    def link(self, obj: PolicyDocument) -> str:
+        # The address as text, then a link staff open by hand in a new tab.
+        # The server never fetches it.
+        url = obj.shared_link
+        if not url:
+            return "-"
+        text = format_html('<span style="overflow-wrap: anywhere">{}</span>', url)
+        if urlsplit(url).scheme.lower() not in ("http", "https"):
+            return text
+        return format_html(
+            '{} <a href="{}" target="_blank" rel="noopener noreferrer">'
+            "Open in a new tab</a>",
+            text,
+            url,
+        )
 
 
 @admin.register(PolicyDocumentAnalysis)

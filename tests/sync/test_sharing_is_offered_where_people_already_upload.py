@@ -464,12 +464,18 @@ class OptInSharesHaveTheirOwnDailyBudgetTest(_UploadsTestCase):
 
     def test_opt_in_copies_count_against_their_own_budget(self):
         self.assertEqual(
-            set(PolicyDocument.SHARED_SOURCES),
+            set(PolicyDocument.SHARED_FILE_SOURCES),
             {
                 PolicyDocument.SOURCE_SHARED,
                 PolicyDocument.SOURCE_SHARED_EXPLAIN,
                 PolicyDocument.SOURCE_SHARED_APPEAL,
             },
+        )
+        # Shared links count against no budget.
+        self.assertEqual(
+            set(PolicyDocument.SHARED_SOURCES),
+            set(PolicyDocument.SHARED_FILE_SOURCES)
+            | {PolicyDocument.SOURCE_SHARED_LINK},
         )
         self.explain_with_the_box_ticked()
         self.assertEqual(PolicyDocument.objects.count(), 2)

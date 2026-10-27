@@ -8,6 +8,9 @@ its reading ended: ready for review, or unreadable when no text could be
 read, as with a scanned PDF. The raw text is never stored, and nothing read
 from a file is logged or raised.
 
+Only shared files are read. A shared link has no file, and nothing here,
+or anywhere else on the server, fetches it: staff open links by hand.
+
 Rows are looked up by id when the work runs, so a row that remove-my-data
 deleted first is simply not there, and one it emptied of its file and text
 is marked removed, not waiting. The store only updates a row still waiting,
@@ -48,7 +51,8 @@ class FileNotRead(Exception):
 
 
 def _shared_rows():
-    return PolicyDocument.objects.filter(source__in=PolicyDocument.SHARED_SOURCES)
+    # Shared files only: a shared link is never read, so never fetched.
+    return PolicyDocument.objects.filter(source__in=PolicyDocument.SHARED_FILE_SOURCES)
 
 
 async def abatch_document_ids(share_batch: str) -> list[str]:

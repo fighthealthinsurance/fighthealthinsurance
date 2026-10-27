@@ -165,7 +165,7 @@ class SharingRejectsTest(_ShareTestCase):
     def test_without_a_file_nothing_is_stored(self):
         response = self.post({"agree": "on"})
         self.assertNothingStored(response)
-        self.assertContains(response, "Choose at least one file to share.")
+        self.assertContains(response, SharePlanDocumentsForm.NOTHING_TO_SHARE)
 
     def test_an_unsupported_file_type_is_rejected(self):
         bad = SimpleUploadedFile("plan.exe", b"MZ\x90\x00", content_type="text/plain")

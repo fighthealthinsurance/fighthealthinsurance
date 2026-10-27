@@ -710,6 +710,7 @@ urlpatterns += [
             "premium_period",
             "who_is_covered",
             "plan_documents",
+            "plan_links",
         )(views.SharePlanDocumentsView.as_view()),
         name="share_plan_documents",
     ),

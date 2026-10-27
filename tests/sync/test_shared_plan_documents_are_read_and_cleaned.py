@@ -379,7 +379,7 @@ class ReadingStartsOnceTheRowsCommitTest(TestCase):
         self.assertEqual(seen, [(str(batch), 2)])
 
     def test_every_way_in_starts_a_reading(self):
-        for source in PolicyDocument.SHARED_SOURCES:
+        for source in PolicyDocument.SHARED_FILE_SOURCES:
             with self.subTest(source=source):
                 with (
                     patch.object(

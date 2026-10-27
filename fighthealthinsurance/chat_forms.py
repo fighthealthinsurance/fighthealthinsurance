@@ -1,8 +1,12 @@
+import ipaddress
+import re
 import typing
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from django import forms
 from django.core.files.uploadedfile import UploadedFile
+from django.core.validators import URLValidator
 
 from fighthealthinsurance import consent
 from fighthealthinsurance.form_utils import (
@@ -152,6 +156,75 @@ def _check_pdf(content: bytes) -> None:
             f"This PDF has more than {MAX_SHARED_PDF_PAGES:,} pages. Please split "
             "it and share the parts."
         )
+
+
+# ---- Links to a plan's documents --------------------------------------------
+
+#: The most links one share takes, and the longest link we keep.
+MAX_SHARED_LINKS = 5
+MAX_SHARED_LINK_CHARS = 2000
+
+LINK_TOO_LONG_MESSAGE = f"Links can be up to {MAX_SHARED_LINK_CHARS:,} characters."
+LINK_SCHEME_MESSAGE = "Links must start with https:// or http://."
+LINK_SIGN_IN_MESSAGE = "Links can't include a user name or password."
+LINK_NO_SITE_MESSAGE = "This link is missing the website's name."
+LINK_NOT_PUBLIC_MESSAGE = (
+    "Links must go to a public website, not an IP address or localhost."
+)
+LINK_NOT_A_LINK_MESSAGE = "This doesn't look like a link to a web page."
+
+_LINK_SHAPE = URLValidator(schemes=["http", "https"])
+# A last part a browser reads as part of an address: decimal, or hex like 0x7f.
+_NUMERIC_LABEL = re.compile(r"^(?:0x[0-9a-f]*|[0-9]+)$")
+
+
+def _not_a_public_name(host: str) -> bool:
+    """True for an IP address in any form a browser takes, localhost, or a
+    name with no dot."""
+    host = host.lower()
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    labels = host.split(".")
+    return (
+        len(labels) < 2
+        or labels[-1] == "localhost"
+        or bool(_NUMERIC_LABEL.match(labels[-1]))
+    )
+
+
+def clean_shared_link(link: str) -> str:
+    """``link`` trimmed, when it is one we keep: http or https, a website's
+    name, no user name or password, at most MAX_SHARED_LINK_CHARS. Raises
+    ValidationError otherwise. It only reads the text: nothing fetches it."""
+    link = link.strip()
+    if len(link) > MAX_SHARED_LINK_CHARS:
+        raise forms.ValidationError(LINK_TOO_LONG_MESSAGE)
+    try:
+        parts = urlsplit(link)
+    except ValueError:
+        raise forms.ValidationError(LINK_NOT_A_LINK_MESSAGE) from None
+    if parts.scheme.lower() not in ("http", "https"):
+        raise forms.ValidationError(LINK_SCHEME_MESSAGE)
+    if "@" in parts.netloc:
+        raise forms.ValidationError(LINK_SIGN_IN_MESSAGE)
+    host = (parts.hostname or "").rstrip(".")
+    if not host:
+        raise forms.ValidationError(LINK_NO_SITE_MESSAGE)
+    if _not_a_public_name(host):
+        raise forms.ValidationError(LINK_NOT_PUBLIC_MESSAGE)
+    try:
+        _LINK_SHAPE(link)
+    except forms.ValidationError:
+        raise forms.ValidationError(LINK_NOT_A_LINK_MESSAGE) from None
+    return link
+
+
+def _shown(link: str) -> str:
+    """A link short enough to name in an error."""
+    return link if len(link) <= 60 else link[:57] + "..."
 
 
 class BaseConsentForm(forms.Form):
@@ -308,10 +381,13 @@ class _OptionalChoiceField(forms.ChoiceField):
 
 
 class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
-    """Plan documents shared for research. Only the files and the agreement
-    are required: no name, and an email only so a removal request finds them."""
+    """Plan documents shared for research. A share needs files, links to the
+    documents, or both, and the agreement: no name, and an email only so a
+    removal request finds them."""
 
     MAX_FILES = 10
+    MAX_LINKS = MAX_SHARED_LINKS
+    NOTHING_TO_SHARE = "Choose at least one file or add a link to share."
     # All the files in one upload, with room under the proxy's 80MB limit.
     MAX_TOTAL_BYTES = 60 * 1024 * 1024
     # The optional fields, shown folded under "About the plan".
@@ -328,10 +404,23 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
     # The most a premium can be, in dollars, however often it is paid.
     MAX_PREMIUM = 100_000
 
-    # Required is checked in clean_plan_documents: an empty list passes the field.
+    # Optional when there are links: clean() asks for one or the other.
     plan_documents = MultipleFileField(
+        required=False,
         label="Your plan documents",
         widget=MultipleFileInput(attrs={"accept": ".pdf,.docx,.txt"}),
+    )
+    plan_links = forms.CharField(
+        required=False,
+        label="Links to your plan's documents",
+        help_text=(
+            f"One link per line, up to {MAX_SHARED_LINKS}. Use public pages only, "
+            "like an employer's benefits site or the plan's page on an "
+            "insurer's site, not links that need you to sign in."
+        ),
+        widget=forms.Textarea(
+            attrs={"rows": 3, "autocomplete": "off", "spellcheck": "false"}
+        ),
     )
     plan_category = forms.ChoiceField(
         required=False,
@@ -411,8 +500,6 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
 
     def clean_plan_documents(self) -> list[UploadedFile]:
         files = [f for f in self.cleaned_data.get("plan_documents") or [] if f]
-        if not files:
-            raise forms.ValidationError("Choose at least one file to share.")
         if len(files) > self.MAX_FILES:
             raise forms.ValidationError(self.too_many_message())
         # Django measured each file as it arrived, so the sizes can be trusted.
@@ -428,8 +515,36 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
             raise forms.ValidationError(problems)
         return files
 
+    def clean_plan_links(self) -> list[str]:
+        """The links, one a line, trimmed, without repeats or blank lines."""
+        links: list[str] = []
+        for line in (self.cleaned_data.get("plan_links") or "").splitlines():
+            link = line.strip()
+            if link and link not in links:
+                links.append(link)
+                if len(links) > self.MAX_LINKS:
+                    raise forms.ValidationError(self.too_many_links_message())
+        problems: list[str] = []
+        for link in links:
+            try:
+                clean_shared_link(link)
+            except forms.ValidationError as error:
+                problems.extend(
+                    f"{_shown(link)}: {message}" for message in error.messages
+                )
+        if problems:
+            raise forms.ValidationError(problems)
+        return links
+
     def clean(self) -> dict[str, Any]:
         cleaned = super().clean() or {}
+        if not (
+            cleaned.get("plan_documents")
+            or cleaned.get("plan_links")
+            or self.has_error("plan_documents")
+            or self.has_error("plan_links")
+        ):
+            self.add_error("plan_documents", self.NOTHING_TO_SHARE)
         # Only the scrambled form is kept, so the address goes no further.
         email = (cleaned.pop("email", "") or "").strip().lower()
         cleaned["hashed_email"] = Denial.get_hashed_email(email) if email else None
@@ -445,6 +560,13 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
         return (
             f"You can share up to {cls.MAX_FILES} files at a time. Have more? "
             "Send them in another upload."
+        )
+
+    @classmethod
+    def too_many_links_message(cls) -> str:
+        return (
+            f"You can share up to {cls.MAX_LINKS} links at a time. Have more? "
+            "Send them in another share."
         )
 
     @classmethod

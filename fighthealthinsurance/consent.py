@@ -52,7 +52,7 @@ SERVER_OCR_SESSION_KEY = "server_ocr_agreements"
 # The agreement to share plan documents for research, on the share page and
 # as the opt-in box on Explain Policy and the appeal's plan documents step.
 # Give SHARING_VERSION a new date whenever any of these words change.
-SHARING_VERSION = datetime.date(2026, 10, 24)
+SHARING_VERSION = datetime.date(2026, 10, 27)
 _SHARING_BODY = (
     "We combine them with documents from other people to learn how plans "
     "work, and we share what we learn publicly. AI models read them, including "
@@ -62,8 +62,8 @@ _SHARING_BODY = (
     "to remove personal details from anything we share."
 )
 SHARING_TERMS = (
-    "By uploading, you agree to share these documents, and what you tell us "
-    "about the plan, with Fight Health Insurance. " + _SHARING_BODY
+    "By uploading, you agree to share these documents, or links to them, and "
+    "what you tell us about the plan, with Fight Health Insurance. " + _SHARING_BODY
 )
 SHARING_CHECKBOX = "I agree to share these documents this way."
 # Where uploading is for something else, only the tick shares a copy.

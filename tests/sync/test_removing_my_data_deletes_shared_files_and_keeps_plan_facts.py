@@ -141,8 +141,8 @@ class TheFilesAndWhatWasReadFromThemAreDeletedTest(_RemovalTestCase):
                 with self.subTest(field=name, value=gone):
                     self.assertNotIn(gone, str(value))
 
-    def test_every_way_of_sharing_is_covered(self):
-        for source in PolicyDocument.SHARED_SOURCES:
+    def test_every_way_of_sharing_a_file_is_covered(self):
+        for source in PolicyDocument.SHARED_FILE_SOURCES:
             with self.subTest(source=source):
                 doc = self.share(source=source)
                 self.remove()

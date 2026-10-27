@@ -25,8 +25,8 @@ TEMPLATES = Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "temp
 
 # Each point of the terms, as the page words it.
 SHARING_POINTS = [
-    "By uploading, you agree to share these documents, and what you tell us about "
-    "the plan, with Fight Health Insurance.",
+    "By uploading, you agree to share these documents, or links to them, and what "
+    "you tell us about the plan, with Fight Health Insurance.",
     "We combine them with documents from other people to learn how plans work, "
     "and we share what we learn publicly.",
     "AI models read them, including ones we run and outside services.",
@@ -42,6 +42,7 @@ SHARING_POINTS = [
 SHARING_WORDS_SHA256 = {
     "2026-10-23": "4f7bdb8a89fdaea06cc7aa7fa6a4b9615d13a993e5447582e861d9c143690d91",
     "2026-10-24": "06d9e69f62c2ba0b9470677a0bd286e4744787294cac0fc532a2aa8fc2afb20b",
+    "2026-10-27": "976263b9b1f1d3c98d77d4da8237de17ae0defd254da2d843362f3959537f7e9",
 }
 
 EM_DASH = "\u2014"
@@ -70,7 +71,8 @@ class SharePlanDocumentsPageTest(TestCase):
         files = form.find("input", attrs={"name": "plan_documents"})
         self.assertEqual(files["type"], "file")
         self.assertTrue(files.has_attr("multiple"))
-        self.assertTrue(files.has_attr("required"))
+        # Links can stand in for files, so the browser mustn't insist on one.
+        self.assertFalse(files.has_attr("required"))
         agree = form.find("input", attrs={"name": "agree"})
         self.assertEqual(agree["type"], "checkbox")
         self.assertTrue(agree.has_attr("required"))
@@ -185,10 +187,11 @@ class SharePlanDocumentsPageTest(TestCase):
         self.assertEqual(hint.get_text(strip=True), field.help_text)
         self.assertIsNotNone(year.find_parent("details", id="about-the-plan"))
 
-    def test_only_the_files_and_the_agreement_are_required(self):
+    def test_only_the_agreement_is_required(self):
+        # A file or a link is asked for by the form's clean(), not a field.
         form = SharePlanDocumentsForm()
         required = {name for name, field in form.fields.items() if field.required}
-        self.assertEqual(required, {"plan_documents", "agree"})
+        self.assertEqual(required, {"agree"})
         self.assertEqual(form.fields["plan_category"].initial, "unknown")
 
     def test_the_optional_fields_fold_under_about_the_plan(self):

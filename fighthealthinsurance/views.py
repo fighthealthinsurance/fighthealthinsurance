@@ -4283,8 +4283,9 @@ class UnderstandPolicyView(FormView):
 
 
 class SharePlanDocumentsView(FormView):
-    """Share your plan documents: people give us their plan's documents to
-    learn from. The upload only stores them (shared_plan_documents)."""
+    """Share your plan documents: people give us their plan's documents, or
+    links to them, to learn from. The upload only stores them
+    (shared_plan_documents); nothing fetches a link."""
 
     template_name = "share_plan_documents.html"
     form_class = SharePlanDocumentsForm
@@ -4299,6 +4300,7 @@ class SharePlanDocumentsView(FormView):
         context["max_total_mb"] = SharePlanDocumentsForm.max_total_mb()
         context["too_many_message"] = SharePlanDocumentsForm.too_many_message()
         context["too_big_message"] = SharePlanDocumentsForm.too_big_message()
+        context["nothing_message"] = SharePlanDocumentsForm.NOTHING_TO_SHARE
         if "reminder_form" not in context:
             context["reminder_form"] = PlanDocumentsReminderForm(
                 prefix=PlanDocumentsReminderForm.PREFIX
@@ -4311,6 +4313,7 @@ class SharePlanDocumentsView(FormView):
 
     # What a refused post keeps for the person, apart from the files.
     KEPT_ON_REFUSAL = (
+        "plan_links",
         "plan_category",
         "insurer_name",
         "employer_name",
@@ -4346,6 +4349,7 @@ class SharePlanDocumentsView(FormView):
     def form_valid(self, form) -> HttpResponse:
         data = form.cleaned_data
         files = data["plan_documents"]
+        links = data["plan_links"]
         details = {
             name: data.get(name)
             for name in (
@@ -4368,6 +4372,7 @@ class SharePlanDocumentsView(FormView):
                 source=PolicyDocument.SOURCE_SHARED,
                 details=details,
                 hashed_email=data.get("hashed_email"),
+                links=links,
             )
         except shared_plan_documents.OverDailyBudget:
             return self._refuse(shared_plan_documents.DAILY_LIMIT_MESSAGE)

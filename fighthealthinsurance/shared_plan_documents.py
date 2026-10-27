@@ -12,8 +12,11 @@ same moment can't all fit in the same room.
 
 People share here in three ways: the share page, and the opt-in box on
 Explain Policy and on the appeal's plan documents step, which shares a copy
-of what was uploaded there. A removal request deletes a person's shared
-files and keeps what they told us about the plan (remove_shared_documents).
+of what was uploaded there. The share page also takes links to public pages
+with the plan's documents: one row each, with no file, that nothing reads
+or fetches and no budget counts. A removal request deletes a person's shared
+files and links and keeps what they told us about the plan
+(remove_shared_documents).
 """
 
 import datetime
@@ -221,18 +224,21 @@ def save_shared_documents(
     details: Mapping[str, Any],
     hashed_email: Optional[str],
     document_type: str = "other",
+    links: Sequence[str] = (),
 ) -> list[PolicyDocument]:
-    """One encrypted PolicyDocument per file, all or none, each marked
-    received. Only stores: no model reads the files here. Once the rows
-    commit, their reading is started on Temporal when it is on
-    (temporal_client.dispatch_shared_plan_documents), away from the request.
+    """One encrypted PolicyDocument per file, each marked received, and one
+    per link (checked by the form), marked a link, all in one batch, all or
+    none. Only stores: no model reads the files here, and nothing ever
+    fetches a link. Once the rows commit, the files' reading is started on
+    Temporal when it is on (temporal_client.dispatch_shared_plan_documents),
+    away from the request. Links count against no budget.
 
     ``details`` holds what is known about the plan: plan_category,
     plan_year, state, insurer_name, employer_name, premium_amount,
     premium_period, who_is_covered, insurance_company_obj and
     insurance_plan_obj, each optional. Raises OverDailyBudget, storing
     nothing, when today's budget for everyone from ``source`` has no room
-    for them.
+    for the files.
     """
     shared = {
         "source": source,
@@ -254,8 +260,8 @@ def save_shared_documents(
         "processing_status": PolicyDocument.PROCESSING_RECEIVED,
     }
     budget, limit = _budget(source)
-    day = reserve(budget, len(files), limit)
-    if day is None:
+    day = reserve(budget, len(files), limit) if files else None
+    if files and day is None:
         raise OverDailyBudget()
     saved: list[PolicyDocument] = []
     try:
@@ -270,10 +276,24 @@ def save_shared_documents(
                 doc.filename = uploaded.name
                 saved.append(doc)
                 doc.save()
+            for link in links:
+                doc = PolicyDocument(
+                    **{
+                        **shared,
+                        "source": PolicyDocument.SOURCE_SHARED_LINK,
+                        "processing_status": PolicyDocument.PROCESSING_LINK,
+                    },
+                    shared_link=link,
+                )
+                saved.append(doc)
+                doc.save()
     except Exception:
-        give_back(budget, len(files), day)
+        if day is not None:
+            give_back(budget, len(files), day)
         # The rows rolled back; their encrypted files would not.
         for doc in saved:
+            if not doc.document_enc:
+                continue
             try:
                 doc.document_enc.delete(save=False)
             except Exception:
@@ -281,12 +301,16 @@ def save_shared_documents(
                     f"Failed to delete an unsaved shared file for {doc.pk}"
                 )
         raise
-    logger.info(f"Saved {len(saved)} shared plan document(s) from {source}")
-    share_batch = str(shared["share_batch"])
-    # Best effort and never raises; the hourly sweep starts a lost one.
-    transaction.on_commit(
-        lambda: temporal_client.dispatch_shared_plan_documents(share_batch)
+    logger.info(
+        f"Saved {len(files)} shared plan document(s) and {len(links)} link(s) "
+        f"from {source}"
     )
+    if files:
+        share_batch = str(shared["share_batch"])
+        # Best effort and never raises; the hourly sweep starts a lost one.
+        transaction.on_commit(
+            lambda: temporal_client.dispatch_shared_plan_documents(share_batch)
+        )
     return saved
 
 
@@ -494,10 +518,11 @@ SHARE_RECORD_FIELDS = (
     "share_batch",
     "processed_at",
 )
-#: What a removal request clears on a row it keeps: the file, everything
-#: read from it, and what linked it to the person.
+#: What a removal request clears on a row it keeps: the file or the link,
+#: everything read from it, and what linked it to the person.
 REMOVED_VALUES: dict[str, Any] = {
     "document_enc": None,
+    "shared_link": "",
     "filename": "",
     "hashed_email": None,
     "session_key": None,
@@ -524,10 +549,10 @@ def has_plan_facts(doc: PolicyDocument) -> bool:
 def remove_shared_documents(hashed_email: str) -> None:
     """Remove-my-data for the plan documents shared with this scrambled email.
 
-    Each file is deleted, with its cleaned text, its fingerprint and the
-    scrambled email. A row that holds facts about the plan (PLAN_FACT_FIELDS)
-    keeps them and is marked removed, so no reading writes to it again; a
-    row with none is deleted whole. Rows shared with no email, or another
+    Each file and link is deleted, with a file's cleaned text, its
+    fingerprint and the scrambled email. A row that holds facts about the
+    plan (PLAN_FACT_FIELDS) keeps them and is marked removed, so no reading
+    writes to it again; a row with none is deleted whole. Rows shared with no email, or another
     email, are untouched.
     """
     with transaction.atomic():

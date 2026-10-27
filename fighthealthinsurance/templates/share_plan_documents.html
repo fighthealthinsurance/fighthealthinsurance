@@ -5,17 +5,19 @@
 
 {% block scriptmagic %}
 <script>
-  // Say a choice of files is too many or too big before sending it; the server checks again.
+  // Say a choice of files is too many or too big, or that there is nothing
+  // to share, before sending it; the server checks again.
   document.addEventListener("DOMContentLoaded", function () {
     var form = document.getElementById("share-plan-documents-form");
     var input = document.getElementById("id_plan_documents");
+    var links = document.getElementById("id_plan_links");
     var note = document.getElementById("id_plan_documents_error");
     if (!form || !input || !note) {
       return;
     }
     var maxFiles = parseInt(form.getAttribute("data-max-files"), 10);
     var maxBytes = parseInt(form.getAttribute("data-max-bytes"), 10);
-    function problem() {
+    function problem(sending) {
       var files = input.files || [];
       var total = 0;
       for (var i = 0; i < files.length; i++) {
@@ -27,10 +29,13 @@
       if (total > maxBytes) {
         return form.getAttribute("data-too-big");
       }
+      if (sending && files.length === 0 && !(links && links.value.trim())) {
+        return form.getAttribute("data-nothing");
+      }
       return "";
     }
-    function check() {
-      var message = problem();
+    function check(sending) {
+      var message = problem(sending);
       note.textContent = message;
       if (message) {
         input.setAttribute("aria-invalid", "true");
@@ -40,9 +45,18 @@
       }
       return message;
     }
-    input.addEventListener("change", check);
+    input.addEventListener("change", function () {
+      check(false);
+    });
+    if (links) {
+      links.addEventListener("input", function () {
+        if (note.textContent === form.getAttribute("data-nothing")) {
+          check(false);
+        }
+      });
+    }
     form.addEventListener("submit", function (event) {
-      if (check()) {
+      if (check(true)) {
         event.preventDefault();
         input.focus();
       }
@@ -78,8 +92,9 @@
 {% comment %}
 Share your plan documents (SharePlanDocumentsView). The ask and the upload
 come first, in the intake flow's width; why we ask and what we publish sit
-below the form. Only the files and the agreement are required; the rest folds
-away under "About the plan". The agreement's words are consent.SHARING_TERMS.
+below the form. A share needs files or links, and the agreement; the rest
+folds away under "About the plan". Links are stored as text and never
+fetched; staff open them by hand. The agreement's words are consent.SHARING_TERMS.
 The opt-in card on other pages (partials/share_for_research.html) links to
 #about-sharing. The facts under
 "How to get your full plan documents" were checked on the date the section
@@ -106,7 +121,7 @@ gives; recheck them before changing it.
         <p id="which-versions">This year's and next year's versions help most. Plan-wide documents like these usually don't include personal details. Please don't send paystubs, medical records or your own enrollment confirmation.</p>
     </div>
 
-    <form method="post" action="{% url 'share_plan_documents' %}" enctype="multipart/form-data" class="fhi-stack" id="share-plan-documents-form" data-max-files="{{ max_files }}" data-max-bytes="{{ max_total_bytes }}" data-too-many="{{ too_many_message }}" data-too-big="{{ too_big_message }}">
+    <form method="post" action="{% url 'share_plan_documents' %}" enctype="multipart/form-data" class="fhi-stack" id="share-plan-documents-form" data-max-files="{{ max_files }}" data-max-bytes="{{ max_total_bytes }}" data-too-many="{{ too_many_message }}" data-too-big="{{ too_big_message }}" data-nothing="{{ nothing_message }}">
         {% csrf_token %}
         {{ form.website }}
         <input type="hidden" name="rendered" value="{{ rendered }}">
@@ -126,6 +141,13 @@ gives; recheck them before changing it.
             {{ form.plan_documents }}
             <small class="fhi-hint" id="plan-documents-limits">PDF, Word (.docx) or text files. Up to {{ max_files }} files and {{ max_total_mb }}MB at a time, 20MB each. Have more? Send them in another upload. We store them encrypted, and our team can open them to review them.</small>
             {% include "partials/field_error.html" with id=form.plan_documents.auto_id|add:"_error" errors=form.plan_documents.errors filled=True %}
+        </div>
+
+        <div class="fhi-field-group">
+            <label for="{{ form.plan_links.id_for_label }}" class="fhi-label">{{ form.plan_links.label }}</label>
+            {{ form.plan_links }}
+            <small class="fhi-hint" id="{{ form.plan_links.auto_id }}_helptext">{{ form.plan_links.help_text }}</small>
+            {% include "partials/field_error.html" with id=form.plan_links.auto_id|add:"_error" errors=form.plan_links.errors filled=True %}
         </div>
 
         <div class="fhi-field-group">
