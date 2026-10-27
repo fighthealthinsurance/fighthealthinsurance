@@ -11,8 +11,8 @@ from the repository root unless a block says otherwise.
   `scripts/install.sh` and `scripts/run_local.sh` only check for 3.10, but
   3.10 cannot import the settings (they use `datetime.UTC`, new in 3.11).
 - **Node.js 22.23.4 or later, with npm** (`engines` in
-  `fighthealthinsurance/static/js/package.json`), or the latest patch of a
-  newer supported line. Node.js 20 is past end of life and got no fix for the
+  `fighthealthinsurance/static/js/package.json`); on the newer lines, 24.22.1
+  or 26.12.1 or later. Node.js 20 is past end of life and got no fix for the
   October 2026 security release. The static build runs `npm run build`, and
   `run_local.sh` stops if it fails.
 - **tesseract-ocr**, for OCR of uploaded denial letters.
