@@ -6,11 +6,14 @@ delete the row through the app's own paths, and check each directory.
 """
 
 import tempfile
+from contextlib import ExitStack
 from unittest.mock import patch
 
 from django.core.files.base import ContentFile
 from django.core.files.storage import FileSystemStorage
 from django.test import TestCase
+
+from loguru import logger
 
 from fighthealthinsurance.helpers import RemoveDataHelper
 from fighthealthinsurance.models import (
@@ -219,13 +222,80 @@ class SharedFilesTest(_StoredFilesTestCase):
 
 
 class StorageFailureTest(_StoredFilesTestCase):
-    def test_a_failed_file_delete_is_logged_and_the_row_stays_deleted(self):
-        row = self.with_files(PlanDocuments(denial=self.denial))
-        with (
-            patch.object(self.backends[1], "delete", side_effect=PermissionError),
-            patch("fighthealthinsurance.models.logger") as log,
-            self.captureOnCommitCallbacks(execute=True),
-        ):
-            row.delete()
-        self.assertFalse(PlanDocuments.objects.exists())
-        log.opt.return_value.warning.assert_called()
+    """The cleanup handler's log lines, captured from loguru."""
+
+    def setUp(self):
+        super().setUp()
+        self.row = self.with_files(PolicyDocument(hashed_email="h"))
+        self.name = self.row.document_enc.name
+        self.pk = self.row.pk
+        self.records: list = []
+        sink_id = logger.add(lambda m: self.records.append(m.record), level="DEBUG")
+        self.addCleanup(logger.remove, sink_id)
+
+    def delete_with_failing_backends(self, *indexes):
+        with ExitStack() as stack:
+            for i in indexes:
+                stack.enter_context(
+                    patch.object(
+                        self.backends[i],
+                        "delete",
+                        side_effect=PermissionError("read-only mount"),
+                    )
+                )
+            stack.enter_context(self.captureOnCommitCallbacks(execute=True))
+            self.row.delete()
+
+    def handler_lines(self):
+        return [
+            (r["level"].name, r["message"], r["exception"])
+            for r in self.records
+            if r["name"] == "fighthealthinsurance.models"
+        ]
+
+    def test_a_deleted_files_name_is_logged(self):
+        self.delete_with_failing_backends()
+        self.assertEqual(
+            self.handler_lines(),
+            [
+                (
+                    "INFO",
+                    f"Deleted stored file {self.name} for PolicyDocument.document_enc"
+                    f" {self.pk}",
+                    None,
+                )
+            ],
+        )
+
+    def test_one_failing_backend_keeps_only_its_own_copy(self):
+        self.delete_with_failing_backends(1)
+        self.assertEqual(self.copies_left([self.name]), [(self.name, 1)])
+
+    def test_one_failing_backend_is_logged_with_the_file_name(self):
+        self.delete_with_failing_backends(1)
+        storage_errors = [
+            r["message"]
+            for r in self.records
+            if r["name"] == "fighthealthinsurance.combined_storage"
+            and r["level"].name == "ERROR"
+        ]
+        self.assertEqual(len(storage_errors), 1)
+        self.assertIn(self.name, storage_errors[0])
+        self.assertIn("read-only mount", storage_errors[0])
+
+    def test_one_failing_backend_raises_nothing_to_the_handler(self):
+        self.delete_with_failing_backends(1)
+        self.assertEqual([line[0] for line in self.handler_lines()], ["INFO"])
+
+    def test_every_backend_failing_keeps_the_row_deleted(self):
+        self.delete_with_failing_backends(0, 1, 2)
+        self.assertFalse(PolicyDocument.objects.exists())
+
+    def test_every_backend_failing_logs_one_error_naming_the_file_without_a_traceback(
+        self,
+    ):
+        self.delete_with_failing_backends(0, 1, 2)
+        lines = self.handler_lines()
+        self.assertEqual([(level, exc) for level, _m, exc in lines], [("ERROR", None)])
+        for part in (self.name, "PolicyDocument.document_enc", "PermissionError"):
+            self.assertIn(part, lines[0][1])

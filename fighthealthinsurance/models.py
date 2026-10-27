@@ -4509,23 +4509,29 @@ def _delete_stored_files(
     sender: type[models.Model], instance: models.Model, **kwargs: typing.Any
 ) -> None:
     """Remove the row's stored files after the row delete commits."""
-    files = [getattr(instance, f) for f in _file_field_names(sender)]
-    files = [f for f in files if f]
+    files = [(f, getattr(instance, f)) for f in _file_field_names(sender)]
+    files = [(field, field_file) for field, field_file in files if field_file]
     if not files:
         return
     pk = instance.pk
 
     def _delete_files() -> None:
-        for field_file in files:
+        for field, field_file in files:
+            name = field_file.name
+            where = f"{sender.__name__}.{field} {pk}"
             try:
                 # A fax row can share its appeal's document file.
-                if _stored_file_in_use(field_file.name):
+                if _stored_file_in_use(name):
                     continue
                 field_file.delete(save=False)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"Failed to delete a stored file for {sender.__name__} {pk}"
+            except Exception as e:
+                # No traceback: the storage already logged each backend's error.
+                logger.error(
+                    f"Failed to delete stored file {name} for {where}: "
+                    f"{type(e).__name__}: {e}"
                 )
+                continue
+            logger.info(f"Deleted stored file {name} for {where}")
 
     transaction.on_commit(_delete_files, using=kwargs.get("using"))
 

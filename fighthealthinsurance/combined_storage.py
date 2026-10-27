@@ -1,4 +1,3 @@
-import hashlib
 from typing import IO, Any, List, Optional
 
 from django.core.files.base import File
@@ -6,11 +5,6 @@ from django.core.files.storage import Storage
 
 from loguru import logger
 from stopit import ThreadingTimeout as Timeout
-
-
-def _name_tag(name: Optional[str]) -> str:
-    """A short hash to tell stored names apart in logs without writing them."""
-    return hashlib.sha256((name or "").encode()).hexdigest()[:8]
 
 
 class CombinedStorage(Storage):
@@ -63,26 +57,29 @@ class CombinedStorage(Storage):
     def delete(self, name: str) -> None:
         """Delete the file from every backend, since save() writes to all of them.
 
-        A backend without a copy is fine. Any other failure is raised once
-        every backend has been tried, so callers learn a copy may remain.
+        A backend without a copy is fine. Each failure is logged, and the
+        last one is raised only when no backend deleted the file.
         """
+        deleted = False
         last_error: Optional[BaseException] = None
         for backend in self.backends:
             try:
-                with Timeout(2.0) as timeout_ctx:
-                    backend.delete(name)
-                # stopit swallows the timeout, so check the context instead.
-                if not timeout_ctx:
-                    raise TimeoutError(
-                        f"Timed out deleting {_name_tag(name)} from {backend}"
-                    )
+                self._delete_from(backend, name)
+                deleted = True
             except FileNotFoundError:
                 continue
             except Exception as e:
                 logger.error(f"Error {e} deleting {name} from {backend}")
                 last_error = e
-        if last_error is not None:
+        if last_error is not None and not deleted:
             raise last_error
+
+    def _delete_from(self, backend: Storage, name: str) -> None:
+        with Timeout(2.0) as timeout_ctx:
+            backend.delete(name)
+        # stopit swallows the timeout, so check the context instead.
+        if not timeout_ctx:
+            raise TimeoutError(f"Timed out deleting {name} from {backend}")
 
     def save(
         self, name: Optional[str], content: IO[Any], max_length: Optional[int] = None
@@ -90,7 +87,8 @@ class CombinedStorage(Storage):
         l: Optional[str] = None
         last_error: Optional[BaseException] = None
         error_list: List[BaseException] = []
-        for index, backend in enumerate(self.backends):
+        for backend in self.backends:
+            stored: Optional[str] = None
             try:
                 with Timeout(6.0) as _timeout_ctx:
                     # Only overwrite l if we have not yet saved but always try and save.
@@ -103,15 +101,12 @@ class CombinedStorage(Storage):
                         stored = backend.save(
                             name=l, content=content, max_length=max_length
                         )
-                        if stored != l:
-                            logger.warning(
-                                f"Backend {index} ({type(backend).__name__}) stored "
-                                f"name {_name_tag(l)} as {_name_tag(stored)}"
-                            )
             except Exception as e:
                 logger.warning(f"Error saving {e} to {backend}")
                 error_list.append(e)
                 last_error = e
+            if l is not None and stored is not None and stored != l:
+                self._remove_renamed_copy(backend, l, stored)
         if l is None:
             logger.error(
                 f"Saving to all backends {self.backends} failed with {error_list}!"
@@ -121,6 +116,20 @@ class CombinedStorage(Storage):
             )
         else:
             return l
+
+    def _remove_renamed_copy(self, backend: Storage, name: str, stored: str) -> None:
+        """No row records the other name, so nothing would ever delete that copy.
+
+        The backend's existing file under the shared name is left alone.
+        """
+        try:
+            self._delete_from(backend, stored)
+        except Exception as e:
+            logger.warning(
+                f"{backend} stored {name} as {stored} and could not remove it: {e}"
+            )
+            return
+        logger.warning(f"{backend} stored {name} as {stored}; removed {stored}")
 
     def url(self, name: Optional[str]) -> str:
         last_error: Optional[BaseException] = None

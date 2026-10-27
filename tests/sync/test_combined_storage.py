@@ -6,13 +6,13 @@ This test suite exercises the failover semantics with MagicMock-backed
 `Storage` instances, plus temporary-directory backends for delete.
 """
 
-import re
 import tempfile
 from unittest import TestCase
 from unittest.mock import MagicMock, call, patch
 
 from django.core.files.base import ContentFile, File
 from django.core.files.storage import FileSystemStorage, Storage
+from stopit import ThreadingTimeout
 
 from fighthealthinsurance.combined_storage import CombinedStorage
 
@@ -25,6 +25,15 @@ def _make_storage() -> MagicMock:
 def _make_file() -> File:
     """Return a concrete `File` instance acceptable to CombinedStorage.open."""
     return File(ContentFile(b"hello"), name="hello.txt")
+
+
+def _timed_out() -> MagicMock:
+    """A stand-in for a stopit timeout context that ran out of time."""
+    timed_out = MagicMock()
+    timed_out.__enter__.return_value = timed_out
+    timed_out.__exit__.return_value = False
+    timed_out.__bool__.return_value = False
+    return timed_out
 
 
 class TestCombinedStorageInit(TestCase):
@@ -131,25 +140,20 @@ class TestCombinedStorageSave(TestCase):
 
         self.assertEqual(third.save.call_args.kwargs["name"], "stored/foo.txt")
 
-    def test_save_warns_without_names_or_contents_when_a_backend_picks_another_name(
-        self,
-    ):
+    def test_save_removes_a_copy_a_later_backend_stored_under_another_name(self):
         first = _make_storage()
-        first.save.return_value = "plans/Rebecca Crumpler SBC.pdf"
+        first.save.return_value = "SBC.pdf"
         second = _make_storage()
-        second.save.return_value = "plans/Rebecca Crumpler SBC_x1y2z3Q.pdf"
+        second.save.return_value = "SBC_x1y2z3Q.pdf"
 
         storage = CombinedStorage(first, second)
-        with patch("fighthealthinsurance.combined_storage.logger") as log:
-            storage.save("Rebecca Crumpler SBC.pdf", ContentFile(b"secret-payload"))
+        result = storage.save("SBC.pdf", ContentFile(b"plan"))
 
-        log.warning.assert_called_once()
-        message = log.warning.call_args.args[0]
-        for part in ("plans", "Rebecca", "Crumpler", "SBC", "x1y2z3Q", ".pdf"):
-            self.assertNotIn(part, message)
-        self.assertNotIn("secret-payload", message)
+        self.assertEqual(result, "SBC.pdf")
+        second.delete.assert_called_once_with("SBC_x1y2z3Q.pdf")
+        first.delete.assert_not_called()
 
-    def test_save_warning_tags_differ_for_the_two_names(self):
+    def test_save_warning_names_both_files_when_a_backend_picks_another_name(self):
         first = _make_storage()
         first.save.return_value = "SBC.pdf"
         second = _make_storage()
@@ -159,8 +163,26 @@ class TestCombinedStorageSave(TestCase):
         with patch("fighthealthinsurance.combined_storage.logger") as log:
             storage.save("SBC.pdf", ContentFile(b"plan"))
 
-        tags = re.findall(r"\b[0-9a-f]{8}\b", log.warning.call_args.args[0])
-        self.assertEqual(len(set(tags)), 2)
+        message = log.warning.call_args.args[0]
+        self.assertIn("SBC.pdf", message)
+        self.assertIn("SBC_x1y2z3Q.pdf", message)
+
+    def test_save_carries_on_when_a_renamed_copy_cannot_be_removed(self):
+        first = _make_storage()
+        first.save.return_value = "SBC.pdf"
+        second = _make_storage()
+        second.save.return_value = "SBC_x1y2z3Q.pdf"
+        second.delete.side_effect = PermissionError("read-only mount")
+        third = _make_storage()
+        third.save.return_value = "SBC.pdf"
+
+        storage = CombinedStorage(first, second, third)
+        with patch("fighthealthinsurance.combined_storage.logger") as log:
+            result = storage.save("SBC.pdf", ContentFile(b"plan"))
+
+        self.assertEqual(result, "SBC.pdf")
+        third.save.assert_called_once()
+        self.assertIn("read-only mount", log.warning.call_args.args[0])
 
     def test_save_continues_through_failures(self):
         first = _make_storage()
@@ -212,33 +234,65 @@ class TestCombinedStorageDelete(TestCase):
 
         second.delete.assert_called_once_with("foo.txt")
 
-    def test_delete_tries_every_backend_before_raising_a_failure(self):
+    def test_delete_does_not_raise_when_another_backend_deletes_the_file(self):
         first = _make_storage()
-        failure = PermissionError("read-only mount")
-        first.delete.side_effect = failure
+        first.delete.side_effect = PermissionError("read-only mount")
         second = _make_storage()
+
+        storage = CombinedStorage(first, second)
+        storage.delete("foo.txt")
+
+        second.delete.assert_called_once_with("foo.txt")
+
+    def test_delete_logs_a_backend_failure_with_the_file_name_and_error(self):
+        first = _make_storage()
+        first.delete.side_effect = PermissionError("read-only mount")
+        second = _make_storage()
+
+        storage = CombinedStorage(first, second)
+        with patch("fighthealthinsurance.combined_storage.logger") as log:
+            storage.delete("foo.txt")
+
+        message = log.error.call_args.args[0]
+        self.assertIn("foo.txt", message)
+        self.assertIn("read-only mount", message)
+
+    def test_delete_raises_when_one_backend_has_no_copy_and_the_other_fails(self):
+        first = _make_storage()
+        first.delete.side_effect = FileNotFoundError("foo.txt")
+        second = _make_storage()
+        failure = PermissionError("read-only mount")
+        second.delete.side_effect = failure
 
         storage = CombinedStorage(first, second)
         with self.assertRaises(PermissionError) as ctx:
             storage.delete("foo.txt")
         self.assertIs(ctx.exception, failure)
-        second.delete.assert_called_once_with("foo.txt")
 
-    def test_delete_raises_when_a_backend_times_out(self):
-        timed_out = MagicMock()
-        timed_out.__enter__.return_value = timed_out
-        timed_out.__exit__.return_value = False
-        timed_out.__bool__.return_value = False
+    def test_delete_does_not_raise_when_one_backend_times_out(self):
         first = _make_storage()
         second = _make_storage()
 
         storage = CombinedStorage(first, second)
         with patch(
-            "fighthealthinsurance.combined_storage.Timeout", return_value=timed_out
+            "fighthealthinsurance.combined_storage.Timeout",
+            side_effect=[_timed_out(), ThreadingTimeout(2.0)],
+        ):
+            storage.delete("foo.txt")
+
+        second.delete.assert_called_once_with("foo.txt")
+
+    def test_delete_raises_naming_the_file_when_every_backend_times_out(self):
+        first = _make_storage()
+        second = _make_storage()
+
+        storage = CombinedStorage(first, second)
+        with patch(
+            "fighthealthinsurance.combined_storage.Timeout", return_value=_timed_out()
         ):
             with self.assertRaises(TimeoutError) as ctx:
                 storage.delete("foo.txt")
-        self.assertNotIn("foo", str(ctx.exception))
+        self.assertIn("foo.txt", str(ctx.exception))
         second.delete.assert_called_once_with("foo.txt")
 
     def test_delete_raises_last_error_when_all_fail(self):
@@ -304,6 +358,36 @@ class TestCombinedStorageDeleteOnDisk(TestCase):
 
         with self.storage.open(second) as f:
             self.assertEqual(f.read(), b"second plan")
+
+
+class TestCombinedStorageSaveWhereALaterBackendHoldsTheName(TestCase):
+    """Backend 1 already holds SBC.pdf, so it stores a new upload under another name."""
+
+    def setUp(self):
+        dirs = [tempfile.TemporaryDirectory() for _ in range(3)]
+        for d in dirs:
+            self.addCleanup(d.cleanup)
+        self.backends = [FileSystemStorage(location=d.name) for d in dirs]
+        self.backends[1].save("SBC.pdf", ContentFile(b"older plan"))
+        self.storage = CombinedStorage(*self.backends)
+        self.name = self.storage.save("SBC.pdf", ContentFile(b"new plan"))
+
+    def test_the_first_backends_name_is_returned(self):
+        self.assertEqual(self.name, "SBC.pdf")
+
+    def test_that_backend_keeps_no_extra_copy(self):
+        self.assertEqual(self.backends[1].listdir("")[1], ["SBC.pdf"])
+
+    def test_that_backends_existing_file_is_untouched(self):
+        with self.backends[1].open("SBC.pdf") as f:
+            self.assertEqual(f.read(), b"older plan")
+
+    def test_the_other_backends_hold_the_new_file(self):
+        contents = []
+        for backend in (self.backends[0], self.backends[2]):
+            with backend.open("SBC.pdf") as f:
+                contents.append(f.read())
+        self.assertEqual(contents, [b"new plan", b"new plan"])
 
 
 class TestCombinedStorageUrl(TestCase):
