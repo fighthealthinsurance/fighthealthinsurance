@@ -47,11 +47,14 @@ Tests run only through `tox -e <env>`. Do not call pytest directly or use the
 The app handles people's health information (PHI). Keep to these rules in
 anything you add.
 
-- **No PHI in logs, Sentry or the browser console.** Production bundles strip
-  `console.log`/`info`/`debug` (`fighthealthinsurance/static/js/webpack.config.js`),
-  but `console.warn`/`error` still ship, so never put PHI in them. Production
+- **No PHI in the browser console or in traceback variable dumps.**
+  Production bundles strip `console.log`/`info`/`debug`
+  (`fighthealthinsurance/static/js/webpack.config.js`), but
+  `console.warn`/`error` still ship, so never put PHI in them. Production
   also turns off loguru's variable dumps in tracebacks
-  (`fighthealthinsurance/settings.py`).
+  (`fighthealthinsurance/settings.py`). Server logs are kept as written and
+  can name stored files; a delete request removes database rows and stored
+  files, not log lines.
 - **Identifying details are scrubbed in the browser before upload.**
   `fighthealthinsurance/static/js/scrub_scrub.ts` swaps names and IDs for
   placeholders such as `{{FIRST_NAME}}` and keeps the originals in the
