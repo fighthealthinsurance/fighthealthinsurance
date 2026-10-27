@@ -1,4 +1,5 @@
 {% load static %}
+{% load bundles %}
 <!DOCTYPE html>
 <html lang="en">
 
@@ -29,7 +30,7 @@
   </main>
 
   <!-- jQuery -->
-  <script src="{% static 'js/jquery.js'%}"></script>
+  <script src="{% versioned 'js/jquery.js' %}"></script>
 
   <!-- Core plugin JavaScript-->
   <script src="{% static 'vendor/jquery-easing/jquery.easing.min.js'%}"></script>

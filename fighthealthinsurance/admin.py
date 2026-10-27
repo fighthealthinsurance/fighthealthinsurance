@@ -8,6 +8,7 @@ from django.urls import reverse
 from django.utils.html import format_html
 
 from fighthealthinsurance.constants import SITE_BANNER_CANNED_MESSAGES
+from fighthealthinsurance.templatetags.bundles import versioned
 
 from fhi_users.audit import AuditLog
 from fhi_users.models import (
@@ -1383,8 +1384,10 @@ class SiteBannerAdminForm(forms.ModelForm):
         model = SiteBanner
         fields = "__all__"
 
-    class Media:
-        js = ("js/admin_site_banner.js",)
+    @property
+    def media(self) -> forms.Media:
+        # Versioned like the templates' scripts, so a CDN can't serve an old copy.
+        return super().media + forms.Media(js=[versioned("js/admin_site_banner.js")])
 
 
 @admin.register(SiteBanner)

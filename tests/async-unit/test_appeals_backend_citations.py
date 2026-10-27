@@ -579,7 +579,7 @@ class TestAppealsBackendHelperWithCitations:
             mock_generate_citations.assert_awaited_once_with(
                 mock_denial, speculative=False
             )
-            mock_find_pubmed.assert_awaited_once_with(mock_denial)
+            mock_find_pubmed.assert_awaited_once_with(mock_denial, budget=40)
 
             # Verify make_appeals received both citation contexts
             mock_make_appeals_wrapper.assert_called_once()

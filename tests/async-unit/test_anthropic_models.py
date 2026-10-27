@@ -5,6 +5,7 @@ Tests cover:
 - Model initialization and configuration
 - Rate limit checking before inference
 - 429 response handling
+- The Models API liveness check (model_is_ok)
 - Model registration and cost tiers
 """
 
@@ -15,6 +16,7 @@ import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
 
 import aiohttp
+import requests
 
 from fighthealthinsurance.ml.ml_models import (
     ProviderUnavailable,
@@ -382,38 +384,94 @@ class TestRemoteAnthropicInfer(unittest.TestCase):
         asyncio.run(self.async_test_infer_429_through_real_infer_marks_exhausted())
 
 
+@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
 class TestRemoteAnthropicModelIsOk(unittest.TestCase):
-    """Tests for RemoteAnthropic.model_is_ok method."""
+    """model_is_ok asks Anthropic's Models API whether the model is served
+    to our key, so the health sweep sees a refused key, a retired model or
+    an outage, not just whether a key is set."""
 
     def setUp(self):
         """Reset class-level state before each test."""
         RemoteAnthropic._rate_limiters.clear()
 
-    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
-    def test_model_is_ok_when_available(self):
-        """Test model_is_ok returns True when not rate limited."""
+    def _check(self, status=200, error=None, model=None):
+        """model_is_ok with the Models API answering ``status`` (or raising
+        ``error``); the patched requests.get, for what it was asked."""
+        model = model or RemoteAnthropic(model="claude-sonnet-4-6")
+        with patch("fighthealthinsurance.ml.ml_models.requests.get") as get:
+            if error is not None:
+                get.side_effect = error
+            else:
+                get.return_value = MagicMock(status_code=status)
+            ok = model.model_is_ok()
+        return ok, get
+
+    def test_ok_when_the_models_api_serves_the_model(self):
+        ok, _get = self._check(200)
+        self.assertTrue(ok)
+
+    def test_asks_the_models_api_for_this_model(self):
+        _ok, get = self._check(200)
+        self.assertEqual(
+            get.call_args.args[0],
+            "https://api.anthropic.com/v1/models/claude-sonnet-4-6",
+        )
+
+    def test_sends_the_native_api_key_and_version_headers(self):
+        _ok, get = self._check(200)
+        self.assertEqual(
+            get.call_args.kwargs["headers"],
+            {"x-api-key": "test-key", "anthropic-version": "2023-06-01"},
+        )
+
+    def test_down_when_the_key_is_refused(self):
+        ok, _get = self._check(401)
+        self.assertFalse(ok)
+
+    def test_down_when_the_model_is_retired(self):
+        ok, _get = self._check(404)
+        self.assertFalse(ok)
+
+    def test_down_when_anthropic_is_overloaded(self):
+        ok, _get = self._check(529)
+        self.assertFalse(ok)
+
+    def test_down_when_anthropic_cannot_be_reached(self):
+        ok, _get = self._check(error=requests.ConnectionError("refused"))
+        self.assertFalse(ok)
+
+    def test_down_without_api_key(self):
         model = RemoteAnthropic(model="claude-sonnet-4-6")
-
-        self.assertTrue(model.model_is_ok())
-
-    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
-    def test_model_is_ok_false_when_rate_limited(self):
-        """Test model_is_ok returns False when rate limited."""
-        model = RemoteAnthropic(model="claude-sonnet-4-6")
-
-        model.rate_limiter.mark_exhausted(60.0)
-
-        self.assertFalse(model.model_is_ok())
-
-    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
-    def test_model_is_ok_false_without_api_key(self):
-        """Test model_is_ok returns False without API key."""
-        model = RemoteAnthropic(model="claude-sonnet-4-6")
-
         # patch.dict restores the pre-test environment on exit, so deleting
         # inside the patched scope leaks nothing to later tests.
         del os.environ["ANTHROPIC_API_KEY"]
-        self.assertFalse(model.model_is_ok())
+        ok, _get = self._check(200, model=model)
+        self.assertFalse(ok)
+
+    def test_without_api_key_nothing_is_asked(self):
+        model = RemoteAnthropic(model="claude-sonnet-4-6")
+        del os.environ["ANTHROPIC_API_KEY"]
+        _ok, get = self._check(200, model=model)
+        get.assert_not_called()
+
+    def test_a_rate_limit_back_off_leaves_the_check_passing(self):
+        """is_available() reads the back-off live; in the check, the sweep
+        would hold it until the model was next checked."""
+        model = RemoteAnthropic(model="claude-sonnet-4-6")
+        model.rate_limiter.mark_exhausted(60.0)
+        ok, _get = self._check(200, model=model)
+        self.assertTrue(ok)
+
+    def test_a_rate_limit_back_off_still_makes_it_unavailable(self):
+        model = RemoteAnthropic(model="claude-sonnet-4-6")
+        model.rate_limiter.mark_exhausted(60.0)
+        self.assertFalse(model.is_available())
+
+    def test_the_router_reads_the_sweep_for_it(self):
+        """With a network check of its own, routing gates it on the sweep's
+        verdict like any other probed backend."""
+        model = RemoteAnthropic(model="claude-sonnet-4-6")
+        self.assertFalse(model.health_checked_live)
 
 
 class TestRemoteAnthropicIntegration(unittest.TestCase):

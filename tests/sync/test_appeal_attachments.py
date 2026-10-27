@@ -4,6 +4,9 @@ from rest_framework.test import APIClient
 from fighthealthinsurance.models import *
 from django.urls import reverse
 import json
+from unittest import mock
+
+from fighthealthinsurance import rest_serializers
 
 
 @override_settings(FIGHT_PAPERWORK_ENABLED=True)
@@ -152,7 +155,87 @@ class AppealAttachmentTests(TestCase):
         )
 
         response = self.client.delete(
-            reverse("appeal_attachments-detail", kwargs={"pk": self.appeal.id})
+            reverse("appeal_attachments-detail", kwargs={"pk": attachment.id})
         )
         self.assertEqual(response.status_code, 204)
         self.assertFalse(AppealAttachment.objects.filter(id=attachment.id).exists())
+
+    def test_upload_over_the_size_limit_is_refused(self):
+        with mock.patch.object(rest_serializers, "MAX_ATTACHMENT_BYTES", 4):
+            response = self.client.post(
+                reverse("appeal_attachments-list"),
+                {"appeal_id": self.appeal.id, "file": self.test_file},
+                format="multipart",
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(AppealAttachment.objects.filter(appeal=self.appeal).exists())
+
+    def test_upload_declared_over_the_limit_is_refused_before_parsing(self):
+        with (
+            mock.patch.object(rest_serializers, "MAX_ATTACHMENT_BYTES", -1024 * 1024),
+            mock.patch("rest_framework.request.Request._parse") as parse,
+        ):
+            response = self.client.post(
+                reverse("appeal_attachments-list"),
+                {"appeal_id": self.appeal.id, "file": self.test_file},
+                format="multipart",
+            )
+        self.assertEqual(response.status_code, 413)
+        parse.assert_not_called()
+        self.assertFalse(AppealAttachment.objects.filter(appeal=self.appeal).exists())
+
+    def test_download_over_the_size_limit_is_refused_before_decrypting(self):
+        upload = self.client.post(
+            reverse("appeal_attachments-list"),
+            {"appeal_id": self.appeal.id, "file": self.test_file},
+            format="multipart",
+        )
+        self.assertEqual(upload.status_code, 201)
+        with (
+            mock.patch("fighthealthinsurance.rest_views.attachment_read_limit", return_value=4),
+            mock.patch("fighthealthinsurance.rest_views.Cryptographer.decrypted") as decrypted,
+        ):
+            response = self.client.get(
+                reverse("appeal_attachments-detail", kwargs={"pk": upload.json()["id"]})
+            )
+        self.assertEqual(response.status_code, 413)
+        decrypted.assert_not_called()
+
+    def test_owner_download_returns_decrypted_file(self):
+        upload = self.client.post(
+            reverse("appeal_attachments-list"),
+            {"appeal_id": self.appeal.id, "file": self.test_file},
+            format="multipart",
+        )
+        self.assertEqual(upload.status_code, 201)
+        attachment_id = upload.json()["id"]
+
+        response = self.client.get(
+            reverse("appeal_attachments-detail", kwargs={"pk": attachment_id})
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), b"file_content")
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn('filename="test.pdf"', response["Content-Disposition"])
+
+    def test_other_professional_cannot_download_attachment(self):
+        attachment = AppealAttachment.objects.create(
+            appeal=self.appeal,
+            file=self.test_file,
+            filename="test.pdf",
+            mime_type="application/pdf",
+        )
+        outsider = User.objects.create_user(
+            username="rebecca.crumpler@example.com",
+            email="rebecca.crumpler@example.com",
+            password=self.user_password,
+        )
+        ProfessionalUser.objects.create(user=outsider, active=True)
+        self.client.force_login(outsider)
+
+        response = self.client.get(
+            reverse("appeal_attachments-detail", kwargs={"pk": attachment.id})
+        )
+
+        self.assertEqual(response.status_code, 404)

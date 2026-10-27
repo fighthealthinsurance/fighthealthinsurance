@@ -63,7 +63,7 @@ class StaticViewSitemap(Sitemap):
         if ai_assistants_page_enabled():
             items.append("ai-assistants")
         if denial_watch_page_enabled():
-            items.append("denial-watch")
+            items.extend(["denial-watch", "open-enrollment"])
         return items
 
     def location(self, item: str) -> str:

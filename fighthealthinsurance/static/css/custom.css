@@ -190,10 +190,10 @@ pre code {
     --fhi-radius: 10px;
     --fhi-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
     /* The two widths a page's content can have. Reading is the column
-       the intake flow already holds; wide is for the four pages that are
-       grids of cards or an index. The measure is how long a line of
-       running text gets inside the reading column: 65 characters, the
-       upper end of what eyes track back from comfortably. */
+       the intake flow and the hero pages' bands hold; wide is for the
+       pages that are grids of cards or an index. The measure is how long
+       a line of running text gets, and the prose pages' column (.fhi-page)
+       is exactly that wide. */
     --fhi-page-reading: 760px;
     --fhi-page-wide: 1140px;
     /* The buffer a column keeps from the window's edge when the window is
@@ -575,12 +575,14 @@ textarea.fhi-field {
 
 /* A page's jump links to its own sections, as a set of equal tiles rather
    than a row of pills. Join the Fight had five Bootstrap pills that wrapped
-   four and one on a desktop and ragged on a phone. One row of five on a
-   desktop; two columns below that, the odd last tile spanning both so the
-   set ends square; one column on a phone. */
+   four and one on a desktop and ragged on a phone. One row on a desktop,
+   however many tiles there are: a row held to five put Denial Watch's seven
+   in a row of five and a row of two. Two columns below that, the odd last
+   tile spanning both so the set ends square; one column on a phone. */
 .fhi-jump-links {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
     gap: var(--fhi-space-3);
     margin: var(--fhi-space-6) 0 var(--fhi-space-8);
 }
@@ -615,6 +617,7 @@ textarea.fhi-field {
 
 @media (max-width: 991px) {
     .fhi-jump-links {
+        grid-auto-flow: row;
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
@@ -1753,6 +1756,22 @@ section:not(.slider) .share-subcopy,
     text-shadow: none;
 }
 
+/* On the home page the panel sits in the wide column, where every other
+   section is centred. Held to 680px it was pinned to the column's left
+   edge with 428px of nothing beside it, and its four buttons broke three
+   and one. Here it is as wide as one row of its buttons and centred, with
+   its words centred over them. */
+#share .share-panel {
+    width: fit-content;
+    max-width: 100%;
+    margin-inline: auto;
+    text-align: center;
+}
+
+#share .share-buttons {
+    justify-content: center;
+}
+
 /* Mobile responsiveness for share buttons */
 @media (max-width: 768px) {
     .share-buttons {
@@ -1845,7 +1864,7 @@ section:not(.slider) .share-subcopy,
     border-left-color: #a5c422;
 }
 /* A callout's heading takes its box's ink, as the Bootstrap-named boxes'
-   did: green on green 4.56:1, amber 4.96:1, blue 5.03:1, red 4.92:1. */
+   did: green on green 4.56:1, amber 4.96:1, blue 5.03:1. */
 .alert-box-success h2,
 .alert-box-success h4 {
     color: #2e7d32;
@@ -1855,6 +1874,7 @@ section:not(.slider) .share-subcopy,
     border-left-color: #ffc107;
 }
 .alert-box-warning h2,
+.alert-box-warning h3,
 .alert-box-warning h4,
 .alert-box-warning li {
     color: #856404;
@@ -1871,14 +1891,6 @@ section:not(.slider) .share-subcopy,
 .alert-box-info h3,
 .alert-box-info h4 {
     color: #1565c0;
-}
-.alert-box-danger {
-    background: #ffebee;
-    border-left-color: #f44336;
-}
-.alert-box-danger h3,
-.alert-box-danger p {
-    color: #c62828;
 }
 
 /* Navigation/Form actions row */
@@ -2191,12 +2203,24 @@ section:not(.slider) .share-subcopy,
 .fhi-page,
 .fhi-page-wide {
     width: 100%;
-    max-width: min(var(--fhi-page-reading), 100% - 2 * var(--fhi-page-gutter));
     margin-left: auto;
     margin-right: auto;
     padding: 0 var(--fhi-space-4) var(--fhi-space-10);
 }
 
+/* The reading column is one line of its running text wide, so the title,
+   images and boxes end where the text does and the block sits centred.
+   With a separate cap on the text, the text stopped about 200px short of
+   a 760px column and everything else ran on past it. A ch here is a zero
+   at the column's 1rem and the prose is set at --fhi-text-reading, so the
+   measure is scaled by their ratio, 1.0625. */
+.fhi-page {
+    max-width: min(calc(var(--fhi-measure) * 1.0625 + 2 * var(--fhi-space-4)), 100% - 2 * var(--fhi-page-gutter));
+}
+
+/* The wide column has no measure: its text fills the column like the cards
+   and grids around it, Melanie's call after seeing About Us with 650px
+   paragraphs over 1140px of boxes. */
 .fhi-page-wide {
     max-width: min(var(--fhi-page-wide), 100% - 2 * var(--fhi-page-gutter));
 }
@@ -2207,17 +2231,6 @@ section:not(.slider) .share-subcopy,
     .fhi-page-wide {
         max-width: none;
     }
-}
-
-/* In the reading column, running text stops at the measure while
-   headings, forms and tables use the whole column. The wide column has
-   no measure: its text fills the column like the cards and grids below
-   it, Melanie's call after seeing About Us with 650px paragraphs over
-   1140px of boxes. :where() on the element keeps this at one class of
-   specificity, so a page rule that wants a wider paragraph wins by
-   naming two. */
-.fhi-page :where(p, li) {
-    max-width: var(--fhi-measure);
 }
 
 /* Running prose in the reading column is a step larger. Text that states
@@ -2320,13 +2333,12 @@ main :where(table) {
 }
 
 /* A page whose copy is centred, like Delete Data: the column stacks its
-   children down the middle, so a paragraph at the measure and a form
-   narrower than the column both sit centred. A centred child takes its
-   own width, so each is also capped at the column: an alert holding an
-   unbroken support address was 371px in a 350px phone column. Running
-   text is left out, since the measure above is its cap and a rule that
-   ties with it on specificity would win on source order; :not() also
-   lifts this above the .alert rule's own max-width. */
+   children down the middle, so a paragraph and a form narrower than the
+   column both sit centred. A centred child takes its own width, so each
+   is also capped at the column: an alert holding an unbroken support
+   address was 371px in a 350px phone column. Running text wraps at the
+   column on its own; :not() also lifts this above the .alert rule's own
+   max-width. */
 .fhi-page-centred > :not(p):not(li) {
     max-width: 100%;
 }
@@ -3134,12 +3146,6 @@ textarea,
     z-index: 5;
 }
 
-.letter-header {
-    border-bottom: 2px solid var(--fhi-green-ink);
-    padding-bottom: var(--fhi-space-2);
-    color: var(--fhi-green-ink);
-}
-
 .term-card,
 .term-card:hover {
     text-decoration: none;
@@ -3875,11 +3881,50 @@ summary.fhi-nav-link::after {
     gap: var(--fhi-space-6);
 }
 .fhi-cards-roomy { --fhi-card-min: 20rem; }
-/* Two columns on the wide page and one on a phone, for a pair of groups
-   too long to sit three across, such as the Resources page's. */
-.fhi-cards-wide { --fhi-card-min: 26rem; }
-/* Equal tiles in a lettered index: a letter with one entry keeps a one-tile card. */
-.fhi-cards-tiles { grid-template-columns: repeat(auto-fill, minmax(min(var(--fhi-card-min, 14rem), 100%), 1fr)); }
+/* Groups of very different lengths, such as the Resources page's, in two
+   columns that each run down the page like a newspaper's rather than in
+   rows. In a row the shorter of a pair stretched to the taller one's height:
+   Resources drew a government card with 520px of nothing in it. Each card
+   stays whole; one column on a phone. */
+.fhi-cards-flow {
+    columns: 2 26rem;
+    column-gap: var(--fhi-space-6);
+}
+.fhi-cards-flow > * {
+    break-inside: avoid;
+    margin-bottom: var(--fhi-space-6);
+}
+
+/* A lettered index, the glossary and the list of states, is one run of
+   entries down as many columns as fit, as in a printed index, with each
+   letter a small marker where its entries start. Each letter used to open
+   a grid row of its own, so a letter with one or two entries left most of
+   its row empty: on the state list, 14 of the 19 letters ended on a row
+   with gaps in it. A letter's section keeps its id and begins with its
+   marker, so every jump link still lands on it. */
+.fhi-index {
+    columns: var(--fhi-index-min, 14rem);
+    column-gap: var(--fhi-space-6);
+}
+.fhi-index-roomy { --fhi-index-min: 18rem; }
+.fhi-index-letter {
+    /* A marker is never the last thing in a column. */
+    break-after: avoid;
+    margin: 0 0 var(--fhi-space-3);
+    padding-bottom: var(--fhi-space-1);
+    border-bottom: 2px solid var(--fhi-green-ink);
+    color: var(--fhi-green-ink);
+    font-size: var(--fhi-text-lead);
+    line-height: var(--fhi-line-heading);
+}
+.fhi-index-entry {
+    display: block;
+    break-inside: avoid;
+    margin-bottom: var(--fhi-space-4);
+}
+.fhi-index-entry:last-child {
+    margin-bottom: var(--fhi-space-7);
+}
 
 .fhi-card {
     display: flex;
@@ -4053,45 +4098,200 @@ summary.fhi-nav-link::after {
 }
 .fhi-check-row > :nth-child(n + 3) { grid-column: 2; }
 .fhi-check-row > * { margin: 0; }
+/* A pick-several field (form_utils.CheckboxList): its tick-box rows, two columns where there is room. */
+.fhi-check-list {
+    display: grid;
+    gap: var(--fhi-space-2) var(--fhi-space-4);
+}
+@media (min-width: 768px) {
+    .fhi-check-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+/* Beside a tick-box list, the label sits level with its first row, not halfway down. */
+.fhi-form-table tr:has(.fhi-check-list) > th {
+    vertical-align: top;
+}
 /* A form's buttons, each the full width of the form. */
 .fhi-actions {
     display: grid;
     gap: var(--fhi-space-2);
 }
-/* The intake page's letter box takes the letter typed, pasted or as a file
-   dropped on it or anywhere in its step, which scrub.ts hands to the file
-   input so it is read on the device the way a chosen file is. A phone or a
-   keyboard cannot drag, so the file input is drawn as its label: a button
-   that says what it does, beside the hint. */
-.fhi-file-pick {
+/* ---- Boxes that take a file
+   Every place the site takes a document is a box with its file button
+   inside it, and file_drop.js takes a file dropped anywhere on the box.
+   Two kinds:
+     .fhi-letter-box  a letter's text box (partials/letter_box_pick.html).
+                      Empty, it shows the file button in its middle with
+                      the other ways in under it; once there is text the
+                      button sits in a strip at its foot as Add a page.
+     .fhi-drop-box    a box for files alone (partials/file_drop_box.html).
+   The letter box follows its placeholder (:placeholder-shown), so typing,
+   pasting or a file's text arriving clears the prompt with no script. */
+.fhi-letter-box {
     position: relative;
+}
+/* With a file button, the box's edge goes round the text and a strip under
+   it, where the button sits once there is text, so the text never runs
+   under the button. The text area inside has no edge of its own, and a red
+   edge goes round the whole box. */
+.fhi-letter-box:has(> .fhi-letter-box-over) {
+    padding-bottom: calc(var(--fhi-btn-height-sm) + 2 * var(--fhi-space-2));
+    border: 1px solid var(--fhi-field-line);
+    border-radius: var(--fhi-radius);
+    background-color: #fff;
+}
+.fhi-letter-box:has(> .fhi-letter-box-over) > textarea {
+    border: 0;
+    border-radius: var(--fhi-radius) var(--fhi-radius) 0 0;
+    background-color: transparent;
+}
+/* Once there is text, a hairline between it and the button's strip. */
+.fhi-letter-box:has(> .fhi-letter-box-over) > textarea:not(:placeholder-shown) {
+    border-bottom: 1px solid var(--fhi-line);
+}
+/* The text area keeps its own focus ring, drawn just inside the box's edge. */
+.fhi-letter-box:has(> .fhi-letter-box-over) > textarea:focus-visible {
+    outline-offset: -2px;
+}
+.fhi-letter-box:has(> .fhi-letter-box-over):has(> textarea[aria-invalid="true"]) {
+    border-color: var(--fhi-danger);
+}
+/* The placeholder still names the empty box to a screen reader; the prompt
+   over the box says it on screen. */
+.fhi-letter-box:has(> .fhi-letter-box-over) > textarea::placeholder {
+    color: transparent;
+}
+/* A click on the prompt reaches the box under it, so anywhere in the box is
+   a place to type or paste. Only the button takes its own clicks. It sits
+   bottom left, clear of the box's resize handle. */
+.fhi-letter-box-over {
+    position: absolute;
+    inset: 0;
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--fhi-space-2) var(--fhi-space-3);
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-end;
+    gap: var(--fhi-space-2);
+    padding: var(--fhi-space-2);
+    pointer-events: none;
+    text-align: center;
+}
+.fhi-letter-box-over > label {
+    pointer-events: auto;
+    background-color: #fff;
 }
 /* The input is hidden from sight, not from the keyboard, so the button
    people see carries the ring while the input has focus. */
-.fhi-file-pick > input[type="file"]:focus-visible + .fhi-button {
+.fhi-letter-box-over > input[type="file"]:focus-visible + label {
     outline: 2px solid var(--fhi-green-ink);
     outline-offset: 2px;
 }
-/* "Or drop the file on this box" only where there is a mouse to drag with;
-   on a phone it would ask for something the phone cannot do. "Or take a
-   photo" the other way round: a desktop's file picker has no camera. It
-   sits inside the button's one span, so it stays in the line of text rather
-   than becoming a flex item of its own. */
+.fhi-letter-box-prompt {
+    display: none;
+    max-width: 30rem;
+    margin: 0;
+    color: var(--fhi-ink-2);
+}
+.fhi-letter-box-prompt > span {
+    display: block;
+    text-wrap: balance;
+}
+.fhi-letter-box-choose {
+    display: none;
+}
+/* With text in the box the button is shorter, so the strip it sits in stays
+   low. The height is .fhi-button-small's. */
+.fhi-letter-box > textarea:not(:placeholder-shown) ~ .fhi-letter-box-over > label {
+    padding: calc(var(--fhi-btn-pad-y-sm) - var(--fhi-btn-border)) calc(var(--fhi-btn-pad-x-sm) - var(--fhi-btn-border));
+    min-height: var(--fhi-btn-height-sm);
+}
+.fhi-letter-box > textarea:placeholder-shown ~ .fhi-letter-box-over {
+    align-items: center;
+    justify-content: center;
+    padding: var(--fhi-space-4);
+}
+.fhi-letter-box > textarea:placeholder-shown ~ .fhi-letter-box-over .fhi-letter-box-prompt {
+    display: block;
+}
+.fhi-letter-box > textarea:placeholder-shown ~ .fhi-letter-box-over .fhi-letter-box-choose {
+    display: inline;
+}
+.fhi-letter-box > textarea:placeholder-shown ~ .fhi-letter-box-over .fhi-letter-box-more {
+    display: none;
+}
+/* A box for files alone. The input stays the browser's own, so it names
+   what was chosen even where no script runs; only its button is drawn as
+   the site's secondary button. */
+.fhi-drop-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--fhi-space-2);
+    padding: var(--fhi-space-6) var(--fhi-space-4);
+    border: 1px dashed var(--fhi-field-line);
+    border-radius: var(--fhi-radius);
+    background-color: #fff;
+    text-align: center;
+}
+/* Not a text box, even on a form that gives every field .fhi-field
+   (StyledWidgetsMixin): the box around it is the edge. */
+.fhi-drop-box > input[type="file"] {
+    width: auto;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    font: inherit;
+    color: var(--fhi-ink-2);
+}
+.fhi-drop-box > input[type="file"]:focus-visible {
+    outline: 2px solid var(--fhi-green-ink);
+    outline-offset: 4px;
+}
+.fhi-drop-box > input[type="file"]::file-selector-button {
+    min-height: var(--fhi-btn-height-md);
+    margin-inline-end: var(--fhi-space-3);
+    padding: calc(var(--fhi-btn-pad-y-md) - var(--fhi-btn-border)) calc(var(--fhi-btn-pad-x-md) - var(--fhi-btn-border));
+    border: var(--fhi-btn-border) solid var(--fhi-green);
+    border-radius: 4px;
+    background-color: transparent;
+    color: var(--fhi-green-ink);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+.fhi-drop-box > input[type="file"]::file-selector-button:hover {
+    background-color: var(--fhi-green);
+    color: var(--fhi-ink);
+}
+.fhi-drop-box > .fhi-drop-hint {
+    color: var(--fhi-ink-2);
+}
+/* "Or drop the file" only where there is a mouse to drag with and
+   file_drop.js has run to take the drop; on a phone it would ask for
+   something the phone cannot do. "Or take a photo" the other way round: a
+   desktop's file picker has no camera. Each sits inside a line of text
+   rather than becoming a flex item of its own. */
 .fhi-drop-hint { display: none; }
 @media (hover: hover) and (pointer: fine) {
-    .fhi-drop-hint { display: inline; }
+    .fhi-file-drop .fhi-drop-hint { display: inline; }
     .fhi-photo-hint { display: none; }
 }
-/* While a file is dragged over the letter's step: a dashed green edge and a
-   pale ground, so the box reads as the place it goes. */
-.fhi-field.fhi-drop-active {
+/* While a file is dragged over a box: a dashed green edge and a pale ground,
+   so the box reads as the place it goes. */
+.fhi-letter-box.fhi-drop-active,
+.fhi-drop-box.fhi-drop-active {
     border-style: dashed;
     border-color: var(--fhi-green-ink);
     background-color: var(--fhi-surface);
+}
+/* Anything else that takes a drop, such as the chat's message box. Inside
+   its edge, where a card around it cannot clip it. */
+.fhi-drop-zone.fhi-drop-active {
+    outline: 2px dashed var(--fhi-green-ink);
+    outline-offset: -2px;
 }
 /* The intake form's steps: each heading sits with the fields under it, and
    the steps sit further apart than the fields in them. */
@@ -4166,3 +4366,105 @@ summary.fhi-nav-link::after {
     outline-offset: 2px;
 }
 .fhi-text-success { color: var(--fhi-green-ink); }
+
+/* ---- The progress rail ----------------------------------------------------
+   partials/flow_progress.html: the appeal flow's stages, each a marker over
+   its name, joined by a line that turns green as stages are done. */
+.fhi-progress {
+    display: flex;
+    margin: var(--fhi-space-6) 0 var(--fhi-space-7);
+    padding: 0;
+    list-style: none;
+}
+.fhi-progress-step {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--fhi-space-2);
+    text-align: center;
+}
+/* The line into each stage from the one before, behind the markers. */
+.fhi-progress-step + .fhi-progress-step::before {
+    content: "";
+    position: absolute;
+    top: calc(var(--fhi-space-7) / 2);
+    left: -50%;
+    right: 50%;
+    height: 3px;
+    transform: translateY(-50%);
+    background: var(--fhi-line);
+}
+.fhi-progress-done + .fhi-progress-step::before {
+    background: var(--fhi-green);
+}
+.fhi-progress-marker {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--fhi-space-7);
+    height: var(--fhi-space-7);
+    border-radius: 50%;
+    background: var(--fhi-line);
+    color: var(--fhi-ink-2);
+    font-size: var(--fhi-text-small);
+    font-weight: 700;
+    line-height: 1;
+}
+/* Done and current stages wear the buttons' lime and ink. */
+.fhi-progress-done .fhi-progress-marker,
+.fhi-progress-current .fhi-progress-marker {
+    background-image: linear-gradient(to right, var(--fhi-btn-fill-a) 0%, var(--fhi-btn-fill-b) 51%, var(--fhi-btn-fill-a) 100%);
+    background-size: 200% auto;
+    color: var(--fhi-btn-ink);
+}
+.fhi-progress-done .fhi-progress-marker::after {
+    content: "\2713";
+}
+.fhi-progress-current .fhi-progress-marker {
+    box-shadow: 0 0 0 var(--fhi-space-1) rgba(165, 196, 34, 0.25);
+}
+/* The current marker shimmers, for anyone who has not asked for less motion. */
+@media (prefers-reduced-motion: no-preference) {
+    .fhi-progress-current .fhi-progress-marker {
+        animation: fhi-progress-shimmer 2.4s ease-in-out infinite alternate;
+    }
+}
+@keyframes fhi-progress-shimmer {
+    from { background-position: left center; }
+    to { background-position: right center; }
+}
+.fhi-progress-label {
+    font-size: var(--fhi-text-body);
+    line-height: var(--fhi-line-heading);
+    color: var(--fhi-muted);
+}
+.fhi-progress-done .fhi-progress-label,
+.fhi-progress-current .fhi-progress-label {
+    color: var(--fhi-ink);
+}
+.fhi-progress-current .fhi-progress-label {
+    font-weight: 700;
+}
+/* A phone has room for one name: the current stage's. The rest stay readable to screen readers. */
+@media (max-width: 575px) {
+    .fhi-progress-step:not(.fhi-progress-current) .fhi-progress-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+    }
+    .fhi-progress-current .fhi-progress-label {
+        white-space: nowrap;
+    }
+}
+/* On the upload page the rail's own margin sets the gap above the title. */
+.fhi-progress + .fhi-page-title {
+    margin-top: 0;
+}

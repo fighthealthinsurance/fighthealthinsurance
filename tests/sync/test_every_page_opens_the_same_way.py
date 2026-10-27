@@ -56,6 +56,7 @@ CONTENT_PAGES = [
     "microsite_directory",
     "share_denial",
     "share_plan_documents",
+    "open-enrollment",
     GLOSSARY_TERM,
 ]
 

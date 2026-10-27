@@ -230,7 +230,7 @@ class TheLoginPageNamesOnlyFilesThatExistTest(SimpleTestCase):
 
     def test_every_static_file_it_names_is_on_disk(self):
         source = LOGIN.read_text()
-        named = re.findall(r"""{%\s*static\s+['"]([^'"]+)['"]\s*%}""", source)
+        named = re.findall(r"""{%\s*(?:static|versioned)\s+['"]([^'"]+)['"]\s*%}""", source)
         self.assertTrue(named)
         for reference in named:
             self.assertTrue(

@@ -289,8 +289,6 @@ NO_BOOTSTRAP_HERE = (
 # entry here stops being used, so the list cannot hide anything by going
 # stale.
 OUR_OWN_NAMES = {
-    # .flow-progress-step.active, defined in the partial's own <style>.
-    "partials/flow_progress.html": ("active",),
     # .hidden-error-message.visible, defined in custom.css.
     "static/js/scrub_client_side_form.ts": ("visible",),
 }

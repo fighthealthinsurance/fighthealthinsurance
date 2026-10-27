@@ -39,21 +39,19 @@
                     </div>
                 </div>
 
-                <!-- Term Groups -->
-                <div class="glossary-grid fhi-stack fhi-stack-loose">
+                <!-- Every term in one run down the columns, each letter a marker where its terms start -->
+                <div class="glossary-grid fhi-index fhi-index-roomy">
                     {% for letter, terms in letter_groups %}
-                    <div id="letter-{{ letter }}" class="letter-section fhi-stack">
-                        <h2 class="letter-header">{{ letter }}</h2>
-                        <div class="fhi-cards fhi-cards-roomy fhi-cards-tiles">
-                            {% for term in terms %}
-                            <a href="{% url 'glossary_term' term.slug %}" class="term-card">
-                                <div class="fhi-card">
-                                    <h3>{{ term.term }}</h3>
-                                    <p class="fhi-note">{{ term.short }}</p>
-                                </div>
-                            </a>
-                            {% endfor %}
-                        </div>
+                    <div id="letter-{{ letter }}" class="letter-section">
+                        <h2 class="fhi-index-letter">{{ letter }}</h2>
+                        {% for term in terms %}
+                        <a href="{% url 'glossary_term' term.slug %}" class="term-card fhi-index-entry">
+                            <div class="fhi-card">
+                                <h3>{{ term.term }}</h3>
+                                <p class="fhi-note">{{ term.short }}</p>
+                            </div>
+                        </a>
+                        {% endfor %}
                     </div>
                     {% endfor %}
                 </div>

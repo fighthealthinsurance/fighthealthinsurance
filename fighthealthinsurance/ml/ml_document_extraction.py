@@ -5,17 +5,19 @@ Handles PDF, DOCX, and plain text extraction with page/section tracking.
 Also provides encrypted file decryption for EncryptedFileField.
 """
 
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import threading
-import io
 from typing import Any, Dict, Optional
 
-import pymupdf
 from loguru import logger
 
 from django_encrypted_filefield.crypt import Cryptographer
+
+from fighthealthinsurance import word_text
+from fighthealthinsurance.pdf_text import read_mupdf_pages
 
 
 def read_and_decrypt_file(
@@ -44,9 +46,8 @@ def read_and_decrypt_file(
                 raw_bytes = f.read(max_bytes + 1)
                 if len(raw_bytes) > max_bytes:
                     logger.warning(
-                        f"{file_field.name} is larger than the {max_bytes} "
-                        "bytes this reads; skipping it rather than risking "
-                        "the worker other patients are generating on"
+                        f"Skipped a stored document larger than the {max_bytes} "
+                        "bytes this reads"
                     )
                     return None
             else:
@@ -59,8 +60,18 @@ def read_and_decrypt_file(
                 logger.debug("Decryption failed, returning raw bytes as fallback")
                 return raw_bytes
     except Exception as e:
-        logger.warning(f"Error reading encrypted file: {e}")
+        logger.warning(f"Could not read a stored document: {type(e).__name__}")
         return None
+
+
+#: The most pages read from one PDF.
+MAX_PDF_PAGES = 2000
+
+#: The most text kept from one PDF, about a thousand pages, like a .docx.
+MAX_PDF_CHARS = 3_000_000
+
+#: How long reading one PDF may take, in a child process that is then stopped.
+MAX_PDF_SECONDS = 30
 
 
 def extract_text_from_pdf_bytes(data: bytes) -> tuple[str, Dict[int, str]]:
@@ -68,19 +79,22 @@ def extract_text_from_pdf_bytes(data: bytes) -> tuple[str, Dict[int, str]]:
     Extract text from PDF bytes with page number tracking.
 
     Returns (full_text, page_dict) where page_dict maps page numbers to text.
+    Read in a child process under the caps above (see pdf_text).
     """
     full_text = ""
     page_dict: Dict[int, str] = {}
 
     try:
-        with pymupdf.open(stream=data, filetype="pdf") as doc:
-            for page_num, page in enumerate(doc, start=1):
-                page_text = page.get_text()
-                if page_text.strip():
-                    page_dict[page_num] = page_text
-                    full_text += f"\n\n[Page {page_num}]\n{page_text}"
+        pages = read_mupdf_pages(data, MAX_PDF_PAGES, MAX_PDF_CHARS, MAX_PDF_SECONDS)
     except Exception as e:
-        logger.warning(f"Error extracting text from PDF bytes: {e}")
+        logger.warning(f"Could not read text from a PDF: {type(e).__name__}")
+        return full_text, page_dict
+
+    for page_num, page in enumerate(pages, start=1):
+        page_text = page["text"]
+        if page_text.strip():
+            page_dict[page_num] = page_text
+            full_text += f"\n\n[Page {page_num}]\n{page_text}"
 
     return full_text, page_dict
 
@@ -89,176 +103,49 @@ def extract_text_from_pdf_bytes(data: bytes) -> tuple[str, Dict[int, str]]:
 #: document, which is a few megabytes of text and some scanned pages.
 MAX_DOCX_UNPACKED_BYTES = 64 * 1024 * 1024
 
-#: How much is unpacked at a time. Each read is what bounds the allocation,
-#: so it has to stay small next to the total.
-_UNPACK_CHUNK = 1024 * 1024
+#: The most text kept from one .docx, about a thousand pages.
+MAX_DOCX_CHARS = 3_000_000
 
-
-def _bounded_docx(data: bytes) -> Optional[bytes]:
-    """The same document, rebuilt from bounded reads, or None if it is too big.
-
-    The stored-bytes limit bounds the archive, not what comes out of it. Zip
-    turns a few hundred kilobytes into gigabytes, and this is the first path
-    that hands a patient's upload to a real document parser rather than
-    decoding it as text.
-
-    Measuring the archive and then handing the original to the parser does
-    not bound anything: the parser reads each member itself, in a chunk of
-    its own choosing, and a member's output is truncated to its declared
-    size only after it has been decompressed. A declared size that lies is
-    free, so the allocation happens inside the parser either way.
-
-    So the archive is unpacked here, a megabyte at a time, stopping at the
-    first chunk that takes the total over the limit, and rebuilt from what
-    came out. The parser then reads a copy whose headers were written from
-    the bytes they describe. Stored rather than deflated, because the point
-    is to avoid work, not to save space; the copy is what the limit above
-    bounds.
-    """
-    import zipfile
-
-    try:
-        archive = zipfile.ZipFile(io.BytesIO(data))
-    except Exception as e:
-        # Not an archive at all. Hand it on unchanged: the parser will fail
-        # on it and produce the empty result, which is the existing
-        # behaviour for a file that is not what its name says.
-        logger.debug(f"Not a readable DOCX archive: {e}")
-        return data
-
-    rebuilt = io.BytesIO()
-    unpacked = 0
-    try:
-        with archive, zipfile.ZipFile(rebuilt, "w", zipfile.ZIP_STORED) as copy:
-            for entry in archive.infolist():
-                if entry.is_dir():
-                    continue
-                parts: list[bytes] = []
-                with archive.open(entry) as member:
-                    while True:
-                        chunk = member.read(_UNPACK_CHUNK)
-                        if not chunk:
-                            break
-                        unpacked += len(chunk)
-                        if unpacked > MAX_DOCX_UNPACKED_BYTES:
-                            logger.warning(
-                                f"DOCX unpacks to more than the "
-                                f"{MAX_DOCX_UNPACKED_BYTES} bytes this will "
-                                "hold; skipping it rather than risking the "
-                                "worker other patients are generating on"
-                            )
-                            return None
-                        parts.append(chunk)
-                copy.writestr(entry.filename, b"".join(parts))
-    except Exception as e:
-        # A member that will not unpack: a bad CRC, a truncated stream, a
-        # compression method we do not have. Skipped rather than handed on,
-        # because handing the original back would give the parser the very
-        # bytes this bound exists to keep away from it, and one decoy member
-        # is all it would take.
-        logger.warning(
-            f"A member of this DOCX would not unpack, so it is skipped "
-            f"rather than parsed unbounded: {e}"
-        )
-        return None
-    return rebuilt.getvalue()
-
-
-def _iter_docx_text(doc) -> Any:
-    """Every paragraph in the body, tables included, in document order.
-
-    ``doc.paragraphs`` walks only the top level, so a plan whose coverage
-    criteria or appeal deadline sit in a table loses exactly the provisions
-    the letter needs. Walking the body element keeps a table's rows where
-    they were written instead of appending them somewhere else.
-
-    Tables nest: a layout table holding a real one is ordinary in a plan
-    document, and a cell's own ``text`` stops at its immediate paragraphs,
-    so the walk recurses through cells rather than reading them flat.
-    """
-    yield from _iter_docx_block_text(doc.element.body, doc)
-
-
-def _iter_docx_block_text(parent, doc, seen_cells=None) -> Any:
-    """Paragraph and table text under one element, in document order."""
-    from docx.oxml.ns import qn
-    from docx.table import Table
-    from docx.text.paragraph import Paragraph
-
-    # A merged cell is handed back once per position it covers: once per
-    # column for a horizontal span, and once per row for a vertical one,
-    # where python-docx walks up to the cell the merge started in. Each copy
-    # holds everything nested in it, so walking every copy repeated that
-    # content once per position, and again a level down for a nested table.
-    #
-    # Kept for the whole walk rather than per row, because a vertical merge
-    # repeats across rows and a per-row set never sees it twice. Identified
-    # by its path in the document rather than by the id of the object: the
-    # same underlying element is handed back as a new wrapper each time it
-    # is reached, so the ids differ for what is one cell.
-    if seen_cells is None:
-        seen_cells = set()
-
-    for child in parent.iterchildren():
-        if child.tag == qn("w:p"):
-            yield Paragraph(child, doc).text
-        elif child.tag == qn("w:tbl"):
-            for row in Table(child, doc).rows:
-                cells = []
-                for cell in row.cells:
-                    where = cell._tc.getroottree().getpath(cell._tc)
-                    if where in seen_cells:
-                        continue
-                    seen_cells.add(where)
-                    # cell._tc is the cell's own element. Private, and the
-                    # only way to keep a nested table in the order it was
-                    # written; cell.text stops at immediate paragraphs.
-                    parts = [
-                        part.strip()
-                        for part in _iter_docx_block_text(cell._tc, doc, seen_cells)
-                        if part and part.strip()
-                    ]
-                    if parts:
-                        cells.append(" ".join(parts))
-                if cells:
-                    yield " | ".join(cells)
+#: How long reading one .docx may take.
+MAX_DOCX_SECONDS = 30
 
 
 def extract_text_from_docx_bytes(data: bytes) -> tuple[str, Dict[int, str]]:
     """
     Extract text from DOCX bytes.
 
-    Groups paragraphs into ~3000-char pseudo-pages since DOCX has no
-    reliable page boundaries.
+    The body is read in one pass (see word_text), paragraphs and table cells
+    in the order they were written, within the caps above. Paragraphs are
+    grouped into ~3000-char pseudo-pages since DOCX has no reliable page
+    boundaries.
     """
     full_text = ""
     page_dict: Dict[int, str] = {}
 
-    bounded = _bounded_docx(data)
-    if bounded is None:
+    text, status = word_text.docx_text(
+        data, MAX_DOCX_CHARS, MAX_DOCX_SECONDS, MAX_DOCX_UNPACKED_BYTES
+    )
+    if status == word_text.UNREADABLE:
+        logger.warning("Could not read text from a DOCX")
         return full_text, page_dict
+    if status == word_text.PARTIAL:
+        logger.warning("Read only part of a DOCX")
 
-    try:
-        import docx
-
-        doc = docx.Document(io.BytesIO(bounded))
-        current_section = 1
-        current_text = ""
-        for para_text in _iter_docx_text(doc):
-            text = para_text.strip()
-            if not text:
-                continue
-            current_text += text + "\n"
-            if len(current_text) > 3000:
-                page_dict[current_section] = current_text
-                full_text += f"\n\n[Section {current_section}]\n{current_text}"
-                current_section += 1
-                current_text = ""
-        if current_text.strip():
+    current_section = 1
+    current_text = ""
+    for line in text[:MAX_DOCX_CHARS].split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        current_text += line + "\n"
+        if len(current_text) > 3000:
             page_dict[current_section] = current_text
             full_text += f"\n\n[Section {current_section}]\n{current_text}"
-    except Exception as e:
-        logger.warning(f"Error extracting text from DOCX bytes: {e}")
+            current_section += 1
+            current_text = ""
+    if current_text.strip():
+        page_dict[current_section] = current_text
+        full_text += f"\n\n[Section {current_section}]\n{current_text}"
 
     return full_text, page_dict
 
@@ -274,7 +161,7 @@ def extract_text_from_plaintext_bytes(data: bytes) -> tuple[str, Dict[int, str]]
             page_dict[1] = content
             full_text = f"\n\n[Section 1]\n{content}"
     except Exception as e:
-        logger.warning(f"Error reading plaintext bytes: {e}")
+        logger.warning(f"Could not read a text file: {type(e).__name__}")
 
     return full_text, page_dict
 
@@ -302,6 +189,21 @@ _PARSING = threading.Lock()
 #: back to reading the bytes as text needs to know which failures mean "no
 #: parser for this" and which mean "the parser tried and got nothing".
 PARSED_EXTENSIONS = (".pdf", ".docx", ".txt")
+
+# Unparsed extensions a log may name; any other is logged as unsupported.
+_NAMED_UNPARSED_EXTENSIONS = (
+    ".doc",
+    ".rtf",
+    ".odt",
+    ".text",
+    ".md",
+    ".html",
+    ".htm",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".heic",
+)
 
 
 class _Payload:
@@ -375,5 +277,9 @@ def extract_text_from_bytes(data: bytes, filename: str) -> tuple[str, Dict[int, 
             return extract_text_from_docx_bytes(data)
         elif lower_name.endswith(".txt"):
             return extract_text_from_plaintext_bytes(data)
-    logger.warning(f"Unsupported file type for text extraction: {filename}")
+    extension = os.path.splitext(lower_name)[1]
+    if extension in _NAMED_UNPARSED_EXTENSIONS:
+        logger.warning(f"Text extraction skipped: {extension} file")
+    else:
+        logger.warning("Text extraction skipped: unsupported type")
     return "", {}

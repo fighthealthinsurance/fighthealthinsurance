@@ -92,10 +92,10 @@ Other Resources
             <a href="{% url 'glossary_index' %}" class="fhi-button fhi-button-secondary fhi-button-small">Glossary</a>
         </div>
 
-        <!-- Two columns across the page, like the blog's cards: the
-             government resources on one side, the shorter groups stacked on
-             the other. One column on a phone. -->
-        <div class="fhi-cards fhi-cards-wide">
+        <!-- Two columns that each run down the page: the government
+             resources first, the shorter groups after them, each card
+             whole and the columns about even. One column on a phone. -->
+        <div class="fhi-cards-flow">
             <section class="fhi-card fhi-stack fhi-stack-loose">
                 <h2 class="text-fhi-green">Government Resources</h2>
                 <div class="fhi-stack">
@@ -121,53 +121,51 @@ Other Resources
                 </div>
             </section>
 
-            <div class="fhi-stack fhi-stack-loose">
-                {% if ai_assistants_on %}
-                <section class="fhi-card fhi-stack">
-                    <h2 class="text-fhi-green">Your AI Assistant</h2>
-                    <p class="fhi-note">
-                        {% include "partials/ai_assistants_blurb.html" %}
-                    </p>
-                    <p><a class="link" href="{% url 'ai-assistants' %}">Use Fight Health Insurance with your AI assistant</a></p>
-                </section>
-                {% endif %}
-                <section class="fhi-card fhi-stack">
-                    <h2 class="text-fhi-green">Condition-Specific Resources</h2>
-                    <p class="fhi-note">
-                        Organizations focused on specific conditions often provide the most relevant and detailed guidance.
-                    </p>
-                    <ul>
-                        <li><a class="link" href="https://www.jdrf.org/">JDRF</a> - Diabetes resources and advocacy</li>
-                        <li><a class="link" href="https://www.cancersupportcommunity.org/blog/how-to-file-health-insurance-appeal-denied-claim">Cancer Support Community</a> - Cancer-related appeals</li>
-                        <li><a class="link" href="https://www.nationalmssociety.org/Living-Well-With-MS/Work-and-Home/Insurance-and-Financial-Information/Health-Insurance/Appeals">National MS Society</a> - Multiple Sclerosis resources</li>
-                    </ul>
-                    <p class="fhi-note">
-                        <em>These resources are often created by people in similar situations and can provide highly relevant guidance.</em>
-                    </p>
-                </section>
+            {% if ai_assistants_on %}
+            <section class="fhi-card fhi-stack">
+                <h2 class="text-fhi-green">Your AI Assistant</h2>
+                <p class="fhi-note">
+                    {% include "partials/ai_assistants_blurb.html" %}
+                </p>
+                <p><a class="link" href="{% url 'ai-assistants' %}">Use Fight Health Insurance with your AI assistant</a></p>
+            </section>
+            {% endif %}
+            <section class="fhi-card fhi-stack">
+                <h2 class="text-fhi-green">Condition-Specific Resources</h2>
+                <p class="fhi-note">
+                    Organizations focused on specific conditions often provide the most relevant and detailed guidance.
+                </p>
+                <ul>
+                    <li><a class="link" href="https://www.jdrf.org/">JDRF</a> - Diabetes resources and advocacy</li>
+                    <li><a class="link" href="https://www.cancersupportcommunity.org/blog/how-to-file-health-insurance-appeal-denied-claim">Cancer Support Community</a> - Cancer-related appeals</li>
+                    <li><a class="link" href="https://www.nationalmssociety.org/Living-Well-With-MS/Work-and-Home/Insurance-and-Financial-Information/Health-Insurance/Appeals">National MS Society</a> - Multiple Sclerosis resources</li>
+                </ul>
+                <p class="fhi-note">
+                    <em>These resources are often created by people in similar situations and can provide highly relevant guidance.</em>
+                </p>
+            </section>
 
-                <section class="fhi-card fhi-stack">
-                    <h2 class="text-fhi-green">General Resources</h2>
-                    <p>
-                        While general-purpose websites may not be as specific to your situation, they can provide helpful overviews:
-                    </p>
-                    <ul>
-                        <li><a href="https://www.webmd.com/health-insurance/how-and-when-to-appeal-insurance-claims" class="link">WebMD</a> - General appeal guidance</li>
-                        <li>Fight Health Insurance (this site) - AI-powered appeal assistance</li>
-                    </ul>
-                </section>
+            <section class="fhi-card fhi-stack">
+                <h2 class="text-fhi-green">General Resources</h2>
+                <p>
+                    While general-purpose websites may not be as specific to your situation, they can provide helpful overviews:
+                </p>
+                <ul>
+                    <li><a href="https://www.webmd.com/health-insurance/how-and-when-to-appeal-insurance-claims" class="link">WebMD</a> - General appeal guidance</li>
+                    <li>Fight Health Insurance (this site) - AI-powered appeal assistance</li>
+                </ul>
+            </section>
 
-                <!-- Coping Resources, with the link to Bingo -->
-                <section class="fhi-card fhi-stack">
-                    <h2 class="text-fhi-green">Coping Resources</h2>
-                    <p>
-                        Sometimes you need to vent about the frustrating reality of insurance denials. Here's a bit of humor to help you cope:
-                    </p>
-                    <ul>
-                        <li><a href="{% url 'bingo' %}" class="link">Insurance Bullshit Bingo</a> - A humorous take on common denial reasons</li>
-                    </ul>
-                </section>
-            </div>
+            <!-- Coping Resources, with the link to Bingo -->
+            <section class="fhi-card fhi-stack">
+                <h2 class="text-fhi-green">Coping Resources</h2>
+                <p>
+                    Sometimes you need to vent about the frustrating reality of insurance denials. Here's a bit of humor to help you cope:
+                </p>
+                <ul>
+                    <li><a href="{% url 'bingo' %}" class="link">Insurance Bullshit Bingo</a> - A humorous take on common denial reasons</li>
+                </ul>
+            </section>
         </div>
 
         <!-- Simple RSS Section -->

@@ -1,0 +1,14 @@
+year,plan_selections,healthcare_gov,state_based,publisher,source_url,source_file
+2014,8019763,5446178,2573585,"HHS ASPE, from CMS data",https://www.aspe.hhs.gov/sites/default/files/migrated_legacy_files/44226/ib_2014Apr_enrollment.pdf,ib_2014Apr_enrollment.pdf
+2015,11688074,8838291,2849783,"HHS ASPE, from CMS data",https://www.aspe.hhs.gov/sites/default/files/migrated_legacy_files/137886/ib_2015mar_enrollment.pdf,ib_2015mar_enrollment.pdf
+2016,12681874,9625982,3055892,"HHS ASPE, from CMS data",https://aspe.hhs.gov/sites/default/files/private/pdf/187866/Finalenrollment2016.pdf,Finalenrollment2016.pdf
+2017,12216003,9201805,3014198,CMS,https://www.cms.gov/research-statistics-data-and-systems/statistics-trends-and-reports/marketplace-products/downloads/2017_oep_state-level_public_use_file.zip,2017_OEP_State-Level_Public_Use_File_082018.xlsx
+2018,11750175,8743642,3006533,CMS,https://www.cms.gov/research-statistics-data-and-systems/statistics-trends-and-reports/marketplace-products/downloads/2018_oe_state.zip,OE2018_State_PUF_20180808.xlsx
+2019,11444141,8411614,3032527,CMS,https://www.cms.gov/research-statistics-data-and-systems/statistics-trends-and-reports/marketplace-products/downloads/2019oepstatelevelpublicusefile.zip,2019 OEP State-Level Public Use File.xlsx
+2020,11409447,8286871,3122576,CMS,https://www.cms.gov/files/zip/2020-oep-state-level-public-use-file.zip,2020 OEP State-Level Public Use File.csv
+2021,12004365,8251703,3752662,CMS,https://www.cms.gov/files/zip/2021-oep-state-level-public-use-file.zip,2021 OEP State-Level Public Use File.csv
+2022,14511077,10255636,4255441,CMS,https://www.cms.gov/files/zip/2022-oep-state-level-public-use-file.zip,2022 OEP State-Level Public Use File.csv
+2023,16357030,12203622,4153408,CMS,https://www.cms.gov/files/zip/2023-oep-state-level-public-use-file.zip,2023 OEP State-Level Public Use File.csv
+2024,21446150,16363133,5083017,CMS,https://www.cms.gov/files/zip/2024-oep-state-level-public-use-file.zip,2024 OEP State-Level Public Use File.csv
+2025,24319713,17128890,7190823,CMS,https://www.cms.gov/files/zip/2025-oep-state-level-public-use-file.zip,2025 OEP State-Level Public Use File.csv
+2026,23130860,15771397,7359463,CMS,https://www.cms.gov/files/zip/2026-oep-state-level-public-use-file.zip,2026 OEP State-Level Public Use File.csv

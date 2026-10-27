@@ -1,0 +1,580 @@
+"""Marketplace enrollment in context: where people get coverage, and coverage beside population.
+
+The open enrollment page and Denial Watch's coverage section share one bar of
+everyone, each person counted once, from FHI's tally of Census's survey
+(partials/coverage_mix.html). The open enrollment page also sets each
+February's marketplace coverage beside the people under 65. The numbers come
+from static/denial_watch.json, which build_bundle.py makes from the checked-in
+CSVs, and some are written into sentences, so these tests check the copy still
+agrees with the data after a refresh.
+"""
+
+import csv
+import pathlib
+import re
+import tempfile
+
+from django.test import TestCase
+from django.urls import reverse
+
+from tests.sync.test_contrast import DW_PAIRS
+from tests.sync.test_denial_watch import DATA, MK, REPO, _between, _load_builder, _millions, _page, _text
+from tests.sync.test_open_enrollment import IN_SEASON, OE_JS, _enroll, _section_parents, _table_rows, _words
+
+HERE = REPO / "scripts" / "denial_watch"
+MIX = DATA["coverage_mix"]
+POP = DATA["population"]
+COUNTS = DATA["coverage_counts"]
+STYLE = (REPO / "fighthealthinsurance" / "templates" / "partials" / "denial_watch_style.html").read_text()
+
+# From CMS's 2025 Open Enrollment state-level public use file (the zip marketplace_signups.csv records), Total/All row:
+# Age_GE65 and BHP_Enrlmnt. The page rounds them to "about 1.7%" and "about 1.8 million".
+OEP_2025_65_PLUS = 412_938
+OEP_2025_BASIC_HEALTH = 1_792_695
+# Where the population series join, April 1, 2020, people under 65: the intercensal file's CENSUS2020POP and
+# Vintage 2025's ESTIMATESBASE2020, summed over ages 0 to 64.
+JOIN_INTERCENSAL, JOIN_V2025 = 275_687_042, 275_888_022
+SURVEY_PAGE = "https://www.census.gov/data/datasets/time-series/demo/cps/cps-asec.2026.html"
+INTERCENSAL = "https://www2.census.gov/programs-surveys/popest/datasets/2010-2020/intercensal/national/asrh/nc-est2020int-agesex-res.csv"
+VINTAGE_2025 = "https://www2.census.gov/programs-surveys/popest/datasets/2020-2025/national/asrh/nc-est2025-agesex-res.csv"
+MEDICARE_PAGE = "https://data.cms.gov/summary-statistics-on-beneficiary-enrollment/medicare-and-medicaid-reports/medicare-monthly-enrollment"
+MEDICAID_PAGE = "https://data.medicaid.gov/dataset/6165f45b-ca93-5bb5-9d06-db29c692a360"
+
+
+def _mix(html: str) -> str:
+    return _between(html, '<section class="fhi-stack" id="coverage-mix"', "</section>")
+
+
+def _rows(path, **match):
+    with open(path, newline="") as f:
+        return [r for r in csv.DictReader(f) if all(r[k] == v for k, v in match.items())]
+
+
+def _share(key: str) -> float:
+    return next(r["pct"] for r in MIX["rows"] if r["k"] == key)
+
+
+def _under_65() -> dict[int, int]:
+    return {r["y"]: r["n"] for r in POP["under_65"]}
+
+
+class TestCoverageMixData(TestCase):
+    """The bar's rows are the checked-in tally, each person once, and the build stops on a tally it can't draw."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.b = _load_builder()
+
+    def _load(self, edit):
+        with open(HERE / "coverage_mix.csv", newline="") as f:
+            rows = list(csv.DictReader(f))
+        rows = edit(rows)
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0]))
+            w.writeheader()
+            w.writerows(rows)
+        try:
+            return self.b.load_coverage_mix(f.name)
+        finally:
+            pathlib.Path(f.name).unlink()
+
+    def test_bundle_bar_is_the_checked_in_tally(self):
+        rows = _rows(HERE / "coverage_mix.csv", measure="now", age="all")
+        self.assertEqual(
+            [(r["k"], r["label"], r["n"], r["pct"]) for r in MIX["rows"]],
+            [(r["key"], r["category"], int(r["people"]), float(r["percent"])) for r in rows],
+        )
+        self.assertEqual(self.b.load_coverage_mix(), MIX)
+
+    def test_shares_add_to_100_within_rounding(self):
+        # Each person is in one slice, so the slices add to everyone, and the shares as shown add to 100 too.
+        self.assertAlmostEqual(sum(r["pct"] for r in MIX["rows"]), 100, delta=0.05)
+        self.assertAlmostEqual(sum(round(r["pct"], 1) for r in MIX["rows"]), 100, delta=0.3)
+        total = sum(r["n"] for r in MIX["rows"])
+        for r in MIX["rows"]:
+            self.assertAlmostEqual(100 * r["n"] / total, r["pct"], delta=0.006, msg=r["k"])
+
+    def test_every_margin_of_error_is_under_half_a_point(self):
+        # The method note says every share is within half a point either way.
+        self.assertTrue(all(r["pct_moe"] < 0.5 for r in MIX["rows"]), [r["pct_moe"] for r in MIX["rows"]])
+
+    def test_the_bar_is_everyone_at_the_interview(self):
+        self.assertEqual(MIX["period"], "At interview, Feb-Apr 2026")
+        self.assertEqual(MIX["page"], SURVEY_PAGE)
+        self.assertEqual(MIX["file"].rsplit("/", 1)[1], "asecpub26csv.zip")
+
+    def test_builder_refuses_shares_that_dont_add_to_100(self):
+        def one_point_more(rows):
+            for r in rows:
+                if r["measure"] == "now" and r["age"] == "all" and r["key"] == "uninsured":
+                    r["percent"] = f"{float(r['percent']) + 1:.2f}"
+            return rows
+
+        with self.assertRaisesRegex(SystemExit, "the shares add to 101.00%"):
+            self._load(one_point_more)
+
+    def test_builder_refuses_a_margin_that_isnt_a_number(self):
+        for bad in ("nan", "inf", "-0.1"):
+            with self.subTest(bad=bad):
+
+                def broken(rows):
+                    for r in rows:
+                        if r["measure"] == "now" and r["age"] == "all" and r["key"] == "uninsured":
+                            r["percent_moe90"] = bad
+                    return rows
+
+                with self.assertRaisesRegex(SystemExit, "margin of error"):
+                    self._load(broken)
+
+    def test_builder_refuses_slices_out_of_order(self):
+        def swap(rows):
+            mine = [i for i, r in enumerate(rows) if r["measure"] == "now" and r["age"] == "all"]
+            rows[mine[0]], rows[mine[1]] = rows[mine[1]], rows[mine[0]]
+            return rows
+
+        with self.assertRaisesRegex(SystemExit, "in that order"):
+            self._load(swap)
+
+    def test_tally_script_keeps_the_page_order_and_the_counting_rule(self):
+        script = (HERE / "cps_coverage_mix.py").read_text()
+        self.assertEqual(re.findall(r'^    \("(\w+)", "([^"]+)"\),$', script, re.M), [(r["k"], r["label"]) for r in MIX["rows"]])
+        self.assertIn('if "medicare" in held:\n        return "medicare"', script)
+        self.assertIn("if len(held) == 1:", script)
+        self.assertIn('return "more_than_one"', script)
+        self.assertIn("https://www2.census.gov/programs-surveys/cps/datasets/2026/march/asecpub26csv.zip", script)
+        self.assertIn(MIX["sha256"], script)
+
+
+class TestPopulationData(TestCase):
+    """People under 65 by July 1, from two Census series that are never mixed with another vintage."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.b = _load_builder()
+        with open(HERE / "population_under_65.csv", newline="") as f:
+            cls.csv = list(csv.DictReader(f))
+
+    def _load(self, edit, feb_years=(2016,)):
+        rows = edit([dict(r) for r in self.csv])
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0]))
+            w.writeheader()
+            w.writerows(rows)
+        try:
+            return self.b.load_population(list(feb_years), f.name)
+        finally:
+            pathlib.Path(f.name).unlink()
+
+    def test_bundle_population_is_the_csv(self):
+        self.assertEqual(POP["under_65"], [dict(y=int(r["year"]), n=int(r["under_65"])) for r in self.csv])
+        self.assertEqual(self.b.load_population([r["y"] for r in MK["feb"]]), POP)
+
+    def test_intercensal_to_2019_then_vintage_2025(self):
+        files = {int(r["year"]): (r["source_url"], r["file_sha256"]) for r in self.csv}
+        self.assertEqual({y for y, (u, _) in files.items() if u == INTERCENSAL}, set(range(2015, 2020)))
+        self.assertEqual({y for y, (u, _) in files.items() if u == VINTAGE_2025}, set(range(2020, 2026)))
+        self.assertEqual({s for y, (_, s) in files.items() if y < 2020}, {"494672c99edd48ebc3f8052a0fdae54083ef7bc1467d9c5394de47cd8a1525e3"})
+        self.assertEqual({s for y, (_, s) in files.items() if y >= 2020}, {"6436d4f6972d415caf14cb20776807bc031fc9f1bfc9d6ff26055d592a2b0230"})
+
+    def test_covers_the_july_before_every_february(self):
+        self.assertTrue({r["y"] - 1 for r in MK["feb"]} <= set(_under_65()))
+
+    def test_builder_refuses_another_vintage(self):
+        # Vintage 2024 rebuilt its base, so mixing it in would fake a jump of about 1.7 million at 2020.
+        def v2024(rows):
+            rows[-1].update(series="Vintage 2024", source_file="nc-est2024-agesex-res.csv")
+            return rows
+
+        with self.assertRaisesRegex(SystemExit, "must come from Vintage 2025"):
+            self._load(v2024)
+
+    def test_builder_refuses_a_missing_july(self):
+        with self.assertRaisesRegex(SystemExit, "no July"):
+            self._load(lambda rows: rows, feb_years=(2027,))
+
+    def test_builder_refuses_a_gap(self):
+        with self.assertRaisesRegex(SystemExit, "without a gap"):
+            self._load(lambda rows: [r for r in rows if r["year"] != "2018"])
+
+
+class TestCoverageCountsData(TestCase):
+    """Medicare and Medicaid and CHIP for the marketplace's latest February, from CMS's records."""
+
+    def test_bundle_counts_are_the_csv(self):
+        rows = {r["coverage"]: r for r in _rows(HERE / "coverage_counts.csv")}
+        self.assertEqual(COUNTS["medicare"]["n"], int(rows["Medicare"]["people"]))
+        self.assertEqual(COUNTS["medicaid_chip"]["n"], int(rows["Medicaid and CHIP"]["people"]))
+        self.assertEqual((COUNTS["medicare"]["page"], COUNTS["medicaid_chip"]["page"]), (MEDICARE_PAGE, MEDICAID_PAGE))
+
+    def test_counts_are_for_the_latest_marketplace_february(self):
+        self.assertEqual(COUNTS["month"], f"{MK['feb'][-1]['y']}-02")
+
+    def test_builder_refuses_another_month(self):
+        with self.assertRaisesRegex(SystemExit, "the page compares 2027-02"):
+            _load_builder().load_coverage_counts("2027-02")
+
+
+class TestCoverageMixOnBothPages(TestCase):
+    """The same bar on both pages, drawn by the view, with every share in words."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.oe = _enroll(IN_SEASON)
+        cls.dw = _page(IN_SEASON)
+        cls.pages = {"open enrollment": _mix(cls.oe), "Denial Watch": _mix(cls.dw)}
+
+    def test_renders_without_the_script(self):
+        # The bar, its label and the list are in the page itself; no script names them.
+        for name, mix in self.pages.items():
+            with self.subTest(page=name):
+                self.assertEqual(mix.count('<span class="dw-mix-seg'), len(MIX["rows"]))
+                self.assertEqual(len(re.findall(r"<li[ >]", _between(mix, 'id="mix-list"', "</ul>"))), len(MIX["rows"]))
+        for script in (OE_JS, (REPO / "fighthealthinsurance" / "static" / "js" / "denial_watch.js").read_text()):
+            self.assertNotIn("mix", script)
+
+    def test_list_says_every_share_in_words_in_the_bars_order(self):
+        for name, mix in self.pages.items():
+            items = re.findall(r'<li[^>]*><i class="dw-mix-sw [\w-]+"></i><span>([^<]+)</span> <span class="dw-num">([^<]+)</span></li>', mix)
+            self.assertEqual(items, [(r["label"], f"{r['pct']:.1f}%") for r in MIX["rows"]], name)
+
+    def test_bar_widths_are_the_shares(self):
+        for name, mix in self.pages.items():
+            widths = [float(w) for w in re.findall(r'<span class="dw-mix-seg [^"]+" style="width: ([\d.]+)%">', mix)]
+            self.assertEqual(widths, [round(r["pct"], 2) for r in MIX["rows"]], name)
+            self.assertAlmostEqual(sum(widths), 100, delta=0.05)
+
+    def test_marketplace_slice_is_named_where_it_starts(self):
+        before = sum(r["pct"] for r in MIX["rows"][: [r["k"] for r in MIX["rows"]].index("marketplace")])
+        for name, mix in self.pages.items():
+            callout = _between(mix, '<p class="dw-mix-callout"', "</p>")
+            self.assertIn(f'style="margin-left: {before:.2f}%"><span>Marketplace plan only, {_share("marketplace"):.1f}%</span>', callout, name)
+            self.assertIn('<li class="dw-mix-hl"><i class="dw-mix-sw dw-mix-marketplace"></i><span>Marketplace plan only</span>', mix)
+
+    def test_screen_readers_get_the_list_not_the_bar(self):
+        for name, mix in self.pages.items():
+            self.assertIn('<div class="dw-mix-chart" aria-hidden="true">', mix, name)
+            self.assertNotIn("aria-hidden", _between(mix, 'id="mix-list"', "</ul>"))
+
+    def test_finding_matches_the_tally(self):
+        job, marketplace = _share("job"), _share("marketplace")
+        self.assertTrue(45 <= job < 50, job)
+        self.assertEqual(round(marketplace), 4)
+        self.assertEqual(max(MIX["rows"], key=lambda r: r["pct"])["k"], "job")
+        for name, mix in self.pages.items():
+            self.assertIn(
+                '<p id="mix-finding">Nearly half of people have coverage only through a job. About 4 in 100 have a marketplace plan.</p>', mix, name
+            )
+
+    def test_who_and_when_match_the_tally(self):
+        self.assertTrue(MIX["period"].endswith("Feb-Apr 2026"))
+        for mix in self.pages.values():
+            self.assertIn("All ages, each person counted once, as of Census's interviews from February to April 2026.", _text(mix))
+
+    def test_records_line_matches_the_records(self):
+        feb = MK["feb"][-1]
+        line = (
+            f"CMS's records count {_millions(feb['n'])} people with marketplace coverage in February {feb['y']}, "
+            f"{_millions(COUNTS['medicare']['n'])} on Medicare and {_millions(COUNTS['medicaid_chip']['n'])} on Medicaid or CHIP "
+            "(some people have both Medicare and Medicaid). Only surveys count job-based coverage and the uninsured, "
+            "and surveys find fewer marketplace plans than records show."
+        )
+        for name, mix in self.pages.items():
+            self.assertEqual(_text(_between(mix, '<p id="mix-records">', "</p>")), line, name)
+
+    def test_scope_line_matches_denial_watch(self):
+        # The every-state chart's grey states with a rate: their own reports, or CMS's last year with them.
+        self.assertEqual(len(DATA["state_reports"]) + len(DATA["earlier"]), 5)
+        # Prior authorization covers Medicare Advantage, Medicaid plans, state Medicaid and HealthCare.gov insurers, nothing job-based.
+        self.assertEqual({r["line"] for r in DATA["prior_auth"]}, {"ma", "mcd", "mkt", "ffs"})
+        rest = (
+            "claim denial rates are for marketplace plans in HealthCare.gov states and five states that run their own marketplace, where some figures also count plans sold outside it. "
+            "Its prior authorization rates cover large Medicare Advantage plans, Medicaid plans and programs, and HealthCare.gov insurers. "
+            "It has no denial rates for job-based plans or Original Medicare."
+        )
+        self.assertEqual(_text(_between(self.pages["open enrollment"], '<p id="mix-scope">', "</p>")), "Denial Watch's " + rest)
+        self.assertEqual(_text(_between(self.pages["Denial Watch"], '<p id="mix-scope">', "</p>")), "This page's " + rest)
+
+    def test_scope_links_land_on_denial_watchs_sections(self):
+        dw = reverse("denial-watch")
+        self.assertEqual(re.findall(r'href="([^"]+)"', _between(self.pages["open enrollment"], 'id="mix-scope"', "</p>")), [f"{dw}#map-denials", f"{dw}#prior-auth"])
+        self.assertEqual(re.findall(r'href="([^"]+)"', _between(self.pages["Denial Watch"], 'id="mix-scope"', "</p>")), ["#map-denials", "#prior-auth"])
+        for target in ("map-denials", "prior-auth"):
+            self.assertIn(f'id="{target}"', self.dw)
+
+    def test_source_line_cites_census_the_way_it_asks(self):
+        for mix in self.pages.values():
+            self.assertIn(
+                '<p class="dw-note" id="mix-source">Source: U.S. Census Bureau, Current Population Survey, 2026 Annual Social and Economic Supplement, '
+                "public-use file. FHI's tabulation.</p>",
+                mix,
+            )
+
+    def test_heading_fits_each_page(self):
+        self.assertIn('<h2 id="coverage-mix-title">Where people get coverage</h2>', self.oe)
+        self.assertIn('<h3 id="coverage-mix-title">Where people get coverage</h3>', self.dw)
+
+    def test_sits_at_the_top_of_open_enrollment_and_in_denial_watchs_coverage_section(self):
+        self.assertLess(self.oe.index('id="enroll-numbers"'), self.oe.index('id="coverage-mix"'))
+        self.assertLess(self.oe.index('id="coverage-mix"'), self.oe.index('id="enroll-trends"'))
+        self.assertEqual(_section_parents(self.oe)["coverage-mix"], None)
+        self.assertEqual(_section_parents(self.dw)["coverage-mix"], "coverage")
+        self.assertLess(self.dw.index('id="cmap"'), self.dw.index('id="coverage-mix"'))
+
+    def test_denial_watch_links_the_enrollment_page_from_it(self):
+        self.assertIn(
+            f'<p id="coverage-marketplace">Marketplace coverage year by year, beside the number of people under 65, is on '
+            f'<a href="{reverse("open-enrollment")}">the open enrollment page</a>.</p>',
+            self.pages["Denial Watch"],
+        )
+        self.assertNotIn('id="coverage-marketplace"', self.pages["open enrollment"])
+
+    def test_how_link_opens_each_pages_method(self):
+        for html, method in ((self.oe, "method-enroll"), (self.dw, "method-coverage")):
+            self.assertIn(
+                f'<p class="dw-how"><a href="#{method}">How we got these numbers<span class="fhi-visually-hidden">: Where people get coverage</span></a></p>',
+                _mix(html),
+            )
+            group = _between(_between(html, 'id="sources"', "</details>"), f'id="{method}"', "</ol>")
+            self.assertIn("<b>Where people get coverage:</b>", group)
+
+    def test_stays_short(self):
+        # The heading, finding, list, records, scope and source, with the bar's labels saying some of the list again: 200 words,
+        # Denial Watch's line to the open enrollment page, and the scope line's note on plans sold outside the marketplace.
+        for name, mix in self.pages.items():
+            self.assertLessEqual(_words(mix), 230, name)
+
+    def test_no_dashes(self):
+        for mix in self.pages.values():
+            for dash in ("\u2014", "\u2013"):
+                self.assertNotIn(dash, mix)
+
+
+class TestCoverageMixMethod(TestCase):
+    """Both pages explain the tally, why this survey, and why it differs from CMS's records."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.groups = {
+            "open enrollment": _between(_enroll(IN_SEASON), 'id="method-enroll"', "</ol>"),
+            "Denial Watch": _between(_page(IN_SEASON), 'id="method-coverage"', "</ol>"),
+        }
+
+    def test_says_how_each_person_is_counted_once(self):
+        for name, group in self.groups.items():
+            text = _text(group)
+            self.assertIn(
+                "Each person is counted once: anyone with Medicare under Medicare, anyone else with exactly one kind of coverage under that kind, "
+                'and anyone else with two or more kinds under "more than one kind".',
+                text,
+                name,
+            )
+            self.assertIn("as of their interviews from February to April 2026", text)
+            self.assertIn("Our tally matches the totals and margins of error Census publishes from the same survey", text)
+            self.assertIn(f'<a href="{SURVEY_PAGE}">', group)
+            self.assertIn('<a href="https://www.census.gov/library/publications/2026/demo/p60-291.html">report P60-291</a>', group)
+
+    def test_names_what_the_kinds_include(self):
+        for group in self.groups.values():
+            text = _text(group)
+            self.assertIn("Medicare includes Medicare Advantage plans, which private insurers run.", text)
+            self.assertIn("Job-based includes self-funded plans, where the employer pays the claims itself.", text)
+            self.assertIn("Basic Health Programs, such as New York's Essential Plan.", text)
+
+    def test_says_why_this_survey(self):
+        for group in self.groups.values():
+            text = _text(group)
+            self.assertIn("Census's American Community Survey has no marketplace category", text)
+            self.assertIn("so it warns against comparing 2025 with earlier years", text)
+            self.assertIn("add up to more than 100%, since people can have more than one kind", text)
+            self.assertIn("its latest figures are for 2025 and its marketplace figures are for people under 65", text)
+
+    def test_says_why_it_differs_from_cms_in_neutral_words(self):
+        for group in self.groups.values():
+            text = _text(group)
+            self.assertIn("Census's survey finds fewer people with marketplace plans than CMS's records count.", text)
+            self.assertIn("CMS counts plans in effect in February, the survey asks from February to April, and some coverage ends in between.", text)
+            for word in ("undercount", "said", "because", "miss"):
+                self.assertNotIn(word, text.lower())
+
+    def test_names_the_record_sources(self):
+        for group in self.groups.values():
+            for href in (MEDICARE_PAGE, MEDICAID_PAGE):
+                self.assertIn(f'href="{href}"', group)
+            self.assertIn("the 50 states and DC added up; it includes Medicare Advantage.", _text(group))
+
+    def test_every_survey_link_is_named_on_denial_watch(self):
+        # Denial Watch names every source in the bundle but the marketplace and population files, which the open enrollment page names.
+        for url in (MIX["page"], MEDICARE_PAGE, MEDICAID_PAGE):
+            self.assertIn(f'href="{url}"', self.groups["Denial Watch"])
+
+
+class TestOpenEnrollmentPopulation(TestCase):
+    """Marketplace coverage beside the people under 65, each as a change since the first February, on one axis."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.content = _enroll(IN_SEASON)
+        cls.section = _between(cls.content, 'id="enroll-population"', "</section>")
+        method = _between(cls.content, 'id="method-enroll"', "</ol>")
+        cls.method_html = _between(method, "<b>Marketplace coverage and people under 65:</b>", "</li>")
+        cls.method = _text(cls.method_html)
+        cls.script = _between(OE_JS, "/* coverage and people under 65:", "})();")
+
+    def _changes(self):
+        u, feb = _under_65(), MK["feb"]
+        return {r["y"]: (r["n"] / feb[0]["n"] - 1, u[r["y"] - 1] / u[feb[0]["y"] - 1] - 1) for r in feb}
+
+    def test_sits_in_the_trends_after_the_two_charts(self):
+        self.assertEqual(_section_parents(self.content)["enroll-population"], "enroll-trends")
+        self.assertLess(self.content.index('id="pktable"'), self.content.index('id="enroll-population"'))
+        self.assertLess(self.content.index('id="enroll-population"'), self.content.index('id="enroll-act"'))
+        self.assertIn('<h3 class="fhi-card-title" id="pop-title">Marketplace coverage and people under 65, change since 2016</h3>', self.section)
+
+    def test_finding_matches_the_data(self):
+        changes, u, feb = self._changes(), _under_65(), {r["y"]: r["n"] for r in MK["feb"]}
+        first, peak, last = MK["feb"][0]["y"], max(feb, key=feb.get), MK["feb"][-1]["y"]
+        self.assertEqual((first, peak, last), (2016, 2025, 2026))
+        self.assertTrue(1 < changes[peak][0] < 2, changes[peak])
+        self.assertEqual(round(changes[peak][1] * 100), 1)
+        self.assertEqual(round(100 * feb[last] / u[last - 1]), 7)
+        self.assertEqual(round(100 * feb[first] / u[first - 1]), 4)
+        self.assertEqual(
+            _text(_between(self.section, 'id="popnote"', "</p>")).split(">", 1)[-1],
+            "Marketplace coverage more than doubled by February 2025, while the number of people under 65 rose about 1%. "
+            "In February 2026 it came to about 7 for every 100 people under 65, up from about 4 in 2016.",
+        )
+
+    def test_finding_and_note_stay_short(self):
+        prose = _text(_between(self.section, 'id="popnote"', "</p>")) + " " + _text(_between(self.section, 'id="popcaveat"', "</p>"))
+        self.assertLessEqual(len(prose.split()), 65, prose)
+
+    def test_note_says_why_everyone_under_65(self):
+        self.assertIn(
+            "No public count exists of everyone who could buy a marketplace plan, so this compares with everyone under 65, "
+            "who these plans are mainly for.",
+            _text(self.section),
+        )
+
+    def test_chart_label_before_the_script_runs_gives_both_changes(self):
+        changes, last = self._changes(), MK["feb"][-1]["y"]
+        self.assertIn(
+            f'aria-label="Line chart of the change since February {MK["feb"][0]["y"]} in people with marketplace coverage, '
+            f'+{changes[last][0] * 100:.1f}% by February {last} (preliminary), and in people under 65, +{changes[last][1] * 100:.1f}%"',
+            self.section,
+        )
+
+    def test_year_table_is_drawn_by_the_view_from_the_bundle(self):
+        u, feb, prelim = _under_65(), MK["feb"], MK["prelim"]
+        rows = _table_rows(_between(self.section, '<table class="dw-table" id="poptable">', "</table>"))
+        expected = [["February", "Marketplace coverage", "People under 65, July 1 before", "Coverage per 100 under 65"]]
+        for i, r in enumerate(feb):
+            pop = u[r["y"] - 1]
+            n_chg = f" (+{(r['n'] / feb[0]['n'] - 1) * 100:.1f}%)" if i else ""
+            pop_chg = f" (+{(pop / u[feb[0]['y'] - 1] - 1) * 100:.1f}%)" if i else ""
+            expected.append([
+                f"{r['y']} (preliminary)" if r["y"] == prelim else str(r["y"]),
+                f"{r['n']:,}{n_chg}",
+                f"{pop:,}{pop_chg}",
+                f"{100 * r['n'] / pop:.1f}",
+            ])
+        self.assertEqual(rows, expected)
+        self.assertNotIn("poptable", OE_JS)
+
+    def test_script_draws_both_lines_on_one_axis_from_the_data(self):
+        call = re.search(r"line\(\$\('popline'\),.*?\{ymin:([\d.]+),ymax:([\d.]+),ticks:\[([^\]]+)\]", self.script)
+        self.assertIsNotNone(call)
+        ymin, ymax, ticks = float(call.group(1)), float(call.group(2)), [float(t) for t in call.group(3).split(",")]
+        self.assertEqual((ymin, ticks[0], ticks[-1]), (0, 0, ymax))
+        # One axis: both lines are a change since the first February, and every point fits it.
+        for y, pair in self._changes().items():
+            for v in pair:
+                self.assertTrue(ymin <= v <= ymax, (y, v))
+        self.assertEqual(self.script.count("ticks:"), 1)
+        self.assertIn("F.map(r=>({x:r.y,y:r.n/f0-1}))", self.script)
+        self.assertIn("also:[{pts:F.map(r=>({x:r.y,y:U.get(r.y-1)/u0-1}))", self.script)
+        self.assertIn("color:tok('--dw-count'),", self.script)
+        self.assertIn("color:tok('--dw-count-deep'),label:y=>'Under 65 '+chg(y),dash:'8 5'}", self.script)
+        self.assertIn("open:p=>p.x===MK.prelim", self.script)
+
+    def test_population_is_the_july_before_each_february(self):
+        self.assertIn("U.get(r.y-1)", self.script)
+        self.assertIn("u0=U.get(F[0].y-1)", self.script)
+
+    def test_shared_chart_draws_a_second_line_dashed_under_the_first(self):
+        charts = (REPO / "fighthealthinsurance" / "static" / "js" / "denial_watch_charts.js").read_text()
+        self.assertIn("for(const s of also)series(s.pts,s);\n  series(pts,{color,ink,label,open,dash});", charts)
+        self.assertIn('${dash?` stroke-dasharray="${dash}"`:\'\'}', charts)
+
+    def test_key_names_both_lines_without_colour(self):
+        key = _between(self.section, '<p class="dw-key" id="popkey">', "</p>")
+        self.assertEqual(
+            re.findall(r'<i class="dw-sw ([\w-]+)"></i>([^<]+)', key),
+            [("dw-sw-count", "Marketplace coverage"), ("dw-sw-dash", "People under 65, dashed"), ("dw-sw-open", f"{MK['prelim']}, preliminary")],
+        )
+        self.assertIn(".dw-sw-dash { height: 4px; border-radius: 0; background: repeating-linear-gradient(90deg, var(--dw-count-deep) 0 7px, var(--dw-paper) 7px 11px); }", STYLE)
+
+    def test_embeds_the_population_with_the_marketplace(self):
+        self.assertIn('"population": {"under_65": [', self.content)
+        self.assertIn("const U=D.population&&new Map(D.population.under_65.map(r=>[r.y,r.n]));", self.script)
+
+    def test_method_names_the_census_files_and_the_caveats(self):
+        picks = {p["y"]: p["n"] for p in MK["picks"]}
+        join = JOIN_V2025 / JOIN_INTERCENSAL - 1
+        self.assertEqual(f"{join * 100:.2f}", "0.07")
+        for href in (INTERCENSAL, VINTAGE_2025):
+            self.assertIn(f'href="{href}"', self.method_html)
+        for words in (
+            "for July 1 of the year before each February",
+            "(nc-est2020int-agesex-res.csv) for 2015 to 2019",
+            "(nc-est2025-agesex-res.csv) for 2020 to 2025",
+            f"Where the two join, in April 2020, the newer series counts {join * 100:.2f}% more people under 65.",
+            "Census revises every year from 2020 on with each new set of estimates; the next estimates by age are due in April 2027.",
+            f"CMS's count is for all ages: about {OEP_2025_65_PLUS / picks[2025] * 100:.1f}% of 2025's plan picks were by people 65 or older.",
+            f"CMS's 2025 open enrollment file counts about {_millions(OEP_2025_BASIC_HEALTH)} people in them.",
+            "February 2026 is CMS's first count for that month and may change.",
+        ):
+            self.assertIn(words, self.method)
+
+    def test_population_sources_are_in_the_bundle(self):
+        urls = {s["url"]: s["years"] for s in DATA["sources"]}
+        self.assertEqual((urls[INTERCENSAL], urls[VINTAGE_2025]), ("July 2015-2019", "July 2020-2025"))
+
+    def test_no_dashes(self):
+        for part in (self.section, self.method_html, self.script):
+            for dash in ("\u2014", "\u2013"):
+                self.assertNotIn(dash, part)
+
+
+class TestCoverageMixColours(TestCase):
+    """Coverage purples, the marketplace slice set apart by more than colour, and nothing grey, red or green."""
+
+    def test_slices_are_coverage_purples(self):
+        mix = _between(STYLE, "  .dw-mix-job,", "  .dw-mix-seg.dw-mix-marketplace")
+        self.assertEqual(set(re.findall(r"var\((--dw-[\w-]+)\)", mix)) - {"--dw-paper"}, {"--dw-health-1", "--dw-health-2", "--dw-health-3", "--dw-health-5"})
+
+    def test_every_slice_ink_is_a_checked_pair(self):
+        # A slice too narrow for words today can show its share after a refresh, so every slice's ink is checked.
+        mix = _between(STYLE, "  .dw-mix-job,", "  .dw-mix-seg.dw-mix-marketplace")
+        slices = re.findall(r"\{ background-color: var\((--dw-[\w-]+)\);(?: color: var\((--dw-[\w-]+)\);)?", mix)
+        self.assertEqual(len(slices), 5)
+        checked = {(ink, ground) for ink, ground, minimum, _ in DW_PAIRS if minimum >= 4.5}
+        for ground, ink in slices:
+            self.assertIn((ink or "--dw-tile-ink", ground), checked)
+
+    def test_marketplace_slice_is_taller_ringed_and_named(self):
+        self.assertIn(".dw-mix-seg.dw-mix-marketplace { margin-block: -5px; box-shadow: 0 0 0 2px var(--fhi-ink); }", STYLE)
+        self.assertIn(".dw-mix-hl { font-weight: 700; color: var(--fhi-ink); }", STYLE)
+        self.assertIn(".dw-mix-callout span { display: inline-block;", STYLE)
+
+    def test_no_coverage_is_an_empty_slice_not_grey(self):
+        self.assertIn(".dw-mix-uninsured { background-color: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-health-3); }", STYLE)
+
+    def test_no_grey_red_or_green(self):
+        mix = _between(STYLE, "  /* Where people get coverage", "  @media (max-width: 1199px)")
+        for token in ("--dw-na", "--dw-bad", "--dw-good", "--dw-deny"):
+            self.assertNotIn(token, mix)

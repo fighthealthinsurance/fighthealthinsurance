@@ -14,8 +14,10 @@
   .persona-card h3 { margin-bottom: 1rem; }
   /* The two cards under Help Patients sit in a card grid, which spaces them
      with its gap. Each used to sit in a column that carried 1.5rem under it,
-     so the grid keeps that much before the Chooser line that follows. */
-  .persona-section > .fhi-cards { margin-bottom: var(--fhi-space-6); }
+     so the grid keeps that much before the Chooser line that follows. Each
+     card is as tall as what it holds: stretched to the share card's height,
+     Spread Awareness was more than half empty. */
+  .persona-section > .fhi-cards { margin-bottom: var(--fhi-space-6); align-items: start; }
 </style>
 {% endblock extra_style %}
 

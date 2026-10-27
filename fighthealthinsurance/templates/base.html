@@ -1,4 +1,5 @@
 {% load compress %}
+{% load bundles %}
 {% load static %}
 <!DOCTYPE html>
 <html lang="en">
@@ -165,6 +166,7 @@
                                 <li><a href="{% url 'other-resources' %}">Guides</a></li>
                                 {# The yearly guide: the address stays, the year in this label moves with the page's content. #}
                                 <li><a href="{% url 'coverage-changes' %}">Coverage Changes for 2027</a></li>
+                                {% if denial_watch_enabled and open_enrollment_in_season %}<li><a href="{% url 'open-enrollment' %}">Open Enrollment</a></li>{% endif %}
                                 <li><a href="{% url 'blog' %}">Blog</a></li>
                             </ul>
                         </details>
@@ -331,7 +333,9 @@
          <details> now, which the browser opens by itself, and custom.css
          starts every page from a short reset of its own. -->
     <!-- jQuery loads first because the compressed block below needs it. -->
-    <script src="{% static 'js/jquery.js' %}"></script>
+    <script src="{% versioned 'js/jquery.js' %}"></script>
+    <!-- Every box that takes a file takes it dropped too. -->
+    <script src="{% versioned 'js/file_drop.js' %}"></script>
     <!-- Smoothscroll needs jQuery, so it loads after it. The header stays
          at the top of the window through position: sticky in main.css,
          with no script. -->

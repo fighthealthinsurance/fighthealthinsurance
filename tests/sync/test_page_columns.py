@@ -29,6 +29,7 @@ ON_A_COLUMN = {
     "how_to_help.html": "fhi-page-wide",
     "ai_assistants.html": "fhi-page-wide",
     "denial_watch.html": "fhi-page-wide dw",
+    "open_enrollment.html": "fhi-page-wide dw",
     "media_references.html": "fhi-page-wide",
     "microsite_directory.html": "fhi-page-wide",
     "fax_thankyou.html": "fhi-page-wide",
@@ -126,16 +127,91 @@ def test_a_moved_page_keeps_no_bootstrap_container() -> None:
     assert not kept, f"back on a Bootstrap container: {kept}"
 
 
-def test_both_tiers_exist_and_read_the_width_tokens() -> None:
+def _rules() -> dict[str, str]:
+    """custom.css as selector -> every body it is given, in order, comments
+    gone, so declared() reads the value the cascade ends on."""
     css = re.sub(r"/\*.*?\*/", "", CUSTOM_CSS.read_text(), flags=re.S)
-    rules = dict(re.findall(r"([^{}]+)\{([^{}]*)\}", css))
-    shared = rules[next(k for k in rules if k.strip() == ".fhi-page,\n.fhi-page-wide")]
-    assert "var(--fhi-page-reading)" in declared(shared, "max-width")
-    wide = rules[next(k for k in rules if k.strip() == ".fhi-page-wide")]
-    assert "var(--fhi-page-wide)" in declared(wide, "max-width")
+    rules: dict[str, str] = {}
+    for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        rules[selector.strip()] = rules.get(selector.strip(), "") + ";" + body
+    return rules
+
+
+def _token(root: str, name: str) -> str:
+    found = re.search(rf"{re.escape(name)}\s*:\s*([^;]+);", root)
+    assert found, f"{name} is not defined in :root"
+    return found.group(1).strip()
+
+
+def test_both_tiers_exist_and_read_the_width_tokens() -> None:
+    rules = _rules()
+    reading = declared(rules[".fhi-page"], "max-width")
+    wide = declared(rules[".fhi-page-wide"], "max-width")
+    assert "var(--fhi-measure)" in reading
+    assert "var(--fhi-page-wide)" in wide
     # Both give way to the window with a gutter, rather than running to it.
-    for body in (shared, wide):
-        assert "var(--fhi-page-gutter)" in declared(body, "max-width")
-    root = rules[next(k for k in rules if k.strip() == ":root")]
+    for value in (reading, wide):
+        assert "var(--fhi-page-gutter)" in value
+    root = rules[":root"]
     for token in ("--fhi-page-reading", "--fhi-page-wide", "--fhi-page-gutter", "--fhi-measure"):
-        assert f"{token}:" in root, f"{token} is not defined in :root"
+        _token(root, token)
+
+
+def test_the_reading_column_is_one_line_of_its_prose_wide() -> None:
+    """The column is the measure, read at the size its running text is set
+    at, plus its edge padding. A ch on the column is a zero at the column's
+    own 1rem; the prose is --fhi-text-reading, so the measure is scaled by
+    their ratio, and that number has to move if either size does."""
+    rules = _rules()
+    reading = declared(rules[".fhi-page"], "max-width")
+    found = re.search(
+        r"calc\(var\(--fhi-measure\)\s*\*\s*([\d.]+)\s*\+\s*2\s*\*\s*var\(--fhi-space-4\)\)",
+        reading,
+    )
+    assert found, f".fhi-page is not the measure plus its padding: {reading}"
+    root = rules[":root"]
+    prose = float(_token(root, "--fhi-text-reading").removesuffix("rem"))
+    body = float(_token(root, "--fhi-text-body").removesuffix("rem"))
+    assert float(found.group(1)) == prose / body
+    # The column's padding is the edge padding the factor adds back.
+    assert declared(rules[".fhi-page,\n.fhi-page-wide"], "padding").split()[1] == "var(--fhi-space-4)"
+    assert "--fhi-page-reading" not in reading
+
+
+def test_running_text_in_the_reading_column_has_no_cap_of_its_own() -> None:
+    """With a second cap on p and li, the text stopped about 200px short of
+    the column while headings, pictures and boxes ran on to its edge."""
+    css = re.sub(r"/\*.*?\*/", "", CUSTOM_CSS.read_text(), flags=re.S)
+    capped = [
+        selector.strip()
+        for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+        if declared(body, "max-width")
+        and any(
+            re.match(r"\.fhi-page\s.*(\bp\b|\bli\b)", part.strip())
+            for part in selector.split(",")
+        )
+    ]
+    assert not capped, f"text in .fhi-page has its own width again: {capped}"
+
+
+def test_the_intake_flow_and_the_bands_keep_the_reading_tier() -> None:
+    """Only .fhi-page moved to the measure. The intake flow's wrapper and a
+    hero page's bands still hold the 760px reading width."""
+    rules = _rules()
+    for wrapper in (".container-narrow", ".fhi-column"):
+        widths = re.findall(r"max-width\s*:\s*([^;]+)", rules[wrapper])
+        # The first is the desktop width; a phone's own rule lifts it later.
+        assert "var(--fhi-page-reading)" in widths[0], (wrapper, widths)
+
+
+def test_the_patient_access_hero_is_as_narrow_as_the_other_explainers() -> None:
+    """Its subcopy ran one 218-character line across the full 1100px panel;
+    Explain Denial, Understand Policy and State Help hold theirs to 800px."""
+    for name, hero in (
+        ("patient_access.html", "#patient-access-hero"),
+        ("explain_denial.html", "#explain-denial-hero"),
+    ):
+        text = (TEMPLATES / name).read_text()
+        rule = re.search(rf"{re.escape(hero)} \.hero-inner\s*\{{([^}}]*)\}}", text)
+        assert rule, f"{name} does not cap its hero panel"
+        assert declared(rule.group(1), "max-width") == "800px", name

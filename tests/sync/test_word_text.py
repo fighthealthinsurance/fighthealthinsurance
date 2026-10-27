@@ -8,23 +8,35 @@ raises nothing. It has no Django imports, so any worker can use it.
 
 import ast
 import io
+import zipfile
 from pathlib import Path
 
+import pytest
 from loguru import logger
 
 from fighthealthinsurance import word_text
-from tests.sync.test_shared_uploads_are_checked_on_the_way_in import zip_bytes
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+W_STRICT = "http://purl.oclc.org/ooxml/wordprocessingml/main"
+WPS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 ROOM = {"max_chars": 1_000_000, "max_seconds": 60, "max_unpacked_bytes": 10**8}
 
 
-def word_file(body_xml, prolog=""):
+def zip_bytes(entries):
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as archive:
+        for name, content in entries.items():
+            archive.writestr(name, content)
+    return out.getvalue()
+
+
+def word_file(body_xml, prolog="", namespace=W):
     """A minimal .docx whose word/document.xml holds ``body_xml``."""
     document = (
         f'<?xml version="1.0" encoding="UTF-8"?>{prolog}'
-        f'<w:document xmlns:w="{W}"><w:body>{body_xml}</w:body></w:document>'
+        f'<w:document xmlns:w="{namespace}"><w:body>{body_xml}</w:body></w:document>'
     )
     return zip_bytes(
         {
@@ -55,7 +67,7 @@ def text_box(text):
     return (
         f'<w:r xmlns:w="{W}">'
         f'<mc:AlternateContent xmlns:mc="{MC}">'
-        '<mc:Choice Requires="wps"><w:drawing>'
+        f'<mc:Choice Requires="wps" xmlns:wps="{WPS}"><w:drawing>'
         '<wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/'
         'wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0" '
         'simplePos="0" relativeHeight="1" behindDoc="0" locked="0" '
@@ -107,22 +119,30 @@ def test_a_table_reads_cell_by_cell_in_order():
     assert status == word_text.WHOLE
 
 
-def test_tabs_and_line_breaks_keep_their_places():
+@pytest.mark.parametrize("namespace", [W, W_STRICT])
+def test_tabs_and_line_breaks_keep_their_places(namespace):
     body = (
         "<w:p><w:r><w:t>Deductible</w:t><w:tab/><w:t>$500</w:t><w:br/>"
-        "<w:t>Copay</w:t></w:r></w:p>"
+        "<w:t>Copay</w:t><w:cr/><w:t>Covered care</w:t></w:r></w:p>"
     )
-    assert read(word_file(body)) == ("Deductible\t$500\nCopay", word_text.WHOLE)
+    assert read(word_file(body, namespace=namespace)) == (
+        "Deductible\t$500\nCopay\nCovered care",
+        word_text.WHOLE,
+    )
 
 
-def test_non_breaking_hyphens_and_position_tabs_read_as_text():
+@pytest.mark.parametrize("namespace", [W, W_STRICT])
+def test_non_breaking_hyphens_and_position_tabs_read_as_text(namespace):
     body = (
         "<w:p><w:r><w:t>out</w:t><w:noBreakHyphen/><w:t>of</w:t>"
         "<w:noBreakHyphen/><w:t>network</w:t></w:r></w:p>"
         '<w:p><w:r><w:t>Copay</w:t><w:ptab w:alignment="left" '
         'w:relativeTo="margin" w:leader="none"/><w:t>$50</w:t></w:r></w:p>'
     )
-    assert read(word_file(body)) == ("out-of-network\nCopay\t$50", word_text.WHOLE)
+    assert read(word_file(body, namespace=namespace)) == (
+        "out-of-network\nCopay\t$50",
+        word_text.WHOLE,
+    )
 
 
 def test_a_text_box_saved_in_both_forms_reads_once():
@@ -133,11 +153,11 @@ def test_a_text_box_saved_in_both_forms_reads_once():
     )
 
 
-def test_only_the_first_choice_is_read():
+def test_only_the_first_supported_choice_is_read():
     def alternatives(first, second, fallback):
         return (
-            f'<mc:AlternateContent xmlns:mc="{MC}">'
-            f'<mc:Choice Requires="wps">{first}</mc:Choice>'
+            f'<mc:AlternateContent xmlns:mc="{MC}" xmlns:shape="{WPS}">'
+            f'<mc:Choice Requires="shape">{first}</mc:Choice>'
             f'<mc:Choice Requires="w14">{second}</mc:Choice>'
             f"<mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent>"
         )
@@ -156,8 +176,115 @@ def test_it_stops_reading_at_the_character_cap():
     content = word_file(many_paragraphs(40_000))
     text, status = read(content, max_chars=10)
     assert status == word_text.WHOLE
-    assert "Crumpler line 0\n" in text
-    assert "Crumpler line 39999" not in text
+    assert text == "Crumpler l"
+
+
+@pytest.mark.parametrize("namespace", [W, W_STRICT])
+def test_paragraph_tab_stops_do_not_add_text(namespace):
+    body = (
+        paragraph("Benefits") + '<w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="720"/>'
+        '<w:tab w:val="right" w:pos="1440"/></w:tabs></w:pPr>'
+        "<w:r><w:t>Copay</w:t><w:tab/><w:t>$50</w:t></w:r></w:p>"
+    )
+    assert read(word_file(body, namespace=namespace)) == (
+        "Benefits\nCopay\t$50",
+        word_text.WHOLE,
+    )
+
+
+@pytest.mark.parametrize("requires", ["unknown", "w unknown", "missing", ""])
+def test_an_unsupported_choice_uses_the_fallback(requires):
+    body = (
+        f'<mc:AlternateContent xmlns:mc="{MC}" xmlns:unknown="urn:future-word">'
+        f'<mc:Choice Requires="{requires}">'
+        "<unknown:text>Unrecognized text representation</unknown:text></mc:Choice>"
+        f'<mc:Fallback>{paragraph("Covered care")}</mc:Fallback>'
+        "</mc:AlternateContent>"
+    )
+    assert read(word_file(body)) == ("Covered care", word_text.WHOLE)
+
+
+def test_a_later_supported_choice_is_read_after_an_unsupported_nested_choice():
+    body = (
+        f'<mc:AlternateContent xmlns:mc="{MC}" xmlns:future="urn:future-word">'
+        '<mc:Choice Requires="future"><mc:AlternateContent>'
+        f'<mc:Choice Requires="w">{paragraph("Skipped nested text")}</mc:Choice>'
+        "</mc:AlternateContent></mc:Choice>"
+        f'<mc:Choice Requires="w">{paragraph("Covered care")}</mc:Choice>'
+        f'<mc:Fallback>{paragraph("Duplicate text")}</mc:Fallback>'
+        "</mc:AlternateContent>" + paragraph("Exclusions")
+    )
+    assert read(word_file(body)) == ("Covered care\nExclusions", word_text.WHOLE)
+
+
+def test_a_supported_wordprocessing_shape_without_a_fallback_keeps_its_text():
+    body = (
+        f'<mc:AlternateContent xmlns:mc="{MC}" xmlns:shape="{WPS}">'
+        '<mc:Choice Requires="shape"><w:drawing><shape:wsp><shape:txbx>'
+        f'<w:txbxContent>{paragraph("Covered care")}</w:txbxContent>'
+        "</shape:txbx></shape:wsp></w:drawing></mc:Choice></mc:AlternateContent>"
+    )
+    assert read(word_file(body)) == ("Covered care", word_text.WHOLE)
+
+
+@pytest.mark.parametrize(
+    "body, cap, expected",
+    [
+        (paragraph("x" * (2 * word_text._CHUNK_BYTES)), 5, "xxxxx"),
+        (paragraph("é🙂coverage"), 3, "é🙂c"),
+        (paragraph("ABC") + paragraph("DEF"), 5, "ABC\nD"),
+        (paragraph("ABC"), 0, ""),
+    ],
+)
+def test_the_character_cap_is_exact_even_within_a_chunk(body, cap, expected):
+    assert read(word_file(body), max_chars=cap) == (expected, word_text.WHOLE)
+
+
+@pytest.mark.parametrize(
+    "relationship",
+    [
+        '<Relationship Type="urn:unrelated/officeDocument" Target="word/decoy.xml"/>',
+        f'<Other Type="{REL}/officeDocument" Target="word/decoy.xml"/>',
+        f'<Relationship xmlns="urn:unrelated" Type="{REL}/officeDocument" Target="word/decoy.xml"/>',
+        f'<Relationship Type="{REL}/officeDocument" Target="word/decoy.xml" TargetMode="External"/>',
+    ],
+)
+def test_unrelated_or_external_relationships_do_not_choose_the_body(relationship):
+    content = zip_bytes(
+        {
+            "_rels/.rels": (
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                f'{relationship}<Relationship Type="{REL}/officeDocument" Target="word/main.xml"/>'
+                "</Relationships>"
+            ),
+            "word/decoy.xml": f'<w:document xmlns:w="{W}">{paragraph("Decoy")}</w:document>',
+            "word/main.xml": f'<w:document xmlns:w="{W}">{paragraph("Covered care")}</w:document>',
+        }
+    )
+    assert read(content) == ("Covered care", word_text.WHOLE)
+
+
+def test_strict_ooxml_reads_the_body_and_skips_moved_away_text():
+    body = (
+        "<w:p><w:r><w:t>Preferred</w:t><w:tab/><w:t>network</w:t><w:br/>"
+        "<w:t>Covered care</w:t></w:r></w:p>"
+        "<w:p><w:moveFrom><w:r><w:t>Moved away</w:t></w:r></w:moveFrom>"
+        "<w:moveTo><w:r><w:t>Moved here</w:t></w:r></w:moveTo></w:p>"
+    )
+    content = zip_bytes(
+        {
+            "_rels/.rels": (
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Type="http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument" '
+                'Target="word/strict.xml"/></Relationships>'
+            ),
+            "word/strict.xml": f'<w:document xmlns:w="{W_STRICT}"><w:body>{body}</w:body></w:document>',
+        }
+    )
+    assert read(content) == (
+        "Preferred\tnetwork\nCovered care\nMoved here",
+        word_text.WHOLE,
+    )
 
 
 def test_it_stops_at_the_unpacked_size_cap():
@@ -172,6 +299,80 @@ def test_it_stops_at_the_time_limit():
         "",
         word_text.PARTIAL,
     )
+
+
+def test_text_a_tracked_change_moved_is_read_only_where_it_went():
+    body = (
+        "<w:p><w:r><w:t>Preferred network</w:t></w:r></w:p>"
+        '<w:p><w:moveFrom w:id="1"><w:r><w:t>Clinic A</w:t></w:r></w:moveFrom></w:p>'
+        "<w:p><w:r><w:t>Out-of-network</w:t></w:r></w:p>"
+        '<w:p><w:moveTo w:id="2"><w:r><w:t>Clinic A</w:t></w:r></w:moveTo></w:p>'
+    )
+    text, status = read(word_file(body))
+    assert status == word_text.WHOLE
+    assert text.split() == ["Preferred", "network", "Out-of-network", "Clinic", "A"]
+
+
+def test_the_body_is_found_through_the_package_relationship():
+    rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    document = f'<w:document xmlns:w="{W}"><w:body>{paragraph("Crumpler main")}</w:body></w:document>'
+    content = zip_bytes(
+        {
+            "[Content_Types].xml": b"<Types/>",
+            "_rels/.rels": (
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                f'<Relationship Id="rId1" Type="{rel}/officeDocument" Target="/word/main.xml"/>'
+                "</Relationships>"
+            ).encode(),
+            "word/main.xml": document.encode(),
+        }
+    )
+    assert read(content) == ("Crumpler main", word_text.WHOLE)
+
+
+def test_a_relationship_outside_the_package_falls_back_to_the_default_body():
+    rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    content = zip_bytes(
+        {
+            "_rels/.rels": (
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                f'<Relationship Id="rId1" Type="{rel}/officeDocument" Target="../outside.xml"/>'
+                "</Relationships>"
+            ).encode(),
+            "word/document.xml": (
+                f'<w:document xmlns:w="{W}"><w:body>{paragraph("Crumpler default")}</w:body></w:document>'
+            ).encode(),
+        }
+    )
+    assert read(content) == ("Crumpler default", word_text.WHOLE)
+
+
+@pytest.mark.parametrize("compression", [zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA])
+@pytest.mark.parametrize(
+    "part", ["word/document.xml", "_rels/.rels", "word/media/unused.bin"]
+)
+def test_unbounded_compression_is_never_opened(compression, part, monkeypatch):
+    document = f'<w:document xmlns:w="{W}"><w:body>{paragraph("Covered care")}</w:body></w:document>'
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as archive:
+        if part != "word/document.xml":
+            archive.writestr("word/document.xml", document)
+        archive.writestr(part, document, compress_type=compression)
+
+    opened = []
+    original_open = zipfile.ZipFile.open
+
+    def watched(archive, name, *args, **kwargs):
+        opened.append(name.filename if isinstance(name, zipfile.ZipInfo) else name)
+        return original_open(archive, name, *args, **kwargs)
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", watched)
+    result = read(out.getvalue())
+    assert part not in opened
+    if part == "word/document.xml":
+        assert result == ("", word_text.UNREADABLE)
+    else:
+        assert result == ("Covered care", word_text.WHOLE)
 
 
 def test_a_file_that_is_not_a_word_file_is_unreadable():

@@ -20,6 +20,7 @@ from fighthealthinsurance.ml.ml_document_extraction import (
 )
 from fighthealthinsurance.ml.ml_policy_doc_helper import MLPolicyDocHelper
 from fighthealthinsurance.models import PolicyDocument, PolicyDocumentAnalysis
+from tests.pdf_fixtures import make_pdf_bytes
 
 # --- Form Validation Tests ---
 
@@ -156,6 +157,16 @@ class TextExtractionTest(TestCase):
         full_text, page_dict = extract_text_from_pdf_bytes(pdf_bytes)
         self.assertIn("page 1", full_text.lower())
         self.assertIn(1, page_dict)
+
+    def test_a_blank_page_keeps_the_page_numbers_after_it(self):
+        pdf_bytes = make_pdf_bytes(["Coverage terms.", "", "Exclusions apply."])
+
+        full_text, page_dict = extract_text_from_pdf_bytes(pdf_bytes)
+
+        self.assertEqual(sorted(page_dict), [1, 3])
+        self.assertIn("Exclusions", page_dict[3])
+        self.assertIn("[Page 3]", full_text)
+        self.assertNotIn("[Page 2]", full_text)
 
     def test_extract_text_from_plaintext(self):
         content = b"This is a plain text policy document with coverage details."

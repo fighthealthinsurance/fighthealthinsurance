@@ -203,20 +203,29 @@
         gap: 3rem;
     }
 
+    /* The count sits on a panel of its own. Grey words and a bright green
+       number straight on the hero photograph measured about 1:1 against
+       it, and the caption all but vanished; on the panel both read from
+       the site's own inks. */
     .stat-item {
         text-align: center;
+        background: var(--fhi-surface);
+        border-radius: var(--fhi-radius);
+        box-shadow: var(--fhi-shadow);
+        padding: var(--fhi-space-3) var(--fhi-space-7);
     }
 
     .stat-number {
         font-size: 3rem;
         font-weight: bold;
-        color: #28a745;
+        line-height: var(--fhi-line-heading);
+        color: var(--fhi-green-ink);
     }
 
     .stat-label {
         font-size: 1rem;
-        color: #6c757d;
-        margin-top: 0.5rem;
+        color: var(--fhi-ink-2);
+        margin-top: var(--fhi-space-1);
     }
 
     .denial-card {

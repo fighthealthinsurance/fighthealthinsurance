@@ -721,7 +721,7 @@ class Base(Configuration):
         "django_tables2",
         "django_recaptcha",
         "rest_framework",
-        "mfa",
+        "fhi_users.mfa_app_config.MfaConfig",
         "channels",
         "django_prometheus",
         "drf_spectacular",

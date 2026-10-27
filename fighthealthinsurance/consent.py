@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime
 from typing import Any, Mapping, Optional
 
+from django.utils import timezone
 from loguru import logger
 
 # The "Last updated" date each policy page shows; tests hold them equal.
@@ -39,6 +40,13 @@ BOXES: dict[str, str] = {
         "to. (Doctors, therapists and offices: see our professional version.)"
     ),
 }
+
+
+# The intake boxes /server_side_ocr needs ticked before it reads an upload.
+# The pii box is about the letter's text, so the intake page asks it once
+# the text read from the upload is in its letter box.
+SERVER_OCR_BOXES = ("privacy", "tos", "personalonly")
+SERVER_OCR_SESSION_KEY = "server_ocr_agreements"
 
 
 # The agreement to share plan documents for research, on the share page and
@@ -75,6 +83,20 @@ def boxes_as_shown(ticked: Mapping[str, Any]) -> list[dict[str, Any]]:
         {"name": name, "label": label, "ticked": bool(ticked.get(name))}
         for name, label in BOXES.items()
     ]
+
+
+def note_server_ocr_consent(session: Any, ticked: Mapping[str, Any]) -> None:
+    """Keep in the session what was ticked before an upload was read, and
+    against which policy versions. There is no denial yet to hang a
+    ConsentRecord on; the intake page records its own when the case is made."""
+    session[SERVER_OCR_SESSION_KEY] = {
+        "terms_version": TERMS_VERSION.isoformat(),
+        "privacy_version": PRIVACY_VERSION.isoformat(),
+        "boxes": [
+            box for box in boxes_as_shown(ticked) if box["name"] in SERVER_OCR_BOXES
+        ],
+        "accepted_at": timezone.now().isoformat(),
+    }
 
 
 def record_consent(

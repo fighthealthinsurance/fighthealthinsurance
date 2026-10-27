@@ -1135,7 +1135,7 @@ async def _get_in_process(app: ASGIApp, path: str) -> tuple[int, str]:
 # its template: templates/scrub.html, health_history.html and
 # plan_documents.html.
 SCAN_EVERY_PAGE = (
-    "Add every page. We read it on this device and put the text in the box below."
+    "Add every page. We read it on this device and put the text in this box."
 )
 SCAN_EMAIL_WHY = (
     "We need your email to go on. It lets us delete your data later if you ask."

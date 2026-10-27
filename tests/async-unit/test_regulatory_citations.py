@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 from fighthealthinsurance.generate_appeal import AppealGenerator
 from fighthealthinsurance.regulatory_citations import (
+    FEDERAL_HOOKS,
     get_regulatory_citation_context,
     self_insured_from,
 )
@@ -140,7 +141,7 @@ class TestPublicProgramFiltering(unittest.TestCase):
         block = get_regulatory_citation_context("MA", programs=("medicare_advantage",))
         assert block is not None
         self.assertIn("CMS-0057-F", block)
-        self.assertIn("algorithms and artificial", block)
+        self.assertIn("CMS-4201-F", block)
         self.assertNotIn("147.136", block)
         self.assertNotIn("Massachusetts", block)
         self.assertIn("this is Medicare Advantage coverage", block)
@@ -149,7 +150,7 @@ class TestPublicProgramFiltering(unittest.TestCase):
         block = get_regulatory_citation_context("MA", programs=("medicaid",))
         assert block is not None
         self.assertIn("CMS-0057-F", block)
-        self.assertNotIn("algorithms and artificial", block)
+        self.assertNotIn("CMS-4201-F", block)
         self.assertNotIn("147.136", block)
         self.assertNotIn("Massachusetts", block)
 
@@ -246,6 +247,57 @@ class TestPublicProgramFiltering(unittest.TestCase):
         self.assertNotIn("147.136", result)
         self.assertNotIn("Massachusetts", result)
         self.assertIn("CMS-0057-F", result)
+
+
+class TestMedicareAdvantageOnlyHooks(unittest.TestCase):
+    """CMS-4201-F binds Medicare Advantage only, so the prompt lists it only then."""
+
+    def test_the_hook_is_named_for_its_real_sources(self):
+        names = " ".join(h.name for h in FEDERAL_HOOKS)
+        self.assertIn("CMS-4201-F", names)
+        self.assertIn("422.101(b)(6) and (c)(1)(i)", names)
+        self.assertIn("February 6, 2024 FAQ memo", names)
+        self.assertNotIn("CMS 2024 Final Rule", names)
+
+    def test_its_summary_opens_with_its_scope(self):
+        hook = next(h for h in FEDERAL_HOOKS if "CMS-4201-F" in h.name)
+        self.assertTrue(
+            hook.summary.startswith(
+                "Medicare Advantage plans only, for Part A and Part B benefits"
+            )
+        )
+
+    def test_left_out_unless_a_public_program_is_known(self):
+        for programs in ((), ("marketplace",), ("erisa",)):
+            for self_insured in (False, None):
+                with self.subTest(programs=programs, self_insured=self_insured):
+                    block = get_regulatory_citation_context(
+                        "CA", programs=programs, self_insured=self_insured
+                    )
+                    assert block is not None
+                    self.assertIn("California", block)
+                    self.assertNotIn("CMS-4201-F", block)
+                    self.assertNotIn("Medicare Advantage plans only", block)
+
+    def test_kept_for_a_medicare_advantage_plan(self):
+        block = get_regulatory_citation_context(
+            "CA", programs=("medicare_advantage",)
+        )
+        assert block is not None
+        self.assertIn("CMS-4201-F", block)
+        self.assertIn("Medicare Advantage plans only", block)
+
+    def test_kept_when_medicare_advantage_sits_beside_a_private_plan(self):
+        block = get_regulatory_citation_context(
+            "CA", programs=("medicare_advantage", "erisa")
+        )
+        assert block is not None
+        self.assertIn("CMS-4201-F", block)
+
+    def test_cms_0057_f_still_rides_along_for_marketplace_plans(self):
+        block = get_regulatory_citation_context("CA", programs=("marketplace",))
+        assert block is not None
+        self.assertIn("CMS-0057-F", block)
 
 
 class TestRegulatoryPromptInjection(unittest.TestCase):

@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load bundles %}
 {% block title %}
 Login
 {% endblock title %}
@@ -42,7 +43,7 @@ Login
 
 <!-- jQuery here, not only at the foot of base.html: the FIDO2 script below
      calls it as soon as it loads, before base.html's copy arrives. -->
-<script src="{% static 'js/jquery.js'%}"></script>
+<script src="{% versioned 'js/jquery.js' %}"></script>
 
 {% include 'FIDO2/Auth_JS.html'%}
 <script type="text/javascript">

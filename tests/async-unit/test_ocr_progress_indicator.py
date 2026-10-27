@@ -223,20 +223,26 @@ def test_progress_box_keeps_the_sibling_live_region_role():
 
 
 def test_progress_box_sits_by_the_uploader():
-    """Under the file picker, above the textarea, not a screen away.
+    """Just above the letter box, which holds the file picker, not a screen
+    away.
 
     The box used to live with the submit-gate messages below a 20-row
     textarea, so on a phone the person who had just picked a file saw
-    nothing change (review). It must come after the uploader and before the
-    denial textarea, which also makes its "below" wording true.
+    nothing change (review). The picker now sits inside the letter box, so
+    the progress box comes right before that box, which also makes its
+    "below" wording true.
     """
     html = (TEMPLATES / "scrub.html").read_text()
-    uploader = html.index('id="uploader"')
     box = html.index('id="ocr_in_progress"')
+    letter_box = html.index('class="fhi-letter-box"')
     textarea = html.index('id="denial_text"')
-    assert uploader < box < textarea, (
-        "the progress box is no longer between the uploader and the textarea"
+    picker = html.index('{% include "partials/letter_box_pick.html"')
+    assert box < letter_box < textarea < picker, (
+        "the progress box is no longer just above the letter box"
     )
+    between = html[box:letter_box]
+    for tag in ("<textarea", "<input", "<section", "<h2"):
+        assert tag not in between, f"{tag} sits between the progress box and the letter box"
 
 
 def test_progress_copy_has_no_em_dash():

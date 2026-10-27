@@ -12,11 +12,24 @@
   .hero-announce-new { padding: 0 var(--fhi-space-2); border-radius: 999px; background-color: var(--fhi-green); color: #15202b; font-size: var(--fhi-text-micro); font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
   .hero-announce-count { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
   .hero-announce-go { text-decoration: underline; text-underline-offset: 0.2em; }
+  /* The highlight cards: two across where they fit, one under the other on a phone. */
+  .home-highlights { width: 100%; max-width: 56rem; margin-inline: auto; }
+  .fhi-card > .home-highlight-stat { margin-top: var(--fhi-space-2); }
+  .home-highlight-stat { display: flex; flex-direction: column; gap: var(--fhi-space-1); color: var(--fhi-ink-2); }
+  .home-highlight-num { color: var(--fhi-ink); font-size: var(--fhi-text-title); font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
 </style>
 {% endblock extra_style %}
 
 {% block hero_announcement %}
-{% if denial_watch_enabled and denial_watch_hero %}
+{# One pill at most: the season's while open enrollment runs, otherwise Denial Watch's until its hero date. #}
+{% if denial_watch_enabled and open_enrollment_in_season %}
+{% block season_pill %}
+{# To point the season's pill somewhere else, change only this block. #}
+<a class="hero-announce" id="season-hero" href="{% url 'open-enrollment' %}">
+    <span><strong>{{ open_enrollment_heading }}:</strong> <span class="hero-announce-go">dates, numbers and what to do</span></span>
+</a>
+{% endblock season_pill %}
+{% elif denial_watch_enabled and denial_watch_hero %}
 {# Names the insurers as the ones denying, so it can't read as us. Without script it gives the yearly average; the script swaps in today's count, figured in the browser so the cached page stays right. #}
 <a class="hero-announce" id="denial-watch-hero" href="{% url 'denial-watch' %}" data-per-day="{{ denial_watch_teaser.per_day }}" data-year="{{ denial_watch_teaser.year }}">
     <span class="hero-announce-new">New</span>
@@ -38,11 +51,28 @@
 
 {% block after_hero %}
 {% if denial_watch_enabled %}
-<section id="denial-watch-home" class="start-section" aria-labelledby="denial-watch-home-title">
-    <div class="fhi-column fhi-column-wide fhi-stack fhi-stack-centred">
-        <h2 class="start-section-title" id="denial-watch-home-title">Denial Watch</h2>
-        <p class="start-section-subtitle">Insurers denied about 1 in {{ denial_watch_teaser.one_in }} in-network claims on HealthCare.gov plans in {{ denial_watch_teaser.year }}.</p>
-        <a class="fhi-button fhi-button-secondary" href="{% url 'denial-watch' %}">See the numbers on coverage, denials and costs</a>
+{# Right after How It Works, so the appeal comes first; the enrollment card takes the open enrollment page's own title for the day. #}
+<section id="home-highlights" class="start-section" aria-labelledby="home-highlights-title">
+    <div class="fhi-column fhi-column-wide fhi-stack">
+        <h2 class="start-section-title" id="home-highlights-title">Denials and coverage, by the numbers</h2>
+        <div class="fhi-switcher home-highlights">
+            <div class="fhi-card" id="denial-watch-home">
+                <h3 class="fhi-card-title" id="denial-watch-home-title">Denial Watch</h3>
+                <p>Maps and trends from public records: how often insurers deny claims, how often appeals win, and what care costs.</p>
+                <p class="home-highlight-stat"><b class="home-highlight-num">About 1 in {{ denial_watch_teaser.one_in }} denied</b> <span>in-network claims on HealthCare.gov plans, by insurers in {{ denial_watch_teaser.year }}</span></p>
+                <a class="fhi-button fhi-button-secondary fhi-card-action" href="{% url 'denial-watch' %}">See the numbers on Denial Watch</a>
+            </div>
+            <div class="fhi-card" id="open-enrollment-home">
+                <h3 class="fhi-card-title" id="open-enrollment-home-title">{{ open_enrollment_heading }}</h3>
+                {% if open_enrollment_in_season %}
+                <p>The sign-up dates, what to compare before you pick a plan, and where to get free help.</p>
+                {% else %}
+                <p>When you can still sign up, what to do if you lose coverage, and where to get free help.</p>
+                {% endif %}
+                <p class="home-highlight-stat"><b class="home-highlight-num">{{ denial_watch_teaser.picks_text }} marketplace plans</b> <span>picked for {{ denial_watch_teaser.picks_year }} in open enrollment, counting automatic renewals</span></p>
+                <a class="fhi-button fhi-button-secondary fhi-card-action" href="{% url 'open-enrollment' %}">{% if open_enrollment_in_season %}Open enrollment dates and what to do{% else %}How to sign up outside open enrollment{% endif %}</a>
+            </div>
+        </div>
     </div>
 </section>
 {% endif %}

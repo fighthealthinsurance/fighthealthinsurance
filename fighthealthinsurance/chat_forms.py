@@ -6,6 +6,7 @@ from django.core.files.uploadedfile import UploadedFile
 
 from fighthealthinsurance import consent
 from fighthealthinsurance.form_utils import (
+    FileDropInput,
     MultipleFileField,
     MultipleFileInput,
     StyledWidgetsMixin,
@@ -214,9 +215,8 @@ class UnderstandPolicyForm(BaseConsentForm):
 
     policy_document = forms.FileField(
         required=True,
-        widget=forms.FileInput(
+        widget=FileDropInput(
             attrs={
-                "class": "fhi-field",
                 "id": "policy_document",
                 "accept": ".pdf,.docx,.txt",
             }
