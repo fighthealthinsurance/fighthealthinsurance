@@ -157,6 +157,10 @@ jobs:
           persist-credentials: false
       - name: Setup node
         uses: actions/setup-node@v6
+        # Latest 22.x: the runner's cached Node can sit below package.json's engines.
+        with:
+          node-version: '22'
+          check-latest: true
 
       - name: Check npm build
         run: ./scripts/ci_npm_build.sh
@@ -189,6 +193,9 @@ jobs:
 
       - name: Setup node
         uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+          check-latest: true
 
       - name: Cache npm dependencies
         uses: actions/cache@v4
@@ -278,6 +285,9 @@ jobs:
 
       - name: Setup node
         uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+          check-latest: true
 
       - name: Cache npm dependencies
         uses: actions/cache@v4
@@ -360,6 +370,9 @@ jobs:
 
       - name: Setup node
         uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+          check-latest: true
 
       - name: Cache npm dependencies
         uses: actions/cache@v4
@@ -447,6 +460,9 @@ jobs:
 
       - name: Setup node
         uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+          check-latest: true
 
       - name: Cache npm dependencies
         uses: actions/cache@v4
@@ -539,6 +555,9 @@ jobs:
 
       - name: Setup node
         uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+          check-latest: true
 
       - name: Cache npm dependencies
         uses: actions/cache@v4
