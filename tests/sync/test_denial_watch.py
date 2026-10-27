@@ -1539,8 +1539,10 @@ class TestDenialWatchEnrollmentCard(TestCase):
     def test_coverage_points_to_the_open_enrollment_page(self):
         coverage = _between(_page(), 'id="coverage"', "</section>")
         self.assertIn('id="cmap"', coverage)
-        pointer = _between(coverage, 'id="coverage-marketplace"', "</p>")
-        self.assertIn(f'<a href="{reverse("open-enrollment")}">the open enrollment page</a>', pointer)
+        self.assertIn(
+            f'<p id="coverage-marketplace">See marketplace coverage year by year on <a href="{reverse("open-enrollment")}">the open enrollment page</a>.</p>',
+            coverage,
+        )
 
     def test_sources_point_to_the_open_enrollment_pages_method(self):
         link = f'<a href="{reverse("open-enrollment")}#method-enroll">the open enrollment page\'s sources</a>'
@@ -2345,8 +2347,8 @@ class TestDenialWatchCharts(TestCase):
         cls.style = _between(_page(), "<style>", "</style>")
 
     def test_phone_chart_text_is_enlarged(self):
-        # The 560-wide drawing fills about 310px on a phone, which made 12px text under 7px.
-        phone = _between(self.style, "@media (max-width: 560px)", "\n  }")
+        # The 560-wide drawing fills about 310px on a phone, which made 12px text under 7px. The coverage donut has a phone block of its own.
+        phone = "\n".join(re.findall(r"@media \(max-width: 560px\) \{(.*?)\n  \}", self.style, re.S))
         self.assertIn(".dw-chart text { font-size: 20px; }", phone)
         self.assertIn(".dw-chart text.dw-end { font-size: 22px; }", phone)
         # The edge labels run a few pixels past the drawing at that size.

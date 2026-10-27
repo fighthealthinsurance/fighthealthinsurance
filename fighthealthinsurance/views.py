@@ -773,48 +773,58 @@ def denial_watch_teaser() -> dict[str, typing.Any]:
     }
 
 
-# The coverage bar's slices by share: which are wide enough to hold words, and from what screen width (see denial_watch_style.html).
-COVERAGE_MIX_SIZES = (("l", 30), ("m", 15), ("s", 10), ("xs", 6))
-# The coverage bar's names inside a slice, for the slices wide enough to hold one.
-COVERAGE_MIX_SHORT = {
-    "job": "Job-based",
-    "medicare": "Medicare",
-    "medicaid_chip": "Medicaid or CHIP",
-    "uninsured": "Uninsured",
-}
+# The coverage donut in its own units: the centre, the ring's outer and inner radius, and how far the marketplace slice stands out.
+COVERAGE_MIX_DONUT = dict(c=100.0, outer=92.0, inner=60.0, pop=6.0)
+
+
+def _donut_point(r: float, share: float) -> str:
+    """The point at radius r, share percent of the way round clockwise from 12 o'clock."""
+    a = 2 * math.pi * share / 100
+    c = COVERAGE_MIX_DONUT["c"]
+    return f"{c + r * math.sin(a):.2f} {c - r * math.cos(a):.2f}"
+
+
+def _donut_slice(start: float, share: float, outer: float, inner: float) -> str:
+    """An SVG path for the ring between inner and outer, from start to start + share, both in percent of the circle."""
+    big = 1 if share > 50 else 0
+    end = start + share
+    return (
+        f"M {_donut_point(outer, start)} A {outer:g} {outer:g} 0 {big} 1 {_donut_point(outer, end)} "
+        f"L {_donut_point(inner, end)} A {inner:g} {inner:g} 0 {big} 0 {_donut_point(inner, start)} Z"
+    )
 
 
 @functools.lru_cache(maxsize=1)
 def denial_watch_coverage_mix() -> dict[str, typing.Any]:
-    """Where people get coverage, the bar both pages draw without the script.
+    """Where people get coverage, the donut both pages draw without the script.
 
-    Each slice's share as words and as a width, where it starts (for the
-    marketplace slice's label above the bar), and how much label fits inside,
-    by size from "l" to "xs": the smaller the slice, the wider the screen its
-    name and share need.
+    Each slice's share as words and as a ring path. The ring turns so the
+    marketplace slice starts at 12 o'clock and the rest follow clockwise in
+    the list's order, and that slice stands out past the ring on both sides.
     """
     mix = _denial_watch_data()["coverage_mix"]
-    rows, start = [], 0.0
+    keys = [r["k"] for r in mix["rows"]]
+    turn = -sum(r["pct"] for r in mix["rows"][: keys.index("marketplace")])
+    d = COVERAGE_MIX_DONUT
+    rows, start = [], turn
     for r in mix["rows"]:
+        out = d["outer"] + d["pop"] if r["k"] == "marketplace" else d["outer"]
+        inner = d["inner"] - d["pop"] if r["k"] == "marketplace" else d["inner"]
         rows.append(
             dict(
                 k=r["k"],
                 css=r["k"].replace("_", "-"),
                 label=r["label"],
                 pct=f"{r['pct']:.1f}%",
-                width=f"{r['pct']:.2f}",
-                start=f"{start:.2f}",
-                size=next(
-                    (size for size, least in COVERAGE_MIX_SIZES if r["pct"] >= least),
-                    "",
-                ),
-                short=COVERAGE_MIX_SHORT.get(r["k"], ""),
+                path=_donut_slice(start, r["pct"], out, inner),
             )
         )
         start += r["pct"]
+    marketplace = next(r for r in mix["rows"] if r["k"] == "marketplace")
     return {
         "rows": rows,
         "marketplace": next(r for r in rows if r["k"] == "marketplace"),
+        "in_100": round(marketplace["pct"]),
     }
 
 

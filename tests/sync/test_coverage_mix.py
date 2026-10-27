@@ -1,6 +1,6 @@
 """Marketplace enrollment in context: where people get coverage, and coverage beside population.
 
-The open enrollment page and Denial Watch's coverage section share one bar of
+The open enrollment page and Denial Watch's coverage section share one donut of
 everyone, each person counted once, from FHI's tally of Census's survey
 (partials/coverage_mix.html). The open enrollment page also sets each
 February's marketplace coverage beside the people under 65. The numbers come
@@ -10,6 +10,7 @@ agrees with the data after a refresh.
 """
 
 import csv
+import math
 import pathlib
 import re
 import tempfile
@@ -17,7 +18,7 @@ import tempfile
 from django.test import TestCase
 from django.urls import reverse
 
-from tests.sync.test_contrast import DW_PAIRS
+from tests.sync.test_contrast import DW_PAIRS, contrast_ratio, dw_colour
 from tests.sync.test_denial_watch import DATA, MK, REPO, _between, _load_builder, _millions, _page, _text
 from tests.sync.test_open_enrollment import IN_SEASON, OE_JS, _enroll, _section_parents, _table_rows, _words
 
@@ -45,6 +46,57 @@ def _mix(html: str) -> str:
     return _between(html, '<section class="fhi-stack" id="coverage-mix"', "</section>")
 
 
+def _donut(mix: str) -> str:
+    return _between(mix, '<svg class="dw-mix-donut"', "</svg>")
+
+
+# One ring slice as the view writes it: along the outer edge clockwise, in to the inner edge, and back anticlockwise.
+_N = r"(-?[\d.]+)"
+SLICE = re.compile(
+    rf'<path class="dw-mix-([\w-]+)" d="M {_N} {_N} A {_N} \4 0 ([01]) 1 {_N} {_N} L {_N} {_N} A {_N} \10 0 \5 0 {_N} {_N} Z"/>'
+)
+
+
+def _slices(mix: str) -> list[dict]:
+    """Each path in the donut, in drawing order: its kind, radii, arc flag, and the four corners as (x, y)."""
+    donut = _donut(mix)
+    found = SLICE.findall(donut)
+    assert len(found) == donut.count("<path"), "a slice path isn't one ring slice"
+    out = []
+    for css, x0, y0, outer, big, x1, y1, x2, y2, inner, x3, y3 in found:
+        f = [float(v) for v in (x0, y0, x1, y1, x2, y2, x3, y3)]
+        out.append(
+            dict(css=css, outer=float(outer), inner=float(inner), big=big == "1", start=(f[0], f[1]), end=(f[2], f[3]), end_in=(f[4], f[5]), start_in=(f[6], f[7]))
+        )
+    return out
+
+
+def _centre(mix: str) -> float:
+    # A square viewBox from 0, so the centre is half its side on both axes.
+    side = re.search(r'viewBox="0 0 ([\d.]+) \1"', _donut(mix))
+    assert side, "the donut's viewBox isn't a square from 0"
+    return float(side.group(1)) / 2
+
+
+def _turn(point: tuple[float, float], c: float) -> float:
+    """How far round a point is, clockwise from 12 o'clock, in percent of the circle."""
+    x, y = point
+    return 100 * (math.atan2(x - c, c - y) / (2 * math.pi) % 1)
+
+
+def _apart(a: float, b: float) -> float:
+    """The distance between two turns round the circle, in percent."""
+    return abs((a - b + 50) % 100 - 50)
+
+
+def _by_kind(mix: str) -> dict[str, dict]:
+    return {s["css"]: s for s in _slices(mix)}
+
+
+def _css(key: str) -> str:
+    return key.replace("_", "-")
+
+
 def _rows(path, **match):
     with open(path, newline="") as f:
         return [r for r in csv.DictReader(f) if all(r[k] == v for k, v in match.items())]
@@ -59,7 +111,7 @@ def _under_65() -> dict[int, int]:
 
 
 class TestCoverageMixData(TestCase):
-    """The bar's rows are the checked-in tally, each person once, and the build stops on a tally it can't draw."""
+    """The donut's rows are the checked-in tally, each person once, and the build stops on a tally it can't draw."""
 
     @classmethod
     def setUpClass(cls):
@@ -79,7 +131,7 @@ class TestCoverageMixData(TestCase):
         finally:
             pathlib.Path(f.name).unlink()
 
-    def test_bundle_bar_is_the_checked_in_tally(self):
+    def test_bundle_rows_are_the_checked_in_tally(self):
         rows = _rows(HERE / "coverage_mix.csv", measure="now", age="all")
         self.assertEqual(
             [(r["k"], r["label"], r["n"], r["pct"]) for r in MIX["rows"]],
@@ -99,7 +151,7 @@ class TestCoverageMixData(TestCase):
         # The method note says every share is within half a point either way.
         self.assertTrue(all(r["pct_moe"] < 0.5 for r in MIX["rows"]), [r["pct_moe"] for r in MIX["rows"]])
 
-    def test_the_bar_is_everyone_at_the_interview(self):
+    def test_the_donut_is_everyone_at_the_interview(self):
         self.assertEqual(MIX["period"], "At interview, Feb-Apr 2026")
         self.assertEqual(MIX["page"], SURVEY_PAGE)
         self.assertEqual(MIX["file"].rsplit("/", 1)[1], "asecpub26csv.zip")
@@ -217,7 +269,7 @@ class TestCoverageCountsData(TestCase):
 
 
 class TestCoverageMixOnBothPages(TestCase):
-    """The same bar on both pages, drawn by the view, with every share in words."""
+    """The same donut on both pages, drawn by the view, with every share in words."""
 
     @classmethod
     def setUpClass(cls):
@@ -227,36 +279,94 @@ class TestCoverageMixOnBothPages(TestCase):
         cls.pages = {"open enrollment": _mix(cls.oe), "Denial Watch": _mix(cls.dw)}
 
     def test_renders_without_the_script(self):
-        # The bar, its label and the list are in the page itself; no script names them.
+        # The donut, its middle and the list are in the page itself; no script names them.
         for name, mix in self.pages.items():
             with self.subTest(page=name):
-                self.assertEqual(mix.count('<span class="dw-mix-seg'), len(MIX["rows"]))
+                self.assertEqual(_donut(mix).count("<path "), len(MIX["rows"]))
                 self.assertEqual(len(re.findall(r"<li[ >]", _between(mix, 'id="mix-list"', "</ul>"))), len(MIX["rows"]))
         for script in (OE_JS, (REPO / "fighthealthinsurance" / "static" / "js" / "denial_watch.js").read_text()):
             self.assertNotIn("mix", script)
 
-    def test_list_says_every_share_in_words_in_the_bars_order(self):
+    def test_list_says_every_share_in_words_in_the_datas_order(self):
         for name, mix in self.pages.items():
             items = re.findall(r'<li[^>]*><i class="dw-mix-sw [\w-]+"></i><span>([^<]+)</span> <span class="dw-num">([^<]+)</span></li>', mix)
             self.assertEqual(items, [(r["label"], f"{r['pct']:.1f}%") for r in MIX["rows"]], name)
 
-    def test_bar_widths_are_the_shares(self):
+    def test_one_slice_per_row_with_the_marketplace_drawn_last(self):
+        # Drawn last, the marketplace slice sits over its neighbours' edges; the list keeps the data's order.
+        kinds = [_css(r["k"]) for r in MIX["rows"]]
         for name, mix in self.pages.items():
-            widths = [float(w) for w in re.findall(r'<span class="dw-mix-seg [^"]+" style="width: ([\d.]+)%">', mix)]
-            self.assertEqual(widths, [round(r["pct"], 2) for r in MIX["rows"]], name)
-            self.assertAlmostEqual(sum(widths), 100, delta=0.05)
+            with self.subTest(page=name):
+                self.assertEqual([s["css"] for s in _slices(mix)], [k for k in kinds if k != "marketplace"] + ["marketplace"])
+                self.assertEqual(re.findall(r'<i class="dw-mix-sw dw-mix-([\w-]+)"></i>', mix), kinds)
 
-    def test_marketplace_slice_is_named_where_it_starts(self):
-        before = sum(r["pct"] for r in MIX["rows"][: [r["k"] for r in MIX["rows"]].index("marketplace")])
+    def test_slice_spans_are_the_shares(self):
         for name, mix in self.pages.items():
-            callout = _between(mix, '<p class="dw-mix-callout"', "</p>")
-            self.assertIn(f'style="margin-left: {before:.2f}%"><span>Marketplace plan only, {_share("marketplace"):.1f}%</span>', callout, name)
-            self.assertIn('<li class="dw-mix-hl"><i class="dw-mix-sw dw-mix-marketplace"></i><span>Marketplace plan only</span>', mix)
+            c, slices = _centre(mix), _by_kind(mix)
+            for r in MIX["rows"]:
+                s = slices[_css(r["k"])]
+                with self.subTest(page=name, kind=r["k"]):
+                    span = (_turn(s["end"], c) - _turn(s["start"], c)) % 100
+                    self.assertAlmostEqual(span, r["pct"], delta=0.01)
+                    self.assertEqual(s["big"], r["pct"] > 50)
+                    # Straight edges in to the centre, and every corner on its ring.
+                    self.assertAlmostEqual(_apart(_turn(s["start_in"], c), _turn(s["start"], c)), 0, delta=0.01)
+                    self.assertAlmostEqual(_apart(_turn(s["end_in"], c), _turn(s["end"], c)), 0, delta=0.01)
+                    for corner, radius in (("start", "outer"), ("end", "outer"), ("start_in", "inner"), ("end_in", "inner")):
+                        self.assertAlmostEqual(math.dist(s[corner], (c, c)), s[radius], delta=0.01)
 
-    def test_screen_readers_get_the_list_not_the_bar(self):
+    def test_slices_follow_each_other_round_the_whole_circle(self):
         for name, mix in self.pages.items():
-            self.assertIn('<div class="dw-mix-chart" aria-hidden="true">', mix, name)
-            self.assertNotIn("aria-hidden", _between(mix, 'id="mix-list"', "</ul>"))
+            c, slices = _centre(mix), _by_kind(mix)
+            ring = [slices[_css(r["k"])] for r in MIX["rows"]]
+            with self.subTest(page=name):
+                for here, after in zip(ring, ring[1:] + ring[:1]):
+                    self.assertAlmostEqual(_apart(_turn(here["end"], c), _turn(after["start"], c)), 0, delta=0.01, msg=(here["css"], after["css"]))
+                self.assertAlmostEqual(sum((_turn(s["end"], c) - _turn(s["start"], c)) % 100 for s in ring), 100, delta=0.05)
+
+    def test_marketplace_slice_starts_at_twelve_oclock(self):
+        before = [r["k"] for r in MIX["rows"]][[r["k"] for r in MIX["rows"]].index("marketplace") - 1]
+        for name, mix in self.pages.items():
+            c, slices = _centre(mix), _by_kind(mix)
+            marketplace = slices["marketplace"]
+            with self.subTest(page=name):
+                # Straight above the centre, on both rings, and the slice before it in the list ends there.
+                self.assertEqual(marketplace["start"], (c, c - marketplace["outer"]))
+                self.assertEqual(marketplace["start_in"], (c, c - marketplace["inner"]))
+                self.assertAlmostEqual(_turn(marketplace["end"], c), _share("marketplace"), delta=0.01)
+                self.assertEqual(slices[_css(before)]["end"], (c, c - slices[_css(before)]["outer"]))
+
+    def test_marketplace_slice_stands_out_past_the_ring(self):
+        for name, mix in self.pages.items():
+            slices = _by_kind(mix)
+            marketplace = slices.pop("marketplace")
+            with self.subTest(page=name):
+                # Every other slice is on one ring, and the marketplace slice reaches past it on both sides by more than the 2-unit gap.
+                self.assertEqual(len({(s["outer"], s["inner"]) for s in slices.values()}), 1)
+                ring = next(iter(slices.values()))
+                self.assertGreater(marketplace["outer"] - ring["outer"], 2)
+                self.assertGreater(ring["inner"] - marketplace["inner"], 2)
+
+    def test_middle_says_the_marketplace_share_as_the_finding_does(self):
+        in_100 = round(_share("marketplace"))
+        for name, mix in self.pages.items():
+            c = _centre(mix)
+            texts = re.findall(r'<text class="([\w-]+)" x="([\d.]+)" y="[\d.]+">([^<]+)</text>', _donut(mix))
+            with self.subTest(page=name):
+                self.assertEqual(
+                    [(cls, words) for cls, _, words in texts],
+                    [("dw-mix-big", f"{in_100} in 100"), ("dw-mix-small", "have a"), ("dw-mix-small", "marketplace plan")],
+                )
+                self.assertEqual({float(x) for _, x, _ in texts}, {c})
+                self.assertIn(f"About {in_100} in 100 have a marketplace plan.", _text(_between(mix, 'id="mix-finding"', "</p>")))
+                self.assertIn('<li class="dw-mix-hl"><i class="dw-mix-sw dw-mix-marketplace"></i><span>Marketplace plan only</span>', mix)
+
+    def test_screen_readers_get_the_list_not_the_donut(self):
+        for name, mix in self.pages.items():
+            with self.subTest(page=name):
+                self.assertIn('<svg class="dw-mix-donut" viewBox="0 0 200 200" aria-hidden="true" focusable="false">', mix)
+                self.assertEqual(mix.count("<svg"), 1)
+                self.assertNotIn("aria-hidden", _between(mix, 'id="mix-list"', "</ul>"))
 
     def test_finding_matches_the_tally(self):
         job, marketplace = _share("job"), _share("marketplace")
@@ -273,44 +383,11 @@ class TestCoverageMixOnBothPages(TestCase):
         for mix in self.pages.values():
             self.assertIn("All ages, each person counted once, as of Census's interviews from February to April 2026.", _text(mix))
 
-    def test_records_line_matches_the_records(self):
-        feb = MK["feb"][-1]
-        line = (
-            f"CMS's records count {_millions(feb['n'])} people with marketplace coverage in February {feb['y']}, "
-            f"{_millions(COUNTS['medicare']['n'])} on Medicare and {_millions(COUNTS['medicaid_chip']['n'])} on Medicaid or CHIP "
-            "(some people have both Medicare and Medicaid). Only surveys count job-based coverage and the uninsured, "
-            "and surveys find fewer marketplace plans than records show."
-        )
+    def test_records_scope_and_source_notes_are_in_the_method_not_here(self):
         for name, mix in self.pages.items():
-            self.assertEqual(_text(_between(mix, '<p id="mix-records">', "</p>")), line, name)
-
-    def test_scope_line_matches_denial_watch(self):
-        # The every-state chart's grey states with a rate: their own reports, or CMS's last year with them.
-        self.assertEqual(len(DATA["state_reports"]) + len(DATA["earlier"]), 5)
-        # Prior authorization covers Medicare Advantage, Medicaid plans, state Medicaid and HealthCare.gov insurers, nothing job-based.
-        self.assertEqual({r["line"] for r in DATA["prior_auth"]}, {"ma", "mcd", "mkt", "ffs"})
-        rest = (
-            "claim denial rates are for marketplace plans in HealthCare.gov states and five states that run their own marketplace, where some figures also count plans sold outside it. "
-            "Its prior authorization rates cover large Medicare Advantage plans, Medicaid plans and programs, and HealthCare.gov insurers. "
-            "It has no denial rates for job-based plans or Original Medicare."
-        )
-        self.assertEqual(_text(_between(self.pages["open enrollment"], '<p id="mix-scope">', "</p>")), "Denial Watch's " + rest)
-        self.assertEqual(_text(_between(self.pages["Denial Watch"], '<p id="mix-scope">', "</p>")), "This page's " + rest)
-
-    def test_scope_links_land_on_denial_watchs_sections(self):
-        dw = reverse("denial-watch")
-        self.assertEqual(re.findall(r'href="([^"]+)"', _between(self.pages["open enrollment"], 'id="mix-scope"', "</p>")), [f"{dw}#map-denials", f"{dw}#prior-auth"])
-        self.assertEqual(re.findall(r'href="([^"]+)"', _between(self.pages["Denial Watch"], 'id="mix-scope"', "</p>")), ["#map-denials", "#prior-auth"])
-        for target in ("map-denials", "prior-auth"):
-            self.assertIn(f'id="{target}"', self.dw)
-
-    def test_source_line_cites_census_the_way_it_asks(self):
-        for mix in self.pages.values():
-            self.assertIn(
-                '<p class="dw-note" id="mix-source">Source: U.S. Census Bureau, Current Population Survey, 2026 Annual Social and Economic Supplement, '
-                "public-use file. FHI's tabulation.</p>",
-                mix,
-            )
+            for gone in ('id="mix-records"', 'id="mix-scope"', 'id="mix-source"', "CMS's records count", "Source:"):
+                with self.subTest(page=name, gone=gone):
+                    self.assertNotIn(gone, mix)
 
     def test_heading_fits_each_page(self):
         self.assertIn('<h2 id="coverage-mix-title">Where people get coverage</h2>', self.oe)
@@ -325,8 +402,7 @@ class TestCoverageMixOnBothPages(TestCase):
 
     def test_denial_watch_links_the_enrollment_page_from_it(self):
         self.assertIn(
-            f'<p id="coverage-marketplace">Marketplace coverage year by year, beside the number of people under 65, is on '
-            f'<a href="{reverse("open-enrollment")}">the open enrollment page</a>.</p>',
+            f'<p id="coverage-marketplace">See marketplace coverage year by year on <a href="{reverse("open-enrollment")}">the open enrollment page</a>.</p>',
             self.pages["Denial Watch"],
         )
         self.assertNotIn('id="coverage-marketplace"', self.pages["open enrollment"])
@@ -341,10 +417,10 @@ class TestCoverageMixOnBothPages(TestCase):
             self.assertIn("<b>Where people get coverage:</b>", group)
 
     def test_stays_short(self):
-        # The heading, finding, list, records, scope and source, with the bar's labels saying some of the list again: 200 words,
-        # Denial Watch's line to the open enrollment page, and the scope line's note on plans sold outside the marketplace.
+        # The heading, finding, who and when, the donut's middle, the list and the method link: 87 words as _words counts
+        # them (it runs the words either side of a tag together), and Denial Watch's line to the open enrollment page: 11 more.
         for name, mix in self.pages.items():
-            self.assertLessEqual(_words(mix), 230, name)
+            self.assertLessEqual(_words(mix), 105, name)
 
     def test_no_dashes(self):
         for mix in self.pages.values():
@@ -353,15 +429,72 @@ class TestCoverageMixOnBothPages(TestCase):
 
 
 class TestCoverageMixMethod(TestCase):
-    """Both pages explain the tally, why this survey, and why it differs from CMS's records."""
+    """Both pages explain the tally, why this survey, how it differs from CMS's records, and what Denial Watch's rates cover."""
 
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
+        cls.oe, cls.dw = _enroll(IN_SEASON), _page(IN_SEASON)
         cls.groups = {
-            "open enrollment": _between(_enroll(IN_SEASON), 'id="method-enroll"', "</ol>"),
-            "Denial Watch": _between(_page(IN_SEASON), 'id="method-coverage"', "</ol>"),
+            "open enrollment": _between(cls.oe, 'id="method-enroll"', "</ol>"),
+            "Denial Watch": _between(cls.dw, 'id="method-coverage"', "</ol>"),
         }
+
+    def test_items_stay_together_in_order(self):
+        for name, group in self.groups.items():
+            labels = re.findall(r"<li[^>]*><b>([^<]+):</b>", group)
+            first = labels.index("Where people get coverage")
+            self.assertEqual(
+                labels[first : first + 5],
+                ["Where people get coverage", "Why this survey", "Surveys and records", "Medicare and Medicaid", "What Denial Watch's rates cover"],
+                name,
+            )
+
+    def test_cites_the_survey_by_name(self):
+        # The survey's full name and the public-use file it was tallied from, in the method's first item.
+        for name, group in self.groups.items():
+            self.assertIn(
+                "FHI's tally of the U.S. Census Bureau's Current Population Survey, 2026 Annual Social and Economic Supplement, from its public-use file",
+                _text(group),
+                name,
+            )
+            self.assertIn(f'<a href="{SURVEY_PAGE}">Current Population Survey, 2026 Annual Social and Economic Supplement</a>', group)
+
+    def test_records_open_surveys_and_records(self):
+        feb = MK["feb"][-1]
+        records = (
+            f"Surveys and records: CMS's records count {_millions(feb['n'])} people with marketplace coverage in February {feb['y']}, "
+            f"{_millions(COUNTS['medicare']['n'])} on Medicare and {_millions(COUNTS['medicaid_chip']['n'])} on Medicaid or CHIP. "
+            "Only surveys count job-based coverage and the uninsured. "
+        )
+        for name, group in self.groups.items():
+            item = _text(_between(group, "<b>Surveys and records:</b>", "</li>"))
+            self.assertEqual(item[: len(records)], records, name)
+            # Some people are in both of CMS's counts, as the next item says.
+            self.assertIn("People with both Medicare and Medicaid are in both counts.", _text(group))
+
+    def test_scope_matches_denial_watch(self):
+        # The every-state chart's grey states with a rate: their own reports, or CMS's last year with them.
+        self.assertEqual(len(DATA["state_reports"]) + len(DATA["earlier"]), 5)
+        # Prior authorization covers Medicare Advantage, Medicaid plans, state Medicaid and HealthCare.gov insurers, nothing job-based.
+        self.assertEqual({r["line"] for r in DATA["prior_auth"]}, {"ma", "mcd", "mkt", "ffs"})
+        rest = (
+            "claim denial rates are for marketplace plans in HealthCare.gov states and five states that run their own marketplace, where some figures also count plans sold outside it. "
+            "Its prior authorization rates cover large Medicare Advantage plans, Medicaid plans and programs, and HealthCare.gov insurers. "
+            "It has no denial rates for job-based plans or Original Medicare."
+        )
+        for name, whose in (("open enrollment", "Denial Watch's"), ("Denial Watch", "This page's")):
+            scope = _text(_between(self.groups[name], '<li id="mix-scope">', "</li>"))
+            self.assertEqual(scope, f"What Denial Watch's rates cover: {whose} " + rest, name)
+
+    def test_scope_links_land_on_denial_watchs_sections(self):
+        dw = reverse("denial-watch")
+        for name, html, prefix in (("open enrollment", self.oe, dw), ("Denial Watch", self.dw, "")):
+            scope = _between(self.groups[name], '<li id="mix-scope">', "</li>")
+            self.assertEqual(re.findall(r'href="([^"]+)"', scope), [f"{prefix}#map-denials", f"{prefix}#prior-auth"], name)
+            self.assertEqual(html.count('id="mix-scope"'), 1, name)
+        for target in ("map-denials", "prior-auth"):
+            self.assertIn(f'id="{target}"', self.dw)
 
     def test_says_how_each_person_is_counted_once(self):
         for name, group in self.groups.items():
@@ -410,6 +543,11 @@ class TestCoverageMixMethod(TestCase):
         # Denial Watch names every source in the bundle but the marketplace and population files, which the open enrollment page names.
         for url in (MIX["page"], MEDICARE_PAGE, MEDICAID_PAGE):
             self.assertIn(f'href="{url}"', self.groups["Denial Watch"])
+
+    def test_no_dashes(self):
+        for group in self.groups.values():
+            for dash in ("\u2014", "\u2013"):
+                self.assertNotIn(dash, group)
 
 
 class TestOpenEnrollmentPopulation(TestCase):
@@ -550,31 +688,58 @@ class TestOpenEnrollmentPopulation(TestCase):
                 self.assertNotIn(dash, part)
 
 
+def _kind_colours() -> dict[str, tuple[str, str]]:
+    """Each kind's slice fill and legend swatch colour, by its class, from the style partial."""
+    found = {}
+    for selectors, fill, swatch in re.findall(
+        r"^  (\.dw-mix-[\w-]+(?:, \.dw-mix-[\w-]+)*) \{ fill: var\((--dw-[\w-]+)\); background-color: var\((--dw-[\w-]+)\);", STYLE, re.M
+    ):
+        for selector in selectors.split(", "):
+            found[selector.removeprefix(".dw-mix-")] = (fill, swatch)
+    return found
+
+
 class TestCoverageMixColours(TestCase):
-    """Coverage purples, the marketplace slice set apart by more than colour, and nothing grey, red or green."""
+    """Coverage purples, the marketplace slice the darkest and set apart by more than colour, and nothing grey, red, green or blue."""
+
+    block = _between(STYLE, "  /* Where people get coverage", "  @media (max-width: 860px)")
 
     def test_slices_are_coverage_purples(self):
-        mix = _between(STYLE, "  .dw-mix-job,", "  .dw-mix-seg.dw-mix-marketplace")
-        self.assertEqual(set(re.findall(r"var\((--dw-[\w-]+)\)", mix)) - {"--dw-paper"}, {"--dw-health-1", "--dw-health-2", "--dw-health-3", "--dw-health-5"})
+        self.assertEqual(set(re.findall(r"var\((--dw-[\w-]+)\)", self.block)) - {"--dw-paper"}, {"--dw-health-1", "--dw-health-2", "--dw-health-3", "--dw-health-5"})
+        self.assertIsNone(re.search(r"#[0-9a-fA-F]{3,6}\b|rgba?\(", self.block))
 
-    def test_every_slice_ink_is_a_checked_pair(self):
-        # A slice too narrow for words today can show its share after a refresh, so every slice's ink is checked.
-        mix = _between(STYLE, "  .dw-mix-job,", "  .dw-mix-seg.dw-mix-marketplace")
-        slices = re.findall(r"\{ background-color: var\((--dw-[\w-]+)\);(?: color: var\((--dw-[\w-]+)\);)?", mix)
-        self.assertEqual(len(slices), 5)
-        checked = {(ink, ground) for ink, ground, minimum, _ in DW_PAIRS if minimum >= 4.5}
-        for ground, ink in slices:
-            self.assertIn((ink or "--dw-tile-ink", ground), checked)
+    def test_each_kind_has_one_colour_for_its_slice_and_its_swatch(self):
+        # The page gives a kind's slice and its swatch in the list the same class (TestCoverageMixOnBothPages), and the class one colour.
+        colours = _kind_colours()
+        self.assertEqual(set(colours), {_css(r["k"]) for r in MIX["rows"]})
+        for kind, (fill, swatch) in colours.items():
+            self.assertEqual(fill, swatch, kind)
+        self.assertIn(".dw-mix-sw { width: 1rem; height: 0.75rem; border-radius: 2px; align-self: center; }", STYLE)
 
-    def test_marketplace_slice_is_taller_ringed_and_named(self):
-        self.assertIn(".dw-mix-seg.dw-mix-marketplace { margin-block: -5px; box-shadow: 0 0 0 2px var(--fhi-ink); }", STYLE)
+    def test_marketplace_slice_is_the_darkest_then_job_based(self):
+        paper = dw_colour("--dw-paper")
+        dark = {kind: contrast_ratio(dw_colour(fill), paper) for kind, (fill, _) in _kind_colours().items()}
+        marketplace, job = dark.pop("marketplace"), dark.pop("job")
+        self.assertGreater(marketplace, job)
+        self.assertGreater(job, max(dark.values()))
+
+    def test_marketplace_slice_and_the_empty_ring_stand_out_from_the_white_gaps(self):
+        # The 2-unit gaps are what the marketplace slice stands out past (TestCoverageMixOnBothPages), so both edges are checked marks.
+        self.assertIn(".dw-mix-donut path { stroke: var(--dw-paper); stroke-width: 2;", STYLE)
+        ring = re.search(r"\.dw-mix-donut path\.dw-mix-uninsured \{ stroke: var\((--dw-[\w-]+)\); \}", STYLE)
+        self.assertIsNotNone(ring)
+        marks = {(ink, ground) for ink, ground, minimum, _ in DW_PAIRS if minimum >= 3.0}
+        self.assertIn((_kind_colours()["marketplace"][0], "--dw-paper"), marks)
+        self.assertIn((ring.group(1), "--dw-paper"), marks)
+
+    def test_marketplace_row_is_set_apart_in_the_list_too(self):
         self.assertIn(".dw-mix-hl { font-weight: 700; color: var(--fhi-ink); }", STYLE)
-        self.assertIn(".dw-mix-callout span { display: inline-block;", STYLE)
+        self.assertIn(".dw-mix-hl .dw-mix-sw { box-shadow: 0 0 0 2px var(--fhi-ink); }", STYLE)
 
-    def test_no_coverage_is_an_empty_slice_not_grey(self):
-        self.assertIn(".dw-mix-uninsured { background-color: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-health-3); }", STYLE)
+    def test_no_coverage_is_an_empty_outlined_slice_not_grey(self):
+        self.assertIn(".dw-mix-uninsured { fill: var(--dw-paper); background-color: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-health-3); }", STYLE)
+        self.assertIn(".dw-mix-donut path.dw-mix-uninsured { stroke: var(--dw-health-3); }", STYLE)
 
-    def test_no_grey_red_or_green(self):
-        mix = _between(STYLE, "  /* Where people get coverage", "  @media (max-width: 1199px)")
-        for token in ("--dw-na", "--dw-bad", "--dw-good", "--dw-deny"):
-            self.assertNotIn(token, mix)
+    def test_no_grey_red_green_or_denial_blue(self):
+        for token in ("--dw-na", "--dw-bad", "--dw-good", "--dw-deny", "--dw-count"):
+            self.assertNotIn(token, self.block)

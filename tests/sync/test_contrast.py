@@ -2813,12 +2813,8 @@ DW_PAIRS = (
     ("--dw-health-4", "--dw-track", 3.0, "an uninsured or health measure bar"),
     ("--dw-count", "--dw-count-tint", 3.0, "the coverage fill on the plan picks track"),
     ("--dw-count-deep", "--dw-paper", 4.5, "the people under 65 line and its end label"),
-    # Where people get coverage: each slice's name in the ink its slice takes, and the slices the white gaps divide.
-    ("--dw-tile-ink", "--dw-health-1", 4.5, "a name on a pale coverage slice"),
-    ("--dw-tile-ink", "--dw-health-2", 4.5, "a name on a mid coverage slice"),
-    ("--dw-paper", "--dw-health-3", 4.5, "a name on Medicare's slice"),
-    ("--dw-paper", "--dw-health-5", 4.5, "a share on the marketplace slice"),
-    ("--dw-tile-ink", "--dw-paper", 4.5, "a share on the empty slice for no coverage"),
+    # Where people get coverage: no words sit on the donut's slices, but the marketplace slice and the empty slice's ring
+    # must stand out from the white gaps between slices.
     ("--dw-health-5", "--dw-paper", 3.0, "the marketplace slice beside its white gaps"),
     ("--dw-health-3", "--dw-paper", 3.0, "the ring of the empty slice for no coverage"),
     # A pressed toggle button is filled with its section's colour.

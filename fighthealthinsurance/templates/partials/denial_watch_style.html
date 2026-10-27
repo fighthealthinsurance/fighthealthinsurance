@@ -89,36 +89,32 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
   .dw-back { margin: 0; font-size: var(--fhi-text-small); }
   .dw-back a { font-weight: 600; text-decoration: underline; }
   .dw-method { display: grid; gap: var(--fhi-space-2); }
-  /* Where people get coverage: one bar, each person in one slice, in the coverage purples. The marketplace slice is the
-     darkest, taller, ringed and named above the bar; no coverage is an empty slice. The list says every share in words. */
-  .dw-mix { display: grid; gap: var(--fhi-space-3); }
+  /* Where people get coverage: one donut, each person in one slice, in the coverage purples. The marketplace slice is the
+     darkest and stands out past the ring, with its share in the middle; job-based is a step lighter than it and every
+     other kind lighter again; no coverage is an empty slice. The list beside it says every share in words. */
+  .dw-mix { display: grid; grid-template-columns: minmax(9rem, 15rem) minmax(0, 30rem); gap: var(--fhi-space-3) var(--fhi-space-6); align-items: center; }
   .dw-mix > * { margin: 0; }
-  .dw-mix-callout { margin: 0; font-size: var(--fhi-text-small); font-weight: 700; color: var(--fhi-ink); }
-  .dw-mix-callout span { display: inline-block; padding: 0 0 var(--fhi-space-2) var(--fhi-space-2); border-left: 2px solid var(--fhi-ink); }
-  .dw-mix-bar { display: flex; min-height: 2.75rem; }
-  /* Each slice exactly its share wide, borders and padding inside, so the label above lands on the marketplace slice. */
-  .dw-mix-seg { box-sizing: border-box; flex: none; display: flex; flex-direction: column; justify-content: center; min-width: 0; overflow: hidden; white-space: nowrap; font-size: var(--fhi-text-small); line-height: 1.15; color: var(--dw-tile-ink); }
-  .dw-mix-seg > * { padding-inline: var(--fhi-space-1); }
-  .dw-mix-seg + .dw-mix-seg { border-left: 2px solid var(--dw-paper); }
-  .dw-mix-seg b { font-weight: 700; }
-  .dw-mix-job, .dw-mix-medicaid-chip { background-color: var(--dw-health-2); }
-  .dw-mix-other-individual, .dw-mix-military-va { background-color: var(--dw-health-1); }
-  .dw-mix-medicare, .dw-mix-more-than-one { background-color: var(--dw-health-3); color: var(--dw-paper); }
-  .dw-mix-marketplace { background-color: var(--dw-health-5); color: var(--dw-paper); }
-  .dw-mix-uninsured { background-color: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-health-3); }
-  .dw-mix-seg.dw-mix-marketplace { margin-block: -5px; box-shadow: 0 0 0 2px var(--fhi-ink); }
-  .dw-mix-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); gap: var(--fhi-space-1) var(--fhi-space-6); padding: 0; list-style: none; font-size: var(--fhi-text-small); color: var(--fhi-ink-2); }
+  .dw-mix > .dw-note { grid-column: 1 / -1; }
+  .dw-mix-donut { display: block; width: 100%; height: auto; overflow: visible; }
+  .dw-mix-donut path { stroke: var(--dw-paper); stroke-width: 2; stroke-linejoin: round; }
+  .dw-mix-donut text { text-anchor: middle; }
+  .dw-mix-big { font-size: 28px; font-weight: 700; fill: var(--fhi-ink); }
+  .dw-mix-small { font-size: 14px; fill: var(--fhi-ink-2); }
+  .dw-mix-job { fill: var(--dw-health-2); background-color: var(--dw-health-2); }
+  .dw-mix-other-individual, .dw-mix-medicare, .dw-mix-medicaid-chip, .dw-mix-military-va, .dw-mix-more-than-one { fill: var(--dw-health-1); background-color: var(--dw-health-1); }
+  .dw-mix-marketplace { fill: var(--dw-health-5); background-color: var(--dw-health-5); }
+  .dw-mix-uninsured { fill: var(--dw-paper); background-color: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-health-3); }
+  .dw-mix-donut path.dw-mix-uninsured { stroke: var(--dw-health-3); }
+  .dw-mix-list { display: grid; gap: var(--fhi-space-1); padding: 0; list-style: none; font-size: var(--fhi-text-small); color: var(--fhi-ink-2); }
   .dw-mix-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--fhi-space-2); align-items: baseline; }
   .dw-mix-list .dw-num { font-weight: 700; color: var(--fhi-ink); }
   .dw-mix-sw { width: 1rem; height: 0.75rem; border-radius: 2px; align-self: center; }
   .dw-mix-hl { font-weight: 700; color: var(--fhi-ink); }
   .dw-mix-hl .dw-mix-sw { box-shadow: 0 0 0 2px var(--fhi-ink); }
-  /* A slice's name and share only where they fit: the smaller the slice, the wider the screen it needs. */
-  @media (max-width: 1199px) {
-    .dw-mix-m b, .dw-mix-s b { display: none; }
-  }
-  @media (max-width: 380px) {
-    .dw-mix-s span { display: none; }
+  /* On a narrow screen the list goes under the donut. */
+  @media (max-width: 560px) {
+    .dw-mix { grid-template-columns: minmax(0, 1fr); }
+    .dw-mix-donut { max-width: 13rem; justify-self: center; }
   }
   @media (max-width: 860px) {
     .dw-two { grid-template-columns: minmax(0, 1fr); }
@@ -133,9 +129,6 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
     .dw-chart { overflow: visible; }
     .dw-chart text { font-size: 20px; }
     .dw-chart text.dw-end { font-size: 22px; }
-    /* Less padding inside the bar, and no words in the smallest slices; the list has every share. */
-    .dw-mix-seg > * { padding-inline: 2px; }
-    .dw-mix-xs span { display: none; }
   }
   /* On a phone a table's padding pushes its last column out of its box; the numbers carry it. */
   @media (max-width: 480px) {

@@ -860,14 +860,14 @@ COVERAGE_MIX_SURVEY = dict(
     sha256="fe819d0d2fc4470c282e76c247b8aa8b6054811619730307e9f2fe6186707d93",
     released="2026-09-15",
 )
-# The bar's slices in the page's order; the page names the marketplace one.
+# The donut's slices in the page's order; the page names the marketplace one.
 COVERAGE_MIX_KEYS = ("job", "marketplace", "other_individual", "medicare", "medicaid_chip", "military_va", "more_than_one", "uninsured")
 
 
 def load_coverage_mix(path=COVERAGE_MIX_CSV):
-    """Everyone at the survey's interview, each person counted once, for the bar both pages draw.
+    """Everyone at the survey's interview, each person counted once, for the donut both pages draw.
 
-    The CSV also keeps the calendar-year measure and the under-65 and 65-and-over rows, as a record; the page uses one bar.
+    The CSV also keeps the calendar-year measure and the under-65 and 65-and-over rows, as a record; the page uses one donut.
     """
     name = pathlib.Path(path).name
     with open(path, newline="") as f:
@@ -993,7 +993,7 @@ def load_coverage_counts(month, path=COVERAGE_COUNTS_CSV):
 
 
 def coverage_report(bundle):
-    """The coverage bar's shares and the population comparison, to check by eye against the page's copy."""
+    """The coverage donut's shares and the population comparison, to check by eye against the page's copy."""
     mix, feb = bundle["coverage_mix"], bundle["marketplace"]["feb"]
     under_65 = {r["y"]: r["n"] for r in bundle["population"]["under_65"]}
     lines = [f"coverage {mix['period']}: {r['label']} {r['pct']:.1f}% (MOE {r['pct_moe']})" for r in mix["rows"]]
