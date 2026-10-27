@@ -525,9 +525,6 @@ class TestOpenEnrollmentTop(TestCase):
             'id="coverage-mix"',
             'id="mix-finding"',
             'id="mix-list"',
-            'id="mix-records"',
-            'id="mix-scope"',
-            'id="mix-source"',
             'id="enroll-trends"',
             'id="mk-title"',
             'id="mknote"',
@@ -553,6 +550,9 @@ class TestOpenEnrollmentTop(TestCase):
             'id="enroll-questions"',
             'id="more-data-enroll"',
             'id="sources"',
+            'id="method-enroll"',
+            "<b>Surveys and records:</b>",
+            'id="mix-scope"',
         ]
         at = [self.content.index(m) for m in order]
         self.assertEqual(at, sorted(at))
@@ -689,7 +689,7 @@ class TestOpenEnrollmentTop(TestCase):
 
     def test_top_stays_short(self):
         # The dates, tiles, steps and February chart: 350 words with the eight steps in season, plus a little room.
-        # The coverage bar and the plan picks history below have budgets of their own.
+        # The coverage donut and the plan picks history below have budgets of their own.
         top = _between(self.section, 'id="enroll"', 'id="enroll-history"')
         mix = _between(top, '<section class="fhi-stack" id="coverage-mix"', "</section>")
         self.assertLessEqual(_words(top.replace(mix, "")), 360)
