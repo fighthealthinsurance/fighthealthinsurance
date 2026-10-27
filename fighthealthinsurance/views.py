@@ -777,6 +777,46 @@ def denial_watch_teaser() -> dict[str, typing.Any]:
 COVERAGE_MIX_DONUT = dict(c=100.0, outer=92.0, inner=60.0, pop=6.0)
 
 
+# The slices named on the ring, beside a tick; the list names the rest.
+COVERAGE_MIX_RING_NAMES = {
+    "job": "Job-based",
+    "medicare": "Medicare",
+    "medicaid_chip": "Medicaid or CHIP",
+    "uninsured": "Uninsured",
+}
+
+
+def _donut_xy(r: float, share: float) -> tuple[float, float]:
+    a = 2 * math.pi * share / 100
+    c = COVERAGE_MIX_DONUT["c"]
+    return c + r * math.sin(a), c - r * math.cos(a)
+
+
+def _donut_label(mid: float, name: str, pct: str) -> dict[str, typing.Any]:
+    """A ring label at a slice's middle: a tick out from the ring, then the
+    name and share beside it, to the side the slice faces, or under or over
+    it near 6 or 12 o'clock."""
+    outer = COVERAGE_MIX_DONUT["outer"]
+    x1, y1 = _donut_xy(outer + 3, mid)
+    x2, y2 = _donut_xy(outer + 12, mid)
+    side = math.sin(2 * math.pi * mid / 100)
+    if abs(side) > 0.3:
+        anchor = "start" if side > 0 else "end"
+        x, y = x2 + (4 if side > 0 else -4), y2 - 2
+    else:
+        anchor = "middle"
+        below = math.cos(2 * math.pi * mid / 100) < 0
+        x, y = x2, (y2 + 12 if below else y2 - 18)
+    return dict(
+        name=name,
+        pct=pct,
+        tick=f"{x1:.2f} {y1:.2f} {x2:.2f} {y2:.2f}".split(),
+        x=f"{x:.2f}",
+        y=f"{y:.2f}",
+        anchor=anchor,
+    )
+
+
 def _donut_point(r: float, share: float) -> str:
     """The point at radius r, share percent of the way round clockwise from 12 o'clock."""
     a = 2 * math.pi * share / 100
@@ -801,6 +841,7 @@ def denial_watch_coverage_mix() -> dict[str, typing.Any]:
     Each slice's share as words and as a ring path. The ring turns so the
     marketplace slice starts at 12 o'clock and the rest follow clockwise in
     the list's order, and that slice stands out past the ring on both sides.
+    The largest slices also carry a label on the ring (ring).
     """
     mix = _denial_watch_data()["coverage_mix"]
     keys = [r["k"] for r in mix["rows"]]
@@ -810,13 +851,16 @@ def denial_watch_coverage_mix() -> dict[str, typing.Any]:
     for r in mix["rows"]:
         out = d["outer"] + d["pop"] if r["k"] == "marketplace" else d["outer"]
         inner = d["inner"] - d["pop"] if r["k"] == "marketplace" else d["inner"]
+        pct = f"{r['pct']:.1f}%"
+        name = COVERAGE_MIX_RING_NAMES.get(r["k"])
         rows.append(
             dict(
                 k=r["k"],
                 css=r["k"].replace("_", "-"),
                 label=r["label"],
-                pct=f"{r['pct']:.1f}%",
+                pct=pct,
                 path=_donut_slice(start, r["pct"], out, inner),
+                ring=_donut_label(start + r["pct"] / 2, name, pct) if name else None,
             )
         )
         start += r["pct"]

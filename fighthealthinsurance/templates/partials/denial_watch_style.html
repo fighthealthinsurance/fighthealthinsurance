@@ -92,16 +92,23 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
   /* Where people get coverage: one donut, each person in one slice, in the coverage purples. The marketplace slice is the
      darkest and stands out past the ring, with its share in the middle; job-based is a step lighter than it and every
      other kind lighter again; no coverage is an empty slice. The list beside it says every share in words. */
-  .dw-mix { display: grid; grid-template-columns: minmax(9rem, 15rem) minmax(0, 30rem); gap: var(--fhi-space-3) var(--fhi-space-6); align-items: center; }
+  .dw-mix { display: grid; grid-template-columns: minmax(9rem, 25rem) minmax(0, 30rem); gap: var(--fhi-space-3) var(--fhi-space-6); align-items: center; }
   .dw-mix > * { margin: 0; }
   .dw-mix > .dw-note { grid-column: 1 / -1; }
-  .dw-mix-donut { display: block; width: 100%; height: auto; overflow: visible; }
+  /* The padding is room for the ring labels, which draw outside the ring's own square. */
+  .dw-mix-donut { box-sizing: border-box; display: block; width: 100%; height: auto; padding: var(--fhi-space-2) 7.5rem var(--fhi-space-7) 4.5rem; overflow: visible; }
   .dw-mix-donut path { stroke: var(--dw-paper); stroke-width: 2; stroke-linejoin: round; }
-  .dw-mix-donut text { text-anchor: middle; }
+  /* Only the middle is centred: a CSS text-anchor would override each ring label's own. */
+  .dw-mix-big, .dw-mix-small { text-anchor: middle; }
+  .dw-mix-ring-label line { stroke: var(--fhi-ink-2); stroke-width: 1; }
+  .dw-mix-ring-label text { font-size: 12px; fill: var(--fhi-ink-2); }
+  .dw-mix-ring-label .dw-num { font-weight: 700; fill: var(--fhi-ink); }
   .dw-mix-big { font-size: 28px; font-weight: 700; fill: var(--fhi-ink); }
   .dw-mix-small { font-size: 14px; fill: var(--fhi-ink-2); }
+  /* Medicare and Medicaid two steps apart, so they read as different even side by side; the three smallest kinds share Medicaid's step. */
   .dw-mix-job { fill: var(--dw-health-2); background-color: var(--dw-health-2); }
-  .dw-mix-other-individual, .dw-mix-medicare, .dw-mix-medicaid-chip, .dw-mix-military-va, .dw-mix-more-than-one { fill: var(--dw-health-1); background-color: var(--dw-health-1); }
+  .dw-mix-medicare { fill: var(--dw-health-3); background-color: var(--dw-health-3); }
+  .dw-mix-other-individual, .dw-mix-medicaid-chip, .dw-mix-military-va, .dw-mix-more-than-one { fill: var(--dw-health-1); background-color: var(--dw-health-1); }
   .dw-mix-marketplace { fill: var(--dw-health-5); background-color: var(--dw-health-5); }
   .dw-mix-uninsured { fill: var(--dw-paper); background-color: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-health-3); }
   .dw-mix-donut path.dw-mix-uninsured { stroke: var(--dw-health-3); }
@@ -114,7 +121,9 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
   /* On a narrow screen the list goes under the donut. */
   @media (max-width: 560px) {
     .dw-mix { grid-template-columns: minmax(0, 1fr); }
-    .dw-mix-donut { max-width: 13rem; justify-self: center; }
+    /* The list sits right under the donut on a phone, so the ring labels go. */
+    .dw-mix-donut { max-width: 13rem; padding: 0; justify-self: center; }
+    .dw-mix-ring-label { display: none; }
   }
   @media (max-width: 860px) {
     .dw-two { grid-template-columns: minmax(0, 1fr); }

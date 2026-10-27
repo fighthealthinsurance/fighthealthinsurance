@@ -361,6 +361,37 @@ class TestCoverageMixOnBothPages(TestCase):
                 self.assertIn(f"About {in_100} in 100 have a marketplace plan.", _text(_between(mix, 'id="mix-finding"', "</p>")))
                 self.assertIn('<li class="dw-mix-hl"><i class="dw-mix-sw dw-mix-marketplace"></i><span>Marketplace plan only</span>', mix)
 
+    def test_ring_names_the_largest_slices_beside_a_tick_at_their_middle(self):
+        named = {"job": "Job-based", "medicare": "Medicare", "medicaid_chip": "Medicaid or CHIP", "uninsured": "Uninsured"}
+        label = re.compile(
+            rf'<g class="dw-mix-ring-label"><line x1="{_N}" y1="{_N}" x2="{_N}" y2="{_N}"/><text x="{_N}" y="{_N}" text-anchor="(start|end|middle)">'
+            rf'<tspan>([^<]+)</tspan><tspan class="dw-num" x="\5" dy="14">([^<]+)</tspan></text></g>'
+        )
+        for name, mix in self.pages.items():
+            c, slices = _centre(mix), _by_kind(mix)
+            found = label.findall(_donut(mix))
+            with self.subTest(page=name):
+                self.assertEqual(
+                    [(words, pct) for *_, words, pct in found],
+                    [(named[r["k"]], f"{r['pct']:.1f}%") for r in MIX["rows"] if r["k"] in named],
+                )
+                for x1, y1, x2, y2, x, _, anchor, words, _ in found:
+                    s = slices[_css(next(k for k, v in named.items() if v == words))]
+                    middle = _turn(s["start"], c) + ((_turn(s["end"], c) - _turn(s["start"], c)) % 100) / 2
+                    inner, outer = (float(x1), float(y1)), (float(x2), float(y2))
+                    # The tick starts just past the ring at the slice's middle and runs straight out.
+                    self.assertTrue(s["outer"] < math.dist(inner, (c, c)) < math.dist(outer, (c, c)), words)
+                    self.assertAlmostEqual(_apart(_turn(inner, c), middle), 0, delta=0.01, msg=words)
+                    self.assertAlmostEqual(_apart(_turn(outer, c), middle), 0, delta=0.01, msg=words)
+                    # The words sit on the side the slice faces, so they never cross the ring.
+                    side = math.sin(2 * math.pi * middle / 100)
+                    expected = "middle" if abs(side) <= 0.3 else ("start" if side > 0 else "end")
+                    self.assertEqual(anchor, expected, words)
+                    if anchor == "start":
+                        self.assertGreater(float(x), float(x2), words)
+                    elif anchor == "end":
+                        self.assertLess(float(x), float(x2), words)
+
     def test_screen_readers_get_the_list_not_the_donut(self):
         for name, mix in self.pages.items():
             with self.subTest(page=name):
@@ -417,10 +448,11 @@ class TestCoverageMixOnBothPages(TestCase):
             self.assertIn("<b>Where people get coverage:</b>", group)
 
     def test_stays_short(self):
-        # The heading, finding, who and when, the donut's middle, the list and the method link: 87 words as _words counts
-        # them (it runs the words either side of a tag together), and Denial Watch's line to the open enrollment page: 11 more.
+        # The heading, finding, who and when, the donut's middle and ring labels, the list and the method link: about 95 words
+        # as _words counts them (it runs the words either side of a tag together), and Denial Watch's line to the open
+        # enrollment page: 11 more.
         for name, mix in self.pages.items():
-            self.assertLessEqual(_words(mix), 105, name)
+            self.assertLessEqual(_words(mix), 115, name)
 
     def test_no_dashes(self):
         for mix in self.pages.values():
@@ -716,12 +748,23 @@ class TestCoverageMixColours(TestCase):
             self.assertEqual(fill, swatch, kind)
         self.assertIn(".dw-mix-sw { width: 1rem; height: 0.75rem; border-radius: 2px; align-self: center; }", STYLE)
 
-    def test_marketplace_slice_is_the_darkest_then_job_based(self):
-        paper = dw_colour("--dw-paper")
-        dark = {kind: contrast_ratio(dw_colour(fill), paper) for kind, (fill, _) in _kind_colours().items()}
-        marketplace, job = dark.pop("marketplace"), dark.pop("job")
-        self.assertGreater(marketplace, job)
-        self.assertGreater(job, max(dark.values()))
+    def test_marketplace_slice_is_the_darkest_and_medicare_and_medicaid_two_steps_apart(self):
+        # One step apart, two light purples can't be told apart even with full colour vision; two steps apart they can.
+        step = {kind: int(fill.rsplit("-", 1)[1]) for kind, (fill, _) in _kind_colours().items() if fill.startswith("--dw-health-")}
+        marketplace = step.pop("marketplace")
+        self.assertGreater(marketplace, max(step.values()))
+        self.assertGreaterEqual(abs(step["medicare"] - step["medicaid-chip"]), 2)
+        # The three smallest kinds take Medicaid's step and stay unnamed on the ring.
+        for kind in ("other-individual", "military-va", "more-than-one"):
+            self.assertEqual(step[kind], step["medicaid-chip"], kind)
+
+    def test_ring_labels_are_ink_and_leave_on_a_phone(self):
+        self.assertIn(".dw-mix-ring-label line { stroke: var(--fhi-ink-2); stroke-width: 1; }", STYLE)
+        self.assertIn(".dw-mix-ring-label text { font-size: 12px; fill: var(--fhi-ink-2); }", STYLE)
+        # A text-anchor set in CSS would override each label's own side.
+        self.assertNotRegex(STYLE, r"\.dw-mix-donut text \{[^}]*text-anchor")
+        phone = _between(STYLE, "  @media (max-width: 560px) {\n    .dw-mix {", "  }")
+        self.assertIn(".dw-mix-ring-label { display: none; }", phone)
 
     def test_marketplace_slice_and_the_empty_ring_stand_out_from_the_white_gaps(self):
         # The 2-unit gaps are what the marketplace slice stands out past (TestCoverageMixOnBothPages), so both edges are checked marks.
