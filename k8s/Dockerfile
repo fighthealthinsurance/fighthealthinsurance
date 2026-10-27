@@ -13,7 +13,7 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 # Install npm & nodes from https://github.com/nodesource/distributions instead of debian which lags
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x -o nodesource_setup.sh && \
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x -o nodesource_setup.sh && \
     bash nodesource_setup.sh && \
     apt-get install -y nodejs && \
     rm nodesource_setup.sh
