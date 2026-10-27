@@ -89,24 +89,68 @@ class SharePlanDocumentsPageTest(TestCase):
         self.assertContains(self.response, "usually don't include personal details")
 
     def test_the_page_says_which_documents_help_most(self):
-        text = self.soup.find(id="most-useful").get_text(" ", strip=True)
-        self.assertIn(
-            "Most useful: your Summary of Benefits and Coverage and your Summary "
-            "Plan Description, for this year and past years if you have them.",
-            text,
+        items = [
+            li.get_text(" ", strip=True)
+            for li in self.soup.find(id="most-useful").find_all("li")
+        ]
+        self.assertEqual(
+            items,
+            [
+                "Enrollment guide or premium rate sheet: what you pay for yourself "
+                "only and for family coverage, and how often.",
+                "Summary of Benefits and Coverage: deductibles, copays and coverage "
+                "limits.",
+                "Summary Plan Description or Evidence of Coverage, if you have it: "
+                "what the plan leaves out and how appeals work.",
+            ],
         )
+        versions = self.soup.find(id="which-versions").get_text(" ", strip=True)
+        self.assertIn("This year's and next year's versions help most.", versions)
+        # Plan materials only: a paystub shows the premium, but with a name on it.
+        self.assertIn(
+            "Please don't send paystubs, medical records or your own enrollment "
+            "confirmation.",
+            versions,
+        )
+
+    def test_the_ask_and_the_upload_come_before_the_why(self):
+        # The ask, the list and the form open the page; the reasons follow it.
+        form = self.soup.find("form", id="share-plan-documents-form")
+        for part in ("share-ask", "most-useful", "which-versions"):
+            with self.subTest(part=part):
+                self.assertIsNotNone(form.find_previous(id=part))
+        why = self.soup.find(id="about-sharing")
+        self.assertEqual(why.find("h2").get_text(strip=True), "Why we're asking")
+        self.assertIsNotNone(form.find_next(id="about-sharing"))
+        self.assertIsNone(why.find_parent("form"))
 
     def test_the_page_says_what_we_will_look_at(self):
         text = self.soup.find(id="what-we-look-at").get_text(" ", strip=True)
         self.assertIn(
-            "We'll look at what common care costs under each plan, how "
-            "deductibles and out-of-pocket limits change over time, what plans "
-            "cover and leave out, and what needs approval first.",
+            "With them we can show what plans cost for one person and for a "
+            "family, what common care costs under each plan, how deductibles "
+            "and out-of-pocket limits change from year to year, what plans "
+            "leave out, and what needs approval first.",
             text,
         )
-        # Both lines come before the form, where people decide what to share.
-        form = self.soup.find("form", id="share-plan-documents-form")
-        self.assertIsNotNone(form.find_previous(id="most-useful"))
+
+    def test_the_page_links_the_data_we_started_with(self):
+        have = self.soup.find(id="what-we-have")
+        hrefs = [a["href"] for a in have.find_all("a")]
+        self.assertEqual(
+            hrefs,
+            [reverse("denial-watch"), reverse("open-enrollment") + "#coverage-mix"],
+        )
+        self.assertIn(
+            "nearly half of people have coverage only through a job, and Denial "
+            "Watch has no denial rates for those plans.",
+            have.get_text(" ", strip=True),
+        )
+
+    def test_the_page_says_findings_describe_the_plans_people_share(self):
+        text = self.soup.find(id="what-it-shows").get_text(" ", strip=True)
+        self.assertIn("It shows what people are offered, not how many people chose each plan", text)
+        self.assertIn("we say how many plans each finding comes from", text)
 
     def test_the_page_asks_once_a_year_and_is_open_anytime(self):
         ask = self.soup.find(id="yearly-ask")
@@ -115,14 +159,21 @@ class SharePlanDocumentsPageTest(TestCase):
             "Once a year we ask everyone to request their plan documents and "
             "share them with us. You can share anytime.",
         )
-        form = self.soup.find("form", id="share-plan-documents-form")
-        self.assertIsNotNone(form.find_previous(id="yearly-ask"))
 
     def test_the_explanation_has_an_anchor_other_pages_link_to(self):
         about = self.soup.find(id="about-sharing")
-        for part in ("what-we-look-at", "most-useful", "yearly-ask"):
+        for part in ("what-we-have", "what-we-look-at", "what-it-shows", "what-happens", "yearly-ask"):
             with self.subTest(part=part):
                 self.assertIsNotNone(about.find(id=part))
+        happens = about.find(id="what-happens").get_text(" ", strip=True)
+        for words in (
+            "We store what you share encrypted.",
+            "AI models, including outside services, read it",
+            "we keep it as long as we can.",
+            "We do our best to remove personal details from anything we share.",
+        ):
+            with self.subTest(words=words):
+                self.assertIn(words, happens)
         self.assertIsNone(about.find_parent("form"))
 
     def test_the_plan_year_stays_optional_and_says_it_shows_trends(self):

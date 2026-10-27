@@ -76,15 +76,18 @@
 
 {% block content %}
 {% comment %}
-Share your plan documents (SharePlanDocumentsView). Only the files and the
-agreement are required; the rest folds away under "About the plan". The
-agreement's words are consent.SHARING_TERMS. The opt-in card on other pages
-(partials/share_for_research.html) links to #about-sharing. The facts under
+Share your plan documents (SharePlanDocumentsView). The ask and the upload
+come first, in the intake flow's width; why we ask and what we publish sit
+below the form. Only the files and the agreement are required; the rest folds
+away under "About the plan". The agreement's words are consent.SHARING_TERMS.
+The opt-in card on other pages (partials/share_for_research.html) links to
+#about-sharing. The facts under
 "How to get your full plan documents" were checked on the date the section
 gives; recheck them before changing it.
 {% endcomment %}
-<div class="fhi-page">
+<div class="fhi-page fhi-page-reading">
     {% include "partials/page_title.html" with title="Share your plan documents" %}
+    <div class="fhi-stack fhi-stack-loose">
 
     {% if shared %}
     <div class="fhi-notice fhi-notice-info" role="status" id="share-thanks">
@@ -93,10 +96,14 @@ gives; recheck them before changing it.
         <p>Have more? <a href="{% url 'share_plan_documents' %}">Share more documents</a></p>
     </div>
     {% else %}
-    <div id="about-sharing">
-        <p id="what-we-look-at">Your plan documents say what your plan covers and how appeals work. We'll look at what common care costs under each plan, how deductibles and out-of-pocket limits change over time, what plans cover and leave out, and what needs approval first. We share what we learn publicly.</p>
-        <p id="most-useful">Most useful: your Summary of Benefits and Coverage and your Summary Plan Description, for this year and past years if you have them. Plan-wide documents like these usually don't include personal details.</p>
-        <p id="yearly-ask">Once a year we ask everyone to request their plan documents and share them with us. You can share anytime.</p>
+    <div class="fhi-stack" id="the-ask">
+        <p id="share-ask">Help us show what health plans cost and cover, and what changes next year. Upload the documents your plan gives everyone:</p>
+        <ul id="most-useful">
+            <li><b>Enrollment guide or premium rate sheet:</b> what you pay for yourself only and for family coverage, and how often.</li>
+            <li><b>Summary of Benefits and Coverage:</b> deductibles, copays and coverage limits.</li>
+            <li><b>Summary Plan Description or Evidence of Coverage,</b> if you have it: what the plan leaves out and how appeals work.</li>
+        </ul>
+        <p id="which-versions">This year's and next year's versions help most. Plan-wide documents like these usually don't include personal details. Please don't send paystubs, medical records or your own enrollment confirmation.</p>
     </div>
 
     <form method="post" action="{% url 'share_plan_documents' %}" enctype="multipart/form-data" class="fhi-stack" id="share-plan-documents-form" data-max-files="{{ max_files }}" data-max-bytes="{{ max_total_bytes }}" data-too-many="{{ too_many_message }}" data-too-big="{{ too_big_message }}">
@@ -187,6 +194,15 @@ gives; recheck them before changing it.
         </div>
     </form>
     {% endif %}
+
+    <section class="fhi-stack" id="about-sharing" aria-labelledby="about-sharing-heading">
+        <h2 id="about-sharing-heading">Why we're asking</h2>
+        <p id="what-we-have">We started with public records. <a href="{% url 'denial-watch' %}">Denial Watch</a> shows how often marketplace plans deny claims and how often plans deny requests for approval. <a href="{% url 'open-enrollment' %}#coverage-mix">Where people get coverage</a> shows that nearly half of people have coverage only through a job, and Denial Watch has no denial rates for those plans.</p>
+        <p id="what-we-look-at">Plan documents fill in what records leave out. With them we can show what plans cost for one person and for a family, what common care costs under each plan, how deductibles and out-of-pocket limits change from year to year, what plans leave out, and what needs approval first. We share what we learn publicly.</p>
+        <p id="what-it-shows">What we publish describes the plans people share with us. It shows what people are offered, not how many people chose each plan or every plan in the country, and we say how many plans each finding comes from.</p>
+        <p id="what-happens">We store what you share encrypted. Our team and AI models, including outside services, read it along with documents from other people, and we keep it as long as we can. We do our best to remove personal details from anything we share.</p>
+        <p id="yearly-ask">Once a year we ask everyone to request their plan documents and share them with us. You can share anytime.</p>
+    </section>
 
     <section class="fhi-stack" id="get-your-plan-documents" aria-labelledby="get-your-plan-documents-heading">
         <h2 id="get-your-plan-documents-heading">How to get your full plan documents</h2>
@@ -311,5 +327,6 @@ Thank you,
         </div>
         <p class="fhi-note" id="plan-documents-checked">Checked October 23, 2026. This is general information, not legal advice.</p>
     </section>
+    </div>
 </div>
 {% endblock content %}

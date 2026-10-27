@@ -2225,6 +2225,12 @@ section:not(.slider) .share-subcopy,
     max-width: min(var(--fhi-page-wide), 100% - 2 * var(--fhi-page-gutter));
 }
 
+/* A reading page that opens on an upload form: the intake flow's width, so
+   the title and the form have room, with the reading column's type. */
+.fhi-page-reading {
+    max-width: min(var(--fhi-page-reading), 100% - 2 * var(--fhi-page-gutter));
+}
+
 @media (max-width: 575px) {
     /* A phone's column is the screen; the 16px edge padding is the buffer. */
     .fhi-page,
