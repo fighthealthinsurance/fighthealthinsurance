@@ -9,7 +9,7 @@ Fight Health Insurance is a Django application that helps patients appeal health
 ## Build & Development Commands
 
 ```bash
-# Install dependencies (Option A: Conda; it does not install pandoc, Node 20+ or mkcert, see README.md)
+# Install dependencies (Option A: Conda; it does not install pandoc, Node 22+ or mkcert, see README.md)
 micromamba env create -f environment.yml
 micromamba activate fhi
 

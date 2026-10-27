@@ -10,9 +10,11 @@ from the repository root unless a block says otherwise.
   `scripts/build_ray.sh`), so use 3.12 if you connect to the Ray cluster.
   `scripts/install.sh` and `scripts/run_local.sh` only check for 3.10, but
   3.10 cannot import the settings (they use `datetime.UTC`, new in 3.11).
-- **Node.js 20 or newer, with npm** (`engines` in
-  `fighthealthinsurance/static/js/package.json`). The static build runs
-  `npm run build`, and `run_local.sh` stops if it fails.
+- **Node.js 22.23.4 or later, with npm** (`engines` in
+  `fighthealthinsurance/static/js/package.json`), or the latest patch of a
+  newer supported line. Node.js 20 is past end of life and got no fix for the
+  October 2026 security release. The static build runs `npm run build`, and
+  `run_local.sh` stops if it fails.
 - **tesseract-ocr**, for OCR of uploaded denial letters.
 - **texlive and pandoc**, for PDF generation.
 - **mkcert**, for the dev server's HTTPS certificate.
@@ -26,8 +28,8 @@ from the repository root unless a block says otherwise.
 sudo apt-get install -y tesseract-ocr texlive pandoc mkcert git git-lfs
 ```
 
-Install Node.js 20+ separately (22 matches production): the production image uses NodeSource's
-`setup_22.x` (`k8s/Dockerfile`), and nvm also works.
+Install Node.js 22 separately, as production does: the production image uses
+NodeSource's `setup_22.x` (`k8s/Dockerfile`), and nvm also works.
 
 - CI also installs `pkg-config python3-dev`. Add them if pip fails to build a
   package.
@@ -62,8 +64,8 @@ sudo dnf install -y python3.12 tesseract tesseract-langpack-eng \
   `python3.12 -m venv .venv` ([Option A](#option-a-virtualenv)); in testing on
   Fedora, a virtualenv worked more reliably than micromamba. `python3.13` is
   packaged too, and it is the version CI tests.
-- On Fedora 43 and 44, `dnf install nodejs` installs Node.js 22, which meets
-  the 20+ requirement.
+- On Fedora 43 and 44, `dnf install nodejs` installs Node.js 22. Run
+  `node --version` and update it if it is older than 22.23.4.
 - If pip fails to build a package, add a compiler and headers:
   `sudo dnf install -y gcc gcc-c++ python3.12-devel libffi-devel openssl-devel`.
   The requirements installed without them on Fedora 44 (x86-64), but a

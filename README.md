@@ -83,7 +83,7 @@ anything you add.
 
 ## Run it locally
 
-You need Python 3.12 or 3.13, Node.js 20+ with npm, tesseract-ocr, texlive,
+You need Python 3.12 or 3.13, Node.js 22+ with npm, tesseract-ocr, texlive,
 pandoc, mkcert and git. Per-platform install commands, the conda option and
 troubleshooting are in [docs/local-development.md](docs/local-development.md).
 
