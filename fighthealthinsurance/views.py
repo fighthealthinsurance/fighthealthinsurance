@@ -3053,8 +3053,9 @@ def issue_fax_cancel_ref(
 
     It also carries two choices the fax form had that the staged fax does
     not keep, so the page can put them back: whether the health history went
-    with it, and the insurer as the person typed it. Never their name: the
-    reference travels to Stripe, encrypted or not."""
+    with it (the staged fax keeps only the history's text), and the insurer
+    as the person typed it. Never their name: the reference travels to
+    Stripe, encrypted or not."""
     if not fax_uuid or not hashed_email:
         return None
     fernet = _denial_ref_fernet(request.session, create=True)
