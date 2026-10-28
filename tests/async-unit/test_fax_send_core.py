@@ -636,6 +636,22 @@ class TestStrandedFaxes:
         self._past_the_grace()
         assert SendFaxHelper.stranded_faxes() == [(staged.hashed_email, staged.uuid)]
 
+    def test_a_fax_staged_again_for_the_same_denial_is_left_to_the_newer_one(
+        self, test_denial
+    ):
+        """A staging that failed before this release is still linked; the
+        person's retry, now sending, supersedes it."""
+        self._stranded(test_denial)
+        self._stranded(test_denial, attempting_to_send_as_of=timezone.now())
+        assert SendFaxHelper.stranded_faxes() == []
+
+    def test_of_two_lost_stagings_for_one_denial_only_the_newer_is_sent(
+        self, test_denial
+    ):
+        self._stranded(test_denial)
+        newer = self._stranded(test_denial)
+        assert SendFaxHelper.stranded_faxes() == [(newer.hashed_email, str(newer.uuid))]
+
     def test_a_staged_fax_that_never_started_is_stranded(self, test_denial):
         fax = self._stranded(test_denial)
         assert SendFaxHelper.stranded_faxes() == [(fax.hashed_email, str(fax.uuid))]

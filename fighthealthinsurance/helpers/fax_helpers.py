@@ -355,12 +355,21 @@ class SendFaxHelper:
         fallback failed or was lost. Only faxes an appeal links (staging
         links it once a sender has the fax, so not one whose staging showed
         the person an error), staged inside REDISPATCH_WINDOW, and at most
-        REDISPATCH_BATCH of them.
+        REDISPATCH_BATCH of them. A fax staged again for the same denial is
+        left to the newer one, which is how a retry after an error looks,
+        whichever code staged it.
         """
         now = timezone.now()
         stranded = (
             FaxesToSend.objects.filter(Q(paid=True) | Q(should_send=True))
             .filter(Exists(Appeal.objects.filter(fax=OuterRef("pk"))))
+            .filter(
+                ~Exists(
+                    FaxesToSend.objects.filter(
+                        denial_id=OuterRef("denial_id"), fax_id__gt=OuterRef("fax_id")
+                    )
+                )
+            )
             .filter(
                 sent=False,
                 attempting_to_send_as_of__isnull=True,
