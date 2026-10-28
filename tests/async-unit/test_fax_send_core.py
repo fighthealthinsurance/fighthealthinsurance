@@ -39,7 +39,7 @@ from fighthealthinsurance.helpers.fax_helpers import (
     SendFaxHelper,
     _dispatch_or_ray_fax,
 )
-from fighthealthinsurance.models import Denial, FaxesToSend
+from fighthealthinsurance.models import Appeal, Denial, FaxesToSend
 
 
 @pytest.fixture
@@ -568,11 +568,73 @@ class TestStrandedFaxes:
     """Which faxes count as stranded: asked for, unsent, never started."""
 
     def _stranded(
-        self, test_denial, age=REQUESTED_SEND_GRACE + timedelta(minutes=1), **overrides
+        self,
+        test_denial,
+        age=REQUESTED_SEND_GRACE + timedelta(minutes=1),
+        linked=True,
+        **overrides,
     ):
+        """A fax as a finished staging leaves it, linked from its appeal."""
         fax = _make_fax(test_denial, **overrides)
         FaxesToSend.objects.filter(pk=fax.pk).update(date=timezone.now() - age)
+        if linked:
+            Appeal.objects.create(
+                for_denial=test_denial,
+                appeal_text="Test appeal text",
+                hashed_email=test_denial.hashed_email,
+                fax=fax,
+            )
         return fax
+
+    def _stage(self, test_denial, fails=False):
+        """Stage a fax as StageFaxView does, each time with a new appeal."""
+        appeal = Appeal.objects.create(
+            for_denial=test_denial,
+            appeal_text="Test appeal text",
+            hashed_email=test_denial.hashed_email,
+        )
+        side_effect = RuntimeError("Temporal and Ray both down") if fails else None
+        with patch(DISPATCH, side_effect=side_effect) as dispatch:
+            staged = SendFaxHelper.stage_appeal_as_fax(
+                appeal=appeal, email=test_denial.raw_email, fax_number="4255551234"
+            )
+        dispatch.assert_called_once()
+        return staged
+
+    def _past_the_grace(self):
+        FaxesToSend.objects.update(
+            date=timezone.now() - REQUESTED_SEND_GRACE - timedelta(minutes=1)
+        )
+
+    def test_a_staging_that_showed_an_error_is_never_sent_later(self, test_denial):
+        with pytest.raises(RuntimeError):
+            self._stage(test_denial, fails=True)
+        self._past_the_grace()
+        assert SendFaxHelper.stranded_faxes() == []
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    def test_an_error_then_a_retry_sends_one_fax(self, test_denial):
+        """The person sees an error and stages again; the retry's send
+        starts, and no reconcile pass sends the first row as well."""
+        with pytest.raises(RuntimeError):
+            self._stage(test_denial, fails=True)
+        # Staging again builds a new appeal, as StageFaxView does.
+        retry = self._stage(test_denial)
+        # The retry's send runs its precheck.
+        fax_send_core.precheck_fax(FaxesToSend.objects.get(uuid=retry.uuid))
+        self._past_the_grace()
+        start = AsyncMock()
+        with patch(TEMPORAL_CONNECT, AsyncMock()), patch(TEMPORAL_START, start), patch(
+            RAY
+        ) as ray_ref:
+            assert _redispatch_pass() == 0
+        start.assert_not_awaited()
+        ray_ref.get.do_send_fax.remote.assert_not_called()
+
+    def test_a_dispatch_lost_after_a_good_staging_is_still_found(self, test_denial):
+        staged = self._stage(test_denial)
+        self._past_the_grace()
+        assert SendFaxHelper.stranded_faxes() == [(staged.hashed_email, staged.uuid)]
 
     def test_a_staged_fax_that_never_started_is_stranded(self, test_denial):
         fax = self._stranded(test_denial)
@@ -594,6 +656,7 @@ class TestStrandedFaxes:
             ("already sent", {"sent": True, "fax_success": False}),
             ("never asked to send", {"paid": False, "should_send": False}),
             ("no denial to send for", {"denial_id": None}),
+            ("its staging never finished", {"linked": False}),
         ],
     )
     def test_a_fax_that_is_not_stranded_is_left_alone(

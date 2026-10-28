@@ -225,6 +225,27 @@ class ResendStuckFaxTest(TestCase):
         assert start.called
 
     @_TEMPORAL_ON
+    def test_a_send_delivered_since_the_page_loaded_the_row_is_not_sent_again(self):
+        real_get = FaxesToSend.objects.get
+
+        def load_then_delivered(*args, **kwargs):
+            row = real_get(*args, **kwargs)
+            FaxesToSend.objects.filter(pk=row.pk).update(sent=True, fax_success=True)
+            return row
+
+        self._login()
+        with patch.object(
+            FaxesToSend.objects, "get", side_effect=load_then_delivered
+        ), patch(_START) as start, patch(_RAY) as ray_ref:
+            r = self.client.post(self.url, {"uuid": str(self.fax.uuid)})
+        assert r.status_code == 409, r.status_code
+        assert b"already sent successfully" in r.content
+        assert not start.called
+        assert not ray_ref.get.do_send_fax.remote.called
+        self.fax.refresh_from_db()
+        assert self.fax.sent is True and self.fax.vendor_send_completed is True
+
+    @_TEMPORAL_ON
     def test_a_second_click_starts_nothing(self):
         self._login()
         with patch(_START) as start:

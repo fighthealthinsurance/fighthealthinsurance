@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Iterable, List, Optional, Tuple
 
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 import ray
@@ -174,10 +174,17 @@ class SendFaxHelper:
             destination=appeal_fax_number or fax_number,
             professional=professional,
         )
-        appeal.fax = fts
-        appeal.save()
         # We call str on fts.uuid since it's a UUID object but when persisted it's a string
         _dispatch_or_ray_fax(fts.hashed_email, str(fts.uuid))
+        # Linked only once a sender has the fax: stranded_faxes takes only
+        # linked faxes, so one whose staging showed an error is never sent.
+        try:
+            appeal.fax = fts
+            appeal.save()
+        except Exception:
+            logger.opt(exception=True).error(
+                f"Could not link its appeal to fax uuid={fts.uuid}"
+            )
         return FaxHelperResults(uuid=str(fts.uuid), hashed_email=hashed_email)
 
     @classmethod
@@ -345,12 +352,15 @@ class SendFaxHelper:
         A fax someone asked to send (paid, or should_send) that is unsent,
         with no attempt started and no claim held, REQUESTED_SEND_GRACE after
         staging never reached a sender: its Temporal start failed and the Ray
-        fallback failed or was lost. Only faxes staged inside
-        REDISPATCH_WINDOW, and at most REDISPATCH_BATCH of them.
+        fallback failed or was lost. Only faxes an appeal links (staging
+        links it once a sender has the fax, so not one whose staging showed
+        the person an error), staged inside REDISPATCH_WINDOW, and at most
+        REDISPATCH_BATCH of them.
         """
         now = timezone.now()
         stranded = (
             FaxesToSend.objects.filter(Q(paid=True) | Q(should_send=True))
+            .filter(Exists(Appeal.objects.filter(fax=OuterRef("pk"))))
             .filter(
                 sent=False,
                 attempting_to_send_as_of__isnull=True,

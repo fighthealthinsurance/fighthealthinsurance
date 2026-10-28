@@ -1405,24 +1405,39 @@ class ResendStuckFaxView(View):
         )
         # Marking a new attempt, unsent and started now, in the same update
         # turns away a second click.
+        # fax_success again here: a send may have been delivered since the
+        # load above.
         taken = (
-            FaxesToSend.objects.filter(pk=fax.pk)
+            FaxesToSend.objects.filter(pk=fax.pk, fax_success=False)
             .filter(sender_stopped)
             .update(
                 vendor_send_completed=False, sent=False, attempting_to_send_as_of=now
             )
         )
         if not taken:
-            started = (
+            current = (
                 FaxesToSend.objects.filter(pk=fax.pk)
-                .values_list("attempting_to_send_as_of", flat=True)
+                .values("fax_success", "attempting_to_send_as_of")
                 .first()
             )
-            if started is None:
+            if current is None:
                 return HttpResponse("No such fax", status=404)
+            if current["fax_success"]:
+                logger.warning(
+                    f"Staff resend refused for fax uuid={fax.uuid}: already successful"
+                )
+                return HttpResponse(
+                    "Fax already sent successfully; refusing", status=409
+                )
             logger.warning(
                 f"Staff resend refused for fax uuid={fax.uuid}: a send may be running"
             )
+            started = current["attempting_to_send_as_of"]
+            if started is None:
+                return HttpResponse(
+                    "A send of this fax may still be running, so nothing was sent.",
+                    status=409,
+                )
             minutes = int(STAFF_RESEND_AFTER.total_seconds() // 60)
             return HttpResponse(
                 f"A send of this fax started at {started:%Y-%m-%d %H:%M} UTC and "
