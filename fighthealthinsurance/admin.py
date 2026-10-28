@@ -7,6 +7,7 @@ from django.db import connection
 from django.db.models import IntegerField
 from django.db.models.expressions import RawSQL
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.html import format_html
 
 from fighthealthinsurance.constants import SITE_BANNER_CANNED_MESSAGES
@@ -1333,12 +1334,16 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
 
     def changelist_view(self, request, extra_context=None):
         # How many shared files there are, how many different documents, and
-        # how many shared links.
+        # how many shared links; then the plans they make up, by week, kind,
+        # year and premium answer.
+        from fighthealthinsurance.shared_plan_documents import share_counts
+
         shared = PolicyDocument.objects.filter(
             source__in=PolicyDocument.SHARED_FILE_SOURCES
         )
         extra_context = {
             **(extra_context or {}),
+            "share_counts": share_counts(timezone.localdate()),
             "shared_files": shared.count(),
             "shared_documents": shared.exclude(fingerprint="")
             .values("fingerprint")

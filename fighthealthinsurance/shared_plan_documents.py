@@ -25,11 +25,13 @@ import hashlib
 import hmac
 import time
 import uuid
+from collections import Counter
 from typing import Any, Mapping, NamedTuple, Optional, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from django.conf import settings
 from django.core import signing
+from django.core.cache import cache
 from django.core.files.uploadedfile import UploadedFile
 from django.db import transaction
 from django.db.models import F, PositiveIntegerField
@@ -655,3 +657,188 @@ def remove_shared_documents(hashed_email: str) -> None:
                 f"Removed {len(rows)} shared plan document(s): "
                 f"{len(rows) - len(nothing_to_keep)} kept for their plan facts"
             )
+
+
+# ---- Counting plans ---------------------------------------------------------
+
+#: The share page's goal, shown through its day. The running count appears
+#: only from GOAL_SHOWN_FROM plans, so nobody lands on "2 of 100".
+GOAL_PLANS = 100
+GOAL_DATE = datetime.date(2027, 1, 15)
+GOAL_SHOWN_FROM = 20
+#: The page's count is at most this old, and the same for every visitor.
+PLAN_COUNT_SECONDS = 10 * 60
+_PLAN_COUNT_KEY = "shared-plan-documents-distinct-plans"
+
+
+class Share(NamedTuple):
+    """One share (a batch of files and links), as the counts see it."""
+
+    shared_at: datetime.datetime
+    new_plan: bool
+    files: int
+    links: int
+    plan_category: str
+    plan_year: Optional[int]
+    premium_answered: bool
+
+
+def plan_shares() -> list[Share]:
+    """Every share still holding a file or link, oldest first, marked with
+    whether it is a new plan."""
+    # Each share is one plan unless every file and link in it came in an
+    # earlier share. Removed rows count for nothing.
+    rows = (
+        PolicyDocument.objects.filter(source__in=PolicyDocument.SHARED_SOURCES)
+        .exclude(processing_status=PolicyDocument.PROCESSING_REMOVED)
+        .order_by("shared_at", "created_at", "pk")
+        .values_list(
+            "pk",
+            "share_batch",
+            "shared_at",
+            "created_at",
+            "source",
+            "fingerprint",
+            "shared_link_fingerprint",
+            "plan_category",
+            "plan_year",
+            "premium_amount",
+        )
+    )
+    batches: dict[Any, dict[str, Any]] = {}
+    for (
+        pk,
+        batch,
+        shared_at,
+        created_at,
+        source,
+        file_hash,
+        link_hash,
+        category,
+        year,
+        premium,
+    ) in rows:
+        found = batches.setdefault(
+            batch or pk,
+            {
+                "at": shared_at or created_at,
+                "files": set(),
+                "links": set(),
+                "unknown": False,
+                "file_count": 0,
+                "link_count": 0,
+                "category": category,
+                "year": year,
+                "premium": premium is not None,
+            },
+        )
+        is_link = source == PolicyDocument.SOURCE_SHARED_LINK
+        found["link_count" if is_link else "file_count"] += 1
+        digest = link_hash if is_link else file_hash
+        if digest:
+            found["links" if is_link else "files"].add(digest)
+        else:
+            found["unknown"] = True
+    seen_files: set[str] = set()
+    seen_links: set[str] = set()
+    shares = []
+    for found in batches.values():
+        new_plan = bool(
+            found["unknown"]
+            or found["files"] - seen_files
+            or found["links"] - seen_links
+        )
+        seen_files |= found["files"]
+        seen_links |= found["links"]
+        shares.append(
+            Share(
+                shared_at=found["at"],
+                new_plan=new_plan,
+                files=found["file_count"],
+                links=found["link_count"],
+                plan_category=found["category"] or "unknown",
+                plan_year=found["year"],
+                premium_answered=found["premium"],
+            )
+        )
+    return shares
+
+
+def distinct_plan_count() -> int:
+    """How many different plans have been shared (plan_shares), counted at
+    most once every PLAN_COUNT_SECONDS for all visitors alike."""
+    count = cache.get(_PLAN_COUNT_KEY)
+    if count is None:
+        count = sum(1 for share in plan_shares() if share.new_plan)
+        cache.set(_PLAN_COUNT_KEY, count, PLAN_COUNT_SECONDS)
+    return int(count)
+
+
+def goal_progress(today: datetime.date) -> Optional[dict[str, Any]]:
+    """The share page's goal through its day, with the count once it reaches
+    GOAL_SHOWN_FROM, or None after the day. A count that fails is left off."""
+    if today > GOAL_DATE:
+        return None
+    try:
+        count: Optional[int] = distinct_plan_count()
+    except Exception:
+        logger.opt(exception=True).warning("Could not count the shared plans")
+        count = None
+    return {
+        "plans": GOAL_PLANS,
+        "by": GOAL_DATE,
+        "count": count if count is not None and count >= GOAL_SHOWN_FROM else None,
+    }
+
+
+def share_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
+    """The staff counts: shares and new plans each week (the last ``weeks``,
+    newest first), and the plans by kind, by year and by whether the premium
+    question was answered."""
+    from fighthealthinsurance.client_network import week_start
+
+    shares = plan_shares()
+    plans = [share for share in shares if share.new_plan]
+    by_week: dict[datetime.date, list[int]] = {}
+    for share in shares:
+        week = week_start(timezone.localdate(share.shared_at))
+        counts = by_week.setdefault(week, [0, 0])
+        counts[0] += 1
+        counts[1] += int(share.new_plan)
+    week_rows: list[dict[str, Any]] = []
+    if shares:
+        first = min(by_week)
+        week = week_start(today)
+        while week >= first and len(week_rows) < weeks:
+            got = by_week.get(week, [0, 0])
+            week_rows.append({"week": week, "shares": got[0], "plans": got[1]})
+            week -= datetime.timedelta(days=7)
+    labels = dict(PolicyDocument.PLAN_CATEGORY_CHOICES)
+    kinds = Counter(share.plan_category for share in plans)
+    years = Counter(share.plan_year for share in plans)
+    this_year, next_year = today.year, today.year + 1
+    return {
+        "shares": len(shares),
+        "plans": len(plans),
+        "goal": GOAL_PLANS,
+        "goal_date": GOAL_DATE,
+        "weeks": week_rows,
+        "kinds": [
+            {"kind": labels.get(kind, kind), "plans": n}
+            for kind, n in sorted(kinds.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        "years": [
+            {"year": str(next_year), "plans": years.get(next_year, 0)},
+            {"year": str(this_year), "plans": years.get(this_year, 0)},
+            {
+                "year": "Other years",
+                "plans": sum(
+                    n
+                    for year, n in years.items()
+                    if year is not None and year not in (this_year, next_year)
+                ),
+            },
+            {"year": "Not given", "plans": years.get(None, 0)},
+        ],
+        "premium_answered": sum(1 for share in plans if share.premium_answered),
+    }
