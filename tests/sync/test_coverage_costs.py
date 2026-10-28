@@ -435,6 +435,21 @@ class CoverageCostsIsLinkedTest(TestCase):
     def setUp(self):
         self.href = f'href="{reverse("coverage-costs")}"'
 
+    def test_the_resources_menu_links_it(self):
+        html = Client().get(reverse("coverage-changes")).content.decode()
+        menu = html[html.index('<summary class="fhi-nav-link">Resources</summary>') :]
+        menu = menu[: menu.index("</ul>")]
+        self.assertIn(f"<li><a {self.href}>Coverage Costs for 2027</a></li>", menu)
+
+    def test_denial_watch_links_it_beside_open_enrollment(self):
+        response = Client().get(reverse("denial-watch"))
+        if response.status_code != 200:
+            self.skipTest("Denial Watch is off in this configuration")
+        self.assertIn(
+            f'<p class="dw-cta" id="enroll-costs"><a {self.href}>What health coverage costs in 2027</a></p>',
+            response.content.decode(),
+        )
+
     def test_the_coverage_guide_links_it_from_more_help(self):
         # Not from inside a question's answer: Tab from an open question
         # goes to the next question (the keyboard test checks it).

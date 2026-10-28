@@ -163,9 +163,11 @@
             <p id="enroll-line">Compare plans and costs for {{ enrollment.plan_year }}, even if you'll be renewed automatically.</p>
             <div class="dw-stat"><p class="dw-stat-head"><b class="dw-num">23.1 million</b> <strong>picked a marketplace plan</strong></p><span>for 2026 in open enrollment, including people renewed automatically</span></div>
             <p class="dw-cta"><a href="{% url 'open-enrollment' %}">Open enrollment: dates, numbers and what to do</a></p>
+            <p class="dw-cta" id="enroll-costs"><a href="{% url 'coverage-costs' %}">What health coverage costs in 2027</a></p>
         </section>
         {% else %}
         <p class="dw-cta" id="enroll"><a href="{% url 'open-enrollment' %}">Signing up for marketplace coverage: numbers and what to do</a></p>
+        <p class="dw-cta" id="enroll-costs"><a href="{% url 'coverage-costs' %}">What health coverage costs in 2027</a></p>
         {% endif %}
 
         <nav class="fhi-jump-links" aria-label="On this page">
