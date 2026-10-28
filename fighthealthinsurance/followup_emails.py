@@ -5,13 +5,13 @@ from collections import defaultdict
 from typing import Any, Optional
 
 from channels.db import database_sync_to_async
-from django.db.utils import NotSupportedError, ProgrammingError
+from django.db.models import Q, QuerySet
 from django.urls import reverse
 from django.utils import timezone
 
 from loguru import logger
 
-from fighthealthinsurance.models import FollowUpSched, InterestedProfessional
+from fighthealthinsurance.models import Denial, FollowUpSched, InterestedProfessional
 from fighthealthinsurance.utils import mask_email_for_logging, send_fallback_email
 
 
@@ -107,6 +107,13 @@ class ThankyouEmailSender(AsyncEmailSenderMixin):
         return await self.adosend(interested_pro=candidate)
 
 
+def withdrawn_follow_ups() -> QuerySet[FollowUpSched]:
+    """Follow-up rows still holding an address their case no longer keeps."""
+    return FollowUpSched.objects.filter(
+        Q(denial_id__raw_email__isnull=True) | Q(denial_id__raw_email="")
+    ).exclude(email="")
+
+
 class FollowUpEmailSender(AsyncEmailSenderMixin):
     def _find_due(self):
         """Base query: all unsent follow-ups that are due and not too old."""
@@ -119,22 +126,11 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
             .order_by("follow_up_date")
         )
 
-    def _find_candidates(self):
-        base_qs = self._find_due()
-        try:
-            candidates = base_qs.order_by(
-                "email", "follow_up_type", "follow_up_date"
-            ).distinct("email", "follow_up_type")
-            candidates.exists()
-            return candidates
-        except (NotSupportedError, ProgrammingError):
-            return base_qs
-
-    def find_candidates(self):
-        return list(self._find_candidates())
+    def find_candidates(self) -> list[FollowUpSched]:
+        return self.find_all_due()
 
     def find_all_due(self) -> list[FollowUpSched]:
-        """Return ALL due follow-ups without DISTINCT ON dedup.
+        """Return every due follow-up, with no per-address dedup.
 
         send_all/asend_all need the complete set so that suppressed
         rows across multiple denials for the same email/type are all
@@ -181,6 +177,26 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
             ).exists()
         return False
 
+    def _email_withdrawn(self, follow_up_sched: FollowUpSched) -> bool:
+        """True when the case no longer keeps the email (consent withdrawn)."""
+        # Read now, not from a denial cached on the row: consent can change.
+        raw_email = (
+            Denial.objects.filter(pk=follow_up_sched.denial_id_id)
+            .values_list("raw_email", flat=True)
+            .first()
+        )
+        return not (raw_email or "").strip()
+
+    def _close_withdrawn(self, follow_up_scheds: list[FollowUpSched]) -> None:
+        """Mark follow-ups handled without sending and drop their address copy."""
+        if not follow_up_scheds:
+            return
+        FollowUpSched.objects.filter(pk__in=[s.pk for s in follow_up_scheds]).update(
+            follow_up_sent=True,
+            follow_up_sent_date=timezone.now(),
+            email="",
+        )
+
     def _mark_as_sent_without_sending(
         self, follow_up_scheds: list[FollowUpSched]
     ) -> None:
@@ -198,12 +214,17 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         """Send one email for a group of candidates sharing the same address.
 
         Iterates candidates in priority order (longest duration first).
-        Skips stale candidates, sends the first non-stale one, and marks
-        the rest as sent without emailing. Returns True if an email was sent.
+        Closes candidates whose case withdrew its email, skips stale ones,
+        sends the first remaining one, and marks the rest as sent without
+        emailing. Returns True if an email was sent.
         """
         to_suppress: list[FollowUpSched] = []
+        withdrawn: list[FollowUpSched] = []
         email_sent = False
         for candidate in all_candidates:
+            if self._email_withdrawn(candidate):
+                withdrawn.append(candidate)
+                continue
             if email_sent:
                 to_suppress.append(candidate)
                 continue
@@ -222,6 +243,7 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
                     f"{mask_email_for_logging(all_candidates[0].email)}"
                 )
             self._mark_as_sent_without_sending(to_suppress)
+        self._close_withdrawn(withdrawn)
         return email_sent
 
     def group_due_followups(
@@ -241,10 +263,14 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         """Preview which candidate would be sent for a group.
 
         Returns (candidate_to_send, suppressed_count).
-        candidate_to_send is None if all candidates are stale.
+        candidate_to_send is None if all candidates are stale or withdrawn.
         """
         to_send = next(
-            (c for c in all_candidates if not self._is_stale(c)),
+            (
+                c
+                for c in all_candidates
+                if not self._email_withdrawn(c) and not self._is_stale(c)
+            ),
             None,
         )
         suppressed = len(all_candidates) - (1 if to_send else 0)
@@ -279,6 +305,10 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         elif follow_up_sched is None and email is None:
             raise Exception("One of email and follow_up_sched must be set.")
         assert follow_up_sched is not None
+
+        if self._email_withdrawn(follow_up_sched):
+            self._close_withdrawn([follow_up_sched])
+            return False
 
         if not _skip_stale_check and self._is_stale(follow_up_sched):
             follow_up_sched.follow_up_sent = True

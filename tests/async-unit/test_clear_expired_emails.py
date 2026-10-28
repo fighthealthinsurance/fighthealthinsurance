@@ -151,6 +151,47 @@ class TestClearExpiredEmailsCommand:
 
         assert followup_sched.email == ""
 
+    def _withdrawn_case_follow_up(self):
+        """A case that withdrew its email after a follow-up went to it."""
+        email = "rebecca.crumpler@test-fhi.com"
+        denial = Denial.objects.create(
+            denial_text="Test denial whose email was withdrawn",
+            hashed_email=Denial.get_hashed_email(email),
+            raw_email=None,
+            health_history="",
+        )
+        return FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=2),
+            follow_up_sent=True,
+            follow_up_sent_date=timezone.now() - datetime.timedelta(days=1),
+        )
+
+    def test_clears_followup_emails_of_a_case_that_withdrew_its_email(
+        self, email_test_setup
+    ):
+        withdrawn = self._withdrawn_case_follow_up()
+
+        call_command("clear_expired_emails", stdout=StringIO())
+
+        withdrawn.refresh_from_db()
+        pending = FollowUpSched.objects.get(
+            denial_id=email_test_setup["denial_pending"]
+        )
+        assert (withdrawn.email, pending.email) == (
+            "",
+            "pending_followup@example.com",
+        )
+
+    def test_dry_run_keeps_followup_emails_of_a_withdrawn_case(self, db):
+        withdrawn = self._withdrawn_case_follow_up()
+
+        call_command("clear_expired_emails", "--dry-run", stdout=StringIO())
+
+        withdrawn.refresh_from_db()
+        assert withdrawn.email == "rebecca.crumpler@test-fhi.com"
+
     def test_safety_check_90_days(self, db):
         """Test that denials created less than 90 days ago are not cleared."""
         # Create a denial that has an old follow-up but was created recently

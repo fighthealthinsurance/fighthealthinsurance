@@ -51,7 +51,7 @@ class Command(BaseCommand):
                 if to_send is None:
                     self.stdout.write(
                         f"  Would suppress all {len(others) + 1} follow-up(s) "
-                        f"for {best.email} (all stale)"
+                        f"for {best.email} (all stale or withdrawn)"
                     )
                     continue
                 suffix = f" (+{suppressed} suppressed)" if suppressed else ""

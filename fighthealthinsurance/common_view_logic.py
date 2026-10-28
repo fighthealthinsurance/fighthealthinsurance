@@ -1217,6 +1217,7 @@ def schedule_follow_ups(
     email: str,
     denial: "Denial",
     from_date: Optional[datetime.date] = None,
+    restart: bool = False,
 ) -> None:
     """Schedule 1-day, 7-day, 30-day, and 90-day follow-up emails for a denial.
 
@@ -1226,6 +1227,8 @@ def schedule_follow_ups(
         from_date: Base date for computing follow-up dates. Defaults to
             denial.date. Pass datetime.date.today() when re-scheduling
             (e.g. when a user requests additional follow-up).
+        restart: Send the 7, 30 and 90 day follow-ups again even if they
+            already went. The 1-day one is not repeated.
 
     Skips follow-ups whose date would already be in the past (e.g. when
     backfilling old denials) and uses update_or_create to prevent duplicates
@@ -1244,15 +1247,28 @@ def schedule_follow_ups(
         # Skip if the follow-up date is already in the past
         if follow_up_date < today:
             continue
+        defaults: dict[str, Any] = {
+            "email": email,
+            "follow_up_date": follow_up_date,
+        }
+        if restart and fut.name != "followup_1day":
+            # A fresh initial keeps the row inside the sender's six-month window.
+            defaults.update(
+                follow_up_sent=False, follow_up_sent_date=None, initial=today
+            )
         # Atomic upsert — avoids race condition with exists()+create()
         FollowUpSched.objects.update_or_create(
             denial_id=denial,
             follow_up_type=fut,
-            defaults={
-                "email": email,
-                "follow_up_date": follow_up_date,
-            },
+            defaults=defaults,
         )
+
+
+def cancel_follow_ups(denial: "Denial") -> None:
+    """Drop a denial's unsent follow-ups and the address copies on sent ones."""
+    follow_ups = FollowUpSched.objects.filter(denial_id=denial)
+    follow_ups.filter(follow_up_sent=False).delete()
+    follow_ups.update(email="")
 
 
 class FollowUpHelper:
@@ -1318,7 +1334,10 @@ class FollowUpHelper:
         # the original denial date (which may already be weeks/months ago).
         if follow_up_again and denial.raw_email:
             schedule_follow_ups(
-                denial.raw_email, denial, from_date=datetime.date.today()
+                denial.raw_email,
+                denial,
+                from_date=datetime.date.today(),
+                restart=True,
             )
         for document in followup_documents:
             if not document:
@@ -3024,6 +3043,9 @@ class DenialCreatorHelper:
 
         if possible_email is not None:
             schedule_follow_ups(possible_email, denial)
+        elif not is_new_denial:
+            # Email consent withdrawn on a resubmit: no follow-up may go.
+            cancel_follow_ups(denial)
         if zip is not None and zip != "":
             # A value in denial.state came off the review form, but is NOT
             # proof the person typed it: that form prefills its state box from

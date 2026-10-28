@@ -1,9 +1,13 @@
 """End-to-end tests for the follow-up page (view + helper)."""
 
+import datetime
+
 from django.test import Client, TestCase
 from django.urls import reverse
+from django.utils import timezone
 
-from fighthealthinsurance.common_view_logic import FollowUpHelper
+from fighthealthinsurance.common_view_logic import FollowUpHelper, schedule_follow_ups
+from fighthealthinsurance.followup_emails import FollowUpEmailSender
 from fighthealthinsurance.models import (
     Denial,
     FollowUp,
@@ -156,6 +160,53 @@ class TestFollowUpViewSubmit(TestCase):
         self.assertEqual(FollowUpSched.objects.filter(denial_id=self.denial).count(), 4)
         followup = FollowUp.objects.get(denial_id=self.denial)
         self.assertTrue(followup.more_follow_up_requested)
+
+    def _every_follow_up_already_sent(self):
+        """Where someone answering the 90 day email stands."""
+        schedule_follow_ups(self.denial.raw_email, self.denial)
+        FollowUpSched.objects.filter(denial_id=self.denial).update(
+            follow_up_sent=True, follow_up_sent_date=timezone.now()
+        )
+
+    def test_follow_up_again_after_every_email_went_restarts_them_from_today(self):
+        """The 7, 30 and 90 day check-ins go again from today; the 1 day one,
+        a first-week nudge, is not repeated."""
+        self._every_follow_up_already_sent()
+
+        self.client.post(self.path, data=self._payload(follow_up_again="on"))
+
+        today = datetime.date.today()
+        pending = {
+            s.follow_up_type.name: s.follow_up_date
+            for s in FollowUpSched.objects.filter(
+                denial_id=self.denial, follow_up_sent=False
+            )
+        }
+        self.assertEqual(
+            pending,
+            {
+                "followup_7day": today + datetime.timedelta(days=7),
+                "followup_30day": today + datetime.timedelta(days=30),
+                "followup_90day": today + datetime.timedelta(days=90),
+            },
+        )
+
+    def test_a_restarted_follow_up_is_sent_when_due_even_past_six_months(self):
+        """The sender skips rows scheduled over six months ago, so a restart
+        counts its six months from the request."""
+        self._every_follow_up_already_sent()
+        FollowUpSched.objects.filter(denial_id=self.denial).update(
+            initial=datetime.date.today() - datetime.timedelta(days=200)
+        )
+
+        self.client.post(self.path, data=self._payload(follow_up_again="on"))
+        # A week on, the 7 day check-in falls due.
+        FollowUpSched.objects.filter(
+            denial_id=self.denial, follow_up_type__name="followup_7day"
+        ).update(follow_up_date=datetime.date.today())
+
+        due = FollowUpEmailSender().find_all_due()
+        self.assertEqual([s.follow_up_type.name for s in due], ["followup_7day"])
 
     def test_invalid_secret_does_not_render_form(self):
         """Wrong secret must NOT render the follow-up form (and must not

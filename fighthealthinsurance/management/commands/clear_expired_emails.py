@@ -7,6 +7,7 @@ from django.core.management.base import BaseCommand, CommandParser
 from django.db.models import Q
 from django.utils import timezone
 
+from fighthealthinsurance.followup_emails import withdrawn_follow_ups
 from fighthealthinsurance.models import Denial, FollowUpSched
 
 
@@ -83,6 +84,15 @@ class Command(BaseCommand):
                 raw_email="",
             )
         )
+
+        # A case whose email was withdrawn keeps no copy in its follow-ups.
+        withdrawn = withdrawn_follow_ups()
+        withdrawn_count = withdrawn.count() if dry_run else withdrawn.update(email="")
+        if withdrawn_count:
+            verb = "Would clear" if dry_run else "Cleared"
+            self.stdout.write(
+                f"{verb} emails from {withdrawn_count} withdrawn follow-ups."
+            )
 
         candidate_count = candidates.count()
 
