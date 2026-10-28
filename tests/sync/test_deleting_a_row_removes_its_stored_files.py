@@ -345,3 +345,17 @@ class RemovalLogTest(_StoredFilesTestCase):
     def test_no_line_holds_the_email_or_the_persons_name(self):
         for message in self.messages:
             self.assertNotIn("crumpler", message.lower())
+
+
+class RemovalDoneLineTest(_StoredFilesTestCase):
+    def test_done_waits_for_the_callers_transaction_to_commit(self):
+        messages: list = []
+        sink_id = logger.add(lambda m: messages.append(m.record["message"]))
+        self.addCleanup(logger.remove, sink_id)
+        done = f"Data removal {email_tag(EMAIL)} done: 1 denials removed"
+        with self.captureOnCommitCallbacks() as callbacks:
+            RemoveDataHelper.remove_data_for_email(EMAIL)
+        self.assertNotIn(done, messages)
+        for callback in callbacks:
+            callback()
+        self.assertEqual(messages[-1], done)

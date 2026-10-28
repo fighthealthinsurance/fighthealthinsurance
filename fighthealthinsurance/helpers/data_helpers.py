@@ -95,7 +95,12 @@ class RemoveDataHelper:
                 cls._record_removal(hashed_email, denials_removed)
         finally:
             removal_tag.reset(token)
-        logger.info(f"Data removal {tag} done: {denials_removed} denials removed")
+        # A caller's transaction can still roll back, so say done once it commits.
+        transaction.on_commit(
+            lambda: logger.info(
+                f"Data removal {tag} done: {denials_removed} denials removed"
+            )
+        )
 
     @classmethod
     def _delete_rows(cls, email: str, hashed_email: str) -> int:
