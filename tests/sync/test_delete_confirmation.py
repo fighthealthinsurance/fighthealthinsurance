@@ -17,6 +17,8 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.views import DELETE_CONFIRMATION_SUBJECT
 
+TRACKERS = ("googletagmanager.com", "bat.bing.com", "uetq")
+
 
 def assert_one_title(response):
     """Every page in the deletion flow opens with the shared title block and
@@ -219,6 +221,42 @@ class TestConfirmDeleteDataView(TestCase):
         assert not MailingListSubscriber.objects.filter(
             email="test@test-fhi.com"
         ).exists()
+
+    def _assert_no_trackers(self, response):
+        """The link carries the email and the token; no tracker may see it."""
+        html = response.content.decode()
+        assert [t for t in TRACKERS if t in html] == []
+
+    def _link(self, token):
+        return {"token": token.token, "email": "test@test-fhi.com"}
+
+    def test_confirm_page_loads_no_trackers(self):
+        token = self._create_token()
+        response = self.client.get(reverse("confirm_delete_data"), self._link(token))
+        assert b"Confirm Data Deletion" in response.content
+        self._assert_no_trackers(response)
+
+    def test_expired_link_page_loads_no_trackers(self):
+        token = self._create_token(expired=True)
+        response = self.client.get(reverse("confirm_delete_data"), self._link(token))
+        assert b"expired" in response.content
+        self._assert_no_trackers(response)
+
+    @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
+    def test_used_link_page_loads_no_trackers(self, mock_remove):
+        token = self._create_token()
+        url = reverse("confirm_delete_data")
+        self.client.post(url, self._link(token))
+        response = self.client.get(url, self._link(token))
+        assert b"already been used" in response.content
+        self._assert_no_trackers(response)
+
+    @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
+    def test_done_page_loads_no_trackers(self, mock_remove):
+        token = self._create_token()
+        response = self.client.post(reverse("confirm_delete_data"), self._link(token))
+        assert b"has been removed" in response.content
+        self._assert_no_trackers(response)
 
     def test_invalid_token_shows_error(self):
         url = reverse("confirm_delete_data")

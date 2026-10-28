@@ -1424,6 +1424,7 @@ class ConfirmDeleteDataView(View):
     GET shows a confirmation page; POST performs the actual deletion.
     This two-step approach prevents email scanners and link prefetch
     bots from triggering deletion by following the emailed link.
+    Its pages load no trackers: the link carries the email and the token.
     """
 
     def _error_response(self, request, error_message):
@@ -1434,6 +1435,7 @@ class ConfirmDeleteDataView(View):
                 "title": "Remove My Data",
                 "form": core_forms.PublicDeleteDataForm(),
                 "error": error_message,
+                "no_third_party_scripts": True,
             },
         )
 
@@ -1481,6 +1483,7 @@ class ConfirmDeleteDataView(View):
                 "title": "Confirm Data Deletion",
                 "email": email_normalized,
                 "token": token_str,
+                "no_third_party_scripts": True,
             },
         )
 
@@ -1516,6 +1519,7 @@ class ConfirmDeleteDataView(View):
             "removed_data.html",
             context={
                 "title": "Remove My Data",
+                "no_third_party_scripts": True,
             },
         )
 
