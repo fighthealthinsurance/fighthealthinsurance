@@ -366,6 +366,28 @@ class TestAFinishedEmptyRunIsRecorded:
         assert await _column(denial, "ml_citation_context") is None
 
 
+class TestADetailEmptiedOnReviewIsNotCitedFrom:
+    """Citations gathered in the background for a procedure or diagnosis the
+    person then emptied on the review page are not reused for the appeal."""
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_candidate_citations_for_an_emptied_diagnosis_are_not_used(self):
+        denial = await _denial_on_the_row(
+            procedure="MRI",
+            diagnosis=None,
+            candidate_procedure="MRI",
+            candidate_diagnosis="Migraine",
+            candidate_ml_citation_context=["About migraine"],
+            review_cleared=" diagnosis ",
+        )
+        with _generation(return_value=["About the MRI"]):
+            result = await MLCitationsHelper.generate_citations_for_denial(
+                denial=denial, speculative=False
+            )
+        assert result == ["About the MRI"]
+
+
 class TestAFinishedEmptyRunIsTheAnswer:
     """A stored [] is a finished run that found nothing, so the next call
     hands it back rather than generating again. The appeal step's barrier

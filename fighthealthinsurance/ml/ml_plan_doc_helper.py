@@ -403,8 +403,8 @@ Write only the search strings: no numbering, bullets, quotes or explanations."""
             )
             search_terms = await cls.generate_search_terms(
                 denial_text=denial.denial_text or "",
-                procedure=denial.procedure or denial.candidate_procedure,
-                diagnosis=denial.diagnosis or denial.candidate_diagnosis,
+                procedure=denial.value_or_candidate("procedure"),
+                diagnosis=denial.value_or_candidate("diagnosis"),
                 documents=documents,
             )
         return cls.relevant_passages(documents, search_terms)
@@ -493,10 +493,8 @@ Write only the search strings: no numbering, bullets, quotes or explanations."""
         if not relevant_text or len(relevant_text.strip()) < 50:
             return None
 
-        procedure = (
-            denial.procedure or denial.candidate_procedure or "the denied treatment"
-        )
-        diagnosis = denial.diagnosis or denial.candidate_diagnosis or ""
+        procedure = denial.value_or_candidate("procedure") or "the denied treatment"
+        diagnosis = denial.value_or_candidate("diagnosis") or ""
 
         prompt = f"""Summarize the following insurance plan document excerpts that are relevant
 to an appeal for: {procedure}

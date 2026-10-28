@@ -363,7 +363,15 @@ def collect_denial_text(denial: Any, *fields: str) -> str:
     the requested fields carry a value.
     """
     parts: list[str] = []
+    cleared_on_review = getattr(denial, "cleared_on_review", None)
     for field in fields:
+        # Extraction's copy of a field the person emptied on review is left out.
+        if (
+            field.startswith("candidate_")
+            and callable(cleared_on_review)
+            and cleared_on_review(field.removeprefix("candidate_"))
+        ):
+            continue
         value = getattr(denial, field, None)
         if value:
             parts.append(str(value))

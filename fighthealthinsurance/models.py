@@ -2802,6 +2802,15 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
         """Whether the person emptied ``field`` on the review page."""
         return field in (self.review_cleared or "").split()
 
+    def value_or_candidate(self, field: str) -> typing.Optional[str]:
+        """``field`` (procedure or diagnosis), or else what extraction read
+        for it, unless the person emptied it on the review page."""
+        value: typing.Optional[str] = getattr(self, field)
+        if value or self.cleared_on_review(field):
+            return value
+        candidate: typing.Optional[str] = getattr(self, f"candidate_{field}")
+        return candidate
+
     @staticmethod
     def not_cleared_on_review(field: str) -> Q:
         """Rows where the person has not emptied ``field`` on review."""

@@ -609,11 +609,14 @@ class MLCitationsHelper:
 
         elif (
             denial.candidate_ml_citation_context is not None
+            # An empty field matches anything, unless the person emptied it.
             and (
-                not denial.procedure or (denial.candidate_procedure == denial.procedure)
+                denial.candidate_procedure == denial.procedure
+                or not (denial.procedure or denial.cleared_on_review("procedure"))
             )
             and (
-                not denial.diagnosis or (denial.candidate_diagnosis == denial.diagnosis)
+                denial.candidate_diagnosis == denial.diagnosis
+                or not (denial.diagnosis or denial.cleared_on_review("diagnosis"))
             )
         ):
             # A speculative [] for the same procedure and diagnosis is the

@@ -595,14 +595,12 @@ class ChatInterface:
             return None
         linked_denial = appeal.for_denial
         parts = []
-        if linked_denial.procedure or linked_denial.candidate_procedure:
-            parts.append(
-                f"Procedure: {linked_denial.procedure or linked_denial.candidate_procedure}"
-            )
-        if linked_denial.diagnosis or linked_denial.candidate_diagnosis:
-            parts.append(
-                f"Diagnosis: {linked_denial.diagnosis or linked_denial.candidate_diagnosis}"
-            )
+        procedure = linked_denial.value_or_candidate("procedure")
+        if procedure:
+            parts.append(f"Procedure: {procedure}")
+        diagnosis = linked_denial.value_or_candidate("diagnosis")
+        if diagnosis:
+            parts.append(f"Diagnosis: {diagnosis}")
         return "; ".join(parts) if parts else None
 
     def _record_turn_repeat_metric(self, depth: int) -> None:

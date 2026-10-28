@@ -330,6 +330,50 @@ class TestExtractRelevantText(SimpleTestCase):
         self.assertEqual(text, "")
 
 
+class TestWhatThePersonEmptiedIsNotAskedAbout(SimpleTestCase):
+    """A procedure or diagnosis emptied on the review page is not put back
+    from extraction's copy into the plan-document prompts."""
+
+    EMPTIED = Denial(
+        denial_text=DENIAL_TEXT,
+        procedure=None,
+        candidate_procedure="Humira",
+        diagnosis=None,
+        candidate_diagnosis="Crohn's disease",
+        review_cleared=" diagnosis procedure ",
+    )
+
+    def test_the_search_strings_are_not_chosen_for_it(self):
+        choose = AsyncMock(return_value=["step therapy"])
+        with (
+            patch.object(
+                MLPlanDocHelper,
+                "load_plan_documents",
+                new=AsyncMock(return_value=[POLICY_DOCUMENT]),
+            ),
+            patch.object(MLPlanDocHelper, "generate_search_terms", new=choose),
+        ):
+            asyncio.run(
+                MLPlanDocHelper.extract_relevant_text(1, denial=self.EMPTIED)
+            )
+        asked = choose.await_args.kwargs
+        self.assertEqual((asked["procedure"], asked["diagnosis"]), (None, None))
+
+    def test_the_summary_is_not_asked_about_it(self):
+        infer = AsyncMock(return_value="A summary of the plan's rules.")
+        with patch(INFER, new=infer):
+            asyncio.run(
+                MLPlanDocHelper.summarize_relevant_sections(
+                    self.EMPTIED,
+                    "Specialty drugs need prior authorization. Appeals are due "
+                    "within 180 days of the notice.",
+                )
+            )
+        prompt = infer.await_args.kwargs["prompt"]
+        self.assertNotIn("Humira", prompt)
+        self.assertNotIn("Crohn", prompt)
+
+
 class TestALongPlanDocumentInTheAppealFlow(TransactionTestCase):
     """generate_plan_documents_summary over a real encrypted multi-page PDF
     of the policy, uploaded with a denial as the appeal flow stores it."""
