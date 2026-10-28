@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0241_mcpclientconnectcount"),
+        ("fighthealthinsurance", "0242_policydocument_sharing"),
     ]
 
     operations = [
