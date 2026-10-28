@@ -298,6 +298,48 @@ class ReviewPageClearsWhatThePersonEmptiedTest(ReviewPageTestBase):
         self.submit(again)
         self.assertIsNone(self.denial.diagnosis)
 
+    def with_a_guide(self, **defaults):
+        """The treatment guide the person started from, in their session."""
+        session = self.client.session
+        session.update(defaults)
+        session.save()
+
+    def test_a_cleared_guide_treatment_stays_cleared_coming_back(self):
+        self.with_a_guide(default_procedure="Insulin pump")
+        self.denial.procedure = None
+        self.denial.save()
+        data = self.review_answers()
+        self.assertEqual(data["procedure"], ["Insulin pump"])
+        data["procedure"] = [""]
+        self.submit(data)
+        back = self.review_answers()
+        self.assertEqual(back["procedure"], [""])
+        self.submit(back)
+        self.assertIsNone(self.denial.procedure)
+
+    def test_a_cleared_guide_treatment_stays_cleared_on_the_way_forward(self):
+        self.with_a_guide(default_procedure="Insulin pump")
+        self.denial.procedure = None
+        self.denial.save()
+        data = self.review_answers()
+        data["procedure"] = [""]
+        self.submit(data)
+        page = self.on_to_review()
+        self.assertIsNone(shown(page, "procedure"))
+
+    def test_a_cleared_guide_condition_stays_cleared_coming_back(self):
+        self.with_a_guide(default_condition="Gestational diabetes")
+        self.denial.diagnosis = None
+        self.denial.save()
+        data = self.review_answers()
+        self.assertEqual(data["diagnosis"], ["Gestational diabetes"])
+        data["diagnosis"] = [""]
+        self.submit(data)
+        back = self.review_answers()
+        self.assertEqual(back["diagnosis"], [""])
+        self.submit(back)
+        self.assertIsNone(self.denial.diagnosis)
+
     def test_a_box_shown_empty_keeps_what_extraction_stored_since(self):
         self.denial.plan_id = None
         self.denial.save()

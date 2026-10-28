@@ -1541,8 +1541,8 @@ def review_form(
     as they left it: a date they cleared stays blank.
 
     ``default_condition`` is the condition a treatment guide or an assistant
-    handoff carried. It fills the diagnosis only when the row has none
-    (form_valid keeps it).
+    handoff carried. It fills the diagnosis only when the row has none and
+    the person did not empty it here before (form_valid keeps it).
 
     On the way forward the letter's triage (ml/denial_triage.suggestions)
     also pre-ticks the denial types it names and, when the row has none, the
@@ -1590,7 +1590,8 @@ def review_form(
             "email": email,
             "your_state": denial.your_state,
             "procedure": procedure,
-            "diagnosis": denial.diagnosis or default_condition,
+            "diagnosis": denial.diagnosis
+            or ("" if denial.cleared_on_review("diagnosis") else default_condition),
             "semi_sekret": denial.semi_sekret,
             "insurance_company": denial.insurance_company,
             "plan_id": denial.plan_id,
@@ -1652,7 +1653,11 @@ class CategorizeReview(View):
         microsite_title = request.session.get("microsite_title", "")
         used_default_procedure = False
 
-        if not procedure and default_procedure:
+        if (
+            not procedure
+            and default_procedure
+            and not denial.cleared_on_review("procedure")
+        ):
             procedure = default_procedure
             used_default_procedure = True
 
@@ -3367,7 +3372,11 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
         used_default_procedure = False
 
         # If no procedure was extracted and we have a default from microsite, use it
-        if not procedure and default_procedure:
+        if (
+            not procedure
+            and default_procedure
+            and not denial.cleared_on_review("procedure")
+        ):
             procedure = default_procedure
             used_default_procedure = True
 
