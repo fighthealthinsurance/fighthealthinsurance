@@ -40,8 +40,9 @@ nothing here runs in the app.
 
 ## Marketplace enrollment in context
 
-The open enrollment page and Denial Watch's coverage section share a bar of
-where people get coverage (`templates/partials/coverage_mix.html`), and the
+The open enrollment page and Denial Watch's coverage section share a donut of
+where people get coverage (`templates/partials/coverage_mix.html`, with its
+sources and method in `templates/partials/coverage_mix_method.html`), and the
 open enrollment page sets each February's marketplace coverage beside the
 people under 65. Three checked-in files feed them:
 
@@ -63,10 +64,11 @@ docstring, `REFERENCE`, and `COVERAGE_MIX_SURVEY` in `build_bundle.py`, and
 check the totals against Census's published Table 1 of its health insurance
 report and table H-02 before reading the page's copy again.
 
-The copy in `coverage_mix.html` and the open enrollment page's population
-chart names some of these numbers (nearly half job-based only, about 4 in 100
-marketplace, the records counts, more than doubled against about 1%, about 7
-and 4 for every 100 under 65); `tests/sync/test_coverage_mix.py` checks them.
+The copy in `coverage_mix.html`, `coverage_mix_method.html` and the open
+enrollment page's population chart names some of these numbers (nearly half
+job-based only, about 4 in 100 marketplace, the records counts, more than
+doubled against about 1%, about 7 and 4 for every 100 under 65);
+`tests/sync/test_coverage_mix.py` checks them.
 
 ## Rules the build follows
 
@@ -134,11 +136,11 @@ and 4 for every 100 under 65); `tests/sync/test_coverage_mix.py` checks them.
   under their own names (`2026-oep-state-level-public-use-file.zip`) and the
   build checks each against its sha256 and stops on a mismatch. A zip that
   isn't there is reported as not checked.
-- The coverage bar counts each person once: anyone with Medicare under
+- The coverage donut counts each person once: anyone with Medicare under
   Medicare, anyone else with exactly one kind under that kind, two or more
   other kinds under "more than one kind". The build stops unless the
   at-interview, all-ages rows are the eight slices in the page's order and
-  their shares add to 100 within rounding. The bar is a survey estimate and
+  their shares add to 100 within rounding. The donut is a survey estimate and
   is never drawn with CMS's counts, which come from records.
 - The population is never mixed across vintages: Vintage 2025 redid 2020 on,
   and pairing the intercensal file with Vintage 2024 would fake a jump of

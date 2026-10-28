@@ -137,7 +137,7 @@
 {# Every number on this page comes from static/denial_watch.json, which #}
 {# scripts/denial_watch/build_bundle.py builds from public source files. #}
 <div class="fhi-page-wide dw" data-state-help="{% url 'state_help_index' %}">
-    {% include "partials/page_title.html" with eyebrow="Denial Watch, from public records" title="Health coverage in America, by the numbers" lede="Why it pays to appeal a denial, who denies the most, what gets denied and why, and who has no coverage at all, from government and insurer records. On HealthCare.gov plans, insurers denied about one in five in-network claims in 2024, 84.5 million among reporting insurers, and very few are appealed." %}
+    {% include "partials/page_title.html" with eyebrow="Denial Watch, from public records" title="Health coverage in America, by the numbers" lede="Why it pays to appeal a denial, who denies the most, what gets denied and why, and who has no coverage at all, from government and insurer records. On HealthCare.gov plans, insurers denied about one in five in-network claims in 2024, 84.5 million among reporting insurers, and very few are appealed." %}
 
     <div class="fhi-stack fhi-stack-loose">
         <div class="dw-ticker" role="group" aria-label="Illustration: 2024 in-network denials spread evenly over a day">
@@ -534,7 +534,7 @@
                                 <li><b>Uninsured:</b> <a href="https://www.census.gov/programs-surveys/sahie.html">Census Small Area Health Insurance Estimates</a>, under 65, 2023 and 2024. The national figure adds up the state estimates.</li>
                                 <li><b>Uninsured and health:</b> compared across 48 states and DC (Kentucky and Pennsylvania have no 2023 estimates). The uninsured rate goes with the share of adults in fair or poor health (correlation 0.52), less with diabetes (0.36), and not with depression (-0.10).</li>
                                 <li><b>Health measures:</b> <a href="https://data.cdc.gov/d/i46a-9kgh">CDC PLACES</a> county data, 2025 release (mostly 2023 BRFSS). Adult crude prevalence, county estimates weighted by adult population. Kentucky and Pennsylvania have no 2023 estimates in this release. Use of CDC data does not imply CDC endorsement.</li>
-                                {% include "partials/coverage_mix_method.html" %}
+                                {% include "partials/coverage_mix_method.html" with here="dw" %}
                             </ol>
                             <p class="dw-back"><a href="#coverage">Back to Who doesn't have coverage?</a></p>
                         </div>

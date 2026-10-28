@@ -51,7 +51,13 @@ anything you add.
   `console.log`/`info`/`debug` (`fighthealthinsurance/static/js/webpack.config.js`),
   but `console.warn`/`error` still ship, so never put PHI in them. Production
   also turns off loguru's variable dumps in tracebacks
-  (`fighthealthinsurance/settings.py`).
+  (`fighthealthinsurance/settings.py`). Uploaded file names are often a
+  person's name, so log a stored file as `log_tags.file_tag(name)` and a data
+  removal as `log_tags.email_tag(email)`; to check a removal later, run
+  `python manage.py removal_log_tag` on a pod and search the logs for the
+  tag. Logs are kept as written: a delete request removes database rows and
+  tries to remove their stored files (a file another row still uses stays,
+  and a storage failure can leave a copy), not log lines.
 - **Identifying details are scrubbed in the browser before upload.**
   `fighthealthinsurance/static/js/scrub_scrub.ts` swaps names and IDs for
   placeholders such as `{{FIRST_NAME}}` and keeps the originals in the

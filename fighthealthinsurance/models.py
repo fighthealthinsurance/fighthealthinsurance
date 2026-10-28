@@ -33,6 +33,7 @@ from fighthealthinsurance.exceptions import (
     DocumentRegenerationError,
     MissingRequiredDataError,
 )
+from fighthealthinsurance.log_tags import error_text, file_tag, removal_tag
 from fighthealthinsurance.ml.appeal_prompt_versions import (
     MODE_CHOICES as LETTER_PROMPT_MODE_CHOICES,
 )
@@ -4607,33 +4608,92 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         return f"PolicyDocument: {self.filename or self.id} ({self.document_type})"
 
 
+# Models whose stored files go when their row is deleted.
+STORED_FILE_MODELS: tuple[type[models.Model], ...] = (
+    PlanDocuments,
+    FollowUpDocuments,
+    ExtraLinkDocument,
+    FaxesToSend,
+    Appeal,
+    AppealAttachment,
+    PolicyDocument,
+)
+
+
+def _file_field_names(model: type[models.Model]) -> list[str]:
+    return [
+        f.name for f in model._meta.concrete_fields if isinstance(f, models.FileField)
+    ]
+
+
+def _stored_file_in_use(name: str) -> bool:
+    """True when any row still points at this stored file."""
+    return any(
+        model._default_manager.filter(**{field: name}).exists()
+        for model in STORED_FILE_MODELS
+        for field in _file_field_names(model)
+    )
+
+
+def _delete_files_on_commit(
+    model: type[models.Model],
+    pk: typing.Any,
+    files: list[tuple[str, typing.Any]],
+    using: typing.Optional[str] = None,
+) -> None:
+    """Remove stored files no row points at once the transaction commits."""
+    removal = removal_tag.get()
+
+    def _delete_files() -> None:
+        for field, field_file in files:
+            name = field_file.name
+            where = f"{model.__name__}.{field} {pk}"
+            if removal:
+                where += f" in data removal {removal}"
+            try:
+                # A fax row can share its appeal's document file.
+                if _stored_file_in_use(name):
+                    continue
+                field_file.delete(save=False)
+            except Exception as e:
+                # No traceback: the storage already logged each backend's error.
+                logger.error(
+                    f"Failed to delete stored file {file_tag(name)} for {where}: "
+                    f"{error_text(e)}"
+                )
+                continue
+            logger.info(f"Deleted stored file {file_tag(name)} for {where}")
+
+    transaction.on_commit(_delete_files, using=using)
+
+
+def _delete_stored_files(
+    sender: type[models.Model], instance: models.Model, **kwargs: typing.Any
+) -> None:
+    """Remove the row's stored files after the row delete commits."""
+    files = [(f, getattr(instance, f)) for f in _file_field_names(sender)]
+    files = [(field, field_file) for field, field_file in files if field_file]
+    if files:
+        _delete_files_on_commit(sender, instance.pk, files, using=kwargs.get("using"))
+
+
+for _model in STORED_FILE_MODELS:
+    post_delete.connect(
+        _delete_stored_files,
+        sender=_model,
+        dispatch_uid=f"delete_stored_files_{_model.__name__}",
+    )
+
+
 def delete_policy_document_file_on_commit(
     document_field: typing.Any, pk: typing.Any, using: typing.Optional[str] = None
 ) -> None:
-    """Remove a PolicyDocument's encrypted file blob once the surrounding
-    transaction commits."""
-    if not document_field:
-        return
-
-    def _delete_file() -> None:
-        try:
-            document_field.delete(save=False)
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Failed to delete PolicyDocument file for {pk}"
-            )
-
-    transaction.on_commit(_delete_file, using=using)
-
-
-@receiver(post_delete, sender=PolicyDocument)
-def _delete_policy_document_file(
-    sender: type, instance: "PolicyDocument", **kwargs: typing.Any
-) -> None:
-    """Remove the encrypted file blob after the row delete commits."""
-    delete_policy_document_file_on_commit(
-        instance.document_enc, instance.pk, using=kwargs.get("using")
-    )
+    """Remove a kept PolicyDocument's file once the row stops pointing at it
+    and the transaction commits."""
+    if document_field:
+        _delete_files_on_commit(
+            PolicyDocument, pk, [("document_enc", document_field)], using=using
+        )
 
 
 class PlanDocumentsReminder(models.Model):
