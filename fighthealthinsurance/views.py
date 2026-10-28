@@ -611,6 +611,12 @@ class CoverageChangesView(StaticIshView):
     template_name = "coverage_changes.html"
 
 
+class CoverageCostsView(StaticIshView):
+    """Next year's prices by kind of coverage, each number dated and labeled."""
+
+    template_name = "coverage_costs.html"
+
+
 class Turning26View(StaticIshView):
     """SEO page for young adults aging off a parent's health insurance at 26."""
 

@@ -30,6 +30,7 @@ ON_A_COLUMN = {
     "ai_assistants.html": "fhi-page-wide",
     "denial_watch.html": "fhi-page-wide dw",
     "open_enrollment.html": "fhi-page-wide dw",
+    "coverage_costs.html": "fhi-page-wide dw",
     "media_references.html": "fhi-page-wide",
     "microsite_directory.html": "fhi-page-wide",
     "fax_thankyou.html": "fhi-page-wide",
