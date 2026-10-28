@@ -715,5 +715,4 @@ jobs:
       - name: Run tests
         run: ENVIRONMENT=Test tox -e py${{ matrix.toxpy }}-django${{ matrix.django }}-temporal
         env:
-          STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
           NOSTRIPE: true
