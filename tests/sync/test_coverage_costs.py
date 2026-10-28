@@ -221,7 +221,7 @@ class CoverageCostsFiguresTest(TestCase):
                     "10.22% Official, IRS, July 2026",
                 ),
                 (
-                    "Most you pay out of pocket in a year, in network",
+                    "Most you pay out of pocket in a year, for covered in-network care",
                     "$10,600 for one person, $21,200 for a family Official, CMS, January 29, 2026",
                     "$12,000 for one person, $24,000 for a family Official, CMS, January 29, 2026",
                 ),
@@ -248,7 +248,7 @@ class CoverageCostsFiguresTest(TestCase):
                 ("Part B deductible, per year", "$283 Official, CMS, November 14, 2025", "$292 Projected, Medicare Trustees, June 2026"),
                 ("Medicare Advantage premium, average per month", "$14.37 Official, CMS, September 28, 2026", "$12.00 Projected, CMS, September 28, 2026"),
                 ("Drug plan on its own (Part D), average per month", "$35.09 Official, CMS, September 28, 2026", "$36 Projected, CMS, September 28, 2026"),
-                ("Most you pay for Part D drugs in a year", "$2,100 Official, CMS, April 6, 2026", "$2,400 Official, CMS, April 6, 2026"),
+                ("Most you pay for covered Part D drugs in a year", "$2,100 Official, CMS, April 6, 2026", "$2,400 Official, CMS, April 6, 2026"),
                 ("Part D deductible, at most", "$615 Official, CMS, April 6, 2026", "$700 Official, CMS, April 6, 2026"),
             ],
         )
@@ -270,6 +270,14 @@ class CoverageCostsFiguresTest(TestCase):
             "Most people get premium help. About 87% of people who picked a plan for 2026 got premium tax credits. (Official, CMS, March 2026)",
         )
         self.assertIn("When list prices rise, your help usually does too.", _text(self._section("help-rises")))
+
+    def test_the_400_percent_cutoff_is_the_federal_credit_and_states_may_help(self):
+        self.assertEqual(
+            _text(self._section("no-help-above")),
+            "No federal premium tax credit above 400% of the poverty level. "
+            "Some states have their own help; your state's marketplace can tell you. "
+            "(Official, IRS, July 2026)",
+        )
 
     def test_says_the_big_jump_came_from_2025_to_2026(self):
         self.assertEqual(
