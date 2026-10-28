@@ -283,6 +283,21 @@ class ReviewPageClearsWhatThePersonEmptiedTest(ReviewPageTestBase):
         self.submit(data)
         self.assertEqual(self.denial.plan_source.count(), 0)
 
+    def test_a_cleared_box_stays_cleared_through_a_form_error(self):
+        data = self.review_answers()
+        data["diagnosis"] = [""]
+        data["denial_date"] = ["not a date"]
+        refused = self.client.post(reverse("find_next_steps_loading"), data)
+        self.assertTemplateUsed(refused, "categorize.html")
+        again = sent(
+            BeautifulSoup(refused.content, "html.parser").find(
+                "form", attrs={"action": reverse("find_next_steps_loading")}
+            )
+        )
+        again["denial_date"] = ["2024-03-01"]
+        self.submit(again)
+        self.assertIsNone(self.denial.diagnosis)
+
     def test_a_box_shown_empty_keeps_what_extraction_stored_since(self):
         self.denial.plan_id = None
         self.denial.save()

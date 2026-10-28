@@ -1820,7 +1820,7 @@ class FindNextStepsLoading(View):
     """Interim loading screen before the questions page is rendered."""
 
     def post(self, request):
-        form = core_forms.BasePostInferedForm(request.POST)
+        form = core_forms.PostInferedLoadingForm(request.POST)
         if not form.is_valid():
             # Same navigation-preserving re-render as FindNextSteps.post.
             _ref = request.POST

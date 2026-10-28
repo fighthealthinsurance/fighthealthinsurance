@@ -762,7 +762,17 @@ REVIEW_CLEARABLE_FIELDS = (
 )
 
 
-class PostInferedForm(ReCaptchaOptionalMixin, BasePostInferedForm):
+class ShownFilledMixin(forms.Form):
+    # Which clearable fields the page showed filled, so a box the person
+    # emptied can be told from one that was empty when the page loaded.
+    shown_filled = forms.CharField(required=False, widget=forms.HiddenInput())
+
+    def clean_shown_filled(self) -> frozenset[str]:
+        names = (self.cleaned_data.get("shown_filled") or "").split()
+        return frozenset(names) & frozenset(REVIEW_CLEARABLE_FIELDS)
+
+
+class PostInferedForm(ReCaptchaOptionalMixin, ShownFilledMixin, BasePostInferedForm):
     """Public appeal form with conditionally-enforced reCAPTCHA.
 
     Previously decided at import time from ``os.environ``, which made the
@@ -772,13 +782,11 @@ class PostInferedForm(ReCaptchaOptionalMixin, BasePostInferedForm):
     """
 
     captcha = forms.CharField(required=False, widget=forms.HiddenInput())
-    # Which clearable fields the page showed filled, so a box the person
-    # emptied can be told from one that was empty when the page loaded.
-    shown_filled = forms.CharField(required=False, widget=forms.HiddenInput())
 
-    def clean_shown_filled(self) -> frozenset[str]:
-        names = (self.cleaned_data.get("shown_filled") or "").split()
-        return frozenset(names) & frozenset(REVIEW_CLEARABLE_FIELDS)
+
+class PostInferedLoadingForm(ShownFilledMixin, BasePostInferedForm):
+    """The review form as the loading step checks it: no captcha, which the
+    next step checks once, and the shown_filled marker kept for a re-render."""
 
 
 class ProPostInferedForm(BasePostInferedForm):
