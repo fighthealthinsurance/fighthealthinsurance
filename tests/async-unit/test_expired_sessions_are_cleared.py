@@ -7,7 +7,8 @@ The purge runs on the loop's first pass, then once every 24 hours, and a
 failure in it leaves the expired email clearing that shares the loop
 untouched. Both cleanups are checked at the top of each pass and once a
 minute through the loop's long waits, so neither a follow-up step that keeps
-failing nor the pacing between follow-up sends holds them up.
+failing nor the pacing between follow-up sends holds them up. The same
+loop sends again, once an hour, any fax whose send never started.
 
 The actor is built from its real class with Ray, the one second start-up
 wait and the second Django boot patched out. Most tests run the loop for a
@@ -44,6 +45,7 @@ def actor():
     # Nothing to send, so a pass goes straight to the daily cleanup.
     built.scheduled_sender.afind_candidates = AsyncMock(return_value=[])
     built.followup_sender.afind_candidates = AsyncMock(return_value=[])
+    built._redispatch_stranded_faxes = AsyncMock()
     return built
 
 
@@ -161,18 +163,19 @@ CLEANUPS = {
 }
 
 
-def run_on_a_mocked_clock(actor, days):
+def run_on_a_mocked_clock(actor, days, names=tuple(CLEANUPS.values())):
     """Run the loop for the given number of days on a mocked clock.
 
     Every wait moves the clock on by its length and nothing else does. The
     clock starts at the actor's start-up time, and the loop stops at the end
-    of the pass that crosses the last day. Returns, for each cleanup, the
-    clock time at each of its runs.
+    of the pass that crosses the last day. Returns, for each of the named
+    steps (the cleanups unless told otherwise), the clock time at each of
+    its runs.
     """
     start = actor.last_email_clear_check
     clock = types.SimpleNamespace(at=start)
     end = start + days * DAY
-    runs = {name: [] for name in CLEANUPS.values()}
+    runs = {name: [] for name in names}
 
     def recorder(name):
         async def record():
@@ -180,7 +183,7 @@ def run_on_a_mocked_clock(actor, days):
 
         return record
 
-    for name in CLEANUPS.values():
+    for name in names:
         setattr(actor, name, AsyncMock(side_effect=recorder(name)))
 
     async def fake_sleep(seconds):
@@ -248,3 +251,55 @@ class TestTheEmailWorkDoesNotHoldUpTheCleanups:
             days=3,
             first_pass=cleanup == "the session purge",
         )
+
+
+HOUR = datetime.timedelta(hours=1)
+
+
+class TestTheFaxReconcile:
+    """Once an hour the loop sends again any fax whose send never started
+    (SendFaxHelper.redispatch_stranded_faxes), through its long waits too."""
+
+    def test_it_waits_an_hour_after_start_up(self, actor):
+        run_passes(actor, passes=2)
+
+        actor._redispatch_stranded_faxes.assert_not_awaited()
+
+    def test_the_pacing_between_follow_up_sends_does_not_delay_it(self, actor):
+        actor.followup_sender.afind_candidates = AsyncMock(return_value=[object()] * 10)
+        actor.followup_sender.asend_all = AsyncMock(return_value=10)
+        first_due = actor.last_fax_reconcile + HOUR
+
+        _, runs = run_on_a_mocked_clock(
+            actor, days=1, names=("_redispatch_stranded_faxes",)
+        )
+
+        runs = runs["_redispatch_stranded_faxes"]
+        assert first_due <= runs[0] <= first_due + LATE_BY_AT_MOST
+        gaps = [later - earlier for earlier, later in zip(runs, runs[1:])]
+        assert all(HOUR <= gap <= HOUR + LATE_BY_AT_MOST for gap in gaps), gaps
+        assert len(runs) >= 23
+
+    @pytest.mark.django_db
+    def test_it_hands_the_work_to_the_fax_helper(self, actor):
+        with patch(
+            "fighthealthinsurance.helpers.fax_helpers.SendFaxHelper"
+            ".redispatch_stranded_faxes",
+            return_value=2,
+        ) as redispatch:
+            async_to_sync(_Underlying._redispatch_stranded_faxes)(actor)
+
+        redispatch.assert_called_once_with()
+        actor._logger.info.assert_called_once_with("Re-dispatched 2 stranded faxes")
+
+    def test_a_failing_reconcile_leaves_the_follow_ups_running(self, actor):
+        actor._clear_expired_sessions = AsyncMock()
+        actor.last_fax_reconcile = timezone.now() - 2 * HOUR
+        actor._redispatch_stranded_faxes = AsyncMock(
+            side_effect=RuntimeError("fax backend unavailable")
+        )
+
+        run_passes(actor)
+
+        actor._redispatch_stranded_faxes.assert_awaited_once()
+        actor.followup_sender.afind_candidates.assert_awaited_once()

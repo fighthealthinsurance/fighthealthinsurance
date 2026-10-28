@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block title %}
-{% if missing %}We couldn't find your fax{% elif delivered %}Your fax went through{% elif refused %}This link no longer works{% else %}Fax ReSend{% endif %}
+{% if missing %}We couldn't find your fax{% elif delivered %}Your fax went through{% elif in_progress %}Your fax is still being sent{% elif refused %}This link no longer works{% else %}Fax ReSend{% endif %}
 {% endblock title %}
 
 {% load static %}
@@ -10,9 +10,9 @@
 {% block content %}
 {% comment %}
 Where the fax follow-up email's link lands (FaxFollowUpView), for the fax
-the link kept in the session. A fax that went through, or one older than
-the re-send window, gets a message in place of the form, and so does a
-visit with no fax in the session.
+the link kept in the session. A fax that went through, one with a send
+still under way, or one older than the re-send window, gets a message in
+place of the form, and so does a visit with no fax in the session.
 {% endcomment %}
 <div class="fhi-page">
 {% if missing %}
@@ -27,6 +27,13 @@ visit with no fax in the session.
 <p>Our records show this fax was delivered, so this link can't send it again.</p>
 <p>Call your insurance company to confirm they received it and ask for a reference number. Insurers sometimes say they never got an appeal.</p>
 <p>If they say it didn't arrive, or it needs to go to a different number, email <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> and we'll help.</p>
+</div>
+{% elif in_progress %}
+{% include "partials/page_title.html" with title="Your fax is still being sent" %}
+<div class="fhi-stack">
+<p>We're still working on a send of this fax, so this page can't send it again yet.</p>
+<p>Please open the link in our email again in a couple of hours. If the fax didn't go through, you can send it again then, to the same number or a new one.</p>
+<p>If this page still says the same thing then, email <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> and we'll help.</p>
 </div>
 {% elif refused %}
 {% include "partials/page_title.html" with title="This link no longer works" %}

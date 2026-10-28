@@ -20,6 +20,7 @@ from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.helpers.fax_helpers import (
     FAX_RESEND_WINDOW,
     RESEND_DELIVERED,
+    RESEND_IN_PROGRESS,
     SendFaxHelper,
 )
 from fighthealthinsurance.models import *
@@ -124,9 +125,9 @@ class FaxFollowUpView(generic.FormView):
     the number fills the fax number box. A POST re-sends
     the fax its ref names in this session, and a ref the session doesn't
     hold sends nothing. With no fax, the page says how to open it. A fax
-    that went through, or one staged more than FAX_RESEND_WINDOW ago, gets
-    a page that says so in place of the form, and a POST for it sends
-    nothing.
+    that went through, one staged more than FAX_RESEND_WINDOW ago, or one
+    with a send still under way gets a page that says so in place of the
+    form, and a POST for it sends nothing.
     """
 
     template_name = "faxfollowup.html"
@@ -165,11 +166,13 @@ class FaxFollowUpView(generic.FormView):
 
     def refused(self, refusal: str) -> HttpResponse:
         delivered = refusal == RESEND_DELIVERED
+        in_progress = refusal == RESEND_IN_PROGRESS
         return self.in_place_of_the_form(
-            {"refused": refusal, "delivered": delivered},
+            {"refused": refusal, "delivered": delivered, "in_progress": in_progress},
             # A link past its window is a dead link, a 404 as in
-            # intake_resume_views; a delivered fax is a plain answer.
-            status=200 if delivered else 404,
+            # intake_resume_views; a delivered fax, or one still being
+            # sent, is a plain answer.
+            status=200 if delivered or in_progress else 404,
         )
 
     def get_initial(self):
@@ -193,10 +196,11 @@ class FaxFollowUpView(generic.FormView):
             hashed_email=self.fax.hashed_email,
         )
         if not sent:
-            # Delivered (or past the window) since dispatch looked.
+            # Delivered, past the window, or a send under way since dispatch
+            # looked. No refusal now means that send has just finished.
             self.fax.refresh_from_db()
             return self.refused(
-                SendFaxHelper.resend_refusal(self.fax) or RESEND_DELIVERED
+                SendFaxHelper.resend_refusal(self.fax) or RESEND_IN_PROGRESS
             )
         return render(
             self.request,

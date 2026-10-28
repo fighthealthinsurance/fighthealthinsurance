@@ -15,6 +15,11 @@ from fighthealthinsurance.utils import get_env_variable
 
 name = "EmailPollingActor"
 
+# How often the loop re-dispatches faxes whose send never started. Ray fax
+# sends queue on one actor, so a shorter gap could queue a fax again that an
+# earlier pass queued behind a slow send.
+FAX_RECONCILE_EVERY = datetime.timedelta(hours=1)
+
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
 class EmailPollingActor:
@@ -52,6 +57,8 @@ class EmailPollingActor:
         # then every 24 hours. Each deploy recreates this actor, so each
         # deploy starts with a purge.
         self.last_session_clear_check: Optional[datetime.datetime] = None
+        # Not on the first pass: the last actor's pass may still be queued.
+        self.last_fax_reconcile = timezone.now()
         self._logger.info("EmailPollingActor senders initialized")
 
     async def health_check(self) -> bool:
@@ -69,8 +76,9 @@ class EmailPollingActor:
             # The daily cleanups come first in each pass, before any email
             # work, and the long waits below check them too, so neither a
             # failing email step nor the pacing between sends holds them up.
-            # _run_daily_cleanups catches its own errors.
+            # _run_daily_cleanups and _run_fax_reconcile catch their own errors.
             await self._run_daily_cleanups()
+            await self._run_fax_reconcile()
             try:
                 # Send queued emails whose business-hours window is now open
                 # FIRST: these are time-sensitive, and the follow-up batch below
@@ -166,7 +174,8 @@ class EmailPollingActor:
         await self._wait_running_daily_cleanups(max(10, base_delay + jitter))
 
     async def _wait_running_daily_cleanups(self, seconds: float) -> None:
-        """Wait the given time, running the daily cleanups as they fall due.
+        """Wait the given time, running the daily cleanups and the fax
+        reconcile as they fall due.
 
         The wait is slept a minute at a time with a check for due cleanups
         after each minute, so a long wait, such as the pacing after a batch
@@ -179,6 +188,7 @@ class EmailPollingActor:
             await asyncio.sleep(step)
             remaining -= step
             await self._run_daily_cleanups()
+            await self._run_fax_reconcile()
 
     async def _run_daily_cleanups(self) -> None:
         """Run each daily cleanup that is due.
@@ -204,6 +214,36 @@ class EmailPollingActor:
                 await self._clear_expired_emails()
         except Exception:
             self._logger.opt(exception=True).error("Error clearing expired emails")
+
+    async def _run_fax_reconcile(self) -> None:
+        """Re-dispatch stranded faxes once every FAX_RECONCILE_EVERY.
+
+        Runs here because this actor runs with Temporal on or off, where the
+        Ray fax sweep runs only with it off. It is stamped as it starts and
+        catches its own errors, as the daily cleanups do.
+        """
+        now = timezone.now()
+        if now - self.last_fax_reconcile < FAX_RECONCILE_EVERY:
+            return
+        self.last_fax_reconcile = now
+        try:
+            await self._redispatch_stranded_faxes()
+        except Exception:
+            self._logger.opt(exception=True).error(
+                "Error re-dispatching stranded faxes"
+            )
+
+    async def _redispatch_stranded_faxes(self) -> None:
+        """Send again the faxes whose dispatch was lost (see
+        SendFaxHelper.redispatch_stranded_faxes)."""
+        from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
+
+        # Sync: it reads the ORM and starts workflows through async_to_sync.
+        dispatched = await database_sync_to_async(
+            SendFaxHelper.redispatch_stranded_faxes
+        )()
+        if dispatched:
+            self._logger.info(f"Re-dispatched {dispatched} stranded faxes")
 
     async def _clear_expired_sessions(self) -> None:
         """Delete sessions whose expiry date has passed.

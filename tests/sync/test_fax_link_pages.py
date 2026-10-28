@@ -12,8 +12,9 @@ redirect, and the 404 for a pair that
 matches no fax, are never cached and send no referrer, and that 404 loads no
 analytics tags. The follow-up page re-sends a failed fax, or one with no
 number, for FAX_RESEND_WINDOW after it was staged. A fax that went through
-stays sent. Stripe's success link sends the fax once, then shows the sent
-page however often it is reloaded.
+stays sent, and one with a send still under way waits for it. Stripe's
+success link sends the fax once, then shows the sent page however often it
+is reloaded.
 """
 
 import re
@@ -79,6 +80,12 @@ class FaxLinkPageTestCase(TestCase):
 
     def deliver(self):
         FaxesToSend.objects.filter(pk=self.fax.pk).update(sent=True, fax_success=True)
+
+    def start_sending(self):
+        """A send holds the vendor-send claim, as one does while it dials."""
+        FaxesToSend.objects.filter(pk=self.fax.pk).update(
+            vendor_send_completed=True, attempting_to_send_as_of=timezone.now()
+        )
 
     def followup_link(self, fax=None, fax_uuid=None, hashed_email=None, name=None):
         fax = fax or self.fax
@@ -402,6 +409,39 @@ class FaxFollowUpPageTest(FaxLinkPageTestCase):
         dispatch.assert_not_called()
         self.assertUnchanged()
         self.assertTrue(FaxesToSend.objects.get(pk=self.fax.pk).fax_success)
+
+    def test_a_fax_still_being_sent_says_so_in_place_of_the_form(self):
+        self.start_sending()
+        response = self.open_followup()
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn("Your fax is still being sent", html)
+        self.assertIn("support42@fighthealthinsurance.com", html)
+        self.assertNotIn('name="fax_phone"', html)
+
+    def test_a_submit_while_a_send_is_under_way_sends_nothing(self):
+        self.open_followup()
+        self.start_sending()
+        response, dispatch = self.resend()
+        self.assertIn("Your fax is still being sent", response.content.decode())
+        dispatch.assert_not_called()
+        self.assertUnchanged()
+        self.assertTrue(FaxesToSend.objects.get(pk=self.fax.pk).vendor_send_completed)
+
+    def test_a_second_submit_while_the_first_is_starting_sends_nothing(self):
+        self.open_followup()
+        _, first = self.resend()
+        first.assert_called_once()
+        # The first send's precheck has marked its attempt.
+        FaxesToSend.objects.filter(pk=self.fax.pk).update(
+            attempting_to_send_as_of=timezone.now()
+        )
+        response, second = self.resend(fax_phone="15550001111")
+        self.assertIn("Your fax is still being sent", response.content.decode())
+        second.assert_not_called()
+        self.assertEqual(
+            FaxesToSend.objects.get(pk=self.fax.pk).destination, NEW_NUMBER
+        )
 
     def test_a_fax_past_the_window_says_the_link_no_longer_works(self):
         self.staged_ago(FAX_RESEND_WINDOW + timedelta(days=1))

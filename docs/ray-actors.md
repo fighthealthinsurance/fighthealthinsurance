@@ -9,7 +9,7 @@ cluster. The local dev server (`scripts/run_local.sh`) does not start them.
 
 | Ray actor name | Code | What it does | Launched when |
 | --- | --- | --- | --- |
-| `email_polling_actor` | `fighthealthinsurance/email_polling_actor.py` | Sends follow-up, thank-you and scheduled emails | Always |
+| `email_polling_actor` | `fighthealthinsurance/email_polling_actor.py` | Sends follow-up, thank-you and scheduled emails; once an hour, sends again any fax whose send never started (`SendFaxHelper.redispatch_stranded_faxes`) | Always |
 | `fax_polling_actor` | `fighthealthinsurance/fax_polling_actor.py` | Sends queued faxes | Only when `TEMPORAL_ENABLED` is false (the default); with Temporal on, `SendFaxWorkflow` replaces it |
 | `chooser_refill_actor` | `fighthealthinsurance/chooser_refill_actor.py` | Keeps the chooser's task pool full | Always |
 | `imr_refresh_actor` | `fighthealthinsurance/imr_refresh_actor.py` | Refreshes the IMR / external-review corpus | Always |

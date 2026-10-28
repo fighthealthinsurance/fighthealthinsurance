@@ -5,9 +5,11 @@ Provides utilities for staging and sending appeal faxes.
 """
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
+from django.conf import settings
+from django.db.models import Q
 from django.utils import timezone
 
 import ray
@@ -24,20 +26,12 @@ from fighthealthinsurance.temporal_client import (
 # NOTE: unlike every other per-task Ray dispatch on a request path, the fax
 # dispatches below deliberately do NOT gate on base_actor_ref.ray_cluster_available().
 # Elsewhere the gate is safe because skipping costs a background refresh; here it
-# would cost a fax the user paid for. Skipping is only recoverable if something
-# else retries the row, and nothing reliably does:
+# would cost a fax the user paid for. SendFaxHelper.redispatch_stranded_faxes
+# picks up a lost dispatch, but only once an hour and from a Ray actor, so it is
+# a backstop for the rare lost send, not a reason to skip one.
 #
-#   * Under TEMPORAL_ENABLED the delayed-fax sweep does not exist at all --
-#     polling_actor_setup skips launching FaxPollingActor and send_delayed_faxes
-#     early-returns (0, 0). These fallbacks are reached exactly when the Temporal
-#     dispatch already failed, so a skip strands a paid fax permanently.
-#   * With Temporal off the sweep exists but selects should_send=True rows at
-#     least an HOUR old, and stage_appeal_as_fax / blocking_dosend_* never set
-#     should_send -- so those rows are invisible to it.
-#
-# Auto-initializing a local Ray cluster to send one fax is bad. Silently never
-# sending it is worse. If this becomes a real problem in the web tier, the fix is
-# a durable retry for FaxesToSend, not a gate here.
+# Auto-initializing a local Ray cluster to send one fax is bad. Not sending it
+# is worse.
 
 # How long after a fax is staged the links that carry its (uuid,
 # hashed_email) pair still act on it. The follow-up link reaches the person
@@ -54,6 +48,36 @@ FAX_RESEND_WINDOW = timedelta(days=30)
 # Why SendFaxHelper.resend_refusal turns a re-send down.
 RESEND_DELIVERED = "delivered"
 RESEND_EXPIRED = "expired"
+RESEND_IN_PROGRESS = "in_progress"
+
+# How long an attempt that has not finished may still be running: the send
+# step stops at 30 minutes and finalize follows, so this leaves room to
+# spare. The staff fax queue calls an older one a stale attempt.
+SEND_ATTEMPT_LIVE = timedelta(hours=2)
+
+# Staging starts a send within seconds, so a request this old with no
+# attempt never started sending.
+REQUESTED_SEND_GRACE = timedelta(minutes=15)
+
+# How recent a stranded fax redispatch_stranded_faxes sends on its own: long
+# enough to ride out a weekend outage. An older request may no longer be
+# wanted, so it waits on the staff fax queue for a person to decide.
+REDISPATCH_WINDOW = timedelta(days=3)
+
+# The most faxes one redispatch_stranded_faxes pass sends again.
+REDISPATCH_BATCH = 50
+
+
+def _no_send_running(now: datetime) -> Q:
+    """Rows no send may still be running for: nothing holds the vendor-send
+    claim, and the last attempt finished, none started, or it started more
+    than SEND_ATTEMPT_LIVE ago. The update in SendFaxHelper.resend uses it;
+    SendFaxHelper.send_in_progress is the same rule for a loaded row."""
+    return Q(vendor_send_completed=False) & (
+        Q(sent=True)
+        | Q(attempting_to_send_as_of__isnull=True)
+        | Q(attempting_to_send_as_of__lt=now - SEND_ATTEMPT_LIVE)
+    )
 
 
 def _dispatch_or_ray_fax(
@@ -188,14 +212,31 @@ class SendFaxHelper:
 
         A fax that went through stays sent (RESEND_DELIVERED), and a fax
         staged more than FAX_RESEND_WINDOW ago can't be re-sent from its
-        link (RESEND_EXPIRED). A failed fax, or one with no number, inside
-        the window can.
+        link (RESEND_EXPIRED). While a send may still be running, the fax
+        waits for it (RESEND_IN_PROGRESS). A failed fax, or one with no
+        number, inside the window can be re-sent.
         """
         if fax.sent and fax.fax_success:
             return RESEND_DELIVERED
         if cls.link_expired(fax):
             return RESEND_EXPIRED
+        if cls.send_in_progress(fax):
+            return RESEND_IN_PROGRESS
         return None
+
+    @classmethod
+    def send_in_progress(cls, fax: FaxesToSend) -> bool:
+        """Whether a send may still be running for this fax: one holds the
+        vendor-send claim, or one started within SEND_ATTEMPT_LIVE and has
+        not finished. The same rule as _no_send_running."""
+        if fax.vendor_send_completed:
+            return True
+        started = fax.attempting_to_send_as_of
+        return (
+            not fax.sent
+            and started is not None
+            and timezone.now() - started < SEND_ATTEMPT_LIVE
+        )
 
     @classmethod
     def link_expired(cls, fax: FaxesToSend) -> bool:
@@ -215,23 +256,31 @@ class SendFaxHelper:
 
         Returns:
             True if resend was initiated, False when resend_refusal turns it
-            down (the fax was delivered, or is older than FAX_RESEND_WINDOW)
+            down (the fax was delivered, is older than FAX_RESEND_WINDOW, or
+            a send may still be running for it)
         """
         f = FaxesToSend.objects.filter(hashed_email=hashed_email, uuid=uuid).get()
         refusal = cls.resend_refusal(f)
         if refusal is not None:
             logger.info(f"Fax uuid={uuid} not re-sent: {refusal}")
             return False
-        f.destination = fax_phone
-        f.should_send = True
-        f.sent = (
-            False  # Technically not necessary, but set in case the live actor fails
+        # One conditional update, so a send that started since the check
+        # above, or a second submit, can't overlap this one.
+        started = (
+            FaxesToSend.objects.filter(pk=f.pk)
+            .filter(_no_send_running(timezone.now()))
+            .update(
+                destination=fax_phone,
+                should_send=True,
+                sent=False,
+                # The next precheck stamps it again; until then a lost
+                # dispatch is one redispatch_stranded_faxes can find.
+                attempting_to_send_as_of=None,
+            )
         )
-        # An explicit resend must actually re-transmit: clear the vendor
-        # idempotency marker or send_fax_via_vendor would short-circuit and
-        # report success without faxing the new number.
-        f.vendor_send_completed = False
-        f.save()
+        if not started:
+            logger.info(f"Fax uuid={uuid} not re-sent: {RESEND_IN_PROGRESS}")
+            return False
         # force_restart supersedes any workflow still open for this fax so the
         # corrected destination is not dropped by a run already past its send
         # step (which would never re-read the new number).
@@ -268,3 +317,46 @@ class SendFaxHelper:
         f.save()
         _dispatch_or_ray_fax(hashed_email, uuid)
         return "dispatched"
+
+    @classmethod
+    def redispatch_stranded_faxes(cls) -> int:
+        """Send again each fax whose dispatch was lost; returns how many.
+
+        A fax someone asked to send (paid, or should_send) that is unsent,
+        with no attempt started and no claim held, REQUESTED_SEND_GRACE after
+        staging never reached a sender: its Temporal start failed and the Ray
+        fallback failed or was lost. Inside REDISPATCH_WINDOW it goes through
+        _dispatch_or_ray_fax, as the views send it, with whichever backend is
+        on. The Temporal workflow id is the fax's own, so a run still open for
+        it is left to finish. With Temporal off, should_send rows are left to
+        the Ray delayed-fax sweep, which already sends them.
+        """
+        now = timezone.now()
+        asked = Q(paid=True) | Q(should_send=True)
+        if not getattr(settings, "TEMPORAL_ENABLED", False):
+            asked = Q(paid=True, should_send=False)
+        stranded = (
+            FaxesToSend.objects.filter(asked)
+            .filter(
+                sent=False,
+                attempting_to_send_as_of__isnull=True,
+                vendor_send_completed=False,
+                # Precheck stops on a fax with no denial without marking it,
+                # so it would come back every pass.
+                denial_id__isnull=False,
+                date__lt=now - REQUESTED_SEND_GRACE,
+                date__gte=now - REDISPATCH_WINDOW,
+            )
+            .order_by("date")
+            .values_list("hashed_email", "uuid")[:REDISPATCH_BATCH]
+        )
+        dispatched = 0
+        for hashed_email, fax_uuid in stranded:
+            try:
+                _dispatch_or_ray_fax(hashed_email, str(fax_uuid))
+                dispatched += 1
+            except Exception:
+                logger.opt(exception=True).error(
+                    f"Could not re-dispatch stranded fax uuid={fax_uuid}"
+                )
+        return dispatched

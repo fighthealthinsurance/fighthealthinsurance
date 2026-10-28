@@ -139,7 +139,9 @@ def precheck_fax(fax: "FaxesToSend") -> str:
         logger.warning(f"Fax {fax} has no destination")
         return STATUS_MISSING_DESTINATION
     fax.attempting_to_send_as_of = timezone.now()
-    fax.save()
+    # Only this field: a full save would write back a claim, number or
+    # sent flag another sender or a resend changed since this row loaded.
+    fax.save(update_fields=["attempting_to_send_as_of"])
     return STATUS_OK
 
 

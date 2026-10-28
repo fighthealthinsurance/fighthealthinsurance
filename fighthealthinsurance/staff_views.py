@@ -53,7 +53,10 @@ from fighthealthinsurance.followup_emails import (
     ThankyouEmailSender,
 )
 from fighthealthinsurance.forms import FollowUpTestForm
-from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
+from fighthealthinsurance.helpers.fax_helpers import (
+    REQUESTED_SEND_GRACE,
+    SendFaxHelper,
+)
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
 from fighthealthinsurance.chat.llm_client import MIN_RESPONSE_LENGTH
@@ -256,10 +259,8 @@ def _sequence_value(model, column: str) -> Optional[int]:
     return None
 
 
-# Staging starts a send within seconds, so a request this old with no
-# attempt never started sending.
-REQUESTED_SEND_GRACE = datetime.timedelta(minutes=15)
-# How many of those the fax queue lists.
+# How many requests with no attempt after REQUESTED_SEND_GRACE the fax
+# queue lists.
 REQUESTED_UNSENT_LISTED = 10
 
 
@@ -577,9 +578,12 @@ class AdminStatusView(generic.TemplateView):
         * ``requested_never_sent``: a consumer asked to send (staging set
           ``paid`` whether or not they then paid; paying is optional) and no
           send started within REQUESTED_SEND_GRACE. Staging dispatches at
-          once, so this is a dispatch that failed or never ran, and nothing
-          else retries it. A younger row is still starting and shows on no
-          card. ``requested_never_sent_rows`` lists the newest of them.
+          once, so this is a dispatch that failed or never ran.
+          SendFaxHelper.redispatch_stranded_faxes sends it again within the
+          hour while it is younger than REDISPATCH_WINDOW; one that stays
+          here failed that too, or is older. A younger row is still starting
+          and shows on no card. ``requested_never_sent_rows`` lists the
+          newest of them.
         * ``in_flight``: an attempt started in the last two hours that has not
           finished. Unbounded, this counter showed rows from January whose
           ``attempting_to_send_as_of`` was never cleared (2026-09-11).
