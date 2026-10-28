@@ -295,6 +295,12 @@ class StorageFailureTest(_StoredFilesTestCase):
         self.delete_with_failing_backends(1)
         self.assertEqual([line[0] for line in self.handler_lines()], ["INFO"])
 
+    def test_the_only_copy_failing_logs_an_error_not_a_delete(self):
+        self.backends[0].delete(self.name)
+        self.backends[2].delete(self.name)
+        self.delete_with_failing_backends(1)
+        self.assertEqual([line[0] for line in self.handler_lines()], ["ERROR"])
+
     def test_every_backend_failing_keeps_the_row_deleted(self):
         self.delete_with_failing_backends(0, 1, 2)
         self.assertFalse(PolicyDocument.objects.exists())

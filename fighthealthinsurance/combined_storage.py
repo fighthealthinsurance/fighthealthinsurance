@@ -66,8 +66,8 @@ class CombinedStorage(Storage):
         last_error: Optional[BaseException] = None
         for backend in self.backends:
             try:
-                self._delete_from(backend, name)
-                deleted = True
+                if self._delete_from(backend, name):
+                    deleted = True
             except FileNotFoundError:
                 continue
             except Exception as e:
@@ -78,12 +78,18 @@ class CombinedStorage(Storage):
         if last_error is not None and not deleted:
             raise last_error
 
-    def _delete_from(self, backend: Storage, name: str) -> None:
+    def _delete_from(self, backend: Storage, name: str) -> bool:
+        """Delete the backend's copy; False when it had none."""
+        had = False
         with Timeout(2.0) as timeout_ctx:
-            backend.delete(name)
+            # FileSystemStorage.delete returns quietly for a missing file.
+            had = backend.exists(name)
+            if had:
+                backend.delete(name)
         # stopit swallows the timeout, so check the context instead.
         if not timeout_ctx:
             raise TimeoutError(f"Timed out deleting {file_tag(name)} from {backend}")
+        return had
 
     def save(
         self, name: Optional[str], content: IO[Any], max_length: Optional[int] = None

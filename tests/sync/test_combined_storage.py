@@ -341,6 +341,19 @@ class TestCombinedStorageDeleteOnDisk(TestCase):
 
         self.assertEqual([b.exists(name) for b in self.backends], [False] * 3)
 
+    def test_delete_raises_when_the_only_backend_with_a_copy_fails(self):
+        name = self.storage.save("plan.pdf", ContentFile(b"plan"))
+        self.backends[0].delete(name)
+        self.backends[2].delete(name)
+        failure = PermissionError(13, "Permission denied")
+
+        with patch.object(self.backends[1], "delete", side_effect=failure):
+            with self.assertRaises(PermissionError) as ctx:
+                self.storage.delete(name)
+
+        self.assertIs(ctx.exception, failure)
+        self.assertTrue(self.backends[1].exists(name))
+
     def two_uploads_named_sbc(self):
         first = self.storage.save("SBC.pdf", ContentFile(b"first plan"))
         second = self.storage.save("SBC.pdf", ContentFile(b"second plan"))
