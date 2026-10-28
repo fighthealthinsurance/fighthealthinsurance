@@ -9,6 +9,7 @@ from asgiref.sync import async_to_sync
 from unittest.mock import Mock, patch, AsyncMock
 from typing import AsyncIterator, List
 from fighthealthinsurance import common_view_logic
+from fighthealthinsurance.exceptions import AppealAssemblyError
 from fighthealthinsurance.common_view_logic import (
     FindNextStepsHelper,
     AppealsBackendHelper,
@@ -49,7 +50,11 @@ from django.test import TestCase
 from pypdf import PdfReader
 
 from tests.back_links import back_link
-from tests.pdf_fixtures import make_pdf_bytes, make_shared_stream_pdf_bytes
+from tests.pdf_fixtures import (
+    make_pdf_bytes,
+    make_shared_stream_pdf_bytes,
+    pandoc_stand_in,
+)
 
 
 @contextmanager
@@ -3165,6 +3170,28 @@ class TestAssembleSingleOutput:
 
         assert len(PdfReader(target).pages) == 9000
         assert cpu_used < 0.25
+
+    async def test_a_letter_that_fails_to_convert_stops_the_merge(self, tmp_path):
+        # The cover converts and the letter does not: no fax without the letter.
+        cover = tmp_path / "info_cover.html"
+        cover.write_text("<p>Cover for Rebecca Lee Crumpler</p>")
+        letter = tmp_path / "appealtxt.txt"
+        letter.write_text("Dear reviewer, please cover my MRI.")
+        target = tmp_path / "combined.pdf"
+        helper = common_view_logic.AppealAssemblyHelper()
+
+        with patch(
+            "fighthealthinsurance.common_view_logic._try_pandoc_engines",
+            pandoc_stand_in(fails_for=["appealtxt"]),
+        ):
+            with pytest.raises(AppealAssemblyError, match="appealtxt.txt"):
+                await helper.assemble_single_output(
+                    user_header="header",
+                    extra="",
+                    input_paths=[str(cover), str(letter)],
+                    target=str(target),
+                )
+        assert not target.exists()
 
     async def test_merge_that_outlasts_the_time_limit_raises_timeout_error(
         self, tmp_path

@@ -13,8 +13,10 @@ import pytest
 from django.core.files.base import ContentFile
 from django_encrypted_filefield.crypt import Cryptographer
 
+from fighthealthinsurance.exceptions import DocumentRegenerationError
 from fighthealthinsurance.models import Denial, FaxesToSend, Appeal
 from fhi_users.models import ProfessionalUser
+from tests.pdf_fixtures import pandoc_stand_in
 
 
 class TestFaxDocumentRetrieval:
@@ -486,6 +488,35 @@ class TestFaxDocumentRegeneration:
             finally:
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
+
+    @pytest.mark.django_db
+    def test_regeneration_leaves_no_files_behind(self, fax_without_document, tmp_path):
+        """The cover, the letter and the merged PDF are all gone once the
+        regenerated document has been saved."""
+        temp_dir = tmp_path / "tmp"
+        temp_dir.mkdir()
+        with (
+            patch.object(tempfile, "tempdir", str(temp_dir)),
+            patch(
+                "fighthealthinsurance.common_view_logic._try_pandoc_engines",
+                pandoc_stand_in(),
+            ),
+        ):
+            fax_without_document.get_fax_document(return_encrypted=False)
+
+        assert list(temp_dir.iterdir()) == []
+
+    @pytest.mark.django_db
+    def test_regenerating_a_letter_that_fails_to_convert_raises(
+        self, fax_without_document
+    ):
+        """A document without the letter is never regenerated in its place."""
+        with patch(
+            "fighthealthinsurance.common_view_logic._try_pandoc_engines",
+            pandoc_stand_in(fails_for=["appealtxt"]),
+        ):
+            with pytest.raises(DocumentRegenerationError):
+                fax_without_document.get_fax_document(return_encrypted=False)
 
 
 class TestBackwardCompatibility:

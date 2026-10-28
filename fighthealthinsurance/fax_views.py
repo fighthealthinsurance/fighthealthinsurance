@@ -16,6 +16,7 @@ import stripe
 from loguru import logger
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
+from fighthealthinsurance.exceptions import AppealAssemblyError
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.helpers.fax_helpers import (
     FAX_RESEND_WINDOW,
@@ -394,9 +395,18 @@ class StageFaxView(generic.FormView):
             "fax_phone"
         )
         denial.save()
-        appeal = common_view_logic.AppealAssemblyHelper().create_or_update_appeal(
-            **form_data
-        )
+        try:
+            appeal = common_view_logic.AppealAssemblyHelper().create_or_update_appeal(
+                **form_data
+            )
+        except AppealAssemblyError as e:
+            logger.warning(f"Fax not staged, the document could not be built: {e}")
+            form.add_error(
+                None,
+                "We couldn't build your fax, so nothing was sent. Please try "
+                "again, or print your appeal below and mail or fax it yourself.",
+            )
+            return self.form_invalid(form)
         staged = SendFaxHelper.stage_appeal_as_fax(
             appeal=appeal, email=form_data["email"], fax_number=form_data["fax_phone"]
         )

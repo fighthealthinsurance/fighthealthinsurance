@@ -1,5 +1,6 @@
 """Small PDFs built in memory for tests that read PDFs."""
 
+import os
 from typing import Optional, Sequence
 
 import pymupdf
@@ -90,3 +91,20 @@ def make_table_pdf_bytes(rows: Sequence[Sequence[str]], text: str = "") -> bytes
     pdf_bytes: bytes = doc.tobytes()
     doc.close()
     return pdf_bytes
+
+
+def pandoc_stand_in(fails_for: Sequence[str] = ()):
+    """A stand-in for _try_pandoc_engines that writes a one-page PDF where
+    pandoc would, so appeal assembly runs without pandoc installed. An input
+    whose file name starts with one of ``fails_for`` fails the way pandoc
+    does when every engine has failed."""
+
+    async def _engines(command: list[str]) -> None:
+        output_path = next(arg[2:] for arg in command if arg.startswith("-o"))
+        name = os.path.basename(output_path)
+        if name.startswith(tuple(fails_for)):
+            raise Exception(f"Failed {name} with all engines")
+        with open(output_path, "wb") as f:
+            f.write(make_pdf_bytes([name]))
+
+    return _engines

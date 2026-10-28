@@ -25,3 +25,10 @@ class MissingRequiredDataError(DocumentRegenerationError):
     """Raised when required data for regeneration is missing."""
 
     pass
+
+
+class AppealAssemblyError(Exception):
+    """Raised when a part of an appeal's document can't be turned into a PDF,
+    so the document would go out without it."""
+
+    pass

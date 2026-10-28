@@ -2077,7 +2077,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
             "pubmed_ids_parsed": pubmed_ids_parsed,
         }
 
-    def _generate_pdf_document(self, parameters: dict) -> str:
+    def _generate_pdf_document(self, parameters: dict) -> bytes:
         """
         Generate PDF document using AppealAssemblyHelper.
 
@@ -2085,7 +2085,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
             parameters: Dict of parameters for _assemble_appeal_pdf()
 
         Returns:
-            str: Path to generated PDF file (caller responsible for cleanup)
+            bytes: The generated PDF
 
         Raises:
             DocumentRegenerationError: If PDF generation fails
@@ -2093,29 +2093,26 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
         # Import here to avoid circular imports
         from fighthealthinsurance.common_view_logic import AppealAssemblyHelper
 
-        # Create temporary file for output
-        target_file = tempfile.NamedTemporaryFile(
-            suffix=".pdf", prefix="regenerated_fax", mode="w+b", delete=False
-        )
-        target_path = target_file.name
-        target_file.close()
-        logger.debug(f"Target file: {target_path}")
-
         # Create AppealAssemblyHelper and generate PDF
         try:
-            helper = AppealAssemblyHelper()
-            result_path: str = helper._assemble_appeal_pdf(
-                **parameters,
-                target=target_path,
-            )
-
-            if not result_path or not os.path.exists(result_path):
-                raise DocumentRegenerationError(
-                    f"PDF generation failed: no file created"
+            # The PDF holds the letter, so it is read here and never left on disk.
+            with tempfile.TemporaryDirectory(prefix="regenerated_fax") as workdir:
+                target_path = os.path.join(workdir, "regenerated_fax.pdf")
+                logger.debug(f"Target file: {target_path}")
+                helper = AppealAssemblyHelper()
+                result_path: str = helper._assemble_appeal_pdf(
+                    **parameters,
+                    target=target_path,
                 )
 
-            logger.debug(f"Successfully regenerated document at {result_path}")
-            return result_path
+                if not result_path or not os.path.exists(result_path):
+                    raise DocumentRegenerationError(
+                        f"PDF generation failed: no file created"
+                    )
+
+                logger.debug(f"Successfully regenerated document at {result_path}")
+                with open(result_path, "rb") as f:
+                    return f.read()
 
         except DocumentRegenerationError:
             # Re-raise our own exceptions
@@ -2124,22 +2121,16 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
             logger.opt(exception=True).error(
                 f"Failed to regenerate document for fax {self.fax_id}: {e}"
             )
-            # Clean up target file if it exists
-            if os.path.exists(target_path):
-                try:
-                    os.unlink(target_path)
-                except:
-                    pass
             raise DocumentRegenerationError(
                 f"Failed to regenerate document for fax {self.fax_id}: {e}"
             ) from e
 
-    def _regenerate_document_from_appeal_data(self) -> str:
+    def _regenerate_document_from_appeal_data(self) -> bytes:
         """
         Regenerate fax document from stored appeal data.
 
         Returns:
-            str: Path to regenerated PDF file (caller responsible for cleanup)
+            bytes: The regenerated PDF
 
         Raises:
             MissingRequiredDataError: If required data is missing
@@ -2291,19 +2282,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
         )
 
         try:
-            regenerated_path = self._regenerate_document_from_appeal_data()
-
-            # Read the regenerated PDF
-            with open(regenerated_path, "rb") as f:
-                regenerated_bytes = f.read()
-
-            # Clean up temporary file
-            try:
-                os.unlink(regenerated_path)
-            except Exception as cleanup_error:
-                logger.opt(exception=True).debug(
-                    f"Failed to clean up temporary file {regenerated_path}: {cleanup_error}"
-                )
+            regenerated_bytes = self._regenerate_document_from_appeal_data()
 
             # Save regenerated document to database (field handles encryption automatically)
             logger.info(f"Saving regenerated document for fax {self.fax_id}")
