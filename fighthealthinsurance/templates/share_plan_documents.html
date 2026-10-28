@@ -7,10 +7,12 @@
 {# Denial Watch's stat tiles, then this page's goal line and document cards. #}
 {% include "partials/denial_watch_style.html" %}
 <style>
-  /* The goal, one line under the title; once there is a count, a bar fills toward it. */
-  .share-goal { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fhi-space-2) var(--fhi-space-4); margin: 0; padding: var(--fhi-space-3) var(--fhi-space-4); border-left: 4px solid var(--fhi-green); border-radius: 0 var(--fhi-radius) var(--fhi-radius) 0; background-color: var(--fhi-surface); color: var(--fhi-ink); }
-  .share-goal-icon { flex: none; width: 1.5rem; height: 1.5rem; color: var(--fhi-green-ink); }
-  .share-goal-meter { flex: 1 1 8rem; height: var(--fhi-space-2); border-radius: var(--fhi-space-1); overflow: hidden; background-color: var(--fhi-line); }
+  /* The goal under the title, the flag beside it; once there is a count, a bar fills toward it under the goal. */
+  .share-goal { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--fhi-space-2) var(--fhi-space-4); margin: 0; padding: var(--fhi-space-3) var(--fhi-space-4); border-left: 4px solid var(--fhi-green); border-radius: 0 var(--fhi-radius) var(--fhi-radius) 0; background-color: var(--fhi-surface); color: var(--fhi-ink); }
+  .share-goal > :not(svg) { grid-column: 2; }
+  .share-goal-icon { width: 1.5rem; height: 1.5rem; color: var(--fhi-green-ink); }
+  .share-goal-progress { display: flex; align-items: center; gap: var(--fhi-space-3); }
+  .share-goal-meter { flex: 1 1 auto; max-width: 20rem; height: var(--fhi-space-2); border-radius: var(--fhi-space-1); overflow: hidden; background-color: var(--fhi-line); }
   .share-goal-meter i { display: block; height: 100%; background-color: var(--fhi-green-ink); }
   /* The documents that help most, in the order we want them: one card each, the icon beside the words. */
   .share-docs { display: grid; gap: var(--fhi-space-3); margin: 0; padding: 0; list-style: none; }
@@ -19,8 +21,8 @@
   .share-doc-text { display: grid; gap: var(--fhi-space-1); min-width: 0; }
   .share-doc-text > * { margin: 0; }
   .share-doc-text .fhi-card-title { color: var(--fhi-ink); }
-  /* Any plan is welcome: a line of its own under the goal, at the goal's left edge. */
-  .share-goal-note { flex-basis: 100%; padding-left: calc(1.5rem + var(--fhi-space-4)); font-size: var(--fhi-text-small); }
+  /* Any plan is welcome: a smaller line under the goal. */
+  .share-goal-note { font-size: var(--fhi-text-small); }
   /* What happens to what you share, and what other plans can send: short lists in a card. */
   .share-happens ul, .share-other ul { display: grid; gap: var(--fhi-space-2); margin: 0; padding-left: var(--fhi-space-5); }
   .share-other .fhi-card-title { color: var(--fhi-ink); }
@@ -143,12 +145,11 @@ gives; recheck them before changing it.
     <p class="share-goal" id="share-goal">
         <svg class="share-goal-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 21V4"/><path d="M5 4h12l-2.5 4 2.5 4H5"/></svg>
         <strong>Our goal: {{ goal.plans }} employer plans by {{ goal.by|date:"F j" }}</strong>
-        {% if goal.count is not None %}<span class="share-goal-meter" aria-hidden="true"><i style="width: {{ goal.percent }}%"></i></span>
-        <span id="share-goal-count">{{ goal.count }} so far</span>{% endif %}
-        <span class="share-goal-note" id="any-plan">Any kind of plan is welcome. <a href="#other-plans">What to send for other plans</a></span>
+        {% if goal.count is not None %}<span class="share-goal-progress"><span class="share-goal-meter" aria-hidden="true"><i style="width: {{ goal.percent }}%"></i></span> <span id="share-goal-count">{{ goal.count }} so far</span></span>{% endif %}
+        <span class="share-goal-note" id="any-plan">Any kind of plan is welcome.{% if not shared %} <a href="#other-plans">What to send for other plans</a>{% endif %}</span>
     </p>
     {% else %}
-    <p id="any-plan">Any kind of plan is welcome. <a href="#other-plans">What to send for other plans</a></p>
+    <p id="any-plan">Any kind of plan is welcome.{% if not shared %} <a href="#other-plans">What to send for other plans</a>{% endif %}</p>
     {% endif %}
 
     {% if shared %}

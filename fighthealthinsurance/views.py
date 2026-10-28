@@ -4329,7 +4329,7 @@ class SharePlanDocumentsView(FormView):
                 prefix=PlanDocumentsReminderForm.PREFIX
             )
         context["reminded"] = self.request.GET.get("reminder") == "1"
-        # The same count for every visitor (shared_plan_documents.distinct_plan_count).
+        # The same count for every visitor (shared_plan_documents.employer_plan_count).
         context["goal"] = shared_plan_documents.goal_progress(
             timezone.localdate(timezone=DENIAL_WATCH_LAST_TIME_ZONE)
         )

@@ -147,6 +147,12 @@ class TheGoalTest(_PageTestCase):
         )
         self.assertEqual(note.find("a")["href"], "#other-plans")
 
+    def test_the_thank_you_page_links_to_no_card_it_does_not_show(self):
+        soup = self.page(path=reverse("share_plan_documents") + "?shared=1")
+        self.assertIsNone(soup.find(id="other-plans"))
+        self.assertIsNone(soup.find("a", href="#other-plans"))
+        self.assertIn("Any kind of plan is welcome.", soup.find(id="any-plan").get_text())
+
     def test_after_the_goal_the_page_still_says_any_plan_is_welcome(self):
         soup = self.page(GOAL_DATE + datetime.timedelta(days=1))
         self.assertIn("Any kind of plan is welcome.", soup.find(id="any-plan").get_text())
