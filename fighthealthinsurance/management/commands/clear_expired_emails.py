@@ -7,7 +7,10 @@ from django.core.management.base import BaseCommand, CommandParser
 from django.db.models import Q
 from django.utils import timezone
 
-from fighthealthinsurance.followup_emails import withdrawn_follow_ups
+from fighthealthinsurance.followup_emails import (
+    clear_case_emails,
+    withdrawn_follow_ups,
+)
 from fighthealthinsurance.models import Denial, FollowUpSched
 
 
@@ -117,10 +120,7 @@ class Command(BaseCommand):
         # First, capture the denial IDs before the update
         denial_ids_to_clear = list(candidates.values_list("denial_id", flat=True))
 
-        cleared_count = candidates.update(raw_email=None)
-
-        # Also clear emails from the FollowUpSched entries for these denials
-        FollowUpSched.objects.filter(denial_id__in=denial_ids_to_clear).update(email="")
+        cleared_count = clear_case_emails(denial_ids_to_clear, cutoff_datetime)
 
         self.stdout.write(
             self.style.SUCCESS(

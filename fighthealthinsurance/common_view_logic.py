@@ -1228,7 +1228,7 @@ def schedule_follow_ups(
             denial.date. Pass datetime.date.today() when re-scheduling
             (e.g. when a user requests additional follow-up).
         restart: Send the 7, 30 and 90 day follow-ups again even if they
-            already went. The 1-day one is not repeated.
+            already went. The 1-day one is neither repeated nor sent late.
 
     Skips follow-ups whose date would already be in the past (e.g. when
     backfilling old denials) and uses update_or_create to prevent duplicates
@@ -1243,6 +1243,12 @@ def schedule_follow_ups(
     )
     today = datetime.date.today()
     for fut in follow_up_types:
+        if restart and fut.name == "followup_1day":
+            # Restarting the longer ones would otherwise let a pending one go.
+            FollowUpSched.objects.filter(
+                denial_id=denial, follow_up_type=fut, follow_up_sent=False
+            ).update(follow_up_sent=True, follow_up_sent_date=timezone.now())
+            continue
         follow_up_date = from_date + fut.duration
         # Skip if the follow-up date is already in the past
         if follow_up_date < today:
@@ -1251,7 +1257,7 @@ def schedule_follow_ups(
             "email": email,
             "follow_up_date": follow_up_date,
         }
-        if restart and fut.name != "followup_1day":
+        if restart:
             # A fresh initial keeps the row inside the sender's six-month window.
             defaults.update(
                 follow_up_sent=False, follow_up_sent_date=None, initial=today
@@ -1346,7 +1352,8 @@ class FollowUpHelper:
                 follow_up_document_enc=document, denial=denial, follow_up_id=follow_up
             )
         denial.appeal_result = appeal_result or None
-        denial.save()
+        # Scoped, so a copy read earlier cannot write a withdrawn email back.
+        denial.save(update_fields=["appeal_result", "last_interaction"])
         cls._notify_support_of_feedback(follow_up, denial)
 
     @staticmethod
@@ -2841,7 +2848,7 @@ class DenialCreatorHelper:
         tos=False,
         privacy=False,
         use_external_models=True,
-        store_raw_email=False,
+        store_raw_email: Optional[bool] = False,
         plan_documents=None,
         patient_id=None,
         insurance_company: Optional[str] = None,
@@ -2871,7 +2878,8 @@ class DenialCreatorHelper:
             tos: Whether terms of service have been accepted.
             privacy: Whether privacy policy has been accepted.
             use_external_models: Whether to use external models.
-            store_raw_email: Whether to store the raw email address.
+            store_raw_email: Whether to store the raw email address. None on
+                an update leaves the kept email and its follow-ups as they are.
             plan_documents: Optional plan documents.
             patient_id: Optional patient ID.
             insurance_company: Optional insurance company name.
@@ -2977,8 +2985,9 @@ class DenialCreatorHelper:
             # Nudge opt-in = a retained raw_email; remember the old value so a
             # change can be pushed to an already-running intake journey below.
             contact_opt_in_before = bool((denial.raw_email or "").strip())
-            denial.raw_email = possible_email
-            resubmit_fields.add("raw_email")
+            if store_raw_email is not None:
+                denial.raw_email = possible_email
+                resubmit_fields.add("raw_email")
             # Guarded like every other optional field here: the denial form
             # has no health_history field, so this path is ALWAYS called with
             # health_history=None -- unguarded, a user who went back to edit
@@ -3031,7 +3040,7 @@ class DenialCreatorHelper:
                 resubmit_fields.update({"user_agent", "asn", "asn_name", "ip_address"})
 
             denial.save(update_fields=sorted(resubmit_fields | {"last_interaction"}))
-            if contact_opt_in_before != bool((possible_email or "").strip()):
+            if contact_opt_in_before != bool((denial.raw_email or "").strip()):
                 # Best-effort, no outbox row: a lost signal fails SAFE because
                 # the nudge activity independently gates on the RETAINED
                 # raw_email before sending, so the journey's copy of the
@@ -3043,7 +3052,7 @@ class DenialCreatorHelper:
 
         if possible_email is not None:
             schedule_follow_ups(possible_email, denial)
-        elif not is_new_denial:
+        elif store_raw_email is not None and not is_new_denial:
             # Email consent withdrawn on a resubmit: no follow-up may go.
             cancel_follow_ups(denial)
         if zip is not None and zip != "":

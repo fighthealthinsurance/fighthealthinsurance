@@ -7,6 +7,7 @@ from unittest.mock import patch
 from django.core.management import call_command
 from django.utils import timezone
 
+from fighthealthinsurance.followup_emails import clear_case_emails
 from fighthealthinsurance.models import Denial, FollowUpSched
 
 
@@ -191,6 +192,25 @@ class TestClearExpiredEmailsCommand:
 
         withdrawn.refresh_from_db()
         assert withdrawn.email == "rebecca.crumpler@test-fhi.com"
+
+    def test_a_round_restarted_after_the_listing_keeps_its_email(
+        self, email_test_setup
+    ):
+        """The sweep listed the case, then a new round was asked for: the
+        clearing checks again as it writes and leaves the case alone."""
+        denial = email_test_setup["denial_old"]
+        FollowUpSched.objects.create(
+            email=denial.raw_email,
+            denial_id=denial,
+            follow_up_date=datetime.date.today() + datetime.timedelta(days=7),
+        )
+
+        clear_case_emails(
+            [denial.denial_id], timezone.now() - datetime.timedelta(days=30)
+        )
+
+        denial.refresh_from_db()
+        assert denial.raw_email == "old_followup@example.com"
 
     def test_safety_check_90_days(self, db):
         """Test that denials created less than 90 days ago are not cleared."""
