@@ -13,6 +13,9 @@ Two properties matter and neither is obvious from reading the filters:
    over-matched it would silently disable tracing for the whole site.
 """
 
+import json
+from urllib.parse import quote
+
 import pytest
 
 from fighthealthinsurance.sentry_filters import (
@@ -570,3 +573,105 @@ class TestLocalVariablesNearAnAssistantsLetter:
     )
     def test_a_malformed_event_never_raises(self, event):
         assert strip_local_variables_near_assistant_text(event) is event
+
+
+# What the delete confirmation link carries (views.send_delete_confirmation_email
+# encodes it with quote). The "+" is the case parse_qs reads as a space.
+CONFIRM_EMAIL = "Rebecca.Crumpler+fhi@example.com"
+CONFIRM_TOKEN = "3f1c2b9e-1d7a-4c39-9a51-6f0e8d2c7b44"
+CONFIRM_QUERY = f"token={CONFIRM_TOKEN}&email={quote(CONFIRM_EMAIL, safe='')}"
+CONFIRM_URL = f"https://www.fighthealthinsurance.com/confirm-delete?{CONFIRM_QUERY}"
+
+
+def _confirm_delete_values_left(event) -> list:
+    """Each form of the email or token still anywhere in the event."""
+    text = json.dumps(event).lower()
+    forms = [CONFIRM_EMAIL, CONFIRM_TOKEN, quote(CONFIRM_EMAIL, safe="")]
+    return [form for form in forms if form.lower() in text]
+
+
+def _confirm_delete_transaction() -> dict:
+    """A GET of the emailed link, shaped as sentry-sdk's ASGI and Django
+    integrations send it (the query string unquoted, the URL without it)."""
+    return {
+        "type": "transaction",
+        "transaction": "/confirm-delete",
+        "transaction_info": {"source": "route"},
+        "request": {
+            "url": "https://www.fighthealthinsurance.com/confirm-delete",
+            "method": "GET",
+            "query_string": f"token={CONFIRM_TOKEN}&email={CONFIRM_EMAIL}",
+            "headers": {"Host": "www.fighthealthinsurance.com"},
+        },
+        "contexts": {"trace": {"data": {"http.query": "?" + CONFIRM_QUERY}}},
+        "spans": [{"op": "http.server", "description": f"GET {CONFIRM_URL}"}],
+        "breadcrumbs": {
+            "values": [{"category": "navigation", "data": {"to": CONFIRM_URL}}]
+        },
+    }
+
+
+def _confirm_delete_error() -> dict:
+    """An error raised by the confirming POST: the form body, the Referer
+    (the link itself), and the view's local variables."""
+    return {
+        "transaction": "/confirm-delete",
+        "exception": {
+            "values": [
+                {
+                    "type": "RuntimeError",
+                    "value": "db hiccup",
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "module": "fighthealthinsurance.views",
+                                "vars": {
+                                    "email": repr(CONFIRM_EMAIL.lower()),
+                                    "token_str": repr(CONFIRM_TOKEN),
+                                },
+                            }
+                        ]
+                    },
+                }
+            ]
+        },
+        "request": {
+            "url": "https://www.fighthealthinsurance.com/confirm-delete",
+            "method": "POST",
+            "headers": {"Referer": CONFIRM_URL},
+            "data": {
+                "csrfmiddlewaretoken": "csrf",
+                "token": CONFIRM_TOKEN,
+                "email": CONFIRM_EMAIL.lower(),
+            },
+        },
+        "breadcrumbs": {
+            "values": [{"message": f"confirming deletion for {CONFIRM_EMAIL}"}]
+        },
+    }
+
+
+class TestDeleteConfirmationLinkStaysOutOfSentry:
+    """The emailed link carries the person's email and deletion token."""
+
+    def test_transaction_carries_neither_value(self):
+        event = before_send_transaction_filter(_confirm_delete_transaction(), {})
+        assert _confirm_delete_values_left(event) == []
+
+    def test_transaction_is_still_sent(self):
+        event = before_send_transaction_filter(_confirm_delete_transaction(), {})
+        assert (event or {}).get("transaction") == "/confirm-delete"
+
+    def test_error_event_carries_neither_value(self):
+        event = before_send_filter(_confirm_delete_error(), {})
+        assert _confirm_delete_values_left(event) == []
+
+    def test_error_event_keeps_its_exception(self):
+        event = before_send_filter(_confirm_delete_error(), {})
+        assert "db hiccup" in json.dumps((event or {}).get("exception"))
+
+    def test_other_pages_keep_their_query_string(self):
+        event = _transaction("route", name="/scan")
+        event["request"] = {"url": "https://x/scan", "query_string": "email=a@b.com"}
+        kept = before_send_transaction_filter(event, {})
+        assert kept["request"].get("query_string") == "email=a@b.com"

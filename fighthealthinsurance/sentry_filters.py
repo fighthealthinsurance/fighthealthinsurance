@@ -27,8 +27,9 @@ noise those probes *do* generate is one transaction per novel path, handled
 by :func:`before_send_transaction_filter`.
 """
 
-from typing import Any, Dict, List, Sequence
-from urllib.parse import urlsplit
+import re
+from typing import Any, Dict, List, Sequence, Set
+from urllib.parse import parse_qs, quote, quote_plus, urlsplit
 
 # Ray client connection failures are transient infrastructure noise: Ray
 # reconnects on its own, so there is nothing to action in Sentry. They are
@@ -117,6 +118,14 @@ ASSISTANT_TEXT_MODULES = (
 # variables. Matched on the transaction name (the route, "/timbit/help/
 # letter_review/{packet_id}/...") or the request URL's path.
 LETTER_REVIEW_PATH_PREFIX = "/timbit/help/letter_review/"
+
+
+# The delete-my-data confirmation link (views.send_delete_confirmation_email)
+# carries the person's email and their deletion token in its query string.
+# Events from that page lose both values wherever the event carries them.
+CONFIRM_DELETE_PATH = "/confirm-delete"
+CONFIRM_DELETE_KEYS = ("email", "token")
+FILTERED = "[Filtered]"
 
 
 # sentry's logentry/Message interface renders text into "formatted" and keeps
@@ -283,6 +292,97 @@ def strip_letter_review_details(event: Any) -> Any:
     return event
 
 
+def is_confirm_delete_event(event: Any) -> bool:
+    """True when an event comes from the delete confirmation page. Never
+    raises."""
+    if not isinstance(event, dict):
+        return False
+    name = event.get("transaction")
+    if isinstance(name, str) and _url_path(name).rstrip("/") == CONFIRM_DELETE_PATH:
+        return True
+    request = event.get("request")
+    if not isinstance(request, dict):
+        return False
+    return _url_path(request.get("url")).rstrip("/") == CONFIRM_DELETE_PATH
+
+
+def _confirm_delete_values(request: Dict[str, Any]) -> Set[str]:
+    """The email and token the request carried, in each form a string in the
+    event could hold them."""
+    found: Set[Any] = set()  # untrusted shapes; only strings are used below
+    queries = [request.get("query_string"), request.get("url")]
+    headers = request.get("headers")
+    if isinstance(headers, dict):
+        queries += [v for k, v in headers.items() if str(k).lower() == "referer"]
+    for query in queries:
+        if not isinstance(query, str):
+            continue
+        query = urlsplit(query).query if "?" in query else query
+        for key, values in parse_qs(query).items():
+            if key in CONFIRM_DELETE_KEYS:
+                found.update(values)
+    data = request.get("data")
+    if isinstance(data, dict):
+        for key in CONFIRM_DELETE_KEYS:
+            value = data.get(key)
+            found.update(value if isinstance(value, list) else [value])
+    forms: Set[str] = set()
+    for value in found:
+        # Shorter is no real address or token, and would match everywhere.
+        if isinstance(value, str) and len(value.strip()) >= 3:
+            value = value.strip()
+            # parse_qs reads an unencoded "+" in an address as a space.
+            for v in (value, value.replace(" ", "+")):
+                forms.update({v, quote(v, safe=""), quote_plus(v), quote(v)})
+    return forms
+
+
+def _replace_values(node: Any, pattern: "re.Pattern[str]") -> Any:
+    if isinstance(node, str):
+        return pattern.sub(FILTERED, node)
+    if isinstance(node, dict):
+        for key in list(node):
+            node[key] = _replace_values(node[key], pattern)
+    elif isinstance(node, list):
+        for i, item in enumerate(node):
+            node[i] = _replace_values(item, pattern)
+    return node
+
+
+def strip_confirm_delete_details(event: Any) -> Any:
+    """Remove the email and the deletion token from an event raised on, or a
+    transaction for, the delete confirmation page (see CONFIRM_DELETE_PATH):
+    the query string goes, and every other copy of either value in the event
+    (the URL, the Referer header, the form body, breadcrumbs, the transaction
+    name, spans) becomes "[Filtered]". An event that cannot be cleaned is
+    dropped. Never raises."""
+    if not is_confirm_delete_event(event):
+        return event
+    try:
+        request = event.get("request")
+        if not isinstance(request, dict):
+            request = {}
+        values = _confirm_delete_values(request)
+        request.pop("query_string", None)
+        url = request.get("url")
+        if isinstance(url, str):
+            request["url"] = url.split("?", 1)[0]
+        headers = request.get("headers")
+        if isinstance(headers, dict):
+            for key, value in headers.items():
+                if str(key).lower() == "referer" and isinstance(value, str):
+                    headers[key] = value.split("?", 1)[0]
+        if values:
+            pattern = re.compile(
+                "|".join(re.escape(v) for v in sorted(values, key=len, reverse=True)),
+                re.IGNORECASE,
+            )
+            _replace_values(event, pattern)
+        return event
+    except Exception:
+        return None
+
+
 def before_send_filter(event: Any, hint: Any) -> Any:
     """Drop known-noise error events. Returns the event, or None to discard.
 
@@ -367,12 +467,15 @@ def before_send_filter(event: Any, hint: Any) -> Any:
         return None
 
     event = strip_letter_review_details(event)
+    event = strip_confirm_delete_details(event)
     return strip_local_variables_near_assistant_text(event)
 
 
 def before_send_transaction_filter(event: Any, hint: Any) -> Any:
     """Drop transactions for requests that matched no URL route, and every
     transaction from a letter review page (see LETTER_REVIEW_PATH_PREFIX).
+    A delete confirmation transaction is kept without the email and token
+    its link carried (see strip_confirm_delete_details).
 
     This is the half of the scanner-noise problem that ``before_send`` cannot
     reach: sentry-sdk calls ``before_send`` only for error events, so at
@@ -391,8 +494,9 @@ def before_send_transaction_filter(event: Any, hint: Any) -> Any:
     if is_letter_review_event(event):
         return None
     transaction_info = event.get("transaction_info")
-    if not isinstance(transaction_info, dict):
-        return event
-    if transaction_info.get("source") == UNROUTED_TRANSACTION_SOURCE:
+    if (
+        isinstance(transaction_info, dict)
+        and transaction_info.get("source") == UNROUTED_TRANSACTION_SOURCE
+    ):
         return None
-    return event
+    return strip_confirm_delete_details(event)
