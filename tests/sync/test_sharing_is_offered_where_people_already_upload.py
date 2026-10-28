@@ -136,7 +136,7 @@ class TheBoxIsOfferedUntickedAndStandsOutTest(TestCase):
             "We keep the files encrypted. Our team and AI models, including "
             "outside services, read them with documents from many other people, "
             "and we share what we learn publicly. If you ask us to delete your "
-            "data, we delete your files, including this copy. What we've learned "
+            "data, we do our best to delete your files, including this copy. What we've learned "
             "about the plan, like what kind of plan it is, stays, because it "
             "describes the plan, not you.",
         )
@@ -219,7 +219,8 @@ class TheBoxIsOfferedUntickedAndStandsOutTest(TestCase):
                 self.assertIn(point, terms)
         self.assertTrue(
             terms.endswith(
-                "If you ask us to delete your data, we delete this copy too. "
+                "If you ask us to delete your data, we do our best to delete "
+                "this copy too. "
                 "What we've learned about the plan stays, because it describes "
                 "the plan, not you."
             )

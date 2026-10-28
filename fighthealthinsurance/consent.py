@@ -86,8 +86,9 @@ SHARING_OPT_IN_TERMS = (
     "If you tick the box, you agree to share a copy of these documents, and "
     "what you've told us about the plan, with Fight Health Insurance. "
     + _SHARING_BODY
-    + " If you ask us to delete your data, we delete this copy too. What we've "
-    "learned about the plan stays, because it describes the plan, not you."
+    + " If you ask us to delete your data, we do our best to delete this copy "
+    "too. What we've learned about the plan stays, because it describes the "
+    "plan, not you."
 )
 SHARING_OPT_IN_CHECKBOX = "Yes, also share a copy with Fight Health Insurance."
 

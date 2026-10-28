@@ -52,7 +52,7 @@ SHARING_WORDS_SHA256 = {
     "2026-10-24": "06d9e69f62c2ba0b9470677a0bd286e4744787294cac0fc532a2aa8fc2afb20b",
     "2026-10-27": "976263b9b1f1d3c98d77d4da8237de17ae0defd254da2d843362f3959537f7e9",
     # From here the share page's folded details are part of the words.
-    "2026-10-28": "fe685c693cb1273997bf32851d669f638b36bd35fcfe3d9051149ff22f482927",
+    "2026-10-28": "4bd9edc25d22114e3057439d8d3e931f8fb52cd281610589388a8948a726d273",
 }
 
 EM_DASH = "\u2014"
