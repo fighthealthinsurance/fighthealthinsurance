@@ -1,5 +1,6 @@
 import csv
 import datetime
+import io
 import json
 import statistics
 from urllib.parse import urlencode
@@ -24,6 +25,7 @@ from django.db.models import (
 )
 from django.db.models.functions import Coalesce, Lower
 from django.http import (
+    FileResponse,
     Http404,
     HttpResponse,
     HttpResponseBase,
@@ -88,6 +90,7 @@ from fighthealthinsurance.models import (
     MailingListSubscriber,
     ModelBackendHealthCheckResult,
     ModelCallAttempt,
+    PolicyDocument,
     ProfessionalDomainRelation,
     ProfessionalUser,
     ProposedAppeal,
@@ -202,6 +205,192 @@ class AdminDeleteDataView(generic.FormView):
             f"Staff user {self.request.user.username} deleted data for {masked}"
         )
         return HttpResponse(f"All data for {masked} has been deleted.")
+
+
+@method_decorator(never_cache, name="dispatch")
+class PolicyDocumentDownloadView(View):
+    """A policy document's file, decrypted with the server's key, for staff
+    reviewing it. Routed behind staff_member_required."""
+
+    def get(self, request, pk) -> HttpResponseBase:
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            read_and_decrypt_file,
+        )
+
+        # Only files shared for research; other uploads stay out of reach.
+        doc = PolicyDocument.objects.filter(
+            pk=pk, source__in=PolicyDocument.SHARED_FILE_SOURCES
+        ).first()
+        if doc is None or not doc.document_enc:
+            raise Http404("No file for that policy document")
+        content = read_and_decrypt_file(doc.document_enc)
+        if not content:
+            raise Http404("No file for that policy document")
+        logger.info(f"Staff user {request.user.pk} downloaded policy document {pk}")
+        response = FileResponse(
+            io.BytesIO(content),
+            as_attachment=True,
+            filename=doc.filename or f"{pk}",
+            content_type="application/octet-stream",
+        )
+        response["Content-Security-Policy"] = _NOTHING_RUNS
+        return response
+
+
+# A response that runs nothing and loads nothing, even if a browser renders it.
+_NOTHING_RUNS = "default-src 'none'; sandbox"
+
+
+def _plain_text(body: str) -> HttpResponse:
+    """``body`` as plain text that a browser shows and never runs."""
+    response = HttpResponse(body, content_type="text/plain; charset=utf-8")
+    response["Content-Security-Policy"] = _NOTHING_RUNS
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Content-Disposition"] = "inline"
+    return response
+
+
+@method_decorator(never_cache, name="dispatch")
+class PolicyDocumentTextView(View):
+    """A policy document's text, for staff reviewing it, as plain text that
+    can't run anything. PDFs are read in a separate process with page,
+    character and time limits, so the file is never parsed here; Word files
+    are read here in one pass (word_text), with the same character and time
+    limits. Routed behind staff_member_required."""
+
+    MAX_PAGES = 1500
+    MAX_CHARS = 3_000_000
+    TIMEOUT_SECONDS = 60
+    # The encrypted file is about a third bigger than the 20MB upload limit.
+    MAX_STORED_BYTES = 32 * 1024 * 1024
+
+    def get(self, request, pk) -> HttpResponseBase:
+        from fighthealthinsurance.chat_forms import policy_document_extension
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            read_and_decrypt_file,
+        )
+
+        doc = PolicyDocument.objects.filter(
+            pk=pk, source__in=PolicyDocument.SHARED_FILE_SOURCES
+        ).first()
+        if doc is None or not doc.document_enc:
+            raise Http404("No file for that policy document")
+        content = read_and_decrypt_file(
+            doc.document_enc, max_bytes=self.MAX_STORED_BYTES
+        )
+        if not content:
+            raise Http404("No file for that policy document")
+        ext = policy_document_extension(doc.filename or doc.document_enc.name or "")
+        text, note = self._text(ext, content)
+        logger.info(f"Staff user {request.user.pk} read policy document {pk} as text")
+        header = f"Policy document {pk} ({ext or 'no extension'})\n"
+        if note:
+            header += f"{note}\n"
+        return _plain_text(header + "\n" + text)
+
+    def _text(self, ext: str, content: bytes) -> tuple[str, str]:
+        """The file's text and a note about it, such as that it was cut short."""
+        if ext == ".pdf":
+            return self._pdf_text(content)
+        if ext == ".docx":
+            return self._docx_text(content)
+        return self._cut(content.decode("utf-8", "replace").strip(), "")
+
+    def _docx_text(self, content: bytes) -> tuple[str, str]:
+        from fighthealthinsurance import word_text
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            MAX_DOCX_UNPACKED_BYTES,
+        )
+
+        text, status = word_text.docx_text(
+            content, self.MAX_CHARS, self.TIMEOUT_SECONDS, MAX_DOCX_UNPACKED_BYTES
+        )
+        if status == word_text.UNREADABLE:
+            return (
+                "",
+                "We couldn't read text from this Word file. Download the original.",
+            )
+        note = ""
+        if status == word_text.PARTIAL:
+            note = "Only part of this Word file is shown."
+        return self._cut(text, note)
+
+    def _pdf_text(self, content: bytes) -> tuple[str, str]:
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.pdf_text import aextract_pdf_page_texts
+
+        try:
+            pages = async_to_sync(aextract_pdf_page_texts)(
+                content, self.MAX_PAGES, self.MAX_CHARS, self.TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            return "", "Reading this PDF took too long. Download the original."
+        except ValueError as error:
+            if "encrypted" in str(error):
+                return "", "This PDF is locked with a password. Download the original."
+            return "", "We couldn't read text from this PDF. Download the original."
+        except Exception:
+            return "", "We couldn't read text from this PDF. Download the original."
+        if not any(page.strip() for page in pages):
+            return self._cut("", "")
+        text = "\n\n".join(
+            f"[Page {number}]\n{page.strip()}"
+            for number, page in enumerate(pages, start=1)
+        )
+        note = ""
+        if len(pages) >= self.MAX_PAGES:
+            note = f"Only the first {self.MAX_PAGES} pages are shown."
+        return self._cut(text, note)
+
+    def _cut(self, text: str, note: str) -> tuple[str, str]:
+        if not text.strip():
+            return "", note or (
+                "No text found. It may be scanned pages. Download the original."
+            )
+        if len(text) >= self.MAX_CHARS:
+            return text[: self.MAX_CHARS], (
+                f"Only the first {self.MAX_CHARS:,} characters are shown."
+            )
+        return text, note
+
+
+@method_decorator(never_cache, name="dispatch")
+class PolicyDocumentCleanedTextView(View):
+    """A shared policy document's cleaned text: what its reading stored,
+    with personal details taken out as best we could
+    (plan_documents_processing). Served like the text view, as plain text
+    that can't run anything. Routed behind staff_member_required."""
+
+    NOTES = {
+        PolicyDocument.PROCESSING_RECEIVED: "Not read yet.",
+        PolicyDocument.PROCESSING_UNREADABLE: (
+            "No text could be read from this file. It may be scanned pages. "
+            "Download the original."
+        ),
+    }
+
+    def get(self, request, pk) -> HttpResponseBase:
+        doc = (
+            PolicyDocument.objects.filter(
+                pk=pk, source__in=PolicyDocument.SHARED_SOURCES
+            )
+            .only("pk", "processing_status", "processed_at", "cleaned_text")
+            .first()
+        )
+        if doc is None:
+            raise Http404("No shared policy document by that id")
+        logger.info(
+            f"Staff user {request.user.pk} read policy document {pk}'s cleaned text"
+        )
+        status = doc.get_processing_status_display() or "Not read"
+        header = f"Policy document {pk}, cleaned text\nStatus: {status}\n"
+        if doc.processed_at:
+            header += f"Read: {doc.processed_at:%Y-%m-%d %H:%M} UTC\n"
+        note = self.NOTES.get(doc.processing_status, "")
+        if note:
+            header += f"{note}\n"
+        return _plain_text(header + "\n" + doc.cleaned_text)
 
 
 class StaffDashboardView(generic.TemplateView):
