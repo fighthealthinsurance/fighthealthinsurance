@@ -2072,46 +2072,22 @@ class FindNextStepsHelper:
         written for instead, and a state with no confirmed reserve written
         for it gets one.
         """
-        confirmed_procedure = (denial.procedure or "").strip()
-        confirmed_diagnosis = (denial.diagnosis or "").strip()
-        confirmed_state = (denial.your_state or "").strip()
-        if not confirmed_procedure and not confirmed_diagnosis and not confirmed_state:
-            logger.debug(
-                f"speculative appeals[dx_px_confirmed]: denial "
-                f"{denial.denial_id} confirmed without procedure, diagnosis or "
-                f"state; nothing to refresh with"
-            )
-            return
         from fighthealthinsurance.context_utils import (
             CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
         )
 
-        reserve_for_this_state = ProposedAppeal.objects.filter(
-            for_denial=denial,
-            context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
-            built_for_state=confirmed_state,
-        ).exists()
+        confirmed_procedure = (denial.procedure or "").strip()
+        confirmed_diagnosis = (denial.diagnosis or "").strip()
+        confirmed_state = (denial.your_state or "").strip()
         dx_px_changed = (prior_procedure or "").strip() != confirmed_procedure or (
             prior_diagnosis or ""
         ).strip() != confirmed_diagnosis
-        values_changed = dx_px_changed or not reserve_for_this_state
-        if not values_changed:
-            logger.debug(
-                f"speculative appeals[dx_px_confirmed]: denial "
-                f"{denial.denial_id} unchanged dx/px and a confirmed-context "
-                f"reserve for {confirmed_state!r} already exists; skipping"
-            )
-            return
-
-        from fighthealthinsurance.ml.ml_speculative_appeals_helper import (
-            dispatch_speculative_appeals,
-        )
-
         if dx_px_changed:
             # A confirmed reserve about the old procedure or diagnosis is
             # worse than none while the replacement is written: a stalled run
             # would serve it, and a replacement that produces nothing would
-            # leave it. Retire it now rather than when the replacement lands.
+            # leave it. Retire it now rather than when the replacement lands,
+            # and also when both were cleared and nothing replaces it.
             # Only rows older than this request: a reserve written since is
             # a later correction's and is kept.
             retired, _ = ProposedAppeal.objects.filter(
@@ -2127,6 +2103,32 @@ class FindNextStepsHelper:
                     f"confirmed reserve row(s) for denial {denial.denial_id} "
                     f"written for the values before this correction"
                 )
+        if not confirmed_procedure and not confirmed_diagnosis and not confirmed_state:
+            logger.debug(
+                f"speculative appeals[dx_px_confirmed]: denial "
+                f"{denial.denial_id} confirmed without procedure, diagnosis or "
+                f"state; nothing to refresh with"
+            )
+            return
+
+        reserve_for_this_state = ProposedAppeal.objects.filter(
+            for_denial=denial,
+            context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+            built_for_state=confirmed_state,
+        ).exists()
+        values_changed = dx_px_changed or not reserve_for_this_state
+        if not values_changed:
+            logger.debug(
+                f"speculative appeals[dx_px_confirmed]: denial "
+                f"{denial.denial_id} unchanged dx/px and a confirmed-context "
+                f"reserve for {confirmed_state!r} already exists; skipping"
+            )
+            return
+
+        from fighthealthinsurance.ml.ml_speculative_appeals_helper import (
+            dispatch_speculative_appeals,
+        )
+
         # force: a confirmed-context reserve written for other values must
         # not veto this one in the helper.
         dispatch_speculative_appeals(

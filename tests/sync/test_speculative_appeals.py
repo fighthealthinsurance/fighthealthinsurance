@@ -731,6 +731,32 @@ class ConfirmedContextDispatchRuleTest(TestCase):
             "the reserve for the old procedure survived the correction",
         )
 
+    def test_clearing_the_procedure_and_diagnosis_retires_the_confirmed_reserve(
+        self,
+    ):
+        """Nothing is left to write a replacement from, so the reserve about
+        the removed procedure must go anyway, or it could still be served."""
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="A confirmed reserve draft about the MRI.",
+            speculative=True,
+            built_for_state="",
+            context_level="speculative_confirmed",
+        )
+        self.denial.procedure = None
+        self.denial.diagnosis = None
+        with patch(_DISPATCH) as mock_dispatch:
+            self.helper._maybe_dispatch_confirmed_speculative(
+                self.denial,
+                prior_procedure="MRI",
+                prior_diagnosis="chronic back pain",
+            )
+        mock_dispatch.assert_not_called()
+        self.assertFalse(
+            ProposedAppeal.objects.filter(for_denial=self.denial).exists(),
+            "the reserve for the cleared procedure survived",
+        )
+
     def test_a_reserve_written_after_this_request_began_is_kept(self):
         """Request A paused before retiring; request B's correct reserve landed
         meanwhile. A retires only what is older than itself."""
