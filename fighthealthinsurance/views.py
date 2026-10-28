@@ -2592,6 +2592,9 @@ class InitialProcessView(generic.FormView):
           somebody else;
         * its intake journey has not been completed (no ``FORM_COMPLETED``
           event); a finished journey means the next submission is a new case;
+        * it has no drafts (other than held-back reserves) and no appeal: a
+          new letter on such a case would sit beside drafts written for the
+          old one, whether or not the intake journey is on;
         * it was created within ``DENIAL_SESSION_REUSE_WINDOW``.
 
         Anything else -- including any lookup error -- returns ``None``, which
@@ -2617,6 +2620,17 @@ class InitialProcessView(generic.FormView):
                 logger.debug(
                     f"Denial {denial.denial_id} already completed its intake "
                     "journey; creating a new denial"
+                )
+                return None
+            if (
+                models.ProposedAppeal.objects.filter(
+                    for_denial=denial, speculative=False
+                ).exists()
+                or models.Appeal.objects.filter(for_denial=denial).exists()
+            ):
+                logger.debug(
+                    f"Denial {denial.denial_id} already has drafts; creating a "
+                    "new denial"
                 )
                 return None
             # Nullable on rows predating the column, and a row with no
