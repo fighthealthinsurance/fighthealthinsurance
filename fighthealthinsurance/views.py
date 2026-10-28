@@ -1604,6 +1604,9 @@ def review_form(
             "denial_type_text": denial.denial_type_text,
         }
     )
+    form.initial["shown_filled"] = " ".join(
+        name for name in core_forms.REVIEW_CLEARABLE_FIELDS if form.initial[name]
+    )
     if from_letter:
         hint = from_your_letter_hint()
         for name in from_letter:

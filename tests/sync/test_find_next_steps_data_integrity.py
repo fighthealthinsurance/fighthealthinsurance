@@ -10,6 +10,10 @@ Pinned regressions:
   ModelMultipleChoiceField) overwrote real stored values with nothing;
 - extraction's own aupdate overwrote the USER's confirmed procedure/diagnosis
   when the LLM call finished after the user had typed their own values.
+
+The blank-submit rule has one exception: a box the review page showed filled
+(it names those in ``shown_filled``) and the person emptied is cleared, and
+unticking every box of a list the page showed ticked clears that list.
 """
 
 from unittest.mock import patch
@@ -21,7 +25,7 @@ from fighthealthinsurance.common_view_logic import (
     DenialCreatorHelper,
     FindNextStepsHelper,
 )
-from fighthealthinsurance.models import Denial, PlanSource
+from fighthealthinsurance.models import Denial, DenialTypes, PlanSource
 
 _QUESTIONS = (
     "fighthealthinsurance.common_view_logic.DenialCreatorHelper."
@@ -101,6 +105,51 @@ class FindNextStepsDataIntegrityTest(TestCase):
         self.denial.refresh_from_db()
         self.assertEqual(self.denial.appeal_fax_number, "555-222-3333")
         self.assertEqual(self.denial.procedure, "Updated procedure")
+
+    def test_a_box_shown_filled_and_emptied_is_cleared(self):
+        Denial.objects.filter(denial_id=self.denial.denial_id).update(
+            date_of_service="2024-01-15", your_state="CA", state="CA"
+        )
+        for name in (
+            "procedure",
+            "diagnosis",
+            "insurance_company",
+            "plan_id",
+            "claim_id",
+            "date_of_service",
+            "your_state",
+        ):
+            with self.subTest(field=name):
+                self._find_next_steps(shown_filled={name})
+                self.denial.refresh_from_db()
+                self.assertIsNone(getattr(self.denial, name))
+
+    def test_a_cleared_state_clears_its_mirror_too(self):
+        Denial.objects.filter(denial_id=self.denial.denial_id).update(
+            your_state="CA", state="CA"
+        )
+        self._find_next_steps(shown_filled={"your_state"})
+        self.denial.refresh_from_db()
+        self.assertIsNone(self.denial.state)
+
+    def test_a_box_shown_empty_keeps_a_value_that_arrived_since(self):
+        # The page named no field as filled: whatever the row holds now came
+        # after the page was drawn, and an empty box says nothing about it.
+        self._find_next_steps(shown_filled=set())
+        self.denial.refresh_from_db()
+        self.assertEqual(self.denial.claim_id, "CLM-1")
+
+    def test_unticking_every_plan_source_shown_clears_them(self):
+        self._find_next_steps(shown_filled={"plan_source"}, plan_source=[])
+        self.assertEqual(self.denial.plan_source.count(), 0)
+
+    def test_unticking_every_denial_type_shown_clears_them(self):
+        denial_type = DenialTypes.objects.create(
+            name="Medical necessity (test)", regex="necessary", negative_regex=""
+        )
+        self.denial.denial_type.set([denial_type])
+        self._find_next_steps(shown_filled={"denial_type"}, denial_type=[])
+        self.assertEqual(self.denial.denial_type.count(), 0)
 
     def test_non_json_qa_context_does_not_500(self):
         self.denial.qa_context = "free text from a historical row"

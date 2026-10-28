@@ -1732,6 +1732,7 @@ class FindNextStepsHelper:
         prof_pov: Optional[bool] = False,
         insurance_company_obj: Optional["InsuranceCompany"] = None,
         insurance_plan_obj: Optional["InsurancePlan"] = None,
+        shown_filled: typing.Collection[str] = (),
     ) -> NextStepInfo:
         hashed_email = Denial.get_hashed_email(email)
         # Update the denial
@@ -1770,12 +1771,22 @@ class FindNextStepsHelper:
         # are required=False on the form, so an empty string arrives whenever
         # the user leaves the box alone (e.g. because extraction was still
         # populating it) -- overwriting with "" turns a temporarily-empty form
-        # into permanent data loss.
+        # into permanent data loss. A box the page showed filled
+        # (shown_filled) and the person emptied is cleared instead.
+        def emptied(name: str, value) -> bool:
+            return not value and name in shown_filled
+
         if procedure and len(procedure) < 200:
             denial.procedure = procedure
             changed_fields.add("procedure")
+        elif emptied("procedure", procedure):
+            denial.procedure = None
+            changed_fields.add("procedure")
         if diagnosis and len(diagnosis) < 200:
             denial.diagnosis = diagnosis
+            changed_fields.add("diagnosis")
+        elif emptied("diagnosis", diagnosis):
+            denial.diagnosis = None
             changed_fields.add("diagnosis")
         # Truthiness, not ``is not None``: an empty ModelMultipleChoiceField
         # cleans to an empty queryset, and .set([]) would CLEAR the stored
@@ -1783,6 +1794,8 @@ class FindNextStepsHelper:
         # ``if denial_type:`` guard below.
         if plan_source:
             denial.plan_source.set(plan_source)
+        elif emptied("plan_source", plan_source):
+            denial.plan_source.clear()
         if patient_health_history:
             denial.health_history = patient_health_history
             changed_fields.add("health_history")
@@ -1809,29 +1822,43 @@ class FindNextStepsHelper:
             )
             changed_fields.add("include_provided_health_history_in_appeal")
 
-        # Get outside help details using shared helper
-        outside_help_details = cls._get_outside_help_details(denial, your_state)
-
         if insurance_company:
             denial.insurance_company = insurance_company
+            changed_fields.add("insurance_company")
+        elif emptied("insurance_company", insurance_company):
+            denial.insurance_company = None
             changed_fields.add("insurance_company")
         if insurance_company_obj is not None:
             denial.insurance_company_obj = insurance_company_obj
             changed_fields.add("insurance_company_obj")
+        elif emptied("insurance_company_obj", insurance_company_obj):
+            denial.insurance_company_obj = None
+            changed_fields.add("insurance_company_obj")
         if insurance_plan_obj is not None:
             denial.insurance_plan_obj = insurance_plan_obj
+            changed_fields.add("insurance_plan_obj")
+        elif emptied("insurance_plan_obj", insurance_plan_obj):
+            denial.insurance_plan_obj = None
             changed_fields.add("insurance_plan_obj")
         if plan_id:
             denial.plan_id = plan_id
             changed_fields.add("plan_id")
+        elif emptied("plan_id", plan_id):
+            denial.plan_id = None
+            changed_fields.add("plan_id")
         if claim_id:
             denial.claim_id = claim_id
+            changed_fields.add("claim_id")
+        elif emptied("claim_id", claim_id):
+            denial.claim_id = None
             changed_fields.add("claim_id")
         if denial_type_text is not None:
             denial.denial_type_text = denial_type_text
             changed_fields.add("denial_type_text")
         if denial_type:
             denial.denial_type.set(denial_type)
+        elif emptied("denial_type", denial_type):
+            denial.denial_type.clear()
 
         # load_qa, not a bare json.loads: qa_context is a plain TextField and
         # historical rows hold free text -- a bare parse 500s the review POST
@@ -1846,6 +1873,15 @@ class FindNextStepsHelper:
             denial.state = your_state
             changed_fields.add("your_state")
             changed_fields.add("state")
+        elif emptied("your_state", your_state):
+            denial.your_state = None
+            denial.state = None
+            changed_fields.add("your_state")
+            changed_fields.add("state")
+
+        # Get outside help details using shared helper; after the state above,
+        # so a state the person cleared is not used.
+        outside_help_details = cls._get_outside_help_details(denial, your_state)
         if denial_date is not None:
             denial.denial_date = denial_date
             if "denial date" not in existing_answers:
@@ -1908,6 +1944,9 @@ class FindNextStepsHelper:
                 existing_answers["date of service"] = date_of_service
             if "date_of_service" not in existing_answers:
                 existing_answers["date_of_service"] = date_of_service
+        elif emptied("date_of_service", date_of_service):
+            denial.date_of_service = None
+            changed_fields.add("date_of_service")
         # This is unique to professional so using this for now to help specialize questions
         prof_pov = denial.professional_to_finish
         if in_network is not None:
