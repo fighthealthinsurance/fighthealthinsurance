@@ -406,7 +406,9 @@ class OneAddressSharesTenTimesADayTest(_ShareTestCase):
 
     def address_rows(self):
         budgets = ("files", "links", "opt_in_files", "reminders")
-        return SharedPlanDocumentsDay.objects.exclude(name__in=budgets)
+        return SharedPlanDocumentsDay.objects.exclude(name__in=budgets).exclude(
+            name__startswith=shared_plan_documents.ATTEMPTS_PREFIX
+        )
 
     def test_ten_a_day_is_the_number(self):
         self.assertEqual(shared_plan_documents._shares_per_address(), 10)
@@ -462,6 +464,27 @@ class OneAddressSharesTenTimesADayTest(_ShareTestCase):
         self.assertEqual(row.day, tomorrow.date())
         # The budgets for everyone keep their rows.
         self.assertEqual(SharedPlanDocumentsDay.objects.filter(name="files").count(), 2)
+
+    @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_ATTEMPTS_PER_ADDRESS=2)
+    def test_uploads_count_as_attempts_before_any_file_is_read(self):
+        locked = pdf_bytes(password="crumpler")
+        for _ in range(2):
+            response = self.share_from(files=[SimpleUploadedFile("eoc.pdf", locked)])
+            self.assertRefused(response, "This PDF is locked with a password.")
+        with patch.object(chat_forms, "_check_pdf") as check:
+            response = self.share_from()
+        self.assertRefused(response, TOMORROW)
+        check.assert_not_called()
+        # Refused uploads took attempts, never shares.
+        self.assertFalse(self.address_rows().exists())
+
+    def test_link_only_shares_take_no_attempt(self):
+        self.share_from(files=[], plan_links=LINK)
+        self.assertFalse(
+            SharedPlanDocumentsDay.objects.filter(
+                name__startswith=shared_plan_documents.ATTEMPTS_PREFIX
+            ).exists()
+        )
 
     @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_SHARES_PER_ADDRESS=1)
     def test_the_links_budget_keeps_its_rows_too(self):

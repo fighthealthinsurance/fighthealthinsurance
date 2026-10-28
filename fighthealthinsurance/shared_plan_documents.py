@@ -233,9 +233,7 @@ def take_share_place(request: HttpRequest) -> Optional[SharePlace]:
     from fighthealthinsurance import assistant_ip_limit, client_network
 
     today = timezone.now().date()
-    SharedPlanDocumentsDay.objects.filter(day__lt=today).exclude(
-        name__in=_BUDGET_NAMES
-    ).delete()
+    _drop_past_address_rows(today)
     name = client_network.period_key(
         _PER_ADDRESS_LABEL, today.isoformat(), assistant_ip_limit.address_of(request)
     )
@@ -243,9 +241,42 @@ def take_share_place(request: HttpRequest) -> Optional[SharePlace]:
     return SharePlace(name, day) if day else None
 
 
+def _drop_past_address_rows(today: datetime.date) -> None:
+    SharedPlanDocumentsDay.objects.filter(day__lt=today).exclude(
+        name__in=_BUDGET_NAMES
+    ).delete()
+
+
 def give_back_share_place(place: SharePlace) -> None:
     """Return the place of a share that wasn't saved."""
     give_back(place.name, 1, place.day)
+
+
+# Posts with files from one address, counted before any file is read, so
+# slow checks can't be repeated without end. Kept apart from the shares: a
+# refused upload takes an attempt, never a share.
+_ATTEMPTS_LABEL = b"fhi-shared-plan-documents-attempts-v1"
+ATTEMPTS_PREFIX = "attempts-"
+
+
+def _attempts_per_address() -> int:
+    return int(
+        getattr(settings, "SHARED_PLAN_DOCUMENTS_DAILY_ATTEMPTS_PER_ADDRESS", 30)
+    )
+
+
+def take_upload_attempt(request: HttpRequest) -> bool:
+    """Count one post with files from this visitor's address today. False
+    when the address has used today's attempts. Never given back."""
+    from fighthealthinsurance import assistant_ip_limit, client_network
+
+    today = timezone.now().date()
+    _drop_past_address_rows(today)
+    digest = client_network.period_key(
+        _ATTEMPTS_LABEL, today.isoformat(), assistant_ip_limit.address_of(request)
+    )
+    name = (ATTEMPTS_PREFIX + digest)[:64]
+    return reserve(name, 1, _attempts_per_address()) is not None
 
 
 # ---- Storing shared files ---------------------------------------------------
