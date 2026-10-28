@@ -81,7 +81,7 @@ class RelatedPagesTest(TestCase):
                 self.assertEqual(section.get("aria-labelledby"), "related-pages-title")
                 self.assertEqual(section.find("p").get("class"), ["dw-kicker"])
                 self.assertEqual(_text(section.find("h2")), "More on costs, coverage and denials")
-                self.assertEqual(section.find("h2").find_next_sibling().get("class"), ["fhi-cards", "fhi-bare-list"])
+                self.assertEqual(section.find("h2").find_next_sibling().get("class"), ["fhi-cards"])
                 # The number pages' kicker, from the shared style partial every one of these pages includes.
                 self.assertIn(".dw-kicker {", str(soup.find_all("style")))
 

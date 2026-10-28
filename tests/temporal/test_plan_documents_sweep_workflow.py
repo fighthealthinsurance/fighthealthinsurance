@@ -208,10 +208,9 @@ async def test_a_share_whose_reading_is_running_is_left_to_it():
 
     stubs = _Stubs(due=[], batches=[held, BATCH_B])
     async with await WorkflowEnvironment.start_time_skipping() as env:
+        # No release afterwards: the time-skipping server can time the held
+        # run out first, and a signal to a closed run fails the test.
         _, result = await _run(env, stubs, before=a_reading_already_running)
-        await env.client.get_workflow_handle(f"shared-plan-documents-{held}").signal(
-            "release"
-        )
     assert result == {"reminders_sent": 0, "readings_started": 1}
 
 

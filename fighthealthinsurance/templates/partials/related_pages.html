@@ -8,18 +8,18 @@ menu. Number pages put it just before Sources and method, the share page last.
 <section class="fhi-stack" id="related-pages" aria-labelledby="related-pages-title">
     <p class="dw-kicker">Related pages</p>
     <h2 id="related-pages-title">More on costs, coverage and denials</h2>
-    <ul class="fhi-cards fhi-bare-list">
+    <div class="fhi-cards">
         {% if denial_watch_enabled and here != "dw" %}
-        <li class="fhi-card" id="related-denial-watch"><h3 class="fhi-card-title"><a href="{% url 'denial-watch' %}">Denial Watch</a></h3><p>How often insurers deny claims and how often appeals win, from public records.</p></li>
+        <div class="fhi-card" id="related-denial-watch"><h3 class="fhi-card-title"><a href="{% url 'denial-watch' %}">Denial Watch</a></h3><p>How often insurers deny claims and how often appeals win, from public records.</p></div>
         {% endif %}
         {% if denial_watch_enabled and here != "oe" %}
-        <li class="fhi-card" id="related-open-enrollment"><h3 class="fhi-card-title"><a href="{% url 'open-enrollment' %}">{{ open_enrollment_heading }}</a></h3><p>{% if open_enrollment_in_season %}The sign-up dates, what to compare before you pick a plan, and where to get free help.{% else %}When you can still sign up, what to do if you lose coverage, and where to get free help.{% endif %}</p></li>
+        <div class="fhi-card" id="related-open-enrollment"><h3 class="fhi-card-title"><a href="{% url 'open-enrollment' %}">{{ open_enrollment_heading }}</a></h3><p>{% if open_enrollment_in_season %}The sign-up dates, what to compare before you pick a plan, and where to get free help.{% else %}When you can still sign up, what to do if you lose coverage, and where to get free help.{% endif %}</p></div>
         {% endif %}
         {% if here != "costs" %}
-        <li class="fhi-card" id="related-coverage-costs"><h3 class="fhi-card-title"><a href="{% url 'coverage-costs' %}">What health coverage costs in 2027</a></h3><p>Premiums and price changes for marketplace, job-based, federal and Medicare coverage.</p></li>
+        <div class="fhi-card" id="related-coverage-costs"><h3 class="fhi-card-title"><a href="{% url 'coverage-costs' %}">What health coverage costs in 2027</a></h3><p>Premiums and price changes for marketplace, job-based, federal and Medicare coverage.</p></div>
         {% endif %}
         {% if here != "share" %}
-        <li class="fhi-card" id="related-share"><h3 class="fhi-card-title"><a href="{% url 'share_plan_documents' %}">Share your plan documents</a></h3><p>Send the documents your plan gives everyone, so we can show what plans cost and cover.</p></li>
+        <div class="fhi-card" id="related-share"><h3 class="fhi-card-title"><a href="{% url 'share_plan_documents' %}">Share your plan documents</a></h3><p>Send the documents your plan gives everyone, so we can show what plans cost and cover.</p></div>
         {% endif %}
-    </ul>
+    </div>
 </section>
