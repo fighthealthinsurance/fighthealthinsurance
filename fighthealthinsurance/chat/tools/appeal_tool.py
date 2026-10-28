@@ -11,6 +11,7 @@ from typing import Any, Awaitable, Callable, FrozenSet, List, Optional, Tuple
 
 from loguru import logger
 
+from fighthealthinsurance.log_tags import error_text
 from fighthealthinsurance.utils import aget_related
 
 from .base_tool import (
@@ -137,7 +138,7 @@ class AppealTool(BaseTool):
             appeal_data, call_span = parse_anchored_json_payload(response_text, match)
             await self.send_status_message("Processing update appeal data...")
 
-            appeal, denial = await self._get_or_create_appeal(chat, appeal_data)
+            appeal, denial = await self._get_or_create_appeal(chat)
 
             if appeal and denial:
                 await self._update_appeal_fields(appeal, denial, appeal_data)
@@ -178,9 +179,8 @@ class AppealTool(BaseTool):
             raise
 
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Error processing appeal data: {type(e).__name__}"
-            )
+            # The class only, no traceback: a field's error quotes its value.
+            logger.warning(f"Error processing appeal data: {error_text(e)}")
             # Generic on purpose: the exception text can carry PHI (a
             # database error quotes the failing row).
             await self.send_error_message(
@@ -188,15 +188,12 @@ class AppealTool(BaseTool):
             )
             raise
 
-    async def _get_or_create_appeal(
-        self, chat: Any, appeal_data: dict
-    ) -> Tuple[Any, Any]:
+    async def _get_or_create_appeal(self, chat: Any) -> Tuple[Any, Any]:
         """
         Get existing appeal or create a new one.
 
         Args:
             chat: The OngoingChat object
-            appeal_data: Dictionary of appeal field values
 
         Returns:
             Tuple of (appeal, denial) objects
@@ -216,7 +213,8 @@ class AppealTool(BaseTool):
                 denial = appeal.for_denial
         else:
             pro_user = await aget_related(chat, "professional_user")
-            # Set on the rows, never from the payload: deletion finds them by it.
+            # Only the chat's own identity, never the payload: deletion finds
+            # these rows by it.
             hashed_email = ""
             if chat.hashed_email:
                 hashed_email = chat.hashed_email
@@ -224,8 +222,6 @@ class AppealTool(BaseTool):
                 user = await aget_related(chat, "user")
                 if user and user.email:
                     hashed_email = Denial.get_hashed_email(user.email)
-            elif appeal_data.get("email"):
-                hashed_email = Denial.get_hashed_email(appeal_data["email"])
             denial = await Denial.objects.acreate(
                 creating_professional=pro_user, hashed_email=hashed_email
             )

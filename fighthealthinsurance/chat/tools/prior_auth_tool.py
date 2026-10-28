@@ -11,6 +11,7 @@ from typing import Any, Awaitable, Callable, FrozenSet, List, Optional, Tuple
 
 from loguru import logger
 
+from fighthealthinsurance.log_tags import error_text
 from fighthealthinsurance.utils import aget_related
 
 from .base_tool import (
@@ -177,9 +178,8 @@ class PriorAuthTool(BaseTool):
             raise
 
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Error processing prior auth data: {type(e).__name__}"
-            )
+            # The class only, no traceback: a field's error quotes its value.
+            logger.warning(f"Error processing prior auth data: {error_text(e)}")
             # Generic on purpose: the exception text can carry PHI (a
             # database error quotes the failing row).
             await self.send_status_message(

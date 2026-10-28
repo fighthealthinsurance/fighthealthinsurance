@@ -228,6 +228,22 @@ async def test_new_appeal_rows_take_the_chats_hashed_email_not_the_payloads():
     )
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_new_appeal_rows_stay_unhashed_without_a_chat_identity():
+    """A payload's email is not an identity: with no hash and no user on the
+    chat, nothing ties the rows to an address."""
+    chat = await OngoingChat.objects.acreate(chat_history=[], summary_for_next_call=[])
+    await AppealTool(AsyncMock(), AsyncMock()).handle(
+        '**create_or_update_appeal**{"procedure": "MRI", '
+        '"email": "rebecca.crumpler@example.org"}',
+        "",
+        chat=chat,
+    )
+    appeal = await Appeal.objects.select_related("for_denial").aget(chat=chat)
+    assert (appeal.hashed_email, appeal.for_denial.hashed_email) == ("", "")
+
+
 class TestToolFieldTextCoercion:
     """set_tool_field gives text columns text on the in-memory instance: the
     letter tool reads the denial it just updated (calling str methods on it)

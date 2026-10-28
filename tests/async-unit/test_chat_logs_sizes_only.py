@@ -27,6 +27,9 @@ from fighthealthinsurance.chat.llm_client import score_llm_response
 from fighthealthinsurance.chat.tools.appeal_tool import AppealTool
 from fighthealthinsurance.chat.tools.clinical_trials_tool import ClinicalTrialsTool
 from fighthealthinsurance.chat.tools.doc_fetcher_tool import DocFetcherTool
+from fighthealthinsurance.chat.tools.generate_appeal_letter_tool import (
+    GenerateAppealLetterTool,
+)
 from fighthealthinsurance.chat.tools.medicaid_gov_tool import MedicaidGovLookupTool
 from fighthealthinsurance.chat.tools.medicaid_tool import (
     MedicaidEligibilityTool,
@@ -37,7 +40,12 @@ from fighthealthinsurance.chat.tools.pubmed_tool import PubMedTool
 from fighthealthinsurance.chat.tools.rxnorm_tool import RxNormLookupTool
 from fighthealthinsurance.chat.tools.uspstf_tool import USPSTFLookupTool
 from fighthealthinsurance.medicaid_api import MedicaidDataUnavailableError
-from fighthealthinsurance.models import Appeal, Denial, PriorAuthRequest
+from fighthealthinsurance.models import (
+    Appeal,
+    Denial,
+    OngoingChat,
+    PriorAuthRequest,
+)
 from fighthealthinsurance.websockets import (
     OngoingChatConsumer,
     _parse_json_or_close,
@@ -246,6 +254,12 @@ class TestAppealAndPriorAuthToolLogs:
                 "_get_or_create_prior_auth",
                 "Error processing prior auth data: RuntimeError",
             ),
+            (
+                GenerateAppealLetterTool,
+                "generate_appeal_letter",
+                "_get_or_create_appeal",
+                "Error drafting appeal letter: RuntimeError",
+            ),
         ],
     )
     async def test_processing_error_logs_class_name(
@@ -259,8 +273,23 @@ class TestAppealAndPriorAuthToolLogs:
             ):
                 await tool.handle(text, "", chat=MagicMock())
         _assert_absent_from_lines(lines, "SENTINEL-rec-name")
-        _assert_absent_from_messages(records, "SENTINEL-rec-err")
+        # Not in a traceback either: these tools log the class alone.
+        _assert_absent_from_lines(lines, "SENTINEL-rec-err")
         assert expected in _messages(records)
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_refused_field_value_never_reaches_a_log_line(self):
+        """A field's validation error quotes the value it refused."""
+        chat = await OngoingChat.objects.acreate(
+            chat_history=[], summary_for_next_call=[]
+        )
+        tool = PriorAuthTool(AsyncMock(), AsyncMock())
+        text = '**create_or_update_prior_auth**{"patient_dob": "SENTINEL-pa-dob"}'
+        with _captured_logs() as (records, lines):
+            await tool.handle(text, "", chat=chat)
+        assert "Error processing prior auth data: ValidationError" in _messages(records)
+        _assert_absent_from_lines(lines, "SENTINEL-pa-dob")
 
     @pytest.mark.asyncio
     async def test_appeal_rejected_keys_logged_as_count(self):

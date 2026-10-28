@@ -25,6 +25,7 @@ from django.db import models
 from loguru import logger
 
 from fighthealthinsurance.client_gone import ClientGone
+from fighthealthinsurance.log_tags import error_text
 
 from .patterns import next_tool_call_start
 
@@ -617,9 +618,8 @@ class BaseTool(ABC):
             logger.info(f"{self.name}: client left mid-tool; skipping the tool")
             return self._strip_tool_syntax(response_text), context, True
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Error executing {self.name} tool: {type(e).__name__}"
-            )
+            # The class only, no traceback: its text can quote a payload value.
+            logger.warning(f"Error executing {self.name} tool: {error_text(e)}")
             try:
                 await self.send_status_message(
                     f"Error processing {self.name} request. Continuing with original response."

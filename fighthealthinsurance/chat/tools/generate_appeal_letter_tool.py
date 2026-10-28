@@ -28,6 +28,7 @@ from fighthealthinsurance.chat.appeal_letter_generator import (
 from fighthealthinsurance.chat.research_context import research_for_chat
 from fighthealthinsurance.client_gone import ClientGone
 from fighthealthinsurance.denial_context import merge_qa
+from fighthealthinsurance.log_tags import error_text
 
 from .appeal_tool import AppealTool
 from .base_tool import (
@@ -241,7 +242,7 @@ class GenerateAppealLetterTool(AppealTool):
                 if value:
                     extra_context[key] = str(value).strip()
 
-            appeal, denial = await self._get_or_create_appeal(chat, appeal_data)
+            appeal, denial = await self._get_or_create_appeal(chat)
             if not appeal or not denial:
                 await self.send_status_message("Failed to create or update appeal.")
                 return (
@@ -329,9 +330,8 @@ class GenerateAppealLetterTool(AppealTool):
             # no error frame into the closed socket.
             raise
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Error drafting appeal letter: {type(e).__name__}"
-            )
+            # The class only, no traceback: a field's error quotes its value.
+            logger.warning(f"Error drafting appeal letter: {error_text(e)}")
             # Generic on purpose: the exception text can carry PHI (a
             # database error quotes the failing row).
             await self.send_error_message(
