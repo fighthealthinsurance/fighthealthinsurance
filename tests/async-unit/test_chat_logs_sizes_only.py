@@ -295,6 +295,43 @@ class TestAppealAndPriorAuthToolLogs:
             in _messages(records)
         )
 
+    @pytest.mark.asyncio
+    async def test_appeal_dropped_column_names_logged_at_debug(self):
+        """So a tool prompt and its allowlist drifting apart shows up."""
+        tool = AppealTool(AsyncMock(), AsyncMock())
+        payload = {"use_external": True, "hashed_email": "h", "procedure": "MRI"}
+        with _captured_logs() as (records, _):
+            await tool._update_appeal_fields(Appeal(), Denial(), payload)
+        debug = [r["message"] for r in records if r["level"].name == "DEBUG"]
+        assert (
+            "Appeal: dropped payload fields not on the tool's allowlist: "
+            "hashed_email, use_external"
+        ) in debug
+
+    @pytest.mark.asyncio
+    async def test_prior_auth_dropped_column_names_logged_at_debug(self):
+        tool = PriorAuthTool(AsyncMock(), AsyncMock())
+        payload = {"status": "completed", "procedure": "MRI", "treatment": "MRI"}
+        with _captured_logs() as (records, _):
+            await tool._update_prior_auth_fields(PriorAuthRequest(), payload)
+        debug = [r["message"] for r in records if r["level"].name == "DEBUG"]
+        assert (
+            "Prior Auth: dropped payload fields not on the tool's allowlist: "
+            "procedure, status"
+        ) in debug
+
+    @pytest.mark.asyncio
+    async def test_dropped_field_log_names_no_values_and_no_other_keys(self):
+        tool = AppealTool(AsyncMock(), AsyncMock())
+        payload = {
+            "hashed_email": "SENTINEL-apval-h",
+            "sentinel_apkey_d": "value d",
+        }
+        with _captured_logs() as (_, lines):
+            await tool._update_appeal_fields(Appeal(), Denial(), payload)
+        _assert_absent_from_lines(lines, "SENTINEL-apval")
+        _assert_absent_from_lines(lines, "apkey")
+
 
 class TestDocFetcherToolLogs:
     @pytest.mark.asyncio

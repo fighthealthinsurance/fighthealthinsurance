@@ -15,7 +15,7 @@ appeal, and replaces the call with the letter text plus a link.
 
 import json
 import re
-from typing import Any, Awaitable, Callable, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, FrozenSet, List, Optional, Tuple
 
 from loguru import logger
 
@@ -58,7 +58,8 @@ class GenerateAppealLetterTool(AppealTool):
     Tool handler that drafts the appeal letter via the appeal pipeline.
 
     Subclasses AppealTool for its get-or-create / field-update plumbing;
-    only the detection pattern and the execute flow differ:
+    only the detection pattern, the field allowlist and the execute flow
+    differ:
     1. Extract the JSON parameters (denial/appeal fields + optional
        medical_reason/additional_context).
     2. Create or update the Appeal + Denial linked to the chat.
@@ -81,6 +82,11 @@ class GenerateAppealLetterTool(AppealTool):
     # AppealTool), with dropped_calls_notice; calls in LATER passes of the
     # same turn are caught by the drafted_this_turn slot.
     max_calls_per_reply: int = 1
+
+    # The letter prompt's fields: the letter itself comes from the pipeline,
+    # so a payload's appeal_text never lands on the appeal.
+    appeal_fields: FrozenSet[str] = frozenset()
+    denial_fields: FrozenSet[str] = AppealTool.denial_fields - {"appeal_text"}
 
     def __init__(
         self,

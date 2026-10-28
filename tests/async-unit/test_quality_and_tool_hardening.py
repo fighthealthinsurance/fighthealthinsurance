@@ -4,8 +4,9 @@
   output (the entire speculative-precompute path ran with an empty template).
 - The full-appeal retry bar matches the delivery bar, so 3-14 char fragments
   get their one retry instead of dying later as undeliverable runts.
-- Appeal/prior-auth tool payloads apply through a field allowlist: pk /
-  relation / identity fields can't be overwritten by a crafted payload.
+- Appeal/letter/prior-auth tool payloads apply through an explicit allowlist
+  per tool: consent, identity, delivery and bookkeeping fields can't be set
+  by a crafted payload, and new rows take the chat's hashed email.
 - A tool that blows up mid-execution no longer leaks raw `**tool**{...}`
   syntax into the chat.
 - Recursive tools forward fallback_backends/full_history to their follow-up
@@ -16,19 +17,27 @@ import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from django.db import models
 
 from fighthealthinsurance.chat.tools.base_tool import (
     BaseTool,
     is_safe_tool_field,
     set_tool_field,
-    settable_model_fields,
 )
 from fighthealthinsurance.chat.tools.appeal_tool import AppealTool
+from fighthealthinsurance.chat.tools.generate_appeal_letter_tool import (
+    GenerateAppealLetterTool,
+)
 from fighthealthinsurance.chat.tools.medicaid_tool import MedicaidInfoTool
 from fighthealthinsurance.chat.tools.prior_auth_tool import PriorAuthTool
 from fighthealthinsurance.generate_appeal import AppealTemplateGenerator
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
-from fighthealthinsurance.models import Appeal, Denial, PriorAuthRequest
+from fighthealthinsurance.models import (
+    Appeal,
+    Denial,
+    OngoingChat,
+    PriorAuthRequest,
+)
 
 
 class TestEmptyTemplateGenerate:
@@ -76,43 +85,147 @@ class TestFullAppealRetryBar:
         )
 
 
+# Consent, identity, delivery, bookkeeping and curation fields on Appeal or
+# Denial: never settable from a model-written payload.
+_NEVER_SETTABLE_APPEAL_OR_DENIAL = [
+    "use_external",
+    "health_history_consent",
+    "include_provided_health_history_in_appeal",
+    "health_history_anonymized",
+    "hashed_email",
+    "raw_email",
+    "appeal_fax_number",
+    "sent",
+    "pending",
+    "pending_patient",
+    "pending_professional",
+    "professional_send",
+    "patient_send",
+    "patient_visible",
+    "billed",
+    "success",
+    "flag_for_exclude",
+    "good_appeal_example",
+    "manual_deidentified_denial",
+    "manual_deidentified_ocr_cleaned_denial",
+    "manual_deidentified_appeal",
+    "verified_procedure",
+    "verified_diagnosis",
+    "ip_address",
+    "created",
+    "semi_sekret",
+    "uuid",
+]
+
+_NEVER_SETTABLE_PRIOR_AUTH = [
+    "status",
+    "mode",
+    "proposal_type",
+    "questions",
+    "answers",
+    "token",
+    "created_at",
+]
+
+
+def _columns(instance):
+    return {f.name for f in instance._meta.concrete_fields}
+
+
+def _forged(instance, key):
+    """A value unlike the one ``instance`` holds for ``key``."""
+    if isinstance(instance._meta.get_field(key), models.BooleanField):
+        return not getattr(instance, key)
+    return "forged"
+
+
 class TestToolFieldAllowlist:
     def test_pk_and_relation_fields_are_blocked(self):
-        allowed = settable_model_fields(Appeal)
-        assert "id" not in allowed
-        assert not is_safe_tool_field("id", allowed)
-        assert not is_safe_tool_field("for_denial", allowed)
-        assert not is_safe_tool_field("for_denial_id", allowed)
-        assert not is_safe_tool_field("chat_id", allowed)
-        assert not is_safe_tool_field("_state", allowed)
-
-    def test_identity_fields_are_blocked_on_denial(self):
-        allowed = settable_model_fields(Denial)
-        assert not is_safe_tool_field("semi_sekret", allowed)
-        assert not is_safe_tool_field("follow_up_semi_sekret", allowed)
+        for allowed in (AppealTool.appeal_fields, AppealTool.denial_fields):
+            for key in ("id", "denial_id", "for_denial", "for_denial_id", "chat_id"):
+                assert not is_safe_tool_field(key, allowed)
+            assert not is_safe_tool_field("_state", allowed)
 
     def test_documented_payload_fields_stay_writable(self):
-        appeal_allowed = settable_model_fields(Appeal)
-        denial_allowed = settable_model_fields(Denial)
-        pa_allowed = settable_model_fields(PriorAuthRequest)
-        # The tool prompt documents these; they must keep working.
-        assert is_safe_tool_field("appeal_text", appeal_allowed)
-        assert is_safe_tool_field("hashed_email", appeal_allowed)
-        assert is_safe_tool_field("denial_text", denial_allowed)
-        assert is_safe_tool_field("insurance_company", denial_allowed)
-        assert is_safe_tool_field("procedure", denial_allowed)
-        assert is_safe_tool_field("diagnosis", denial_allowed)
-        assert is_safe_tool_field("treatment", pa_allowed)
+        # The tool prompts document these; they must keep working.
+        assert is_safe_tool_field("appeal_text", AppealTool.appeal_fields)
+        for key in ("denial_text", "insurance_company", "procedure", "diagnosis"):
+            assert is_safe_tool_field(key, AppealTool.denial_fields)
+            assert is_safe_tool_field(key, GenerateAppealLetterTool.denial_fields)
+        for key in ("treatment", "diagnosis", "patient_name", "text"):
+            assert is_safe_tool_field(key, PriorAuthTool.prior_auth_fields)
 
-    def test_setattr_loop_blocks_pk_overwrite(self):
-        appeal = Appeal(appeal_text="original")
-        allowed = settable_model_fields(Appeal)
-        payload = {"id": 999999, "appeal_text": "updated text"}
-        for key, value in payload.items():
-            if is_safe_tool_field(key, allowed):
-                setattr(appeal, key, value)
-        assert appeal.id != 999999
-        assert appeal.appeal_text == "updated text"
+    @pytest.mark.parametrize(
+        "model_cls,fields",
+        [
+            (Appeal, AppealTool.appeal_fields),
+            (Denial, AppealTool.denial_fields),
+            (Denial, GenerateAppealLetterTool.denial_fields),
+            (PriorAuthRequest, PriorAuthTool.prior_auth_fields),
+        ],
+    )
+    def test_allowlisted_fields_are_editable_columns(self, model_cls, fields):
+        columns = {
+            f.name
+            for f in model_cls._meta.concrete_fields
+            if f.editable and not f.is_relation and not f.primary_key
+        }
+        assert set(fields) - columns == set()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_cls", [AppealTool, GenerateAppealLetterTool])
+    @pytest.mark.parametrize("key", _NEVER_SETTABLE_APPEAL_OR_DENIAL)
+    async def test_payload_never_sets_consent_identity_or_delivery_fields(
+        self, tool_cls, key
+    ):
+        appeal, denial = Appeal(), Denial()
+        owners = [i for i in (appeal, denial) if key in _columns(i)]
+        before = [getattr(i, key) for i in owners]
+        payload = {key: _forged(owners[0], key)}
+        await tool_cls(AsyncMock(), AsyncMock())._update_appeal_fields(
+            appeal, denial, payload
+        )
+        assert [getattr(i, key) for i in owners] == before
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("key", _NEVER_SETTABLE_PRIOR_AUTH)
+    async def test_prior_auth_payload_never_sets_status_or_bookkeeping(self, key):
+        prior_auth = PriorAuthRequest()
+        before = getattr(prior_auth, key)
+        await PriorAuthTool(AsyncMock(), AsyncMock())._update_prior_auth_fields(
+            prior_auth, {key: "forged"}
+        )
+        assert getattr(prior_auth, key) == before
+
+    @pytest.mark.asyncio
+    async def test_letter_payload_leaves_the_appeals_letter_alone(self):
+        """The letter comes from the pipeline, not the payload."""
+        appeal = Appeal(appeal_text="Rebecca Lee Crumpler's own letter.")
+        await GenerateAppealLetterTool(AsyncMock(), AsyncMock())._update_appeal_fields(
+            appeal, Denial(), {"appeal_text": "A letter from the payload."}
+        )
+        assert appeal.appeal_text == "Rebecca Lee Crumpler's own letter."
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_new_appeal_rows_take_the_chats_hashed_email_not_the_payloads():
+    """Deletion finds a chat's denial and appeal by the chat's hashed email,
+    so a payload must not be able to swap it."""
+    chat_hash = Denial.get_hashed_email("rebecca.crumpler@example.org")
+    chat = await OngoingChat.objects.acreate(
+        hashed_email=chat_hash, chat_history=[], summary_for_next_call=[]
+    )
+    await AppealTool(AsyncMock(), AsyncMock()).handle(
+        '**create_or_update_appeal**{"procedure": "MRI", "hashed_email": "forged"}',
+        "",
+        chat=chat,
+    )
+    appeal = await Appeal.objects.select_related("for_denial").aget(chat=chat)
+    assert (appeal.hashed_email, appeal.for_denial.hashed_email) == (
+        chat_hash,
+        chat_hash,
+    )
 
 
 class TestToolFieldTextCoercion:

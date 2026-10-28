@@ -7,7 +7,7 @@ or update prior authorization records linked to the current chat.
 
 import json
 import re
-from typing import Any, Awaitable, Callable, Optional, Tuple
+from typing import Any, Awaitable, Callable, FrozenSet, List, Optional, Tuple
 
 from loguru import logger
 
@@ -16,10 +16,10 @@ from fighthealthinsurance.utils import aget_related
 from .base_tool import (
     BaseTool,
     is_safe_tool_field,
+    log_dropped_tool_fields,
     parse_anchored_json_payload,
     replace_anchored_call,
     set_tool_field,
-    settable_model_fields,
     strip_anchored_calls,
 )
 from .patterns import CREATE_OR_UPDATE_PRIOR_AUTH_REGEX
@@ -46,6 +46,21 @@ class PriorAuthTool(BaseTool):
     # needs its own pass.
     max_calls_per_reply: int = 3
     anchored_calls: bool = True
+
+    # What a payload may set: the request's medical and patient details and
+    # its text. Status, mode and bookkeeping fields are dropped.
+    prior_auth_fields: FrozenSet[str] = frozenset(
+        {
+            "diagnosis",
+            "treatment",
+            "insurance_company",
+            "patient_health_history",
+            "urgent",
+            "patient_name",
+            "patient_dob",
+            "text",
+        }
+    )
 
     # Field name mappings for normalization
     FIELD_MAPPINGS = {
@@ -211,9 +226,8 @@ class PriorAuthTool(BaseTool):
             prior_auth: The PriorAuthRequest object to update
             prior_auth_data: Dictionary of field values
         """
-        # Allowlist, not hasattr -- see AppealTool._update_appeal_fields.
-        allowed = settable_model_fields(type(prior_auth))
-        rejected_keys = 0
+        # Explicit allowlist -- see AppealTool._update_appeal_fields.
+        rejected: List[str] = []
         for key, value in prior_auth_data.items():
             # Normalize the key
             key = key.lower().strip()
@@ -222,14 +236,15 @@ class PriorAuthTool(BaseTool):
             if key in self.FIELD_MAPPINGS:
                 key = self.FIELD_MAPPINGS[key]
 
-            if is_safe_tool_field(key, allowed):
+            if is_safe_tool_field(key, self.prior_auth_fields):
                 set_tool_field(prior_auth, key, value)
             else:
-                rejected_keys += 1
+                rejected.append(key)
 
-        if rejected_keys:
-            # A count only: the keys come from the model's reply.
+        if rejected:
+            # A count: the keys come from the model's reply.
             logger.warning(
                 "Skipped payload keys not settable on Prior Auth model "
-                f"(rejected_keys={rejected_keys})"
+                f"(rejected_keys={len(rejected)})"
             )
+            log_dropped_tool_fields(self.name, rejected)
