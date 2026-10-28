@@ -70,6 +70,8 @@ _CHECKED_INPUTS = (
     "IntakeJourneyInput",
     "AssistantAppealInput",
     "ChatRoutingPolicyInput",
+    "SharedPlanDocumentsInput",
+    "PlanDocumentsSweepInput",
 )
 
 
@@ -87,6 +89,12 @@ def test_payload_dataclasses_carry_only_opaque_identifiers():
         "contact_opt_in",
         # ChatRoutingPolicyInput: a number of minutes, no case at all.
         "window_minutes",
+        # SharedPlanDocumentsInput: the uuid a share's rows carry.
+        "share_batch",
+        # PlanDocumentsSweepInput: numbers, no person and no share.
+        "max_reminders",
+        "max_batches",
+        "received_minutes",
     }
     for klass in (getattr(wf_types, name) for name in _CHECKED_INPUTS):
         fields = {f.name for f in dataclasses.fields(klass)}
@@ -123,6 +131,26 @@ def test_the_policy_input_is_a_plain_number():
 
     hints = typing.get_type_hints(ChatRoutingPolicyInput)
     assert hints == {"window_minutes": int}
+
+
+def test_the_shared_plan_documents_input_is_one_share_batch_uuid():
+    import typing
+
+    from fighthealthinsurance.workflows.types import SharedPlanDocumentsInput
+
+    assert typing.get_type_hints(SharedPlanDocumentsInput) == {"share_batch": str}
+
+
+def test_the_sweep_input_is_plain_numbers():
+    import typing
+
+    from fighthealthinsurance.workflows.types import PlanDocumentsSweepInput
+
+    assert typing.get_type_hints(PlanDocumentsSweepInput) == {
+        "max_reminders": int,
+        "max_batches": int,
+        "received_minutes": int,
+    }
 
 
 @pytest.mark.asyncio

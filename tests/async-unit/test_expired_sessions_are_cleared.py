@@ -50,6 +50,7 @@ def actor():
     # The fax reconcile's pass is its own task; these loop tests only see
     # it start.
     built._start_fax_reconcile = AsyncMock()
+    built.plan_documents_reminder_sender.afind_candidates = AsyncMock(return_value=[])
     return built
 
 
@@ -349,3 +350,22 @@ class TestTheFaxReconcile:
 
         actor._start_fax_reconcile.assert_awaited_once()
         actor.followup_sender.afind_candidates.assert_awaited_once()
+
+
+def test_each_pass_sends_the_plan_documents_reminders_that_are_due(actor):
+    actor.plan_documents_reminder_sender.afind_candidates = AsyncMock(return_value=[7])
+    actor.plan_documents_reminder_sender.asend_all = AsyncMock(return_value=1)
+    with patch.object(_Underlying, "_run_daily_cleanups", AsyncMock()):
+        run_passes(actor)
+    actor.plan_documents_reminder_sender.asend_all.assert_awaited_once_with(
+        count=10, candidates=[7]
+    )
+
+
+def test_a_reminder_failure_leaves_the_follow_ups_running(actor):
+    actor.plan_documents_reminder_sender.afind_candidates = AsyncMock(
+        side_effect=RuntimeError("database went away")
+    )
+    with patch.object(_Underlying, "_run_daily_cleanups", AsyncMock()):
+        run_passes(actor, passes=2)
+    assert actor.followup_sender.afind_candidates.await_count == 2

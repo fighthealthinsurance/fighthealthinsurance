@@ -1,0 +1,32 @@
+{% comment %}
+The offer to also share a copy of the documents on this page for research,
+on Explain Policy and the appeal's plan documents step. "field" is the form's
+share_for_research (form_utils.share_for_research_field): its label is the
+box's words and its help text the agreement (consent.SHARING_OPT_IN_TERMS),
+which sits above the box as it does on the share page. It renders unticked.
+Under the box, "What does sharing mean?" opens in place with no script, and
+its link to the share page opens in a new tab, so nothing on this form is
+lost. "heading_level" is the level its heading takes on the page. Draws
+nothing when the form has no such field.
+{% endcomment %}
+{% if field %}{% with level=heading_level|default:3 %}
+<div class="fhi-card fhi-card-info" id="share-for-research" role="group" aria-labelledby="share-for-research-heading">
+  <h{{ level }} class="fhi-card-banner" id="share-for-research-heading">Help other people fight back</h{{ level }}>
+  <p id="share-for-research-intro">Share a copy of these documents with us. We learn from them what care costs, how costs and coverage change over time, and what needs approval first, and we share what we learn so others can fight back.</p>
+  <p id="share-for-research-terms">{{ field.help_text }}</p>
+  <div class="fhi-notice fhi-notice-info fhi-check-row">
+    {{ field }}
+    <label class="fhi-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+  </div>
+  <div class="fhi-accordion">
+    <details class="fhi-accordion-item" id="share-for-research-more">
+      <summary><span class="fhi-accordion-question">What does sharing mean?</span></summary>
+      <div class="fhi-accordion-body fhi-stack">
+        <p>Ticking the box saves a separate copy of these documents for research, with what you've told us about the plan. It changes nothing else here. If you leave the box unticked, we make no copy.</p>
+        <p id="share-for-research-who-reads">We keep the files encrypted. Our team and AI models, including outside services, read them with documents from many other people, and we share what we learn publicly. If you ask us to delete your data, we do our best to delete your files, including this copy. What we've learned about the plan, like what kind of plan it is, stays, because it describes the plan, not you.</p>
+        <p><a href="{% url 'share_plan_documents' %}#about-sharing" target="_blank" rel="noopener" id="share-for-research-read-more">Read more about sharing your plan documents (opens in a new tab)</a></p>
+      </div>
+    </details>
+  </div>
+</div>
+{% endwith %}{% endif %}
