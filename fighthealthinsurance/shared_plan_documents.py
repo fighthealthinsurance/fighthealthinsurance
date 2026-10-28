@@ -661,14 +661,16 @@ def remove_shared_documents(hashed_email: str) -> None:
 
 # ---- Counting plans ---------------------------------------------------------
 
-#: The share page's goal, shown through its day. The running count appears
-#: only from GOAL_SHOWN_FROM plans, so nobody lands on "2 of 100".
+#: The share page's goal, in employer plans, shown through its day. The
+#: running count appears only from GOAL_SHOWN_FROM of them, so nobody lands
+#: on "2 of 100". Every kind of plan is welcome; only the goal is narrower.
 GOAL_PLANS = 100
 GOAL_DATE = datetime.date(2027, 1, 15)
 GOAL_SHOWN_FROM = 20
 #: The page's count is at most this old, and the same for every visitor.
 PLAN_COUNT_SECONDS = 10 * 60
-_PLAN_COUNT_KEY = "shared-plan-documents-distinct-plans"
+_PLAN_COUNT_KEY = "shared-plan-documents-employer-plans"
+EMPLOYER_CATEGORIES = ("employer_erisa", "employer_non_erisa")
 
 
 class Share(NamedTuple):
@@ -681,6 +683,8 @@ class Share(NamedTuple):
     plan_category: str
     plan_year: Optional[int]
     premium_answered: bool
+    # An employer plan of either kind, or a kind not given with an employer named.
+    employer: bool
 
 
 def plan_shares() -> list[Share]:
@@ -703,6 +707,7 @@ def plan_shares() -> list[Share]:
             "plan_category",
             "plan_year",
             "premium_amount",
+            "employer_name",
         )
     )
     batches: dict[Any, dict[str, Any]] = {}
@@ -717,6 +722,7 @@ def plan_shares() -> list[Share]:
         category,
         year,
         premium,
+        employer_name,
     ) in rows:
         found = batches.setdefault(
             batch or pk,
@@ -730,6 +736,7 @@ def plan_shares() -> list[Share]:
                 "category": category,
                 "year": year,
                 "premium": premium is not None,
+                "employer_name": bool(employer_name),
             },
         )
         is_link = source == PolicyDocument.SOURCE_SHARED_LINK
@@ -750,37 +757,48 @@ def plan_shares() -> list[Share]:
         )
         seen_files |= found["files"]
         seen_links |= found["links"]
+        category = found["category"] or "unknown"
         shares.append(
             Share(
                 shared_at=found["at"],
                 new_plan=new_plan,
                 files=found["file_count"],
                 links=found["link_count"],
-                plan_category=found["category"] or "unknown",
+                plan_category=category,
                 plan_year=found["year"],
                 premium_answered=found["premium"],
+                employer=bool(
+                    category in EMPLOYER_CATEGORIES
+                    or (category == "unknown" and found["employer_name"])
+                ),
             )
         )
     return shares
 
 
 def distinct_plan_count() -> int:
-    """How many different plans have been shared (plan_shares), counted at
-    most once every PLAN_COUNT_SECONDS for all visitors alike."""
+    """How many different plans of every kind have been shared (plan_shares)."""
+    return sum(1 for share in plan_shares() if share.new_plan)
+
+
+def employer_plan_count() -> int:
+    """How many different employer plans have been shared, the goal's count,
+    counted at most once every PLAN_COUNT_SECONDS for all visitors alike."""
     count = cache.get(_PLAN_COUNT_KEY)
     if count is None:
-        count = sum(1 for share in plan_shares() if share.new_plan)
+        count = sum(1 for share in plan_shares() if share.new_plan and share.employer)
         cache.set(_PLAN_COUNT_KEY, count, PLAN_COUNT_SECONDS)
     return int(count)
 
 
 def goal_progress(today: datetime.date) -> Optional[dict[str, Any]]:
-    """The share page's goal through its day, with the count once it reaches
-    GOAL_SHOWN_FROM, or None after the day. A count that fails is left off."""
+    """The share page's goal through its day, with the count of employer
+    plans once it reaches GOAL_SHOWN_FROM, or None after the day. A count
+    that fails is left off."""
     if today > GOAL_DATE:
         return None
     try:
-        count: Optional[int] = distinct_plan_count()
+        count: Optional[int] = employer_plan_count()
     except Exception:
         logger.opt(exception=True).warning("Could not count the shared plans")
         count = None
@@ -797,8 +815,9 @@ def goal_progress(today: datetime.date) -> Optional[dict[str, Any]]:
 
 def share_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
     """The staff counts: shares and new plans each week (the last ``weeks``,
-    newest first), and the plans by kind, by year and by whether the premium
-    question was answered."""
+    newest first), the employer plans the goal counts, and the plans of
+    every kind by kind, by year and by whether the premium question was
+    answered."""
     from fighthealthinsurance.client_network import week_start
 
     shares = plan_shares()
@@ -824,6 +843,7 @@ def share_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
     return {
         "shares": len(shares),
         "plans": len(plans),
+        "employer_plans": sum(1 for share in plans if share.employer),
         "goal": GOAL_PLANS,
         "goal_date": GOAL_DATE,
         "weeks": week_rows,

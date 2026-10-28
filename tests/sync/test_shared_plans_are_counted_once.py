@@ -4,8 +4,10 @@ Each share (a batch of files and links sent together) is one plan, unless
 every file and link in it came in an earlier share: files are matched by
 their keyed fingerprint, links by the keyed hash of the link. A link-only
 share counts unless every link repeats an earlier one. Rows a removal
-request cleared count for nothing. The share page's goal and the staff
-counts on the PolicyDocument admin list both count plans this way.
+request cleared count for nothing. The staff counts on the PolicyDocument
+admin list count every kind of plan this way, and call out the employer
+plans the share page's goal counts: an employer plan of either kind, or a
+plan whose kind wasn't given with an employer named.
 """
 
 import datetime
@@ -21,6 +23,7 @@ from django.utils import timezone
 from fighthealthinsurance.models import PolicyDocument
 from fighthealthinsurance.shared_plan_documents import (
     distinct_plan_count,
+    employer_plan_count,
     link_fingerprint,
     plan_shares,
     share_counts,
@@ -160,6 +163,24 @@ class RemovedRowsCountForNothingTest(_PlansTestCase):
         self.assertEqual(self.plans(), 1)
 
 
+class TheGoalCountsEmployerPlansTest(_PlansTestCase):
+    def test_employer_plans_of_either_kind_and_unsure_ones_with_an_employer(self):
+        self.share(files=["a"], plan_category="employer_erisa")
+        self.share(files=["b"], plan_category="employer_non_erisa")
+        self.share(files=["c"], plan_category="unknown", employer_name="Crumpler Clinic")
+        self.share(files=["d"], plan_category="unknown")
+        self.share(files=["e"], plan_category="aca_marketplace", employer_name="Crumpler Clinic")
+        self.share(files=["f"], plan_category="medicare_advantage")
+        self.assertEqual((distinct_plan_count(), employer_plan_count()), (6, 3))
+
+    def test_a_repeat_of_an_employer_plan_is_not_counted_again(self):
+        self.share(files=["a"], plan_category="employer_erisa")
+        self.share(files=["a"], plan_category="employer_erisa")
+        self.share(links=[LINK], plan_category="employer_erisa")
+        self.share(links=[LINK], plan_category="employer_erisa")
+        self.assertEqual(employer_plan_count(), 2)
+
+
 class StaffSeeThePlansTest(_PlansTestCase):
     def setUp(self):
         super().setUp()
@@ -234,12 +255,22 @@ class StaffSeeThePlansTest(_PlansTestCase):
             section.find(id="shared-plan-premiums").get_text(" ", strip=True),
         )
 
-    def test_the_counts_match_the_goals_rule(self):
+    def test_employer_plans_are_called_out(self):
+        self.share(files=["a"], plan_category="employer_erisa")
+        self.share(files=["b"], plan_category="unknown", employer_name="Crumpler Clinic")
+        self.share(files=["c"], plan_category="medicaid_chip")
+        text = self.counts_on_the_page().find(id="shared-plan-employer").get_text(
+            " ", strip=True
+        )
+        self.assertTrue(text.startswith("2 employer plans toward the goal of 100 by January 15, 2027"))
+
+    def test_the_counts_match_the_rule(self):
         self.share(files=["a"])
         self.share(files=["a"])
         self.remove(self.share(links=[LINK]))
         counts = share_counts(self.today)
         self.assertEqual((counts["shares"], counts["plans"]), (2, distinct_plan_count()))
+        self.assertEqual(counts["employer_plans"], employer_plan_count())
 
     def test_with_nothing_shared_the_tables_say_so(self):
         section = self.counts_on_the_page()

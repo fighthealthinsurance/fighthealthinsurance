@@ -2,10 +2,12 @@
 and the numbers behind the ask.
 
 In open enrollment season an eyebrow says next year's plan documents are
-out. The goal line says 100 plans by January 15, and shows a running count
-only from 20 plans, counted the same for every visitor and at most ten
-minutes old; after January 15 it goes. Three cards name the documents in
-the order we want them. Under "Why we're asking", two tiles: the share of
+out. The goal line says 100 employer plans by January 15, and shows a
+running count of distinct employer plans only from 20, counted the same for
+every visitor and at most ten minutes old; after January 15 it goes. Any
+kind of plan is welcome, and the page says so under the goal. Three cards
+name the documents for a plan through work in the order we want them, and a
+small card says what to send for other kinds of plans. Under "Why we're asking", two tiles: the share of
 people covered only through a job, from Denial Watch's bundle, and that
 Denial Watch has no denial rates for those plans. A card says what happens
 to what people share, in the agreement's terms and no more.
@@ -26,7 +28,7 @@ from fighthealthinsurance.models import PolicyDocument
 from fighthealthinsurance.shared_plan_documents import (
     GOAL_DATE,
     PLAN_COUNT_SECONDS,
-    distinct_plan_count,
+    employer_plan_count,
 )
 
 ROOT = Path(__file__).resolve().parents[2] / "fighthealthinsurance"
@@ -42,14 +44,17 @@ LOCMEM_CACHE = {
 DASHES = ("\u2014", "\u2013")
 
 
-def seed_plans(count, start=0):
-    """``count`` shares of one different file each."""
+def seed_plans(count, start=0, **facts):
+    """``count`` shares of one different file each, employer plans unless
+    ``facts`` say otherwise."""
+    facts = {"plan_category": "employer_erisa", **facts}
     for n in range(start, start + count):
         PolicyDocument.objects.create(
             source=PolicyDocument.SOURCE_SHARED,
             share_batch=uuid.uuid4(),
             fingerprint=f"plan-{n}",
             processing_status=PolicyDocument.PROCESSING_RECEIVED,
+            **facts,
         )
 
 
@@ -86,7 +91,9 @@ class TheGoalTest(_PageTestCase):
     def test_the_goal_shows_without_a_count_below_twenty_plans(self):
         seed_plans(19)
         goal = self.goal(self.page())
-        self.assertIn("Our goal: 100 plans by January 15", goal.get_text(" ", strip=True))
+        self.assertIn(
+            "Our goal: 100 employer plans by January 15", goal.get_text(" ", strip=True)
+        )
         self.assertIsNone(goal.find(id="share-goal-count"))
         self.assertIsNone(goal.find(class_="share-goal-meter"))
 
@@ -111,10 +118,38 @@ class TheGoalTest(_PageTestCase):
             source=PolicyDocument.SOURCE_SHARED,
             share_batch=uuid.uuid4(),
             fingerprint="plan-0",
+            plan_category="employer_erisa",
             processing_status=PolicyDocument.PROCESSING_RECEIVED,
         )
         goal = self.goal(self.page())
         self.assertEqual(goal.find(id="share-goal-count").get_text(strip=True), "20 so far")
+
+    def test_the_count_is_employer_plans_only(self):
+        seed_plans(8)
+        seed_plans(6, start=8, plan_category="employer_non_erisa")
+        seed_plans(6, start=14, plan_category="unknown", employer_name="Crumpler Clinic")
+        # Welcome, but not what the goal counts.
+        seed_plans(5, start=20, plan_category="aca_marketplace")
+        seed_plans(3, start=25, plan_category="medicare_advantage")
+        seed_plans(2, start=28, plan_category="unknown")
+        goal = self.goal(self.page())
+        self.assertEqual(goal.find(id="share-goal-count").get_text(strip=True), "20 so far")
+
+    def test_other_plans_alone_never_show_a_count(self):
+        seed_plans(30, plan_category="medicaid_chip")
+        self.assertIsNone(self.goal(self.page()).find(id="share-goal-count"))
+
+    def test_under_the_goal_the_page_says_any_plan_is_welcome(self):
+        note = self.goal(self.page()).find(id="any-plan")
+        self.assertEqual(
+            note.get_text(" ", strip=True),
+            "Any kind of plan is welcome. What to send for other plans",
+        )
+        self.assertEqual(note.find("a")["href"], "#other-plans")
+
+    def test_after_the_goal_the_page_still_says_any_plan_is_welcome(self):
+        soup = self.page(GOAL_DATE + datetime.timedelta(days=1))
+        self.assertIn("Any kind of plan is welcome.", soup.find(id="any-plan").get_text())
 
     def test_the_goal_shows_through_its_day_and_then_goes(self):
         self.assertIsNotNone(self.goal(self.page(GOAL_DATE)))
@@ -165,12 +200,12 @@ class TheCountCarriesNoVisitorAndStaysFreshTest(_PageTestCase):
         self.assertEqual(self.count_on(self.page()), "20 so far")
         later = datetime.datetime.now().timestamp() + PLAN_COUNT_SECONDS + 1
         with mock.patch("django.core.cache.backends.locmem.time.time", return_value=later):
-            self.assertEqual(distinct_plan_count(), 21)
+            self.assertEqual(employer_plan_count(), 21)
 
     def test_only_a_number_is_kept(self):
         seed_plans(20)
-        distinct_plan_count()
-        self.assertEqual(cache.get("shared-plan-documents-distinct-plans"), 20)
+        employer_plan_count()
+        self.assertEqual(cache.get("shared-plan-documents-employer-plans"), 20)
 
     def test_the_page_is_never_stored_whole(self):
         with mock.patch("django.utils.timezone.localdate", return_value=IN_SEASON):
@@ -196,6 +231,40 @@ class TheDocumentCardsTest(_PageTestCase):
                 self.assertEqual(icon["aria-hidden"], "true")
                 self.assertEqual(icon["focusable"], "false")
         self.assertEqual(self.page().find(id="most-useful").name, "ol")
+
+
+class OtherKindsOfPlansTest(_PageTestCase):
+    def test_a_small_card_says_what_to_send_for_other_plans(self):
+        card = self.page().find(id="other-plans")
+        self.assertIn("fhi-card", card["class"])
+        self.assertEqual(
+            [li.get_text(" ", strip=True) for li in card.find_all("li")],
+            [
+                "Marketplace or individual plans: the Summary of Benefits and "
+                "Coverage, and what you pay each month.",
+                "Medicare Advantage: the Evidence of Coverage and the Annual "
+                "Notice of Change.",
+                "Medicaid or CHIP: the member handbook.",
+            ],
+        )
+
+    def test_it_names_documents_the_how_to_section_already_names(self):
+        soup = self.page()
+        how_to = soup.find(id="get-your-plan-documents").get_text(" ", strip=True)
+        for name in (
+            "Summary of Benefits and Coverage",
+            "Evidence of Coverage",
+            "Annual Notice of Change",
+            "member handbook",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, how_to)
+
+    def test_it_sits_with_the_ask_before_the_form(self):
+        soup = self.page()
+        form = soup.find("form", id="share-plan-documents-form")
+        self.assertIsNotNone(form.find_previous(id="other-plans"))
+        self.assertIsNone(soup.find(id="other-plans").find_parent("form"))
 
 
 class WhyWereAskingTest(_PageTestCase):
