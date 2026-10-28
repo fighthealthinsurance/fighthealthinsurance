@@ -74,7 +74,8 @@ class TheFormSitsUnderTheLetterTest(_ReminderTestCase):
         # After the letter, before the other kinds of plans.
         self.assertIsNotNone(box.find_previous(id="request-letter"))
         self.assertEqual(
-            box.find_next_sibling("h3").get_text(strip=True), "Other kinds of plans"
+            box.find_next_sibling("h3").get_text(strip=True),
+            "Getting documents for other kinds of plans",
         )
         form = box.find("form")
         email = form.find("input", attrs={"name": "reminder-email"})

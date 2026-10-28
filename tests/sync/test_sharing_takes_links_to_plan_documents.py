@@ -423,12 +423,12 @@ class TheThankYouNoteSaysWhatHappensToWhatWasSharedTest(_LinkTestCase):
 
     FILES_NOTE = (
         "We store your files encrypted. Our team and AI models, including "
-        "outside services, will read them along with documents from other "
-        "people, to learn how plans work."
+        "outside services, will read them with other people's documents to "
+        "learn how plans work."
     )
     LINKS_NOTE = (
-        "We store your links encrypted. Our team will open them by hand, and "
-        "we never fetch them automatically."
+        "We store your links encrypted. Our team will open them by hand. We "
+        "never fetch them automatically."
     )
 
     def thanks(self, shared):
@@ -546,7 +546,27 @@ class ThePageOffersALinksBoxTest(_LinkTestCase):
         files = self.soup.find("input", attrs={"name": "plan_documents"})
         self.assertIs(files.find_next("textarea"), self.box)
         self.assertIsNotNone(self.box.find_next("select", attrs={"name": "plan_category"}))
-        self.assertIsNone(self.box.find_parent("details"))
+
+    def test_the_box_folds_under_one_line_that_says_links_are_optional(self):
+        fold = self.box.find_parent("details")
+        self.assertEqual(fold["id"], "share-links")
+        self.assertFalse(fold.has_attr("open"))
+        self.assertEqual(
+            fold.find("summary").get_text(" ", strip=True),
+            "No files? Share links to your plan's documents instead (optional)",
+        )
+
+    def test_links_kept_after_a_refusal_open_the_fold(self):
+        response = self.share(links=LINK, rendered="not-a-token")
+        soup = BeautifulSoup(response.content, "html.parser")
+        fold = soup.find("details", id="share-links")
+        self.assertTrue(fold.has_attr("open"))
+        self.assertEqual(fold.find("textarea").get_text(strip=True), LINK)
+
+    def test_a_bad_link_opens_the_fold_to_show_its_error(self):
+        response = self.share([txt()], links="javascript:alert(1)")
+        soup = BeautifulSoup(response.content, "html.parser")
+        self.assertTrue(soup.find("details", id="share-links").has_attr("open"))
 
     def test_the_box_is_labelled_optional_and_says_which_links(self):
         label = self.soup.find("label", attrs={"for": self.box["id"]})

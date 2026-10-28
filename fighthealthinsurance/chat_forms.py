@@ -426,7 +426,7 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
         required=False,
         choices=PolicyDocument.PLAN_CATEGORY_CHOICES,
         initial="unknown",
-        label="What kind of plan is it?",
+        label="What kind of plan is it? (optional)",
     )
     insurer_name = forms.CharField(
         required=False, max_length=200, label="Insurance company"
@@ -477,10 +477,10 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
         max_length=300,
         label="Your email",
         help_text=(
-            "We keep only a scrambled form of it, so we can find these files "
-            "if you ask us to delete them. What we've learned about the plan, "
-            "like what it costs, stays, because it describes the plan, not "
-            "you. We can't use your email to write to you."
+            "We keep only a scrambled form of it, so we can find what you shared "
+            "if you ask us to delete it. What we've learned about the plan, like "
+            "what it costs, stays, because it describes the plan, not you. We "
+            "can't use it to write to you."
         ),
     )
     agree = forms.BooleanField(

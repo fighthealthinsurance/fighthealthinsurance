@@ -280,10 +280,10 @@ class TheCopySaysWhatIsDeletedAndWhatStaysTest(TestCase):
     def test_the_share_pages_email_hint_says_it(self):
         self.assertEqual(
             SharePlanDocumentsForm().fields["email"].help_text,
-            "We keep only a scrambled form of it, so we can find these files if "
-            "you ask us to delete them. What we've learned about the plan, like "
+            "We keep only a scrambled form of it, so we can find what you shared "
+            "if you ask us to delete it. What we've learned about the plan, like "
             "what it costs, stays, because it describes the plan, not you. We "
-            "can't use your email to write to you.",
+            "can't use it to write to you.",
         )
 
     def test_none_of_it_uses_a_long_dash(self):

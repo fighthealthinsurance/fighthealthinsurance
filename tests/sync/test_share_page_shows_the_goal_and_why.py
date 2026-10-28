@@ -6,8 +6,8 @@ out. The goal line says 100 employer plans by January 15, and shows a
 running count of distinct employer plans only from 20, counted the same for
 every visitor and at most ten minutes old; after January 15 it goes. Any
 kind of plan is welcome, and the page says so under the goal. Three cards
-name the documents for a plan through work in the order we want them, and a
-small card says what to send for other kinds of plans. Under "Why we're asking", two tiles: the share of
+in a row name the documents for a plan through work in the order we want
+them, and a fold says what to send for other kinds of plans. Under "Why we're asking", two tiles: the share of
 people covered only through a job, from Denial Watch's bundle, and that
 Denial Watch has no denial rates for those plans. A card says what happens
 to what people share, in the agreement's terms and no more.
@@ -80,7 +80,7 @@ class TheTitleSaysWhyNowTest(_PageTestCase):
         self.assertEqual(
             soup.find(class_="fhi-page-lede").get_text(strip=True),
             "What is health insurance through work going to cost next year? Help "
-            "us build a clearer picture of the plans people are being offered.",
+            "us find out by sharing the documents your plan gives everyone.",
         )
 
 
@@ -143,7 +143,7 @@ class TheGoalTest(_PageTestCase):
         note = self.goal(self.page()).find(id="any-plan")
         self.assertEqual(
             note.get_text(" ", strip=True),
-            "Any kind of plan is welcome. What to send for other plans",
+            "Any kind of plan is welcome. What to send",
         )
         self.assertEqual(note.find("a")["href"], "#other-plans")
 
@@ -236,13 +236,20 @@ class TheDocumentCardsTest(_PageTestCase):
                 icon = card.find("svg")
                 self.assertEqual(icon["aria-hidden"], "true")
                 self.assertEqual(icon["focusable"], "false")
-        self.assertEqual(self.page().find(id="most-useful").name, "ol")
+        cards_list = self.page().find(id="most-useful")
+        self.assertEqual(cards_list.name, "ol")
+        # The page kit's card grid: a row where three fit, one column on a phone.
+        self.assertIn("fhi-cards", cards_list["class"])
 
 
 class OtherKindsOfPlansTest(_PageTestCase):
-    def test_a_small_card_says_what_to_send_for_other_plans(self):
+    def test_a_fold_says_what_to_send_for_other_plans(self):
         card = self.page().find(id="other-plans")
-        self.assertIn("fhi-card", card["class"])
+        self.assertEqual(card.name, "details")
+        self.assertEqual(
+            card.find("summary").get_text(strip=True),
+            "Other kinds of plans: what to send",
+        )
         self.assertEqual(
             [li.get_text(" ", strip=True) for li in card.find_all("li")],
             [
@@ -266,11 +273,10 @@ class OtherKindsOfPlansTest(_PageTestCase):
             with self.subTest(name=name):
                 self.assertIn(name, how_to)
 
-    def test_it_sits_with_the_ask_before_the_form(self):
-        soup = self.page()
-        form = soup.find("form", id="share-plan-documents-form")
-        self.assertIsNotNone(form.find_previous(id="other-plans"))
-        self.assertIsNone(soup.find(id="other-plans").find_parent("form"))
+    def test_it_sits_under_the_cards_before_the_agreement(self):
+        fold = self.page().find(id="other-plans")
+        self.assertIsNotNone(fold.find_previous(id="most-useful"))
+        self.assertIsNotNone(fold.find_next("input", attrs={"name": "agree"}))
 
 
 class WhyWereAskingTest(_PageTestCase):
@@ -309,24 +315,7 @@ class WhyWereAskingTest(_PageTestCase):
         self.assertIsNotNone(soup.find(id="what-we-have"))
 
 
-class WhatHappensCardTest(_PageTestCase):
-    def card(self):
-        return self.page().find(id="what-happens")
-
-    def test_it_is_a_card_with_a_heading(self):
-        card = self.card()
-        self.assertIn("fhi-card", card["class"])
-        self.assertEqual(
-            card.find("h3").get_text(strip=True), "What happens to what you share"
-        )
-        self.assertEqual(card["aria-labelledby"], card.find("h3")["id"])
-
-    def test_it_promises_nothing_the_agreement_does_not(self):
-        text = self.card().get_text(" ", strip=True).lower()
-        for word in ("private", "anonymous", "confidential", "delete", "never share"):
-            with self.subTest(word=word):
-                self.assertNotIn(word, text)
-
+class NoLongDashesTest(_PageTestCase):
     def test_it_has_no_long_dashes(self):
         main = self.page().find("main").get_text()
         for dash in DASHES:

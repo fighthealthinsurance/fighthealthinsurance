@@ -4313,6 +4313,7 @@ class SharePlanDocumentsView(FormView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["sharing_terms"] = consent.SHARING_TERMS
+        context["sharing_details"] = consent.SHARING_DETAILS
         shared = self.request.GET.get("shared")
         context["shared_files"] = shared in (self.SHARED_FILES, self.SHARED_BOTH)
         context["shared_links"] = shared in (self.SHARED_LINKS, self.SHARED_BOTH)

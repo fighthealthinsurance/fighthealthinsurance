@@ -206,9 +206,17 @@ class TheBoxIsOfferedUntickedAndStandsOutTest(TestCase):
             terms.startswith("If you tick the box, you agree to share a copy")
         )
         self.assertNotIn("By uploading", terms)
-        # Every point of the share page's own agreement, word for word.
-        body = consent.SHARING_TERMS.split("Insurance. ", 1)[1]
-        self.assertIn(body, terms)
+        # The share page's points, for a copy of files.
+        for point in (
+            "we share what we learn publicly",
+            "AI models read them, including ones we run and outside services.",
+            "We keep what you share as long as we can.",
+            "Please do your best to leave out your name, member ID and health "
+            "information",
+            "we do our best to remove personal details",
+        ):
+            with self.subTest(point=point):
+                self.assertIn(point, terms)
         self.assertTrue(
             terms.endswith(
                 "If you ask us to delete your data, we delete this copy too. "

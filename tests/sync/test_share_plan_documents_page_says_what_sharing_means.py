@@ -1,13 +1,15 @@
 """The share-your-plan-documents page says plainly what sharing means.
 
-Ticking the box agrees to every point of the sharing terms: the documents,
-and what people tell us about the plan, come to us, we combine them with
-other people's and publish what we learn, AI models read them (ours and
-outside services), we keep them as long as we can, and people should leave
-out personal details unless they want them in, while we do our best to take
-them out either way. The page says we ask once a year and take documents
-anytime. It also explains how to ask a plan for its full documents, with a
-letter to copy that works without JavaScript.
+Ticking the box agrees to the sharing terms. Their core sits beside the box,
+always shown: we keep what people share, with what they tell us about the
+plan, and use it with other people's documents to publish what we learn;
+our team and AI models, ours and outside services, read the files; we keep
+it as long as we can. The rest folds under "More about how we use what you
+share": encryption, links opened by hand and never fetched, leaving out
+personal details, our best effort to take them out, and how removal works.
+The page says we ask once a year and take documents anytime. It also
+explains how to ask a plan for its full documents, with a letter to copy
+that works without JavaScript.
 """
 
 import hashlib
@@ -23,17 +25,23 @@ from fighthealthinsurance.chat_forms import SharePlanDocumentsForm
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "templates"
 
-# Each point of the terms, as the page words it.
+# The core terms beside the box, as the page words them.
 SHARING_POINTS = [
-    "By uploading, you agree to share these documents, or links to them, and what "
-    "you tell us about the plan, with Fight Health Insurance.",
-    "We combine them with documents from other people to learn how plans work, "
-    "and we share what we learn publicly.",
-    "AI models read them, including ones we run and outside services.",
-    "We keep what you share as long as we can.",
-    "Please do your best to leave out your name, member ID and health "
-    "information, unless you want to include them.",
-    "Either way, we do our best to remove personal details from anything we share.",
+    "We keep what you share, including what you tell us about the plan, and use "
+    "it with other people's documents to publish what we learn about plans.",
+    "Our team and AI models, including outside services, read your files.",
+    "We keep everything as long as we can.",
+]
+# The details folded under them.
+SHARING_DETAIL_POINTS = [
+    "We store what you share encrypted, files and links alike.",
+    "Our team opens links by hand. We never fetch them automatically.",
+    "Please leave out your name, member ID and health information, unless you "
+    "want to include them.",
+    "We do our best to remove personal details from anything we publish.",
+    "If you gave us your email, you can ask us to delete your data. We do our "
+    "best to delete the files and links you shared. What we've learned about "
+    "the plan stays, because it describes the plan, not you.",
 ]
 
 # The words SHARING_VERSION dates: the share page's and the opt-in box's on
@@ -43,6 +51,8 @@ SHARING_WORDS_SHA256 = {
     "2026-10-23": "4f7bdb8a89fdaea06cc7aa7fa6a4b9615d13a993e5447582e861d9c143690d91",
     "2026-10-24": "06d9e69f62c2ba0b9470677a0bd286e4744787294cac0fc532a2aa8fc2afb20b",
     "2026-10-27": "976263b9b1f1d3c98d77d4da8237de17ae0defd254da2d843362f3959537f7e9",
+    # From here the share page's folded details are part of the words.
+    "2026-10-28": "fe685c693cb1273997bf32851d669f638b36bd35fcfe3d9051149ff22f482927",
 }
 
 EM_DASH = "\u2014"
@@ -77,13 +87,48 @@ class SharePlanDocumentsPageTest(TestCase):
         self.assertEqual(agree["type"], "checkbox")
         self.assertTrue(agree.has_attr("required"))
 
-    def test_the_terms_say_every_point_next_to_the_box(self):
-        terms = self.soup.find(id="sharing-terms").get_text(" ", strip=True)
+    def test_the_core_terms_show_beside_the_box(self):
+        terms = self.soup.find(id="sharing-terms")
         for point in SHARING_POINTS:
             with self.subTest(point=point):
-                self.assertIn(point, terms)
+                self.assertIn(point, terms.get_text(" ", strip=True))
+        self.assertIsNone(terms.find_parent("details"))
+        box = self.soup.find("input", attrs={"name": "agree"})
+        self.assertIs(box.find_previous(id="sharing-terms"), terms)
         label = self.soup.find("label", attrs={"for": "id_agree"})
         self.assertEqual(label.get_text(strip=True), consent.SHARING_CHECKBOX)
+
+    def test_the_rest_of_the_terms_fold_under_the_core_before_the_box(self):
+        fold = self.soup.find("details", id="what-happens")
+        self.assertFalse(fold.has_attr("open"))
+        self.assertEqual(
+            fold.find("summary").get_text(strip=True),
+            "More about how we use what you share",
+        )
+        self.assertEqual(
+            [li.get_text(" ", strip=True) for li in fold.find_all("li")],
+            SHARING_DETAIL_POINTS,
+        )
+        self.assertEqual(list(consent.SHARING_DETAILS), SHARING_DETAIL_POINTS)
+        terms = self.soup.find(id="sharing-terms")
+        box = self.soup.find("input", attrs={"name": "agree"})
+        self.assertIs(terms.find_next("details"), fold)
+        self.assertIs(fold.find_next("input", attrs={"name": "agree"}), box)
+
+    def test_no_term_says_an_ai_model_reads_a_link(self):
+        words = [consent.SHARING_TERMS, *consent.SHARING_DETAILS]
+        for text in words:
+            for sentence in re.split(r"(?<=\.) ", text):
+                if "link" in sentence.lower():
+                    with self.subTest(sentence=sentence):
+                        self.assertNotIn("AI", sentence)
+        self.assertIn("read your files", consent.SHARING_TERMS)
+
+    def test_the_terms_promise_no_privacy_and_no_deletion(self):
+        words = " ".join([consent.SHARING_TERMS, *consent.SHARING_DETAILS]).lower()
+        for word in ("private", "anonymous", "confidential", "we delete", "we will delete"):
+            with self.subTest(word=word):
+                self.assertNotIn(word, words)
 
     def test_the_page_says_plan_wide_documents_usually_carry_no_personal_details(
         self,
@@ -98,19 +143,18 @@ class SharePlanDocumentsPageTest(TestCase):
         self.assertEqual(
             items,
             [
-                "Rate sheet or enrollment guide What you pay for yourself only and "
-                "for family coverage, and how often.",
-                "Summary of Benefits and Coverage Deductibles, copays and coverage "
-                "limits. It leaves out premiums, which is why the rate sheet comes "
-                "first.",
+                "Rate sheet or enrollment guide What you pay, for yourself and for "
+                "family.",
+                "Summary of Benefits and Coverage Deductibles, copays and limits, "
+                "but not premiums.",
                 "Summary Plan Description or Evidence of Coverage If you have it: "
-                "what the plan leaves out and how appeals work.",
+                "what's left out, and how appeals work.",
             ],
         )
         versions = self.soup.find(id="which-versions").get_text(" ", strip=True)
         self.assertIn(
-            "This year's and next year's versions help most, because matched "
-            "years show what changed.",
+            "This year's and next year's versions help most: matched years show "
+            "what changed.",
             versions,
         )
         # Plan materials only: a paystub shows the premium, but with a name on it.
@@ -120,24 +164,63 @@ class SharePlanDocumentsPageTest(TestCase):
             versions,
         )
 
-    def test_the_ask_and_the_upload_come_before_the_why(self):
-        # The ask, the list and the form open the page; the reasons follow it.
-        form = self.soup.find("form", id="share-plan-documents-form")
-        for part in ("share-ask", "most-useful", "which-versions"):
+    def test_the_upload_comes_first_then_what_to_send_then_the_why(self):
+        # The goal, then the upload; what helps most under it; the reasons last.
+        files = self.soup.find("input", attrs={"name": "plan_documents"})
+        goal = self.soup.find(id="share-goal")
+        self.assertEqual(goal.find_next("label")["for"], files["id"])
+        cards = self.soup.find(id="most-useful")
+        self.assertIs(cards.find_previous("input", attrs={"name": "plan_documents"}), files)
+        for part in ("most-useful", "which-versions", "other-plans", "no-documents-yet"):
             with self.subTest(part=part):
-                self.assertIsNotNone(form.find_previous(id=part))
+                self.assertIsNotNone(files.find_next(id=part))
+        form = self.soup.find("form", id="share-plan-documents-form")
         why = self.soup.find(id="about-sharing")
         self.assertEqual(why.find("h2").get_text(strip=True), "Why we're asking")
         self.assertIsNotNone(form.find_next(id="about-sharing"))
         self.assertIsNone(why.find_parent("form"))
 
+    def test_the_top_asks_in_one_help_us_sentence(self):
+        text = self.soup.find("main").get_text(" ", strip=True)
+        self.assertEqual(text.count("Help us"), 1)
+
+    def test_people_without_documents_find_the_letter_and_the_reminder(self):
+        line = self.soup.find(id="no-documents-yet")
+        hrefs = [a["href"] for a in line.find_all("a")]
+        self.assertEqual(hrefs, ["#request-letter-heading", "#plan-documents-reminder"])
+        for href in hrefs:
+            with self.subTest(href=href):
+                self.assertIsNotNone(self.soup.find(id=href[1:]))
+        self.assertIsNotNone(line.find_next("input", attrs={"name": "agree"}))
+
+    def test_other_kinds_of_plans_fold_under_the_cards(self):
+        fold = self.soup.find("details", id="other-plans")
+        self.assertFalse(fold.has_attr("open"))
+        self.assertIsNotNone(fold.find_previous(id="most-useful"))
+
+    def test_no_two_headings_say_the_same_thing(self):
+        # A fold's summary counts as a heading; "Name: more" reads as "Name".
+        headings = [
+            tag.get_text(" ", strip=True).lower().split(":")[0]
+            for tag in self.soup.find("main").find_all(["h1", "h2", "h3", "h4", "summary"])
+        ]
+        self.assertEqual(len(headings), len(set(headings)), headings)
+
+    def test_every_fold_is_a_styled_expansion_with_a_short_summary(self):
+        for fold in self.soup.find("main").find_all("details"):
+            with self.subTest(fold=fold.get("id")):
+                self.assertIn("fhi-accordion-item", fold["class"])
+                summary = fold.find("summary")
+                self.assertIsNotNone(summary.find(class_="fhi-accordion-question"))
+                self.assertLessEqual(len(summary.get_text(strip=True)), 70)
+
     def test_the_page_says_what_we_will_look_at(self):
         text = self.soup.find(id="what-we-look-at").get_text(" ", strip=True)
         self.assertIn(
-            "With them we can show what plans cost for one person and for a "
-            "family, what common care costs under each plan, how deductibles "
-            "and out-of-pocket limits change from year to year, what plans "
-            "leave out, and what needs approval first.",
+            "With plan documents we can show what plans cost for one person and "
+            "for a family, what common care costs, how deductibles and "
+            "out-of-pocket limits change each year, what plans leave out, and "
+            "what needs approval first.",
             text,
         )
 
@@ -156,8 +239,12 @@ class SharePlanDocumentsPageTest(TestCase):
 
     def test_the_page_says_findings_describe_the_plans_people_share(self):
         text = self.soup.find(id="what-it-shows").get_text(" ", strip=True)
-        self.assertIn("It shows what people are offered, not how many people chose each plan", text)
-        self.assertIn("we say how many plans each finding comes from", text)
+        self.assertIn(
+            "what people are offered, not which plans they chose or every plan in "
+            "the country.",
+            text,
+        )
+        self.assertIn("Each finding says how many plans it comes from.", text)
 
     def test_the_page_asks_once_a_year_and_is_open_anytime(self):
         ask = self.soup.find(id="yearly-ask")
@@ -169,21 +256,19 @@ class SharePlanDocumentsPageTest(TestCase):
 
     def test_the_explanation_has_an_anchor_other_pages_link_to(self):
         about = self.soup.find(id="about-sharing")
-        for part in ("what-we-have", "what-we-look-at", "what-it-shows", "what-happens", "yearly-ask"):
-            with self.subTest(part=part):
-                self.assertIsNotNone(about.find(id=part))
-        happens = about.find(id="what-happens").get_text(" ", strip=True)
-        for words in (
-            "We store what you share encrypted, files and links alike.",
-            "AI models, including outside services, read the files",
-            "We keep what you share as long as we can.",
-            "Please leave out your name, member ID and health information, "
-            "unless you want to include them.",
-            "We do our best to remove personal details from anything we share.",
-        ):
-            with self.subTest(words=words):
-                self.assertIn(words, happens)
         self.assertIsNone(about.find_parent("form"))
+        self.assertEqual(
+            about.find(id="why-short").get_text(strip=True),
+            "We publish what we learn from the documents people share.",
+        )
+        fold = about.find("details", id="more-why")
+        self.assertFalse(fold.has_attr("open"))
+        self.assertEqual(
+            fold.find("summary").get_text(strip=True), "More about why we're asking"
+        )
+        for part in ("what-we-have", "what-we-look-at", "what-it-shows", "yearly-ask"):
+            with self.subTest(part=part):
+                self.assertIsNotNone(fold.find(id=part))
 
     def test_the_plan_year_stays_optional_and_says_it_shows_trends(self):
         field = SharePlanDocumentsForm().fields["plan_year"]
@@ -282,7 +367,9 @@ class SharePlanDocumentsPageTest(TestCase):
         self.assertNotIn(EM_DASH, source)
         main = self.soup.find("main").get_text()
         self.assertNotIn(EM_DASH, main)
-        self.assertNotIn(EM_DASH, consent.SHARING_TERMS)
+        for words in (consent.SHARING_TERMS, *consent.SHARING_DETAILS):
+            self.assertNotIn(EM_DASH, words)
+            self.assertNotIn("\u2013", words)
 
     def test_after_sharing_the_page_thanks_and_says_what_happens_next(self):
         response = self.client.get(self.url + "?shared=1")
@@ -294,7 +381,7 @@ class SharePlanDocumentsPageTest(TestCase):
             "Our team and AI models, including outside services, will read them",
             thanks,
         )
-        self.assertIn("share what we learn", thanks)
+        self.assertIn("publish what we learn", thanks)
         self.assertIsNone(soup.find("form", id="share-plan-documents-form"))
         self.assertIsNotNone(soup.find("section", id="get-your-plan-documents"))
 
@@ -304,6 +391,7 @@ class SharingTermsVersionTest(TestCase):
         words = "\n".join(
             [
                 consent.SHARING_TERMS,
+                *consent.SHARING_DETAILS,
                 consent.SHARING_CHECKBOX,
                 consent.SHARING_OPT_IN_TERMS,
                 consent.SHARING_OPT_IN_CHECKBOX,
