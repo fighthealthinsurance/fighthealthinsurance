@@ -461,9 +461,7 @@ class OneAddressSharesTenTimesADayTest(_ShareTestCase):
         (row,) = self.address_rows()
         self.assertEqual(row.day, tomorrow.date())
         # The budgets for everyone keep their rows.
-        self.assertEqual(
-            SharedPlanDocumentsDay.objects.filter(name="files").count(), 2
-        )
+        self.assertEqual(SharedPlanDocumentsDay.objects.filter(name="files").count(), 2)
 
     @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_SHARES_PER_ADDRESS=1)
     def test_the_links_budget_keeps_its_rows_too(self):
@@ -471,9 +469,7 @@ class OneAddressSharesTenTimesADayTest(_ShareTestCase):
         tomorrow = timezone.now() + datetime.timedelta(days=1)
         with patch("django.utils.timezone.now", return_value=tomorrow):
             self.share_from()
-        self.assertEqual(
-            SharedPlanDocumentsDay.objects.filter(name="links").count(), 1
-        )
+        self.assertEqual(SharedPlanDocumentsDay.objects.filter(name="links").count(), 1)
 
     def test_the_address_is_kept_only_as_a_digest(self):
         self.share_from()
