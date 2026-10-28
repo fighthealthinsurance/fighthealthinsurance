@@ -312,9 +312,7 @@ class TestRemoveDataHelper(TestCase):
     def test_remove_data_deletes_queued_emails_not_yet_sent(self):
         RemoveDataHelper.remove_data_for_email(self.target_email)
         self.assertFalse(
-            ScheduledEmail.objects.filter(
-                to_email__iexact=self.target_email
-            ).exists()
+            ScheduledEmail.objects.filter(to_email__iexact=self.target_email).exists()
         )
 
     def test_remove_data_leaves_other_signups_and_queued_emails(self):
@@ -352,9 +350,7 @@ class TestRemoveDataHelper(TestCase):
     def test_remove_data_deletes_their_expired_checkout_record(self):
         RemoveDataHelper.remove_data_for_email(self.target_email)
         self.assertFalse(
-            LostStripeSession.objects.filter(
-                email__iexact=self.target_email
-            ).exists()
+            LostStripeSession.objects.filter(email__iexact=self.target_email).exists()
         )
 
     def test_remove_data_keeps_other_peoples_expired_checkout_records(self):
@@ -362,3 +358,27 @@ class TestRemoveDataHelper(TestCase):
         self.assertTrue(
             LostStripeSession.objects.filter(email=self.other_email).exists()
         )
+
+    def test_remove_data_drops_them_from_an_unsent_email_that_copies_them(self):
+        queued = ScheduledEmail.objects.create(
+            to_email="mary.mahoney@example.com",
+            cc=["TEST@example.com", "susan.picotte@example.com"],
+            subject="Introduction",
+            template_name="proconnector_intro",
+        )
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        queued.refresh_from_db()
+        self.assertEqual(queued.cc, ["susan.picotte@example.com"])
+        self.assertEqual(queued.to_email, "mary.mahoney@example.com")
+
+    def test_remove_data_leaves_a_sent_email_that_copied_them(self):
+        sent = ScheduledEmail.objects.create(
+            to_email="mary.mahoney@example.com",
+            cc=["test@example.com"],
+            subject="Introduction",
+            template_name="proconnector_intro",
+            sent=True,
+        )
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        sent.refresh_from_db()
+        self.assertEqual(sent.cc, ["test@example.com"])

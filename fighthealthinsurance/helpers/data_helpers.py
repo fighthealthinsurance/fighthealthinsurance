@@ -150,4 +150,10 @@ class RemoveDataHelper:
         InterestedProfessional.objects.filter(email__iexact=email).delete()
         # Unsent queued emails, so none goes out after the deletion.
         ScheduledEmail.objects.filter(to_email__iexact=email, sent=False).delete()
+        # One that only copies them still goes to its recipient, without them.
+        address = email.strip().lower()
+        for queued in ScheduledEmail.objects.filter(sent=False).only("pk", "cc"):
+            kept = [a for a in queued.cc or [] if str(a).strip().lower() != address]
+            if kept != (queued.cc or []):
+                ScheduledEmail.objects.filter(pk=queued.pk, sent=False).update(cc=kept)
         return denials_removed
