@@ -1774,7 +1774,11 @@ class FindNextStepsHelper:
         # into permanent data loss. A box the page showed filled
         # (shown_filled) and the person emptied is cleared instead.
         def emptied(name: str, value) -> bool:
-            return not value and name in shown_filled
+            if value or name not in shown_filled:
+                return False
+            # Noted before the clear, so extraction can't fill it again.
+            cls._note_cleared_on_review(denial, name)
+            return True
 
         if procedure and len(procedure) < 200:
             denial.procedure = procedure
@@ -1856,6 +1860,11 @@ class FindNextStepsHelper:
             denial.denial_type_text = denial_type_text
             changed_fields.add("denial_type_text")
         if denial_type:
+            if "denial_type" in shown_filled and not set(
+                denial.denial_type.values_list("pk", flat=True)
+            ) <= {chosen.pk for chosen in denial_type}:
+                # Unticked some: a later read of the letter can't add them back.
+                cls._note_cleared_on_review(denial, "denial_type")
             denial.denial_type.set(denial_type)
         elif emptied("denial_type", denial_type):
             denial.denial_type.clear()
@@ -2046,6 +2055,16 @@ class FindNextStepsHelper:
                 financial_assistance=financial_assistance,
                 appeal_deadline_note=appeal_deadline_note,
             )
+
+    @staticmethod
+    def _note_cleared_on_review(denial: "Denial", field: str) -> None:
+        """Add ``field`` to the review-page fields the person emptied, on the
+        row at once (Denial.review_cleared)."""
+        names = set((denial.review_cleared or "").split()) | {field}
+        denial.review_cleared = f" {' '.join(sorted(names))} "
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            review_cleared=denial.review_cleared
+        )
 
     @classmethod
     def _maybe_dispatch_confirmed_speculative(
@@ -2733,6 +2752,8 @@ class DenialCreatorHelper:
           carry the ``typesafe`` source. A type the person added on the
           review page carries no source and is kept; one they left ticked
           keeps its source and is read again from the new letter.
+        * which review-page fields the person emptied (``review_cleared``):
+          that was about the old letter, and the new one is read afresh.
         * the question set (``generated_questions``, its stamp, and the
           speculative ``candidate_generated_questions``), so the questions are
           asked again about the new letter even when the procedure and
@@ -2774,6 +2795,7 @@ class DenialCreatorHelper:
         extraction_cleared: dict[str, Any] = {
             "candidate_procedure": None,
             "candidate_diagnosis": None,
+            "review_cleared": "",
             # Not read yet, and replacing a letter that was (see the gate in
             # extract_entity).
             "extract_procedure_diagnosis_finished": None,
@@ -3351,6 +3373,7 @@ class DenialCreatorHelper:
         the check and the write is kept."""
         return bool(
             await Denial.objects.filter(
+                Denial.not_cleared_on_review("insurance_plan_obj"),
                 denial_id=denial_id,
                 insurance_plan_obj__isnull=True,
                 insurance_company_obj_id=carrier_id,
@@ -3445,7 +3468,8 @@ class DenialCreatorHelper:
     async def _fill_if_empty(
         denial_id: int, field: str, value: Any, *, blank_is_empty: bool = True
     ) -> bool:
-        """Write ``value`` into ``field`` only where the row still holds nothing.
+        """Write ``value`` into ``field`` only where the row still holds nothing
+        and the person did not empty it on the review page.
 
         Every column these extractors write is editable on the review page, and
         the retry lifts the gate that normally stops a second read, so an
@@ -3458,7 +3482,7 @@ class DenialCreatorHelper:
             empty = empty | Q(**{field: ""})
         return bool(
             await Denial.objects.filter(denial_id=denial_id)
-            .filter(empty)
+            .filter(empty, Denial.not_cleared_on_review(field))
             .aupdate(**{field: value})
         )
 
@@ -3825,7 +3849,8 @@ class DenialCreatorHelper:
             kept_existing = False
             for field, value in user_facing.items():
                 updated = await this_letter.filter(
-                    Q(**{f"{field}__isnull": True}) | Q(**{field: ""})
+                    Q(**{f"{field}__isnull": True}) | Q(**{field: ""}),
+                    Denial.not_cleared_on_review(field),
                 ).aupdate(**{field: value})
                 if updated:
                     filled_in = True
@@ -4784,6 +4809,15 @@ class DenialCreatorHelper:
                 f"while its types were matched; removed {len(created_pks)}"
             )
             return EXTRACTION_OUTCOME_FAILED
+        if (
+            created_pks
+            and not await Denial.objects.filter(
+                Denial.not_cleared_on_review("denial_type"), denial_id=denial_id
+            ).aexists()
+        ):
+            # The person unticked types on review; what they left stands.
+            await DenialTypesRelation.objects.filter(pk__in=created_pks).adelete()
+            return EXTRACTION_OUTCOME_KEPT_EXISTING
         created = len(created_pks)
         if created:
             return EXTRACTION_OUTCOME_FOUND

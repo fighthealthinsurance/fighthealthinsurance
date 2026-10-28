@@ -2603,6 +2603,16 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     good_appeal_example = models.BooleanField(default=False)
     candidate_procedure = models.CharField(max_length=300, null=True, blank=True)
     candidate_diagnosis = models.CharField(max_length=300, null=True, blank=True)
+    # The review-page fields the person emptied for the letter on the row,
+    # each between spaces (find_next_steps), so extraction leaves them empty.
+    review_cleared = models.CharField(
+        max_length=300,
+        null=True,
+        blank=True,
+        default="",
+        db_default="",
+        editable=False,
+    )
     candidate_generated_questions = models.JSONField(null=True, blank=True)
     candidate_ml_citation_context = models.JSONField(null=True, blank=True)
     # Speculative/pre-warmed condensed denial_text produced by the background
@@ -2787,6 +2797,15 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     def get_hashed_email(email: str) -> str:
         encoded_email = email.encode("utf-8").lower()
         return hashlib.sha512(encoded_email).hexdigest()
+
+    def cleared_on_review(self, field: str) -> bool:
+        """Whether the person emptied ``field`` on the review page."""
+        return field in (self.review_cleared or "").split()
+
+    @staticmethod
+    def not_cleared_on_review(field: str) -> Q:
+        """Rows where the person has not emptied ``field`` on review."""
+        return ~Q(review_cleared__contains=f" {field} ")
 
 
 class DenialQA(models.Model):
