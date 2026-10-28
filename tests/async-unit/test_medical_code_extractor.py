@@ -341,3 +341,20 @@ class TestModuleConstants:
             assert key in DME_DEVICE_KEYWORDS, (
                 f"FORM_DEVICE_TYPES key {key!r} missing from " "DME_DEVICE_KEYWORDS"
             )
+
+
+def test_collected_text_leaves_out_extractions_copy_of_an_emptied_field():
+    from fighthealthinsurance.medical_code_extractor import collect_denial_text
+    from fighthealthinsurance.models import Denial
+
+    denial = Denial(
+        procedure=None,
+        candidate_procedure="Insulin pump",
+        diagnosis=None,
+        candidate_diagnosis="Type 1 diabetes",
+        review_cleared=" diagnosis ",
+    )
+    collected = collect_denial_text(
+        denial, "procedure", "candidate_procedure", "candidate_diagnosis"
+    )
+    assert collected == "Insulin pump"

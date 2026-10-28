@@ -8,8 +8,9 @@ follow-up emails -- because the form carries no denial id and the session's
 ``denial_uuid`` was written but never read back.
 
 These tests pin the reuse rule: the session's denial is updated in place, but
-only for the same person, only while their journey is unfinished, and only
-inside the recency window. Every other case must still create a new denial.
+only for the same person, only while their journey is unfinished, only before
+any draft or appeal was written for it, and only inside the recency window.
+Every other case must still create a new denial.
 """
 
 import contextlib
@@ -18,7 +19,7 @@ from unittest.mock import AsyncMock, patch
 
 from asgiref.sync import async_to_sync, sync_to_async
 from django.db import DatabaseError
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -28,18 +29,19 @@ from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestions
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
 from fighthealthinsurance.models import (
+    Appeal,
     Denial,
     DenialTypes,
     DenialTypesRelation,
     FollowUpSched,
     IntakeJourneyEvent,
+    ProposedAppeal,
 )
 from fighthealthinsurance.views import DENIAL_SESSION_REUSE_WINDOW
+from tests.sync.test_intake_resume_link import INTAKE_ON
 
 
-class DenialSessionReuseTest(TestCase):
-    """One browser session mid-intake == one Denial row."""
-
+class SessionReuseTestBase(TestCase):
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
     EMAIL = "reuse@example.com"
@@ -70,6 +72,10 @@ class DenialSessionReuseTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Denial.objects.count(), 1)
         return Denial.objects.get()
+
+
+class DenialSessionReuseTest(SessionReuseTestBase):
+    """One browser session mid-intake == one Denial row."""
 
     def test_resubmitting_the_form_does_not_create_a_second_denial(self):
         first = self._first_submission()
@@ -211,6 +217,67 @@ class DenialSessionReuseTest(TestCase):
         )
 
         self.assertEqual(Denial.objects.count(), 2)
+
+
+class ACaseWithDraftsIsNotReusedTest(SessionReuseTestBase):
+    """Once drafts or an appeal exist, the next submission is a new case.
+
+    Reused, the new letter would sit on a case whose drafts argue the old
+    one, and the appeals page would show them beside the new ones. This runs
+    with the intake journey off, where no FORM_COMPLETED row is ever written;
+    the subclass below runs it with the journey on.
+    """
+
+    def assert_a_new_denial_after(self, first: Denial):
+        self.assertFalse(
+            IntakeJourneyEvent.objects.filter(
+                denial=first, event_type=IntakeJourneyEvent.FORM_COMPLETED
+            ).exists(),
+            "the journey's own exit would end reuse without the drafts check",
+        )
+        self._post()
+        self.assertEqual(Denial.objects.count(), 2)
+
+    def test_a_case_with_drafts_is_not_reused(self):
+        first = self._first_submission()
+        ProposedAppeal.objects.create(for_denial=first, appeal_text="A first draft.")
+        self.assert_a_new_denial_after(first)
+
+    def test_a_case_with_an_appeal_is_not_reused(self):
+        first = self._first_submission()
+        Appeal.objects.create(
+            for_denial=first,
+            appeal_text="The letter they chose.",
+            hashed_email=first.hashed_email,
+        )
+        self.assert_a_new_denial_after(first)
+
+    def test_held_back_reserve_drafts_do_not_end_reuse(self):
+        first = self._first_submission()
+        ProposedAppeal.objects.create(
+            for_denial=first, appeal_text="A reserve draft.", speculative=True
+        )
+
+        self._post()
+
+        self.assertEqual(Denial.objects.count(), 1)
+
+
+class ACaseWithDraftsIsNotReusedWithTheIntakeJourneyOnTest(
+    ACaseWithDraftsIsNotReusedTest
+):
+    def setUp(self):
+        # Turned on inside the sync conftest's fixture that pins every
+        # Temporal flag off, so this override is the one that applies.
+        intake_on = override_settings(**INTAKE_ON)
+        intake_on.enable()
+        self.addCleanup(intake_on.disable)
+        no_delivery = patch(
+            "fighthealthinsurance.intake_outbox.deliver", return_value=False
+        )
+        no_delivery.start()
+        self.addCleanup(no_delivery.stop)
+        super().setUp()
 
 
 # The extractors other than the procedure/diagnosis reader and the denial-type

@@ -1553,8 +1553,8 @@ def review_form(
     as they left it: a date they cleared stays blank.
 
     ``default_condition`` is the condition a treatment guide or an assistant
-    handoff carried. It fills the diagnosis only when the row has none
-    (form_valid keeps it).
+    handoff carried. It fills the diagnosis only when the row has none and
+    the person did not empty it here before (form_valid keeps it).
 
     On the way forward the letter's triage (ml/denial_triage.suggestions)
     also pre-ticks the denial types it names and, when the row has none, the
@@ -1602,7 +1602,8 @@ def review_form(
             "email": email,
             "your_state": denial.your_state,
             "procedure": procedure,
-            "diagnosis": denial.diagnosis or default_condition,
+            "diagnosis": denial.diagnosis
+            or ("" if denial.cleared_on_review("diagnosis") else default_condition),
             "semi_sekret": denial.semi_sekret,
             "insurance_company": denial.insurance_company,
             "plan_id": denial.plan_id,
@@ -1615,6 +1616,9 @@ def review_form(
             "insurance_plan_obj": denial.insurance_plan_obj_id,
             "denial_type_text": denial.denial_type_text,
         }
+    )
+    form.initial["shown_filled"] = " ".join(
+        name for name in core_forms.REVIEW_CLEARABLE_FIELDS if form.initial[name]
     )
     if from_letter:
         hint = from_your_letter_hint()
@@ -1661,7 +1665,11 @@ class CategorizeReview(View):
         microsite_title = request.session.get("microsite_title", "")
         used_default_procedure = False
 
-        if not procedure and default_procedure:
+        if (
+            not procedure
+            and default_procedure
+            and not denial.cleared_on_review("procedure")
+        ):
             procedure = default_procedure
             used_default_procedure = True
 
@@ -1829,7 +1837,7 @@ class FindNextStepsLoading(View):
     """Interim loading screen before the questions page is rendered."""
 
     def post(self, request):
-        form = core_forms.BasePostInferedForm(request.POST)
+        form = core_forms.PostInferedLoadingForm(request.POST)
         if not form.is_valid():
             # Same navigation-preserving re-render as FindNextSteps.post.
             _ref = request.POST
@@ -2601,6 +2609,9 @@ class InitialProcessView(generic.FormView):
           somebody else;
         * its intake journey has not been completed (no ``FORM_COMPLETED``
           event); a finished journey means the next submission is a new case;
+        * it has no drafts (other than held-back reserves) and no appeal: a
+          new letter on such a case would sit beside drafts written for the
+          old one, whether or not the intake journey is on;
         * it was created within ``DENIAL_SESSION_REUSE_WINDOW``.
 
         Anything else -- including any lookup error -- returns ``None``, which
@@ -2626,6 +2637,17 @@ class InitialProcessView(generic.FormView):
                 logger.debug(
                     f"Denial {denial.denial_id} already completed its intake "
                     "journey; creating a new denial"
+                )
+                return None
+            if (
+                models.ProposedAppeal.objects.filter(
+                    for_denial=denial, speculative=False
+                ).exists()
+                or models.Appeal.objects.filter(for_denial=denial).exists()
+            ):
+                logger.debug(
+                    f"Denial {denial.denial_id} already has drafts; creating a "
+                    "new denial"
                 )
                 return None
             # Nullable on rows predating the column, and a row with no
@@ -3362,7 +3384,11 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
         used_default_procedure = False
 
         # If no procedure was extracted and we have a default from microsite, use it
-        if not procedure and default_procedure:
+        if (
+            not procedure
+            and default_procedure
+            and not denial.cleared_on_review("procedure")
+        ):
             procedure = default_procedure
             used_default_procedure = True
 

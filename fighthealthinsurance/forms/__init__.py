@@ -747,7 +747,34 @@ class BasePostInferedForm(DenialRefForm):
     )
 
 
-class PostInferedForm(ReCaptchaOptionalMixin, BasePostInferedForm):
+# The review page's fields that an empty answer clears, but only when the page
+# showed them filled (find_next_steps).
+REVIEW_CLEARABLE_FIELDS = (
+    "procedure",
+    "diagnosis",
+    "insurance_company",
+    "insurance_company_obj",
+    "insurance_plan_obj",
+    "plan_id",
+    "claim_id",
+    "date_of_service",
+    "your_state",
+    "denial_type",
+    "plan_source",
+)
+
+
+class ShownFilledMixin(forms.Form):
+    # Which clearable fields the page showed filled, so a box the person
+    # emptied can be told from one that was empty when the page loaded.
+    shown_filled = forms.CharField(required=False, widget=forms.HiddenInput())
+
+    def clean_shown_filled(self) -> frozenset[str]:
+        names = (self.cleaned_data.get("shown_filled") or "").split()
+        return frozenset(names) & frozenset(REVIEW_CLEARABLE_FIELDS)
+
+
+class PostInferedForm(ReCaptchaOptionalMixin, ShownFilledMixin, BasePostInferedForm):
     """Public appeal form with conditionally-enforced reCAPTCHA.
 
     Previously decided at import time from ``os.environ``, which made the
@@ -757,6 +784,11 @@ class PostInferedForm(ReCaptchaOptionalMixin, BasePostInferedForm):
     """
 
     captcha = forms.CharField(required=False, widget=forms.HiddenInput())
+
+
+class PostInferedLoadingForm(ShownFilledMixin, BasePostInferedForm):
+    """The review form as the loading step checks it: no captcha, which the
+    next step checks once, and the shown_filled marker kept for a re-render."""
 
 
 class ProPostInferedForm(BasePostInferedForm):

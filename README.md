@@ -142,7 +142,7 @@ tox -e py313-django52-sync -- -k test_no_multiline_hash_comments_in_any_template
 | `py313-django52-async-unit` | `tests/async-unit/` | `Test` | `-n auto` | `tests-async-unit` |
 | `py313-django52-sync-actor` | `tests/sync-actor/` | `TestActor` | Ray actor tests | `tests-sync-actor` |
 | `py313-django52-selenium` | `tests/selenium/` | `TestSync` | Real browser; failed tests rerun twice | `tests-selenium` |
-| `py313-django52-temporal` | `tests/temporal/` | `Test` | Downloads the Temporal test server on first run | not in CI |
+| `py313-django52-temporal` | `tests/temporal/` | `Test` | Downloads the Temporal test server on first run | `tests-temporal` |
 
 - `py312-` and `py311-` variants exist too. CI runs only 3.13. Bare names
   (`tox -e async-unit`) use the Python tox runs on.
@@ -191,10 +191,10 @@ and on every pull request.
 | `shell-linter` | `./scripts/check_shell_style.sh` |
 | `types` | `tox -e mypy` on Python 3.13 |
 | `npm-build` | `./scripts/ci_npm_build.sh` |
-| `tests-sync`, `tests-async`, `tests-async-unit`, `tests-sync-actor` | The matching `py313-django52-*` env |
+| `tests-sync`, `tests-async`, `tests-async-unit`, `tests-sync-actor`, `tests-temporal` | The matching `py313-django52-*` env |
 | `tests-selenium` | `py313-django52-selenium`, skipped when a pull request only touches `k8s/`, `charts/`, `docs/*.md`, top-level `*.md`, `mypy.ini` or `.gitignore` |
 
-Not in CI: the `temporal` and `prettier` envs, pyright, and Python 3.11/3.12
+Not in CI: the `prettier` env, pyright, and Python 3.11/3.12
 test runs. [`update-browserslist-db.yml`](.github/workflows/update-browserslist-db.yml)
 refreshes the Browserslist database once a quarter (or by hand) and opens a
 pull request.
@@ -438,7 +438,7 @@ and how to update it: [docs/geoip.md](docs/geoip.md).
 2. Make small, focused commits.
 3. Run the tox env for what you changed, or `./scripts/good_to_go.sh --py 313`
    before pushing. Add `tox -e py313-django52-temporal` when you touch Temporal
-   code, since neither CI nor `good_to_go.sh` runs it.
+   code, since `good_to_go.sh` doesn't run it (CI does).
 4. Run `tox -e black` and `tox -e mypy`, and `./scripts/check_shell_style.sh`
    if you changed a shell script.
 5. Screenshots for UI review can go in `docs/ux-evidence/`; pull request diffs

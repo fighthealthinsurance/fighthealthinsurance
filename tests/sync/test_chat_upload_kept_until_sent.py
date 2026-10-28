@@ -16,6 +16,9 @@ dropped.
 Only one retry can be in flight at a time. The server answers a
 connection's turns in order, so a retry stays in flight until the socket
 owes no more replies (or closes), not merely until the first reply lands.
+For the same reason Retry sends nothing while an open socket still owes a
+reply: the resend would wait for the turn in progress and then run it again.
+It tells the person we're still working instead.
 
 There is no harness that runs the React chat component, so these read the
 source, like ``tests/async-unit/test_appeal_sends_what_was_edited.py``.
@@ -201,6 +204,28 @@ def test_a_second_retry_cannot_start_while_one_is_in_flight():
     ), "Retry no longer refuses while a retry is still in flight"
     assert body.count("setRetryInFlight(true);") == 2, (
         "a retry that went out (document or message) isn't marked in flight"
+    )
+
+
+def test_retry_does_not_resend_while_an_open_socket_owes_a_reply():
+    body = _arrow_body(_source(), "handleRetryLastMessage")
+    owed = re.search(
+        r"if \(\s*repliesOwedRef\.current > 0 &&\s*"
+        r"wsRef\.current\?\.readyState === WebSocket\.OPEN\s*\) \{",
+        body,
+    )
+    assert owed is not None, (
+        "Retry resends while the open socket still owes the turn its reply"
+    )
+    assert owed.start() < body.find("sendChatMessage("), (
+        "Retry resends before checking for a reply still owed"
+    )
+    waiting = _brace_block(body, owed.end() - 1)
+    assert re.search(r"statusMessage:\s*\"Still working", waiting), (
+        "Retry does nothing visible while the reply is still coming"
+    )
+    assert waiting.rstrip("} \n").endswith("return;"), (
+        "Retry goes on to resend after saying we're still working"
     )
 
 
