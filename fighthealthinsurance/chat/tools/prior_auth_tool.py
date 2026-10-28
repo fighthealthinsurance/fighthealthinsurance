@@ -137,7 +137,16 @@ class PriorAuthTool(BaseTool):
             try:
                 _, call_span = parse_anchored_json_payload(response_text, match)
             except (json.JSONDecodeError, ValueError):
-                return response_text, context
+                # A garbled call still gets the refusal, not the save-error text.
+                return (
+                    strip_anchored_calls(
+                        self,
+                        response_text,
+                        notice=PATIENT_CHAT_REFUSAL,
+                        empty_fallback=PATIENT_CHAT_REFUSAL,
+                    ),
+                    context,
+                )
             return (
                 replace_anchored_call(
                     response_text, match, call_span, PATIENT_CHAT_REFUSAL

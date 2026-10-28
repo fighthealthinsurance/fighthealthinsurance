@@ -8,8 +8,10 @@ deleted while rows for unrelated emails are untouched.
 """
 
 from datetime import date, timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.db.models import QuerySet
 from django.test import TestCase
 from django.utils import timezone
 
@@ -370,6 +372,33 @@ class TestRemoveDataHelper(TestCase):
         queued.refresh_from_db()
         self.assertEqual(queued.cc, ["susan.picotte@example.com"])
         self.assertEqual(queued.to_email, "mary.mahoney@example.com")
+
+    def test_remove_data_rereads_a_shared_copy_list_under_a_lock(self):
+        """Another removal from the same email can't be undone by a stale read."""
+        queued = ScheduledEmail.objects.create(
+            to_email="mary.mahoney@example.com",
+            cc=["test@example.com", "susan.picotte@example.com"],
+            subject="Introduction",
+            template_name="proconnector_intro",
+        )
+        lock = QuerySet.select_for_update
+
+        def other_removal_commits_first(queryset, *args, **kwargs):
+            if queryset.model is ScheduledEmail:
+                ScheduledEmail.objects.filter(pk=queued.pk).update(
+                    cc=["test@example.com"]
+                )
+            return lock(queryset, *args, **kwargs)
+
+        with patch.object(
+            QuerySet,
+            "select_for_update",
+            autospec=True,
+            side_effect=other_removal_commits_first,
+        ):
+            RemoveDataHelper.remove_data_for_email(self.target_email)
+        queued.refresh_from_db()
+        self.assertEqual(queued.cc, [])
 
     def test_remove_data_leaves_a_sent_email_that_copied_them(self):
         sent = ScheduledEmail.objects.create(

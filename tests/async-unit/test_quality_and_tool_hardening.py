@@ -346,6 +346,16 @@ class TestPriorAuthOnlyInProfessionalChats:
         assert reply.strip() == PATIENT_CHAT_REFUSAL
 
     @pytest.mark.asyncio
+    async def test_patient_chat_with_a_garbled_call_gets_the_refusal(self):
+        tool = PriorAuthTool(AsyncMock(), AsyncMock())
+        garbled = self.REPLY.replace('"back pain"}', "}")
+        reply, _, _ = await tool.handle(
+            garbled, "", chat=OngoingChat(chat_type=ChatType.PATIENT)
+        )
+        assert PATIENT_CHAT_REFUSAL in reply
+        assert "Rebecca Lee Crumpler" not in reply
+
+    @pytest.mark.asyncio
     async def test_professional_chat_still_creates_the_prior_auth(self):
         _, create = await self._run(ChatType.PROFESSIONAL)
         create.assert_awaited_once()

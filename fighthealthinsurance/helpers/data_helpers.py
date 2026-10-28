@@ -152,8 +152,21 @@ class RemoveDataHelper:
         ScheduledEmail.objects.filter(to_email__iexact=email, sent=False).delete()
         # One that only copies them still goes to its recipient, without them.
         address = email.strip().lower()
-        for queued in ScheduledEmail.objects.filter(sent=False).only("pk", "cc"):
+        copied = [
+            queued.pk
+            for queued in ScheduledEmail.objects.filter(sent=False).only("pk", "cc")
+            if any(str(a).strip().lower() == address for a in queued.cc or [])
+        ]
+        # Reread under a row lock so a removal running at the same time can't
+        # write back an address the other one just took out.
+        for queued in (
+            ScheduledEmail.objects.select_for_update()
+            .filter(pk__in=copied, sent=False)
+            .order_by("pk")
+            .only("pk", "cc")
+        ):
             kept = [a for a in queued.cc or [] if str(a).strip().lower() != address]
             if kept != (queued.cc or []):
-                ScheduledEmail.objects.filter(pk=queued.pk, sent=False).update(cc=kept)
+                queued.cc = kept
+                queued.save(update_fields=["cc"])
         return denials_removed
