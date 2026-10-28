@@ -1212,7 +1212,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       return;
     }
 
-    // Allow retry even while loading so long-running requests can be manually re-sent.
+    // An open socket still owes a reply: the server answers it in order, so a
+    // resend would only run the whole turn again once this one finishes.
+    if (
+      repliesOwedRef.current > 0 &&
+      wsRef.current?.readyState === WebSocket.OPEN
+    ) {
+      setState((prev) => ({
+        ...prev,
+        statusMessage:
+          "Still working on your message. Long answers, like a letter draft, can take a couple of minutes. The answer will appear here.",
+      }));
+      return;
+    }
 
     // Find the last user message
     const lastUserMessage = [...state.messages]
