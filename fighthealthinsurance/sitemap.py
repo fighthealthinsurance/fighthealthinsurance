@@ -44,6 +44,7 @@ class StaticViewSitemap(Sitemap):
             "pbs-newshour",
             "media-references",
             "coverage-changes",
+            "coverage-costs",
             "turning-26",
             "other-resources",
             "faq",

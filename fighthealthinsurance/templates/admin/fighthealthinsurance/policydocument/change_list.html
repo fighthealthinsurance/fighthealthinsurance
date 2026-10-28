@@ -1,0 +1,38 @@
+{% extends "admin/change_list.html" %}
+{% comment %} PolicyDocumentAdmin.changelist_view counts the shared files, the
+different documents among them by their fingerprints, and the shared links,
+then the plans they make up (shared_plan_documents.share_counts): every kind,
+with the employer plans the share page's goal counts called out. {% endcomment %}
+{% block result_list %}
+<p id="shared-document-counts">Shared for research: {{ shared_files }} file{{ shared_files|pluralize }}, {{ shared_documents }} different document{{ shared_documents|pluralize }}. {{ shared_links }} link{{ shared_links|pluralize }} to plan documents.</p>
+<div id="shared-plan-counts">
+    <h2>Plans shared for research</h2>
+    <p id="shared-plan-total">{{ share_counts.plans }} different plan{{ share_counts.plans|pluralize }} from {{ share_counts.shares }} share{{ share_counts.shares|pluralize }}. Each share is one plan unless every file and link in it came in an earlier share; removed rows count for nothing.</p>
+    <p id="shared-plan-employer"><strong>{{ share_counts.employer_plans }} employer plan{{ share_counts.employer_plans|pluralize }}</strong> toward the goal of {{ share_counts.goal }} by {{ share_counts.goal_date|date:"F j, Y" }}: an employer plan of either kind, or a plan whose kind wasn't given with an employer named. The share page shows this count from 20.</p>
+    <p id="shared-plan-premiums">{{ share_counts.premium_answered }} of {{ share_counts.plans }} plan{{ share_counts.plans|pluralize }} came with an answer to the premium question.</p>
+    <table id="shared-plan-weeks">
+        <caption>Each week, newest first</caption>
+        <thead><tr><th scope="col">Week of</th><th scope="col">Shares</th><th scope="col">New plans</th></tr></thead>
+        <tbody>
+            {% for row in share_counts.weeks %}<tr><th scope="row">{{ row.week|date:"M j, Y" }}</th><td>{{ row.shares }}</td><td>{{ row.plans }}</td></tr>
+            {% empty %}<tr><td colspan="3">No shares yet.</td></tr>{% endfor %}
+        </tbody>
+    </table>
+    <table id="shared-plan-kinds">
+        <caption>Plans by kind</caption>
+        <thead><tr><th scope="col">Kind of plan</th><th scope="col">Plans</th></tr></thead>
+        <tbody>
+            {% for row in share_counts.kinds %}<tr><th scope="row">{{ row.kind }}</th><td>{{ row.plans }}</td></tr>
+            {% empty %}<tr><td colspan="2">No plans yet.</td></tr>{% endfor %}
+        </tbody>
+    </table>
+    <table id="shared-plan-years">
+        <caption>Plans by plan year (one year per share; people sharing more than one year may leave it blank)</caption>
+        <thead><tr><th scope="col">Plan year</th><th scope="col">Plans</th></tr></thead>
+        <tbody>
+            {% for row in share_counts.years %}<tr><th scope="row">{{ row.year }}</th><td>{{ row.plans }}</td></tr>{% endfor %}
+        </tbody>
+    </table>
+</div>
+{{ block.super }}
+{% endblock %}

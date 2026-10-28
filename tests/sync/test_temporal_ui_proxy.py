@@ -80,6 +80,25 @@ class TemporalUIProxyStaffTest(TestCase):
         self.assertFalse(upstream.call_args.kwargs["allow_redirects"])
 
     @mock.patch(_UPSTREAM_CALL)
+    def test_the_research_namespace_pages_and_api_pass_through(self, upstream):
+        """Shared plan documents run in fhi-research; the UI names the
+        namespace in its routes, and staff switch to it there."""
+        for path, query in (
+            ("namespaces/fhi-research/workflows", ""),
+            ("api/v1/namespaces/fhi-research/workflows", "query=x"),
+        ):
+            with self.subTest(path=path):
+                upstream.return_value = _FakeUpstream()
+                url = reverse("temporal_ui", kwargs={"path": path})
+                response = self.client.get(f"{url}?{query}" if query else url)
+                self.assertEqual(response.status_code, 200)
+                expected = f"http://temporal-web.test:8080/timbit/temporal/{path}"
+                self.assertEqual(
+                    upstream.call_args.args[1],
+                    f"{expected}?{query}" if query else expected,
+                )
+
+    @mock.patch(_UPSTREAM_CALL)
     def test_root_without_slash_redirects_to_slash(self, upstream):
         response = self.client.get(reverse("temporal_ui_root"))
         self.assertEqual(response.status_code, 302)

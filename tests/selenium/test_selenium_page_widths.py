@@ -54,6 +54,7 @@ PAGES = {
     "/other-resources": "wide",
     "/how-to-help": "wide",
     "/media-references": "wide",
+    "/coverage-costs": "wide",
     "/treatments/": "wide",
     "/remove_data": "reading",
     "/about-ai": "reading",

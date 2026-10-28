@@ -4406,6 +4406,30 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
         return f"Skip of Task {self.task_id} by {self.session_key}"
 
 
+class EncryptedTextField(models.TextField):
+    """Text stored encrypted with the same key as the uploaded files
+    (Cryptographer, keyed by DEFF_SALT and DEFF_PASSWORD) and read back as
+    plain text. Empty stays empty. Each save makes a different ciphertext, so
+    the column can't be searched or compared: keep a keyed hash beside it."""
+
+    def get_prep_value(self, value: typing.Any) -> typing.Any:
+        value = super().get_prep_value(value)
+        if not value:
+            return value
+        return Cryptographer.encrypted(value.encode("utf-8")).decode("ascii")
+
+    def from_db_value(
+        self, value: typing.Any, expression: typing.Any, connection: typing.Any
+    ) -> typing.Any:
+        if not value:
+            return value
+        try:
+            return Cryptographer.decrypted(value.encode("ascii")).decode("utf-8")
+        except Exception as e:
+            logger.warning(f"Could not decrypt a stored value: {type(e).__name__}")
+            return ""
+
+
 class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model):  # type: ignore
     """
     Stores uploaded policy documents (Summary of Benefits, Medical Policy PDFs).
@@ -4432,6 +4456,57 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         ("unknown", "I'm Not Sure"),
     ]
 
+    PREMIUM_PERIOD_CHOICES = [
+        ("weekly", "Each week"),
+        ("biweekly", "Every two weeks"),
+        ("semimonthly", "Twice a month"),
+        ("monthly", "Each month"),
+        ("yearly", "Each year"),
+    ]
+    WHO_IS_COVERED_CHOICES = [
+        ("self_only", "Just you"),
+        ("self_and_partner", "You and a spouse or partner"),
+        ("self_and_children", "You and your children"),
+        ("family", "Your whole family"),
+    ]
+
+    SOURCE_EXPLAIN_POLICY = "explain_policy"
+    SOURCE_SHARED = "shared"
+    # A copy shared by ticking the box on Explain Policy or the appeal's plan
+    # documents step, kept apart from the row or appeal it was copied from.
+    SOURCE_SHARED_EXPLAIN = "shared_explain"
+    SOURCE_SHARED_APPEAL = "shared_appeal"
+    # A link to a public page with the plan's documents, from the share page.
+    # The row has no file, and the server never fetches the link.
+    SOURCE_SHARED_LINK = "shared_link"
+    SOURCE_CHOICES = [
+        (SOURCE_EXPLAIN_POLICY, "Explain my policy"),
+        (SOURCE_SHARED, "Shared for research"),
+        (SOURCE_SHARED_EXPLAIN, "Shared for research from Explain my policy"),
+        (SOURCE_SHARED_APPEAL, "Shared for research from an appeal"),
+        (SOURCE_SHARED_LINK, "Link shared for research"),
+    ]
+    # Every source whose rows hold a shared file, the only rows ever read.
+    SHARED_FILE_SOURCES = (SOURCE_SHARED, SOURCE_SHARED_EXPLAIN, SOURCE_SHARED_APPEAL)
+    # Every source whose rows were shared for research.
+    SHARED_SOURCES = SHARED_FILE_SOURCES + (SOURCE_SHARED_LINK,)
+
+    # Where a shared file is in its reading (plan_documents_processing).
+    PROCESSING_RECEIVED = "received"
+    PROCESSING_READY = "ready_for_review"
+    PROCESSING_UNREADABLE = "unreadable"
+    # Remove-my-data deleted the file and its text and kept the plan facts.
+    PROCESSING_REMOVED = "removed"
+    # A shared link: nothing to read, and the sweep never picks it up.
+    PROCESSING_LINK = "link"
+    PROCESSING_STATUS_CHOICES = [
+        (PROCESSING_RECEIVED, "Received, not read yet"),
+        (PROCESSING_READY, "Read and cleaned, ready for review"),
+        (PROCESSING_UNREADABLE, "No text could be read"),
+        (PROCESSING_REMOVED, "File and text deleted at the person's request"),
+        (PROCESSING_LINK, "A link, never fetched: staff open it by hand"),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
     document_type = models.CharField(
@@ -4444,12 +4519,73 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     hashed_email = models.CharField(max_length=200, null=True, blank=True)
     session_key = models.CharField(max_length=100, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    source = models.CharField(
+        db_default="explain_policy",
+        max_length=20,
+        choices=SOURCE_CHOICES,
+        default=SOURCE_EXPLAIN_POLICY,
+    )
+    # Shared uploads only: the agreement's date (consent.SHARING_VERSION) and when.
+    shared_consent_version = models.DateField(null=True, blank=True)
+    shared_at = models.DateTimeField(null=True, blank=True)
+    # Files shared together in one upload carry the same batch.
+    share_batch = models.UUIDField(null=True, blank=True)
+    plan_year = models.PositiveSmallIntegerField(null=True, blank=True)
+    state = models.CharField(db_default="", max_length=2, blank=True)
+    insurer_name = models.CharField(db_default="", max_length=200, blank=True)
+    employer_name = models.CharField(db_default="", max_length=200, blank=True)
+    # Shared uploads only: the premium, if the person told us, and who it covers.
+    premium_amount = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True
+    )
+    premium_period = models.CharField(
+        db_default="", max_length=20, choices=PREMIUM_PERIOD_CHOICES, blank=True
+    )
+    who_is_covered = models.CharField(
+        db_default="", max_length=20, choices=WHO_IS_COVERED_CHOICES, blank=True
+    )
+    insurance_company_obj = models.ForeignKey(
+        InsuranceCompany,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="policy_documents",
+    )
+    insurance_plan_obj = models.ForeignKey(
+        InsurancePlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="policy_documents",
+    )
+    # Shared uploads only: a keyed SHA-256 of the file, so repeats can be counted.
+    fingerprint = models.CharField(db_default="", max_length=64, blank=True)
+    # Shared links only: the page's address, checked on the way in
+    # (chat_forms.clean_shared_link) and stored encrypted. Staff open it by
+    # hand; nothing fetches it. Its keyed hash finds repeats.
+    shared_link = EncryptedTextField(db_default="", blank=True, default="")
+    shared_link_fingerprint = models.CharField(db_default="", max_length=64, blank=True)
+    # Shared uploads only: the file's text with personal details taken out as
+    # best we can, and where its reading is. The raw text is never stored.
+    processing_status = models.CharField(
+        db_default="",
+        max_length=20,
+        choices=PROCESSING_STATUS_CHOICES,
+        blank=True,
+        default="",
+    )
+    processed_at = models.DateTimeField(null=True, blank=True)
+    cleaned_text = EncryptedTextField(db_default="", blank=True, default="")
 
     class Meta:
         indexes = [
             models.Index(fields=["hashed_email"]),
             models.Index(fields=["session_key"]),
             models.Index(fields=["created_at"]),
+            models.Index(fields=["source", "created_at"]),
+            models.Index(fields=["share_batch"]),
+            models.Index(fields=["fingerprint"]),
+            models.Index(fields=["processing_status", "shared_at"]),
         ]
         verbose_name = "Policy Document"
         verbose_name_plural = "Policy Documents"
@@ -4485,21 +4621,19 @@ def _stored_file_in_use(name: str) -> bool:
     )
 
 
-def _delete_stored_files(
-    sender: type[models.Model], instance: models.Model, **kwargs: typing.Any
+def _delete_files_on_commit(
+    model: type[models.Model],
+    pk: typing.Any,
+    files: list[tuple[str, typing.Any]],
+    using: typing.Optional[str] = None,
 ) -> None:
-    """Remove the row's stored files after the row delete commits."""
-    files = [(f, getattr(instance, f)) for f in _file_field_names(sender)]
-    files = [(field, field_file) for field, field_file in files if field_file]
-    if not files:
-        return
-    pk = instance.pk
+    """Remove stored files no row points at once the transaction commits."""
     removal = removal_tag.get()
 
     def _delete_files() -> None:
         for field, field_file in files:
             name = field_file.name
-            where = f"{sender.__name__}.{field} {pk}"
+            where = f"{model.__name__}.{field} {pk}"
             if removal:
                 where += f" in data removal {removal}"
             try:
@@ -4516,7 +4650,17 @@ def _delete_stored_files(
                 continue
             logger.info(f"Deleted stored file {file_tag(name)} for {where}")
 
-    transaction.on_commit(_delete_files, using=kwargs.get("using"))
+    transaction.on_commit(_delete_files, using=using)
+
+
+def _delete_stored_files(
+    sender: type[models.Model], instance: models.Model, **kwargs: typing.Any
+) -> None:
+    """Remove the row's stored files after the row delete commits."""
+    files = [(f, getattr(instance, f)) for f in _file_field_names(sender)]
+    files = [(field, field_file) for field, field_file in files if field_file]
+    if files:
+        _delete_files_on_commit(sender, instance.pk, files, using=kwargs.get("using"))
 
 
 for _model in STORED_FILE_MODELS:
@@ -4525,6 +4669,60 @@ for _model in STORED_FILE_MODELS:
         sender=_model,
         dispatch_uid=f"delete_stored_files_{_model.__name__}",
     )
+
+
+def delete_policy_document_file_on_commit(
+    document_field: typing.Any, pk: typing.Any, using: typing.Optional[str] = None
+) -> None:
+    """Remove a kept PolicyDocument's file once the row stops pointing at it
+    and the transaction commits."""
+    if document_field:
+        _delete_files_on_commit(
+            PolicyDocument, pk, [("document_enc", document_field)], using=using
+        )
+
+
+class PlanDocumentsReminder(models.Model):
+    """One email, 30 days after asking on the share page, to share the plan
+    documents a plan has sent by then. The row, and the address with it, is
+    deleted when the email goes (plan_documents_reminder.py), and by
+    remove-my-data before then."""
+
+    # One waiting reminder per address: asking again moves the date.
+    email = models.EmailField(max_length=254, unique=True)
+    send_after = models.DateTimeField(db_index=True)
+    created = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"PlanDocumentsReminder {self.pk} after {self.send_after:%Y-%m-%d}"
+
+
+class SharedPlanDocumentsDay(models.Model):
+    """How much of one daily budget has been used on one UTC day: for
+    everyone, files or links shared on the share page, copies shared by
+    ticking the box on another page, or reminder requests; or one address's shares
+    on the share page, named by a keyed digest of the address and the day
+    (shared_plan_documents.take_share_place). One row per budget per day,
+    shared by every pod (shared_plan_documents.reserve). Counts only."""
+
+    FILES = "files"
+    LINKS = "links"
+    OPT_IN_FILES = "opt_in_files"
+    REMINDERS = "reminders"
+
+    day = models.DateField()
+    name = models.CharField(max_length=64)
+    count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["day", "name"], name="shared_plan_documents_day_name"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.day} {self.name}: {self.count}"
 
 
 class PolicyDocumentAnalysis(ExportModelOperationsMixin("PolicyDocumentAnalysis"), models.Model):  # type: ignore

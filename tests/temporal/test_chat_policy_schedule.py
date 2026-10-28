@@ -197,6 +197,11 @@ def _command(**flags):
     with (
         override_settings(**flags),
         patch.object(temporal_client, "ensure_chat_policy_schedule", ensure),
+        patch.object(
+            temporal_client,
+            "ensure_plan_documents_schedule",
+            AsyncMock(return_value="absent"),
+        ),
         patch.object(temporal_client, "get_temporal_client", connect),
     ):
         call_command("ensure_temporal_schedules", stdout=out)
