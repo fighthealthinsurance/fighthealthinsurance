@@ -135,7 +135,10 @@ class RelatedPagesTest(TestCase):
 
     @override_settings(DENIAL_WATCH_PAGE_ENABLED=False)
     def test_without_denial_watch_the_share_page_names_its_pages_without_links(self):
-        self.assertEqual(_soup("share_plan_documents").find(id="what-we-have").find_all("a"), [])
+        paragraph = _soup("share_plan_documents").find(id="what-we-have")
+        self.assertEqual(paragraph.find_all("a"), [])
+        self.assertIn("Denial Watch shows", _text(paragraph))
+        self.assertIn("Where people get coverage shows", _text(paragraph))
 
     def test_no_long_dashes(self):
         for name in CARDS:
