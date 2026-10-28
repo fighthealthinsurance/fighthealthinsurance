@@ -561,9 +561,15 @@ class FlexibleFaxMagic(object):
         return list(filter(lambda backend: backend.professional, self.backends))
 
     async def assemble_outputs(
-        self, user_header: str, extra: str, input_paths: list[str]
+        self,
+        user_header: str,
+        extra: str,
+        input_paths: list[str],
+        workdir: Optional[str] = None,
     ) -> list[str]:
-        """Assemble the outputs into chunks of max_pages length"""
+        """Assemble the outputs into chunks of max_pages length, writing the
+        headers and transmissions in workdir (the system temp directory when
+        it is None)."""
         if len(input_paths) == 0:
             raise Exception(f"Empty fax request")
         # Keep track of the total pages
@@ -616,7 +622,7 @@ class FlexibleFaxMagic(object):
             # Write out the header
             header_path = ""
             with tempfile.NamedTemporaryFile(
-                suffix=".txt", prefix="header", mode="w+t", delete=False
+                suffix=".txt", prefix="header", mode="w+t", delete=False, dir=workdir
             ) as t:
                 header = f"""This part of transmission {user_header} which is transmission {i} of {number_of_transmissions} with {x_pages}  pages in this transmission in addition to the cover page [this page]. {extra}"""
                 t.write(header)
@@ -625,7 +631,7 @@ class FlexibleFaxMagic(object):
                 await _try_pandoc_engines(command)
                 header_path = f"{t.name}.pdf"
             with tempfile.NamedTemporaryFile(
-                suffix=".pdf", prefix="combined", mode="w+t", delete=False
+                suffix=".pdf", prefix="combined", mode="w+t", delete=False, dir=workdir
             ) as t:
                 results.append(t.name)
                 w = PdfWriter()
@@ -658,20 +664,21 @@ class FlexibleFaxMagic(object):
 
         myuuid = uuid.uuid4()
         myuuidStr = str(myuuid)
-        transmission_files = await self.assemble_outputs(myuuidStr, extra, input_paths)
-        for transmission in transmission_files:
-            r = await self._send_fax(
-                path=transmission,
-                destination=destination,
-                blocking=blocking,
-                professional=professional,
+        # Headers carry claim IDs and names, so nothing outlives the send.
+        with tempfile.TemporaryDirectory(prefix="fax_send") as workdir:
+            transmission_files = await self.assemble_outputs(
+                myuuidStr, extra, input_paths, workdir=workdir
             )
-            if r is False:
-                return r
-        time.sleep(1)
-        # Clean the pdfs post transmission
-        for f in transmission_files:
-            os.remove(f)
+            for transmission in transmission_files:
+                r = await self._send_fax(
+                    path=transmission,
+                    destination=destination,
+                    blocking=blocking,
+                    professional=professional,
+                )
+                if r is False:
+                    return r
+            time.sleep(1)
         return True
 
     async def _try_send(
