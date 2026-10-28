@@ -58,13 +58,19 @@ from fighthealthinsurance import (
     common_view_logic,
     consent,
     intake_resume,
+    shared_plan_documents,
 )
 from fighthealthinsurance import forms as core_forms, models
 from fighthealthinsurance.form_utils import append_help_text, from_your_letter_hint
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
 from fighthealthinsurance.structured_data import render_json_ld
-from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
+from fighthealthinsurance.chat_forms import (
+    PlanDocumentsReminderForm,
+    SharePlanDocumentsForm,
+    UnderstandPolicyForm,
+    UserConsentForm,
+)
 from fighthealthinsurance.denial_context import (
     GENERATED_QUESTION_PREFIX,
     load_qa,
@@ -3505,14 +3511,19 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
         return context
 
     def form_valid(self, form):
+        submitted = dict(form.cleaned_data)
+        share_for_research = submitted.pop("share_for_research", False)
         # TODO: Make use of the response from this
         try:
-            common_view_logic.DenialCreatorHelper.update_denial(**form.cleaned_data)
+            common_view_logic.DenialCreatorHelper.update_denial(**submitted)
         except models.Denial.DoesNotExist:
             logger.warning(
                 "DenialCollectedView: stale denial ref on POST; redirecting to scan"
             )
             return redirect("scan")
+        if share_for_research:
+            # After the appeal's own save, so a failed share never touches it.
+            shared_plan_documents.share_appeal_plan_documents(self.request, submitted)
         intake_resume.note_step(form.cleaned_data["denial_id"], "eev")
 
         new_form = core_forms.EntityExtractForm(
@@ -4281,6 +4292,11 @@ class UnderstandPolicyView(FormView):
             form.add_error(None, "Failed to upload document. Please try again.")
             return self.form_invalid(form)
 
+        if form.cleaned_data.get("share_for_research"):
+            shared_plan_documents.share_explain_policy_copy(
+                self.request, uploaded_file, policy_doc
+            )
+
         _handle_mailing_list_subscribe(form, "understand policy page")
 
         # Build initial message for chat — must match the regex in
@@ -4318,6 +4334,186 @@ class UnderstandPolicyView(FormView):
             "chat_url": reverse("chat"),
         }
         return render(self.request, "chat_redirect.html", context)
+
+
+def coverage_job_share() -> typing.Optional[str]:
+    """The share of people with coverage only through a job, as Denial
+    Watch's coverage bar shows it ("47.5%"), or None when its numbers can't
+    be read."""
+    try:
+        return str(
+            next(
+                row["pct"]
+                for row in denial_watch_coverage_mix()["rows"]
+                if row["k"] == "job"
+            )
+        )
+    except Exception:
+        logger.opt(exception=True).error("Denial Watch's coverage numbers unavailable")
+        return None
+
+
+class SharePlanDocumentsView(FormView):
+    """Share your plan documents: people give us their plan's documents, or
+    links to them, to learn from. The upload only stores them
+    (shared_plan_documents); nothing fetches a link."""
+
+    template_name = "share_plan_documents.html"
+    form_class = SharePlanDocumentsForm
+
+    # What the thank-you note was for: files ("1", as before links), links or both.
+    SHARED_FILES, SHARED_LINKS, SHARED_BOTH = "1", "links", "both"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["sharing_terms"] = consent.SHARING_TERMS
+        context["sharing_details"] = consent.SHARING_DETAILS
+        shared = self.request.GET.get("shared")
+        context["shared_files"] = shared in (self.SHARED_FILES, self.SHARED_BOTH)
+        context["shared_links"] = shared in (self.SHARED_LINKS, self.SHARED_BOTH)
+        context["shared"] = context["shared_files"] or context["shared_links"]
+        context["rendered"] = shared_plan_documents.render_token()
+        context["max_files"] = SharePlanDocumentsForm.MAX_FILES
+        context["max_total_bytes"] = SharePlanDocumentsForm.MAX_TOTAL_BYTES
+        context["max_total_mb"] = SharePlanDocumentsForm.max_total_mb()
+        context["too_many_message"] = SharePlanDocumentsForm.too_many_message()
+        context["too_big_message"] = SharePlanDocumentsForm.too_big_message()
+        context["nothing_message"] = SharePlanDocumentsForm.NOTHING_TO_SHARE
+        if "reminder_form" not in context:
+            context["reminder_form"] = PlanDocumentsReminderForm(
+                prefix=PlanDocumentsReminderForm.PREFIX
+            )
+        context["reminded"] = self.request.GET.get("reminder") == "1"
+        # The same count for every visitor (shared_plan_documents.employer_plan_count).
+        context["goal"] = shared_plan_documents.goal_progress(
+            timezone.localdate(timezone=DENIAL_WATCH_LAST_TIME_ZONE)
+        )
+        context["job_share"] = coverage_job_share()
+        return context
+
+    def get_success_url(self, files: bool = True, links: bool = False) -> str:
+        shared = self.SHARED_LINKS if links else self.SHARED_FILES
+        if files and links:
+            shared = self.SHARED_BOTH
+        return f"{reverse('share_plan_documents')}?shared={shared}"
+
+    # What a refused post keeps for the person, apart from the files.
+    KEPT_ON_REFUSAL = (
+        "plan_links",
+        "plan_category",
+        "insurer_name",
+        "employer_name",
+        "plan_year",
+        "state",
+        "premium_amount",
+        "premium_period",
+        "who_is_covered",
+        "email",
+    )
+
+    def post(self, request, *args, **kwargs) -> HttpResponse:
+        # These checks come before any file is read.
+        if request.POST.get("website"):
+            return redirect(self.get_success_url())
+        if not shared_plan_documents.render_token_ok(request.POST.get("rendered")):
+            return self._refuse(shared_plan_documents.TRY_AGAIN)
+        problem = shared_plan_documents.daily_limit_problem(
+            request, request.FILES.getlist("plan_documents")
+        )
+        if problem:
+            return self._refuse(problem)
+        return super().post(request, *args, **kwargs)
+
+    def _refuse(self, message: str) -> HttpResponse:
+        kept = {name: self.request.POST.get(name, "") for name in self.KEPT_ON_REFUSAL}
+        return self.render_to_response(
+            self.get_context_data(
+                form=SharePlanDocumentsForm(initial=kept), refused=message
+            )
+        )
+
+    def form_valid(self, form) -> HttpResponse:
+        place = shared_plan_documents.take_share_place(self.request)
+        if place is None:
+            return self._refuse(shared_plan_documents.SESSION_LIMIT_MESSAGE)
+        data = form.cleaned_data
+        files = data["plan_documents"]
+        links = data["plan_links"]
+        details = {
+            name: data.get(name)
+            for name in (
+                "plan_category",
+                "plan_year",
+                "state",
+                "insurer_name",
+                "employer_name",
+                "premium_amount",
+                "premium_period",
+                "who_is_covered",
+            )
+        }
+        details["insurance_company_obj"] = shared_plan_documents.match_insurer(
+            data.get("insurer_name") or ""
+        )
+        try:
+            shared_plan_documents.save_shared_documents(
+                files,
+                source=PolicyDocument.SOURCE_SHARED,
+                details=details,
+                hashed_email=data.get("hashed_email"),
+                links=links,
+            )
+        except shared_plan_documents.OverDailyBudget:
+            shared_plan_documents.give_back_share_place(place)
+            return self._refuse(shared_plan_documents.DAILY_LIMIT_MESSAGE)
+        except Exception:
+            shared_plan_documents.give_back_share_place(place)
+            logger.opt(exception=True).error("Failed to save shared plan documents")
+            form.add_error(None, "We couldn't save your files. Please try again.")
+            return self.form_invalid(form)
+        shared_plan_documents.note_shared(self.request, files)
+        return redirect(self.get_success_url(files=bool(files), links=bool(links)))
+
+
+class PlanDocumentsReminderView(View):
+    """The share page's opt-in reminder (plan_documents_reminder). Posts
+    only; the page itself draws the form."""
+
+    def get(self, request, *args, **kwargs) -> HttpResponse:
+        return redirect(reverse("share_plan_documents") + "#plan-documents-reminder")
+
+    def post(self, request, *args, **kwargs) -> HttpResponse:
+        from fighthealthinsurance import plan_documents_reminder
+
+        prefix = PlanDocumentsReminderForm.PREFIX
+        done = f"{reverse('share_plan_documents')}?reminder=1#plan-documents-reminder"
+        if request.POST.get(f"{prefix}-website"):
+            return redirect(done)
+        refused = None
+        if not shared_plan_documents.render_token_ok(request.POST.get("rendered")):
+            form = PlanDocumentsReminderForm(
+                prefix=prefix,
+                initial={"email": request.POST.get(f"{prefix}-email", "")},
+            )
+            refused = "Please ask for the reminder again."
+        else:
+            form = PlanDocumentsReminderForm(request.POST, prefix=prefix)
+            if form.is_valid():
+                problem = plan_documents_reminder.schedule_reminder(
+                    form.cleaned_data["email"]
+                )
+                if problem is None:
+                    return redirect(done)
+                form.add_error("email", problem)
+        page = SharePlanDocumentsView()
+        page.setup(request, *args, **kwargs)
+        return page.render_to_response(
+            page.get_context_data(
+                form=SharePlanDocumentsForm(),
+                reminder_form=form,
+                reminder_refused=refused,
+            )
+        )
 
 
 class DenialLanguageLibraryView(StaticIshView):

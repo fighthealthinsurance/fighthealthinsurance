@@ -49,6 +49,7 @@ ON_A_COLUMN = {
     "mhmda.html": "fhi-page",
     "glossary.html": "fhi-page",
     "followup.html": "fhi-page",
+    "share_plan_documents.html": "fhi-page fhi-page-reading",
     "remove_data.html": "fhi-page fhi-page-centred",
     "pwyw_thanks.html": "fhi-page fhi-page-centred",
     "confirm_delete.html": "fhi-page fhi-page-centred",

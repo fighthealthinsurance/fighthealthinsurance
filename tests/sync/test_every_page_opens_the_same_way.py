@@ -55,6 +55,7 @@ CONTENT_PAGES = [
     "scan",
     "microsite_directory",
     "share_denial",
+    "share_plan_documents",
     "open-enrollment",
     GLOSSARY_TERM,
 ]
@@ -95,6 +96,7 @@ ON_A_COLUMN = [
     "remove_data",
     "microsite_directory",
     "share_denial",
+    "share_plan_documents",
     GLOSSARY_TERM,
     "state_help_index",
     STATE_PAGE,
