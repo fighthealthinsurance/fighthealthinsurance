@@ -16,6 +16,7 @@ import stripe
 from loguru import logger
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
+from fighthealthinsurance.exceptions import AppealAssemblyError
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.helpers.fax_helpers import (
     FAX_RESEND_WINDOW,
@@ -297,8 +298,9 @@ class FaxPaymentCancelledView(View):
                 "fax_phone": fax.destination or denial.appeal_fax_number,
                 # The insurer as the person typed it on the fax form, and
                 # whether the health history went, from the reference: the
-                # staged fax keeps neither. Their name is not kept anywhere;
-                # the page fills it in from what this browser holds.
+                # staged fax keeps the history's text but neither choice.
+                # Their name is not kept anywhere; the page fills it in from
+                # what this browser holds.
                 "insurance_company": choices.get("insurer") or denial.insurance_company,
                 "include_provided_health_history": choices.get(
                     "include_history", False
@@ -394,11 +396,25 @@ class StageFaxView(generic.FormView):
             "fax_phone"
         )
         denial.save()
-        appeal = common_view_logic.AppealAssemblyHelper().create_or_update_appeal(
-            **form_data
-        )
+        try:
+            appeal = common_view_logic.AppealAssemblyHelper().create_or_update_appeal(
+                **form_data
+            )
+        except AppealAssemblyError as e:
+            logger.warning(f"Fax not staged, the document could not be built: {e}")
+            form.add_error(
+                None,
+                "We couldn't build your fax, so nothing was sent. Please try "
+                "again, or print your appeal below and mail or fax it yourself.",
+            )
+            return self.form_invalid(form)
         staged = SendFaxHelper.stage_appeal_as_fax(
-            appeal=appeal, email=form_data["email"], fax_number=form_data["fax_phone"]
+            appeal=appeal,
+            email=form_data["email"],
+            fax_number=form_data["fax_phone"],
+            health_history=common_view_logic.AppealAssemblyHelper.health_history_to_send(
+                denial, form_data["include_provided_health_history"]
+            ),
         )
         if form.placeholders_sent_as_they_are:
             # How many, and nothing else: never the letter or the blanks.

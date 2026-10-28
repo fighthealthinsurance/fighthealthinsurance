@@ -5,13 +5,14 @@ instead, so the page counting and splitting run without pandoc installed.
 """
 
 import os
+import tempfile
 from unittest.mock import patch
 
 import pymupdf
 import pytest
 from pypdf import PdfReader
 
-from fighthealthinsurance.fax_utils import FlexibleFaxMagic
+from fighthealthinsurance.fax_utils import FaxSenderBase, FlexibleFaxMagic
 from tests.pdf_fixtures import make_pdf_bytes
 
 
@@ -51,3 +52,47 @@ async def test_pdf_pages_are_split_into_headed_transmissions(tmp_path):
     finally:
         for path in outputs:
             os.remove(path)
+
+
+class _Backend(FaxSenderBase):
+    """A fax backend whose every send succeeds or fails, as asked."""
+
+    def __init__(self, succeeds: bool):
+        self.succeeds = succeeds
+
+    async def send_fax_blocking(self, destination, path, dest_name=None):
+        return self.succeeds
+
+
+async def _send_and_list_leftovers(tmp_path, succeeds: bool) -> list:
+    """Send a one-page letter and return what the send left in the temporary
+    directory. The header names the claim, as a real send's does."""
+    letter = tmp_path / "letter.pdf"
+    letter.write_bytes(make_pdf_bytes(["Dear reviewer"]))
+    temp_dir = tmp_path / "tmp"
+    temp_dir.mkdir()
+    with (
+        patch.object(tempfile, "tempdir", str(temp_dir)),
+        patch(
+            "fighthealthinsurance.fax_utils._try_pandoc_engines",
+            _render_header_with_pymupdf,
+        ),
+    ):
+        await FlexibleFaxMagic([_Backend(succeeds)]).send_fax(
+            input_paths=[str(letter)],
+            extra="This is regarding claim id CLM-1849.",
+            destination="14255555555",
+            blocking=True,
+            professional=False,
+        )
+    return list(temp_dir.iterdir())
+
+
+@pytest.mark.asyncio
+async def test_a_sent_fax_leaves_no_files_behind(tmp_path):
+    assert await _send_and_list_leftovers(tmp_path, succeeds=True) == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_send_leaves_no_files_behind(tmp_path):
+    assert await _send_and_list_leftovers(tmp_path, succeeds=False) == []

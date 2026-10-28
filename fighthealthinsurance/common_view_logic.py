@@ -64,6 +64,7 @@ from fighthealthinsurance.denial_history_consent import (
     history_may_be_used,
 )
 from fighthealthinsurance.appeal_fingerprints import fingerprint_text
+from fighthealthinsurance.exceptions import AppealAssemblyError
 from fighthealthinsurance.pdf_text import amerge_pdfs
 from loguru import logger
 from stopit.utils import TimeoutException
@@ -270,6 +271,19 @@ class AppealAssemblyHelper:
     # in a child process that is stopped at this limit (see pdf_text).
     PDF_MERGE_TIMEOUT_SECS = 60.0
 
+    @staticmethod
+    def health_history_to_send(
+        denial: Denial, include_provided_health_history: bool
+    ) -> Optional[str]:
+        """The health history that goes out with the appeal, when the person
+        chose to include it."""
+        if (
+            include_provided_health_history
+            or denial.include_provided_health_history_in_appeal
+        ):
+            return denial.health_history
+        return None
+
     async def _convert_input(self, input_path: str) -> Optional[str]:
         if input_path.endswith(".pdf"):
             return input_path
@@ -315,6 +329,14 @@ class AppealAssemblyHelper:
         converted_paths = await asyncio.gather(
             *(self._convert_input(path) for path in input_paths)
         )
+        # Every part is one the person chose to send, so none may be left out.
+        failed = [
+            os.path.basename(path)
+            for path, pdf_path in zip(input_paths, converted_paths)
+            if not pdf_path
+        ]
+        if failed:
+            raise AppealAssemblyError(f"Could not convert {', '.join(failed)} to PDF")
 
         await amerge_pdfs(
             [pdf_path for pdf_path in converted_paths if pdf_path],
@@ -387,12 +409,9 @@ class AppealAssemblyHelper:
         else:
             insurance_company = denial.insurance_company
         claim_id = denial.claim_id
-        health_history: Optional[str] = None
-        if (
-            include_provided_health_history
-            or denial.include_provided_health_history_in_appeal
-        ):
-            health_history = denial.health_history
+        health_history = self.health_history_to_send(
+            denial, include_provided_health_history
+        )
         # Usage based billing goes here
         if appeal and hasattr(appeal, "domain") and appeal.domain:
             stripe_customer_id = appeal.domain.stripe_customer_id
@@ -403,9 +422,13 @@ class AppealAssemblyHelper:
                     quantity=1,
                     identifier=appeal.uuid,
                 )
-        with tempfile.NamedTemporaryFile(
-            suffix=".pdf", prefix="alltogether", mode="w+b", delete=False
-        ) as t:
+        # The merged PDF is removed once storage holds its encrypted copy.
+        with (
+            tempfile.TemporaryDirectory(prefix="appeal") as workdir,
+            tempfile.NamedTemporaryFile(
+                suffix=".pdf", prefix="alltogether", mode="w+b", dir=workdir
+            ) as t,
+        ):
             self._assemble_appeal_pdf(
                 insurance_company=insurance_company,
                 patient_name=name,
@@ -488,107 +511,119 @@ class AppealAssemblyHelper:
     ):
         if len(target) < 2:
             return
-        files_for_fax: list[str] = []
-        if include_cover:
-            # Build our cover page
-            onbehalf_of_name = f"{professional_name} and {patient_name}"
-            cover_context = {
-                "receiver_name": insurance_company or "",
-                "receiver_fax_number": fax_phone,
-                "company_name": company_name,
-                "company_fax_number": company_fax_number,
-                "company_phone_number": company_phone_number,
-                "fax_sent_datetime": str(datetime.datetime.now()),
-                "provider_fax_number": (professional_fax_number or professional_name),
-                "provider_name": professional_name,
-                "professional_fax_number": professional_fax_number,
-                "patient_name": patient_name,
-                "onbehalf_of_name": onbehalf_of_name,
-                "claim_id": claim_id,
-            }
-            cover_content: str = ""
-            # Render the cover content
-            if cover_template_string and len(cover_template_string) > 1:
-                # string.Template does no escaping, so HTML-escape the values
-                # the way Django's autoescape does in the branch below.
-                cover_content = Template(cover_template_string).substitute(
-                    {
-                        key: html.escape(value) if isinstance(value, str) else value
-                        for key, value in cover_context.items()
-                    }
+        # The parts hold the letter and personal details, so none outlive the merge.
+        with tempfile.TemporaryDirectory(prefix="appeal_parts") as workdir:
+            files_for_fax: list[str] = []
+            if include_cover:
+                # Build our cover page
+                onbehalf_of_name = f"{professional_name} and {patient_name}"
+                cover_context = {
+                    "receiver_name": insurance_company or "",
+                    "receiver_fax_number": fax_phone,
+                    "company_name": company_name,
+                    "company_fax_number": company_fax_number,
+                    "company_phone_number": company_phone_number,
+                    "fax_sent_datetime": str(datetime.datetime.now()),
+                    "provider_fax_number": (
+                        professional_fax_number or professional_name
+                    ),
+                    "provider_name": professional_name,
+                    "professional_fax_number": professional_fax_number,
+                    "patient_name": patient_name,
+                    "onbehalf_of_name": onbehalf_of_name,
+                    "claim_id": claim_id,
+                }
+                cover_content: str = ""
+                # Render the cover content
+                if cover_template_string and len(cover_template_string) > 1:
+                    # string.Template does no escaping, so HTML-escape the values
+                    # the way Django's autoescape does in the branch below.
+                    cover_content = Template(cover_template_string).substitute(
+                        {
+                            key: html.escape(value) if isinstance(value, str) else value
+                            for key, value in cover_context.items()
+                        }
+                    )
+                    logger.debug(
+                        f"Rendered cover letter from string ({len(cover_content)} chars)"
+                    )
+                else:
+                    cover_content = render_to_string(
+                        cover_template_path,
+                        context=cover_context,
+                    )
+                    logger.debug(
+                        f"Rendered cover letter from {cover_template_path} ({len(cover_content)} chars)"
+                    )
+                cover_letter_file = tempfile.NamedTemporaryFile(
+                    suffix=".html",
+                    prefix="info_cover",
+                    mode="w+t",
+                    delete=False,
+                    dir=workdir,
                 )
+                cover_letter_file.write(cover_content)
+                cover_letter_file.flush()
+                files_for_fax.append(cover_letter_file.name)
+                logger.debug(f"Added cover letter {cover_letter_file.name}")
+
+            # Appeal text
+            appeal_text_file = tempfile.NamedTemporaryFile(
+                suffix=".txt", prefix="appealtxt", mode="w+t", delete=False, dir=workdir
+            )
+            appeal_text_file.write(completed_appeal_text)
+            appeal_text_file.flush()
+            files_for_fax.append(appeal_text_file.name)
+            logger.debug(f"Added appeal text {appeal_text_file.name}")
+
+            # Health history
+            # Make the file scope up here so it lasts until after we've got the single output
+            health_history_file = None
+            if health_history and len(health_history) > 2:
+                health_history_file = tempfile.NamedTemporaryFile(
+                    suffix=".txt",
+                    prefix="healthhist",
+                    mode="w+t",
+                    delete=False,
+                    dir=workdir,
+                )
+                health_history_file.write("Health History:\n")
+                health_history_file.write(health_history)
+                files_for_fax.append(health_history_file.name)
+                health_history_file.flush()
+                logger.debug(f"Added health history {health_history_file.name}")
+
+            # PubMed articles
+            if pubmed_ids_parsed is not None and len(pubmed_ids_parsed) > 0:
+                pmt = PubMedTools()
+                pubmed_docs: list[PubMedArticleSummarized] = async_to_sync(
+                    pmt.get_articles
+                )(pubmed_ids_parsed)
+                pdf_count = 0
+                if pubmed_docs:
+                    pubmed_docs_paths = [
+                        x
+                        for x in map(async_to_sync(pmt.article_as_pdf), pubmed_docs)
+                        if x is not None
+                    ]
+                    files_for_fax.extend(pubmed_docs_paths)
+                    pdf_count = len(pubmed_docs_paths)
                 logger.debug(
-                    f"Rendered cover letter from string ({len(cover_content)} chars)"
+                    f"PubMed: requested {len(pubmed_ids_parsed)} articles "
+                    f"({pubmed_ids_parsed}), retrieved {len(pubmed_docs)}, "
+                    f"added {pdf_count} PDFs"
                 )
-            else:
-                cover_content = render_to_string(
-                    cover_template_path,
-                    context=cover_context,
-                )
-                logger.debug(
-                    f"Rendered cover letter from {cover_template_path} ({len(cover_content)} chars)"
-                )
-            cover_letter_file = tempfile.NamedTemporaryFile(
-                suffix=".html", prefix="info_cover", mode="w+t", delete=False
+            # TODO: Add more generic DOI handler.
+
+            # Combine and return path
+            target = async_to_sync(self.assemble_single_output)(
+                input_paths=files_for_fax,
+                extra="",
+                user_header=str(uuid.uuid4()),
+                target=target,
             )
-            cover_letter_file.write(cover_content)
-            cover_letter_file.flush()
-            files_for_fax.append(cover_letter_file.name)
-            logger.debug(f"Added cover letter {cover_letter_file.name}")
-
-        # Appeal text
-        appeal_text_file = tempfile.NamedTemporaryFile(
-            suffix=".txt", prefix="appealtxt", mode="w+t", delete=False
-        )
-        appeal_text_file.write(completed_appeal_text)
-        appeal_text_file.flush()
-        files_for_fax.append(appeal_text_file.name)
-        logger.debug(f"Added appeal text {appeal_text_file.name}")
-
-        # Health history
-        # Make the file scope up here so it lasts until after we've got the single output
-        health_history_file = None
-        if health_history and len(health_history) > 2:
-            health_history_file = tempfile.NamedTemporaryFile(
-                suffix=".txt", prefix="healthhist", mode="w+t", delete=False
-            )
-            health_history_file.write("Health History:\n")
-            health_history_file.write(health_history)
-            files_for_fax.append(health_history_file.name)
-            health_history_file.flush()
-            logger.debug(f"Added health history {health_history_file.name}")
-
-        # PubMed articles
-        if pubmed_ids_parsed is not None and len(pubmed_ids_parsed) > 0:
-            pmt = PubMedTools()
-            pubmed_docs: list[PubMedArticleSummarized] = async_to_sync(
-                pmt.get_articles
-            )(pubmed_ids_parsed)
-            pdf_count = 0
-            if pubmed_docs:
-                pubmed_docs_paths = [
-                    x
-                    for x in map(async_to_sync(pmt.article_as_pdf), pubmed_docs)
-                    if x is not None
-                ]
-                files_for_fax.extend(pubmed_docs_paths)
-                pdf_count = len(pubmed_docs_paths)
-            logger.debug(
-                f"PubMed: requested {len(pubmed_ids_parsed)} articles "
-                f"({pubmed_ids_parsed}), retrieved {len(pubmed_docs)}, "
-                f"added {pdf_count} PDFs"
-            )
-        # TODO: Add more generic DOI handler.
-
-        # Combine and return path
-        target = async_to_sync(self.assemble_single_output)(
-            input_paths=files_for_fax,
-            extra="",
-            user_header=str(uuid.uuid4()),
-            target=target,
-        )
-        logger.debug(f"Final target is {target}")
-        return target
+            logger.debug(f"Final target is {target}")
+            return target
 
 
 async def _record_synthesis_attempt(

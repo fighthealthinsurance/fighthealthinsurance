@@ -266,7 +266,10 @@ class CustomCoverTemplateTest(unittest.TestCase):
         captured = {}
 
         async def _fake_assemble(input_paths, extra, user_header, target):
-            captured["input_paths"] = input_paths
+            # The parts are removed once assembly returns, so read the cover now.
+            cover_path = next(p for p in input_paths if p.endswith(".html"))
+            with open(cover_path) as f:
+                captured["cover"] = f.read()
             return target
 
         with patch.object(helper, "assemble_single_output", _fake_assemble):
@@ -282,16 +285,8 @@ class CustomCoverTemplateTest(unittest.TestCase):
                 ),
                 target="/tmp/unused-target.pdf",
             )
-        input_paths = captured["input_paths"]
-        try:
-            cover_path = next(p for p in input_paths if p.endswith(".html"))
-            with open(cover_path) as f:
-                cover = f.read()
-        finally:
-            for path in input_paths:
-                os.unlink(path)
         self.assertEqual(
-            cover,
+            captured["cover"],
             "<p>Jane &lt;b&gt;Doe&lt;/b&gt; for Acme &lt;Health&gt;, claim A&amp;B</p>",
         )
 

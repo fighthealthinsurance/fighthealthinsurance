@@ -385,6 +385,10 @@ class HylaFaxClient(FaxSenderBase):
         """Upload files to remote host if needed. Returns None on failure. Return remote path."""
         return path
 
+    async def _remove_uploaded_file(self, uploaded_path: str) -> None:
+        """Remove a file _upload_file put on a remote host; nothing is uploaded here."""
+        return None
+
     async def _run_command(self, command: list[str]) -> Tuple[int, str]:
         """Return the command and it's output"""
         proc = await asyncio.create_subprocess_exec(
@@ -417,60 +421,68 @@ class HylaFaxClient(FaxSenderBase):
             f.flush()
             os.sync()
             time.sleep(1)
-            uploaded_destination_file = await self._upload_file(f.name)
-            if uploaded_destination_file is None:
-                return False
-            uploaded_path = await self._upload_file(path)
-            if uploaded_path is None:
-                return False
-            command = ["sendfax", "-n", f"-B{self.max_speed}"]
-            # For a blocking send cycle through the fax modems until one works
-            if blocking:
-                command.append("-w")
-            for host_string in host_strings:
-                command.extend(
-                    [
-                        f"-h{host_string}",
-                        uploaded_path,
-                        f"-z{uploaded_destination_file}",  # It is important this is last
-                    ]
-                )
-                exitcode, result_text = await self._run_command(command)
-                if exitcode != 0:
-                    continue
-                if not blocking:
-                    return True
-                else:
-                    # Regex to match the job id
-                    pattern = r"request id is (\d+)"
-
-                    match = re.search(pattern, result_text, re.MULTILINE)
-
-                    # Extracting the job ID
-                    if match:
-                        job_id = match.group(1)
-                        logger.debug(f"Job ID: {job_id}")
-                        exit_code, result_text = await self._run_command(
-                            ["faxstat", "-d"]
-                        )
-                        if exit_code != 0:
-                            continue
-                        # Regular expression pattern to check if the job ID succeeded
-                        pattern = rf"^{job_id}\s+\d+\s+D\b"
+            uploaded: list[str] = []
+            try:
+                uploaded_destination_file = await self._upload_file(f.name)
+                if uploaded_destination_file is None:
+                    return False
+                uploaded.append(uploaded_destination_file)
+                uploaded_path = await self._upload_file(path)
+                if uploaded_path is None:
+                    return False
+                uploaded.append(uploaded_path)
+                command = ["sendfax", "-n", f"-B{self.max_speed}"]
+                # For a blocking send cycle through the fax modems until one works
+                if blocking:
+                    command.append("-w")
+                for host_string in host_strings:
+                    command.extend(
+                        [
+                            f"-h{host_string}",
+                            uploaded_path,
+                            f"-z{uploaded_destination_file}",  # It is important this is last
+                        ]
+                    )
+                    exitcode, result_text = await self._run_command(command)
+                    if exitcode != 0:
+                        continue
+                    if not blocking:
+                        return True
+                    else:
+                        # Regex to match the job id
+                        pattern = r"request id is (\d+)"
 
                         match = re.search(pattern, result_text, re.MULTILINE)
 
-                        # Checking if the job succeeded
+                        # Extracting the job ID
                         if match:
-                            logger.info(f"Job ID {job_id} succeeded.")
-                            return True
+                            job_id = match.group(1)
+                            logger.debug(f"Job ID: {job_id}")
+                            exit_code, result_text = await self._run_command(
+                                ["faxstat", "-d"]
+                            )
+                            if exit_code != 0:
+                                continue
+                            # Regular expression pattern to check if the job ID succeeded
+                            pattern = rf"^{job_id}\s+\d+\s+D\b"
+
+                            match = re.search(pattern, result_text, re.MULTILINE)
+
+                            # Checking if the job succeeded
+                            if match:
+                                logger.info(f"Job ID {job_id} succeeded.")
+                                return True
+                            else:
+                                logger.warning(f"Job ID {job_id} did not succeed.")
+                                return False
                         else:
-                            logger.warning(f"Job ID {job_id} did not succeed.")
+                            logger.warning("No job ID found.")
                             return False
-                    else:
-                        logger.warning("No job ID found.")
-                        return False
-            return False
+                return False
+            finally:
+                # sendfax has stored its own copy on the fax server once it returns.
+                for uploaded_file in uploaded:
+                    await self._remove_uploaded_file(uploaded_file)
 
 
 class SshHylaFaxClient(HylaFaxClient):
@@ -516,7 +528,14 @@ class SshHylaFaxClient(HylaFaxClient):
             logger.error(
                 f"Error during upload: {e} sending remote file {path} to {target} on {self.remote_host}"
             )
+            # A partly written copy is still a copy of the fax.
+            await self._remove_uploaded_file(target)
             return None
+
+    async def _remove_uploaded_file(self, uploaded_path: str) -> None:
+        exit_code, _result_text = await self._run_command(["rm", "-f", uploaded_path])
+        if exit_code != 0:
+            logger.warning(f"Failed to remove {uploaded_path} on {self.remote_host}")
 
     async def _run_command(self, command: list[str]) -> Tuple[int, str]:
         try:
@@ -561,9 +580,15 @@ class FlexibleFaxMagic(object):
         return list(filter(lambda backend: backend.professional, self.backends))
 
     async def assemble_outputs(
-        self, user_header: str, extra: str, input_paths: list[str]
+        self,
+        user_header: str,
+        extra: str,
+        input_paths: list[str],
+        workdir: Optional[str] = None,
     ) -> list[str]:
-        """Assemble the outputs into chunks of max_pages length"""
+        """Assemble the outputs into chunks of max_pages length, writing the
+        headers and transmissions in workdir (the system temp directory when
+        it is None)."""
         if len(input_paths) == 0:
             raise Exception(f"Empty fax request")
         # Keep track of the total pages
@@ -616,7 +641,7 @@ class FlexibleFaxMagic(object):
             # Write out the header
             header_path = ""
             with tempfile.NamedTemporaryFile(
-                suffix=".txt", prefix="header", mode="w+t", delete=False
+                suffix=".txt", prefix="header", mode="w+t", delete=False, dir=workdir
             ) as t:
                 header = f"""This part of transmission {user_header} which is transmission {i} of {number_of_transmissions} with {x_pages}  pages in this transmission in addition to the cover page [this page]. {extra}"""
                 t.write(header)
@@ -625,7 +650,7 @@ class FlexibleFaxMagic(object):
                 await _try_pandoc_engines(command)
                 header_path = f"{t.name}.pdf"
             with tempfile.NamedTemporaryFile(
-                suffix=".pdf", prefix="combined", mode="w+t", delete=False
+                suffix=".pdf", prefix="combined", mode="w+t", delete=False, dir=workdir
             ) as t:
                 results.append(t.name)
                 w = PdfWriter()
@@ -658,20 +683,21 @@ class FlexibleFaxMagic(object):
 
         myuuid = uuid.uuid4()
         myuuidStr = str(myuuid)
-        transmission_files = await self.assemble_outputs(myuuidStr, extra, input_paths)
-        for transmission in transmission_files:
-            r = await self._send_fax(
-                path=transmission,
-                destination=destination,
-                blocking=blocking,
-                professional=professional,
+        # Headers carry claim IDs and names, so nothing outlives the send.
+        with tempfile.TemporaryDirectory(prefix="fax_send") as workdir:
+            transmission_files = await self.assemble_outputs(
+                myuuidStr, extra, input_paths, workdir=workdir
             )
-            if r is False:
-                return r
-        time.sleep(1)
-        # Clean the pdfs post transmission
-        for f in transmission_files:
-            os.remove(f)
+            for transmission in transmission_files:
+                r = await self._send_fax(
+                    path=transmission,
+                    destination=destination,
+                    blocking=blocking,
+                    professional=professional,
+                )
+                if r is False:
+                    return r
+            time.sleep(1)
         return True
 
     async def _try_send(
