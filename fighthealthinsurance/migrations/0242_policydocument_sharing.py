@@ -3,6 +3,8 @@
 import django.db.models.deletion
 from django.db import migrations, models
 
+import fighthealthinsurance.models
+
 
 class Migration(migrations.Migration):
 
@@ -194,7 +196,14 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="policydocument",
             name="shared_link",
-            field=models.URLField(blank=True, default="", max_length=2000),
+            field=fighthealthinsurance.models.EncryptedTextField(
+                blank=True, default=""
+            ),
+        ),
+        migrations.AddField(
+            model_name="policydocument",
+            name="shared_link_fingerprint",
+            field=models.CharField(blank=True, max_length=64),
         ),
         migrations.AddIndex(
             model_name="policydocument",

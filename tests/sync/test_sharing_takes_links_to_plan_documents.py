@@ -6,12 +6,14 @@ link is checked as text only: https or http, a website's name, no user name
 or password, no IP address or localhost, at most 2,000 characters. Blank
 lines and repeats are dropped. Each link is one PolicyDocument row with no
 file, marked a link, in the same batch and with the same plan facts as the
-share's files. No reading or sweep picks one up, and nothing on the server
+share's files. The link is stored encrypted, with a keyed hash beside it so
+repeats can be found. No reading or sweep picks one up, and nothing on the server
 fetches it: staff open it by hand from the admin. Links count against no
 file budget. Remove-my-data deletes a link as it deletes a file.
 """
 
 import datetime
+import hashlib
 import time
 from decimal import Decimal
 from contextlib import ExitStack, contextmanager
@@ -22,10 +24,14 @@ from bs4 import BeautifulSoup
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
+from django.db.models import TextField
+from django.db.models.functions import Cast
 from django.forms.models import model_to_dict
 from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from django_encrypted_filefield.crypt import Cryptographer
 
 from fighthealthinsurance import consent, shared_plan_documents, temporal_client
 from fighthealthinsurance import plan_documents_processing as processing
@@ -47,6 +53,7 @@ from fighthealthinsurance.models import Denial, PolicyDocument, SharedPlanDocume
 from fighthealthinsurance.shared_plan_documents import (
     PLAN_FACT_FIELDS,
     TRY_AGAIN,
+    link_fingerprint,
     render_token,
     save_shared_documents,
 )
@@ -64,6 +71,16 @@ LINKS = PolicyDocument.SOURCE_SHARED_LINK
 
 def txt(name="sbc.txt", content=TXT):
     return SimpleUploadedFile(name, content, content_type="text/plain")
+
+
+def stored(pk, field="shared_link"):
+    """What the database holds in ``field``, before anything decrypts it."""
+    return (
+        PolicyDocument.objects.filter(pk=pk)
+        .annotate(raw=Cast(field, output_field=TextField()))
+        .values_list("raw", flat=True)
+        .get()
+    )
 
 
 @contextmanager
@@ -119,7 +136,9 @@ class _LinkTestCase(TestCase):
         return self.client.post(self.url, data)
 
     def link_rows(self):
-        return list(PolicyDocument.objects.filter(source=LINKS).order_by("shared_link"))
+        # The stored link is ciphertext, so the database can't order by it.
+        rows = PolicyDocument.objects.filter(source=LINKS)
+        return sorted(rows, key=lambda row: row.shared_link)
 
 
 # ---- Each link is checked as text --------------------------------------------
@@ -230,7 +249,7 @@ class TheLinksBoxIsReadLineByLineTest(TestCase):
 class ALinkOnlyShareTest(_LinkTestCase):
     def test_links_alone_store_one_row_each_marked_a_link(self):
         response = self.share(links=f"{LINK}\n{LINK_B}")
-        self.assertRedirects(response, self.url + "?shared=1")
+        self.assertRedirects(response, self.url + "?shared=links")
         rows = self.link_rows()
         self.assertEqual([row.shared_link for row in rows], sorted([LINK, LINK_B]))
         self.assertEqual(PolicyDocument.objects.count(), 2)
@@ -266,8 +285,70 @@ class ALinkOnlyShareTest(_LinkTestCase):
         self.assertEqual(refused.status_code, 200)
         self.assertEqual(PolicyDocument.objects.count(), 1)
         response = self.share(links=LINK)
-        self.assertRedirects(response, self.url + "?shared=1")
+        self.assertRedirects(response, self.url + "?shared=links")
         self.assertEqual(len(self.link_rows()), 1)
+
+
+class ALinkIsStoredEncryptedTest(_LinkTestCase):
+    """The link is encrypted with the uploaded files' key, and read back as
+    the link. Each save encrypts differently, so a keyed hash of the link,
+    the same however the page's address was typed, finds repeats."""
+
+    def test_the_database_holds_the_link_encrypted(self):
+        self.share(links=LINK)
+        (row,) = self.link_rows()
+        raw = stored(row.pk)
+        self.assertTrue(raw)
+        self.assertNotIn("crumpler-clinic", raw)
+        self.assertEqual(Cryptographer.decrypted(raw.encode()).decode(), LINK)
+        self.assertEqual(row.shared_link, LINK)
+
+    def test_each_save_encrypts_differently_and_the_hash_finds_the_repeat(self):
+        self.share(links=LINK)
+        self.share(links=LINK)
+        first, second = PolicyDocument.objects.filter(source=LINKS)
+        self.assertNotEqual(stored(first.pk), stored(second.pk))
+        self.assertEqual(first.shared_link_fingerprint, link_fingerprint(LINK))
+        self.assertEqual(second.shared_link_fingerprint, link_fingerprint(LINK))
+
+    def test_the_hash_is_keyed_and_is_never_the_link(self):
+        digest = link_fingerprint(LINK)
+        self.assertEqual(len(digest), 64)
+        self.assertNotIn("crumpler", digest)
+        self.assertNotEqual(digest, hashlib.sha256(LINK.encode()).hexdigest())
+        with override_settings(SECRET_KEY="another-key-for-these-tests"):
+            self.assertNotEqual(link_fingerprint(LINK), digest)
+
+    def test_the_hash_reads_one_page_typed_differently_as_the_same(self):
+        for link in (
+            LINK + "/",
+            "HTTPS://Benefits.Crumpler-Clinic.example.org/2026/plan-documents",
+            LINK + "#page=2",
+            f"  {LINK}  ",
+        ):
+            with self.subTest(link=link):
+                self.assertEqual(link_fingerprint(link), link_fingerprint(LINK))
+        for link in (
+            LINK.replace("2026", "2027"),
+            LINK + "?plan=gold",
+            LINK.replace("plan-documents", "Plan-Documents"),
+            LINK_B,
+        ):
+            with self.subTest(link=link):
+                self.assertNotEqual(link_fingerprint(link), link_fingerprint(LINK))
+
+    def test_a_value_that_will_not_decrypt_reads_as_empty(self):
+        self.share(links=LINK)
+        (row,) = self.link_rows()
+        table = PolicyDocument._meta.db_table
+        pk = PolicyDocument._meta.pk.get_db_prep_value(row.pk, connection)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"UPDATE {table} SET shared_link = %s WHERE id = %s",
+                ["not-a-token", pk],
+            )
+        row.refresh_from_db()
+        self.assertEqual(row.shared_link, "")
 
 
 class AShareWithFilesAndLinksTest(_LinkTestCase):
@@ -284,7 +365,8 @@ class AShareWithFilesAndLinksTest(_LinkTestCase):
     }
 
     def test_links_carry_the_same_batch_facts_and_agreement_as_the_files(self):
-        self.share([txt()], links=LINK, **self.FACTS)
+        response = self.share([txt()], links=LINK, **self.FACTS)
+        self.assertRedirects(response, self.url + "?shared=both")
         file_row = PolicyDocument.objects.get(source=PolicyDocument.SOURCE_SHARED)
         (link_row,) = self.link_rows()
         self.assertEqual(link_row.shared_link, LINK)
@@ -328,6 +410,74 @@ class AShareWithFilesAndLinksTest(_LinkTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(PolicyDocument.objects.exists())
         self.assertContains(response, LINK_SCHEME_MESSAGE)
+
+
+class TheThankYouNoteSaysWhatHappensToWhatWasSharedTest(_LinkTestCase):
+    """Files and links are stored encrypted. Files are read by people and AI
+    models; links are opened by hand, never fetched, and no AI model is said
+    to read them."""
+
+    FILES_NOTE = (
+        "We store your files encrypted. Our team and AI models, including "
+        "outside services, will read them along with documents from other "
+        "people, to learn how plans work."
+    )
+    LINKS_NOTE = (
+        "We store your links encrypted. Our team will open them by hand, and "
+        "we never fetch them automatically."
+    )
+
+    def thanks(self, shared):
+        response = self.client.get(self.url, {"shared": shared})
+        soup = BeautifulSoup(response.content, "html.parser")
+        note = soup.find(id="share-thanks")
+        return note.get_text(" ", strip=True) if note else None
+
+    def test_after_files_it_says_what_happens_to_files(self):
+        note = self.thanks("1")
+        self.assertIn("Thank you. We have your documents.", note)
+        self.assertIn(self.FILES_NOTE, note)
+        self.assertNotIn(self.LINKS_NOTE, note)
+
+    def test_after_links_it_says_they_are_opened_by_hand_and_never_fetched(self):
+        note = self.thanks("links")
+        self.assertIn("Thank you. We have your links.", note)
+        self.assertIn(self.LINKS_NOTE, note)
+        self.assertNotIn("AI models", note)
+
+    def test_after_both_it_says_each(self):
+        note = self.thanks("both")
+        self.assertIn("Thank you. We have your documents and links.", note)
+        self.assertIn(self.FILES_NOTE, note)
+        self.assertIn(self.LINKS_NOTE, note)
+
+    def test_an_unknown_value_shows_the_form_not_a_note(self):
+        self.assertIsNone(self.thanks("yes"))
+
+    def test_a_share_lands_on_the_note_for_what_it_held(self):
+        cases = (
+            ({"files": [txt()]}, "We have your documents."),
+            ({"links": LINK}, "We have your links."),
+            ({"files": [txt("spd.txt")], "links": LINK_B}, "We have your documents and links."),
+        )
+        for share, words in cases:
+            with self.subTest(words=words):
+                response = self.share(**share)
+                page = self.client.get(response["Location"])
+                self.assertContains(page, words)
+
+    def test_what_happens_says_links_are_opened_by_hand_and_not_read_by_ai(self):
+        page = BeautifulSoup(self.client.get(self.url).content, "html.parser")
+        text = page.find(id="what-happens").get_text(" ", strip=True)
+        self.assertIn("We store what you share encrypted, files and links alike.", text)
+        self.assertIn(
+            "Our team opens links by hand, and we never fetch them automatically.",
+            text,
+        )
+        for sentence in text.split(". "):
+            if "link" in sentence:
+                with self.subTest(sentence=sentence):
+                    self.assertNotIn("AI", sentence)
 
     def test_a_failed_save_keeps_no_link_rows(self):
         with patch(
@@ -458,6 +608,7 @@ class RemovingMyDataDeletesLinksTest(TestCase):
         self.remove()
         row.refresh_from_db()
         self.assertEqual(row.shared_link, "")
+        self.assertEqual((stored(row.pk), row.shared_link_fingerprint), ("", ""))
         self.assertEqual(row.processing_status, PolicyDocument.PROCESSING_REMOVED)
         self.assertIsNone(row.hashed_email)
         self.assertEqual((row.insurer_name, row.plan_year), ("Crumpler Health Mutual", 2026))

@@ -252,7 +252,8 @@ class EveryFieldIsDecidedTest(TestCase):
 
 # What the remove-data pages say about shared plan documents.
 REMOVE_DATA_NOTE = (
-    "If you shared plan documents with us for research, we delete those files. "
+    "If you shared plan documents with us for research, we do our best to "
+    "delete those files and links. "
     "What we've learned about the plan, like what kind of plan it is, stays, "
     "because it describes the plan, not you."
 )

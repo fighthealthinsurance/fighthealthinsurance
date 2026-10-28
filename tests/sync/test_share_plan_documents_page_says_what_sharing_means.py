@@ -169,10 +169,10 @@ class SharePlanDocumentsPageTest(TestCase):
                 self.assertIsNotNone(about.find(id=part))
         happens = about.find(id="what-happens").get_text(" ", strip=True)
         for words in (
-            "We store what you share encrypted.",
-            "AI models, including outside services, read it",
-            "we keep it as long as we can.",
-            "We do our best to remove personal details from anything we share.",
+            "We store what you share encrypted, files and links alike.",
+            "AI models, including outside services, read the files",
+            "We keep what you share as long as we can",
+            "we do our best to remove personal details from anything we share.",
         ):
             with self.subTest(words=words):
                 self.assertIn(words, happens)

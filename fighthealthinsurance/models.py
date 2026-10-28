@@ -4426,6 +4426,30 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
         return f"Skip of Task {self.task_id} by {self.session_key}"
 
 
+class EncryptedTextField(models.TextField):
+    """Text stored encrypted with the same key as the uploaded files
+    (Cryptographer, keyed by DEFF_SALT and DEFF_PASSWORD) and read back as
+    plain text. Empty stays empty. Each save makes a different ciphertext, so
+    the column can't be searched or compared: keep a keyed hash beside it."""
+
+    def get_prep_value(self, value: typing.Any) -> typing.Any:
+        value = super().get_prep_value(value)
+        if not value:
+            return value
+        return Cryptographer.encrypted(value.encode("utf-8")).decode("ascii")
+
+    def from_db_value(
+        self, value: typing.Any, expression: typing.Any, connection: typing.Any
+    ) -> typing.Any:
+        if not value:
+            return value
+        try:
+            return Cryptographer.decrypted(value.encode("ascii")).decode("utf-8")
+        except Exception as e:
+            logger.warning(f"Could not decrypt a stored value: {type(e).__name__}")
+            return ""
+
+
 class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model):  # type: ignore
     """
     Stores uploaded policy documents (Summary of Benefits, Medical Policy PDFs).
@@ -4554,8 +4578,10 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     # Shared uploads only: a keyed SHA-256 of the file, so repeats can be counted.
     fingerprint = models.CharField(max_length=64, blank=True)
     # Shared links only: the page's address, checked on the way in
-    # (chat_forms.clean_shared_link). Staff open it by hand; nothing fetches it.
-    shared_link = models.URLField(max_length=2000, blank=True, default="")
+    # (chat_forms.clean_shared_link) and stored encrypted. Staff open it by
+    # hand; nothing fetches it. Its keyed hash finds repeats.
+    shared_link = EncryptedTextField(blank=True, default="")
+    shared_link_fingerprint = models.CharField(max_length=64, blank=True)
     # Shared uploads only: the file's text with personal details taken out as
     # best we can, and where its reading is. The raw text is never stored.
     processing_status = models.CharField(

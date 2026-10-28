@@ -1287,12 +1287,12 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "plan_category",
         "created_at",
     )
+    # A shared link is stored encrypted, so it can't be searched.
     search_fields = (
         "filename",
         "hashed_email",
         "insurer_name",
         "employer_name",
-        "shared_link",
     )
     # Staff reach the file and its cleaned text through the links below,
     # never the raw fields; the cleaned text runs long. A shared link is
@@ -1308,6 +1308,7 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "shared_at",
         "share_batch",
         "fingerprint",
+        "shared_link_fingerprint",
         "processing_status",
         "processed_at",
     )

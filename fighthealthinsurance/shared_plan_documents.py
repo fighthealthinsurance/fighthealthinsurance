@@ -13,8 +13,8 @@ same moment can't all fit in the same room.
 People share here in three ways: the share page, and the opt-in box on
 Explain Policy and on the appeal's plan documents step, which shares a copy
 of what was uploaded there. The share page also takes links to public pages
-with the plan's documents: one row each, with no file, that nothing reads
-or fetches and no budget counts. A removal request deletes a person's shared
+with the plan's documents: one row each, with no file and the link stored
+encrypted, that nothing reads or fetches and no budget counts. A removal request deletes a person's shared
 files and links and keeps what they told us about the plan
 (remove_shared_documents).
 """
@@ -25,6 +25,7 @@ import hmac
 import time
 import uuid
 from typing import Any, Mapping, Optional, Sequence
+from urllib.parse import urlsplit, urlunsplit
 
 from django.conf import settings
 from django.core import signing
@@ -196,8 +197,17 @@ def note_shared(request: HttpRequest, files: Sequence[UploadedFile]) -> None:
 
 # ---- Storing shared files ---------------------------------------------------
 
-# Names the SECRET_KEY sub-key, so these digests match no other feature's.
+# Name the SECRET_KEY sub-keys, so these digests match no other feature's.
 _FINGERPRINT_LABEL = b"fhi.shared-plan-document-fingerprint.v1"
+_LINK_FINGERPRINT_LABEL = b"fhi.shared-plan-document-link-fingerprint.v1"
+
+
+def _keyed_digest(label: bytes) -> "hmac.HMAC":
+    secret = settings.SECRET_KEY
+    if isinstance(secret, str):
+        secret = secret.encode("utf-8")
+    key = hmac.new(secret, label, hashlib.sha256).digest()
+    return hmac.new(key, digestmod=hashlib.sha256)
 
 
 def fingerprint(file: UploadedFile) -> str:
@@ -206,14 +216,30 @@ def fingerprint(file: UploadedFile) -> str:
     Keyed, so someone holding a file can't check it against our table
     without our key. Reads in chunks and leaves the file rewound.
     """
-    secret = settings.SECRET_KEY
-    if isinstance(secret, str):
-        secret = secret.encode("utf-8")
-    key = hmac.new(secret, _FINGERPRINT_LABEL, hashlib.sha256).digest()
-    digest = hmac.new(key, digestmod=hashlib.sha256)
+    digest = _keyed_digest(_FINGERPRINT_LABEL)
     for chunk in file.chunks():
         digest.update(chunk)
     file.seek(0)
+    return digest.hexdigest()
+
+
+def link_fingerprint(link: str) -> str:
+    """A keyed SHA-256 of a shared link, the same for the same page however
+    it was typed: the scheme and site in lower case, with no #part and no
+    slash at the end. The link itself is stored encrypted, which differs on
+    every save, so repeats are found by this."""
+    parts = urlsplit(link.strip())
+    normal = urlunsplit(
+        (
+            parts.scheme.lower(),
+            parts.netloc.lower(),
+            parts.path.rstrip("/"),
+            parts.query,
+            "",
+        )
+    )
+    digest = _keyed_digest(_LINK_FINGERPRINT_LABEL)
+    digest.update(normal.encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -227,7 +253,8 @@ def save_shared_documents(
     links: Sequence[str] = (),
 ) -> list[PolicyDocument]:
     """One encrypted PolicyDocument per file, each marked received, and one
-    per link (checked by the form), marked a link, all in one batch, all or
+    per link (checked by the form), marked a link and stored encrypted with
+    a keyed hash of it (link_fingerprint), all in one batch, all or
     none. Only stores: no model reads the files here, and nothing ever
     fetches a link. Once the rows commit, the files' reading is started on
     Temporal when it is on (temporal_client.dispatch_shared_plan_documents),
@@ -284,6 +311,7 @@ def save_shared_documents(
                         "processing_status": PolicyDocument.PROCESSING_LINK,
                     },
                     shared_link=link,
+                    shared_link_fingerprint=link_fingerprint(link),
                 )
                 saved.append(doc)
                 doc.save()
@@ -523,6 +551,7 @@ SHARE_RECORD_FIELDS = (
 REMOVED_VALUES: dict[str, Any] = {
     "document_enc": None,
     "shared_link": "",
+    "shared_link_fingerprint": "",
     "filename": "",
     "hashed_email": None,
     "session_key": None,

@@ -93,7 +93,7 @@
 Share your plan documents (SharePlanDocumentsView). The ask and the upload
 come first, in the intake flow's width; why we ask and what we publish sit
 below the form. A share needs files or links, and the agreement; the rest
-folds away under "About the plan". Links are stored as text and never
+folds away under "About the plan". Links are stored encrypted and never
 fetched; staff open them by hand. The agreement's words are consent.SHARING_TERMS.
 The opt-in card on other pages (partials/share_for_research.html) links to
 #about-sharing. The facts under
@@ -106,8 +106,10 @@ gives; recheck them before changing it.
 
     {% if shared %}
     <div class="fhi-notice fhi-notice-info" role="status" id="share-thanks">
-        <p><strong>Thank you. We have your documents.</strong></p>
-        <p>We store them encrypted. Our team and AI models, including outside services, will read them along with documents from other people, to learn how plans work. We'll share what we learn on this site, and we do our best to remove personal details from anything we share.</p>
+        <p><strong>Thank you. We have your {% if shared_files and shared_links %}documents and links{% elif shared_links %}links{% else %}documents{% endif %}.</strong></p>
+        {% if shared_files %}<p id="share-thanks-files">We store your files encrypted. Our team and AI models, including outside services, will read them along with documents from other people, to learn how plans work.</p>{% endif %}
+        {% if shared_links %}<p id="share-thanks-links">We store your links encrypted. Our team will open them by hand, and we never fetch them automatically.</p>{% endif %}
+        <p>We'll share what we learn on this site, and we do our best to remove personal details from anything we share.</p>
         <p>Have more? <a href="{% url 'share_plan_documents' %}">Share more documents</a></p>
     </div>
     {% else %}
@@ -222,7 +224,7 @@ gives; recheck them before changing it.
         <p id="what-we-have">We started with public records. <a href="{% url 'denial-watch' %}">Denial Watch</a> shows how often marketplace plans deny claims and how often plans deny requests for approval. <a href="{% url 'open-enrollment' %}#coverage-mix">Where people get coverage</a> shows that nearly half of people have coverage only through a job, and Denial Watch has no denial rates for those plans.</p>
         <p id="what-we-look-at">Plan documents fill in what records leave out. With them we can show what plans cost for one person and for a family, what common care costs under each plan, how deductibles and out-of-pocket limits change from year to year, what plans leave out, and what needs approval first. We share what we learn publicly.</p>
         <p id="what-it-shows">What we publish describes the plans people share with us. It shows what people are offered, not how many people chose each plan or every plan in the country, and we say how many plans each finding comes from.</p>
-        <p id="what-happens">We store what you share encrypted. Our team and AI models, including outside services, read it along with documents from other people, and we keep it as long as we can. We do our best to remove personal details from anything we share.</p>
+        <p id="what-happens">We store what you share encrypted, files and links alike. Our team and AI models, including outside services, read the files along with documents from other people. Our team opens links by hand, and we never fetch them automatically. We keep what you share as long as we can, and we do our best to remove personal details from anything we share.</p>
         <p id="yearly-ask">Once a year we ask everyone to request their plan documents and share them with us. You can share anytime.</p>
     </section>
 

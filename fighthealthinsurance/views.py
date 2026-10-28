@@ -4290,10 +4290,16 @@ class SharePlanDocumentsView(FormView):
     template_name = "share_plan_documents.html"
     form_class = SharePlanDocumentsForm
 
+    # What the thank-you note was for: files ("1", as before links), links or both.
+    SHARED_FILES, SHARED_LINKS, SHARED_BOTH = "1", "links", "both"
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["sharing_terms"] = consent.SHARING_TERMS
-        context["shared"] = self.request.GET.get("shared") == "1"
+        shared = self.request.GET.get("shared")
+        context["shared_files"] = shared in (self.SHARED_FILES, self.SHARED_BOTH)
+        context["shared_links"] = shared in (self.SHARED_LINKS, self.SHARED_BOTH)
+        context["shared"] = context["shared_files"] or context["shared_links"]
         context["rendered"] = shared_plan_documents.render_token()
         context["max_files"] = SharePlanDocumentsForm.MAX_FILES
         context["max_total_bytes"] = SharePlanDocumentsForm.MAX_TOTAL_BYTES
@@ -4308,8 +4314,11 @@ class SharePlanDocumentsView(FormView):
         context["reminded"] = self.request.GET.get("reminder") == "1"
         return context
 
-    def get_success_url(self) -> str:
-        return f"{reverse('share_plan_documents')}?shared=1"
+    def get_success_url(self, files: bool = True, links: bool = False) -> str:
+        shared = self.SHARED_LINKS if links else self.SHARED_FILES
+        if files and links:
+            shared = self.SHARED_BOTH
+        return f"{reverse('share_plan_documents')}?shared={shared}"
 
     # What a refused post keeps for the person, apart from the files.
     KEPT_ON_REFUSAL = (
@@ -4381,7 +4390,7 @@ class SharePlanDocumentsView(FormView):
             form.add_error(None, "We couldn't save your files. Please try again.")
             return self.form_invalid(form)
         shared_plan_documents.note_shared(self.request, files)
-        return redirect(self.get_success_url())
+        return redirect(self.get_success_url(files=bool(files), links=bool(links)))
 
 
 class PlanDocumentsReminderView(View):
