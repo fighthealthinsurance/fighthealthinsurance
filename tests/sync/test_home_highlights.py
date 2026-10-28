@@ -1,9 +1,11 @@
-"""The home page's pointers to Denial Watch and the open enrollment page.
+"""The home page's pointers to the number pages and the share page.
 
-One pill in the hero: open enrollment's while the season runs, Denial
-Watch's before it. Under How It Works, two cards, each with one number
-from Denial Watch's bundle (static/denial_watch.json). All of it hides
-behind DENIAL_WATCH_PAGE_ENABLED, like the pages themselves.
+One pill in the hero: while open enrollment runs it asks for plan documents
+and links to the share page, and before the season it is Denial Watch's.
+Under How It Works, three cards: Denial Watch and open enrollment, each with
+one number from Denial Watch's bundle (static/denial_watch.json), and what
+coverage costs, with one of its page's tiles. All of it hides behind
+DENIAL_WATCH_PAGE_ENABLED, like Denial Watch and open enrollment themselves.
 """
 
 from datetime import date
@@ -50,16 +52,20 @@ def _section(html: str):
 
 @override_settings(DENIAL_WATCH_PAGE_ENABLED=True)
 class TestHomeSeasonPill(TestCase):
-    def test_in_season_the_pill_points_to_open_enrollment(self):
-        from fighthealthinsurance.views import denial_watch_enrollment
-
+    def test_in_season_the_pill_asks_for_plan_documents(self):
         (pill,) = _pills(_home(IN_SEASON))
-        self.assertEqual(pill["href"], reverse("open-enrollment"))
-        year = denial_watch_enrollment(IN_SEASON)["plan_year"]
+        self.assertEqual(pill["href"], reverse("share_plan_documents"))
         self.assertEqual(
             pill.get_text(" ", strip=True),
-            f"Open enrollment for {year}: dates, numbers and what to do",
+            "It's open enrollment: share your plan's documents with us. Here's how",
         )
+
+    def test_the_season_pill_keeps_the_pill_format(self):
+        # A bold lead, then the ask, then the go phrase, as Denial Watch's pill has.
+        (pill,) = _pills(_home(IN_SEASON))
+        self.assertEqual(pill["id"], "season-hero")
+        self.assertEqual(pill.find("strong").get_text(strip=True), "It's open enrollment:")
+        self.assertEqual(pill.select_one(".hero-announce-go").get_text(strip=True), "Here's how")
 
     def test_before_the_season_the_pill_is_denial_watchs(self):
         (pill,) = _pills(_home(BEFORE_SEASON))
@@ -77,7 +83,7 @@ class TestHomeSeasonPill(TestCase):
     def test_the_season_pill_needs_no_script(self):
         # Its words are all in the markup, and the counter's script isn't sent.
         html = _home(IN_SEASON)
-        self.assertIn("dates, numbers and what to do", _between(html, 'id="season-hero"', "</a>"))
+        self.assertIn("share your plan's documents with us.", _between(html, 'id="season-hero"', "</a>"))
         self.assertNotIn('getElementById("denial-watch-hero")', html)
 
     def test_the_season_pill_has_a_named_block_to_swap(self):
@@ -99,9 +105,9 @@ class TestHomeHighlights(TestCase):
     def _card(self, card_id: str, day: date = IN_SEASON):
         return _section(_home(day)).find(id=card_id)
 
-    def test_both_cards_render(self):
+    def test_three_cards_render(self):
         cards = _section(_home()).select(".fhi-card")
-        self.assertEqual([c["id"] for c in cards], ["denial-watch-home", "open-enrollment-home"])
+        self.assertEqual([c["id"] for c in cards], ["denial-watch-home", "open-enrollment-home", "coverage-costs-home"])
 
     def test_each_card_has_one_number_and_one_link(self):
         for card in _section(_home()).select(".fhi-card"):
@@ -135,8 +141,32 @@ class TestHomeHighlights(TestCase):
         self.assertTrue(num.endswith("M marketplace plans"), num)
         self.assertTrue(tile.endswith(num.removesuffix("M marketplace plans") + " million"), (tile, num))
 
+    def test_costs_number_is_the_coverage_costs_pages_marketplace_tile(self):
+        # No new number: the card repeats the page's first tile, the median rise insurers proposed.
+        tile = BeautifulSoup(_get("coverage-costs", IN_SEASON), "html.parser").find(id="stat-marketplace")
+        stat = self._card("coverage-costs-home").select_one(".home-highlight-stat")
+        self.assertEqual(
+            stat.select_one(".home-highlight-num").get_text(strip=True),
+            f"{tile.find('b').get_text(strip=True)} median rise",
+        )
+        self.assertEqual(
+            stat.find("span").get_text(strip=True),
+            "insurers asked for on 2027 marketplace plans, before premium help",
+        )
+        self.assertIn("insurers asked for", tile.find("strong").get_text())
+        self.assertIn("before premium help", tile.get_text())
+
+    def test_costs_card_takes_its_pages_title(self):
+        page_h1 = BeautifulSoup(_get("coverage-costs", IN_SEASON), "html.parser").find("h1")
+        title = self._card("coverage-costs-home").find("h3")
+        self.assertEqual(title.get_text(strip=True), page_h1.get_text(strip=True))
+
     def test_cards_link_to_their_pages(self):
-        for card_id, name in (("denial-watch-home", "denial-watch"), ("open-enrollment-home", "open-enrollment")):
+        for card_id, name in (
+            ("denial-watch-home", "denial-watch"),
+            ("open-enrollment-home", "open-enrollment"),
+            ("coverage-costs-home", "coverage-costs"),
+        ):
             with self.subTest(card=card_id):
                 self.assertEqual(self._card(card_id).find("a")["href"], reverse(name))
 
@@ -162,7 +192,7 @@ class TestHomeHighlights(TestCase):
         soup = BeautifulSoup(_home(), "html.parser")
         self.assertEqual(len(soup.find_all("h1")), 1)
         levels = [h.name for h in _section(_home()).find_all(["h1", "h2", "h3", "h4", "h5", "h6"])]
-        self.assertEqual(levels, ["h2", "h3", "h3"])
+        self.assertEqual(levels, ["h2", "h3", "h3", "h3"])
 
     def test_no_dashes_in_the_copy(self):
         for day in (IN_SEASON, AFTER_SEASON):

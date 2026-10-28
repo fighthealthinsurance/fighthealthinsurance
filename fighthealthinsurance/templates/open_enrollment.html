@@ -143,6 +143,7 @@
                         {% else %}<li id="enroll-update"><b>Report income and household changes.</b> If either changes, <a href="https://www.healthcare.gov/reporting-changes/">update your application</a> as soon as you can, so your savings stay right.</li>
                         {% endif %}<li><b>Pay the first premium.</b> A plan you pick only starts once the first month's premium is paid, if there is one.</li>
                         <li><b>Disagree with a marketplace decision?</b> If it says you can't buy a plan or get savings, you can <a href="https://www.healthcare.gov/marketplace-appeals/">appeal to the marketplace</a>, generally within 90 days of the notice.</li>
+                        <li id="act-share">{% include "partials/share_plan_documents_step.html" %}</li>
                         <li><b>Get free help.</b> <a href="https://www.healthcare.gov/find-local-help/">Find an independent assister near you</a> or call <a class="dw-tel" href="tel:+18003182596">1-800-318-2596</a>.</li>
                     </ul>
                 </div>
@@ -221,6 +222,8 @@
             <p class="fhi-notice fhi-notice-info" id="join-forces-enroll">Know a public data source we should include? Send it our way. <a href="{% url 'contact' %}">Get in touch</a>.</p>
             <p class="dw-note">Checked October 26, 2026.</p>
         </section>
+
+        {% include "partials/related_pages.html" with here="oe" %}
 
         <section class="fhi-stack" id="sources" aria-labelledby="sources-title">
             <p class="dw-kicker">Where the numbers come from</p>

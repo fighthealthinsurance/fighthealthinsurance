@@ -462,7 +462,7 @@ class TestDenialWatchIsEasyToFind(TestCase):
         about = Client().get(reverse("about")).content.decode()
         home = Client().get(reverse("root")).content.decode()
         explain = Client().get(reverse("explain_denial")).content.decode()
-        self.assertIn(f'<a href="{href}" class="fhi-nav-link" id="denialwatchlink">', about)
+        self.assertIn(f'<a href="{href}" id="denialwatchlink">Denial Watch</a>', about)
         self.assertIn(f'<a href="{href}">Denial Watch</a>', about)
         self.assertRegex(home, rf'(?s)id="denial-watch-home".*?href="{href}"')
         self.assertIn(f'<a href="{href}">See how often, on Denial Watch</a>', explain)
@@ -513,14 +513,14 @@ class TestDenialWatchIsEasyToFind(TestCase):
         last = datetime(2026, 12, 16, 9, 0, tzinfo=dt_timezone.utc)
         with mock.patch("django.utils.timezone.now", return_value=last):
             html = Client().get(reverse("about")).content.decode()
-        self.assertIn('Denial Watch <span class="fhi-nav-new">New</span></a>', html)
+        self.assertIn('id="denialwatchmenu">Denial Watch <span class="fhi-nav-new">New</span></summary>', html)
 
     @override_settings(DENIAL_WATCH_PAGE_ENABLED=True)
     def test_the_nav_drops_new_after_december_15(self):
         after = datetime(2026, 12, 16, 11, 0, tzinfo=dt_timezone.utc)
         with mock.patch("django.utils.timezone.now", return_value=after):
             html = Client().get(reverse("about")).content.decode()
-        self.assertIn('id="denialwatchlink">Denial Watch</a>', html)
+        self.assertIn('id="denialwatchmenu">Denial Watch</summary>', html)
         self.assertNotIn("fhi-nav-new", html)
 
     @override_settings(DENIAL_WATCH_PAGE_ENABLED=True)

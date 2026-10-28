@@ -442,6 +442,7 @@
                 <div class="fhi-card"><h3 class="fhi-card-title">3. Ask for independent review</h3><p>If the plan says no again, most denials about medical judgment can go to outside doctors, through your state or the federal process. In California, independent reviewers sided with patients in 72% of the cases they decided in 2025.</p></div>
                 <div class="fhi-card"><h3 class="fhi-card-title">4. Get help writing it</h3><p>Fight Health Insurance <a href="{% url 'scan' %}">drafts an appeal from your denial letter</a> for free, with the medical evidence and the rules that apply to your plan. Not sure what your denial means? <a href="{% url 'explain_denial' %}">Get it explained</a>.</p></div>
             </div>
+            <p class="dw-cta" id="act-share">{% include "partials/share_plan_documents_step.html" %}</p>
             <div class="fhi-card" id="who-to-call">
                 <h3 class="fhi-card-title">Who to call</h3>
                 <p>Start your appeal with the steps in your denial letter. For questions or complaints, these offices can help, by kind of coverage.</p>
@@ -481,6 +482,8 @@
             <p class="fhi-notice fhi-notice-info" id="join-forces">Know a public data source we should include? Send it our way. If you run one of these, or can connect us with the people who do, we'd like to join forces on making health care data easier to understand. <a href="{% url 'contact' %}">Get in touch</a>.</p>
             <p class="dw-note">Checked October 23, 2026.</p>
         </section>
+
+        {% include "partials/related_pages.html" with here="dw" %}
 
         <section class="fhi-stack" id="sources" aria-labelledby="sources-title">
             <p class="dw-kicker">Where the numbers come from</p>

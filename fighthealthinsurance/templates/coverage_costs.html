@@ -127,7 +127,7 @@
                     <li id="act-medicare"><b>Compare Medicare plans by December 7.</b> <a href="https://www.medicare.gov/plan-compare/">Medicare Plan Finder</a> checks plans against your drugs and pharmacies.</li>
                     <li id="act-federal"><b>Compare federal plans in Open Season.</b> Use OPM's <a href="https://www.opm.gov/healthcare-insurance/healthcare/plan-information/compare-plans/">plan comparison tool</a> and <a href="https://www.opm.gov/healthcare-insurance/healthcare/plan-information/premiums/">premium charts</a>.</li>
                     <li id="act-job"><b>On a job-based plan, ask HR.</b> Each plan's <a href="https://www.healthcare.gov/health-care-law-protections/summary-of-benefits-and-coverage/">Summary of Benefits and Coverage</a> shows what you'd pay for care.</li>
-                    <li id="act-share"><b>Share your enrollment documents.</b> <a href="{% url 'share_plan_documents' %}">Send us your plan's rate sheet and benefits summary</a> to help us show what plans cost and cover.</li>
+                    <li id="act-share">{% include "partials/share_plan_documents_step.html" %}</li>
                     <li id="act-help"><b>Get free help.</b> <a href="https://www.healthcare.gov/find-local-help/">Find an independent assister</a>, or your state's free Medicare counseling on <a href="{% url 'state_help_index' %}">our state help pages</a>.</li>
                     <li id="act-checklist"><b>See what else changes.</b> <a href="{% url 'coverage-changes' %}#fall-checklist">Our fall checklist</a> covers the rest of 2027.</li>
                 </ul>
@@ -157,6 +157,8 @@
             <p class="fhi-notice fhi-notice-info" id="join-forces-costs">Know a public data source we should include? Send it our way. <a href="{% url 'contact' %}">Get in touch</a>.</p>
             <p class="dw-note">Checked October 28, 2026.</p>
         </section>
+
+        {% include "partials/related_pages.html" with here="costs" %}
 
         <section class="fhi-stack" id="sources" aria-labelledby="sources-title">
             <p class="dw-kicker">Where the numbers come from</p>

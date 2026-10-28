@@ -12,8 +12,8 @@
   .hero-announce-new { padding: 0 var(--fhi-space-2); border-radius: 999px; background-color: var(--fhi-green); color: #15202b; font-size: var(--fhi-text-micro); font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
   .hero-announce-count { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
   .hero-announce-go { text-decoration: underline; text-underline-offset: 0.2em; }
-  /* The highlight cards: two across where they fit, one under the other on a phone. */
-  .home-highlights { width: 100%; max-width: 56rem; margin-inline: auto; }
+  /* The highlight cards: side by side across the wide column where they fit, one under the other on a phone. */
+  .home-highlights { width: 100%; }
   .fhi-card > .home-highlight-stat { margin-top: var(--fhi-space-2); }
   .home-highlight-stat { display: flex; flex-direction: column; gap: var(--fhi-space-1); color: var(--fhi-ink-2); }
   .home-highlight-num { color: var(--fhi-ink); font-size: var(--fhi-text-title); font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
@@ -21,12 +21,13 @@
 {% endblock extra_style %}
 
 {% block hero_announcement %}
-{# One pill at most: the season's while open enrollment runs, otherwise Denial Watch's until its hero date. #}
+{# One pill at most: the season's ask for plan documents while open enrollment runs, otherwise Denial Watch's until its hero date. #}
 {% if denial_watch_enabled and open_enrollment_in_season %}
 {% block season_pill %}
 {# To point the season's pill somewhere else, change only this block. #}
-<a class="hero-announce" id="season-hero" href="{% url 'open-enrollment' %}">
-    <span><strong>{{ open_enrollment_heading }}:</strong> <span class="hero-announce-go">dates, numbers and what to do</span></span>
+<a class="hero-announce" id="season-hero" href="{% url 'share_plan_documents' %}">
+    <span><strong>It's open enrollment:</strong> share your plan's documents with us.</span>
+    <span class="hero-announce-go">Here's how</span>
 </a>
 {% endblock season_pill %}
 {% elif denial_watch_enabled and denial_watch_hero %}
@@ -51,10 +52,10 @@
 
 {% block after_hero %}
 {% if denial_watch_enabled %}
-{# Right after How It Works, so the appeal comes first; the enrollment card takes the open enrollment page's own title for the day. #}
+{# Right after How It Works, so the appeal comes first; the enrollment card takes the open enrollment page's own title for the day, and the costs card one of its page's tiles. #}
 <section id="home-highlights" class="start-section" aria-labelledby="home-highlights-title">
     <div class="fhi-column fhi-column-wide fhi-stack">
-        <h2 class="start-section-title" id="home-highlights-title">Denials and coverage, by the numbers</h2>
+        <h2 class="start-section-title" id="home-highlights-title">Denials, coverage and costs, by the numbers</h2>
         <div class="fhi-switcher home-highlights">
             <div class="fhi-card" id="denial-watch-home">
                 <h3 class="fhi-card-title" id="denial-watch-home-title">Denial Watch</h3>
@@ -71,6 +72,12 @@
                 {% endif %}
                 <p class="home-highlight-stat"><b class="home-highlight-num">{{ denial_watch_teaser.picks_text }} marketplace plans</b> <span>picked for {{ denial_watch_teaser.picks_year }} in open enrollment, counting automatic renewals</span></p>
                 <a class="fhi-button fhi-button-secondary fhi-card-action" href="{% url 'open-enrollment' %}">{% if open_enrollment_in_season %}Open enrollment dates and what to do{% else %}How to sign up outside open enrollment{% endif %}</a>
+            </div>
+            <div class="fhi-card" id="coverage-costs-home">
+                <h3 class="fhi-card-title" id="coverage-costs-home-title">What health coverage costs in 2027</h3>
+                <p>Premiums and price changes for marketplace, job-based, federal and Medicare coverage.</p>
+                <p class="home-highlight-stat"><b class="home-highlight-num">15% median rise</b> <span>insurers asked for on 2027 marketplace plans, before premium help</span></p>
+                <a class="fhi-button fhi-button-secondary fhi-card-action" href="{% url 'coverage-costs' %}">See 2027 prices by kind of coverage</a>
             </div>
         </div>
     </div>

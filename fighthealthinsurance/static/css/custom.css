@@ -2240,10 +2240,11 @@ section:not(.slider) .share-subcopy,
 }
 
 /* Running prose in the reading column is a step larger. Text that states
-   its own size (.lead, .small, .fhi-lead, .fhi-note), sits in a card, or
-   is a breadcrumb keeps the size it was given. Each name in the list is
-   one class, so the rule stays at two classes of specificity. */
-.fhi-page :where(p, li):not(.lead, .small, .fhi-lead, .fhi-note, .fhi-breadcrumbs *, [class*="card"] *) {
+   its own size (.lead, .small, .fhi-lead, .fhi-note, the number pages'
+   .dw-kicker and .dw-note), sits in a card, or is a breadcrumb keeps the
+   size it was given. Each name in the list is one class, so the rule stays
+   at two classes of specificity. */
+.fhi-page :where(p, li):not(.lead, .small, .fhi-lead, .fhi-note, .dw-kicker, .dw-note, .fhi-breadcrumbs *, [class*="card"] *) {
     font-size: var(--fhi-text-reading);
 }
 
