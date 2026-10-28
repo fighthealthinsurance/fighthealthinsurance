@@ -15,6 +15,7 @@ from django.core.files.storage import FileSystemStorage, Storage
 from stopit import ThreadingTimeout
 
 from fighthealthinsurance.combined_storage import CombinedStorage
+from fighthealthinsurance.log_tags import file_tag
 
 
 def _make_storage() -> MagicMock:
@@ -153,7 +154,7 @@ class TestCombinedStorageSave(TestCase):
         second.delete.assert_called_once_with("SBC_x1y2z3Q.pdf")
         first.delete.assert_not_called()
 
-    def test_save_warning_names_both_files_when_a_backend_picks_another_name(self):
+    def test_save_warning_tags_both_files_when_a_backend_picks_another_name(self):
         first = _make_storage()
         first.save.return_value = "SBC.pdf"
         second = _make_storage()
@@ -164,8 +165,9 @@ class TestCombinedStorageSave(TestCase):
             storage.save("SBC.pdf", ContentFile(b"plan"))
 
         message = log.warning.call_args.args[0]
-        self.assertIn("SBC.pdf", message)
-        self.assertIn("SBC_x1y2z3Q.pdf", message)
+        self.assertIn(file_tag("SBC.pdf"), message)
+        self.assertIn(file_tag("SBC_x1y2z3Q.pdf"), message)
+        self.assertNotIn("SBC", message)
 
     def test_save_carries_on_when_a_renamed_copy_cannot_be_removed(self):
         first = _make_storage()
@@ -182,7 +184,7 @@ class TestCombinedStorageSave(TestCase):
 
         self.assertEqual(result, "SBC.pdf")
         third.save.assert_called_once()
-        self.assertIn("read-only mount", log.warning.call_args.args[0])
+        self.assertIn("PermissionError", log.warning.call_args.args[0])
 
     def test_save_continues_through_failures(self):
         first = _make_storage()
@@ -201,15 +203,16 @@ class TestCombinedStorageSave(TestCase):
         """If every backend fails, save() raises an Exception that surfaces
         the underlying errors."""
         first = _make_storage()
-        first.save.side_effect = IOError("first down")
+        first.save.side_effect = IOError(28, "No space left on device", "/a/foo.txt")
         second = _make_storage()
-        second.save.side_effect = IOError("second down")
+        second.save.side_effect = IOError(5, "Input/output error", "/b/foo.txt")
 
         storage = CombinedStorage(first, second)
         with self.assertRaises(Exception) as ctx:
             storage.save("foo.txt", ContentFile(b"payload"))
-        # The error message mentions the collected errors.
-        self.assertIn("second down", str(ctx.exception))
+        # The error message mentions the collected errors, without the file name.
+        self.assertIn("OSError: Input/output error", str(ctx.exception))
+        self.assertNotIn("foo.txt", str(ctx.exception))
 
 
 class TestCombinedStorageDelete(TestCase):
@@ -244,18 +247,21 @@ class TestCombinedStorageDelete(TestCase):
 
         second.delete.assert_called_once_with("foo.txt")
 
-    def test_delete_logs_a_backend_failure_with_the_file_name_and_error(self):
+    def test_delete_logs_a_backend_failure_with_the_file_tag_and_error(self):
         first = _make_storage()
-        first.delete.side_effect = PermissionError("read-only mount")
+        first.delete.side_effect = PermissionError(
+            13, "Permission denied", "/media/Rebecca_Crumpler_SBC.pdf"
+        )
         second = _make_storage()
 
         storage = CombinedStorage(first, second)
         with patch("fighthealthinsurance.combined_storage.logger") as log:
-            storage.delete("foo.txt")
+            storage.delete("Rebecca_Crumpler_SBC.pdf")
 
         message = log.error.call_args.args[0]
-        self.assertIn("foo.txt", message)
-        self.assertIn("read-only mount", message)
+        self.assertIn(file_tag("Rebecca_Crumpler_SBC.pdf"), message)
+        self.assertIn("PermissionError: Permission denied", message)
+        self.assertNotIn("Crumpler", message)
 
     def test_delete_raises_when_one_backend_has_no_copy_and_the_other_fails(self):
         first = _make_storage()
@@ -282,7 +288,7 @@ class TestCombinedStorageDelete(TestCase):
 
         second.delete.assert_called_once_with("foo.txt")
 
-    def test_delete_raises_naming_the_file_when_every_backend_times_out(self):
+    def test_delete_raises_with_the_file_tag_when_every_backend_times_out(self):
         first = _make_storage()
         second = _make_storage()
 
@@ -292,7 +298,8 @@ class TestCombinedStorageDelete(TestCase):
         ):
             with self.assertRaises(TimeoutError) as ctx:
                 storage.delete("foo.txt")
-        self.assertIn("foo.txt", str(ctx.exception))
+        self.assertIn(file_tag("foo.txt"), str(ctx.exception))
+        self.assertNotIn("foo.txt", str(ctx.exception))
         second.delete.assert_called_once_with("foo.txt")
 
     def test_delete_raises_last_error_when_all_fail(self):

@@ -16,6 +16,7 @@ from django.test import TestCase
 from loguru import logger
 
 from fighthealthinsurance.helpers import RemoveDataHelper
+from fighthealthinsurance.log_tags import email_tag, file_tag
 from fighthealthinsurance.models import (
     STORED_FILE_MODELS,
     Appeal,
@@ -226,7 +227,9 @@ class StorageFailureTest(_StoredFilesTestCase):
 
     def setUp(self):
         super().setUp()
-        self.row = self.with_files(PolicyDocument(hashed_email="h"))
+        self.row = self.with_files(
+            PolicyDocument(hashed_email="h"), upload_name="Rebecca Crumpler SBC.pdf"
+        )
         self.name = self.row.document_enc.name
         self.pk = self.row.pk
         self.records: list = []
@@ -253,25 +256,30 @@ class StorageFailureTest(_StoredFilesTestCase):
             if r["name"] == "fighthealthinsurance.models"
         ]
 
-    def test_a_deleted_files_name_is_logged(self):
+    def test_a_deleted_file_is_logged_by_its_tag(self):
         self.delete_with_failing_backends()
         self.assertEqual(
             self.handler_lines(),
             [
                 (
                     "INFO",
-                    f"Deleted stored file {self.name} for PolicyDocument.document_enc"
-                    f" {self.pk}",
+                    f"Deleted stored file {file_tag(self.name)} for"
+                    f" PolicyDocument.document_enc {self.pk}",
                     None,
                 )
             ],
         )
 
+    def test_no_line_names_the_file(self):
+        self.delete_with_failing_backends(0, 1)
+        for record in self.records:
+            self.assertNotIn("Crumpler", record["message"])
+
     def test_one_failing_backend_keeps_only_its_own_copy(self):
         self.delete_with_failing_backends(1)
         self.assertEqual(self.copies_left([self.name]), [(self.name, 1)])
 
-    def test_one_failing_backend_is_logged_with_the_file_name(self):
+    def test_one_failing_backend_is_logged_with_the_file_tag(self):
         self.delete_with_failing_backends(1)
         storage_errors = [
             r["message"]
@@ -280,8 +288,8 @@ class StorageFailureTest(_StoredFilesTestCase):
             and r["level"].name == "ERROR"
         ]
         self.assertEqual(len(storage_errors), 1)
-        self.assertIn(self.name, storage_errors[0])
-        self.assertIn("read-only mount", storage_errors[0])
+        self.assertIn(file_tag(self.name), storage_errors[0])
+        self.assertIn("PermissionError", storage_errors[0])
 
     def test_one_failing_backend_raises_nothing_to_the_handler(self):
         self.delete_with_failing_backends(1)
@@ -291,11 +299,49 @@ class StorageFailureTest(_StoredFilesTestCase):
         self.delete_with_failing_backends(0, 1, 2)
         self.assertFalse(PolicyDocument.objects.exists())
 
-    def test_every_backend_failing_logs_one_error_naming_the_file_without_a_traceback(
+    def test_every_backend_failing_logs_one_error_tagging_the_file_without_a_traceback(
         self,
     ):
         self.delete_with_failing_backends(0, 1, 2)
         lines = self.handler_lines()
         self.assertEqual([(level, exc) for level, _m, exc in lines], [("ERROR", None)])
-        for part in (self.name, "PolicyDocument.document_enc", "PermissionError"):
+        for part in (
+            file_tag(self.name),
+            "PolicyDocument.document_enc",
+            "PermissionError",
+        ):
             self.assertIn(part, lines[0][1])
+
+
+class RemovalLogTest(_StoredFilesTestCase):
+    """A data removal logs a tag for the email, never the email or a file's name."""
+
+    def setUp(self):
+        super().setUp()
+        self.with_files(
+            PlanDocuments(denial=self.denial), upload_name="Rebecca Crumpler SBC.pdf"
+        )
+        self.messages: list = []
+        sink_id = logger.add(
+            lambda m: self.messages.append(m.record["message"]), level="DEBUG"
+        )
+        self.addCleanup(logger.remove, sink_id)
+        with self.captureOnCommitCallbacks(execute=True):
+            RemoveDataHelper.remove_data_for_email(EMAIL)
+        self.tag = email_tag(EMAIL)
+
+    def test_the_removal_logs_its_start_under_the_email_tag(self):
+        self.assertIn(f"Data removal {self.tag} started", self.messages)
+
+    def test_the_removal_logs_its_end_with_the_denials_removed(self):
+        self.assertIn(f"Data removal {self.tag} done: 1 denials removed", self.messages)
+
+    def test_each_deleted_file_carries_the_removal_tag(self):
+        deleted = [m for m in self.messages if m.startswith("Deleted stored file")]
+        self.assertEqual(len(deleted), len(_file_field_names(PlanDocuments)))
+        for message in deleted:
+            self.assertTrue(message.endswith(f"in data removal {self.tag}"), message)
+
+    def test_no_line_holds_the_email_or_the_persons_name(self):
+        for message in self.messages:
+            self.assertNotIn("crumpler", message.lower())

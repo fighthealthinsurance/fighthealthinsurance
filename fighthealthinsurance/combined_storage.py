@@ -6,6 +6,8 @@ from django.core.files.storage import Storage
 from loguru import logger
 from stopit import ThreadingTimeout as Timeout
 
+from fighthealthinsurance.log_tags import error_text, file_tag
+
 
 class CombinedStorage(Storage):
     """A combined storage backend that uses timeouts."""
@@ -43,12 +45,12 @@ class CombinedStorage(Storage):
             except Exception as e:
                 error_list.append(e)
                 logger.warning(
-                    f"Error opening from {name} {mode} on backend {backend} from {self.backends}: {e}"
+                    f"Error opening {file_tag(name)} {mode} on backend {backend} from {self.backends}: {error_text(e)}"
                 )
                 last_error = e
         if last_error is not None:
             logger.error(
-                f"Opening failed on all backends -- {self.backends} w/ errors {error_list}-- raising {last_error}"
+                f"Opening {file_tag(name)} failed on all backends -- {self.backends} w/ errors {[error_text(e) for e in error_list]} -- raising {error_text(last_error)}"
             )
             raise last_error
         else:
@@ -69,7 +71,9 @@ class CombinedStorage(Storage):
             except FileNotFoundError:
                 continue
             except Exception as e:
-                logger.error(f"Error {e} deleting {name} from {backend}")
+                logger.error(
+                    f"Error {error_text(e)} deleting {file_tag(name)} from {backend}"
+                )
                 last_error = e
         if last_error is not None and not deleted:
             raise last_error
@@ -79,7 +83,7 @@ class CombinedStorage(Storage):
             backend.delete(name)
         # stopit swallows the timeout, so check the context instead.
         if not timeout_ctx:
-            raise TimeoutError(f"Timed out deleting {name} from {backend}")
+            raise TimeoutError(f"Timed out deleting {file_tag(name)} from {backend}")
 
     def save(
         self, name: Optional[str], content: IO[Any], max_length: Optional[int] = None
@@ -102,18 +106,17 @@ class CombinedStorage(Storage):
                             name=l, content=content, max_length=max_length
                         )
             except Exception as e:
-                logger.warning(f"Error saving {e} to {backend}")
+                logger.warning(f"Error saving {error_text(e)} to {backend}")
                 error_list.append(e)
                 last_error = e
             if l is not None and stored is not None and stored != l:
                 self._remove_renamed_copy(backend, l, stored)
         if l is None:
+            errors = [error_text(e) for e in error_list]
             logger.error(
-                f"Saving to all backends {self.backends} failed with {error_list}!"
+                f"Saving to all backends {self.backends} failed with {errors}!"
             )
-            raise Exception(
-                f"Failed to save to any backend w/ errors {error_list} -- last error {last_error}"
-            )
+            raise Exception(f"Failed to save to any backend w/ errors {errors}")
         else:
             return l
 
@@ -126,10 +129,12 @@ class CombinedStorage(Storage):
             self._delete_from(backend, stored)
         except Exception as e:
             logger.warning(
-                f"{backend} stored {name} as {stored} and could not remove it: {e}"
+                f"{backend} stored {file_tag(name)} as {file_tag(stored)} and could not remove it: {error_text(e)}"
             )
             return
-        logger.warning(f"{backend} stored {name} as {stored}; removed {stored}")
+        logger.warning(
+            f"{backend} stored {file_tag(name)} as {file_tag(stored)}; removed {file_tag(stored)}"
+        )
 
     def url(self, name: Optional[str]) -> str:
         last_error: Optional[BaseException] = None
@@ -138,7 +143,7 @@ class CombinedStorage(Storage):
                 with Timeout(2.0) as _timeout_ctx:
                     return backend.url(name)
             except Exception as e:
-                logger.error(f"Error getting URL {e} from {backend}")
+                logger.error(f"Error getting URL {error_text(e)} from {backend}")
                 last_error = e
         if last_error is not None:
             raise last_error
@@ -154,7 +159,9 @@ class CombinedStorage(Storage):
                     if r:
                         return r
             except Exception as e:
-                logger.error(f"Error {e}")
+                logger.error(
+                    f"Error {error_text(e)} checking {file_tag(name)} on {backend}"
+                )
                 last_error = e
         if last_error is not None:
             raise last_error

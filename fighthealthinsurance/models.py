@@ -33,6 +33,7 @@ from fighthealthinsurance.exceptions import (
     DocumentRegenerationError,
     MissingRequiredDataError,
 )
+from fighthealthinsurance.log_tags import error_text, file_tag, removal_tag
 from fighthealthinsurance.ml.appeal_prompt_versions import (
     MODE_CHOICES as LETTER_PROMPT_MODE_CHOICES,
 )
@@ -4514,11 +4515,14 @@ def _delete_stored_files(
     if not files:
         return
     pk = instance.pk
+    removal = removal_tag.get()
 
     def _delete_files() -> None:
         for field, field_file in files:
             name = field_file.name
             where = f"{sender.__name__}.{field} {pk}"
+            if removal:
+                where += f" in data removal {removal}"
             try:
                 # A fax row can share its appeal's document file.
                 if _stored_file_in_use(name):
@@ -4527,11 +4531,11 @@ def _delete_stored_files(
             except Exception as e:
                 # No traceback: the storage already logged each backend's error.
                 logger.error(
-                    f"Failed to delete stored file {name} for {where}: "
-                    f"{type(e).__name__}: {e}"
+                    f"Failed to delete stored file {file_tag(name)} for {where}: "
+                    f"{error_text(e)}"
                 )
                 continue
-            logger.info(f"Deleted stored file {name} for {where}")
+            logger.info(f"Deleted stored file {file_tag(name)} for {where}")
 
     transaction.on_commit(_delete_files, using=kwargs.get("using"))
 
