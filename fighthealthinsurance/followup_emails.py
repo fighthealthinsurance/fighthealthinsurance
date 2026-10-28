@@ -171,7 +171,7 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         (e.g., 90-day > 30-day > 7-day), since it represents the most
         significant check-in milestone.
         """
-        current = self._current_emails(candidates)
+        current = self.current_emails(candidates)
         groups: dict[str, list[FollowUpSched]] = defaultdict(list)
         for candidate in candidates:
             # By the case's address now, which is where the email would go.
@@ -202,7 +202,7 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
             ).exists()
         return False
 
-    def _current_emails(self, follow_up_scheds: list[FollowUpSched]) -> dict[int, str]:
+    def current_emails(self, follow_up_scheds: list[FollowUpSched]) -> dict[int, str]:
         """Each row's case's email as it is now; a case keeping none is left out."""
         denial_ids = {s.denial_id_id for s in follow_up_scheds}
         return {
@@ -262,7 +262,7 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         to_suppress: list[FollowUpSched] = []
         withdrawn: list[FollowUpSched] = []
         email_sent = False
-        current = self._current_emails(all_candidates)
+        current = self.current_emails(all_candidates)
         for candidate in all_candidates:
             if candidate.denial_id_id not in current:
                 withdrawn.append(candidate)
@@ -307,7 +307,7 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         Returns (candidate_to_send, suppressed_count).
         candidate_to_send is None if all candidates are stale or withdrawn.
         """
-        current = self._current_emails(all_candidates)
+        current = self.current_emails(all_candidates)
         to_send = next(
             (
                 c

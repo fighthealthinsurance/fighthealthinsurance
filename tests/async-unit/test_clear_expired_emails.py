@@ -307,6 +307,34 @@ class TestSendFollowupEmailsCommand:
         assert "Dry run mode" in out.getvalue()
         mock_send_email.assert_not_called()
 
+    def test_dry_run_prints_no_full_address(self, db):
+        """The listing masks the address it would send to, and names none for
+        a case that withdrew its email."""
+        yesterday = datetime.date.today() - datetime.timedelta(days=1)
+        for email, kept in (
+            ("rebecca.crumpler@test-fhi.com", True),
+            ("mary.seacole@test-fhi.com", False),
+        ):
+            denial = Denial.objects.create(
+                denial_text="Test denial",
+                hashed_email=Denial.get_hashed_email(email),
+                raw_email=email if kept else None,
+                health_history="",
+            )
+            FollowUpSched.objects.create(
+                email=email, denial_id=denial, follow_up_date=yesterday
+            )
+
+        out = StringIO()
+        call_command("send_followup_emails", "--dry-run", stdout=out)
+
+        printed = out.getvalue()
+        assert (
+            "rebecca.crumpler@" not in printed
+            and "mary.seacole@" not in printed
+            and "r*****@test-fhi.com" in printed
+        ), printed
+
     @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_respects_count_limit(self, mock_send_email, db):
         """Test that count parameter limits emails sent."""
