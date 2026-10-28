@@ -21,6 +21,7 @@ from fighthealthinsurance.models import (
     LostStripeSession,
     MailingListSubscriber,
     OngoingChat,
+    PlanDocumentsReminder,
     PolicyDocument,
     PriorAuthRequest,
     ScheduledEmail,
@@ -133,8 +134,16 @@ class RemoveDataHelper:
         ).delete()
         chats.delete()
         ChatLeads.objects.filter(email__iexact=email).delete()
+        # Shared plan documents: the files go, facts about the plan stay.
+        from fighthealthinsurance.shared_plan_documents import (
+            remove_shared_documents,
+        )
+
+        remove_shared_documents(hashed_email)
         # Policy documents (encrypted files cleaned up via post_delete signal)
         PolicyDocument.objects.filter(hashed_email=hashed_email).delete()
+        # A share page reminder that hasn't gone yet
+        PlanDocumentsReminder.objects.filter(email__iexact=email).delete()
         # Mailing list, demo requests and professional sign-ups
         MailingListSubscriber.objects.filter(email__iexact=email).delete()
         DemoRequests.objects.filter(email__iexact=email).delete()

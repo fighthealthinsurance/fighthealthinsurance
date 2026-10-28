@@ -76,6 +76,12 @@ CASES = [
         "https://www.fighthealthinsurance.com/continue/tok",
     ),
     (
+        "plan_documents_reminder",
+        {"url": "https://www.fighthealthinsurance.com/share-plan-documents"},
+        FHI,
+        "https://www.fighthealthinsurance.com/share-plan-documents",
+    ),
+    (
         # An apostrophe in the address and an & in the link: the text version
         # must not HTML-escape either.
         "delete_data_confirmation",

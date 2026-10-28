@@ -69,7 +69,9 @@ fits comfortably next to the Ray heads (which already request 6 GiB each).
    ```
 
    This creates the in-cluster `temporal-frontend:7233` service the worker and
-   the app connect to.
+   the app connect to. Shared plan documents run in a second namespace,
+   `fhi-research`, created once by hand the same way (see "Shared plan
+   documents" below). Every other workflow stays in `default` for now.
 
 4. **Deploy the worker:**
 
@@ -222,9 +224,9 @@ back to plain TLS.
    the PodMonitor selector actually produces `up{pod=~"fhi-(fax|appeal)-worker-.*"}`
    targets (operator `podMonitorSelector` caveat), kube-state-metrics is
    scraped (`kube_deployment_status_replicas_available`), the SDK series
-   carry `namespace="default"` (the Temporal namespace, not the Kubernetes
-   one; the operator's own `namespace` label can push it to
-   `exported_namespace`, as it does for the server's series, and then the
+   carry `namespace="default"` or `namespace="fhi-research"` (the Temporal
+   namespace, not the Kubernetes one; the operator's own `namespace` label
+   can push it to `exported_namespace`, as it does for the server's series, and then the
    worker-side rules need the same relabel), and the server's own series arrive through the ServiceMonitors
    with a `temporal_namespace` label (see "Server metrics" below). The
    server-side metric names and units are checked against the server
@@ -273,9 +275,10 @@ Two things in `values.yaml` the rules depend on:
   `namespace`, so the server's own `namespace` label (the Temporal
   namespace) arrives as `exported_namespace`. A `metricRelabelings` entry
   copies it to `temporal_namespace`, and the server-side rules match
-  `temporal_namespace="default"`. A series scraped some other way (for
-  example through the chart's `prometheus.io` annotations, still on by
-  default) never gets that label, so the rules never count a copy twice.
+  `temporal_namespace=~"default|fhi-research"`. A series scraped some
+  other way (for example through the chart's `prometheus.io` annotations,
+  still on by default) never gets that label, so the rules never count a
+  copy twice.
 - No metrics `framework` is set, so the server uses its tally reporter:
   counters keep their plain names (`no_poller_tasks`, not
   `no_poller_tasks_total`) and timers are histograms in seconds.
@@ -331,7 +334,10 @@ buttons (the proxy also forwards only GET/HEAD). Changing either is a
 `helm upgrade` (above). Direct access for debugging still works with
 `kubectl -n totallylegitco port-forward svc/temporal-web 8080:8080`, but note
 the UI then expects to be served under the public path, i.e.
-`http://localhost:8080/timbit/temporal/`.
+`http://localhost:8080/timbit/temporal/`. Shared plan documents run in the
+`fhi-research` namespace: pick it in the UI's namespace menu, or open
+`/timbit/temporal/namespaces/fhi-research/workflows`. The proxy passes every
+namespace's pages through.
 
 ## Rollback
 
@@ -356,6 +362,8 @@ required.
   available via `delay_send`).
 - **Behind its own flag:** the `chat-routing-policy` Schedule (below), the
   first Temporal Schedule here.
+- **Behind its own flag:** reading shared plan documents and the hourly
+  `plan-documents-sweep` Schedule (below).
 - **Next:** point fax creation at `delay_send=True` to retire the
   `FaxPollingActor`; then convert the refresh/prefetch actors to Temporal
   Schedules and the email-polling actor to a workflow. See the migration notes
@@ -413,19 +421,134 @@ is never on the chat path, so chat behaves the same with all of this off.
 - **History:** a number of minutes and the run's id in, the new row's id
   out. No chat text.
 
+## Shared plan documents
+
+`SharedPlanDocumentsWorkflow` reads the files of one share of plan
+documents: from the share page, or a ticked box on Explain Policy or the
+appeal's plan documents step. For each row still waiting it pulls out the
+text with the bounded readers (a PDF in a child process with page,
+character and time caps, a Word file in one pass, a text file decoded),
+takes out personal details as best it can (`plan_document_scrub.py`), and
+stores the cleaned text on the row as ready for review. A row with no text
+to read, such as a scanned PDF, is marked unreadable. The raw text is never
+stored. Staff read the cleaned text from the admin.
+
+The request that saved a share starts its reading once the rows commit, as
+`shared-plan-documents-{share batch}`. That start is best effort: it waits
+three seconds at most and never fails the share. `PlanDocumentsSweepWorkflow`,
+on the `plan-documents-sweep` Schedule, makes up for a lost start, and sends
+the share page's 30-day reminders in place of the Ray email loop.
+
+| Setting | Default | Where |
+| --- | --- | --- |
+| `TEMPORAL_PLAN_DOCUMENTS_ENABLED` | off | shared app secret, next to the journey flags |
+| `TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE` | `fhi-plan-documents` | `appeal-worker.yaml` |
+| `TEMPORAL_RESEARCH_NAMESPACE` | `fhi-research` | `appeal-worker.yaml`; the web pods use the settings default |
+| `TEMPORAL_RESEARCH_PAYLOAD_KEY` | unset | shared app secret; required for this flag |
+
+- **A namespace of their own:** these runs, the sweep Schedule and the
+  readings it starts all live in the `fhi-research` Temporal namespace,
+  apart from everything in `default`. That gives them their own
+  retention, their own payload key, their own limits on the server, and a
+  view of their own in the Temporal UI. The web pods start readings there,
+  and the `fhi-appeal-worker` pods reach it over the same connection they
+  use for `default`. Every other workflow stays in `default` for now.
+- **Their own payload key:** `TEMPORAL_RESEARCH_PAYLOAD_KEY` is a Fernet
+  key, or a comma-separated list for rotation, the same format and the
+  same rotation rule as `TEMPORAL_PAYLOAD_KEY` (see "Protecting user data"
+  below). The research client encrypts and decrypts with these keys
+  alone, so the shared key can't read research history and this key can't
+  read the history in `default`. Generate a new key for it; a malformed
+  key, or one that also appears in `TEMPORAL_PAYLOAD_KEY`, keeps the flag
+  off, and so does a `TEMPORAL_RESEARCH_NAMESPACE` equal to
+  `TEMPORAL_NAMESPACE`.
+- **Flag:** takes effect only with `TEMPORAL_ENABLED` and
+  `TEMPORAL_RESEARCH_PAYLOAD_KEY` also set, so these runs only ever exist
+  in encrypted history. It does not need the journey flags. With the flag
+  on and no usable research key, the worker logs a warning at start-up,
+  and the paused Schedule's note names all three settings. With the flag
+  on and no `fhi-research` namespace, the worker logs an error and hosts
+  the rest of its queues without this one.
+- **Where it runs:** the `fhi-appeal-worker` pods host the queue as a
+  Worker of its own with one activity slot, so reading a file never takes
+  an appeal generation's slot, and only one PDF child process (capped at
+  1GB) runs for it at a time inside the appeal worker. A reading waiting
+  for the slot is not counted against its time limit. The reader threads
+  and child processes are its own too. The fax worker never hosts it. The
+  `fhi-.*` queue alerts in `worker-alerts.yaml` cover it, since their
+  namespace matchers include `fhi-research`.
+- **Turning it on,** in this order:
+  1. Deploy, so migration 0242 has added the reading's columns.
+  2. Create the namespace, once, with a retention of 30 days, through the
+     admin tools pod:
+
+     ```sh
+     kubectl -n totallylegitco exec -i deploy/temporal-admintools -- \
+       temporal operator namespace create --address temporal-frontend:7233 \
+       --namespace fhi-research --retention 720h
+     ```
+
+  3. Set `TEMPORAL_RESEARCH_PAYLOAD_KEY` (a new Fernet key) and
+     `TEMPORAL_PLAN_DOCUMENTS_ENABLED=true` in the shared
+     `fight-health-insurance-secret`, next to `TEMPORAL_ENABLED`.
+  4. Restart `fhi-appeal-worker`, the web pods and the Ray pods: each
+     reads the secret only when it starts. Until the namespace exists, the
+     share page's reminders stop, so create it before setting the flag and
+     restarting.
+
+  The worker then hosts the queue and creates the Schedule in
+  `fhi-research`, the web pods start readings there, and the Ray email
+  loop stops sending the share page's reminders. Shares saved while it was
+  off are still waiting, and the sweep reads up to 50 of them an hour. To
+  turn it off, set the flag to false and restart the same pods; the worker
+  pauses the Schedule.
+- **Retries:** a reading gets three tries; after that the row is marked
+  unreadable, and staff still have the original file. In the admin, staff
+  can select such rows and choose "Read again": they go back to waiting,
+  and the next hourly sweep starts a new reading for their share, even
+  though an earlier run used the same workflow id.
+- **The sweep Schedule:** id `plan-documents-sweep`; an interval of one
+  hour; overlap SKIP; a catch-up window of one hour, so an outage makes up
+  at most one run; each run has a 30-minute execution timeout. A run sends
+  up to 50 due reminders, one activity each, run once and never retried,
+  then starts readings, as children it does not wait for, for up to 50
+  shares still waiting 15 minutes after they were saved. A share whose
+  reading is already running is left to it. Each `fhi-appeal-worker` pod
+  creates or updates the Schedule at start-up when the flags allow, and
+  pauses it when they don't; `manage.py ensure_temporal_schedules` does the
+  same by hand.
+- **Reminders:** the activity claims a reminder by deleting its row, reads
+  the address from that row and sends one email, so the address never
+  reaches history and a reminder goes at most once. While
+  `plan_documents_enabled()` is true the Ray `EmailPollingActor` leaves
+  these reminders alone; while it is false it sends them as before. If the
+  Ray pods and the worker disagree about the flags for a while, the claim
+  still sends each reminder once.
+- **Deletion:** remove-my-data deletes each shared file with its cleaned
+  text. A row with facts about the plan, such as its insurer or premium,
+  keeps them, loses its scrambled email and is marked removed; a row with
+  none is deleted. Every activity looks its row up by id when it runs and
+  writes only to a row still waiting, so a run that finds its rows gone or
+  removed writes nothing.
+- **History:** the share's uuid, the rows' ids and their statuses; for the
+  sweep, its three numbers, the reminders' row ids, true or false for
+  each, the shares' uuids and two counts. No text, file names, emails,
+  insurers or employers.
+
 ## Protecting user data in workflow history
 
 Workflow payloads are claim-check style by contract: opaque
 `(hashed_email, uuid)` identifiers only, never case content (enforced by
 `tests/temporal/test_temporal_codec.py`). Two further layers:
 
-- **Retention is the storage bound.** The namespace is created with
-  `--retention 720h`, so closed-workflow histories are deleted by the
-  server after 30 days. History is a debugging window, not a data store
-  (the durable data lives in Django); raise it deliberately, not by
-  default.
+- **Retention is the storage bound.** The `default` namespace is created
+  with `--retention 720h`, so closed-workflow histories are deleted by the
+  server after 30 days, and `fhi-research` is created the same way.
+  History is a debugging window, not a data store (the durable data lives
+  in Django); raise it deliberately, not by default.
 - **Payload encryption.** Set `TEMPORAL_PAYLOAD_KEY` (a Fernet key) in the
-  app/worker environment and every payload is encrypted client-side
+  app/worker environment and every payload in `default` is encrypted
+  client-side; `fhi-research` uses `TEMPORAL_RESEARCH_PAYLOAD_KEY` instead
   (`fighthealthinsurance/temporal_codec.py`): the Temporal database and UI
   hold ciphertext only. Destroying or rotating the key renders all
   existing histories unreadable at once, an immediate backstop if any

@@ -922,7 +922,15 @@ def _page_path(value: str) -> str:
 _FETCHES_ON_RENDER = frozenset({"other-resources"})
 # Pages where a person enters their own denial or details.
 _PERSONAL_START_PAGES = frozenset(
-    {"scan", "chat", "chat-alt", "chat_consent", "explain_denial", "understand_policy"}
+    {
+        "scan",
+        "chat",
+        "chat-alt",
+        "chat_consent",
+        "explain_denial",
+        "understand_policy",
+        "share_plan_documents",
+    }
 )
 
 

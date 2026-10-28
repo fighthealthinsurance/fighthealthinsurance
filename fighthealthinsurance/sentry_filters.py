@@ -119,6 +119,17 @@ ASSISTANT_TEXT_MODULES = (
 # letter_review/{packet_id}/...") or the request URL's path.
 LETTER_REVIEW_PATH_PREFIX = "/timbit/help/letter_review/"
 
+# The pages where people share plan documents, or tick a box to share a copy
+# of what they upload: their posts carry an email, plan details and files.
+# An error event from one keeps its stack but loses the request body and
+# every frame's variables, as a letter review event does. Matched on the
+# request URL's path.
+SHARING_FORM_PATHS = (
+    "/share-plan-documents",
+    "/understand-policy",
+    "/v0/combined_collected_view",
+)
+
 
 # The delete-my-data confirmation link (views.send_delete_confirmation_email)
 # carries the person's email and their deletion token in its query string.
@@ -383,6 +394,33 @@ def strip_confirm_delete_details(event: Any) -> Any:
         return None
 
 
+def is_sharing_form_event(event: Any) -> bool:
+    """True when an event comes from a page in SHARING_FORM_PATHS. Never raises."""
+    if not isinstance(event, dict):
+        return False
+    request = event.get("request")
+    if not isinstance(request, dict):
+        return False
+    path = _url_path(request.get("url")).rstrip("/")
+    return any(
+        path == prefix or path.startswith(prefix + "/") for prefix in SHARING_FORM_PATHS
+    )
+
+
+def strip_sharing_form_details(event: Any) -> Any:
+    """Drop the request body and every frame's variables from an error event
+    raised on a page in SHARING_FORM_PATHS. The stack itself stays. Never
+    raises."""
+    if not is_sharing_form_event(event):
+        return event
+    request = event.get("request")
+    if isinstance(request, dict):
+        request.pop("data", None)
+    for frame in _frames(event):
+        frame.pop("vars", None)
+    return event
+
+
 def before_send_filter(event: Any, hint: Any) -> Any:
     """Drop known-noise error events. Returns the event, or None to discard.
 
@@ -467,6 +505,7 @@ def before_send_filter(event: Any, hint: Any) -> Any:
         return None
 
     event = strip_letter_review_details(event)
+    event = strip_sharing_form_details(event)
     event = strip_confirm_delete_details(event)
     return strip_local_variables_near_assistant_text(event)
 

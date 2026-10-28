@@ -1,0 +1,223 @@
+{% extends 'base.html' %}
+{% load bundles %}
+
+{% block title %}What Health Coverage Costs in 2027: Premiums by Kind of Coverage{% endblock title %}
+{% block metatitle %}What Health Coverage Costs in 2027 - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}2027 premiums, price changes and limits for marketplace, job-based, federal employee and Medicare coverage: what's set, what's proposed or projected, what's still to come, and where to see your own price.{% endblock metadescription %}
+
+{% block extra_style %}
+{# Denial Watch's tiles, tables and notes, so the number pages read alike. #}
+{% include "partials/denial_watch_style.html" %}
+{% endblock extra_style %}
+
+{% block content %}
+{# Every figure sits beside its label, source and date; Sources and method links each source. #}
+<div class="fhi-page-wide dw">
+    {% include "partials/page_title.html" with title="What health coverage costs in 2027" %}
+
+    <div class="fhi-stack fhi-stack-loose">
+        <div class="fhi-stack" id="costs-top">
+            <p class="dw-answer" id="costs-answer">Some 2027 prices are set. Others are proposed or projected, and more come out in November.</p>
+            <div class="dw-stats" id="costs-numbers">
+                <div class="dw-stat" id="stat-marketplace"><p class="dw-kicker">Marketplace</p><p class="dw-stat-head"><b class="dw-num">15%</b> <strong>rise insurers asked for</strong></p><span>Median for 2027 plans, before premium help.</span><p class="dw-note">Proposed, KFF, August 3, 2026</p></div>
+                <div class="dw-stat" id="stat-job-based"><p class="dw-kicker">Job-based</p><p class="dw-stat-head"><b class="dw-num">8.2%</b> <strong>rise in employer health costs</strong></p><span>Expected per employee for 2027.</span><p class="dw-note">Projected, Marsh, September 2, 2026</p></div>
+                <div class="dw-stat" id="stat-federal"><p class="dw-kicker">Federal employees</p><p class="dw-stat-head"><b class="dw-num">10.9%</b> <strong>more paid by FEHB enrollees</strong></p><span>On average, for 2027.</span><p class="dw-note">Official, OPM, September 2026</p></div>
+                <div class="dw-stat" id="stat-medicare"><p class="dw-kicker">Medicare</p><p class="dw-stat-head"><b class="dw-num">$209.50</b> <strong>a month for Part B</strong></p><span>The standard premium expected for 2027.</span><p class="dw-note">Projected, Medicare Trustees, June 2026</p></div>
+            </div>
+            <p class="dw-key" id="cc-labels"><b>Labels:</b> <span><b>Official:</b> set or counted by a government agency;</span> <span><b>Final:</b> rates insurers charge after review;</span> <span><b>Proposed:</b> what insurers asked for, which can change;</span> <span><b>Projected:</b> an estimate before the real number;</span> <span><b>Survey:</b> an average from a survey of employers.</span></p>
+            <p class="dw-note">Numbers and links checked October 28, 2026.</p>
+        </div>
+
+        <section class="fhi-stack" id="marketplace" aria-labelledby="marketplace-title">
+            <h2 id="marketplace-title">Marketplace plans</h2>
+            <p class="dw-answer">Insurers asked for smaller rises for 2027 than for 2026.</p>
+            <p class="dw-how"><a href="#method-marketplace">How we got these numbers<span class="fhi-visually-hidden">: Marketplace plans</span></a></p>
+            <div class="fhi-card">
+                <div class="dw-table-wrap">
+                    <table class="dw-table" id="marketplace-table">
+                        <caption class="fhi-visually-hidden">Marketplace prices and limits, 2026 and 2027</caption>
+                        <thead><tr><th scope="col"><span class="fhi-visually-hidden">Measure</span></th><th scope="col">2026</th><th scope="col">2027</th></tr></thead>
+                        <tbody>
+                            <tr><th scope="row">Median price change</th><td class="dw-num"><b>20%</b><br><span class="dw-note">Final, KFF, August 3, 2026</span></td><td class="dw-num"><b>15%</b><br><span class="dw-note">Proposed, KFF, August 3, 2026</span></td></tr>
+                            <tr><th scope="row">Average price change, weighted by enrollment</th><td class="dw-num"><b>25.5%</b><br><span class="dw-note">Final, Families USA, October 26, 2026</span></td><td class="dw-num"><b>15.6%</b><br><span class="dw-note">Proposed, Families USA, October 26, 2026</span></td></tr>
+                            <tr><th scope="row">Most you pay for the benchmark plan with premium help, as a share of income</th><td class="dw-num"><b>9.96%</b><br><span class="dw-note">Official, IRS, July 2025</span></td><td class="dw-num"><b>10.22%</b><br><span class="dw-note">Official, IRS, July 2026</span></td></tr>
+                            <tr><th scope="row">Most you pay out of pocket in a year, for covered in-network care</th><td class="dw-num"><b>$10,600</b> for one person, <b>$21,200</b> for a family<br><span class="dw-note">Official, CMS, January 29, 2026</span></td><td class="dw-num"><b>$12,000</b> for one person, <b>$24,000</b> for a family<br><span class="dw-note">Official, CMS, January 29, 2026</span></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="dw-note">Price changes are list prices, before premium help. Out-of-pocket limits don't include premiums.</p>
+            </div>
+            <div class="fhi-card">
+                <ul class="dw-list">
+                    <li id="most-get-help"><b>Most people get premium help.</b> About 87% of people who picked a plan for 2026 got premium tax credits. <span class="dw-note">(Official, CMS, March 2026)</span></li>
+                    <li id="help-rises"><b>Help rises with prices.</b> It's based on your income and your area's benchmark plan, the second-lowest-cost silver plan. When list prices rise, your help usually does too.</li>
+                    <li id="no-help-above"><b>No federal premium tax credit above 400% of the poverty level.</b> Some states have their own help; your state's marketplace can tell you. <span class="dw-note">(Official, IRS, July 2026)</span></li>
+                    <li id="big-jump"><b>For many people, the big jump came in 2026.</b> The extra premium help ended after 2025. The average premium after help rose from $113 a month for 2025 to $178 for 2026. So 2026 to 2027 understates what long-time enrollees felt. <span class="dw-note">(Official, CMS, May 2025 and March 2026)</span></li>
+                </ul>
+            </div>
+        </section>
+
+        <section class="fhi-stack" id="job-based" aria-labelledby="job-based-title">
+            <h2 id="job-based-title">Job-based plans</h2>
+            <p class="dw-answer">Your employer decides how much of the premium you pay.</p>
+            <p class="dw-how"><a href="#method-job-based">How we got these numbers<span class="fhi-visually-hidden">: Job-based plans</span></a></p>
+            <div class="fhi-card">
+                <ul class="dw-list">
+                    <li id="job-premiums"><b>Average yearly premium, 2026:</b> $9,804 for one person and $28,303 for a family. Each rose 5% from 2025. <span class="dw-note">(Survey, KFF, October 22, 2026)</span></li>
+                    <li id="job-worker-share"><b>What workers paid, 2026:</b> $1,672 for one person and $7,471 for a family. The family share rose 9% from 2025. <span class="dw-note">(Survey, KFF, October 22, 2026)</span></li>
+                    <li id="job-2027"><b>Expected for 2027:</b> employers expect their health benefit cost per employee to rise 8.2% on average, even after changes such as higher deductibles. <span class="dw-note">(Projected, Marsh, September 2, 2026)</span></li>
+                </ul>
+                <p class="dw-note">Averages for what workers pay in 2027 aren't out yet. Your enrollment materials show your own.</p>
+            </div>
+        </section>
+
+        <section class="fhi-stack" id="federal" aria-labelledby="federal-title">
+            <h2 id="federal-title">Federal employees and retirees</h2>
+            <p class="dw-answer">Premiums rise again in 2027, by less than in 2026.</p>
+            <p>This covers FEHB and Postal Service (PSHB) plans. Open Season runs November 9 to December 14, 2026.</p>
+            <p class="dw-how"><a href="#method-federal">How we got these numbers<span class="fhi-visually-hidden">: Federal employees and retirees</span></a></p>
+            <div class="fhi-card">
+                <div class="dw-table-wrap">
+                    <table class="dw-table" id="federal-table">
+                        <caption class="fhi-visually-hidden">Average premium rises for federal employee plans, 2026 and 2027</caption>
+                        <thead><tr><th scope="col">Average rise</th><th scope="col">2026</th><th scope="col">2027</th></tr></thead>
+                        <tbody>
+                            <tr><th scope="row">FEHB premiums</th><td class="dw-num"><b>10.2%</b><br><span class="dw-note">Official, OPM, September 2026</span></td><td class="dw-num"><b>9.3%</b><br><span class="dw-note">Official, OPM, September 2026</span></td></tr>
+                            <tr><th scope="row">What FEHB enrollees pay</th><td class="dw-num"><b>12.3%</b><br><span class="dw-note">Official, OPM, September 2026</span></td><td class="dw-num"><b>10.9%</b><br><span class="dw-note">Official, OPM, September 2026</span></td></tr>
+                            <tr><th scope="row">PSHB premiums</th><td class="dw-num"><b>9%</b><br><span class="dw-note">Official, OPM, September 2026</span></td><td class="dw-num"><b>6.7%</b><br><span class="dw-note">Official, OPM, September 2026</span></td></tr>
+                            <tr><th scope="row">What PSHB enrollees pay</th><td class="dw-num"><b>11.3%</b><br><span class="dw-note">Official, OPM, September 2026</span></td><td class="dw-num"><b>8.2%</b><br><span class="dw-note">Official, OPM, September 2026</span></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="dw-note">Averages across all plans. Your plan's change can differ.</p>
+            </div>
+        </section>
+
+        <section class="fhi-stack" id="medicare" aria-labelledby="medicare-title">
+            <h2 id="medicare-title">Medicare</h2>
+            <p class="dw-answer">Part B is expected to rise. The average Medicare Advantage premium is expected to fall.</p>
+            <p>Open enrollment runs October 15 to December 7, 2026.</p>
+            <p class="dw-how"><a href="#method-medicare">How we got these numbers<span class="fhi-visually-hidden">: Medicare</span></a></p>
+            <div class="fhi-card">
+                <div class="dw-table-wrap">
+                    <table class="dw-table" id="medicare-table">
+                        <caption class="fhi-visually-hidden">Medicare premiums and limits, 2026 and 2027</caption>
+                        <thead><tr><th scope="col"><span class="fhi-visually-hidden">Measure</span></th><th scope="col">2026</th><th scope="col">2027</th></tr></thead>
+                        <tbody>
+                            <tr><th scope="row">Part B premium, per month</th><td class="dw-num"><b>$202.90</b><br><span class="dw-note">Official, CMS, November 14, 2025</span></td><td class="dw-num"><b>$209.50</b><br><span class="dw-note">Projected, Medicare Trustees, June 2026</span></td></tr>
+                            <tr><th scope="row">Part B deductible, per year</th><td class="dw-num"><b>$283</b><br><span class="dw-note">Official, CMS, November 14, 2025</span></td><td class="dw-num"><b>$292</b><br><span class="dw-note">Projected, Medicare Trustees, June 2026</span></td></tr>
+                            <tr><th scope="row">Medicare Advantage premium, average per month</th><td class="dw-num"><b>$14.37</b><br><span class="dw-note">Official, CMS, September 28, 2026</span></td><td class="dw-num"><b>$12.00</b><br><span class="dw-note">Projected, CMS, September 28, 2026</span></td></tr>
+                            <tr><th scope="row">Drug plan on its own (Part D), average per month</th><td class="dw-num"><b>$35.09</b><br><span class="dw-note">Official, CMS, September 28, 2026</span></td><td class="dw-num"><b>$36</b><br><span class="dw-note">Projected, CMS, September 28, 2026</span></td></tr>
+                            <tr><th scope="row">Most you pay for covered Part D drugs in a year</th><td class="dw-num"><b>$2,100</b><br><span class="dw-note">Official, CMS, April 6, 2026</span></td><td class="dw-num"><b>$2,400</b><br><span class="dw-note">Official, CMS, April 6, 2026</span></td></tr>
+                            <tr><th scope="row">Part D deductible, at most</th><td class="dw-num"><b>$615</b><br><span class="dw-note">Official, CMS, April 6, 2026</span></td><td class="dw-num"><b>$700</b><br><span class="dw-note">Official, CMS, April 6, 2026</span></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="dw-note">Most people pay Part B plus any plan premium. Higher incomes pay more for Part B. Plan averages are weighted by enrollment, and plans near you can cost more or less.</p>
+            </div>
+        </section>
+
+        <section class="fhi-stack" id="act" aria-labelledby="act-title">
+            <p class="dw-kicker">What you can do</p>
+            <h2 id="act-title">What to do now</h2>
+            <div class="fhi-card">
+                <ul class="dw-list">
+                    <li id="act-healthcare-gov"><b>See marketplace prices.</b> HealthCare.gov shows <a href="https://www.healthcare.gov/see-plans/">plans and prices</a> for your area, with 2027 plans from about November 1.</li>
+                    <li id="act-state"><b>Use your state's marketplace if it has one.</b> <a href="https://www.healthcare.gov/marketplace-in-your-state/">Find yours on HealthCare.gov's list</a>.</li>
+                    <li id="act-medicare"><b>Compare Medicare plans by December 7.</b> <a href="https://www.medicare.gov/plan-compare/">Medicare Plan Finder</a> checks plans against your drugs and pharmacies.</li>
+                    <li id="act-federal"><b>Compare federal plans in Open Season.</b> Use OPM's <a href="https://www.opm.gov/healthcare-insurance/healthcare/plan-information/compare-plans/">plan comparison tool</a> and <a href="https://www.opm.gov/healthcare-insurance/healthcare/plan-information/premiums/">premium charts</a>.</li>
+                    <li id="act-job"><b>On a job-based plan, ask HR.</b> Each plan's <a href="https://www.healthcare.gov/health-care-law-protections/summary-of-benefits-and-coverage/">Summary of Benefits and Coverage</a> shows what you'd pay for care.</li>
+                    <li id="act-share"><b>Share your enrollment documents.</b> <a href="{% url 'share_plan_documents' %}">Send us your plan's rate sheet and benefits summary</a> to help us show what plans cost and cover.</li>
+                    <li id="act-help"><b>Get free help.</b> <a href="https://www.healthcare.gov/find-local-help/">Find an independent assister</a>, or your state's free Medicare counseling on <a href="{% url 'state_help_index' %}">our state help pages</a>.</li>
+                    <li id="act-checklist"><b>See what else changes.</b> <a href="{% url 'coverage-changes' %}#fall-checklist">Our fall checklist</a> covers the rest of 2027.</li>
+                </ul>
+            </div>
+        </section>
+
+        <section class="fhi-stack" id="pending" aria-labelledby="pending-title">
+            <p class="dw-kicker">Not out yet</p>
+            <h2 id="pending-title">Still to come</h2>
+            <div class="fhi-cards">
+                <div class="fhi-card" id="pending-final-rates"><h3 class="fhi-card-title">Final marketplace rates</h3><p>By November 1, when open enrollment starts. Federal rules require it.</p></div>
+                <div class="fhi-card" id="pending-cms-files"><h3 class="fhi-card-title">CMS's 2027 marketplace files</h3><p>Early to mid November, like last year's.</p></div>
+                <div class="fhi-card" id="pending-part-b"><h3 class="fhi-card-title">The official Part B premium</h3><p>Mid November. Last year's came out November 14.</p></div>
+                <div class="fhi-card" id="pending-paid"><h3 class="fhi-card-title">What enrollees pay after help</h3><p>Around March 2027, from CMS's open enrollment files.</p></div>
+            </div>
+            <p>We try to update this page as each one comes out.</p>
+        </section>
+
+        <section class="fhi-stack" id="more-data" aria-labelledby="more-data-title">
+            <p class="dw-kicker">Beyond this page</p>
+            <h2 id="more-data-title">Where to find more data like this</h2>
+            <ul class="fhi-list">
+                <li><h3 class="fhi-card-title"><a href="https://www.kff.org/affordable-care-act/state-indicator/average-marketplace-premiums-by-metal-tier/">KFF State Health Facts</a></h3><p>Average marketplace premiums by state, for the lowest-cost bronze, silver and gold plans and the benchmark plan. No ads.</p></li>
+                <li><h3 class="fhi-card-title"><a href="https://www.cms.gov/data-research/statistics-trends-and-reports/marketplace-products">CMS Marketplace Products</a></h3><p>CMS's open enrollment files for each year, with average premiums before and after premium help by state. No ads.</p></li>
+                <li><h3 class="fhi-card-title"><a href="https://www.healthcare.gov/health-and-dental-plan-datasets-for-researchers-and-issuers/">HealthCare.gov plan datasets</a></h3><p>Downloadable data on HealthCare.gov's health and dental plans, for researchers. No ads.</p></li>
+            </ul>
+            <p class="fhi-notice fhi-notice-info" id="join-forces-costs">Know a public data source we should include? Send it our way. <a href="{% url 'contact' %}">Get in touch</a>.</p>
+            <p class="dw-note">Checked October 28, 2026.</p>
+        </section>
+
+        <section class="fhi-stack" id="sources" aria-labelledby="sources-title">
+            <p class="dw-kicker">Where the numbers come from</p>
+            {# Closed until opened; js/denial_watch_charts.js opens it for a link to anything inside. #}
+            <div class="fhi-accordion">
+                <details class="fhi-accordion-item" id="sources-details">
+                    <summary><h2 class="fhi-accordion-question" id="sources-title">Sources and method</h2></summary>
+                    <div class="fhi-accordion-body fhi-stack">
+                        <p>Each number is as its source published it, except the 87%, which is our math from CMS's counts. Each date is when the source published it, or when a data file's page was last updated.</p>
+                        <div class="dw-method" id="method-marketplace">
+                            <h3 class="fhi-card-title">Marketplace plans</h3>
+                            <ol class="dw-sources">
+                                <li><b>Median price change:</b> KFF, a nonprofit health policy research, polling and news organization. Matt McGough and others, <a href="https://www.kff.org/affordable-care-act/how-much-and-why-aca-marketplace-premiums-are-going-up-in-2027/">"How Much and Why ACA Marketplace Premiums Are Going Up in 2027"</a>, July 8, 2026, updated August 3, 2026. The median of 276 insurers' proposed changes in all 50 states and DC. For 2026, KFF gives 18% proposed and 20% final. We cite KFF's figures and don't copy its charts.</li>
+                                <li><b>Weighted price change:</b> Families USA, a national consumer health advocacy organization, <a href="https://www.familiesusa.org/resources/aca-marketplace-premium-rate-tracker-insurers-likely-to-propose-premium-increases-for-2027/">"ACA Marketplace Premium Rate Tracker"</a>, updated October 26, 2026. Requested changes in all 50 states and DC, weighted by enrollment, and 2026's average final change. It updates as states finalize rates.</li>
+                                <li><b>Premium help:</b> the IRS's yearly tables of the share of income people pay for the benchmark plan, which stop at 400% of the poverty level: <a href="https://www.irs.gov/pub/irs-drop/rp-25-25.pdf">Rev. Proc. 2025-25</a> for 2026 and <a href="https://www.irs.gov/pub/irs-drop/rp-26-26.pdf">Rev. Proc. 2026-26</a> for 2027.</li>
+                                <li><b>Out-of-pocket limits:</b> CMS, <a href="https://www.cms.gov/files/document/2027-papi-parameters-guidance-2026-01-29.pdf">2027 payment parameters guidance</a>, January 29, 2026, with the 2026 and 2027 limits.</li>
+                                <li><b>Premium help and what people paid:</b> CMS's Marketplace Open Enrollment Period public use files for <a href="https://www.cms.gov/data-research/statistics-trends-reports/marketplace-products/2025-marketplace-open-enrollment-period-public-use-files">2025</a> (page updated May 12, 2025) and <a href="https://www.cms.gov/data-research/statistics-trends-reports/marketplace-products/2026-marketplace-open-enrollment-period-public-use-files">2026</a> (March 27, 2026). The state-level file's national row, HealthCare.gov and state-run marketplaces together. The average is the monthly premium per person after premium tax credits, for everyone with a plan picked. It leaves out extra help some states add, and it moves with the plans people pick. The 87% is the 20,035,756 people who got a premium tax credit out of the 23,130,860 who picked a plan.</li>
+                            </ol>
+                            <p class="dw-back"><a href="#marketplace">Back to Marketplace plans</a></p>
+                        </div>
+                        <div class="dw-method" id="method-job-based">
+                            <h3 class="fhi-card-title">Job-based plans</h3>
+                            <ol class="dw-sources">
+                                <li><b>Premiums and workers' share:</b> KFF, <a href="https://www.kff.org/health-costs/2026-employer-health-benefits-survey/">2026 Employer Health Benefits Survey</a>, October 22, 2026. A yearly survey of employers; national averages, the employer's share included.</li>
+                                <li><b>2027 costs:</b> Marsh, preliminary results of its 2026 National Survey of Employer-Sponsored Health Plans, from more than 1,800 employers, <a href="https://www.mercer.com/en-us/about/newsroom/employers-expect-health-benefit-costs-to-jump-in-2027/">announced September 2, 2026</a> on the site of Mercer, which is becoming Marsh. Total health benefit cost per employee, after the changes employers plan.</li>
+                            </ol>
+                            <p class="dw-back"><a href="#job-based">Back to Job-based plans</a></p>
+                        </div>
+                        <div class="dw-method" id="method-federal">
+                            <h3 class="fhi-card-title">Federal employees and retirees</h3>
+                            <ol class="dw-sources">
+                                <li><b>Premium rises and Open Season:</b> OPM, <a href="https://www.opm.gov/healthcare-insurance/open-season/agency-benefits-officers/housing-for-os-materials/2026-federal-benefits-open-season-highlights-for-plan-year-2027.pdf">Federal Benefits Open Season Highlights, 2027 Plan Year</a>, September 2026. Average changes across all plans, for 2026 and 2027.</li>
+                            </ol>
+                            <p class="dw-back"><a href="#federal">Back to Federal employees and retirees</a></p>
+                        </div>
+                        <div class="dw-method" id="method-medicare">
+                            <h3 class="fhi-card-title">Medicare</h3>
+                            <ol class="dw-sources">
+                                <li><b>Part B for 2026:</b> CMS, <a href="https://www.cms.gov/newsroom/fact-sheets/2026-medicare-parts-b-premiums-deductibles">2026 Medicare Parts A &amp; B Premiums and Deductibles</a>, November 14, 2025.</li>
+                                <li><b>Part B for 2027:</b> the <a href="https://www.cms.gov/oact/tr/2026">2026 Medicare Trustees Report</a>, June 2026, table V.E2. It estimates the standard premium and deductible; CMS sets the official amounts later.</li>
+                                <li><b>Medicare Advantage and drug plan premiums:</b> CMS, <a href="https://www.cms.gov/newsroom/press-releases/medicare-advantage-medicare-prescription-drug-programs-expected-remain-stable-2027">"Medicare Advantage and Medicare Prescription Drug Programs Expected to Remain Stable in 2027"</a>, September 28, 2026. Averages weighted by enrollment. The Medicare Advantage average includes plans with drug coverage and Special Needs Plans. The 2027 averages are CMS's projections.</li>
+                                <li><b>Part D limits:</b> CMS, <a href="https://www.cms.gov/files/document/2027-announcement.pdf">2027 Rate Announcement</a>, April 6, 2026, which sets 2027's deductible and out-of-pocket threshold and lists 2026's.</li>
+                            </ol>
+                            <p class="dw-back"><a href="#medicare">Back to Medicare</a></p>
+                        </div>
+                        <div class="dw-method" id="method-pending">
+                            <h3 class="fhi-card-title">Still to come</h3>
+                            <ol class="dw-sources">
+                                <li><b>Final rates:</b> <a href="https://www.ecfr.gov/current/title-45/subtitle-A/subchapter-B/part-154/subpart-C/section-154.301">45 CFR 154.301(b)</a> requires final rate increases to be public by the first day of open enrollment.</li>
+                                <li><b>Timing:</b> we expect CMS's files and the Part B announcement around when last year's came out. CMS released the 2026 Part B amounts on November 14, 2025.</li>
+                            </ol>
+                            <p class="dw-back"><a href="#pending">Back to Still to come</a></p>
+                        </div>
+                        <p class="dw-note"><b>Please note:</b> This is general information, not legal, medical or financial advice. Plans vary, so check your own plan's documents. Proposed and projected numbers may change.</p>
+                    </div>
+                </details>
+            </div>
+        </section>
+    </div>
+</div>
+<script src="{% versioned 'js/denial_watch_charts.js' %}" defer></script>
+{# The shared opener, so a link into the closed Sources and method opens it first. #}
+<script>document.addEventListener("DOMContentLoaded", () => window.DWCharts && window.DWCharts.foldLinks());</script>
+{% endblock content %}

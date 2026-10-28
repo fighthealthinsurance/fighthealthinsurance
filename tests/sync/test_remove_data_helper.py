@@ -11,6 +11,7 @@ from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 
 from fighthealthinsurance.helpers import RemoveDataHelper
 from fighthealthinsurance.models import (
@@ -26,6 +27,7 @@ from fighthealthinsurance.models import (
     LostStripeSession,
     MailingListSubscriber,
     OngoingChat,
+    PlanDocumentsReminder,
     PriorAuthRequest,
     ScheduledEmail,
 )
@@ -121,6 +123,9 @@ class TestRemoveDataHelper(TestCase):
         )
         MailingListSubscriber.objects.create(email=cls.target_email)
         DemoRequests.objects.create(email=cls.target_email)
+        PlanDocumentsReminder.objects.create(
+            email=cls.target_email, send_after=timezone.now()
+        )
 
         # --- Control rows (should survive) -----------------------------
         cls.other_denial = Denial.objects.create(
@@ -134,6 +139,9 @@ class TestRemoveDataHelper(TestCase):
             appeal_text="other appeal",
         )
         MailingListSubscriber.objects.create(email=cls.other_email)
+        PlanDocumentsReminder.objects.create(
+            email=cls.other_email, send_after=timezone.now()
+        )
         ChatLeads.objects.create(
             name="Other Lead",
             email=cls.other_email,
@@ -194,6 +202,9 @@ class TestRemoveDataHelper(TestCase):
             "lost_stripe_session": LostStripeSession.objects.filter(
                 email__iexact=self.target_email
             ).count(),
+            "plan_documents_reminder": PlanDocumentsReminder.objects.filter(
+                email__iexact=self.target_email
+            ).count(),
         }
 
     def test_remove_data_deletes_the_consent_record_with_the_denial(self):
@@ -247,6 +258,9 @@ class TestRemoveDataHelper(TestCase):
         self.assertEqual(
             ChatLeads.objects.filter(email__iexact=self.other_email).count(),
             pre_other_leads,
+        )
+        self.assertTrue(
+            PlanDocumentsReminder.objects.filter(email=self.other_email).exists()
         )
 
     def test_remove_data_normalizes_whitespace_and_case(self):
