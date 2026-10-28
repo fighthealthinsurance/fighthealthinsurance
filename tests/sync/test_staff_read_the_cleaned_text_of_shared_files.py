@@ -11,19 +11,22 @@ removed at the person's request.
 
 import datetime
 import time
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from asgiref.sync import async_to_sync
+from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db.models import TextField
 from django.db.models.functions import Cast
-from django.test import Client, TestCase
+from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from fighthealthinsurance import plan_documents_processing as processing
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
-from fighthealthinsurance.models import Denial, PolicyDocument
+from fighthealthinsurance.models import Denial, EncryptedTextField, PolicyDocument
 from fighthealthinsurance.shared_plan_documents import render_token
 
 User = get_user_model()
@@ -261,6 +264,25 @@ class TheCleanedTextIsStoredEncryptedTest(_CleanedTextTestCase):
         self.assertTrue(raw)
         self.assertNotIn("Deductible", raw)
         self.assertEqual(PolicyDocument.objects.get(pk=doc.pk).cleaned_text, CLEANED)
+
+
+class AnAdminEditKeepsTheEncryptedFieldsTest(_CleanedTextTestCase):
+    def test_an_edit_saves_only_what_the_form_changed(self):
+        doc = self.shared()
+        model_admin = admin.site._registry[PolicyDocument]
+        # As if the text couldn't be decrypted when the change page loaded.
+        with patch.object(EncryptedTextField, "from_db_value", return_value=""):
+            loaded = PolicyDocument.objects.get(pk=doc.pk)
+        loaded.insurer_name = "Crumpler Mutual"
+        model_admin.save_model(
+            RequestFactory().post("/"),
+            loaded,
+            SimpleNamespace(changed_data=["insurer_name"]),
+            change=True,
+        )
+        saved = PolicyDocument.objects.get(pk=doc.pk)
+        self.assertEqual(saved.insurer_name, "Crumpler Mutual")
+        self.assertEqual(saved.cleaned_text, CLEANED)
 
 
 class StaffReachOnlySharedFilesTest(_CleanedTextTestCase):

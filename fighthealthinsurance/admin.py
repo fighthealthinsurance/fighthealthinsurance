@@ -1315,6 +1315,14 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     )
     actions = ("read_again",)
 
+    def save_model(self, request, obj, form, change):
+        # Only what the form changed: the encrypted fields it excludes are
+        # never written back from what this request read.
+        if change:
+            obj.save(update_fields=form.changed_data)
+            return
+        super().save_model(request, obj, form, change)
+
     @admin.action(description="Read again (shared files marked unreadable)")
     def read_again(self, request, queryset):
         # Back to waiting: the hourly sweep starts a new reading for them.
