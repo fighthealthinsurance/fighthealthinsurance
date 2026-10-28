@@ -98,16 +98,21 @@ class SharePlanDocumentsPageTest(TestCase):
         self.assertEqual(
             items,
             [
-                "Enrollment guide or premium rate sheet: what you pay for yourself "
-                "only and for family coverage, and how often.",
-                "Summary of Benefits and Coverage: deductibles, copays and coverage "
-                "limits.",
-                "Summary Plan Description or Evidence of Coverage, if you have it: "
+                "Rate sheet or enrollment guide What you pay for yourself only and "
+                "for family coverage, and how often.",
+                "Summary of Benefits and Coverage Deductibles, copays and coverage "
+                "limits. It leaves out premiums, which is why the rate sheet comes "
+                "first.",
+                "Summary Plan Description or Evidence of Coverage If you have it: "
                 "what the plan leaves out and how appeals work.",
             ],
         )
         versions = self.soup.find(id="which-versions").get_text(" ", strip=True)
-        self.assertIn("This year's and next year's versions help most.", versions)
+        self.assertIn(
+            "This year's and next year's versions help most, because matched "
+            "years show what changed.",
+            versions,
+        )
         # Plan materials only: a paystub shows the premium, but with a name on it.
         self.assertIn(
             "Please don't send paystubs, medical records or your own enrollment "
@@ -171,8 +176,10 @@ class SharePlanDocumentsPageTest(TestCase):
         for words in (
             "We store what you share encrypted, files and links alike.",
             "AI models, including outside services, read the files",
-            "We keep what you share as long as we can",
-            "we do our best to remove personal details from anything we share.",
+            "We keep what you share as long as we can.",
+            "Please leave out your name, member ID and health information, "
+            "unless you want to include them.",
+            "We do our best to remove personal details from anything we share.",
         ):
             with self.subTest(words=words):
                 self.assertIn(words, happens)

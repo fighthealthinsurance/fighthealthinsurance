@@ -3,6 +3,27 @@
 {% block metatitle %}Share your plan documents - Fight Health Insurance{% endblock metatitle %}
 {% block metadescription %}Share your health plan's documents so we can learn what plans cover and share what we learn. Plus how to ask your plan for its full documents.{% endblock metadescription %}
 
+{% block extra_style %}
+{# Denial Watch's stat tiles, then this page's goal line and document cards. #}
+{% include "partials/denial_watch_style.html" %}
+<style>
+  /* The goal, one line under the title; once there is a count, a bar fills toward it. */
+  .share-goal { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fhi-space-2) var(--fhi-space-4); margin: 0; padding: var(--fhi-space-3) var(--fhi-space-4); border-left: 4px solid var(--fhi-green); border-radius: 0 var(--fhi-radius) var(--fhi-radius) 0; background-color: var(--fhi-surface); color: var(--fhi-ink); }
+  .share-goal-icon { flex: none; width: 1.5rem; height: 1.5rem; color: var(--fhi-green-ink); }
+  .share-goal-meter { flex: 1 1 8rem; height: var(--fhi-space-2); border-radius: var(--fhi-space-1); overflow: hidden; background-color: var(--fhi-line); }
+  .share-goal-meter i { display: block; height: 100%; background-color: var(--fhi-green-ink); }
+  /* The documents that help most, in the order we want them: one card each, the icon beside the words. */
+  .share-docs { display: grid; gap: var(--fhi-space-3); margin: 0; padding: 0; list-style: none; }
+  .fhi-card.share-doc { flex-direction: row; align-items: flex-start; gap: var(--fhi-space-4); padding: var(--fhi-space-4) var(--fhi-space-5); }
+  .share-doc-icon { flex: none; width: 2rem; height: 2rem; color: var(--fhi-green-ink); }
+  .share-doc-text { display: grid; gap: var(--fhi-space-1); min-width: 0; }
+  .share-doc-text > * { margin: 0; }
+  .share-doc-text .fhi-card-title { color: var(--fhi-ink); }
+  /* What happens to what you share: the agreement's points as a short list. */
+  .share-happens ul { display: grid; gap: var(--fhi-space-2); margin: 0; padding-left: var(--fhi-space-5); }
+</style>
+{% endblock extra_style %}
+
 {% block scriptmagic %}
 <script>
   // Say a choice of files is too many or too big, or that there is nothing
@@ -96,13 +117,31 @@ below the form. A share needs files or links, and the agreement; the rest
 folds away under "About the plan". Links are stored encrypted and never
 fetched; staff open them by hand. The agreement's words are consent.SHARING_TERMS.
 The opt-in card on other pages (partials/share_for_research.html) links to
-#about-sharing. The facts under
+#about-sharing. The eyebrow shows only in open enrollment season. The goal
+line shows through its day (shared_plan_documents.goal_progress), with a
+count only from 20 plans; the count is the same for every visitor. The 47.5%
+tile reads Denial Watch's bundle. The facts under
 "How to get your full plan documents" were checked on the date the section
 gives; recheck them before changing it.
 {% endcomment %}
 <div class="fhi-page fhi-page-reading">
-    {% include "partials/page_title.html" with title="Share your plan documents" %}
+    {% with lede="What is health insurance through work going to cost next year? Help us build a clearer picture of the plans people are being offered." %}
+    {% if open_enrollment_in_season %}
+    {% include "partials/page_title.html" with title="Share your plan documents" eyebrow="Open enrollment: next year's plan documents are out now" lede=lede %}
+    {% else %}
+    {% include "partials/page_title.html" with title="Share your plan documents" lede=lede %}
+    {% endif %}
+    {% endwith %}
     <div class="fhi-stack fhi-stack-loose">
+
+    {% if goal %}
+    <p class="share-goal" id="share-goal">
+        <svg class="share-goal-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 21V4"/><path d="M5 4h12l-2.5 4 2.5 4H5"/></svg>
+        <strong>Our goal: {{ goal.plans }} plans by {{ goal.by|date:"F j" }}</strong>
+        {% if goal.count is not None %}<span class="share-goal-meter" aria-hidden="true"><i style="width: {{ goal.percent }}%"></i></span>
+        <span id="share-goal-count">{{ goal.count }} so far</span>{% endif %}
+    </p>
+    {% endif %}
 
     {% if shared %}
     <div class="fhi-notice fhi-notice-info" role="status" id="share-thanks">
@@ -115,12 +154,30 @@ gives; recheck them before changing it.
     {% else %}
     <div class="fhi-stack" id="the-ask">
         <p id="share-ask">Help us show what health plans cost and cover, and what changes next year. Upload the documents your plan gives everyone:</p>
-        <ul id="most-useful">
-            <li><b>Enrollment guide or premium rate sheet:</b> what you pay for yourself only and for family coverage, and how often.</li>
-            <li><b>Summary of Benefits and Coverage:</b> deductibles, copays and coverage limits.</li>
-            <li><b>Summary Plan Description or Evidence of Coverage,</b> if you have it: what the plan leaves out and how appeals work.</li>
-        </ul>
-        <p id="which-versions">This year's and next year's versions help most. Plan-wide documents like these usually don't include personal details. Please don't send paystubs, medical records or your own enrollment confirmation.</p>
+        <ol class="share-docs" id="most-useful">
+            <li class="fhi-card share-doc">
+                <svg class="share-doc-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M12 6.5v11"/><path d="M14.5 9.5c0-1.1-1.1-1.8-2.5-1.8s-2.5.7-2.5 1.8 1.1 1.6 2.5 1.9 2.5.8 2.5 1.9-1.1 1.9-2.5 1.9-2.5-.8-2.5-1.9"/></svg>
+                <div class="share-doc-text">
+                    <p class="fhi-card-title"><strong>Rate sheet or enrollment guide</strong></p>
+                    <p>What you pay for yourself only and for family coverage, and how often.</p>
+                </div>
+            </li>
+            <li class="fhi-card share-doc">
+                <svg class="share-doc-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18"/><path d="M3 14.5h18"/><path d="M10 9.5V20"/></svg>
+                <div class="share-doc-text">
+                    <p class="fhi-card-title"><strong>Summary of Benefits and Coverage</strong></p>
+                    <p>Deductibles, copays and coverage limits. It leaves out premiums, which is why the rate sheet comes first.</p>
+                </div>
+            </li>
+            <li class="fhi-card share-doc">
+                <svg class="share-doc-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5"/><path d="M5 4.5v15A1.5 1.5 0 0 0 6.5 21H19v-3"/><path d="M9 7.5h6"/><path d="M9 11h4"/></svg>
+                <div class="share-doc-text">
+                    <p class="fhi-card-title"><strong>Summary Plan Description or Evidence of Coverage</strong></p>
+                    <p>If you have it: what the plan leaves out and how appeals work.</p>
+                </div>
+            </li>
+        </ol>
+        <p id="which-versions">This year's and next year's versions help most, because matched years show what changed. Plan-wide documents like these usually don't include personal details. Please don't send paystubs, medical records or your own enrollment confirmation.</p>
     </div>
 
     <form method="post" action="{% url 'share_plan_documents' %}" enctype="multipart/form-data" class="fhi-stack" id="share-plan-documents-form" data-max-files="{{ max_files }}" data-max-bytes="{{ max_total_bytes }}" data-too-many="{{ too_many_message }}" data-too-big="{{ too_big_message }}" data-nothing="{{ nothing_message }}">
@@ -221,10 +278,26 @@ gives; recheck them before changing it.
 
     <section class="fhi-stack" id="about-sharing" aria-labelledby="about-sharing-heading">
         <h2 id="about-sharing-heading">Why we're asking</h2>
+        {% if job_share %}
+        <div class="dw-stats" id="why-numbers">
+            <div class="dw-stat" id="why-job-share"><p class="dw-stat-head"><b class="dw-num">{{ job_share }}</b> <strong>of people have coverage only through a job</strong></p><span>Census Bureau survey, 2026</span></div>
+            <div class="dw-stat" id="why-no-rates"><p class="dw-stat-head"><b class="dw-num">None</b> <strong>of Denial Watch's denial rates cover plans through work</strong></p><span>Plan documents help fill in that gap.</span></div>
+        </div>
+        {% endif %}
         <p id="what-we-have">We started with public records. <a href="{% url 'denial-watch' %}">Denial Watch</a> shows how often marketplace plans deny claims and how often plans deny requests for approval. <a href="{% url 'open-enrollment' %}#coverage-mix">Where people get coverage</a> shows that nearly half of people have coverage only through a job, and Denial Watch has no denial rates for those plans.</p>
         <p id="what-we-look-at">Plan documents fill in what records leave out. With them we can show what plans cost for one person and for a family, what common care costs under each plan, how deductibles and out-of-pocket limits change from year to year, what plans leave out, and what needs approval first. We share what we learn publicly.</p>
         <p id="what-it-shows">What we publish describes the plans people share with us. It shows what people are offered, not how many people chose each plan or every plan in the country, and we say how many plans each finding comes from.</p>
-        <p id="what-happens">We store what you share encrypted, files and links alike. Our team and AI models, including outside services, read the files along with documents from other people. Our team opens links by hand, and we never fetch them automatically. We keep what you share as long as we can, and we do our best to remove personal details from anything we share.</p>
+        <div class="fhi-card share-happens" id="what-happens" role="group" aria-labelledby="what-happens-heading">
+            <h3 id="what-happens-heading">What happens to what you share</h3>
+            <ul>
+                <li>We store what you share encrypted, files and links alike.</li>
+                <li>Our team and AI models, including outside services, read the files along with documents from other people.</li>
+                <li>Our team opens links by hand. We never fetch them automatically.</li>
+                <li>We keep what you share as long as we can.</li>
+                <li>Please leave out your name, member ID and health information, unless you want to include them.</li>
+                <li>We do our best to remove personal details from anything we share.</li>
+            </ul>
+        </div>
         <p id="yearly-ask">Once a year we ask everyone to request their plan documents and share them with us. You can share anytime.</p>
     </section>
 

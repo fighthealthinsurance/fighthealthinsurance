@@ -4282,6 +4282,23 @@ class UnderstandPolicyView(FormView):
         return render(self.request, "chat_redirect.html", context)
 
 
+def coverage_job_share() -> typing.Optional[str]:
+    """The share of people with coverage only through a job, as Denial
+    Watch's coverage bar shows it ("47.5%"), or None when its numbers can't
+    be read."""
+    try:
+        return str(
+            next(
+                row["pct"]
+                for row in denial_watch_coverage_mix()["rows"]
+                if row["k"] == "job"
+            )
+        )
+    except Exception:
+        logger.opt(exception=True).error("Denial Watch's coverage numbers unavailable")
+        return None
+
+
 class SharePlanDocumentsView(FormView):
     """Share your plan documents: people give us their plan's documents, or
     links to them, to learn from. The upload only stores them
@@ -4312,6 +4329,11 @@ class SharePlanDocumentsView(FormView):
                 prefix=PlanDocumentsReminderForm.PREFIX
             )
         context["reminded"] = self.request.GET.get("reminder") == "1"
+        # The same count for every visitor (shared_plan_documents.distinct_plan_count).
+        context["goal"] = shared_plan_documents.goal_progress(
+            timezone.localdate(timezone=DENIAL_WATCH_LAST_TIME_ZONE)
+        )
+        context["job_share"] = coverage_job_share()
         return context
 
     def get_success_url(self, files: bool = True, links: bool = False) -> str:

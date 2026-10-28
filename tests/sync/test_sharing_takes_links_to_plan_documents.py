@@ -475,8 +475,7 @@ class TheThankYouNoteSaysWhatHappensToWhatWasSharedTest(_LinkTestCase):
         text = page.find(id="what-happens").get_text(" ", strip=True)
         self.assertIn("We store what you share encrypted, files and links alike.", text)
         self.assertIn(
-            "Our team opens links by hand, and we never fetch them automatically.",
-            text,
+            "Our team opens links by hand. We never fetch them automatically.", text
         )
         for sentence in text.split(". "):
             if "link" in sentence:

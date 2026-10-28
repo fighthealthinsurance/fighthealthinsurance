@@ -784,10 +784,14 @@ def goal_progress(today: datetime.date) -> Optional[dict[str, Any]]:
     except Exception:
         logger.opt(exception=True).warning("Could not count the shared plans")
         count = None
+    if count is not None and count < GOAL_SHOWN_FROM:
+        count = None
     return {
         "plans": GOAL_PLANS,
         "by": GOAL_DATE,
-        "count": count if count is not None and count >= GOAL_SHOWN_FROM else None,
+        "count": count,
+        # How far along, for the bar: never past full.
+        "percent": min(count or 0, GOAL_PLANS) * 100 // GOAL_PLANS,
     }
 
 
