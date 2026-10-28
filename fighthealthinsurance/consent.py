@@ -49,6 +49,50 @@ SERVER_OCR_BOXES = ("privacy", "tos", "personalonly")
 SERVER_OCR_SESSION_KEY = "server_ocr_agreements"
 
 
+# The agreement to share plan documents for research, on the share page and
+# as the opt-in box on Explain Policy and the appeal's plan documents step.
+# Give SHARING_VERSION a new date whenever any of these words change.
+SHARING_VERSION = datetime.date(2026, 10, 28)
+_SHARING_BODY = (
+    "We combine them with documents from other people to learn how plans "
+    "work, and we share what we learn publicly. AI models read them, including "
+    "ones we run and outside services. We keep what you share as long as we "
+    "can. Please do your best to leave out your name, member ID and health "
+    "information, unless you want to include them. Either way, we do our best "
+    "to remove personal details from anything we share."
+)
+# The share page's agreement. The core terms sit beside the box; the
+# details fold away under them and are part of what the box agrees to.
+# Only files are said to be read by AI models: nothing reads a link.
+SHARING_TERMS = (
+    "We keep what you share, including what you tell us about the plan, and "
+    "use it with other people's documents to publish what we learn about "
+    "plans. Our team and AI models, including outside services, read your "
+    "files. We keep everything as long as we can."
+)
+SHARING_DETAILS = (
+    "We store what you share encrypted, files and links alike.",
+    "Our team opens links by hand. We never fetch them automatically.",
+    "Please leave out your name, member ID and health information, unless "
+    "you want to include them.",
+    "We do our best to remove personal details from anything we publish.",
+    "If you gave us your email, you can ask us to delete your data. We do our "
+    "best to delete the files and links you shared. What we've learned about "
+    "the plan stays, because it describes the plan, not you.",
+)
+SHARING_CHECKBOX = "I agree to share these documents this way."
+# Where uploading is for something else, only the tick shares a copy.
+SHARING_OPT_IN_TERMS = (
+    "If you tick the box, you agree to share a copy of these documents, and "
+    "what you've told us about the plan, with Fight Health Insurance. "
+    + _SHARING_BODY
+    + " If you ask us to delete your data, we do our best to delete this copy "
+    "too. What we've learned about the plan stays, because it describes the "
+    "plan, not you."
+)
+SHARING_OPT_IN_CHECKBOX = "Yes, also share a copy with Fight Health Insurance."
+
+
 def boxes_as_shown(ticked: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Each box with its wording and whether it was ticked."""
     return [

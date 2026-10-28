@@ -18,10 +18,12 @@
 #      schedule-to-start as the MATCHING/HISTORY services measure them, which
 #      keep counting when every worker is gone.
 #
-# The Temporal NAMESPACE the workers use is `default` (TEMPORAL_NAMESPACE in
-# worker.yaml / appeal-worker.yaml); the Kubernetes namespace is
-# `totallylegitco`. SDK series carry the Temporal namespace as `namespace`,
-# so worker-side rules match namespace="default" -- NOT the Kubernetes one
+# The Temporal NAMESPACES the workers use are `default` (TEMPORAL_NAMESPACE in
+# worker.yaml / appeal-worker.yaml) and `fhi-research`, where the appeal
+# worker hosts shared plan documents (TEMPORAL_RESEARCH_NAMESPACE in
+# appeal-worker.yaml); the Kubernetes namespace is `totallylegitco`. SDK
+# series carry the Temporal namespace as `namespace`, so worker-side rules
+# match namespace=~"default|fhi-research" -- NOT the Kubernetes one
 # (external review found the previous rules filtered on totallylegitco and
 # could never match). The manifest test pins this.
 #
@@ -105,8 +107,8 @@ spec:
               drain or deploy removes the queue's last poller.
 
     # ------------------------------------------------------------------------
-    # Family 1: WORKER-SIDE SDK metrics. Temporal namespace label is
-    # "default" here (see header).
+    # Family 1: WORKER-SIDE SDK metrics. The Temporal namespace label is
+    # "default" or "fhi-research" here (see header).
     # ------------------------------------------------------------------------
     - name: fhi-temporal-workers
       rules:
@@ -115,7 +117,7 @@ spec:
           expr: >-
             histogram_quantile(0.95,
               sum by (le, task_queue) (
-                rate(temporal_activity_schedule_to_start_latency_bucket{namespace="default"}[10m])
+                rate(temporal_activity_schedule_to_start_latency_bucket{namespace=~"default|fhi-research"}[10m])
               )
             ) > 60
           for: 10m
@@ -132,7 +134,7 @@ spec:
         # ---- SLOT EXHAUSTION -------------------------------------------------
         - alert: FhiTemporalWorkerSlotsExhausted
           expr: >-
-            max_over_time(temporal_worker_task_slots_available{namespace="default"}[5m]) == 0
+            max_over_time(temporal_worker_task_slots_available{namespace=~"default|fhi-research"}[5m]) == 0
           labels:
             severity: warning
           annotations:
@@ -150,7 +152,7 @@ spec:
         - alert: FhiTemporalActivityFailures
           expr: >-
             sum by (task_queue, activity_type) (
-              increase(temporal_activity_execution_failed{namespace="default"}[15m])
+              increase(temporal_activity_execution_failed{namespace=~"default|fhi-research"}[15m])
             ) > 3
           for: 0m
           labels:
@@ -165,7 +167,7 @@ spec:
         # ---- CLIENT RPC FAILURES against the Temporal frontend ----------------
         - alert: FhiTemporalRequestFailures
           expr: >-
-            sum by (pod) (increase(temporal_request_failure{namespace="default"}[10m])) > 10
+            sum by (pod) (increase(temporal_request_failure{namespace=~"default|fhi-research"}[10m])) > 10
           for: 5m
           labels:
             severity: critical
@@ -212,15 +214,15 @@ spec:
           expr: >-
             (
               sum by (taskqueue, task_type) (
-                increase(no_poller_tasks{temporal_namespace="default", taskqueue=~"fhi-.*"}[15m])
+                increase(no_poller_tasks{temporal_namespace=~"default|fhi-research", taskqueue=~"fhi-.*"}[15m])
               ) > 0
             )
             or
             (
               sum by (taskqueue, task_type) (
-                no_poller_tasks{temporal_namespace="default", taskqueue=~"fhi-.*"}
+                no_poller_tasks{temporal_namespace=~"default|fhi-research", taskqueue=~"fhi-.*"}
                   unless
-                no_poller_tasks{temporal_namespace="default", taskqueue=~"fhi-.*"} offset 15m
+                no_poller_tasks{temporal_namespace=~"default|fhi-research", taskqueue=~"fhi-.*"} offset 15m
               ) > 0
             )
           for: 0m
@@ -239,7 +241,7 @@ spec:
         - alert: FhiTemporalTaskQueueWorkWaiting
           expr: >-
             max by (taskqueue, task_type) (
-              max_over_time(approximate_backlog_age_seconds{temporal_namespace="default", taskqueue=~"fhi-.*", partition!="__sticky__"}[15m])
+              max_over_time(approximate_backlog_age_seconds{temporal_namespace=~"default|fhi-research", taskqueue=~"fhi-.*", partition!="__sticky__"}[15m])
             ) > 120
           for: 0m
           labels:
@@ -255,7 +257,7 @@ spec:
         # ---- CAN'T KEEP UP: a sustained backlog ----------------------------
         - alert: FhiTemporalTaskQueueBacklog
           expr: >-
-            sum by (taskqueue, task_type) (approximate_backlog_count{temporal_namespace="default", taskqueue=~"fhi-.*", partition!="__sticky__"}) > 25
+            sum by (taskqueue, task_type) (approximate_backlog_count{temporal_namespace=~"default|fhi-research", taskqueue=~"fhi-.*", partition!="__sticky__"}) > 25
           for: 30m
           labels:
             severity: warning
@@ -271,7 +273,7 @@ spec:
           expr: >-
             histogram_quantile(0.95,
               sum by (le, taskqueue) (
-                rate(task_schedule_to_start_latency_bucket{temporal_namespace="default", taskqueue=~"fhi-.*"}[10m])
+                rate(task_schedule_to_start_latency_bucket{temporal_namespace=~"default|fhi-research", taskqueue=~"fhi-.*"}[10m])
               )
             ) > 60
           for: 30m
@@ -287,7 +289,7 @@ spec:
         # ---- WORKERS DYING MID-ATTEMPT ------------------------------------
         - alert: FhiTemporalActivityTimeouts
           expr: >-
-            sum by (taskqueue) (increase(activity_task_timeout{temporal_namespace="default", taskqueue=~"fhi-.*"}[30m])) > 3
+            sum by (taskqueue) (increase(activity_task_timeout{temporal_namespace=~"default|fhi-research", taskqueue=~"fhi-.*"}[30m])) > 3
           for: 0m
           labels:
             severity: warning

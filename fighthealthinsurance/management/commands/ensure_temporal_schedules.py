@@ -1,19 +1,25 @@
 """Bring FHI's Temporal Schedules in step with their flags.
 
-Today there is one, ``chat-routing-policy``: created or updated (and
-unpaused) when TEMPORAL_ENABLED and TEMPORAL_CHAT_POLICY_ENABLED are both on,
-paused when not. The appeal-worker process does the same at start-up, so
-this command is for doing it by hand, for example after changing the flag
-without restarting the workers. It is idempotent.
+There are two. ``chat-routing-policy`` is created or updated (and
+unpaused) when TEMPORAL_ENABLED and TEMPORAL_CHAT_POLICY_ENABLED are both
+on, paused when not. ``plan-documents-sweep`` follows
+temporal_client.plan_documents_enabled() the same way, in the research
+namespace, over the same connection. The appeal-worker
+process does the same at start-up, so this command is for doing it by hand,
+for example after changing a flag without restarting the workers. It is
+idempotent.
 
-With TEMPORAL_ENABLED off it does nothing and does not connect.
+Each Schedule is tried on its own, so one failing never stops the other.
+It prints one line per Schedule, its outcome or the error's class name,
+and exits non-zero when any failed. With TEMPORAL_ENABLED off it does
+nothing and does not connect.
 """
 
 import asyncio
 from typing import Any
 
 from django.conf import settings
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 
 class Command(BaseCommand):
@@ -23,19 +29,55 @@ class Command(BaseCommand):
         if not getattr(settings, "TEMPORAL_ENABLED", False):
             self.stdout.write("TEMPORAL_ENABLED is off; not contacting Temporal.")
             return
-        from fighthealthinsurance.temporal_client import CHAT_POLICY_SCHEDULE_ID
+        failed = []
+        for schedule_id, outcome, ok in asyncio.run(self._ensure()):
+            self.stdout.write(f"{schedule_id}: {outcome}")
+            if not ok:
+                failed.append(schedule_id)
+        if failed:
+            raise CommandError(f"Not kept in step: {', '.join(failed)}")
 
-        outcome = asyncio.run(self._ensure())
-        self.stdout.write(f"{CHAT_POLICY_SCHEDULE_ID}: {outcome}")
-
-    async def _ensure(self) -> str:
+    async def _ensure(self) -> list[tuple[str, str, bool]]:
         from fighthealthinsurance.temporal_client import (
+            CHAT_POLICY_SCHEDULE_ID,
+            DEFAULT_PROFILE,
+            PLAN_DOCUMENTS_SCHEDULE_ID,
+            RESEARCH_PROFILE,
             chat_policy_schedule_enabled,
+            client_for_profile,
             ensure_chat_policy_schedule,
+            ensure_plan_documents_schedule,
             get_temporal_client,
+            plan_documents_enabled,
         )
 
         client = await get_temporal_client()
-        return await ensure_chat_policy_schedule(
-            client, enabled=chat_policy_schedule_enabled()
-        )
+        results = []
+        for schedule_id, ensure, enabled, profile in (
+            (
+                CHAT_POLICY_SCHEDULE_ID,
+                ensure_chat_policy_schedule,
+                chat_policy_schedule_enabled(),
+                DEFAULT_PROFILE,
+            ),
+            (
+                PLAN_DOCUMENTS_SCHEDULE_ID,
+                ensure_plan_documents_schedule,
+                plan_documents_enabled(),
+                RESEARCH_PROFILE,
+            ),
+        ):
+            try:
+                # Each Schedule in its own namespace, over the one connection.
+                target = (
+                    client
+                    if profile == DEFAULT_PROFILE
+                    else client_for_profile(client, profile)
+                )
+                outcome = await ensure(target, enabled=enabled)
+            except Exception as e:
+                # Class name only, as the worker logs it.
+                results.append((schedule_id, f"failed ({type(e).__name__})", False))
+            else:
+                results.append((schedule_id, outcome, True))
+        return results

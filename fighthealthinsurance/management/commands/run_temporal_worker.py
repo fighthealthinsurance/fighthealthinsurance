@@ -18,7 +18,11 @@ installs.
 
 The appeal role (and ``all``) also hosts the chat routing policy queue as a
 Worker of its own when TEMPORAL_CHAT_POLICY_ENABLED is on, and keeps the
-``chat-routing-policy`` Schedule in step with that flag at start-up.
+``chat-routing-policy`` Schedule in step with that flag at start-up. It
+hosts the shared plan documents queue the same way when
+temporal_client.plan_documents_enabled() is true, and keeps the
+``plan-documents-sweep`` Schedule in step with it, both in the research
+namespace through a client that shares this process's connection.
 """
 
 import asyncio
@@ -101,6 +105,54 @@ def app_metrics_server() -> str | None:
         )
         return None
     return bind
+
+
+async def plan_documents_client(client: Any, enabled: bool) -> tuple[Any, bool]:
+    """The client for shared plan documents, and whether to host their queue.
+
+    The client shares ``client``'s connection but works in the research
+    namespace with the research payload key. The queue is hosted only when
+    ``enabled`` and that namespace exists: a Worker in a missing namespace
+    fails as it starts and would take this process's other Workers down
+    with it. The client is None when it can't be made or the namespace
+    can't be checked, so the Schedule is left as it is rather than paused
+    under a replica that hosts it.
+    """
+    from fighthealthinsurance.temporal_client import (
+        RESEARCH_PROFILE,
+        client_for_profile,
+        namespace_exists,
+        temporal_namespace,
+    )
+
+    namespace = temporal_namespace(RESEARCH_PROFILE)
+    try:
+        research = client_for_profile(client, RESEARCH_PROFILE)
+    except Exception as e:
+        logger.warning(
+            f"Shared plan documents stay off: no client for the {namespace!r} "
+            f"namespace ({type(e).__name__})"
+        )
+        return None, False
+    if not enabled:
+        return research, False
+    try:
+        exists = await asyncio.wait_for(
+            namespace_exists(research), timeout=SCHEDULE_ENSURE_TIMEOUT_SECONDS
+        )
+    except Exception as e:
+        logger.warning(
+            f"Shared plan documents stay off until the next start: the "
+            f"{namespace!r} namespace could not be checked ({type(e).__name__})"
+        )
+        return None, False
+    if not exists:
+        logger.error(
+            f"Shared plan documents stay off: the Temporal namespace {namespace!r} "
+            "does not exist yet (k8s/temporal/README.md says how to create it)"
+        )
+        return research, False
+    return research, True
 
 
 def install_shutdown_handlers(workers, stop, log, tasks=None) -> None:
@@ -249,11 +301,16 @@ class Command(BaseCommand):
             chat_routing_policy as policy_activities,
             fax as fax_activities,
             intake_journey as intake_activities,
+            plan_documents_sweep as sweep_activities,
+            shared_plan_documents as plan_document_activities,
         )
         from fighthealthinsurance.temporal_client import (
             chat_policy_schedule_enabled,
             ensure_chat_policy_schedule,
+            ensure_plan_documents_schedule,
             get_temporal_client,
+            plan_documents_enabled,
+            research_payload_key_problem,
         )
         from fighthealthinsurance.workflows.generate_appeal import (
             GenerateAppealWorkflow,
@@ -309,6 +366,21 @@ class Command(BaseCommand):
         policy_enabled = chat_policy_schedule_enabled()
         policy_queue = settings.TEMPORAL_CHAT_POLICY_TASK_QUEUE
         hosts_policy = role in ("appeal", "all")
+        # Shared plan documents: like the policy, in the research namespace
+        # and needing the research key. --task-queue never changes it.
+        plan_documents_on = plan_documents_enabled()
+        plan_documents_queue = settings.TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE
+        hosts_plan_documents = role in ("appeal", "all")
+        if hosts_plan_documents and getattr(
+            settings, "TEMPORAL_PLAN_DOCUMENTS_ENABLED", False
+        ):
+            problem = research_payload_key_problem()
+            if problem:
+                # The flag alone looks on; say why the queue stays dark.
+                logger.warning(
+                    f"TEMPORAL_PLAN_DOCUMENTS_ENABLED is on but {problem}, "
+                    "so shared plan documents stay off"
+                )
 
         # The connect is raced against stop: a SIGTERM that lands while the
         # connection is still pending must not be discarded (review), and a
@@ -324,11 +396,19 @@ class Command(BaseCommand):
             return
         stopped.cancel()
         client = connect.result()
+        research_client: Any = None
+        if hosts_plan_documents:
+            research_client, plan_documents_on = await plan_documents_client(
+                client, plan_documents_on
+            )
         self.stdout.write(
             f"Connected to Temporal at {settings.TEMPORAL_HOST} "
             f"(namespace={settings.TEMPORAL_NAMESPACE}); role={role}; appeal "
             f"journey {'ENABLED' if journey_enabled else 'disabled'}; chat "
             f"policy {'ENABLED' if policy_enabled and hosts_policy else 'disabled'}; "
+            f"plan documents "
+            f"{'ENABLED' if plan_documents_on and hosts_plan_documents else 'disabled'} "
+            f"(namespace={settings.TEMPORAL_RESEARCH_NAMESPACE}); "
             f"metrics {os.environ.get(METRICS_BIND_ENV) if runtime else 'off'}; "
             f"app metrics {app_metrics or 'off'}"
         )
@@ -347,6 +427,22 @@ class Command(BaseCommand):
                 # Class name only. Hosting goes on; the next start retries.
                 logger.warning(
                     "Could not keep the chat routing policy schedule in step: "
+                    f"{type(e).__name__}"
+                )
+        if hosts_plan_documents and research_client is not None:
+            # The same for the sweep, in the research namespace: set when the
+            # flags allow, paused when not, only where its queue is hosted.
+            try:
+                outcome = await asyncio.wait_for(
+                    ensure_plan_documents_schedule(
+                        research_client, enabled=plan_documents_on
+                    ),
+                    timeout=SCHEDULE_ENSURE_TIMEOUT_SECONDS,
+                )
+                self.stdout.write(f"Plan documents sweep schedule: {outcome}")
+            except Exception as e:
+                logger.warning(
+                    "Could not keep the plan documents sweep schedule in step: "
                     f"{type(e).__name__}"
                 )
 
@@ -454,18 +550,48 @@ class Command(BaseCommand):
                 runs.append(policy_worker.run())
                 workers.append(policy_worker)
                 queues.append(policy_queue)
+            if hosts_plan_documents and plan_documents_on:
+                # Its own Worker, so reading files never takes an appeal
+                # generation's slot. One at a time: a reading holds a file of
+                # up to 32MB and may start a PDF child of up to 1GB, inside
+                # the appeal worker's memory.
+                plan_documents_workflows: List[type] = (
+                    workflow_registry.plan_documents_workflows()
+                )
+                plan_documents_worker = Worker(
+                    research_client,
+                    task_queue=plan_documents_queue,
+                    workflows=plan_documents_workflows,
+                    activities=[
+                        plan_document_activities.list_shared_plan_documents,
+                        plan_document_activities.process_shared_plan_document,
+                        plan_document_activities.mark_shared_plan_document_unreadable,
+                        sweep_activities.find_due_plan_documents_reminders,
+                        sweep_activities.send_plan_documents_reminder,
+                        sweep_activities.find_waiting_share_batches,
+                    ],
+                    max_concurrent_activities=1,
+                    # Covers a reading's three-minute start_to_close, inside
+                    # the appeal Worker's 300s drain and the pod's grace.
+                    graceful_shutdown_timeout=timedelta(minutes=3),
+                )
+                runs.append(plan_documents_worker.run())
+                workers.append(plan_documents_worker)
+                queues.append(plan_documents_queue)
             if not runs:
-                # role=appeal with the journey and policy flags dark. Idle
-                # instead of exiting: an exit would crash-loop the
-                # Deployment, but this pod being inert IS the kill switch
-                # working -- flipping the flags and restarting the
-                # Deployment brings it live.
+                # role=appeal with the journey, policy and plan documents
+                # flags dark. Idle instead of exiting: an exit would
+                # crash-loop the Deployment, but this pod being inert IS the
+                # kill switch working -- flipping the flags and restarting
+                # the Deployment brings it live.
                 self.stdout.write(
-                    "Appeal worker role selected but the appeal journey and "
-                    "chat policy flags are OFF; idling (this process will host "
-                    "nothing until TEMPORAL_ENABLED and "
-                    "TEMPORAL_APPEAL_JOURNEY_ENABLED or "
-                    "TEMPORAL_CHAT_POLICY_ENABLED are set and the process "
+                    "Appeal worker role selected but the appeal journey, "
+                    "chat policy and plan documents flags are OFF; idling "
+                    "(this process will host nothing until TEMPORAL_ENABLED "
+                    "and TEMPORAL_APPEAL_JOURNEY_ENABLED, "
+                    "TEMPORAL_CHAT_POLICY_ENABLED or "
+                    "TEMPORAL_PLAN_DOCUMENTS_ENABLED (with "
+                    "TEMPORAL_RESEARCH_PAYLOAD_KEY) are set and the process "
                     "restarts)."
                 )
                 await stop.wait()

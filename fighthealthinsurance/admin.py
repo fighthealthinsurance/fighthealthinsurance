@@ -1,9 +1,14 @@
+from urllib.parse import urlsplit
+
 from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.db import connection
 from django.db.models import IntegerField
 from django.db.models.expressions import RawSQL
+from django.urls import reverse
+from django.utils import timezone
+from django.utils.html import format_html
 
 from fighthealthinsurance.constants import SITE_BANNER_CANNED_MESSAGES
 from fighthealthinsurance.templatetags.bundles import versioned
@@ -1265,10 +1270,140 @@ class AuditLogAdmin(admin.ModelAdmin):
 
 @admin.register(PolicyDocument)
 class PolicyDocumentAdmin(admin.ModelAdmin):
-    list_display = ("id", "filename", "document_type", "plan_category", "created_at")
-    list_filter = ("document_type", "plan_category", "created_at")
-    search_fields = ("filename", "hashed_email")
-    readonly_fields = ("id", "created_at")
+    list_display = (
+        "id",
+        "filename",
+        "source",
+        "document_type",
+        "plan_category",
+        "processing_status",
+        "created_at",
+        "file",
+        "link",
+    )
+    list_filter = (
+        "source",
+        "processing_status",
+        "document_type",
+        "plan_category",
+        "created_at",
+    )
+    # A shared link is stored encrypted, so it can't be searched.
+    search_fields = (
+        "filename",
+        "hashed_email",
+        "insurer_name",
+        "employer_name",
+    )
+    # Staff reach the file and its cleaned text through the links below,
+    # never the raw fields; the cleaned text runs long. A shared link is
+    # shown, never edited.
+    exclude = ("document_enc", "cleaned_text", "shared_link")
+    readonly_fields = (
+        "id",
+        "created_at",
+        "file",
+        "link",
+        "source",
+        "shared_consent_version",
+        "shared_at",
+        "share_batch",
+        "fingerprint",
+        "shared_link_fingerprint",
+        "processing_status",
+        "processed_at",
+    )
+    actions = ("read_again",)
+
+    def save_model(self, request, obj, form, change):
+        # Only what the form changed: the encrypted fields it excludes are
+        # never written back from what this request read.
+        if change:
+            obj.save(update_fields=form.changed_data)
+            return
+        super().save_model(request, obj, form, change)
+
+    @admin.action(description="Read again (shared files marked unreadable)")
+    def read_again(self, request, queryset):
+        # Back to waiting: the hourly sweep starts a new reading for them.
+        updated = queryset.filter(
+            source__in=PolicyDocument.SHARED_FILE_SOURCES,
+            processing_status=PolicyDocument.PROCESSING_UNREADABLE,
+        ).update(
+            processing_status=PolicyDocument.PROCESSING_RECEIVED,
+            processed_at=None,
+            cleaned_text="",
+        )
+        self.message_user(
+            request,
+            f"{updated} file(s) will be read again by the next hourly sweep; "
+            f"{queryset.count() - updated} were not shared files marked unreadable.",
+        )
+
+    def changelist_view(self, request, extra_context=None):
+        # How many shared files there are, how many different documents, and
+        # how many shared links; then the plans they make up, by week, kind,
+        # year and premium answer.
+        from fighthealthinsurance.shared_plan_documents import share_counts
+
+        shared = PolicyDocument.objects.filter(
+            source__in=PolicyDocument.SHARED_FILE_SOURCES
+        )
+        extra_context = {
+            **(extra_context or {}),
+            "share_counts": share_counts(timezone.localdate()),
+            "shared_files": shared.count(),
+            "shared_documents": shared.exclude(fingerprint="")
+            .values("fingerprint")
+            .distinct()
+            .count(),
+            "shared_links": PolicyDocument.objects.filter(
+                source=PolicyDocument.SOURCE_SHARED_LINK
+            )
+            .exclude(shared_link="")
+            .count(),
+        }
+        return super().changelist_view(request, extra_context=extra_context)
+
+    @admin.display(description="File")
+    def file(self, obj: PolicyDocument) -> str:
+        # Text first: reading it opens nothing a stranger made.
+        if (
+            not obj.pk
+            or not obj.document_enc
+            or obj.source not in PolicyDocument.SHARED_FILE_SOURCES
+        ):
+            return "-"
+        links = format_html(
+            '<a href="{}">Read as text</a> or <a href="{}">download the original</a>',
+            reverse("staff_policy_document_text", kwargs={"pk": obj.pk}),
+            reverse("staff_policy_document_download", kwargs={"pk": obj.pk}),
+        )
+        if obj.processing_status == PolicyDocument.PROCESSING_READY:
+            # The cleaned text first: it has personal details taken out.
+            links = format_html(
+                '<a href="{}">Read the cleaned text</a>, {}',
+                reverse("staff_policy_document_cleaned_text", kwargs={"pk": obj.pk}),
+                links,
+            )
+        return links
+
+    @admin.display(description="Link")
+    def link(self, obj: PolicyDocument) -> str:
+        # The address as text, then a link staff open by hand in a new tab.
+        # The server never fetches it.
+        url = obj.shared_link
+        if not url:
+            return "-"
+        text = format_html('<span style="overflow-wrap: anywhere">{}</span>', url)
+        if urlsplit(url).scheme.lower() not in ("http", "https"):
+            return text
+        return format_html(
+            '{} <a href="{}" target="_blank" rel="noopener noreferrer">'
+            "Open in a new tab</a>",
+            text,
+            url,
+        )
 
 
 @admin.register(PolicyDocumentAnalysis)
