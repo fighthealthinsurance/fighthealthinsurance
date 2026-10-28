@@ -311,14 +311,20 @@ async def _arun_child(
 
 
 async def aextract_pdf_page_texts(
-    content: bytes, max_pages: int, max_chars: int, timeout_secs: float
+    content: bytes,
+    max_pages: int,
+    max_chars: int,
+    timeout_secs: float,
+    executor: Optional[ThreadPoolExecutor] = None,
 ) -> List[str]:
     """Run :func:`extract_pdf_page_texts` in a child process.
 
     Raises TimeoutError when it takes longer than ``timeout_secs``. This
     process reads no more of the child's output than ``max_pages`` pages
     holding ``max_chars`` characters can take, and raises RuntimeError if the
-    child writes more.
+    child writes more. ``executor`` is the pool whose thread waits on the
+    child, the text pool unless a caller brings its own so its reads never
+    wait behind another feature's.
     """
     max_output_bytes = (
         _JSON_BYTES_PER_CHAR * max_chars
@@ -326,7 +332,7 @@ async def aextract_pdf_page_texts(
         + _REPORT_BYTES
     )
     page_texts: List[str] = await _arun_child(
-        _TEXT,
+        executor or _TEXT,
         ["text", str(max_pages), str(max_chars)],
         content,
         timeout_secs,

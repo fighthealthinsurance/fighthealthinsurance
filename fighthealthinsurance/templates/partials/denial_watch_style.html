@@ -39,6 +39,8 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
   .dw-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--fhi-space-4); }
   .dw-stat { display: grid; gap: var(--fhi-space-1); align-content: start; padding-top: var(--fhi-space-3); border-top: 3px solid var(--fhi-ink); }
   .dw-stat-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--fhi-space-2); margin: 0; }
+  /* A tile's kicker and source note are paragraphs too; the tile's gap spaces them. */
+  .dw-stat > p { margin: 0; }
   .dw-stat b { font-size: 2rem; line-height: 1.1; }
   .dw-stat strong { font-size: 1.3rem; line-height: 1.15; color: var(--fhi-ink); }
   .dw-stat span { color: var(--fhi-ink-2); }

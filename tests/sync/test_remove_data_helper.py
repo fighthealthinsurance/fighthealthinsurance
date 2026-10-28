@@ -10,6 +10,7 @@ deleted while rows for unrelated emails are untouched.
 from datetime import date, timedelta
 
 from django.test import TestCase
+from django.utils import timezone
 
 from fighthealthinsurance.helpers import RemoveDataHelper
 from fighthealthinsurance.models import (
@@ -23,6 +24,7 @@ from fighthealthinsurance.models import (
     FollowUpSched,
     MailingListSubscriber,
     OngoingChat,
+    PlanDocumentsReminder,
 )
 
 
@@ -88,6 +90,9 @@ class TestRemoveDataHelper(TestCase):
         )
         MailingListSubscriber.objects.create(email=cls.target_email)
         DemoRequests.objects.create(email=cls.target_email)
+        PlanDocumentsReminder.objects.create(
+            email=cls.target_email, send_after=timezone.now()
+        )
 
         # --- Control rows (should survive) -----------------------------
         cls.other_denial = Denial.objects.create(
@@ -101,6 +106,9 @@ class TestRemoveDataHelper(TestCase):
             appeal_text="other appeal",
         )
         MailingListSubscriber.objects.create(email=cls.other_email)
+        PlanDocumentsReminder.objects.create(
+            email=cls.other_email, send_after=timezone.now()
+        )
         ChatLeads.objects.create(
             name="Other Lead",
             email=cls.other_email,
@@ -136,6 +144,9 @@ class TestRemoveDataHelper(TestCase):
                 email__iexact=self.target_email
             ).count(),
             "demo_requests": DemoRequests.objects.filter(
+                email__iexact=self.target_email
+            ).count(),
+            "plan_documents_reminder": PlanDocumentsReminder.objects.filter(
                 email__iexact=self.target_email
             ).count(),
         }
@@ -191,6 +202,9 @@ class TestRemoveDataHelper(TestCase):
         self.assertEqual(
             ChatLeads.objects.filter(email__iexact=self.other_email).count(),
             pre_other_leads,
+        )
+        self.assertTrue(
+            PlanDocumentsReminder.objects.filter(email=self.other_email).exists()
         )
 
     def test_remove_data_normalizes_whitespace_and_case(self):
