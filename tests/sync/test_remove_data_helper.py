@@ -9,6 +9,7 @@ deleted while rows for unrelated emails are untouched.
 
 from datetime import date, timedelta
 
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from fighthealthinsurance.helpers import RemoveDataHelper
@@ -21,9 +22,15 @@ from fighthealthinsurance.models import (
     FaxesToSend,
     FollowUp,
     FollowUpSched,
+    InterestedProfessional,
     MailingListSubscriber,
     OngoingChat,
+    PriorAuthRequest,
+    ScheduledEmail,
 )
+from fhi_users.models import ProfessionalUser
+
+User = get_user_model()
 
 
 class TestRemoveDataHelper(TestCase):
@@ -77,7 +84,26 @@ class TestRemoveDataHelper(TestCase):
             appeal_text="fax by email",
             paid=False,
         )
-        OngoingChat.objects.create(hashed_email=cls.target_hash)
+        cls.target_chat = OngoingChat.objects.create(hashed_email=cls.target_hash)
+        # A prior auth the chat made on its own: it outlives the chat
+        # (SET_NULL) unless the helper deletes it first.
+        PriorAuthRequest.objects.create(
+            chat=cls.target_chat,
+            patient_name="Rebecca Lee Crumpler",
+            diagnosis="back pain",
+            treatment="MRI",
+        )
+        # Stored mixed-case, as a sign-up form may have saved it.
+        InterestedProfessional.objects.create(
+            name="Rebecca Lee Crumpler",
+            email="Test@Example.com",
+            phone_number="555-0003",
+        )
+        ScheduledEmail.objects.create(
+            to_email="Test@Example.com",
+            subject="Introduction",
+            template_name="proconnector_intro",
+        )
         ChatLeads.objects.create(
             name="Target Lead",
             email=cls.target_email,
@@ -110,6 +136,14 @@ class TestRemoveDataHelper(TestCase):
             agreed_to_terms=True,
         )
         OngoingChat.objects.create(hashed_email=cls.other_hash)
+        InterestedProfessional.objects.create(
+            name="Elizabeth Blackwell", email=cls.other_email
+        )
+        ScheduledEmail.objects.create(
+            to_email=cls.other_email,
+            subject="Introduction",
+            template_name="proconnector_intro",
+        )
 
     def _target_row_counts(self) -> dict:
         """Count the rows that should have been deleted for target_email."""
@@ -137,6 +171,15 @@ class TestRemoveDataHelper(TestCase):
             ).count(),
             "demo_requests": DemoRequests.objects.filter(
                 email__iexact=self.target_email
+            ).count(),
+            "interested_professional": InterestedProfessional.objects.filter(
+                email__iexact=self.target_email
+            ).count(),
+            "scheduled_email": ScheduledEmail.objects.filter(
+                to_email__iexact=self.target_email
+            ).count(),
+            "chat_prior_auth": PriorAuthRequest.objects.filter(
+                patient_name="Rebecca Lee Crumpler"
             ).count(),
         }
 
@@ -230,3 +273,51 @@ class TestRemoveDataHelper(TestCase):
         self.assertEqual(
             FaxesToSend.objects.filter(email__iexact=self.target_email).count(), 0
         )
+
+    def test_remove_data_deletes_a_professional_signup_stored_in_mixed_case(self):
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertFalse(
+            InterestedProfessional.objects.filter(
+                email__iexact=self.target_email
+            ).exists()
+        )
+
+    def test_remove_data_deletes_queued_emails_not_yet_sent(self):
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertFalse(
+            ScheduledEmail.objects.filter(
+                to_email__iexact=self.target_email
+            ).exists()
+        )
+
+    def test_remove_data_leaves_other_signups_and_queued_emails(self):
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertEqual(
+            (
+                InterestedProfessional.objects.filter(email=self.other_email).count(),
+                ScheduledEmail.objects.filter(to_email=self.other_email).count(),
+            ),
+            (1, 1),
+        )
+
+    def test_remove_data_deletes_the_prior_auth_their_chat_made(self):
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertFalse(
+            PriorAuthRequest.objects.filter(
+                patient_name="Rebecca Lee Crumpler"
+            ).exists()
+        )
+
+    def test_remove_data_keeps_a_professionals_prior_auth_from_their_chat(self):
+        user = User.objects.create_user(
+            username="virginia_apgar", email="apgar@example.com", password="x"
+        )
+        professional = ProfessionalUser.objects.create(user=user, active=True)
+        kept = PriorAuthRequest.objects.create(
+            chat=self.target_chat,
+            creator_professional_user=professional,
+            diagnosis="asthma",
+            treatment="inhaler",
+        )
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertTrue(PriorAuthRequest.objects.filter(pk=kept.pk).exists())

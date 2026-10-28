@@ -1,6 +1,7 @@
 import datetime
 from unittest.mock import patch
 
+from django.contrib.sessions.models import Session
 from django.core import mail
 from django.test import TestCase
 from django.urls import reverse
@@ -174,6 +175,19 @@ class TestConfirmDeleteDataView(TestCase):
         assert not DeleteToken.objects.filter(
             hashed_email=self._hashed("test@test-fhi.com")
         ).exists()
+
+    @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
+    def test_post_clears_the_browser_session_that_holds_the_email(self, mock_remove):
+        """The intake keeps the raw email in the session; deletion ends it."""
+        session = self.client.session
+        session["email"] = "test@test-fhi.com"
+        session.save()
+        token = self._create_token()
+        self.client.post(
+            reverse("confirm_delete_data"),
+            {"token": token.token, "email": "test@test-fhi.com"},
+        )
+        assert not Session.objects.filter(session_key=session.session_key).exists()
 
     def test_invalid_token_shows_error(self):
         url = reverse("confirm_delete_data")

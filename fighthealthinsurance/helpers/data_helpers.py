@@ -17,9 +17,12 @@ from fighthealthinsurance.models import (
     FaxesToSend,
     FollowUp,
     FollowUpSched,
+    InterestedProfessional,
     MailingListSubscriber,
     OngoingChat,
     PolicyDocument,
+    PriorAuthRequest,
+    ScheduledEmail,
 )
 
 
@@ -118,11 +121,21 @@ class RemoveDataHelper:
         FaxesToSend.objects.filter(email__iexact=email).delete()
         # Chat data - use find_chats_by_email to catch all related chats
         # (covers hashed_email, user__email, and professional_user__user__email)
-        OngoingChat.find_chats_by_email(email).delete()
+        chats = OngoingChat.find_chats_by_email(email)
+        # Prior auths outlive their chat (SET_NULL); a professional's stay.
+        PriorAuthRequest.objects.filter(
+            chat__in=chats,
+            creator_professional_user__isnull=True,
+            created_for_professional_user__isnull=True,
+        ).delete()
+        chats.delete()
         ChatLeads.objects.filter(email__iexact=email).delete()
         # Policy documents (encrypted files cleaned up via post_delete signal)
         PolicyDocument.objects.filter(hashed_email=hashed_email).delete()
-        # Mailing list and demo requests
+        # Mailing list, demo requests and professional sign-ups
         MailingListSubscriber.objects.filter(email__iexact=email).delete()
         DemoRequests.objects.filter(email__iexact=email).delete()
+        InterestedProfessional.objects.filter(email__iexact=email).delete()
+        # Unsent queued emails, so none goes out after the deletion.
+        ScheduledEmail.objects.filter(to_email__iexact=email, sent=False).delete()
         return denials_removed

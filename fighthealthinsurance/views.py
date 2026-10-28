@@ -1505,6 +1505,8 @@ class ConfirmDeleteDataView(View):
             )
         RemoveDataHelper.remove_data_for_email(email_normalized)
         delete_token.delete()
+        # The browser's session holds their email too.
+        request.session.flush()
         return render(
             request,
             "removed_data.html",
