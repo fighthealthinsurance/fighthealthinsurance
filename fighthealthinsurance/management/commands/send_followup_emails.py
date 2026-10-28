@@ -5,6 +5,7 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandParser
 
 from fighthealthinsurance.followup_emails import FollowUpEmailSender
+from fighthealthinsurance.utils import mask_email_for_logging
 
 
 class Command(BaseCommand):
@@ -46,16 +47,19 @@ class Command(BaseCommand):
         if dry_run:
             self.stdout.write(self.style.WARNING("Dry run mode - not sending emails."))
             selected = grouped[:count] if count else grouped
+            # Addresses masked: the run's shape is enough, and some withdrew.
+            current = sender.current_emails(candidates)
             for best, others in selected:
                 to_send, suppressed = sender.preview_grouped_send([best] + others)
                 if to_send is None:
                     self.stdout.write(
                         f"  Would suppress all {len(others) + 1} follow-up(s) "
-                        f"for {best.email} (all stale)"
+                        "for one address (all stale or withdrawn)"
                     )
                     continue
                 suffix = f" (+{suppressed} suppressed)" if suppressed else ""
-                self.stdout.write(f"  Would send to: {to_send.email}{suffix}")
+                address = mask_email_for_logging(current.get(to_send.denial_id_id))
+                self.stdout.write(f"  Would send to: {address}{suffix}")
             return
 
         sent_count = sender.send_all(count=count, candidates=candidates)

@@ -20,11 +20,19 @@ Each test pins one property of the text that reaches a model:
 """
 
 import asyncio
+import json
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from fighthealthinsurance.chat.tools.appeal_tool import AppealTool
+from fighthealthinsurance.chat.tools.generate_appeal_letter_tool import (
+    _CONTEXT_ONLY_KEYS,
+    GenerateAppealLetterTool,
+)
+from fighthealthinsurance.chat.tools.prior_auth_tool import PriorAuthTool
 from fighthealthinsurance.escalation_addresses import EscalationRecipient
 from fighthealthinsurance.generate_appeal import (
     AppealGenerator,
@@ -605,6 +613,29 @@ class TestChatSystemPrompt:
     async def test_logged_in_users_get_the_letter_generator(self):
         sp = await _chat_system_prompt("Please draft my letter.", is_logged_in=True)
         assert "**generate_appeal_letter**{" in sp
+
+    @pytest.mark.asyncio
+    async def test_tool_examples_use_only_fields_the_tools_save(self):
+        """An example key the tool drops would be lost while the tool
+        reports success."""
+        sp = await _chat_system_prompt("Please draft my letter.", is_logged_in=True)
+        saved = {
+            "create_or_update_appeal": AppealTool.appeal_fields
+            | AppealTool.denial_fields,
+            "generate_appeal_letter": GenerateAppealLetterTool.denial_fields
+            | set(_CONTEXT_ONLY_KEYS),
+            "create_or_update_prior_auth": PriorAuthTool.prior_auth_fields
+            | set(PriorAuthTool.FIELD_MAPPINGS),
+        }
+        examples = re.findall(r"\*\*([a-z_]+)\*\*(\{[^\n]*?\})", sp)
+        assert {tool for tool, _ in examples} == set(saved)
+        unsaved = {
+            (tool, key)
+            for tool, payload in examples
+            for key in json.loads(payload)
+            if key not in saved[tool]
+        }
+        assert unsaved == set()
 
     @pytest.mark.asyncio
     async def test_the_model_may_still_write_the_letter_itself(self):

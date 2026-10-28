@@ -457,8 +457,9 @@ class TheThankYouNoteIsShortTest(_LinkTestCase):
     def test_after_files_it_names_documents(self):
         self.assertEqual(
             self.thanks("1"),
-            "Thank you. We have your documents. We'll publish what we learn on "
-            "this site. Have more? Share more documents",
+            "Thank you. We have your documents. Once enough people share, we'll "
+            "publish what we learn, combined across plans, with personal details "
+            "removed as best we can. Have more? Share more documents",
         )
 
     def test_after_links_it_names_links_and_no_ai_model(self):

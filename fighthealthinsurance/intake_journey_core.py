@@ -74,6 +74,18 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
         )
         logger.info(f"Intake nudge skipped for denial {denial_uuid}: form completed")
         return False
+    from fighthealthinsurance.models import Denial
+
+    # Read again: the email can be withdrawn while the steps above wait.
+    address = (
+        await Denial.objects.filter(pk=denial.pk)
+        .values_list("raw_email", flat=True)
+        .afirst()
+        or ""
+    ).strip()
+    if not address:
+        logger.info(f"Intake nudge skipped for denial {denial_uuid}: email withdrawn")
+        return False
     base = getattr(
         settings, "FHI_PUBLIC_BASE_URL", "https://www.fighthealthinsurance.com"
     )
@@ -92,7 +104,7 @@ async def send_abandonment_nudge(hashed_email: str, denial_uuid: str) -> bool:
             NUDGE_SUBJECT,
             NUDGE_TEMPLATE,
             {"url": url, "days": intake_resume.link_days()},
-            denial.raw_email,
+            address,
         )
     except Exception:
         await intake_outbox.arecord_nudge_outcome(

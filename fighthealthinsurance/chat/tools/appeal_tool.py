@@ -7,19 +7,20 @@ or update appeal records linked to the current chat.
 
 import json
 import re
-from typing import Any, Awaitable, Callable, Optional, Tuple
+from typing import Any, Awaitable, Callable, FrozenSet, List, Optional, Tuple
 
 from loguru import logger
 
+from fighthealthinsurance.log_tags import error_text
 from fighthealthinsurance.utils import aget_related
 
 from .base_tool import (
     BaseTool,
     is_safe_tool_field,
+    log_dropped_tool_fields,
     parse_anchored_json_payload,
     replace_anchored_call,
     set_tool_field,
-    settable_model_fields,
     strip_anchored_calls,
 )
 from .patterns import CREATE_OR_UPDATE_APPEAL_REGEX
@@ -49,6 +50,22 @@ class AppealTool(BaseTool):
     # get its own pass or it renders as raw tool syntax.
     max_calls_per_reply: int = 3
     anchored_calls: bool = True
+
+    # What a payload may set: the fields the tool prompt documents, plus a
+    # few claim details. Everything else (consent, identity, delivery,
+    # bookkeeping, curation) is dropped.
+    appeal_fields: FrozenSet[str] = frozenset({"appeal_text"})
+    denial_fields: FrozenSet[str] = frozenset(
+        {
+            "appeal_text",
+            "denial_text",
+            "procedure",
+            "diagnosis",
+            "insurance_company",
+            "date_of_service_text",
+            "employer_name",
+        }
+    )
 
     def strip_calls_on_error(self, response_text: str) -> str:
         """Span-bounded on-error strip: the greedy DOTALL pattern would also
@@ -121,7 +138,7 @@ class AppealTool(BaseTool):
             appeal_data, call_span = parse_anchored_json_payload(response_text, match)
             await self.send_status_message("Processing update appeal data...")
 
-            appeal, denial = await self._get_or_create_appeal(chat, appeal_data)
+            appeal, denial = await self._get_or_create_appeal(chat)
 
             if appeal and denial:
                 await self._update_appeal_fields(appeal, denial, appeal_data)
@@ -162,9 +179,8 @@ class AppealTool(BaseTool):
             raise
 
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Error processing appeal data: {type(e).__name__}"
-            )
+            # The class only, no traceback: a field's error quotes its value.
+            logger.warning(f"Error processing appeal data: {error_text(e)}")
             # Generic on purpose: the exception text can carry PHI (a
             # database error quotes the failing row).
             await self.send_error_message(
@@ -172,15 +188,12 @@ class AppealTool(BaseTool):
             )
             raise
 
-    async def _get_or_create_appeal(
-        self, chat: Any, appeal_data: dict
-    ) -> Tuple[Any, Any]:
+    async def _get_or_create_appeal(self, chat: Any) -> Tuple[Any, Any]:
         """
         Get existing appeal or create a new one.
 
         Args:
             chat: The OngoingChat object
-            appeal_data: Dictionary of appeal field values
 
         Returns:
             Tuple of (appeal, denial) objects
@@ -200,25 +213,24 @@ class AppealTool(BaseTool):
                 denial = appeal.for_denial
         else:
             pro_user = await aget_related(chat, "professional_user")
-            denial = await Denial.objects.acreate(creating_professional=pro_user)
-            appeal = await Appeal.objects.acreate(
-                chat=chat, creating_professional=pro_user, for_denial=denial
+            # Only the chat's own identity, never the payload: deletion finds
+            # these rows by it.
+            hashed_email = ""
+            if chat.hashed_email:
+                hashed_email = chat.hashed_email
+            elif chat.user_id is not None:
+                user = await aget_related(chat, "user")
+                if user and user.email:
+                    hashed_email = Denial.get_hashed_email(user.email)
+            denial = await Denial.objects.acreate(
+                creating_professional=pro_user, hashed_email=hashed_email
             )
-
-            # Add hashed email if not provided
-            if "hashed_email" not in appeal_data:
-                if chat.hashed_email:
-                    appeal_data["hashed_email"] = chat.hashed_email
-                elif chat.user_id is not None:
-                    user = await aget_related(chat, "user")
-                    if user and user.email:
-                        appeal_data["hashed_email"] = Denial.get_hashed_email(
-                            user.email
-                        )
-                elif appeal_data.get("email"):
-                    appeal_data["hashed_email"] = Denial.get_hashed_email(
-                        appeal_data["email"]
-                    )
+            appeal = await Appeal.objects.acreate(
+                chat=chat,
+                creating_professional=pro_user,
+                for_denial=denial,
+                hashed_email=hashed_email,
+            )
 
         return appeal, denial
 
@@ -233,33 +245,31 @@ class AppealTool(BaseTool):
             denial: The Denial object to update
             appeal_data: Dictionary of field values
         """
-        # Allowlist, not hasattr: hasattr/setattr accepted ANY attribute name,
-        # letting a crafted (or just confused) LLM payload overwrite pks,
-        # relation ids, methods, or private state on both models.
-        appeal_allowed = settable_model_fields(type(appeal))
-        denial_allowed = settable_model_fields(type(denial))
-        rejected_keys = 0
+        # Explicit allowlists: a payload is model output, so it never sets
+        # consent, identity, delivery or bookkeeping fields.
+        rejected: List[str] = []
         for key, value in appeal_data.items():
             set_field = False
 
-            if is_safe_tool_field(key, appeal_allowed):
+            if is_safe_tool_field(key, self.appeal_fields):
                 set_field = True
                 set_tool_field(appeal, key, value)
 
-            if is_safe_tool_field(key, denial_allowed):
+            if is_safe_tool_field(key, self.denial_fields):
                 set_field = True
                 set_tool_field(denial, key, value)
 
             if not set_field:
-                rejected_keys += 1
+                rejected.append(key)
                 await self.send_status_message(
                     f"Key {key} not found in Appeal or Denial model. "
                     f"The value {value} is not synced back yet."
                 )
 
-        if rejected_keys:
-            # A count only: the keys come from the model's reply.
+        if rejected:
+            # A count: the keys come from the model's reply.
             logger.warning(
                 "Skipped payload keys not settable on Appeal or Denial model "
-                f"(rejected_keys={rejected_keys})"
+                f"(rejected_keys={len(rejected)})"
             )
+            log_dropped_tool_fields(self.name, rejected)

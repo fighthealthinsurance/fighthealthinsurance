@@ -155,7 +155,7 @@ checked on the date the section gives; recheck them before changing it.
 
     {% if shared %}
     <div class="fhi-notice fhi-notice-info" role="status" id="share-thanks">
-        <p><strong>Thank you. We have your {% if shared_files and shared_links %}documents and links{% elif shared_links %}links{% else %}documents{% endif %}.</strong> We'll publish what we learn on this site. Have more? <a href="{% url 'share_plan_documents' %}">Share more documents</a></p>
+        <p><strong>Thank you. We have your {% if shared_files and shared_links %}documents and links{% elif shared_links %}links{% else %}documents{% endif %}.</strong> Once enough people share, we'll publish what we learn, combined across plans, with personal details removed as best we can. Have more? <a href="{% url 'share_plan_documents' %}">Share more documents</a></p>
     </div>
     {% else %}
     <form method="post" action="{% url 'share_plan_documents' %}" enctype="multipart/form-data" class="fhi-stack" id="share-plan-documents-form" data-max-files="{{ max_files }}" data-max-bytes="{{ max_total_bytes }}" data-too-many="{{ too_many_message }}" data-too-big="{{ too_big_message }}" data-nothing="{{ nothing_message }}">
@@ -317,7 +317,7 @@ checked on the date the section gives; recheck them before changing it.
             <div class="dw-stat" id="why-no-rates"><p class="dw-stat-head"><b class="dw-num">None</b> <strong>of Denial Watch's denial rates cover plans through work</strong></p><span>Plan documents won't show denial rates, but they show the rules behind denials.</span></div>
         </div>
         {% endif %}
-        <p id="why-short">We publish what we learn from the documents people share.</p>
+        <p id="why-short">Once enough people share, we'll publish what we learn, combined across plans, never your documents themselves.</p>
         <div class="fhi-accordion">
             <details class="fhi-accordion-item" id="more-why">
                 <summary><span class="fhi-accordion-question">More about why we're asking</span></summary>

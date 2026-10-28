@@ -15,7 +15,7 @@ appeal, and replaces the call with the letter text plus a link.
 
 import json
 import re
-from typing import Any, Awaitable, Callable, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, FrozenSet, List, Optional, Tuple
 
 from loguru import logger
 
@@ -28,6 +28,7 @@ from fighthealthinsurance.chat.appeal_letter_generator import (
 from fighthealthinsurance.chat.research_context import research_for_chat
 from fighthealthinsurance.client_gone import ClientGone
 from fighthealthinsurance.denial_context import merge_qa
+from fighthealthinsurance.log_tags import error_text
 
 from .appeal_tool import AppealTool
 from .base_tool import (
@@ -58,7 +59,8 @@ class GenerateAppealLetterTool(AppealTool):
     Tool handler that drafts the appeal letter via the appeal pipeline.
 
     Subclasses AppealTool for its get-or-create / field-update plumbing;
-    only the detection pattern and the execute flow differ:
+    only the detection pattern, the field allowlist and the execute flow
+    differ:
     1. Extract the JSON parameters (denial/appeal fields + optional
        medical_reason/additional_context).
     2. Create or update the Appeal + Denial linked to the chat.
@@ -81,6 +83,11 @@ class GenerateAppealLetterTool(AppealTool):
     # AppealTool), with dropped_calls_notice; calls in LATER passes of the
     # same turn are caught by the drafted_this_turn slot.
     max_calls_per_reply: int = 1
+
+    # The letter prompt's fields: the letter itself comes from the pipeline,
+    # so a payload's appeal_text never lands on the appeal.
+    appeal_fields: FrozenSet[str] = frozenset()
+    denial_fields: FrozenSet[str] = AppealTool.denial_fields - {"appeal_text"}
 
     def __init__(
         self,
@@ -235,7 +242,7 @@ class GenerateAppealLetterTool(AppealTool):
                 if value:
                     extra_context[key] = str(value).strip()
 
-            appeal, denial = await self._get_or_create_appeal(chat, appeal_data)
+            appeal, denial = await self._get_or_create_appeal(chat)
             if not appeal or not denial:
                 await self.send_status_message("Failed to create or update appeal.")
                 return (
@@ -323,9 +330,8 @@ class GenerateAppealLetterTool(AppealTool):
             # no error frame into the closed socket.
             raise
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Error drafting appeal letter: {type(e).__name__}"
-            )
+            # The class only, no traceback: a field's error quotes its value.
+            logger.warning(f"Error drafting appeal letter: {error_text(e)}")
             # Generic on purpose: the exception text can carry PHI (a
             # database error quotes the failing row).
             await self.send_error_message(

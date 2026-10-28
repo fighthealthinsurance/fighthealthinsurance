@@ -26,6 +26,7 @@ from rest_framework.test import APITestCase
 
 from fighthealthinsurance.models import (
     Denial,
+    FollowUpSched,
     UserDomain,
     ExtraUserProperties,
     ProfessionalUser,
@@ -1953,6 +1954,45 @@ class DenialCreateWithExistingId(APITestCase):
         self.assertTrue(status.is_success(response.status_code))
         parsed = response.json()
         self.assertEqual(parsed["denial_id"], denial_id)
+
+    def test_an_update_that_leaves_out_consent_keeps_the_follow_ups(self):
+        """Only a choice to stop keeping the email cancels follow-ups; an
+        update that does not mention it leaves them as they were."""
+        self.assertTrue(
+            self.client.login(username=self.username, password=self.password)
+        )
+        url = reverse("denials-list")
+        payload = {
+            "email": "rebecca.crumpler@test-fhi.com",
+            "denial_text": "Test denial text",
+            "pii": "true",
+            "tos": "true",
+            "privacy": "true",
+        }
+        response = self.client.post(
+            url,
+            json.dumps({**payload, "store_raw_email": "true"}),
+            content_type="application/json",
+        )
+        denial_id = response.json()["denial_id"]
+        before = list(
+            FollowUpSched.objects.filter(denial_id=denial_id).values_list(
+                "pk", "email", "follow_up_sent"
+            )
+        )
+
+        self.client.post(
+            url,
+            json.dumps({**payload, "denial_id": denial_id}),
+            content_type="application/json",
+        )
+
+        after = list(
+            FollowUpSched.objects.filter(denial_id=denial_id).values_list(
+                "pk", "email", "follow_up_sent"
+            )
+        )
+        self.assertEqual((len(before), after), (4, before))
 
 
 @override_settings(FIGHT_PAPERWORK_ENABLED=True)

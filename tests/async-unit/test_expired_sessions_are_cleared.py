@@ -27,6 +27,7 @@ from django.utils import timezone
 
 from fighthealthinsurance import views
 from fighthealthinsurance.email_polling_actor import EmailPollingActor
+from fighthealthinsurance.models import Denial, FollowUpSched
 
 # Access the underlying class through the Ray decorator's __ray_metadata__.
 _Klass = getattr(EmailPollingActor, "__ray_metadata__", None)
@@ -103,6 +104,32 @@ class TestThePurge:
         async_to_sync(actor._clear_expired_sessions)()
 
         assert actor._logger.method_calls == [call.info("Cleared 1 expired sessions")]
+
+
+class TestTheEmailClearing:
+    @pytest.mark.django_db
+    def test_a_case_that_withdrew_its_email_keeps_no_copy_in_its_follow_ups(
+        self, actor
+    ):
+        email = "rebecca.crumpler@test-fhi.com"
+        denial = Denial.objects.create(
+            denial_text="Test denial whose email was withdrawn",
+            hashed_email=Denial.get_hashed_email(email),
+            raw_email=None,
+            health_history="",
+        )
+        sched = FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=2),
+            follow_up_sent=True,
+            follow_up_sent_date=timezone.now() - datetime.timedelta(days=1),
+        )
+
+        async_to_sync(actor._clear_expired_emails)()
+
+        sched.refresh_from_db()
+        assert sched.email == ""
 
 
 class TestTheDailyLoop:

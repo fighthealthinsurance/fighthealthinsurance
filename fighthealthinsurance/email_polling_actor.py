@@ -270,6 +270,10 @@ class EmailPollingActor:
         try:
             from django.db.models import Q
 
+            from fighthealthinsurance.followup_emails import (
+                clear_case_emails,
+                withdrawn_follow_ups,
+            )
             from fighthealthinsurance.models import Denial, FollowUpSched
 
             cutoff_datetime = timezone.now() - datetime.timedelta(days=30)
@@ -320,25 +324,22 @@ class EmailPollingActor:
             )()
 
             if denial_ids_to_clear:
-                # Clear the raw_email field
-                cleared_count = await database_sync_to_async(
-                    lambda: Denial.objects.filter(
-                        denial_id__in=denial_ids_to_clear
-                    ).update(raw_email=None)
-                )()
-
-                # Also clear emails from FollowUpSched entries
-                await database_sync_to_async(
-                    lambda: FollowUpSched.objects.filter(
-                        denial_id__in=denial_ids_to_clear
-                    ).update(email="")
-                )()
+                cleared_count = await database_sync_to_async(clear_case_emails)(
+                    denial_ids_to_clear, cutoff_datetime
+                )
 
                 self._logger.info(
                     f"Cleared emails from {cleared_count} expired denials"
                 )
             else:
                 self._logger.debug("No expired emails to clear")
+
+            # A case whose email was withdrawn keeps no copy in its follow-ups.
+            withdrawn_count = await withdrawn_follow_ups().aupdate(email="")
+            if withdrawn_count:
+                self._logger.info(
+                    f"Cleared emails from {withdrawn_count} withdrawn follow-ups"
+                )
 
         except Exception:
             self._logger.opt(exception=True).error("Error clearing expired emails")

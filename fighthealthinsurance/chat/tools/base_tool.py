@@ -5,54 +5,69 @@ Tool handlers process specific "tool calls" that the LLM includes in responses.
 Each tool can detect its pattern in text, execute the tool action, and format results.
 """
 
+import functools
 import json
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Awaitable, Callable, List, Optional, Set, Tuple
+from typing import (
+    AbstractSet,
+    Any,
+    Awaitable,
+    Callable,
+    FrozenSet,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+)
 
 from django.db import models
 from loguru import logger
 
 from fighthealthinsurance.client_gone import ClientGone
+from fighthealthinsurance.log_tags import error_text
 
 from .patterns import next_tool_call_start
 
-# Identity/audit fields that LLM-supplied tool payloads must never overwrite,
-# even though they are concrete editable columns.
-_TOOL_FIELD_DENYLIST = {
-    "id",
-    "pk",
-    "uuid",
-    "semi_sekret",
-    "follow_up_semi_sekret",
-    "session_key",
-}
 
+def is_safe_tool_field(key: str, allowed: AbstractSet[str]) -> bool:
+    """Whether an LLM payload key may be applied to a model instance.
 
-def settable_model_fields(model_cls) -> Set[str]:
-    """Field names an LLM tool payload may set on ``model_cls``.
-
-    Concrete, editable, non-primary-key, non-relation fields minus the
-    denylist. Relations (and their ``*_id`` attribute forms) are excluded so
-    a crafted payload can't re-point an appeal/prior auth at another user's
-    denial or chat; identity fields are excluded so it can't overwrite
-    lookup keys.
+    ``allowed`` is the tool's explicit allowlist: the fields its prompt
+    documents. Consent, identity, delivery and bookkeeping fields are never
+    on one.
     """
-    fields: Set[str] = set()
-    for f in model_cls._meta.concrete_fields:
-        if f.primary_key or f.is_relation or not getattr(f, "editable", True):
-            continue
-        if f.name in _TOOL_FIELD_DENYLIST:
-            continue
-        fields.add(f.name)
-    return fields
-
-
-def is_safe_tool_field(key: str, allowed: Set[str]) -> bool:
-    """Whether an LLM payload key may be applied to a model instance."""
     if not key or key.startswith("_") or key.endswith("_id"):
         return False
     return key in allowed
+
+
+@functools.cache
+def _record_column_names() -> FrozenSet[str]:
+    """Column names of the records the chat tools write."""
+    from fighthealthinsurance.models import Appeal, Denial, PriorAuthRequest
+
+    return frozenset(
+        name
+        for model_cls in (Appeal, Denial, PriorAuthRequest)
+        for f in model_cls._meta.concrete_fields
+        for name in (f.name, f.attname)
+    )
+
+
+def log_dropped_tool_fields(tool_name: str, dropped: Iterable[str]) -> None:
+    """Debug-log the dropped payload keys that are record column names.
+
+    A documented field showing up here means the tool prompt and the
+    allowlist have drifted apart. Names only, and only column names: any
+    other key came from the model's reply and may be patient data.
+    """
+    named = sorted(set(dropped) & _record_column_names())
+    if named:
+        logger.debug(
+            f"{tool_name}: dropped payload fields not on the tool's allowlist: "
+            f"{', '.join(named)}"
+        )
 
 
 def set_tool_field(instance: Any, key: str, value: Any) -> None:
@@ -603,9 +618,8 @@ class BaseTool(ABC):
             logger.info(f"{self.name}: client left mid-tool; skipping the tool")
             return self._strip_tool_syntax(response_text), context, True
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Error executing {self.name} tool: {type(e).__name__}"
-            )
+            # The class only, no traceback: its text can quote a payload value.
+            logger.warning(f"Error executing {self.name} tool: {error_text(e)}")
             try:
                 await self.send_status_message(
                     f"Error processing {self.name} request. Continuing with original response."

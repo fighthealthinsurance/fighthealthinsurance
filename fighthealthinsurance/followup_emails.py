@@ -1,17 +1,19 @@
 import asyncio
 import datetime
+import operator
 import random
 from collections import defaultdict
+from functools import reduce
 from typing import Any, Optional
 
 from channels.db import database_sync_to_async
-from django.db.utils import NotSupportedError, ProgrammingError
+from django.db.models import Q, QuerySet
 from django.urls import reverse
 from django.utils import timezone
 
 from loguru import logger
 
-from fighthealthinsurance.models import FollowUpSched, InterestedProfessional
+from fighthealthinsurance.models import Denial, FollowUpSched, InterestedProfessional
 from fighthealthinsurance.utils import mask_email_for_logging, send_fallback_email
 
 
@@ -110,6 +112,34 @@ class ThankyouEmailSender(AsyncEmailSenderMixin):
         return await self.adosend(interested_pro=candidate)
 
 
+def withdrawn_follow_ups() -> QuerySet[FollowUpSched]:
+    """Follow-up rows still holding an address their case no longer keeps."""
+    return FollowUpSched.objects.filter(
+        Q(denial_id__raw_email__isnull=True) | Q(denial_id__raw_email="")
+    ).exclude(email="")
+
+
+def clear_case_emails(denial_ids: list[int], cutoff_datetime: datetime.datetime) -> int:
+    """Clear these cases' emails and their follow-up copies; returns how many.
+
+    A case with a follow-up pending, or sent after the cutoff, keeps its
+    email. That is checked as the update runs, so a round restarted after
+    the sweep listed its cases is not cleared.
+    """
+    still_in_use = FollowUpSched.objects.filter(
+        Q(follow_up_sent=False) | Q(follow_up_sent_date__gte=cutoff_datetime)
+    ).values("denial_id")
+    cleared = (
+        Denial.objects.filter(denial_id__in=denial_ids)
+        .exclude(denial_id__in=still_in_use)
+        .update(raw_email=None)
+    )
+    FollowUpSched.objects.filter(
+        denial_id__in=denial_ids, denial_id__raw_email__isnull=True
+    ).update(email="")
+    return cleared
+
+
 class FollowUpEmailSender(AsyncEmailSenderMixin):
     def _find_due(self):
         """Base query: all unsent follow-ups that are due and not too old."""
@@ -122,22 +152,11 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
             .order_by("follow_up_date")
         )
 
-    def _find_candidates(self):
-        base_qs = self._find_due()
-        try:
-            candidates = base_qs.order_by(
-                "email", "follow_up_type", "follow_up_date"
-            ).distinct("email", "follow_up_type")
-            candidates.exists()
-            return candidates
-        except (NotSupportedError, ProgrammingError):
-            return base_qs
-
-    def find_candidates(self):
-        return list(self._find_candidates())
+    def find_candidates(self) -> list[FollowUpSched]:
+        return self.find_all_due()
 
     def find_all_due(self) -> list[FollowUpSched]:
-        """Return ALL due follow-ups without DISTINCT ON dedup.
+        """Return every due follow-up, with no per-address dedup.
 
         send_all/asend_all need the complete set so that suppressed
         rows across multiple denials for the same email/type are all
@@ -155,9 +174,11 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         (e.g., 90-day > 30-day > 7-day), since it represents the most
         significant check-in milestone.
         """
+        current = self.current_emails(candidates)
         groups: dict[str, list[FollowUpSched]] = defaultdict(list)
         for candidate in candidates:
-            groups[candidate.email].append(candidate)
+            # By the case's address now, which is where the email would go.
+            groups[current.get(candidate.denial_id_id, "")].append(candidate)
 
         result = []
         for group in groups.values():
@@ -178,11 +199,49 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         """Check if a follow-up is stale (a later type for same denial already sent)."""
         if follow_up_sched.follow_up_type and follow_up_sched.follow_up_type.duration:
             return FollowUpSched.objects.filter(
-                denial_id=follow_up_sched.denial_id,
+                denial_id=follow_up_sched.denial_id_id,
                 follow_up_sent=True,
                 follow_up_type__duration__gt=follow_up_sched.follow_up_type.duration,
             ).exists()
         return False
+
+    def current_emails(self, follow_up_scheds: list[FollowUpSched]) -> dict[int, str]:
+        """Each row's case's email as it is now; a case keeping none is left out."""
+        denial_ids = {s.denial_id_id for s in follow_up_scheds}
+        return {
+            pk: (raw_email or "").strip()
+            for pk, raw_email in Denial.objects.filter(pk__in=denial_ids).values_list(
+                "pk", "raw_email"
+            )
+            if (raw_email or "").strip()
+        }
+
+    def _unchanged(
+        self, follow_up_scheds: list[FollowUpSched]
+    ) -> QuerySet[FollowUpSched]:
+        """These rows while still unsent and due on the date they were read.
+
+        Writing through this leaves alone a row sent, restarted or deleted
+        since, so a stale copy can neither undo a restart nor re-create a
+        cancelled row.
+        """
+        return FollowUpSched.objects.filter(
+            reduce(
+                operator.or_,
+                (Q(pk=s.pk, follow_up_date=s.follow_up_date) for s in follow_up_scheds),
+            ),
+            follow_up_sent=False,
+        )
+
+    def _close_withdrawn(self, follow_up_scheds: list[FollowUpSched]) -> None:
+        """Mark follow-ups handled without sending and drop their address copy."""
+        if not follow_up_scheds:
+            return
+        self._unchanged(follow_up_scheds).update(
+            follow_up_sent=True,
+            follow_up_sent_date=timezone.now(),
+            email="",
+        )
 
     def _mark_as_sent_without_sending(
         self, follow_up_scheds: list[FollowUpSched]
@@ -190,23 +249,27 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         """Mark follow-up schedules as sent without actually sending email."""
         if not follow_up_scheds:
             return
-        now = timezone.now()
-        pks = [s.pk for s in follow_up_scheds]
-        FollowUpSched.objects.filter(pk__in=pks).update(
+        self._unchanged(follow_up_scheds).update(
             follow_up_sent=True,
-            follow_up_sent_date=now,
+            follow_up_sent_date=timezone.now(),
         )
 
     def _send_grouped(self, all_candidates: list[FollowUpSched]) -> bool:
         """Send one email for a group of candidates sharing the same address.
 
         Iterates candidates in priority order (longest duration first).
-        Skips stale candidates, sends the first non-stale one, and marks
-        the rest as sent without emailing. Returns True if an email was sent.
+        Closes candidates whose case withdrew its email, skips stale ones,
+        sends the first remaining one, and marks the rest as sent without
+        emailing. Returns True if an email was sent.
         """
         to_suppress: list[FollowUpSched] = []
+        withdrawn: list[FollowUpSched] = []
         email_sent = False
+        current = self.current_emails(all_candidates)
         for candidate in all_candidates:
+            if candidate.denial_id_id not in current:
+                withdrawn.append(candidate)
+                continue
             if email_sent:
                 to_suppress.append(candidate)
                 continue
@@ -225,6 +288,7 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
                     f"{mask_email_for_logging(all_candidates[0].email)}"
                 )
             self._mark_as_sent_without_sending(to_suppress)
+        self._close_withdrawn(withdrawn)
         return email_sent
 
     def group_due_followups(
@@ -244,10 +308,15 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         """Preview which candidate would be sent for a group.
 
         Returns (candidate_to_send, suppressed_count).
-        candidate_to_send is None if all candidates are stale.
+        candidate_to_send is None if all candidates are stale or withdrawn.
         """
+        current = self.current_emails(all_candidates)
         to_send = next(
-            (c for c in all_candidates if not self._is_stale(c)),
+            (
+                c
+                for c in all_candidates
+                if c.denial_id_id in current and not self._is_stale(c)
+            ),
             None,
         )
         suppressed = len(all_candidates) - (1 if to_send else 0)
@@ -283,15 +352,18 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
             raise Exception("One of email and follow_up_sched must be set.")
         assert follow_up_sched is not None
 
+        # The case as it is now: its consent and address may have changed
+        # since the row was read, and the row's copy may be out of date.
+        denial = Denial.objects.filter(pk=follow_up_sched.denial_id_id).first()
+        email = ((denial.raw_email if denial else None) or "").strip()
+        if denial is None or not email:
+            self._close_withdrawn([follow_up_sched])
+            return False
+
         if not _skip_stale_check and self._is_stale(follow_up_sched):
-            follow_up_sched.follow_up_sent = True
-            follow_up_sched.follow_up_sent_date = timezone.now()
-            follow_up_sched.save()
+            self._mark_as_sent_without_sending([follow_up_sched])
             return True
 
-        # Use the email from follow_up_sched to ensure consistency
-        email = follow_up_sched.email
-        denial = follow_up_sched.denial_id
         selected_appeal = denial.chose_appeal()
         # Only letters the person could have seen: the email asks whether one
         # of them worked. A speculative row is written in the background as
@@ -330,6 +402,13 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
             template_name = "followup"
             subject = "Following up from Fight Health Insurance"
 
+        # Claimed before sending, so two senders, or one holding a copy of a
+        # row restarted or cancelled since, cannot both send it.
+        claimed_at = timezone.now()
+        if not self._unchanged([follow_up_sched]).update(
+            follow_up_sent=True, follow_up_sent_date=claimed_at
+        ):
+            return False
         try:
             send_fallback_email(
                 template_name=template_name,
@@ -337,15 +416,18 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
                 context=context,
                 to_email=email,
             )
-            follow_up_sched.follow_up_sent = True
-            follow_up_sched.follow_up_sent_date = timezone.now()
-            follow_up_sched.save()
-            return True
         except Exception as e:
+            # Not sent, so the claim goes back unless the row changed since.
+            FollowUpSched.objects.filter(
+                pk=follow_up_sched.pk, follow_up_sent_date=claimed_at
+            ).update(follow_up_sent=False, follow_up_sent_date=None)
             logger.warning(
                 f"Failed to send follow-up email to {mask_email_for_logging(email)}: {e}"
             )
             return False
+        follow_up_sched.follow_up_sent = True
+        follow_up_sched.follow_up_sent_date = claimed_at
+        return True
 
     async def asend_all(
         self,

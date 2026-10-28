@@ -7,6 +7,7 @@ from unittest.mock import patch
 from django.core.management import call_command
 from django.utils import timezone
 
+from fighthealthinsurance.followup_emails import clear_case_emails
 from fighthealthinsurance.models import Denial, FollowUpSched
 
 
@@ -151,6 +152,66 @@ class TestClearExpiredEmailsCommand:
 
         assert followup_sched.email == ""
 
+    def _withdrawn_case_follow_up(self):
+        """A case that withdrew its email after a follow-up went to it."""
+        email = "rebecca.crumpler@test-fhi.com"
+        denial = Denial.objects.create(
+            denial_text="Test denial whose email was withdrawn",
+            hashed_email=Denial.get_hashed_email(email),
+            raw_email=None,
+            health_history="",
+        )
+        return FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=2),
+            follow_up_sent=True,
+            follow_up_sent_date=timezone.now() - datetime.timedelta(days=1),
+        )
+
+    def test_clears_followup_emails_of_a_case_that_withdrew_its_email(
+        self, email_test_setup
+    ):
+        withdrawn = self._withdrawn_case_follow_up()
+
+        call_command("clear_expired_emails", stdout=StringIO())
+
+        withdrawn.refresh_from_db()
+        pending = FollowUpSched.objects.get(
+            denial_id=email_test_setup["denial_pending"]
+        )
+        assert (withdrawn.email, pending.email) == (
+            "",
+            "pending_followup@example.com",
+        )
+
+    def test_dry_run_keeps_followup_emails_of_a_withdrawn_case(self, db):
+        withdrawn = self._withdrawn_case_follow_up()
+
+        call_command("clear_expired_emails", "--dry-run", stdout=StringIO())
+
+        withdrawn.refresh_from_db()
+        assert withdrawn.email == "rebecca.crumpler@test-fhi.com"
+
+    def test_a_round_restarted_after_the_listing_keeps_its_email(
+        self, email_test_setup
+    ):
+        """The sweep listed the case, then a new round was asked for: the
+        clearing checks again as it writes and leaves the case alone."""
+        denial = email_test_setup["denial_old"]
+        FollowUpSched.objects.create(
+            email=denial.raw_email,
+            denial_id=denial,
+            follow_up_date=datetime.date.today() + datetime.timedelta(days=7),
+        )
+
+        clear_case_emails(
+            [denial.denial_id], timezone.now() - datetime.timedelta(days=30)
+        )
+
+        denial.refresh_from_db()
+        assert denial.raw_email == "old_followup@example.com"
+
     def test_safety_check_90_days(self, db):
         """Test that denials created less than 90 days ago are not cleared."""
         # Create a denial that has an old follow-up but was created recently
@@ -245,6 +306,34 @@ class TestSendFollowupEmailsCommand:
 
         assert "Dry run mode" in out.getvalue()
         mock_send_email.assert_not_called()
+
+    def test_dry_run_prints_no_full_address(self, db):
+        """The listing masks the address it would send to, and names none for
+        a case that withdrew its email."""
+        yesterday = datetime.date.today() - datetime.timedelta(days=1)
+        for email, kept in (
+            ("rebecca.crumpler@test-fhi.com", True),
+            ("mary.seacole@test-fhi.com", False),
+        ):
+            denial = Denial.objects.create(
+                denial_text="Test denial",
+                hashed_email=Denial.get_hashed_email(email),
+                raw_email=email if kept else None,
+                health_history="",
+            )
+            FollowUpSched.objects.create(
+                email=email, denial_id=denial, follow_up_date=yesterday
+            )
+
+        out = StringIO()
+        call_command("send_followup_emails", "--dry-run", stdout=out)
+
+        printed = out.getvalue()
+        assert (
+            "rebecca.crumpler@" not in printed
+            and "mary.seacole@" not in printed
+            and "r*****@test-fhi.com" in printed
+        ), printed
 
     @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_respects_count_limit(self, mock_send_email, db):
