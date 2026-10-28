@@ -416,20 +416,9 @@ class AShareWithFilesAndLinksTest(_LinkTestCase):
         self.assertContains(response, LINK_SCHEME_MESSAGE)
 
 
-class TheThankYouNoteSaysWhatHappensToWhatWasSharedTest(_LinkTestCase):
-    """Files and links are stored encrypted. Files are read by people and AI
-    models; links are opened by hand, never fetched, and no AI model is said
-    to read them."""
-
-    FILES_NOTE = (
-        "We store your files encrypted. Our team and AI models, including "
-        "outside services, will read them with other people's documents to "
-        "learn how plans work."
-    )
-    LINKS_NOTE = (
-        "We store your links encrypted. Our team will open them by hand. We "
-        "never fetch them automatically."
-    )
+class TheThankYouNoteIsShortTest(_LinkTestCase):
+    """One short paragraph: what was received, that we publish what we learn,
+    and a link to share more. It never says an AI model reads links."""
 
     def thanks(self, shared):
         response = self.client.get(self.url, {"shared": shared})
@@ -437,23 +426,28 @@ class TheThankYouNoteSaysWhatHappensToWhatWasSharedTest(_LinkTestCase):
         note = soup.find(id="share-thanks")
         return note.get_text(" ", strip=True) if note else None
 
-    def test_after_files_it_says_what_happens_to_files(self):
-        note = self.thanks("1")
-        self.assertIn("Thank you. We have your documents.", note)
-        self.assertIn(self.FILES_NOTE, note)
-        self.assertNotIn(self.LINKS_NOTE, note)
+    def test_after_files_it_names_documents(self):
+        self.assertEqual(
+            self.thanks("1"),
+            "Thank you. We have your documents. We'll publish what we learn on "
+            "this site. Have more? Share more documents",
+        )
 
-    def test_after_links_it_says_they_are_opened_by_hand_and_never_fetched(self):
+    def test_after_links_it_names_links_and_no_ai_model(self):
         note = self.thanks("links")
         self.assertIn("Thank you. We have your links.", note)
-        self.assertIn(self.LINKS_NOTE, note)
         self.assertNotIn("AI models", note)
 
-    def test_after_both_it_says_each(self):
-        note = self.thanks("both")
-        self.assertIn("Thank you. We have your documents and links.", note)
-        self.assertIn(self.FILES_NOTE, note)
-        self.assertIn(self.LINKS_NOTE, note)
+    def test_after_both_it_names_each(self):
+        self.assertIn(
+            "Thank you. We have your documents and links.", self.thanks("both")
+        )
+
+    def test_the_note_is_one_paragraph(self):
+        soup = BeautifulSoup(
+            self.client.get(self.url, {"shared": "both"}).content, "html.parser"
+        )
+        self.assertEqual(len(soup.find(id="share-thanks").find_all("p")), 1)
 
     def test_an_unknown_value_shows_the_form_not_a_note(self):
         self.assertIsNone(self.thanks("yes"))

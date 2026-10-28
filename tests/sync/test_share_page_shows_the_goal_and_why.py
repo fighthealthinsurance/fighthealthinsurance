@@ -298,7 +298,7 @@ class WhyWereAskingTest(_PageTestCase):
         self.assertEqual(
             tile.get_text(" ", strip=True),
             "None of Denial Watch's denial rates cover plans through work Plan "
-            "documents help fill in that gap.",
+            "documents won't show denial rates, but they show the rules behind denials.",
         )
 
     def test_the_tiles_come_first_under_the_heading(self):

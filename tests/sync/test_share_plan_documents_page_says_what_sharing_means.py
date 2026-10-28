@@ -376,11 +376,6 @@ class SharePlanDocumentsPageTest(TestCase):
         soup = BeautifulSoup(response.content, "html.parser")
         thanks = soup.find(id="share-thanks").get_text(" ", strip=True)
         self.assertIn("Thank you", thanks)
-        self.assertIn("encrypted", thanks)
-        self.assertIn(
-            "Our team and AI models, including outside services, will read them",
-            thanks,
-        )
         self.assertIn("publish what we learn", thanks)
         self.assertIsNone(soup.find("form", id="share-plan-documents-form"))
         self.assertIsNotNone(soup.find("section", id="get-your-plan-documents"))
