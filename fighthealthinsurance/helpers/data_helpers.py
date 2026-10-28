@@ -17,10 +17,14 @@ from fighthealthinsurance.models import (
     FaxesToSend,
     FollowUp,
     FollowUpSched,
+    InterestedProfessional,
+    LostStripeSession,
     MailingListSubscriber,
     OngoingChat,
     PlanDocumentsReminder,
     PolicyDocument,
+    PriorAuthRequest,
+    ScheduledEmail,
 )
 
 
@@ -117,9 +121,18 @@ class RemoveDataHelper:
         FollowUp.objects.filter(hashed_email=hashed_email).delete()
         FaxesToSend.objects.filter(hashed_email=hashed_email).delete()
         FaxesToSend.objects.filter(email__iexact=email).delete()
+        # An expired checkout keeps the email and the client IP.
+        LostStripeSession.objects.filter(email__iexact=email).delete()
         # Chat data - use find_chats_by_email to catch all related chats
         # (covers hashed_email, user__email, and professional_user__user__email)
-        OngoingChat.find_chats_by_email(email).delete()
+        chats = OngoingChat.find_chats_by_email(email)
+        # Prior auths outlive their chat (SET_NULL); a professional's stay.
+        PriorAuthRequest.objects.filter(
+            chat__in=chats,
+            creator_professional_user__isnull=True,
+            created_for_professional_user__isnull=True,
+        ).delete()
+        chats.delete()
         ChatLeads.objects.filter(email__iexact=email).delete()
         # Shared plan documents: the files go, facts about the plan stay.
         from fighthealthinsurance.shared_plan_documents import (
@@ -131,7 +144,29 @@ class RemoveDataHelper:
         PolicyDocument.objects.filter(hashed_email=hashed_email).delete()
         # A share page reminder that hasn't gone yet
         PlanDocumentsReminder.objects.filter(email__iexact=email).delete()
-        # Mailing list and demo requests
+        # Mailing list, demo requests and professional sign-ups
         MailingListSubscriber.objects.filter(email__iexact=email).delete()
         DemoRequests.objects.filter(email__iexact=email).delete()
+        InterestedProfessional.objects.filter(email__iexact=email).delete()
+        # Unsent queued emails, so none goes out after the deletion.
+        ScheduledEmail.objects.filter(to_email__iexact=email, sent=False).delete()
+        # One that only copies them still goes to its recipient, without them.
+        address = email.strip().lower()
+        copied = [
+            queued.pk
+            for queued in ScheduledEmail.objects.filter(sent=False).only("pk", "cc")
+            if any(str(a).strip().lower() == address for a in queued.cc or [])
+        ]
+        # Reread under a row lock so a removal running at the same time can't
+        # write back an address the other one just took out.
+        for queued in (
+            ScheduledEmail.objects.select_for_update()
+            .filter(pk__in=copied, sent=False)
+            .order_by("pk")
+            .only("pk", "cc")
+        ):
+            kept = [a for a in queued.cc or [] if str(a).strip().lower() != address]
+            if kept != (queued.cc or []):
+                queued.cc = kept
+                queued.save(update_fields=["cc"])
         return denials_removed

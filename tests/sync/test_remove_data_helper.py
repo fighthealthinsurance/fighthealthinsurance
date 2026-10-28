@@ -8,7 +8,10 @@ deleted while rows for unrelated emails are untouched.
 """
 
 from datetime import date, timedelta
+from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
+from django.db.models import QuerySet
 from django.test import TestCase
 from django.utils import timezone
 
@@ -22,10 +25,17 @@ from fighthealthinsurance.models import (
     FaxesToSend,
     FollowUp,
     FollowUpSched,
+    InterestedProfessional,
+    LostStripeSession,
     MailingListSubscriber,
     OngoingChat,
     PlanDocumentsReminder,
+    PriorAuthRequest,
+    ScheduledEmail,
 )
+from fhi_users.models import ProfessionalUser
+
+User = get_user_model()
 
 
 class TestRemoveDataHelper(TestCase):
@@ -79,7 +89,32 @@ class TestRemoveDataHelper(TestCase):
             appeal_text="fax by email",
             paid=False,
         )
-        OngoingChat.objects.create(hashed_email=cls.target_hash)
+        cls.target_chat = OngoingChat.objects.create(hashed_email=cls.target_hash)
+        # A prior auth the chat made on its own: it outlives the chat
+        # (SET_NULL) unless the helper deletes it first.
+        PriorAuthRequest.objects.create(
+            chat=cls.target_chat,
+            patient_name="Rebecca Lee Crumpler",
+            diagnosis="back pain",
+            treatment="MRI",
+        )
+        # Stored mixed-case, as a sign-up form may have saved it.
+        InterestedProfessional.objects.create(
+            name="Rebecca Lee Crumpler",
+            email="Test@Example.com",
+            phone_number="555-0003",
+        )
+        ScheduledEmail.objects.create(
+            to_email="Test@Example.com",
+            subject="Introduction",
+            template_name="proconnector_intro",
+        )
+        LostStripeSession.objects.create(
+            email="Test@Example.com",
+            payment_type="fax",
+            ip_address="203.0.113.7",
+            metadata={"fax_request_uuid": "target-fax"},
+        )
         ChatLeads.objects.create(
             name="Target Lead",
             email=cls.target_email,
@@ -118,6 +153,17 @@ class TestRemoveDataHelper(TestCase):
             agreed_to_terms=True,
         )
         OngoingChat.objects.create(hashed_email=cls.other_hash)
+        InterestedProfessional.objects.create(
+            name="Elizabeth Blackwell", email=cls.other_email
+        )
+        LostStripeSession.objects.create(
+            email=cls.other_email, payment_type="fax", ip_address="203.0.113.8"
+        )
+        ScheduledEmail.objects.create(
+            to_email=cls.other_email,
+            subject="Introduction",
+            template_name="proconnector_intro",
+        )
 
     def _target_row_counts(self) -> dict:
         """Count the rows that should have been deleted for target_email."""
@@ -144,6 +190,18 @@ class TestRemoveDataHelper(TestCase):
                 email__iexact=self.target_email
             ).count(),
             "demo_requests": DemoRequests.objects.filter(
+                email__iexact=self.target_email
+            ).count(),
+            "interested_professional": InterestedProfessional.objects.filter(
+                email__iexact=self.target_email
+            ).count(),
+            "scheduled_email": ScheduledEmail.objects.filter(
+                to_email__iexact=self.target_email
+            ).count(),
+            "chat_prior_auth": PriorAuthRequest.objects.filter(
+                patient_name="Rebecca Lee Crumpler"
+            ).count(),
+            "lost_stripe_session": LostStripeSession.objects.filter(
                 email__iexact=self.target_email
             ).count(),
             "plan_documents_reminder": PlanDocumentsReminder.objects.filter(
@@ -244,3 +302,112 @@ class TestRemoveDataHelper(TestCase):
         self.assertEqual(
             FaxesToSend.objects.filter(email__iexact=self.target_email).count(), 0
         )
+
+    def test_remove_data_deletes_a_professional_signup_stored_in_mixed_case(self):
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertFalse(
+            InterestedProfessional.objects.filter(
+                email__iexact=self.target_email
+            ).exists()
+        )
+
+    def test_remove_data_deletes_queued_emails_not_yet_sent(self):
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertFalse(
+            ScheduledEmail.objects.filter(to_email__iexact=self.target_email).exists()
+        )
+
+    def test_remove_data_leaves_other_signups_and_queued_emails(self):
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertEqual(
+            (
+                InterestedProfessional.objects.filter(email=self.other_email).count(),
+                ScheduledEmail.objects.filter(to_email=self.other_email).count(),
+            ),
+            (1, 1),
+        )
+
+    def test_remove_data_deletes_the_prior_auth_their_chat_made(self):
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertFalse(
+            PriorAuthRequest.objects.filter(
+                patient_name="Rebecca Lee Crumpler"
+            ).exists()
+        )
+
+    def test_remove_data_keeps_a_professionals_prior_auth_from_their_chat(self):
+        user = User.objects.create_user(
+            username="virginia_apgar", email="apgar@example.com", password="x"
+        )
+        professional = ProfessionalUser.objects.create(user=user, active=True)
+        kept = PriorAuthRequest.objects.create(
+            chat=self.target_chat,
+            creator_professional_user=professional,
+            diagnosis="asthma",
+            treatment="inhaler",
+        )
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertTrue(PriorAuthRequest.objects.filter(pk=kept.pk).exists())
+
+    def test_remove_data_deletes_their_expired_checkout_record(self):
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertFalse(
+            LostStripeSession.objects.filter(email__iexact=self.target_email).exists()
+        )
+
+    def test_remove_data_keeps_other_peoples_expired_checkout_records(self):
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertTrue(
+            LostStripeSession.objects.filter(email=self.other_email).exists()
+        )
+
+    def test_remove_data_drops_them_from_an_unsent_email_that_copies_them(self):
+        queued = ScheduledEmail.objects.create(
+            to_email="mary.mahoney@example.com",
+            cc=["TEST@example.com", "susan.picotte@example.com"],
+            subject="Introduction",
+            template_name="proconnector_intro",
+        )
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        queued.refresh_from_db()
+        self.assertEqual(queued.cc, ["susan.picotte@example.com"])
+        self.assertEqual(queued.to_email, "mary.mahoney@example.com")
+
+    def test_remove_data_rereads_a_shared_copy_list_under_a_lock(self):
+        """Another removal from the same email can't be undone by a stale read."""
+        queued = ScheduledEmail.objects.create(
+            to_email="mary.mahoney@example.com",
+            cc=["test@example.com", "susan.picotte@example.com"],
+            subject="Introduction",
+            template_name="proconnector_intro",
+        )
+        lock = QuerySet.select_for_update
+
+        def other_removal_commits_first(queryset, *args, **kwargs):
+            if queryset.model is ScheduledEmail:
+                ScheduledEmail.objects.filter(pk=queued.pk).update(
+                    cc=["test@example.com"]
+                )
+            return lock(queryset, *args, **kwargs)
+
+        with patch.object(
+            QuerySet,
+            "select_for_update",
+            autospec=True,
+            side_effect=other_removal_commits_first,
+        ):
+            RemoveDataHelper.remove_data_for_email(self.target_email)
+        queued.refresh_from_db()
+        self.assertEqual(queued.cc, [])
+
+    def test_remove_data_leaves_a_sent_email_that_copied_them(self):
+        sent = ScheduledEmail.objects.create(
+            to_email="mary.mahoney@example.com",
+            cc=["test@example.com"],
+            subject="Introduction",
+            template_name="proconnector_intro",
+            sent=True,
+        )
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        sent.refresh_from_db()
+        self.assertEqual(sent.cc, ["test@example.com"])

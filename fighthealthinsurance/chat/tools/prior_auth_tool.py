@@ -25,6 +25,12 @@ from .base_tool import (
 )
 from .patterns import CREATE_OR_UPDATE_PRIOR_AUTH_REGEX
 
+# What a patient sees when the model tries to record a prior authorization.
+PATIENT_CHAT_REFUSAL = (
+    "I can't file a prior authorization here; your doctor's office requests "
+    "those. I can help you appeal a denial instead."
+)
+
 
 class PriorAuthTool(BaseTool):
     """
@@ -122,6 +128,31 @@ class PriorAuthTool(BaseTool):
             logger.warning("PriorAuthTool called without chat object")
             await self.send_error_message("Cannot create prior auth: no chat context")
             return response_text, context
+
+        from fighthealthinsurance.models import ChatType
+
+        if chat.chat_type == ChatType.PATIENT:
+            # Prior auth records are a professional's: say so in place of the call.
+            logger.info("PriorAuthTool declined in a patient chat")
+            try:
+                _, call_span = parse_anchored_json_payload(response_text, match)
+            except (json.JSONDecodeError, ValueError):
+                # A garbled call still gets the refusal, not the save-error text.
+                return (
+                    strip_anchored_calls(
+                        self,
+                        response_text,
+                        notice=PATIENT_CHAT_REFUSAL,
+                        empty_fallback=PATIENT_CHAT_REFUSAL,
+                    ),
+                    context,
+                )
+            return (
+                replace_anchored_call(
+                    response_text, match, call_span, PATIENT_CHAT_REFUSAL
+                ),
+                context,
+            )
 
         try:
             # Precise payload + span (see parse_anchored_json_payload): replace

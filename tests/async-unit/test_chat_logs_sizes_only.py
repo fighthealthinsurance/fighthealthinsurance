@@ -42,6 +42,7 @@ from fighthealthinsurance.chat.tools.uspstf_tool import USPSTFLookupTool
 from fighthealthinsurance.medicaid_api import MedicaidDataUnavailableError
 from fighthealthinsurance.models import (
     Appeal,
+    ChatType,
     Denial,
     OngoingChat,
     PriorAuthRequest,
@@ -281,8 +282,11 @@ class TestAppealAndPriorAuthToolLogs:
     @pytest.mark.asyncio
     async def test_refused_field_value_never_reaches_a_log_line(self):
         """A field's validation error quotes the value it refused."""
+        # The tool runs only in professional chats.
         chat = await OngoingChat.objects.acreate(
-            chat_history=[], summary_for_next_call=[]
+            chat_history=[],
+            summary_for_next_call=[],
+            chat_type=ChatType.PROFESSIONAL,
         )
         tool = PriorAuthTool(AsyncMock(), AsyncMock())
         text = '**create_or_update_prior_auth**{"patient_dob": "SENTINEL-pa-dob"}'

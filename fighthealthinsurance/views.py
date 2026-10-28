@@ -21,6 +21,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import ImproperlyConfigured
+from django.db import transaction
 from django.http import (
     HttpRequest,
     HttpResponse,
@@ -1435,6 +1436,7 @@ class ConfirmDeleteDataView(View):
     GET shows a confirmation page; POST performs the actual deletion.
     This two-step approach prevents email scanners and link prefetch
     bots from triggering deletion by following the emailed link.
+    Its pages load no trackers: the link carries the email and the token.
     """
 
     def _error_response(self, request, error_message):
@@ -1445,6 +1447,7 @@ class ConfirmDeleteDataView(View):
                 "title": "Remove My Data",
                 "form": core_forms.PublicDeleteDataForm(),
                 "error": error_message,
+                "no_third_party_scripts": True,
             },
         )
 
@@ -1492,6 +1495,7 @@ class ConfirmDeleteDataView(View):
                 "title": "Confirm Data Deletion",
                 "email": email_normalized,
                 "token": token_str,
+                "no_third_party_scripts": True,
             },
         )
 
@@ -1503,11 +1507,16 @@ class ConfirmDeleteDataView(View):
             return self._error_response(request, error)
         email_normalized = email.strip().lower() if email else email
         hashed_email = models.Denial.get_hashed_email(email_normalized)
-        # Record the token as used; if another request already recorded it, abort
-        _used_token, created = UsedDeleteToken.objects.get_or_create(
-            token=delete_token.token,
-            defaults={"hashed_email": hashed_email},
-        )
+        # Commit token and deletion together so a failed deletion keeps the link usable.
+        with transaction.atomic():
+            # Record the token as used; if another request already recorded it, abort
+            _used_token, created = UsedDeleteToken.objects.get_or_create(
+                token=delete_token.token,
+                defaults={"hashed_email": hashed_email},
+            )
+            if created:
+                RemoveDataHelper.remove_data_for_email(email_normalized)
+                delete_token.delete()
         if not created:
             return self._error_response(
                 request,
@@ -1515,13 +1524,14 @@ class ConfirmDeleteDataView(View):
                 "Your data has been deleted. "
                 "If you need to delete additional data, please request a new link.",
             )
-        RemoveDataHelper.remove_data_for_email(email_normalized)
-        delete_token.delete()
+        # The browser's session holds their email too.
+        request.session.flush()
         return render(
             request,
             "removed_data.html",
             context={
                 "title": "Remove My Data",
+                "no_third_party_scripts": True,
             },
         )
 

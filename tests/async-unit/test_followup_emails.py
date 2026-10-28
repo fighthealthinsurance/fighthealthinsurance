@@ -1630,3 +1630,28 @@ class TestThankyouEmailSenderAsync:
         count = await sender.asend_all()
         assert count == 1
         mock_send_email.assert_called_once()
+
+
+@pytest.mark.django_db
+class TestThankyouEmailSenderAndDataRemoval:
+    """A data removal can land while a thank-you email is going out."""
+
+    def test_signup_removed_during_the_send_stays_removed(self):
+        from fighthealthinsurance.helpers import RemoveDataHelper
+        from fighthealthinsurance.models import InterestedProfessional
+
+        pro = InterestedProfessional.objects.create(
+            name="Rebecca Lee Crumpler", email="crumpler@clinic.example"
+        )
+
+        def removed_mid_send(**kwargs):
+            RemoveDataHelper.remove_data_for_email("crumpler@clinic.example")
+
+        with patch(
+            "fighthealthinsurance.followup_emails.send_fallback_email",
+            side_effect=removed_mid_send,
+        ):
+            ThankyouEmailSender().dosend(interested_pro=pro)
+        assert not InterestedProfessional.objects.filter(
+            email="crumpler@clinic.example"
+        ).exists()

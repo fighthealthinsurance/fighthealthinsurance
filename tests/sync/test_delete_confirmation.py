@@ -1,11 +1,14 @@
 import datetime
 from unittest.mock import patch
 
+import pytest
+from django.contrib.sessions.models import Session
 from django.core import mail
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+from fighthealthinsurance.helpers import RemoveDataHelper
 from fighthealthinsurance.models import (
     Denial,
     DeleteToken,
@@ -13,6 +16,8 @@ from fighthealthinsurance.models import (
     UsedDeleteToken,
 )
 from fighthealthinsurance.views import DELETE_CONFIRMATION_SUBJECT
+
+TRACKERS = ("googletagmanager.com", "bat.bing.com", "uetq")
 
 
 def assert_one_title(response):
@@ -169,11 +174,104 @@ class TestConfirmDeleteDataView(TestCase):
         )
         assert response.status_code == 200
         assert_one_title(response)
-        assert b"data associated with your email has been removed" in response.content
+        assert b"deleted the data associated with your email" in response.content
         mock_remove.assert_called_once_with("test@test-fhi.com")
         assert not DeleteToken.objects.filter(
             hashed_email=self._hashed("test@test-fhi.com")
         ).exists()
+
+    @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
+    def test_post_clears_the_browser_session_that_holds_the_email(self, mock_remove):
+        """The intake keeps the raw email in the session; deletion ends it."""
+        session = self.client.session
+        session["email"] = "test@test-fhi.com"
+        session.save()
+        token = self._create_token()
+        self.client.post(
+            reverse("confirm_delete_data"),
+            {"token": token.token, "email": "test@test-fhi.com"},
+        )
+        assert not Session.objects.filter(session_key=session.session_key).exists()
+
+    def _post_with_a_failing_deletion(self, token):
+        with patch.object(
+            RemoveDataHelper, "_delete_rows", side_effect=RuntimeError("db hiccup")
+        ):
+            with pytest.raises(RuntimeError):
+                self.client.post(
+                    reverse("confirm_delete_data"),
+                    {"token": token.token, "email": "test@test-fhi.com"},
+                )
+
+    def test_failed_deletion_leaves_the_link_unused(self):
+        token = self._create_token()
+        self._post_with_a_failing_deletion(token)
+        assert not UsedDeleteToken.objects.filter(token=token.token).exists()
+
+    def test_retry_after_a_failed_deletion_removes_the_data(self):
+        MailingListSubscriber.objects.create(
+            email="test@test-fhi.com", name="Rebecca Lee Crumpler"
+        )
+        token = self._create_token()
+        self._post_with_a_failing_deletion(token)
+        self.client.post(
+            reverse("confirm_delete_data"),
+            {"token": token.token, "email": "test@test-fhi.com"},
+        )
+        assert not MailingListSubscriber.objects.filter(
+            email="test@test-fhi.com"
+        ).exists()
+
+    def _assert_no_trackers(self, response):
+        """The link carries the email and the token; no tracker may see it."""
+        html = response.content.decode()
+        assert [t for t in TRACKERS if t in html] == []
+
+    def _link(self, token):
+        return {"token": token.token, "email": "test@test-fhi.com"}
+
+    def test_confirm_page_loads_no_trackers(self):
+        token = self._create_token()
+        response = self.client.get(reverse("confirm_delete_data"), self._link(token))
+        assert b"Confirm Data Deletion" in response.content
+        self._assert_no_trackers(response)
+
+    def test_expired_link_page_loads_no_trackers(self):
+        token = self._create_token(expired=True)
+        response = self.client.get(reverse("confirm_delete_data"), self._link(token))
+        assert b"expired" in response.content
+        self._assert_no_trackers(response)
+
+    @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
+    def test_used_link_page_loads_no_trackers(self, mock_remove):
+        token = self._create_token()
+        url = reverse("confirm_delete_data")
+        self.client.post(url, self._link(token))
+        response = self.client.get(url, self._link(token))
+        assert b"already been used" in response.content
+        self._assert_no_trackers(response)
+
+    @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
+    def test_done_page_loads_no_trackers(self, mock_remove):
+        token = self._create_token()
+        response = self.client.post(reverse("confirm_delete_data"), self._link(token))
+        assert b"deleted the data associated with your email" in response.content
+        self._assert_no_trackers(response)
+
+    def test_the_confirm_page_promises_a_best_effort(self):
+        token = self._create_token()
+        response = self.client.get(reverse("confirm_delete_data"), self._link(token))
+        html = response.content.decode()
+        assert "We do our best to delete all of it." in html
+        assert "permanently delete all data" not in html
+
+    @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
+    def test_the_done_page_says_as_best_we_can(self, mock_remove):
+        token = self._create_token()
+        response = self.client.post(reverse("confirm_delete_data"), self._link(token))
+        html = response.content.decode()
+        assert "deleted the data associated with your email, as best we can" in html
+        assert "Any deleted the data associated with your email" not in html
 
     def test_invalid_token_shows_error(self):
         url = reverse("confirm_delete_data")
@@ -270,7 +368,7 @@ class TestConfirmDeleteDataView(TestCase):
             url, {"token": token.token, "email": "Test@Test-FHI.COM"}
         )
         assert response.status_code == 200
-        assert b"data associated with your email has been removed" in response.content
+        assert b"deleted the data associated with your email" in response.content
         mock_remove.assert_called_once_with("test@test-fhi.com")
 
     @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
@@ -288,7 +386,7 @@ class TestConfirmDeleteDataView(TestCase):
             url, {"token": token.token, "email": "  test@test-fhi.com  "}
         )
         assert response.status_code == 200
-        assert b"data associated with your email has been removed" in response.content
+        assert b"deleted the data associated with your email" in response.content
         mock_remove.assert_called_once_with("test@test-fhi.com")
 
     @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
@@ -307,7 +405,7 @@ class TestConfirmDeleteDataView(TestCase):
             url, {"token": token2.token, "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
-        assert b"data associated with your email has been removed" in response.content
+        assert b"deleted the data associated with your email" in response.content
 
     def test_email_with_plus_sign_url_encoding(self):
         """Email with + sign should work end-to-end through URL encoding."""
@@ -346,7 +444,7 @@ class TestConfirmDeleteDataView(TestCase):
             url, {"token": token.token, "email": "test@test-fhi.com"}
         )
         assert response1.status_code == 200
-        assert b"data associated with your email has been removed" in response1.content
+        assert b"deleted the data associated with your email" in response1.content
         # Second POST with same token
         response2 = self.client.post(
             url, {"token": token.token, "email": "test@test-fhi.com"}
@@ -371,7 +469,7 @@ class TestConfirmDeleteDataView(TestCase):
             url, {"token": token.token, "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
-        assert b"data associated with your email has been removed" in response.content
+        assert b"deleted the data associated with your email" in response.content
 
         # The mixed-case record should have been deleted via __iexact lookup
         assert not MailingListSubscriber.objects.filter(
