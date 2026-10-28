@@ -107,6 +107,13 @@ class PriorAuthTool(BaseTool):
             await self.send_error_message("Cannot create prior auth: no chat context")
             return response_text, context
 
+        from fighthealthinsurance.models import ChatType
+
+        if chat.chat_type == ChatType.PATIENT:
+            # Prior auth records are a professional's; handle() strips the call.
+            logger.info("PriorAuthTool declined in a patient chat")
+            return response_text, context
+
         try:
             # Precise payload + span (see parse_anchored_json_payload): replace
             # call_span, not the greedy match.group(0), so a second tool call

@@ -28,7 +28,13 @@ from fighthealthinsurance.chat.tools.medicaid_tool import MedicaidInfoTool
 from fighthealthinsurance.chat.tools.prior_auth_tool import PriorAuthTool
 from fighthealthinsurance.generate_appeal import AppealTemplateGenerator
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
-from fighthealthinsurance.models import Appeal, Denial, PriorAuthRequest
+from fighthealthinsurance.models import (
+    Appeal,
+    ChatType,
+    Denial,
+    OngoingChat,
+    PriorAuthRequest,
+)
 
 
 class TestEmptyTemplateGenerate:
@@ -169,6 +175,41 @@ class TestPriorAuthPayloadFields:
         prior_auth = PriorAuthRequest(diagnosis="back pain")
         await tool._update_prior_auth_fields(prior_auth, {"diagnosis": None})
         assert prior_auth.diagnosis == "back pain"
+
+
+class TestPriorAuthOnlyInProfessionalChats:
+    """Prior auth records belong to Fight Paperwork's professional chats; a
+    patient chat's reply carrying the call creates nothing."""
+
+    REPLY = (
+        "Here is what I found.\n"
+        '**create_or_update_prior_auth**{"patient_name": "Rebecca Lee Crumpler", '
+        '"diagnosis": "back pain"}'
+    )
+
+    async def _run(self, chat_type):
+        tool = PriorAuthTool(AsyncMock(), AsyncMock())
+        chat = OngoingChat(chat_type=chat_type)
+        with patch.object(
+            tool, "_get_or_create_prior_auth", AsyncMock(return_value=None)
+        ) as create:
+            reply, _, _ = await tool.handle(self.REPLY, "", chat=chat)
+        return reply, create
+
+    @pytest.mark.asyncio
+    async def test_patient_chat_creates_no_prior_auth(self):
+        _, create = await self._run(ChatType.PATIENT)
+        create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_patient_chat_reply_drops_the_call_and_its_payload(self):
+        reply, _ = await self._run(ChatType.PATIENT)
+        assert reply == "Here is what I found."
+
+    @pytest.mark.asyncio
+    async def test_professional_chat_still_creates_the_prior_auth(self):
+        _, create = await self._run(ChatType.PROFESSIONAL)
+        create.assert_awaited_once()
 
 
 class TestToolErrorFrames:
