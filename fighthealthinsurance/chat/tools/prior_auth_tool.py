@@ -25,6 +25,12 @@ from .base_tool import (
 )
 from .patterns import CREATE_OR_UPDATE_PRIOR_AUTH_REGEX
 
+# What a patient sees when the model tries to record a prior authorization.
+PATIENT_CHAT_REFUSAL = (
+    "I can't file a prior authorization here; your doctor's office requests "
+    "those. I can help you appeal a denial instead."
+)
+
 
 class PriorAuthTool(BaseTool):
     """
@@ -126,9 +132,18 @@ class PriorAuthTool(BaseTool):
         from fighthealthinsurance.models import ChatType
 
         if chat.chat_type == ChatType.PATIENT:
-            # Prior auth records are a professional's; handle() strips the call.
+            # Prior auth records are a professional's: say so in place of the call.
             logger.info("PriorAuthTool declined in a patient chat")
-            return response_text, context
+            try:
+                _, call_span = parse_anchored_json_payload(response_text, match)
+            except (json.JSONDecodeError, ValueError):
+                return response_text, context
+            return (
+                replace_anchored_call(
+                    response_text, match, call_span, PATIENT_CHAT_REFUSAL
+                ),
+                context,
+            )
 
         try:
             # Precise payload + span (see parse_anchored_json_payload): replace

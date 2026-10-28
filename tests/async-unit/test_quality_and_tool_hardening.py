@@ -29,7 +29,10 @@ from fighthealthinsurance.chat.tools.generate_appeal_letter_tool import (
     GenerateAppealLetterTool,
 )
 from fighthealthinsurance.chat.tools.medicaid_tool import MedicaidInfoTool
-from fighthealthinsurance.chat.tools.prior_auth_tool import PriorAuthTool
+from fighthealthinsurance.chat.tools.prior_auth_tool import (
+    PATIENT_CHAT_REFUSAL,
+    PriorAuthTool,
+)
 from fighthealthinsurance.generate_appeal import AppealTemplateGenerator
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
 from fighthealthinsurance.models import (
@@ -328,7 +331,19 @@ class TestPriorAuthOnlyInProfessionalChats:
     @pytest.mark.asyncio
     async def test_patient_chat_reply_drops_the_call_and_its_payload(self):
         reply, _ = await self._run(ChatType.PATIENT)
-        assert reply == "Here is what I found."
+        assert "create_or_update_prior_auth" not in reply
+        assert "Rebecca Lee Crumpler" not in reply
+        assert reply.startswith("Here is what I found.")
+        assert PATIENT_CHAT_REFUSAL in reply
+
+    @pytest.mark.asyncio
+    async def test_patient_chat_with_only_the_call_gets_the_refusal_not_a_save_error(self):
+        tool = PriorAuthTool(AsyncMock(), AsyncMock())
+        only_call = self.REPLY[self.REPLY.index("**create_or_update_prior_auth**") :]
+        reply, _, _ = await tool.handle(
+            only_call, "", chat=OngoingChat(chat_type=ChatType.PATIENT)
+        )
+        assert reply.strip() == PATIENT_CHAT_REFUSAL
 
     @pytest.mark.asyncio
     async def test_professional_chat_still_creates_the_prior_auth(self):
