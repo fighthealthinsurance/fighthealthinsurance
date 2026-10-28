@@ -6,8 +6,8 @@ There are two shapes, each drawn by one template, and one script behind both:
   (partials/letter_box_pick.html): the intake page and Explain Denial;
 - a box for files alone (partials/file_drop_box.html, which a page
   includes and form_utils.FileDropInput and MultipleFileInput render for a
-  form field): plan documents, the follow-up form, Understand Policy and the
-  server-side reading page;
+  form field): plan documents, the follow-up form, Understand Policy, the
+  server-side reading page and Share your plan documents;
 - static/js/file_drop.js, loaded on every page, which takes a file dropped
   on any box marked data-file-drop (the chat's message box too) and hands it
   to that box's own file input.
@@ -28,7 +28,10 @@ from django.template.loader import render_to_string
 from django.test import TestCase
 from django.urls import reverse
 
-from fighthealthinsurance.chat_forms import UnderstandPolicyForm
+from fighthealthinsurance.chat_forms import (
+    SharePlanDocumentsForm,
+    UnderstandPolicyForm,
+)
 from fighthealthinsurance.forms import FollowUpForm, PlanDocumentsForm
 from tests.sync.test_escalation_packet_behaviour import NODE, needs_node
 
@@ -183,7 +186,13 @@ class EveryUploadIsABoxTest(TestCase):
     """Each place a person gives us a document, as rendered."""
 
     def test_the_pages(self):
-        for name in ("scan", "explain_denial", "understand_policy", "server_side_ocr"):
+        for name in (
+            "scan",
+            "explain_denial",
+            "understand_policy",
+            "server_side_ocr",
+            "share_plan_documents",
+        ):
             with self.subTest(page=name):
                 response = self.client.get(reverse(name))
                 self.assertEqual(response.status_code, 200)
@@ -194,6 +203,7 @@ class EveryUploadIsABoxTest(TestCase):
             (PlanDocumentsForm(), "plan_documents"),
             (FollowUpForm(), "followup_documents"),
             (UnderstandPolicyForm(), "policy_document"),
+            (SharePlanDocumentsForm(), "plan_documents"),
         ):
             with self.subTest(field=field):
                 html = str(form[field])

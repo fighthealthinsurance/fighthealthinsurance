@@ -25,6 +25,7 @@ replayed, which is exactly the surface non-determinism affects.
 """
 
 import asyncio
+import dataclasses
 import json
 import os
 import pathlib
@@ -33,6 +34,7 @@ import uuid
 import pytest
 from temporalio import activity, workflow
 from temporalio.client import WorkflowHistory
+from temporalio.converter import DataConverter, DefaultFailureConverter
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
 
@@ -43,13 +45,21 @@ from fighthealthinsurance.workflows.chat_routing_policy import (
 )
 from fighthealthinsurance.workflows.generate_appeal import GenerateAppealWorkflow
 from fighthealthinsurance.workflows.intake_journey import IntakeJourneyWorkflow
+from fighthealthinsurance.workflows.plan_documents_sweep import (
+    PlanDocumentsSweepWorkflow,
+)
 from fighthealthinsurance.workflows.send_fax import SendFaxWorkflow
+from fighthealthinsurance.workflows.shared_plan_documents import (
+    SharedPlanDocumentsWorkflow,
+)
 from fighthealthinsurance.workflows.types import (
     AssistantAppealInput,
     ChatRoutingPolicyInput,
     GenerateAppealInput,
     IntakeJourneyInput,
+    PlanDocumentsSweepInput,
     SendFaxInput,
+    SharedPlanDocumentsInput,
 )
 
 HISTORY_DIR = pathlib.Path(__file__).parent / "histories"
@@ -218,6 +228,55 @@ def _chat_policy_activities():
     return [compute_and_store_chat_policy]
 
 
+def _shared_plan_documents_activities():
+    @activity.defn(name="list_shared_plan_documents")
+    async def list_shared_plan_documents(share_batch: str) -> list[str]:
+        return [
+            "0c1d2e3f-4a5b-4c6d-8e9f-a0b1c2d3e4f5",
+            "1d2e3f4a-5b6c-4d7e-9f0a-b1c2d3e4f5a6",
+        ]
+
+    @activity.defn(name="process_shared_plan_document")
+    async def process_shared_plan_document(document_id: str) -> str:
+        # The second row fails its reading, so the baseline covers marking.
+        if document_id.startswith("1d2e"):
+            from temporalio.exceptions import ApplicationError
+
+            raise ApplicationError("FileNotRead", non_retryable=True)
+        return "ready_for_review"
+
+    @activity.defn(name="mark_shared_plan_document_unreadable")
+    async def mark_shared_plan_document_unreadable(document_id: str) -> str:
+        return "unreadable"
+
+    return [
+        list_shared_plan_documents,
+        process_shared_plan_document,
+        mark_shared_plan_document_unreadable,
+    ]
+
+
+def _plan_documents_sweep_activities():
+    @activity.defn(name="find_due_plan_documents_reminders")
+    async def find_due_plan_documents_reminders(limit: int) -> list[int]:
+        return [41, 42]
+
+    @activity.defn(name="send_plan_documents_reminder")
+    async def send_plan_documents_reminder(reminder_id: int) -> bool:
+        # The second was removed before its send, so nothing went.
+        return reminder_id == 41
+
+    @activity.defn(name="find_waiting_share_batches")
+    async def find_waiting_share_batches(received_minutes: int, limit: int) -> list[str]:
+        return ["5b7d1f0e-6a43-4f8e-9c1d-2e3f4a5b6c7d"]
+
+    return [
+        find_due_plan_documents_reminders,
+        send_plan_documents_reminder,
+        find_waiting_share_batches,
+    ]
+
+
 def _assistant_activities():
     @activity.defn(name="read_letter")
     async def read_letter(hashed_email: str, denial_uuid: str) -> bool:
@@ -242,6 +301,20 @@ def _assistant_activities():
         return True
 
     return [read_letter, ask_questions, start_drafting, finish_drafts, mark_draft_status]
+
+
+class _NoStackTraces(DefaultFailureConverter):
+    """A stub's failure carries its stack, and with it the file paths of
+    whoever captured the history; replay needs neither, so captures drop it."""
+
+    def to_failure(self, exception, payload_converter, failure):
+        super().to_failure(exception, payload_converter, failure)
+        failure.stack_trace = ""
+
+
+_CAPTURE_CONVERTER = dataclasses.replace(
+    DataConverter.default, failure_converter_class=_NoStackTraces
+)
 
 
 async def _capture(
@@ -292,7 +365,9 @@ async def test_capture_baseline_histories():
         pytest.skip("set FHI_CAPTURE_HISTORY=1 to regenerate the baselines")
 
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    async with await WorkflowEnvironment.start_time_skipping(identity="test-client") as env:
+    async with await WorkflowEnvironment.start_time_skipping(
+        identity="test-client", data_converter=_CAPTURE_CONVERTER
+    ) as env:
         plans = [
             (
                 "send_fax_completed",
@@ -347,6 +422,24 @@ async def test_capture_baseline_histories():
                 ChatRoutingPolicyWorkflow.run,
                 ChatRoutingPolicyInput(window_minutes=24 * 60),
             ),
+            (
+                "shared_plan_documents_completed",
+                [SharedPlanDocumentsWorkflow],
+                _shared_plan_documents_activities(),
+                SharedPlanDocumentsWorkflow.run,
+                SharedPlanDocumentsInput(
+                    share_batch="5b7d1f0e-6a43-4f8e-9c1d-2e3f4a5b6c7d"
+                ),
+            ),
+            (
+                "plan_documents_sweep_completed",
+                # The real reading, so the child the sweep starts runs too.
+                [PlanDocumentsSweepWorkflow, SharedPlanDocumentsWorkflow],
+                _plan_documents_sweep_activities()
+                + _shared_plan_documents_activities(),
+                PlanDocumentsSweepWorkflow.run,
+                PlanDocumentsSweepInput(),
+            ),
         ]
         for name, workflows, activities, entry, arg in plans:
             # The abandoned journey must NOT be signalled: it runs the nudge
@@ -388,11 +481,18 @@ def test_the_worker_hands_the_registry_result_to_the_worker_unmodified():
     assert "workflow_registry.fax_workflows()" in source
     assert "workflow_registry.appeal_workflows(" in source
     assert "workflow_registry.chat_policy_workflows()" in source
+    assert "workflow_registry.plan_documents_workflows()" in source
     # No hand-rolled list left behind.
     assert "fax_workflows: List[type] = [SendFaxWorkflow]" not in source
     assert "workflows=[ChatRoutingPolicyWorkflow]" not in source
+    assert "workflows=[SharedPlanDocumentsWorkflow]" not in source
     # ...and nothing added to any list after the registry produced it.
-    for name in ("fax_workflows", "appeal_workflows", "policy_workflows"):
+    for name in (
+        "fax_workflows",
+        "appeal_workflows",
+        "policy_workflows",
+        "plan_documents_workflows",
+    ):
         assert f"{name}.append(" not in source, f"{name} is mutated after the registry"
         assert f"{name} +=" not in source, f"{name} is extended after the registry"
         assert f"workflows={name}" in source, f"{name} is not what Worker receives"

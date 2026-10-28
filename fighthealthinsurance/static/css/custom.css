@@ -415,6 +415,14 @@ textarea.fhi-field {
     border: 1px solid var(--fhi-field-line);
 }
 
+/* A tick box nobody should miss, such as the offer to share a copy for
+   research: half again as big, centred on its label. */
+.fhi-check-large {
+    width: var(--fhi-space-6);
+    height: var(--fhi-space-6);
+    align-self: center;
+}
+
 /* The site's own input box and tick box ring the way the rest of the site
    does, at a weight their own rules cannot quietly undo. */
 .fhi-field:focus-visible,
@@ -2215,6 +2223,12 @@ section:not(.slider) .share-subcopy,
    paragraphs over 1140px of boxes. */
 .fhi-page-wide {
     max-width: min(var(--fhi-page-wide), 100% - 2 * var(--fhi-page-gutter));
+}
+
+/* A reading page that opens on an upload form: the intake flow's width, so
+   the title and the form have room, with the reading column's type. */
+.fhi-page-reading {
+    max-width: min(var(--fhi-page-reading), 100% - 2 * var(--fhi-page-gutter));
 }
 
 @media (max-width: 575px) {
