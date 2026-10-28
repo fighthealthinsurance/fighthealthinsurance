@@ -8,6 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 from loguru import logger
 
+from fighthealthinsurance.log_tags import email_tag, removal_tag
 from fighthealthinsurance.models import (
     Appeal,
     ChatLeads,
@@ -75,18 +76,31 @@ class RemoveDataHelper:
 
         email = email.strip().lower()
         hashed_email: str = Denial.get_hashed_email(email)
-        with transaction.atomic():
-            # Take this person's lock before touching any of their rows,
-            # the order every writer of person_counted uses
-            # (lifetime_counters.person_lock). Deleting a denial locks rows
-            # one at a time as the cascade walks them, including the
-            # SET_NULL back-references; a first-draft count locking the
-            # same person's rows in the other order would deadlock, and
-            # PostgreSQL would abort one of them -- possibly this deletion
-            # (review).
-            person_lock(hashed_email)
-            denials_removed = cls._delete_rows(email, hashed_email)
-            cls._record_removal(hashed_email, denials_removed)
+        # Logged instead of the email; email_tag() finds this removal's lines later.
+        tag = email_tag(email)
+        logger.info(f"Data removal {tag} started")
+        token = removal_tag.set(tag)
+        try:
+            with transaction.atomic():
+                # Take this person's lock before touching any of their rows,
+                # the order every writer of person_counted uses
+                # (lifetime_counters.person_lock). Deleting a denial locks rows
+                # one at a time as the cascade walks them, including the
+                # SET_NULL back-references; a first-draft count locking the
+                # same person's rows in the other order would deadlock, and
+                # PostgreSQL would abort one of them -- possibly this deletion
+                # (review).
+                person_lock(hashed_email)
+                denials_removed = cls._delete_rows(email, hashed_email)
+                cls._record_removal(hashed_email, denials_removed)
+        finally:
+            removal_tag.reset(token)
+        # A caller's transaction can still roll back, so say done once it commits.
+        transaction.on_commit(
+            lambda: logger.info(
+                f"Data removal {tag} done: {denials_removed} denials removed"
+            )
+        )
 
     @classmethod
     def _delete_rows(cls, email: str, hashed_email: str) -> int:
