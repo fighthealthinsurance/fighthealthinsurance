@@ -57,7 +57,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="policydocument",
             name="employer_name",
-            field=models.CharField(blank=True, max_length=200),
+            field=models.CharField(db_default="", blank=True, max_length=200),
         ),
         migrations.AddField(
             model_name="policydocument",
@@ -84,7 +84,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="policydocument",
             name="insurer_name",
-            field=models.CharField(blank=True, max_length=200),
+            field=models.CharField(db_default="", blank=True, max_length=200),
         ),
         migrations.AddField(
             model_name="policydocument",
@@ -110,6 +110,7 @@ class Migration(migrations.Migration):
             model_name="policydocument",
             name="source",
             field=models.CharField(
+                db_default="explain_policy",
                 choices=[
                     ("explain_policy", "Explain my policy"),
                     ("shared", "Shared for research"),
@@ -124,12 +125,12 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="policydocument",
             name="state",
-            field=models.CharField(blank=True, max_length=2),
+            field=models.CharField(db_default="", blank=True, max_length=2),
         ),
         migrations.AddField(
             model_name="policydocument",
             name="fingerprint",
-            field=models.CharField(blank=True, max_length=64),
+            field=models.CharField(db_default="", blank=True, max_length=64),
         ),
         migrations.AddField(
             model_name="policydocument",
@@ -142,6 +143,7 @@ class Migration(migrations.Migration):
             model_name="policydocument",
             name="premium_period",
             field=models.CharField(
+                db_default="",
                 blank=True,
                 choices=[
                     ("weekly", "Each week"),
@@ -157,6 +159,7 @@ class Migration(migrations.Migration):
             model_name="policydocument",
             name="who_is_covered",
             field=models.CharField(
+                db_default="",
                 blank=True,
                 choices=[
                     ("self_only", "Just you"),
@@ -171,7 +174,7 @@ class Migration(migrations.Migration):
             model_name="policydocument",
             name="cleaned_text",
             field=fighthealthinsurance.models.EncryptedTextField(
-                blank=True, default=""
+                db_default="", blank=True, default=""
             ),
         ),
         migrations.AddField(
@@ -183,6 +186,7 @@ class Migration(migrations.Migration):
             model_name="policydocument",
             name="processing_status",
             field=models.CharField(
+                db_default="",
                 blank=True,
                 choices=[
                     ("received", "Received, not read yet"),
@@ -199,13 +203,13 @@ class Migration(migrations.Migration):
             model_name="policydocument",
             name="shared_link",
             field=fighthealthinsurance.models.EncryptedTextField(
-                blank=True, default=""
+                db_default="", blank=True, default=""
             ),
         ),
         migrations.AddField(
             model_name="policydocument",
             name="shared_link_fingerprint",
-            field=models.CharField(blank=True, max_length=64),
+            field=models.CharField(db_default="", blank=True, max_length=64),
         ),
         migrations.AddIndex(
             model_name="policydocument",

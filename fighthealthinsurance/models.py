@@ -4541,7 +4541,10 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     session_key = models.CharField(max_length=100, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     source = models.CharField(
-        max_length=20, choices=SOURCE_CHOICES, default=SOURCE_EXPLAIN_POLICY
+        db_default="explain_policy",
+        max_length=20,
+        choices=SOURCE_CHOICES,
+        default=SOURCE_EXPLAIN_POLICY,
     )
     # Shared uploads only: the agreement's date (consent.SHARING_VERSION) and when.
     shared_consent_version = models.DateField(null=True, blank=True)
@@ -4549,18 +4552,18 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     # Files shared together in one upload carry the same batch.
     share_batch = models.UUIDField(null=True, blank=True)
     plan_year = models.PositiveSmallIntegerField(null=True, blank=True)
-    state = models.CharField(max_length=2, blank=True)
-    insurer_name = models.CharField(max_length=200, blank=True)
-    employer_name = models.CharField(max_length=200, blank=True)
+    state = models.CharField(db_default="", max_length=2, blank=True)
+    insurer_name = models.CharField(db_default="", max_length=200, blank=True)
+    employer_name = models.CharField(db_default="", max_length=200, blank=True)
     # Shared uploads only: the premium, if the person told us, and who it covers.
     premium_amount = models.DecimalField(
         max_digits=8, decimal_places=2, null=True, blank=True
     )
     premium_period = models.CharField(
-        max_length=20, choices=PREMIUM_PERIOD_CHOICES, blank=True
+        db_default="", max_length=20, choices=PREMIUM_PERIOD_CHOICES, blank=True
     )
     who_is_covered = models.CharField(
-        max_length=20, choices=WHO_IS_COVERED_CHOICES, blank=True
+        db_default="", max_length=20, choices=WHO_IS_COVERED_CHOICES, blank=True
     )
     insurance_company_obj = models.ForeignKey(
         InsuranceCompany,
@@ -4577,19 +4580,23 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         related_name="policy_documents",
     )
     # Shared uploads only: a keyed SHA-256 of the file, so repeats can be counted.
-    fingerprint = models.CharField(max_length=64, blank=True)
+    fingerprint = models.CharField(db_default="", max_length=64, blank=True)
     # Shared links only: the page's address, checked on the way in
     # (chat_forms.clean_shared_link) and stored encrypted. Staff open it by
     # hand; nothing fetches it. Its keyed hash finds repeats.
-    shared_link = EncryptedTextField(blank=True, default="")
-    shared_link_fingerprint = models.CharField(max_length=64, blank=True)
+    shared_link = EncryptedTextField(db_default="", blank=True, default="")
+    shared_link_fingerprint = models.CharField(db_default="", max_length=64, blank=True)
     # Shared uploads only: the file's text with personal details taken out as
     # best we can, and where its reading is. The raw text is never stored.
     processing_status = models.CharField(
-        max_length=20, choices=PROCESSING_STATUS_CHOICES, blank=True, default=""
+        db_default="",
+        max_length=20,
+        choices=PROCESSING_STATUS_CHOICES,
+        blank=True,
+        default="",
     )
     processed_at = models.DateTimeField(null=True, blank=True)
-    cleaned_text = EncryptedTextField(blank=True, default="")
+    cleaned_text = EncryptedTextField(db_default="", blank=True, default="")
 
     class Meta:
         indexes = [
