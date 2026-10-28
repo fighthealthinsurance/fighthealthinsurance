@@ -4,7 +4,8 @@ Each shared file is one encrypted PolicyDocument marked with where it came
 from (``source``) and the date of the agreement it was shared under. This
 module stores them, with a fingerprint of each file so repeats can be
 counted, and holds the limits every way in shares: a signed timestamp that
-each upload form carries, and a daily budget per visitor and for everyone.
+each upload form carries, a daily budget per visitor and for everyone, and a
+daily count of share page submissions per address (take_share_place).
 The share page has its own budget for everyone, and copies shared from other
 pages have theirs, so neither uses the other's room. A budget for everyone is
 taken in one conditional database update (reserve), so shares landing at the
@@ -24,7 +25,7 @@ import hashlib
 import hmac
 import time
 import uuid
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, NamedTuple, Optional, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from django.conf import settings
@@ -193,6 +194,51 @@ def note_shared(request: HttpRequest, files: Sequence[UploadedFile]) -> None:
         "files": used["files"] + len(files),
         "bytes": used["bytes"] + sum(f.size or 0 for f in files),
     }
+
+
+# ---- How many shares one address may send in a day --------------------------
+
+# Counted the way the assistant terms page counts agreements
+# (assistant_ip_limit): Cloudflare's address, an IPv6 address by its /64,
+# kept only as a keyed digest of the address and the day. Each address's
+# count is a row of the share page's daily counts, named by that digest.
+_PER_ADDRESS_LABEL = b"fhi-shared-plan-documents-per-ip-v1"
+_BUDGET_NAMES = (
+    SharedPlanDocumentsDay.FILES,
+    SharedPlanDocumentsDay.OPT_IN_FILES,
+    SharedPlanDocumentsDay.REMINDERS,
+)
+
+
+class SharePlace(NamedTuple):
+    name: str
+    day: datetime.date
+
+
+def _shares_per_address() -> int:
+    return int(getattr(settings, "SHARED_PLAN_DOCUMENTS_DAILY_SHARES_PER_ADDRESS", 10))
+
+
+def take_share_place(request: HttpRequest) -> Optional[SharePlace]:
+    """Count one share, of files, links or both, from this visitor's address
+    today, or None when the address has had its shares for the day. Earlier
+    days' address rows are deleted first, so none outlives its day."""
+    from fighthealthinsurance import assistant_ip_limit, client_network
+
+    today = timezone.now().date()
+    SharedPlanDocumentsDay.objects.filter(day__lt=today).exclude(
+        name__in=_BUDGET_NAMES
+    ).delete()
+    name = client_network.period_key(
+        _PER_ADDRESS_LABEL, today.isoformat(), assistant_ip_limit.address_of(request)
+    )
+    day = reserve(name, 1, _shares_per_address())
+    return SharePlace(name, day) if day else None
+
+
+def give_back_share_place(place: SharePlace) -> None:
+    """Return the place of a share that wasn't saved."""
+    give_back(place.name, 1, place.day)
 
 
 # ---- Storing shared files ---------------------------------------------------

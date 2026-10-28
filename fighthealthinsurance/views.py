@@ -4356,6 +4356,9 @@ class SharePlanDocumentsView(FormView):
         )
 
     def form_valid(self, form) -> HttpResponse:
+        place = shared_plan_documents.take_share_place(self.request)
+        if place is None:
+            return self._refuse(shared_plan_documents.SESSION_LIMIT_MESSAGE)
         data = form.cleaned_data
         files = data["plan_documents"]
         links = data["plan_links"]
@@ -4384,8 +4387,10 @@ class SharePlanDocumentsView(FormView):
                 links=links,
             )
         except shared_plan_documents.OverDailyBudget:
+            shared_plan_documents.give_back_share_place(place)
             return self._refuse(shared_plan_documents.DAILY_LIMIT_MESSAGE)
         except Exception:
+            shared_plan_documents.give_back_share_place(place)
             logger.opt(exception=True).error("Failed to save shared plan documents")
             form.add_error(None, "We couldn't save your files. Please try again.")
             return self.form_invalid(form)

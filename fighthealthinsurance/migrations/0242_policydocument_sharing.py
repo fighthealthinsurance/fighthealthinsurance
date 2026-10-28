@@ -43,7 +43,7 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("day", models.DateField()),
-                ("name", models.CharField(max_length=16)),
+                ("name", models.CharField(max_length=64)),
                 ("count", models.PositiveIntegerField(default=0)),
             ],
             options={

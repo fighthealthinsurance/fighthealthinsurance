@@ -274,7 +274,11 @@ class ALinkOnlyShareTest(_LinkTestCase):
     def test_links_use_no_file_budget(self):
         self.share(links=f"{LINK}\n{LINK_B}")
         self.assertEqual(shared_plan_documents.shared_today(), 0)
-        self.assertFalse(SharedPlanDocumentsDay.objects.exists())
+        self.assertFalse(
+            SharedPlanDocumentsDay.objects.filter(
+                name__in=(SharedPlanDocumentsDay.FILES, SharedPlanDocumentsDay.OPT_IN_FILES)
+            ).exists()
+        )
         used = self.client.session["shared_plan_documents_today"]
         self.assertEqual((used["files"], used["bytes"]), (0, 0))
 

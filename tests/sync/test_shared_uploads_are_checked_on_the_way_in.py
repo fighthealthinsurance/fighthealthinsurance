@@ -10,7 +10,8 @@ Word document without macros or locked parts, a .txt must be text, and a PDF
 must open, without a password, in a separate process. The form carries a
 signed note of when it was drawn, so a post that never loaded the page, or
 came back faster than a person can choose files, is asked to try again before
-any file is read. Each visitor, and everyone together, has a daily budget.
+any file is read. Each visitor, and everyone together, has a daily budget,
+and one address can send ten shares a day, of files or links alike.
 
 Staff read a shared file as text first, as plain text that runs nothing.
 Word files are read by word_text (tests/sync/test_word_text.py).
@@ -387,6 +388,89 @@ class DailyBudgetsTest(_ShareTestCase):
         ):
             self.share([txt(), txt()])
         self.assertEqual(shared_plan_documents.shared_today(), 0)
+
+
+LINK = "https://benefits.crumpler-cooperative.example.org/plan-documents"
+ADDRESS = "203.0.113.7"
+# The page escapes the message's apostrophe, so tests look for its end.
+TOMORROW = "share the rest tomorrow"
+
+
+class OneAddressSharesTenTimesADayTest(_ShareTestCase):
+    """Counted like the assistant terms page's agreements: per address that
+    Cloudflare saw, per UTC day, only as a keyed digest."""
+
+    def share_from(self, address=ADDRESS, files=None, **fields):
+        files = [txt()] if files is None else files
+        return self.share(files, client=Client(HTTP_CF_CONNECTING_IP=address), **fields)
+
+    def address_rows(self):
+        budgets = ("files", "opt_in_files", "reminders")
+        return SharedPlanDocumentsDay.objects.exclude(name__in=budgets)
+
+    def test_ten_a_day_is_the_number(self):
+        self.assertEqual(shared_plan_documents._shares_per_address(), 10)
+
+    @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_SHARES_PER_ADDRESS=2)
+    def test_past_the_limit_a_share_is_refused_and_keeps_what_was_typed(self):
+        self.assertStored(self.share_from())
+        self.assertStored(self.share_from(), count=2)
+        response = self.share_from(
+            insurer_name="Crumpler Mutual", plan_links=LINK, email="rebecca@example.com"
+        )
+        self.assertRefused(response, TOMORROW, count=2)
+        self.assertIn(TOMORROW, SESSION_LIMIT_MESSAGE)
+        self.assertContains(response, 'value="Crumpler Mutual"')
+        self.assertContains(response, LINK)
+        self.assertContains(response, 'value="rebecca@example.com"')
+
+    @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_SHARES_PER_ADDRESS=1)
+    def test_a_share_of_links_counts_like_a_share_of_files(self):
+        response = self.share_from(files=[], plan_links=LINK)
+        self.assertRedirects(response, self.url + "?shared=links")
+        self.assertRefused(
+            self.share_from(files=[], plan_links=LINK), TOMORROW, count=1
+        )
+        self.assertRefused(self.share_from(), TOMORROW, count=1)
+
+    @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_SHARES_PER_ADDRESS=1)
+    def test_another_address_still_shares(self):
+        self.assertStored(self.share_from())
+        self.assertStored(self.share_from("198.51.100.4"), count=2)
+
+    @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_SHARES_PER_ADDRESS=1)
+    def test_a_share_the_form_turns_down_takes_no_place(self):
+        response = self.share_from(plan_links="javascript:alert(1)")
+        self.assertEqual(response.status_code, 200)
+        self.assertStored(self.share_from())
+
+    @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_SHARES_PER_ADDRESS=1)
+    def test_a_share_that_fails_to_save_gives_its_place_back(self):
+        with patch.object(
+            PolicyDocument, "save", side_effect=RuntimeError("storage went away")
+        ):
+            self.share_from()
+        self.assertStored(self.share_from())
+
+    @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_SHARES_PER_ADDRESS=1)
+    def test_the_count_starts_again_the_next_day_and_yesterdays_rows_go(self):
+        self.assertStored(self.share_from())
+        tomorrow = timezone.now() + datetime.timedelta(days=1)
+        with patch("django.utils.timezone.now", return_value=tomorrow):
+            self.assertStored(self.share_from(), count=2)
+        (row,) = self.address_rows()
+        self.assertEqual(row.day, tomorrow.date())
+        # The budgets for everyone keep their rows.
+        self.assertEqual(
+            SharedPlanDocumentsDay.objects.filter(name="files").count(), 2
+        )
+
+    def test_the_address_is_kept_only_as_a_digest(self):
+        self.share_from()
+        (row,) = self.address_rows()
+        self.assertRegex(row.name, r"^[0-9a-f]{64}$")
+        self.assertNotIn("203", row.name)
+        self.assertEqual(row.count, 1)
 
 
 class StaffReadSharedFilesAsTextTest(_ShareTestCase):
