@@ -174,7 +174,7 @@ class TestConfirmDeleteDataView(TestCase):
         )
         assert response.status_code == 200
         assert_one_title(response)
-        assert b"data associated with your email has been removed" in response.content
+        assert b"deleted the data associated with your email" in response.content
         mock_remove.assert_called_once_with("test@test-fhi.com")
         assert not DeleteToken.objects.filter(
             hashed_email=self._hashed("test@test-fhi.com")
@@ -255,8 +255,23 @@ class TestConfirmDeleteDataView(TestCase):
     def test_done_page_loads_no_trackers(self, mock_remove):
         token = self._create_token()
         response = self.client.post(reverse("confirm_delete_data"), self._link(token))
-        assert b"has been removed" in response.content
+        assert b"deleted the data associated with your email" in response.content
         self._assert_no_trackers(response)
+
+    def test_the_confirm_page_promises_a_best_effort(self):
+        token = self._create_token()
+        response = self.client.get(reverse("confirm_delete_data"), self._link(token))
+        html = response.content.decode()
+        assert "We do our best to delete all of it." in html
+        assert "permanently delete all data" not in html
+
+    @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
+    def test_the_done_page_says_as_best_we_can(self, mock_remove):
+        token = self._create_token()
+        response = self.client.post(reverse("confirm_delete_data"), self._link(token))
+        html = response.content.decode()
+        assert "deleted the data associated with your email, as best we can" in html
+        assert "Any deleted the data associated with your email" not in html
 
     def test_invalid_token_shows_error(self):
         url = reverse("confirm_delete_data")
@@ -353,7 +368,7 @@ class TestConfirmDeleteDataView(TestCase):
             url, {"token": token.token, "email": "Test@Test-FHI.COM"}
         )
         assert response.status_code == 200
-        assert b"data associated with your email has been removed" in response.content
+        assert b"deleted the data associated with your email" in response.content
         mock_remove.assert_called_once_with("test@test-fhi.com")
 
     @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
@@ -371,7 +386,7 @@ class TestConfirmDeleteDataView(TestCase):
             url, {"token": token.token, "email": "  test@test-fhi.com  "}
         )
         assert response.status_code == 200
-        assert b"data associated with your email has been removed" in response.content
+        assert b"deleted the data associated with your email" in response.content
         mock_remove.assert_called_once_with("test@test-fhi.com")
 
     @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
@@ -390,7 +405,7 @@ class TestConfirmDeleteDataView(TestCase):
             url, {"token": token2.token, "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
-        assert b"data associated with your email has been removed" in response.content
+        assert b"deleted the data associated with your email" in response.content
 
     def test_email_with_plus_sign_url_encoding(self):
         """Email with + sign should work end-to-end through URL encoding."""
@@ -429,7 +444,7 @@ class TestConfirmDeleteDataView(TestCase):
             url, {"token": token.token, "email": "test@test-fhi.com"}
         )
         assert response1.status_code == 200
-        assert b"data associated with your email has been removed" in response1.content
+        assert b"deleted the data associated with your email" in response1.content
         # Second POST with same token
         response2 = self.client.post(
             url, {"token": token.token, "email": "test@test-fhi.com"}
@@ -454,7 +469,7 @@ class TestConfirmDeleteDataView(TestCase):
             url, {"token": token.token, "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
-        assert b"data associated with your email has been removed" in response.content
+        assert b"deleted the data associated with your email" in response.content
 
         # The mixed-case record should have been deleted via __iexact lookup
         assert not MailingListSubscriber.objects.filter(
