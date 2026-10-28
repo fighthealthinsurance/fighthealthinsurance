@@ -402,6 +402,7 @@ class CoverageCostsActPendingAndMoreDataTest(TestCase):
                     "https://www.opm.gov/healthcare-insurance/healthcare/plan-information/premiums/",
                 ],
                 "act-job": ["https://www.healthcare.gov/health-care-law-protections/summary-of-benefits-and-coverage/"],
+                "act-share": [reverse("share_plan_documents")],
                 "act-help": ["https://www.healthcare.gov/find-local-help/", reverse("state_help_index")],
                 "act-checklist": [f"{reverse('coverage-changes')}#fall-checklist"],
             },
