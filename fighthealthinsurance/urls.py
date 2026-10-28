@@ -378,6 +378,12 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         RedirectView.as_view(pattern_name="coverage-changes", permanent=True),
         name="preparing-2026",
     ),
+    # Next year's prices, at an address with no year in it, like the guide.
+    path(
+        "coverage-costs",
+        views.CoverageCostsView.as_view(),
+        name="coverage-costs",
+    ),
     path(
         "turning-26",
         views.Turning26View.as_view(),

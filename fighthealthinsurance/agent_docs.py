@@ -84,6 +84,12 @@ PAGE_NOTES: dict[str, tuple[str, str]] = {
         "what changes for Marketplace, Medicaid, Medicare and employer plans, "
         "the dates that matter this fall, and appeal deadlines",
     ),
+    "coverage-costs": (
+        "What health coverage costs in 2027",
+        "premiums, price changes and limits for marketplace, job-based, federal "
+        "employee and Medicare coverage, each dated and labeled, what's still to "
+        "come, and where to see your own price",
+    ),
     "turning-26": ("Turning 26", "coverage options when you age off a parent's plan"),
     "medicaid-eligibility": ("Medicaid eligibility", ""),
     "other-resources": ("Other resources", "organizations and tools beyond this site"),

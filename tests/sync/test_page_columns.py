@@ -34,6 +34,7 @@ ON_A_COLUMN = {
     "microsite_directory.html": "fhi-page-wide",
     "fax_thankyou.html": "fhi-page-wide",
     "about_ai.html": "fhi-page",
+    "coverage_costs.html": "fhi-page",
     "faxfollowup.html": "fhi-page",
     "thankyou.html": "fhi-page",
     "followup_thankyou.html": "fhi-page",

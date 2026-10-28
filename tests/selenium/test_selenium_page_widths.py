@@ -57,6 +57,7 @@ PAGES = {
     "/treatments/": "wide",
     "/remove_data": "reading",
     "/about-ai": "reading",
+    "/coverage-costs": "reading",
     "/faq/": "reading",
     "/contact": "reading",
     "/privacy_policy": "reading",

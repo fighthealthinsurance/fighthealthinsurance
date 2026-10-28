@@ -56,6 +56,7 @@ CONTENT_PAGES = [
     "microsite_directory",
     "share_denial",
     "open-enrollment",
+    "coverage-costs",
     GLOSSARY_TERM,
 ]
 
@@ -95,6 +96,7 @@ ON_A_COLUMN = [
     "remove_data",
     "microsite_directory",
     "share_denial",
+    "coverage-costs",
     GLOSSARY_TERM,
     "state_help_index",
     STATE_PAGE,
