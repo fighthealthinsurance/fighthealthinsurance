@@ -286,6 +286,36 @@ class TestFaxDocumentRegeneration:
                     os.unlink(temp_path)
 
     @pytest.mark.django_db
+    def test_regenerating_keeps_a_claim_another_sender_took(
+        self, fax_without_document, sample_pdf_bytes
+    ):
+        """Saving the rebuilt document writes only that field, so a vendor
+        claim taken since this row loaded is not undone."""
+        real_save = FaxesToSend.save
+
+        def claimed_meanwhile(row, *args, **kwargs):
+            FaxesToSend.objects.filter(pk=row.pk).update(vendor_send_completed=True)
+            return real_save(row, *args, **kwargs)
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
+            temp_file.write(sample_pdf_bytes)
+            temp_path = temp_file.name
+        try:
+            with patch(
+                "fighthealthinsurance.common_view_logic.AppealAssemblyHelper._assemble_appeal_pdf",
+                return_value=temp_path,
+            ), patch.object(FaxesToSend, "save", claimed_meanwhile):
+                fax_without_document.get_fax_document(return_encrypted=False)
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+        fax_without_document.refresh_from_db()
+        assert fax_without_document.vendor_send_completed is True
+        stored = fax_without_document.combined_document_enc.read()
+        assert Cryptographer.decrypted(stored) == sample_pdf_bytes
+
+    @pytest.mark.django_db
     def test_regenerate_on_decryption_failure(self, db, sample_pdf_bytes):
         """Test that decryption failure triggers regeneration."""
         denial = Denial.objects.create(

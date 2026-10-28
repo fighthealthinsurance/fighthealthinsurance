@@ -15,6 +15,13 @@ from fighthealthinsurance.utils import get_env_variable
 
 name = "EmailPollingActor"
 
+# How often the loop starts a pass that sends again the faxes whose send
+# never started. A pass only starts Temporal workflows keyed by fax, so a fax
+# matched again while its run is open starts nothing new.
+FAX_RECONCILE_EVERY = datetime.timedelta(minutes=10)
+# How long one pass may run before it is stopped.
+FAX_RECONCILE_PASS_LIMIT = datetime.timedelta(minutes=5)
+
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
 class EmailPollingActor:
@@ -56,6 +63,9 @@ class EmailPollingActor:
         # then every 24 hours. Each deploy recreates this actor, so each
         # deploy starts with a purge.
         self.last_session_clear_check: Optional[datetime.datetime] = None
+        # None: the first pass of run() starts a fax reconcile.
+        self.last_fax_reconcile: Optional[datetime.datetime] = None
+        self._fax_reconcile_task: Optional[asyncio.Future] = None
         self._logger.info("EmailPollingActor senders initialized")
 
     async def health_check(self) -> bool:
@@ -73,8 +83,9 @@ class EmailPollingActor:
             # The daily cleanups come first in each pass, before any email
             # work, and the long waits below check them too, so neither a
             # failing email step nor the pacing between sends holds them up.
-            # _run_daily_cleanups catches its own errors.
+            # _run_daily_cleanups and _run_fax_reconcile catch their own errors.
             await self._run_daily_cleanups()
+            await self._run_fax_reconcile()
             try:
                 # Send queued emails whose business-hours window is now open
                 # FIRST: these are time-sensitive, and the follow-up batch below
@@ -194,7 +205,8 @@ class EmailPollingActor:
         await self._wait_running_daily_cleanups(max(10, base_delay + jitter))
 
     async def _wait_running_daily_cleanups(self, seconds: float) -> None:
-        """Wait the given time, running the daily cleanups as they fall due.
+        """Wait the given time, running the daily cleanups and the fax
+        reconcile as they fall due.
 
         The wait is slept a minute at a time with a check for due cleanups
         after each minute, so a long wait, such as the pacing after a batch
@@ -207,6 +219,7 @@ class EmailPollingActor:
             await asyncio.sleep(step)
             remaining -= step
             await self._run_daily_cleanups()
+            await self._run_fax_reconcile()
 
     async def _run_daily_cleanups(self) -> None:
         """Run each daily cleanup that is due.
@@ -232,6 +245,52 @@ class EmailPollingActor:
                 await self._clear_expired_emails()
         except Exception:
             self._logger.opt(exception=True).error("Error clearing expired emails")
+
+    async def _run_fax_reconcile(self) -> None:
+        """Start a fax reconcile pass every FAX_RECONCILE_EVERY.
+
+        Runs here because this actor runs with Temporal on, where the Ray fax
+        sweep does not. The pass runs as its own task, so a slow Temporal
+        never holds up the email work, and one still running when the next
+        falls due is left to finish. Catches its own errors, as the daily
+        cleanups do.
+        """
+        try:
+            now = timezone.now()
+            last = self.last_fax_reconcile
+            if last is not None and now - last < FAX_RECONCILE_EVERY:
+                return
+            running = self._fax_reconcile_task
+            if running is not None and not running.done():
+                return
+            self.last_fax_reconcile = now
+            await self._start_fax_reconcile()
+        except Exception:
+            self._logger.opt(exception=True).error("Error starting the fax reconcile")
+
+    async def _start_fax_reconcile(self) -> None:
+        self._fax_reconcile_task = asyncio.ensure_future(self._fax_reconcile_pass())
+
+    async def _fax_reconcile_pass(self) -> None:
+        """One pass, stopped after FAX_RECONCILE_PASS_LIMIT."""
+        try:
+            await asyncio.wait_for(
+                self._redispatch_stranded_faxes(),
+                FAX_RECONCILE_PASS_LIMIT.total_seconds(),
+            )
+        except Exception:
+            self._logger.opt(exception=True).error(
+                "Error re-dispatching stranded faxes"
+            )
+
+    async def _redispatch_stranded_faxes(self) -> None:
+        """Send again the faxes whose dispatch was lost (see
+        SendFaxHelper.aredispatch_stranded_faxes)."""
+        from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
+
+        held = await SendFaxHelper.aredispatch_stranded_faxes()
+        if held:
+            self._logger.info(f"Started sends for {held} stranded faxes")
 
     async def _clear_expired_sessions(self) -> None:
         """Delete sessions whose expiry date has passed.

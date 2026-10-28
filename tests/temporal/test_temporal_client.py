@@ -5,6 +5,7 @@ it as a failure would make callers fall back to a concurrent Ray send for the
 same fax (double-fax risk), so it must map to "handled".
 """
 
+import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -12,13 +13,16 @@ from cryptography.fernet import Fernet
 from django.test import override_settings
 
 from temporalio.exceptions import WorkflowAlreadyStartedError
+from temporalio.testing import WorkflowEnvironment
 
+from fighthealthinsurance.helpers.fax_helpers import _astart_fax_sends
 from fighthealthinsurance.temporal_client import (
     RESEARCH_PROFILE,
     dispatch_fax_send,
     dispatch_shared_plan_documents,
     plan_documents_enabled,
     research_payload_key_problem,
+    start_send_fax_workflow,
 )
 from fighthealthinsurance.workflows.types import SharedPlanDocumentsInput
 
@@ -44,12 +48,50 @@ def test_dispatch_returns_false_when_disabled():
     assert dispatch_fax_send("h", "u") is False
 
 
+@pytest.mark.asyncio
+async def test_the_server_refuses_a_second_send_for_a_fax_with_an_open_run():
+    """The workflow id is the fax's own, so while a run for a fax is open a
+    plain start fails as already started (dispatch_fax_send counts that as
+    handled): the views and the stranded-fax reconcile can't open a second
+    send of one fax. No worker polls the queue, so the first run stays open."""
+    async with await WorkflowEnvironment.start_local() as env:
+        with (
+            patch(
+                "fighthealthinsurance.temporal_client.get_temporal_client",
+                AsyncMock(return_value=env.client),
+            ),
+            override_settings(TEMPORAL_TASK_QUEUE=f"no-worker-{uuid.uuid4()}"),
+        ):
+            await start_send_fax_workflow("h", "u")
+            with pytest.raises(WorkflowAlreadyStartedError):
+                await start_send_fax_workflow("h", "u")
+
+
+@pytest.mark.asyncio
+async def test_a_stranded_fax_found_on_two_passes_gets_one_run():
+    """The reconcile's second pass, while the first pass's run is still
+    open, counts it and starts nothing new."""
+    fax = ("h", f"u-{uuid.uuid4()}")
+    async with await WorkflowEnvironment.start_local() as env:
+        with (
+            patch(
+                "fighthealthinsurance.temporal_client.get_temporal_client",
+                AsyncMock(return_value=env.client),
+            ),
+            override_settings(TEMPORAL_TASK_QUEUE=f"no-worker-{uuid.uuid4()}"),
+        ):
+            assert await _astart_fax_sends([fax]) == 1
+            handle = env.client.get_workflow_handle(f"send-fax-{fax[1]}")
+            first_run = (await handle.describe()).run_id
+            assert await _astart_fax_sends([fax]) == 1
+            assert (await handle.describe()).run_id == first_run
+
+
 # --- Shared plan documents ----------------------------------------------------
 
 _KEY = Fernet.generate_key().decode()
 _IN_BOTH_KEY = Fernet.generate_key().decode()
 _OLD_KEY = Fernet.generate_key().decode()
-
 
 
 @pytest.mark.parametrize(
@@ -195,7 +237,7 @@ def test_a_share_starts_one_reading_named_by_its_batch_on_its_queue():
         assert dispatch_shared_plan_documents(BATCH) is True
     # In the research namespace, with its key.
     assert connect.await_args.kwargs == {"profile": RESEARCH_PROFILE}
-    (args, kwargs) = client.start_workflow.await_args
+    args, kwargs = client.start_workflow.await_args
     assert args == ("SharedPlanDocumentsWorkflow", SharedPlanDocumentsInput(BATCH))
     assert kwargs["id"] == f"shared-plan-documents-{BATCH}"
     assert kwargs["task_queue"] == "q-plan-docs"

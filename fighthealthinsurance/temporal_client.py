@@ -185,6 +185,8 @@ async def start_send_fax_workflow(
     fax_uuid: str,
     delay_send: bool = False,
     force_restart: bool = False,
+    client: Any = None,
+    rpc_timeout: Optional[timedelta] = None,
 ) -> str:
     """Start ``SendFaxWorkflow`` for a fax. Returns the workflow id.
 
@@ -193,12 +195,14 @@ async def start_send_fax_workflow(
     ``WorkflowAlreadyStartedError``, and if that open run is already past its
     send step it never picks up a corrected destination -- terminating it and
     starting fresh re-hydrates the new destination from the DB and sends it.
+    ``client`` reuses a connection; ``rpc_timeout`` bounds the start call.
     """
     from temporalio.common import WorkflowIDConflictPolicy
 
     from fighthealthinsurance.workflows.types import SendFaxInput
 
-    client = await get_temporal_client()
+    if client is None:
+        client = await get_temporal_client()
     conflict_policy = (
         WorkflowIDConflictPolicy.TERMINATE_EXISTING
         if force_restart
@@ -217,6 +221,7 @@ async def start_send_fax_workflow(
         id=f"send-fax-{fax_uuid}",
         task_queue=settings.TEMPORAL_TASK_QUEUE,
         id_conflict_policy=conflict_policy,
+        rpc_timeout=rpc_timeout,
     )
     logger.info(f"Started SendFaxWorkflow {handle.id} for fax {fax_uuid}")
     return str(handle.id)

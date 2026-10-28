@@ -132,14 +132,16 @@ def precheck_fax(fax: "FaxesToSend") -> str:
         return STATUS_ALREADY_SENT
     denial = fax.denial_id
     if denial is None:
-        logger.warning(f"Fax {fax} has no denial id")
+        logger.warning(f"Fax uuid={fax.uuid} has no denial id")
         send_fax_status_notification(fax, False, False, missing_denial=True)
         return STATUS_MISSING_DENIAL
     if fax.destination is None:
-        logger.warning(f"Fax {fax} has no destination")
+        logger.warning(f"Fax uuid={fax.uuid} has no destination")
         return STATUS_MISSING_DESTINATION
     fax.attempting_to_send_as_of = timezone.now()
-    fax.save()
+    # Only this field: a full save would write back a claim, number or
+    # sent flag another sender or a resend changed since this row loaded.
+    fax.save(update_fields=["attempting_to_send_as_of"])
     return STATUS_OK
 
 
@@ -313,7 +315,7 @@ def finalize_fax(
             appeal.sent = fax_success
             appeal.save()
         else:
-            logger.warning(f"No appeal found for professional {fax}")
+            logger.warning(f"No appeal found for professional fax uuid={fax.uuid}")
     # Best-effort side effects: state is durable now, so these run once and must
     # never raise (a flaky email must not trigger a finalize retry / re-send).
     send_fax_status_notification(fax, fax_success, missing_destination)

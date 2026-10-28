@@ -2293,8 +2293,10 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
                 ContentFile(
                     regenerated_bytes
                 ),  # Pass unencrypted, field encrypts automatically
-                save=True,
+                save=False,
             )
+            # Only this field, so a claim another sender took isn't undone.
+            self.save(update_fields=["combined_document_enc"])
 
             # Return in requested format
             return self._format_document_output(regenerated_bytes, return_encrypted)
