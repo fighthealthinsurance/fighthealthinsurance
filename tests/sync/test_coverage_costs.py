@@ -435,13 +435,10 @@ class CoverageCostsIsLinkedTest(TestCase):
     def setUp(self):
         self.href = f'href="{reverse("coverage-costs")}"'
 
-    def test_the_coverage_guide_links_it_from_marketplace_premiums_and_more_help(self):
+    def test_the_coverage_guide_links_it_from_more_help(self):
+        # Not from inside a question's answer: Tab from an open question
+        # goes to the next question (the keyboard test checks it).
         html = Client().get(reverse("coverage-changes")).content.decode()
-        watch = html[html.index('<section id="areas-to-watch"') : html.index("</section>", html.index('<section id="areas-to-watch"'))]
-        self.assertIn(
-            f"Final prices come out around November 1. <a {self.href}>What health coverage costs in 2027</a> has the numbers for each kind of coverage.",
-            watch,
-        )
         more = html[html.index('<section id="resources"') : html.index("</section>", html.index('<section id="resources"'))]
         self.assertIn(f"<li><a {self.href}>What health coverage costs in 2027</a></li>", more)
 
