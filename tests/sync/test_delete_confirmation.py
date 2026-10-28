@@ -1,12 +1,14 @@
 import datetime
 from unittest.mock import patch
 
+import pytest
 from django.contrib.sessions.models import Session
 from django.core import mail
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+from fighthealthinsurance.helpers import RemoveDataHelper
 from fighthealthinsurance.models import (
     Denial,
     DeleteToken,
@@ -188,6 +190,35 @@ class TestConfirmDeleteDataView(TestCase):
             {"token": token.token, "email": "test@test-fhi.com"},
         )
         assert not Session.objects.filter(session_key=session.session_key).exists()
+
+    def _post_with_a_failing_deletion(self, token):
+        with patch.object(
+            RemoveDataHelper, "_delete_rows", side_effect=RuntimeError("db hiccup")
+        ):
+            with pytest.raises(RuntimeError):
+                self.client.post(
+                    reverse("confirm_delete_data"),
+                    {"token": token.token, "email": "test@test-fhi.com"},
+                )
+
+    def test_failed_deletion_leaves_the_link_unused(self):
+        token = self._create_token()
+        self._post_with_a_failing_deletion(token)
+        assert not UsedDeleteToken.objects.filter(token=token.token).exists()
+
+    def test_retry_after_a_failed_deletion_removes_the_data(self):
+        MailingListSubscriber.objects.create(
+            email="test@test-fhi.com", name="Rebecca Lee Crumpler"
+        )
+        token = self._create_token()
+        self._post_with_a_failing_deletion(token)
+        self.client.post(
+            reverse("confirm_delete_data"),
+            {"token": token.token, "email": "test@test-fhi.com"},
+        )
+        assert not MailingListSubscriber.objects.filter(
+            email="test@test-fhi.com"
+        ).exists()
 
     def test_invalid_token_shows_error(self):
         url = reverse("confirm_delete_data")
