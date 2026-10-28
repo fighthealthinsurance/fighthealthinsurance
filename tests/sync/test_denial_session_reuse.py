@@ -31,6 +31,7 @@ from fighthealthinsurance.models import (
     Denial,
     DenialTypes,
     DenialTypesRelation,
+    FollowUpSched,
     IntakeJourneyEvent,
 )
 from fighthealthinsurance.views import DENIAL_SESSION_REUSE_WINDOW
@@ -47,20 +48,21 @@ class DenialSessionReuseTest(TestCase):
     def setUp(self):
         self.client = Client()
 
-    def _post(self, email=None, denial_text="Your claim has been denied."):
+    def _post(
+        self, email=None, denial_text="Your claim has been denied.", keep_email=False
+    ):
         """Submit the consumer scrub form on the current session."""
-        return self.client.post(
-            reverse("process"),
-            {
-                "email": email or self.EMAIL,
-                "denial_text": denial_text,
-                "pii": "on",
-                "tos": "on",
-                "privacy": "on",
-                "personalonly": "on",
-            },
-            follow=True,
-        )
+        data = {
+            "email": email or self.EMAIL,
+            "denial_text": denial_text,
+            "pii": "on",
+            "tos": "on",
+            "privacy": "on",
+            "personalonly": "on",
+        }
+        if keep_email:
+            data["store_raw_email"] = "checked"
+        return self.client.post(reverse("process"), data, follow=True)
 
     def _first_submission(self) -> Denial:
         """The submission every test starts from, and the row it created."""
@@ -170,6 +172,25 @@ class DenialSessionReuseTest(TestCase):
         self._post()
 
         self.assertEqual(Denial.objects.count(), 2)
+
+    def test_unticking_keep_my_email_on_a_resubmit_cancels_the_follow_ups(self):
+        """The follow-ups the first submission scheduled must not go, and no
+        follow-up row keeps the address."""
+        email = "rebecca.crumpler@test-fhi.com"
+        self._post(email=email, keep_email=True)
+        denial = Denial.objects.get()
+        self.assertTrue(FollowUpSched.objects.filter(denial_id=denial).exists())
+
+        self._post(email=email)
+
+        self.assertEqual(
+            list(
+                FollowUpSched.objects.filter(denial_id=denial).exclude(
+                    follow_up_sent=True, email=""
+                )
+            ),
+            [],
+        )
 
     def test_a_session_without_a_denial_uuid_creates_a_new_denial(self):
         """The unchanged path: no session state, no reuse."""

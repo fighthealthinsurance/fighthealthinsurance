@@ -681,6 +681,22 @@ class TestNudge(TransactionTestCase):
                 assert not IntakeResumePoint.objects.filter(denial=denial).exists()
                 assert not IntakeJourneyEvent.objects.filter(denial=denial).exists()
 
+    def test_an_email_withdrawn_while_the_nudge_waits_gets_no_nudge(self):
+        """Unticking the box after the claim but before the send stops it."""
+        denial = _make_denial(8162)
+        claim_nudge = intake_outbox.aclaim_nudge
+
+        async def claim_then_withdraw(d):
+            claim = await claim_nudge(d)
+            await Denial.objects.filter(pk=d.pk).aupdate(raw_email=None)
+            return claim
+
+        with patch.object(intake_outbox, "aclaim_nudge", claim_then_withdraw):
+            sent, send = self._send(denial)
+
+        assert sent is False
+        send.assert_not_awaited()
+
     def test_a_nudge_skipped_for_a_finished_form_mints_no_link(self):
         from fighthealthinsurance.models import IntakeResumePoint
 

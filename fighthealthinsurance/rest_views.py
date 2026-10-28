@@ -372,6 +372,9 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                     f"remote_ip={request.META.get('REMOTE_ADDR', 'unknown')} "
                     f"denial_id={denial_id}"
                 )
+        if denial is not None and "store_raw_email" not in request.data:
+            # Consent left out of an update leaves the kept email as it is.
+            serializer_data["store_raw_email"] = None
         if "patient_id" in serializer_data and is_convertible_to_int(
             serializer_data["patient_id"]
         ):

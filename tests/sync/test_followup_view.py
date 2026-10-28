@@ -1,9 +1,15 @@
 """End-to-end tests for the follow-up page (view + helper)."""
 
+import datetime
+
+from unittest.mock import patch
+
 from django.test import Client, TestCase
 from django.urls import reverse
+from django.utils import timezone
 
-from fighthealthinsurance.common_view_logic import FollowUpHelper
+from fighthealthinsurance.common_view_logic import FollowUpHelper, schedule_follow_ups
+from fighthealthinsurance.followup_emails import FollowUpEmailSender
 from fighthealthinsurance.models import (
     Denial,
     FollowUp,
@@ -152,10 +158,89 @@ class TestFollowUpViewSubmit(TestCase):
 
     def test_follow_up_again_checked_schedules_new_round(self):
         self.client.post(self.path, data=self._payload(follow_up_again="on"))
-        # 1-day, 7-day, 30-day, 90-day = 4 scheduled rows
-        self.assertEqual(FollowUpSched.objects.filter(denial_id=self.denial).count(), 4)
+        # 7-day, 30-day, 90-day = 3 scheduled rows; a new round has no 1-day
+        self.assertEqual(FollowUpSched.objects.filter(denial_id=self.denial).count(), 3)
         followup = FollowUp.objects.get(denial_id=self.denial)
         self.assertTrue(followup.more_follow_up_requested)
+
+    def _every_follow_up_already_sent(self):
+        """Where someone answering the 90 day email stands."""
+        schedule_follow_ups(self.denial.raw_email, self.denial)
+        FollowUpSched.objects.filter(denial_id=self.denial).update(
+            follow_up_sent=True, follow_up_sent_date=timezone.now()
+        )
+
+    def test_follow_up_again_after_every_email_went_restarts_them_from_today(self):
+        """The 7, 30 and 90 day check-ins go again from today; the 1 day one,
+        a first-week nudge, is not repeated."""
+        self._every_follow_up_already_sent()
+
+        self.client.post(self.path, data=self._payload(follow_up_again="on"))
+
+        today = datetime.date.today()
+        pending = {
+            s.follow_up_type.name: s.follow_up_date
+            for s in FollowUpSched.objects.filter(
+                denial_id=self.denial, follow_up_sent=False
+            )
+        }
+        self.assertEqual(
+            pending,
+            {
+                "followup_7day": today + datetime.timedelta(days=7),
+                "followup_30day": today + datetime.timedelta(days=30),
+                "followup_90day": today + datetime.timedelta(days=90),
+            },
+        )
+
+    def test_a_restarted_follow_up_is_sent_when_due_even_past_six_months(self):
+        """The sender skips rows scheduled over six months ago, so a restart
+        counts its six months from the request."""
+        self._every_follow_up_already_sent()
+        FollowUpSched.objects.filter(denial_id=self.denial).update(
+            initial=datetime.date.today() - datetime.timedelta(days=200)
+        )
+
+        self.client.post(self.path, data=self._payload(follow_up_again="on"))
+        # A week on, the 7 day check-in falls due.
+        FollowUpSched.objects.filter(
+            denial_id=self.denial, follow_up_type__name="followup_7day"
+        ).update(follow_up_date=datetime.date.today())
+
+        due = FollowUpEmailSender().find_all_due()
+        self.assertEqual([s.follow_up_type.name for s in due], ["followup_7day"])
+
+    def test_a_restart_creates_no_1_day_check_in_where_there_was_none(self):
+        self._every_follow_up_already_sent()
+        FollowUpSched.objects.filter(
+            denial_id=self.denial, follow_up_type__name="followup_1day"
+        ).delete()
+
+        self.client.post(self.path, data=self._payload(follow_up_again="on"))
+
+        self.assertFalse(
+            FollowUpSched.objects.filter(
+                denial_id=self.denial, follow_up_type__name="followup_1day"
+            ).exists()
+        )
+
+    def test_a_restart_does_not_send_a_pending_1_day_check_in_late(self):
+        """An unsent 1 day row was held back because longer ones had gone;
+        restarting those must not let it out."""
+        self._every_follow_up_already_sent()
+        FollowUpSched.objects.filter(
+            denial_id=self.denial, follow_up_type__name="followup_1day"
+        ).update(
+            follow_up_sent=False,
+            follow_up_sent_date=None,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+        )
+
+        self.client.post(self.path, data=self._payload(follow_up_again="on"))
+        with patch("fighthealthinsurance.followup_emails.send_fallback_email") as send:
+            FollowUpEmailSender().send_all()
+
+        send.assert_not_called()
 
     def test_invalid_secret_does_not_render_form(self):
         """Wrong secret must NOT render the follow-up form (and must not
@@ -277,6 +362,23 @@ class TestFollowUpHelper(TestCase):
         self.assertTrue(followup.use_quote)
         self.assertTrue(followup.follow_up_medicare_someone_to_help)
 
+    def test_feedback_does_not_write_back_an_email_withdrawn_meanwhile(self):
+        """The case was read before the email was withdrawn; saving the
+        feedback must not put the address back."""
+        read_before = Denial.objects.get(pk=self.denial.pk)
+        Denial.objects.filter(pk=self.denial.pk).update(raw_email=None)
+
+        with patch.object(FollowUpHelper, "fetch_denial", return_value=read_before):
+            FollowUpHelper.store_follow_up_result(
+                uuid=self.denial.uuid,
+                follow_up_semi_sekret=self.denial.follow_up_semi_sekret,
+                hashed_email=self.denial.hashed_email,
+                appeal_result="Yes",
+            )
+
+        self.denial.refresh_from_db()
+        self.assertIsNone(self.denial.raw_email)
+
     def test_store_follow_up_result_with_documents_filters_none(self):
         """None entries (e.g. from MultipleFileField with no upload) must
         not turn into empty FollowUpDocuments rows."""
@@ -302,4 +404,4 @@ class TestFollowUpHelper(TestCase):
             appeal_result="",
             follow_up_again=True,
         )
-        self.assertEqual(FollowUpSched.objects.filter(denial_id=self.denial).count(), 4)
+        self.assertEqual(FollowUpSched.objects.filter(denial_id=self.denial).count(), 3)
