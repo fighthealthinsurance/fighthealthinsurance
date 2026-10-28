@@ -478,7 +478,7 @@ the share page's 30-day reminders in place of the Ray email loop.
   `fhi-.*` queue alerts in `worker-alerts.yaml` cover it, since their
   namespace matchers include `fhi-research`.
 - **Turning it on,** in this order:
-  1. Deploy, so migration 0248 has added the reading's columns.
+  1. Deploy, so migration 0242 has added the reading's columns.
   2. Create the namespace, once, with a retention of 30 days, through the
      admin tools pod:
 
