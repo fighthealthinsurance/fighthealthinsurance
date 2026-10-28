@@ -259,7 +259,8 @@ class SharePlanDocumentsPageTest(TestCase):
         self.assertIsNone(about.find_parent("form"))
         self.assertEqual(
             about.find(id="why-short").get_text(strip=True),
-            "We publish what we learn from the documents people share.",
+            "Once enough people share, we'll publish what we learn, combined "
+            "across plans, never your documents themselves.",
         )
         fold = about.find("details", id="more-why")
         self.assertFalse(fold.has_attr("open"))
