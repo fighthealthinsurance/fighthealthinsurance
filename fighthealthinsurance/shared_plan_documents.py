@@ -100,6 +100,10 @@ def _files_per_day() -> int:
     return int(getattr(settings, "SHARED_PLAN_DOCUMENTS_DAILY_FILES", 1000))
 
 
+def _links_per_day() -> int:
+    return int(getattr(settings, "SHARED_PLAN_DOCUMENTS_DAILY_LINKS", 200))
+
+
 def _opt_in_files_per_day() -> int:
     return int(getattr(settings, "SHARED_PLAN_DOCUMENTS_OPT_IN_DAILY_FILES", 1000))
 
@@ -306,14 +310,14 @@ def save_shared_documents(
     none. Only stores: no model reads the files here, and nothing ever
     fetches a link. Once the rows commit, the files' reading is started on
     Temporal when it is on (temporal_client.dispatch_shared_plan_documents),
-    away from the request. Links count against no budget.
+    away from the request. Links count against a budget of their own.
 
     ``details`` holds what is known about the plan: plan_category,
     plan_year, state, insurer_name, employer_name, premium_amount,
     premium_period, who_is_covered, insurance_company_obj and
     insurance_plan_obj, each optional. Raises OverDailyBudget, storing
     nothing, when today's budget for everyone from ``source`` has no room
-    for the files.
+    for the files, or the links' budget has none for the links.
     """
     shared = {
         "source": source,
@@ -337,6 +341,15 @@ def save_shared_documents(
     budget, limit = _budget(source)
     day = reserve(budget, len(files), limit) if files else None
     if files and day is None:
+        raise OverDailyBudget()
+    links_day = (
+        reserve(SharedPlanDocumentsDay.LINKS, len(links), _links_per_day())
+        if links
+        else None
+    )
+    if links and links_day is None:
+        if day is not None:
+            give_back(budget, len(files), day)
         raise OverDailyBudget()
     saved: list[PolicyDocument] = []
     try:
@@ -366,6 +379,8 @@ def save_shared_documents(
     except Exception:
         if day is not None:
             give_back(budget, len(files), day)
+        if links_day is not None:
+            give_back(SharedPlanDocumentsDay.LINKS, len(links), links_day)
         # The rows rolled back; their encrypted files would not.
         for doc in saved:
             if not doc.document_enc:

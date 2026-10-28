@@ -20,6 +20,7 @@ from cryptography.fernet import Fernet
 from bs4 import BeautifulSoup
 from django.core import mail
 from django.db import DatabaseError
+from django.db.models import QuerySet
 from django.db.models.deletion import Collector
 from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
@@ -29,7 +30,11 @@ from fighthealthinsurance import plan_documents_reminder
 from fighthealthinsurance.activities import plan_documents_sweep
 from fighthealthinsurance.chat_forms import PlanDocumentsReminderForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
-from fighthealthinsurance.models import PlanDocumentsReminder, PolicyDocument
+from fighthealthinsurance.models import (
+    PlanDocumentsReminder,
+    PolicyDocument,
+    SharedPlanDocumentsDay,
+)
 from fighthealthinsurance.shared_plan_documents import render_token
 
 EMAIL = "rebecca.crumpler@test-fhi.com"
@@ -316,9 +321,9 @@ class TheSweepSendsTheReminderTest(TransactionTestCase):
         )
 
     def due(self, limit=50):
-        return async_to_sync(
-            plan_documents_sweep.find_due_plan_documents_reminders
-        )(limit)
+        return async_to_sync(plan_documents_sweep.find_due_plan_documents_reminders)(
+            limit
+        )
 
     def test_due_reminders_are_found_by_row_id_only(self):
         PlanDocumentsReminder.objects.create(
@@ -407,3 +412,46 @@ class TheRayLoopLeavesRemindersToTheSweepTest(TestCase):
                 ):
                     async_to_sync(actor._send_plan_documents_reminders)()
                 actor.plan_documents_reminder_sender.afind_candidates.assert_awaited_once()
+
+
+class TheAnswerNeverShowsWhoAskedTest(_ReminderTestCase):
+    @override_settings(PLAN_DOCUMENTS_REMINDERS_DAILY=1)
+    def test_an_address_already_waiting_gets_the_same_answer_once_the_day_is_full(self):
+        self.ask()
+        response = self.ask()
+        self.assertContains(response, "a lot of reminder requests today")
+
+    def test_a_reminder_that_fails_to_save_gives_its_place_back(self):
+        with patch.object(
+            PlanDocumentsReminder.objects, "update_or_create", side_effect=DatabaseError
+        ):
+            with self.assertRaises(DatabaseError):
+                plan_documents_reminder.schedule_reminder(EMAIL)
+        self.assertFalse(
+            SharedPlanDocumentsDay.objects.filter(
+                name=SharedPlanDocumentsDay.REMINDERS, count__gt=0
+            ).exists()
+        )
+
+
+class AReminderAskedForAgainIsNotSentEarlyTest(_ReminderTestCase):
+    def test_a_reminder_moved_on_while_being_claimed_stays(self):
+        self.ask()
+        row = PlanDocumentsReminder.objects.get()
+        due = row.send_after + datetime.timedelta(minutes=1)
+        later = due + datetime.timedelta(days=30)
+        real_first = QuerySet.first
+
+        def first_then_asked_again(queryset):
+            found = real_first(queryset)
+            if found is not None:
+                PlanDocumentsReminder.objects.filter(pk=found.pk).update(
+                    send_after=later
+                )
+            return found
+
+        sender = plan_documents_reminder.PlanDocumentsReminderSender()
+        with patch.object(plan_documents_reminder, "_now", return_value=due):
+            with patch.object(QuerySet, "first", first_then_asked_again):
+                self.assertIsNone(sender.claim(row.pk))
+        self.assertTrue(PlanDocumentsReminder.objects.filter(send_after=later).exists())

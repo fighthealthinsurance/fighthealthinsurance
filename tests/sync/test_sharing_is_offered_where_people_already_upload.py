@@ -480,7 +480,7 @@ class OptInSharesHaveTheirOwnDailyBudgetTest(_UploadsTestCase):
                 PolicyDocument.SOURCE_SHARED_APPEAL,
             },
         )
-        # Shared links count against no budget.
+        # Shared links count against a budget of their own, not the files'.
         self.assertEqual(
             set(PolicyDocument.SHARED_SOURCES),
             set(PolicyDocument.SHARED_FILE_SOURCES)

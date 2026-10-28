@@ -1360,7 +1360,11 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     @admin.display(description="File")
     def file(self, obj: PolicyDocument) -> str:
         # Text first: reading it opens nothing a stranger made.
-        if not obj.pk or not obj.document_enc:
+        if (
+            not obj.pk
+            or not obj.document_enc
+            or obj.source not in PolicyDocument.SHARED_FILE_SOURCES
+        ):
             return "-"
         links = format_html(
             '<a href="{}">Read as text</a> or <a href="{}">download the original</a>',

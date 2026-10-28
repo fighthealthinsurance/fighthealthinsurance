@@ -4589,7 +4589,7 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         max_length=20, choices=PROCESSING_STATUS_CHOICES, blank=True, default=""
     )
     processed_at = models.DateTimeField(null=True, blank=True)
-    cleaned_text = models.TextField(blank=True, default="")
+    cleaned_text = EncryptedTextField(blank=True, default="")
 
     class Meta:
         indexes = [
@@ -4713,13 +4713,14 @@ class PlanDocumentsReminder(models.Model):
 
 class SharedPlanDocumentsDay(models.Model):
     """How much of one daily budget has been used on one UTC day: for
-    everyone, files shared on the share page, copies shared by ticking the
-    box on another page, or new reminder addresses; or one address's shares
+    everyone, files or links shared on the share page, copies shared by
+    ticking the box on another page, or reminder requests; or one address's shares
     on the share page, named by a keyed digest of the address and the day
     (shared_plan_documents.take_share_place). One row per budget per day,
     shared by every pod (shared_plan_documents.reserve). Counts only."""
 
     FILES = "files"
+    LINKS = "links"
     OPT_IN_FILES = "opt_in_files"
     REMINDERS = "reminders"
 

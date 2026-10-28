@@ -217,7 +217,10 @@ class PolicyDocumentDownloadView(View):
             read_and_decrypt_file,
         )
 
-        doc = PolicyDocument.objects.filter(pk=pk).first()
+        # Only files shared for research; other uploads stay out of reach.
+        doc = PolicyDocument.objects.filter(
+            pk=pk, source__in=PolicyDocument.SHARED_FILE_SOURCES
+        ).first()
         if doc is None or not doc.document_enc:
             raise Http404("No file for that policy document")
         content = read_and_decrypt_file(doc.document_enc)
@@ -267,7 +270,9 @@ class PolicyDocumentTextView(View):
             read_and_decrypt_file,
         )
 
-        doc = PolicyDocument.objects.filter(pk=pk).first()
+        doc = PolicyDocument.objects.filter(
+            pk=pk, source__in=PolicyDocument.SHARED_FILE_SOURCES
+        ).first()
         if doc is None or not doc.document_enc:
             raise Http404("No file for that policy document")
         content = read_and_decrypt_file(

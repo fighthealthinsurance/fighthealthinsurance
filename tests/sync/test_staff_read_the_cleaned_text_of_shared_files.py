@@ -15,6 +15,8 @@ import time
 from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db.models import TextField
+from django.db.models.functions import Cast
 from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -124,7 +126,9 @@ class TheAdminFindsFilesByTheirReadingTest(_CleanedTextTestCase):
 
     def test_the_list_filters_by_processing_status(self):
         ready = self.shared()
-        unreadable = self.shared(status=PolicyDocument.PROCESSING_UNREADABLE, cleaned="")
+        unreadable = self.shared(
+            status=PolicyDocument.PROCESSING_UNREADABLE, cleaned=""
+        )
         page = self.client.get(
             reverse("admin:fighthealthinsurance_policydocument_changelist"),
             {"processing_status__exact": PolicyDocument.PROCESSING_READY},
@@ -173,10 +177,14 @@ class StaffCanAskForAFileToBeReadAgainTest(_CleanedTextTestCase):
         )
 
     def test_unreadable_shared_files_go_back_to_waiting(self):
-        unreadable = self.shared(status=PolicyDocument.PROCESSING_UNREADABLE, cleaned="")
+        unreadable = self.shared(
+            status=PolicyDocument.PROCESSING_UNREADABLE, cleaned=""
+        )
         response = self.read_again(unreadable)
         unreadable.refresh_from_db()
-        self.assertEqual(unreadable.processing_status, PolicyDocument.PROCESSING_RECEIVED)
+        self.assertEqual(
+            unreadable.processing_status, PolicyDocument.PROCESSING_RECEIVED
+        )
         self.assertIsNone(unreadable.processed_at)
         self.assertContains(response, "1 file(s) will be read again")
 
@@ -199,7 +207,9 @@ class StaffCanAskForAFileToBeReadAgainTest(_CleanedTextTestCase):
             self.assertEqual(doc.processing_status, before)
 
     def test_the_sweep_finds_them_again(self):
-        unreadable = self.shared(status=PolicyDocument.PROCESSING_UNREADABLE, cleaned="")
+        unreadable = self.shared(
+            status=PolicyDocument.PROCESSING_UNREADABLE, cleaned=""
+        )
         PolicyDocument.objects.filter(pk=unreadable.pk).update(
             shared_at=timezone.now() - datetime.timedelta(days=2)
         )
@@ -237,3 +247,53 @@ class TheStaffDashboardNamesEveryWorkflowTest(TestCase):
         page = self.client.get(reverse("staff_dashboard")).content.decode()
         self.assertIn("Workflow runs and full event histories", page)
         self.assertNotIn("Fax workflow runs", page)
+
+
+class TheCleanedTextIsStoredEncryptedTest(_CleanedTextTestCase):
+    def test_the_database_holds_the_cleaned_text_encrypted(self):
+        doc = self.shared()
+        raw = (
+            PolicyDocument.objects.filter(pk=doc.pk)
+            .annotate(raw=Cast("cleaned_text", output_field=TextField()))
+            .values_list("raw", flat=True)
+            .get()
+        )
+        self.assertTrue(raw)
+        self.assertNotIn("Deductible", raw)
+        self.assertEqual(PolicyDocument.objects.get(pk=doc.pk).cleaned_text, CLEANED)
+
+
+class StaffReachOnlySharedFilesTest(_CleanedTextTestCase):
+    def own_upload(self):
+        """An Explain Policy upload nobody shared for research."""
+        return PolicyDocument.objects.create(
+            document_enc=SimpleUploadedFile("policy.txt", b"Member ID W123456789"),
+            filename="policy.txt",
+            source=PolicyDocument.SOURCE_EXPLAIN_POLICY,
+        )
+
+    def test_staff_can_neither_download_nor_read_it(self):
+        doc = self.own_upload()
+        client = Client()
+        client.force_login(self.staff())
+        for name in ("staff_policy_document_download", "staff_policy_document_text"):
+            with self.subTest(name=name):
+                response = client.get(reverse(name, kwargs={"pk": doc.pk}))
+                self.assertEqual(response.status_code, 404)
+
+    def test_the_admin_offers_no_file_links_for_it(self):
+        doc = self.own_upload()
+        admin = User.objects.create_superuser(
+            username="ida_gray_nelson_rollins", password="pw-for-tests"
+        )
+        client = Client()
+        client.force_login(admin)
+        page = client.get(
+            reverse("admin:fighthealthinsurance_policydocument_change", args=[doc.pk])
+        ).content.decode()
+        self.assertNotIn(
+            reverse("staff_policy_document_download", kwargs={"pk": doc.pk}), page
+        )
+        self.assertNotIn(
+            reverse("staff_policy_document_text", kwargs={"pk": doc.pk}), page
+        )

@@ -166,6 +166,11 @@ class EachLinkIsCheckedAsTextTest(TestCase):
         "http://localhost:8000/admin": LINK_NOT_PUBLIC_MESSAGE,
         "http://LOCALHOST./admin": LINK_NOT_PUBLIC_MESSAGE,
         "http://plans.localhost/sbc.pdf": LINK_NOT_PUBLIC_MESSAGE,
+        # Full-width letters and digits a browser folds to the plain ones.
+        "http://foo.\uff4c\uff4f\uff43\uff41\uff4c\uff48\uff4f\uff53\uff54:8000/": (
+            LINK_NOT_PUBLIC_MESSAGE
+        ),
+        "http://\uff11\uff12\uff17.0.0.1/sbc.pdf": LINK_NOT_PUBLIC_MESSAGE,
         "https://crumpler mutual.example.com/sbc": LINK_NOT_A_LINK_MESSAGE,
         "https://crumplermutual.example.com/"
         + "a" * MAX_SHARED_LINK_CHARS: LINK_TOO_LONG_MESSAGE,
@@ -177,6 +182,7 @@ class EachLinkIsCheckedAsTextTest(TestCase):
         "https://crumplermutual.example.com/plans?year=2026&tier=gold#costs",
         "https://crumplermutual.example.com:8443/plans",
         "https://posts.example.com/@crumpler/our-plan",
+        "https://b\u00fccher.example.com/plans/sbc",
     )
 
     def test_each_kind_of_bad_link_is_refused_with_its_reason(self):
@@ -196,6 +202,27 @@ class EachLinkIsCheckedAsTextTest(TestCase):
         link = prefix + "a" * (MAX_SHARED_LINK_CHARS - len(prefix))
         self.assertEqual(len(link), MAX_SHARED_LINK_CHARS)
         self.assertEqual(clean_shared_link(link), link)
+
+
+class LinksHaveADailyBudgetTest(_LinkTestCase):
+    @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_LINKS=2)
+    def test_links_past_the_days_budget_are_refused_and_nothing_is_kept(self):
+        self.share(
+            links="https://a.crumplermutual.example.com/sbc\n"
+            "https://b.crumplermutual.example.com/sbc"
+        )
+        self.assertEqual(PolicyDocument.objects.filter(source=LINKS).count(), 2)
+        response = self.share(
+            files=[txt()], links="https://c.crumplermutual.example.com/sbc"
+        )
+        self.assertContains(response, "a lot of documents today")
+        self.assertEqual(PolicyDocument.objects.count(), 2)
+        # The file's place in its own budget goes back.
+        self.assertFalse(
+            SharedPlanDocumentsDay.objects.filter(
+                name=SharedPlanDocumentsDay.FILES, count__gt=0
+            ).exists()
+        )
 
 
 class TheLinksBoxIsReadLineByLineTest(TestCase):
@@ -276,7 +303,10 @@ class ALinkOnlyShareTest(_LinkTestCase):
         self.assertEqual(shared_plan_documents.shared_today(), 0)
         self.assertFalse(
             SharedPlanDocumentsDay.objects.filter(
-                name__in=(SharedPlanDocumentsDay.FILES, SharedPlanDocumentsDay.OPT_IN_FILES)
+                name__in=(
+                    SharedPlanDocumentsDay.FILES,
+                    SharedPlanDocumentsDay.OPT_IN_FILES,
+                )
             ).exists()
         )
         used = self.client.session["shared_plan_documents_today"]
@@ -397,9 +427,7 @@ class AShareWithFilesAndLinksTest(_LinkTestCase):
         dispatch.assert_called_once_with(str(file_row.share_batch))
         self.assertEqual(file_row.processing_status, PolicyDocument.PROCESSING_RECEIVED)
         self.assertEqual(shared_plan_documents.shared_today(), 1)
-        self.assertEqual(
-            self.client.session["shared_plan_documents_today"]["files"], 1
-        )
+        self.assertEqual(self.client.session["shared_plan_documents_today"]["files"], 1)
 
     def test_files_alone_still_share_as_before(self):
         response = self.share([txt()])
@@ -456,7 +484,10 @@ class TheThankYouNoteIsShortTest(_LinkTestCase):
         cases = (
             ({"files": [txt()]}, "We have your documents."),
             ({"links": LINK}, "We have your links."),
-            ({"files": [txt("spd.txt")], "links": LINK_B}, "We have your documents and links."),
+            (
+                {"files": [txt("spd.txt")], "links": LINK_B},
+                "We have your documents and links.",
+            ),
         )
         for share, words in cases:
             with self.subTest(words=words):
@@ -539,7 +570,9 @@ class ThePageOffersALinksBoxTest(_LinkTestCase):
     def test_the_box_sits_under_the_file_upload_and_before_the_plan_questions(self):
         files = self.soup.find("input", attrs={"name": "plan_documents"})
         self.assertIs(files.find_next("textarea"), self.box)
-        self.assertIsNotNone(self.box.find_next("select", attrs={"name": "plan_category"}))
+        self.assertIsNotNone(
+            self.box.find_next("select", attrs={"name": "plan_category"})
+        )
 
     def test_the_box_folds_under_one_line_that_says_links_are_optional(self):
         fold = self.box.find_parent("details")
@@ -628,7 +661,9 @@ class RemovingMyDataDeletesLinksTest(TestCase):
         self.assertEqual((stored(row.pk), row.shared_link_fingerprint), ("", ""))
         self.assertEqual(row.processing_status, PolicyDocument.PROCESSING_REMOVED)
         self.assertIsNone(row.hashed_email)
-        self.assertEqual((row.insurer_name, row.plan_year), ("Crumpler Health Mutual", 2026))
+        self.assertEqual(
+            (row.insurer_name, row.plan_year), ("Crumpler Health Mutual", 2026)
+        )
         for name, value in model_to_dict(row).items():
             with self.subTest(field=name):
                 self.assertNotIn("crumpler-clinic", str(value))
@@ -704,13 +739,15 @@ class NothingReadsOrFetchesALinkTest(TransactionTestCase):
         self.assertEqual(self.listed(file_row), [str(file_row.pk)])
 
     def test_reading_a_link_row_by_id_reads_and_writes_nothing(self):
-        (row, _) = self.share()
+        row, _ = self.share()
         for activity_fn in (
             activities.process_shared_plan_document,
             activities.mark_shared_plan_document_unreadable,
         ):
             with self.subTest(activity=activity_fn.__name__):
-                self.assertEqual(async_to_sync(activity_fn)(str(row.pk)), processing.GONE)
+                self.assertEqual(
+                    async_to_sync(activity_fn)(str(row.pk)), processing.GONE
+                )
                 self.assertUntouched(row, row.shared_link)
                 self.assertEqual(row.processing_status, PolicyDocument.PROCESSING_LINK)
 
@@ -792,7 +829,9 @@ class StaffSeeSharedLinksTest(TestCase):
         soup = self.page("changelist")
         (opening,) = self.opening_links(soup)
         self.assertEqual(opening["rel"], ["noopener", "noreferrer"])
-        text_view = reverse("staff_policy_document_text", kwargs={"pk": self.file_row.pk})
+        text_view = reverse(
+            "staff_policy_document_text", kwargs={"pk": self.file_row.pk}
+        )
         self.assertIsNotNone(soup.find("a", href=text_view))
         counts = soup.find(id="shared-document-counts").get_text(" ", strip=True)
         self.assertIn("Shared for research: 1 file, 1 different document.", counts)

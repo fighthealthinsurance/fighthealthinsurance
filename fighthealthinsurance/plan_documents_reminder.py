@@ -48,22 +48,25 @@ def _requests_per_day() -> int:
 def schedule_reminder(email: str) -> Optional[str]:
     """Set the reminder for ``email``. Returns None when it is set, else what
     to tell the person. Asking again moves the date; it never adds a second
-    email."""
-    from fighthealthinsurance.shared_plan_documents import reserve
+    email. Every request counts against the day's budget, so the answer
+    never shows whether an address already asked."""
+    from fighthealthinsurance.shared_plan_documents import give_back, reserve
 
     email = (email or "").strip().lower()
     if is_blocked_email(email):
         return CANT_SEND_MESSAGE
     now = _now()
-    waiting = PlanDocumentsReminder.objects.filter(email=email).exists()
-    if not waiting and (
-        reserve(SharedPlanDocumentsDay.REMINDERS, 1, _requests_per_day()) is None
-    ):
+    day = reserve(SharedPlanDocumentsDay.REMINDERS, 1, _requests_per_day())
+    if day is None:
         return DAILY_LIMIT_MESSAGE
-    PlanDocumentsReminder.objects.update_or_create(
-        email=email,
-        defaults={"send_after": now + datetime.timedelta(days=REMINDER_DAYS)},
-    )
+    try:
+        PlanDocumentsReminder.objects.update_or_create(
+            email=email,
+            defaults={"send_after": now + datetime.timedelta(days=REMINDER_DAYS)},
+        )
+    except Exception:
+        give_back(SharedPlanDocumentsDay.REMINDERS, 1, day)
+        raise
     logger.info("Set a plan documents reminder")
     return None
 
@@ -96,7 +99,10 @@ class PlanDocumentsReminderSender(AsyncEmailSenderMixin):
             ).first()
             if claimed is None:
                 return None
-            deleted, _ = PlanDocumentsReminder.objects.filter(pk=claimed.pk).delete()
+            # Still due: a reminder asked for again meanwhile has moved on.
+            deleted, _ = PlanDocumentsReminder.objects.filter(
+                pk=claimed.pk, send_after__lte=_now()
+            ).delete()
         except Exception as error:
             # Only the error's type: the row holds an address.
             logger.error(

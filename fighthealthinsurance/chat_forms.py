@@ -178,6 +178,16 @@ _LINK_SHAPE = URLValidator(schemes=["http", "https"])
 _NUMERIC_LABEL = re.compile(r"^(?:0x[0-9a-f]*|[0-9]+)$")
 
 
+def _browser_host(host: str) -> Optional[str]:
+    """``host`` as a browser goes to it, full-width and other look-alike
+    characters folded (IDNA), so a full-width localhost reads as localhost.
+    None when it can't be."""
+    try:
+        return host.encode("idna").decode("ascii").lower().rstrip(".")
+    except UnicodeError:
+        return None
+
+
 def _not_a_public_name(host: str) -> bool:
     """True for an IP address in any form a browser takes, localhost, or a
     name with no dot."""
@@ -213,7 +223,10 @@ def clean_shared_link(link: str) -> str:
     host = (parts.hostname or "").rstrip(".")
     if not host:
         raise forms.ValidationError(LINK_NO_SITE_MESSAGE)
-    if _not_a_public_name(host):
+    browser_host = _browser_host(host)
+    if browser_host is None:
+        raise forms.ValidationError(LINK_NOT_A_LINK_MESSAGE)
+    if _not_a_public_name(browser_host):
         raise forms.ValidationError(LINK_NOT_PUBLIC_MESSAGE)
     try:
         _LINK_SHAPE(link)

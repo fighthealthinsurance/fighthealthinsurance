@@ -170,7 +170,9 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="policydocument",
             name="cleaned_text",
-            field=models.TextField(blank=True, default=""),
+            field=fighthealthinsurance.models.EncryptedTextField(
+                blank=True, default=""
+            ),
         ),
         migrations.AddField(
             model_name="policydocument",
