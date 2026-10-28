@@ -14,6 +14,7 @@ from django.test import override_settings
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.testing import WorkflowEnvironment
 
+from fighthealthinsurance.helpers.fax_helpers import _astart_fax_sends
 from fighthealthinsurance.temporal_client import (
     dispatch_fax_send,
     start_send_fax_workflow,
@@ -58,3 +59,23 @@ async def test_the_server_refuses_a_second_send_for_a_fax_with_an_open_run():
             await start_send_fax_workflow("h", "u")
             with pytest.raises(WorkflowAlreadyStartedError):
                 await start_send_fax_workflow("h", "u")
+
+
+@pytest.mark.asyncio
+async def test_a_stranded_fax_found_on_two_passes_gets_one_run():
+    """The reconcile's second pass, while the first pass's run is still
+    open, counts it and starts nothing new."""
+    fax = ("h", f"u-{uuid.uuid4()}")
+    async with await WorkflowEnvironment.start_local() as env:
+        with (
+            patch(
+                "fighthealthinsurance.temporal_client.get_temporal_client",
+                AsyncMock(return_value=env.client),
+            ),
+            override_settings(TEMPORAL_TASK_QUEUE=f"no-worker-{uuid.uuid4()}"),
+        ):
+            assert await _astart_fax_sends([fax]) == 1
+            handle = env.client.get_workflow_handle(f"send-fax-{fax[1]}")
+            first_run = (await handle.describe()).run_id
+            assert await _astart_fax_sends([fax]) == 1
+            assert (await handle.describe()).run_id == first_run

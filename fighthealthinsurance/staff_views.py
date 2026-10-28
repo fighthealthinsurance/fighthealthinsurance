@@ -55,6 +55,7 @@ from fighthealthinsurance.followup_emails import (
 from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.helpers.fax_helpers import (
     REQUESTED_SEND_GRACE,
+    STAFF_RESEND_AFTER,
     SendFaxHelper,
 )
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
@@ -579,11 +580,11 @@ class AdminStatusView(generic.TemplateView):
           ``paid`` whether or not they then paid; paying is optional) and no
           send started within REQUESTED_SEND_GRACE. Staging dispatches at
           once, so this is a dispatch that failed or never ran.
-          SendFaxHelper.redispatch_stranded_faxes sends it again within the
-          hour while it is younger than REDISPATCH_WINDOW; one that stays
-          here failed that too, or is older. A younger row is still starting
-          and shows on no card. ``requested_never_sent_rows`` lists the
-          newest of them.
+          With Temporal on, SendFaxHelper.aredispatch_stranded_faxes starts
+          it again within minutes while it is younger than
+          REDISPATCH_WINDOW; one that stays here failed that too, is older,
+          or Temporal is off. A younger row is still starting and shows on
+          no card. ``requested_never_sent_rows`` lists the newest of them.
         * ``in_flight``: an attempt started in the last two hours that has not
           finished. Unbounded, this counter showed rows from January whose
           ``attempting_to_send_as_of`` was never cleared (2026-09-11).
@@ -1366,6 +1367,10 @@ class ResendStuckFaxView(View):
     whatever the claim says. ``precheck_fax`` enforces the same rule
     downstream, but refusing here keeps a dashboard mis-click from ever
     reaching the send path.
+
+    Nor may it release a claim whose sender may still be dialing. It waits
+    until that send finished and released the claim, or started more than
+    STAFF_RESEND_AFTER ago, and otherwise says when to try again.
     """
 
     def post(self, request):
@@ -1392,13 +1397,41 @@ class ResendStuckFaxView(View):
             # started that could never send (external review).
             return HttpResponse("Fax has no destination", status=400)
 
-        released = FaxesToSend.objects.filter(pk=fax.pk).update(
-            vendor_send_completed=False
+        now = timezone.now()
+        sender_stopped = (
+            Q(attempting_to_send_as_of__isnull=True)
+            | Q(attempting_to_send_as_of__lt=now - STAFF_RESEND_AFTER)
+            | Q(sent=True, vendor_send_completed=False)
         )
-        logger.info(
-            f"Staff {request.user} resending fax uuid={fax.uuid} "
-            f"(claim released: {bool(released)})"
+        # Marking a new attempt, unsent and started now, in the same update
+        # turns away a second click.
+        taken = (
+            FaxesToSend.objects.filter(pk=fax.pk)
+            .filter(sender_stopped)
+            .update(
+                vendor_send_completed=False, sent=False, attempting_to_send_as_of=now
+            )
         )
+        if not taken:
+            started = (
+                FaxesToSend.objects.filter(pk=fax.pk)
+                .values_list("attempting_to_send_as_of", flat=True)
+                .first()
+            )
+            if started is None:
+                return HttpResponse("No such fax", status=404)
+            logger.warning(
+                f"Staff resend refused for fax uuid={fax.uuid}: a send may be running"
+            )
+            minutes = int(STAFF_RESEND_AFTER.total_seconds() // 60)
+            return HttpResponse(
+                f"A send of this fax started at {started:%Y-%m-%d %H:%M} UTC and "
+                f"may still be running, so nothing was sent. A resend can start "
+                f"{minutes} minutes after a send starts: try again after "
+                f"{started + STAFF_RESEND_AFTER:%H:%M} UTC.",
+                status=409,
+            )
+        logger.info(f"Staff {request.user} resending fax uuid={fax.uuid}")
         try:
             # force_restart because this IS the explicit resend that flag is
             # for: the workflow id is deterministic per fax, so a failed send
@@ -1411,6 +1444,10 @@ class ResendStuckFaxView(View):
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Staff resend failed to start a send for fax uuid={fax.uuid}"
+            )
+            # Nothing started, so the next click may try again at once.
+            FaxesToSend.objects.filter(pk=fax.pk, attempting_to_send_as_of=now).update(
+                attempting_to_send_as_of=None
             )
             return HttpResponse(f"Could not start send: {e}", status=502)
         return HttpResponse("Resend started")

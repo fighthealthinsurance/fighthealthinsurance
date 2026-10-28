@@ -100,16 +100,18 @@ class FaxActor:
         f = 0
         for fax in delayed_faxes:
             try:
-                self._logger.debug(f"Attempting to send fax {fax}")
+                self._logger.debug(f"Attempting to send fax uuid={fax.uuid}")
                 t = t + 1
                 response = self.do_send_fax_object(fax)
                 if response:
-                    self._logger.info(f"Sent fax {fax} successfully")
+                    self._logger.info(f"Sent fax uuid={fax.uuid} successfully")
                 else:
-                    self._logger.warning(f"Failed to send fax {fax}")
+                    self._logger.warning(f"Failed to send fax uuid={fax.uuid}")
                     f = f + 1
             except Exception:
-                self._logger.opt(exception=True).error(f"Error sending fax {fax}")
+                self._logger.opt(exception=True).error(
+                    f"Error sending fax uuid={fax.uuid}"
+                )
                 f = f + 1
         if t > 0:
             self._logger.info(f"Tried sending {t} faxes with {f} failures")

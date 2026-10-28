@@ -428,14 +428,10 @@ class FaxFollowUpPageTest(FaxLinkPageTestCase):
         self.assertUnchanged()
         self.assertTrue(FaxesToSend.objects.get(pk=self.fax.pk).vendor_send_completed)
 
-    def test_a_second_submit_while_the_first_is_starting_sends_nothing(self):
+    def test_a_second_submit_right_after_the_first_sends_nothing(self):
         self.open_followup()
         _, first = self.resend()
         first.assert_called_once()
-        # The first send's precheck has marked its attempt.
-        FaxesToSend.objects.filter(pk=self.fax.pk).update(
-            attempting_to_send_as_of=timezone.now()
-        )
         response, second = self.resend(fax_phone="15550001111")
         self.assertIn("Your fax is still being sent", response.content.decode())
         second.assert_not_called()

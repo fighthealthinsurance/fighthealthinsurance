@@ -15,10 +15,12 @@ from fighthealthinsurance.utils import get_env_variable
 
 name = "EmailPollingActor"
 
-# How often the loop re-dispatches faxes whose send never started. Ray fax
-# sends queue on one actor, so a shorter gap could queue a fax again that an
-# earlier pass queued behind a slow send.
-FAX_RECONCILE_EVERY = datetime.timedelta(hours=1)
+# How often the loop starts a pass that sends again the faxes whose send
+# never started. A pass only starts Temporal workflows keyed by fax, so a fax
+# matched again while its run is open starts nothing new.
+FAX_RECONCILE_EVERY = datetime.timedelta(minutes=10)
+# How long one pass may run before it is stopped.
+FAX_RECONCILE_PASS_LIMIT = datetime.timedelta(minutes=5)
 
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
@@ -57,8 +59,9 @@ class EmailPollingActor:
         # then every 24 hours. Each deploy recreates this actor, so each
         # deploy starts with a purge.
         self.last_session_clear_check: Optional[datetime.datetime] = None
-        # Not on the first pass: the last actor's pass may still be queued.
-        self.last_fax_reconcile = timezone.now()
+        # None: the first pass of run() starts a fax reconcile.
+        self.last_fax_reconcile: Optional[datetime.datetime] = None
+        self._fax_reconcile_task: Optional[asyncio.Future] = None
         self._logger.info("EmailPollingActor senders initialized")
 
     async def health_check(self) -> bool:
@@ -216,18 +219,37 @@ class EmailPollingActor:
             self._logger.opt(exception=True).error("Error clearing expired emails")
 
     async def _run_fax_reconcile(self) -> None:
-        """Re-dispatch stranded faxes once every FAX_RECONCILE_EVERY.
+        """Start a fax reconcile pass every FAX_RECONCILE_EVERY.
 
-        Runs here because this actor runs with Temporal on or off, where the
-        Ray fax sweep runs only with it off. It is stamped as it starts and
-        catches its own errors, as the daily cleanups do.
+        Runs here because this actor runs with Temporal on, where the Ray fax
+        sweep does not. The pass runs as its own task, so a slow Temporal
+        never holds up the email work, and one still running when the next
+        falls due is left to finish. Catches its own errors, as the daily
+        cleanups do.
         """
-        now = timezone.now()
-        if now - self.last_fax_reconcile < FAX_RECONCILE_EVERY:
-            return
-        self.last_fax_reconcile = now
         try:
-            await self._redispatch_stranded_faxes()
+            now = timezone.now()
+            last = self.last_fax_reconcile
+            if last is not None and now - last < FAX_RECONCILE_EVERY:
+                return
+            running = self._fax_reconcile_task
+            if running is not None and not running.done():
+                return
+            self.last_fax_reconcile = now
+            await self._start_fax_reconcile()
+        except Exception:
+            self._logger.opt(exception=True).error("Error starting the fax reconcile")
+
+    async def _start_fax_reconcile(self) -> None:
+        self._fax_reconcile_task = asyncio.ensure_future(self._fax_reconcile_pass())
+
+    async def _fax_reconcile_pass(self) -> None:
+        """One pass, stopped after FAX_RECONCILE_PASS_LIMIT."""
+        try:
+            await asyncio.wait_for(
+                self._redispatch_stranded_faxes(),
+                FAX_RECONCILE_PASS_LIMIT.total_seconds(),
+            )
         except Exception:
             self._logger.opt(exception=True).error(
                 "Error re-dispatching stranded faxes"
@@ -235,15 +257,12 @@ class EmailPollingActor:
 
     async def _redispatch_stranded_faxes(self) -> None:
         """Send again the faxes whose dispatch was lost (see
-        SendFaxHelper.redispatch_stranded_faxes)."""
+        SendFaxHelper.aredispatch_stranded_faxes)."""
         from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 
-        # Sync: it reads the ORM and starts workflows through async_to_sync.
-        dispatched = await database_sync_to_async(
-            SendFaxHelper.redispatch_stranded_faxes
-        )()
-        if dispatched:
-            self._logger.info(f"Re-dispatched {dispatched} stranded faxes")
+        held = await SendFaxHelper.aredispatch_stranded_faxes()
+        if held:
+            self._logger.info(f"Started sends for {held} stranded faxes")
 
     async def _clear_expired_sessions(self) -> None:
         """Delete sessions whose expiry date has passed.

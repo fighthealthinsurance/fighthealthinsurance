@@ -14,9 +14,14 @@ integration:
    sweep is gated off, so nothing else would send it.
 """
 
+import asyncio
+import time
+
 import pytest
 from datetime import timedelta
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+from asgiref.sync import async_to_sync
 
 from django.test import override_settings
 from django.utils import timezone
@@ -167,15 +172,24 @@ class TestResendWaitsForASendUnderWay:
             assert _resend(fax) is True
         dispatch.assert_called_once()
 
-    def test_a_resend_clears_the_attempt_so_a_lost_dispatch_is_found(self, test_denial):
-        fax = _make_fax(
-            test_denial,
-            sent=True,
-            fax_success=False,
-            attempting_to_send_as_of=timezone.now() - timedelta(minutes=5),
-        )
-        with patch(DISPATCH):
+    def test_two_submits_before_any_precheck_start_one_send(self, test_denial):
+        """The resend marks its attempt in the same update, so a second
+        submit before the first send's precheck is turned away too."""
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        with patch(DISPATCH) as dispatch:
             assert _resend(fax) is True
+            assert _resend(fax, fax_phone="8005550000") is False
+        dispatch.assert_called_once()
+        fax.refresh_from_db()
+        assert fax.destination == "8005559999"
+        assert fax.attempting_to_send_as_of is not None
+
+    def test_a_dispatch_that_fails_unmarks_the_attempt(self, test_denial):
+        """Nothing started, so the person, or the reconcile, can try again."""
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        with patch(DISPATCH, side_effect=RuntimeError("no backend")):
+            with pytest.raises(RuntimeError):
+                _resend(fax)
         fax.refresh_from_db()
         assert fax.attempting_to_send_as_of is None
 
@@ -401,6 +415,23 @@ class TestRemoteSendFaxConfirmation:
         assert result == "already_sent"
         dispatch.assert_not_called()
 
+    def test_a_claim_taken_before_its_write_survives(self, test_denial):
+        """Another sender claims the fax between this load and its write."""
+        fax = _make_fax(test_denial)
+        real_save = FaxesToSend.save
+
+        def claimed_meanwhile(row, *args, **kwargs):
+            FaxesToSend.objects.filter(pk=row.pk).update(vendor_send_completed=True)
+            return real_save(row, *args, **kwargs)
+
+        with patch.object(FaxesToSend, "save", claimed_meanwhile), patch(DISPATCH):
+            SendFaxHelper.remote_send_fax(
+                hashed_email=fax.hashed_email, uuid=str(fax.uuid)
+            )
+        fax.refresh_from_db()
+        assert fax.vendor_send_completed is True
+        assert fax.should_send is True
+
     def test_unsent_fax_is_dispatched(self, test_denial):
         fax = _make_fax(test_denial, sent=False)
         with patch(
@@ -426,6 +457,22 @@ class TestPrecheckAlreadySentGuard:
         """A successful send is never re-attempted (duplicate-dispatch guard)."""
         fax = _make_fax(test_denial, sent=True, fax_success=True)
         assert fax_send_core.precheck_fax(fax) == STATUS_ALREADY_SENT
+
+    @pytest.mark.parametrize(
+        "overrides", [{"destination": None}, {"denial_id": None}], ids=str
+    )
+    def test_precheck_logs_the_fax_uuid_not_the_person(
+        self, test_denial, log_capture, overrides
+    ):
+        fax = _make_fax(test_denial, name="Rebecca Lee Crumpler", **overrides)
+        with log_capture() as cap, patch(
+            "fighthealthinsurance.fax_send_core.send_fax_status_notification"
+        ):
+            fax_send_core.precheck_fax(fax)
+        logged = " ".join(cap.messages("WARNING"))
+        assert str(fax.uuid) in logged
+        assert "Rebecca Lee Crumpler" not in logged
+        assert fax.email not in logged
 
     def test_precheck_writes_back_nothing_it_loaded(self, test_denial):
         """A row loaded before a resend's new number, or another sender's
@@ -497,10 +544,28 @@ class TestFaxDispatchFallback:
         mock_cluster.assert_not_called()
 
 
+TEMPORAL_START = "fighthealthinsurance.temporal_client.start_send_fax_workflow"
+TEMPORAL_CONNECT = "fighthealthinsurance.temporal_client.get_temporal_client"
+RAY = "fighthealthinsurance.helpers.fax_helpers.fax_actor_ref"
+
+
+async def _hang(*args, **kwargs):
+    await asyncio.Event().wait()
+
+
+def _redispatch_pass():
+    """One reconcile pass, bounded so a broken timeout fails the test
+    rather than hanging the suite."""
+
+    async def bounded():
+        return await asyncio.wait_for(SendFaxHelper.aredispatch_stranded_faxes(), 10)
+
+    return async_to_sync(bounded)()
+
+
 @pytest.mark.django_db
-class TestRedispatchStrandedFaxes:
-    """A fax someone asked to send whose dispatch was lost is sent again,
-    through the same dispatch as the views, by the hourly reconcile."""
+class TestStrandedFaxes:
+    """Which faxes count as stranded: asked for, unsent, never started."""
 
     def _stranded(
         self, test_denial, age=REQUESTED_SEND_GRACE + timedelta(minutes=1), **overrides
@@ -509,19 +574,10 @@ class TestRedispatchStrandedFaxes:
         FaxesToSend.objects.filter(pk=fax.pk).update(date=timezone.now() - age)
         return fax
 
-    def _redispatch(self):
-        with patch(DISPATCH) as dispatch:
-            count = SendFaxHelper.redispatch_stranded_faxes()
-        return count, dispatch
-
-    @override_settings(TEMPORAL_ENABLED=True)
-    def test_a_staged_fax_that_never_started_is_sent_again(self, test_denial):
+    def test_a_staged_fax_that_never_started_is_stranded(self, test_denial):
         fax = self._stranded(test_denial)
-        count, dispatch = self._redispatch()
-        assert count == 1
-        dispatch.assert_called_once_with(fax.hashed_email, str(fax.uuid))
+        assert SendFaxHelper.stranded_faxes() == [(fax.hashed_email, str(fax.uuid))]
 
-    @override_settings(TEMPORAL_ENABLED=True)
     @pytest.mark.parametrize(
         "why, overrides",
         [
@@ -544,43 +600,99 @@ class TestRedispatchStrandedFaxes:
         self, test_denial, why, overrides
     ):
         self._stranded(test_denial, **overrides)
-        count, dispatch = self._redispatch()
-        assert count == 0, why
-        dispatch.assert_not_called()
-
-    @override_settings(TEMPORAL_ENABLED=False)
-    def test_with_temporal_off_the_ray_sweep_keeps_its_own_rows(self, test_denial):
-        """should_send rows are the Ray delayed-fax sweep's; the reconcile
-        takes only the paid rows the sweep never looks at."""
-        self._stranded(test_denial, should_send=True)
-        paid_only = self._stranded(test_denial)
-        count, dispatch = self._redispatch()
-        assert count == 1
-        dispatch.assert_called_once_with(paid_only.hashed_email, str(paid_only.uuid))
+        assert SendFaxHelper.stranded_faxes() == [], why
 
     @override_settings(TEMPORAL_ENABLED=True)
-    def test_one_dispatch_that_fails_does_not_stop_the_rest(self, test_denial):
-        self._stranded(test_denial)
-        self._stranded(test_denial)
-        with patch(DISPATCH, side_effect=[RuntimeError("ray down"), None]) as dispatch:
-            count = SendFaxHelper.redispatch_stranded_faxes()
-        assert count == 1
-        assert dispatch.call_count == 2
-
-    @override_settings(TEMPORAL_ENABLED=True)
-    @patch("fighthealthinsurance.helpers.fax_helpers.fax_actor_ref")
-    @patch("fighthealthinsurance.temporal_client.start_send_fax_workflow")
-    def test_a_fax_whose_workflow_is_still_open_is_not_sent_by_ray(
-        self, mock_start, mock_actor_ref, test_denial
-    ):
-        """The workflow id is the fax's own: a run still open for it makes
-        the start fail as already started, which counts as handled."""
+    def test_a_fax_is_started_once_however_many_passes_find_it(self, test_denial):
+        """Pass one starts the run; pass two, while it is open, starts
+        nothing new; once the run's precheck marks the attempt, no pass
+        finds the fax. Ray is never asked, so nothing can queue twice."""
         from temporalio.exceptions import WorkflowAlreadyStartedError
 
-        mock_start.side_effect = WorkflowAlreadyStartedError(
-            "send-fax-u", "SendFaxWorkflow"
+        fax = self._stranded(test_denial)
+        start = AsyncMock(
+            side_effect=[
+                f"send-fax-{fax.uuid}",
+                WorkflowAlreadyStartedError(f"send-fax-{fax.uuid}", "SendFaxWorkflow"),
+            ]
         )
-        self._stranded(test_denial)
-        assert SendFaxHelper.redispatch_stranded_faxes() == 1
-        mock_start.assert_called_once()
-        mock_actor_ref.get.do_send_fax.remote.assert_not_called()
+        with patch(TEMPORAL_CONNECT, AsyncMock()), patch(TEMPORAL_START, start), patch(
+            RAY
+        ) as ray_ref:
+            assert _redispatch_pass() == 1
+            assert _redispatch_pass() == 1
+            fax_send_core.precheck_fax(FaxesToSend.objects.get(pk=fax.pk))
+            assert _redispatch_pass() == 0
+        assert [c.args[:2] for c in start.await_args_list] == [
+            (fax.hashed_email, str(fax.uuid))
+        ] * 2
+        ray_ref.get.do_send_fax.remote.assert_not_called()
+
+
+@pytest.mark.django_db
+class TestRedispatchStrandedFaxes:
+    """The reconcile pass starts sends through Temporal only, each connect
+    and start bounded, and never through Ray."""
+
+    FAXES = [("h1", "u1"), ("h2", "u2")]
+
+    def _pass(self, start, connect=None):
+        with patch.object(
+            SendFaxHelper, "stranded_faxes", return_value=self.FAXES
+        ), patch(TEMPORAL_CONNECT, connect or AsyncMock()), patch(
+            TEMPORAL_START, start
+        ), patch(
+            RAY
+        ) as ray_ref:
+            held = _redispatch_pass()
+        return held, ray_ref
+
+    @override_settings(TEMPORAL_ENABLED=False)
+    def test_with_temporal_off_nothing_is_sent(self):
+        start = AsyncMock()
+        held, ray_ref = self._pass(start)
+        assert held == 0
+        start.assert_not_awaited()
+        ray_ref.get.do_send_fax.remote.assert_not_called()
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    def test_a_start_that_fails_never_falls_back_to_ray(self):
+        start = AsyncMock(side_effect=RuntimeError("frontend unreachable"))
+        held, ray_ref = self._pass(start)
+        assert held == 0
+        assert start.await_count == 2
+        ray_ref.get.do_send_fax.remote.assert_not_called()
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    def test_one_start_that_fails_does_not_stop_the_rest(self):
+        start = AsyncMock(side_effect=[RuntimeError("blip"), "send-fax-u2"])
+        held, _ = self._pass(start)
+        assert held == 1
+        assert start.await_count == 2
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @patch(
+        "fighthealthinsurance.helpers.fax_helpers.REDISPATCH_START_TIMEOUT",
+        timedelta(milliseconds=50),
+    )
+    def test_a_start_that_hangs_is_given_up_and_the_next_tried(self):
+        start = AsyncMock(side_effect=_hang)
+        began = time.monotonic()
+        held, ray_ref = self._pass(start)
+        assert time.monotonic() - began < 5
+        assert held == 0
+        assert start.await_count == 2
+        ray_ref.get.do_send_fax.remote.assert_not_called()
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @patch(
+        "fighthealthinsurance.helpers.fax_helpers.REDISPATCH_START_TIMEOUT",
+        timedelta(milliseconds=50),
+    )
+    def test_a_connect_that_hangs_ends_the_pass(self):
+        start = AsyncMock()
+        began = time.monotonic()
+        with pytest.raises(TimeoutError):
+            self._pass(start, connect=AsyncMock(side_effect=_hang))
+        assert time.monotonic() - began < 5
+        start.assert_not_awaited()
