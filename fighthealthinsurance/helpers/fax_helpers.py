@@ -103,6 +103,7 @@ class SendFaxHelper:
         email: str,
         professional: bool = False,
         fax_number: Optional[str] = None,
+        health_history: Optional[str] = None,
     ) -> FaxHelperResults:
         """
         Stage an appeal to be sent as a fax.
@@ -112,6 +113,8 @@ class SendFaxHelper:
             email: Email address associated with the appeal
             professional: Whether this is from a professional user
             fax_number: Optional override fax number
+            health_history: The health history the person chose to send,
+                kept so a rebuilt document still includes it
 
         Returns:
             FaxHelperResults with uuid and hashed_email
@@ -133,6 +136,7 @@ class SendFaxHelper:
             pmids=appeal.pubmed_ids_json,
             hashed_email=hashed_email,
             appeal_text=appeal_text,
+            health_history=health_history,
             email=email,
             denial_id=denial,
             combined_document_enc=appeal.document_enc,

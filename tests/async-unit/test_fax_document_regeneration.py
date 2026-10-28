@@ -16,7 +16,7 @@ from django_encrypted_filefield.crypt import Cryptographer
 from fighthealthinsurance.exceptions import DocumentRegenerationError
 from fighthealthinsurance.models import Denial, FaxesToSend, Appeal
 from fhi_users.models import ProfessionalUser
-from tests.pdf_fixtures import pandoc_stand_in
+from tests.pdf_fixtures import pandoc_stand_in, pdf_text
 
 
 class TestFaxDocumentRetrieval:
@@ -505,6 +505,27 @@ class TestFaxDocumentRegeneration:
             fax_without_document.get_fax_document(return_encrypted=False)
 
         assert list(temp_dir.iterdir()) == []
+
+    @pytest.mark.django_db
+    def test_regenerated_document_holds_the_cover_the_letter_and_the_history(
+        self, fax_without_document
+    ):
+        fax_without_document.health_history = (
+            "Lupus, treated by Dr. Mary Edwards Walker"
+        )
+        fax_without_document.save()
+        with patch(
+            "fighthealthinsurance.common_view_logic._try_pandoc_engines",
+            pandoc_stand_in(),
+        ):
+            text = pdf_text(fax_without_document.get_fax_document())
+
+        marks = (
+            "CONFIDENTIAL HEALTH INFORMATION ENCLOSED",
+            "This is a test appeal letter requesting coverage.",
+            "Lupus, treated by Dr. Mary Edwards Walker",
+        )
+        assert [mark for mark in marks if mark not in text] == []
 
     @pytest.mark.django_db
     def test_regenerating_a_letter_that_fails_to_convert_raises(

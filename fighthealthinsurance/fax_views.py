@@ -408,7 +408,12 @@ class StageFaxView(generic.FormView):
             )
             return self.form_invalid(form)
         staged = SendFaxHelper.stage_appeal_as_fax(
-            appeal=appeal, email=form_data["email"], fax_number=form_data["fax_phone"]
+            appeal=appeal,
+            email=form_data["email"],
+            fax_number=form_data["fax_phone"],
+            health_history=common_view_logic.AppealAssemblyHelper.health_history_to_send(
+                denial, form_data["include_provided_health_history"]
+            ),
         )
         if form.placeholders_sent_as_they_are:
             # How many, and nothing else: never the letter or the blanks.

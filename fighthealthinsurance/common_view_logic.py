@@ -271,6 +271,19 @@ class AppealAssemblyHelper:
     # in a child process that is stopped at this limit (see pdf_text).
     PDF_MERGE_TIMEOUT_SECS = 60.0
 
+    @staticmethod
+    def health_history_to_send(
+        denial: Denial, include_provided_health_history: bool
+    ) -> Optional[str]:
+        """The health history that goes out with the appeal, when the person
+        chose to include it."""
+        if (
+            include_provided_health_history
+            or denial.include_provided_health_history_in_appeal
+        ):
+            return denial.health_history
+        return None
+
     async def _convert_input(self, input_path: str) -> Optional[str]:
         if input_path.endswith(".pdf"):
             return input_path
@@ -396,12 +409,9 @@ class AppealAssemblyHelper:
         else:
             insurance_company = denial.insurance_company
         claim_id = denial.claim_id
-        health_history: Optional[str] = None
-        if (
-            include_provided_health_history
-            or denial.include_provided_health_history_in_appeal
-        ):
-            health_history = denial.health_history
+        health_history = self.health_history_to_send(
+            denial, include_provided_health_history
+        )
         # Usage based billing goes here
         if appeal and hasattr(appeal, "domain") and appeal.domain:
             stripe_customer_id = appeal.domain.stripe_customer_id

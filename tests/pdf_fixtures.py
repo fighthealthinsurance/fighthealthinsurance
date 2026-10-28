@@ -1,9 +1,13 @@
 """Small PDFs built in memory for tests that read PDFs."""
 
+import io
 import os
+import re
+import textwrap
 from typing import Optional, Sequence
 
 import pymupdf
+import pypdf
 
 
 def make_pdf_bytes(
@@ -94,17 +98,28 @@ def make_table_pdf_bytes(rows: Sequence[Sequence[str]], text: str = "") -> bytes
 
 
 def pandoc_stand_in(fails_for: Sequence[str] = ()):
-    """A stand-in for _try_pandoc_engines that writes a one-page PDF where
-    pandoc would, so appeal assembly runs without pandoc installed. An input
-    whose file name starts with one of ``fails_for`` fails the way pandoc
-    does when every engine has failed."""
+    """A stand-in for _try_pandoc_engines that writes the input's text, with
+    any HTML tags dropped, to a PDF where pandoc would, so appeal assembly runs
+    without pandoc installed. An input whose file name starts with one of
+    ``fails_for`` fails the way pandoc does when every engine has failed."""
 
     async def _engines(command: list[str]) -> None:
         output_path = next(arg[2:] for arg in command if arg.startswith("-o"))
-        name = os.path.basename(output_path)
-        if name.startswith(tuple(fails_for)):
-            raise Exception(f"Failed {name} with all engines")
+        input_path = output_path[: -len(".pdf")]
+        if os.path.basename(input_path).startswith(tuple(fails_for)):
+            raise Exception(f"Failed {input_path} with all engines")
+        with open(input_path, encoding="utf-8") as f:
+            text = re.sub(r"<[^>]+>", " ", f.read())
+        lines = textwrap.wrap(text, 80) or [""]
+        pages = ["\n".join(lines[i : i + 40]) for i in range(0, len(lines), 40)]
         with open(output_path, "wb") as f:
-            f.write(make_pdf_bytes([name]))
+            f.write(make_pdf_bytes(pages))
 
     return _engines
+
+
+def pdf_text(content: bytes) -> str:
+    """The text of every page of a PDF, with runs of whitespace made single
+    spaces so a phrase reads the same wherever its lines wrapped."""
+    reader = pypdf.PdfReader(io.BytesIO(content))
+    return " ".join(" ".join(page.extract_text() for page in reader.pages).split())
