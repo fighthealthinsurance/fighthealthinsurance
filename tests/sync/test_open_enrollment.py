@@ -618,6 +618,7 @@ class TestOpenEnrollmentTop(TestCase):
                 "Weigh insurers' denial rates.",
                 "Pay the first premium.",
                 "Disagree with a marketplace decision?",
+                "Share your plan's documents.",
                 "Get free help.",
             ],
         )
@@ -655,7 +656,13 @@ class TestOpenEnrollmentTop(TestCase):
         steps = _between(top, 'id="enroll-steps"', "</ul>")
         self.assertEqual(
             re.findall(r"<li[^>]*><b>([^<]+)</b>", steps),
-            ["Report income and household changes.", "Pay the first premium.", "Disagree with a marketplace decision?", "Get free help."],
+            [
+                "Report income and household changes.",
+                "Pay the first premium.",
+                "Disagree with a marketplace decision?",
+                "Share your plan's documents.",
+                "Get free help.",
+            ],
         )
         # Out of season, changes are reported as they happen, not for next year's plan.
         self.assertIn('href="https://www.healthcare.gov/reporting-changes/"', steps)

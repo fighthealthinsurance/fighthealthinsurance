@@ -4,7 +4,7 @@
 {% block metadescription %}Share your health plan's documents so we can learn what plans cover and share what we learn. Plus how to ask your plan for its full documents.{% endblock metadescription %}
 
 {% block extra_style %}
-{# Denial Watch's stat tiles, then this page's goal line and document cards. #}
+{# Denial Watch's stat tiles, kickers and notes, then this page's goal line and document cards. #}
 {% include "partials/denial_watch_style.html" %}
 <style>
   /* The goal under the title, the flag beside it; once there is a count, a bar fills toward it under the goal. */
@@ -130,7 +130,10 @@ The goal counts employer plans through its day
 for every visitor. The 47.5% tile reads Denial Watch's bundle. The opt-in
 card on other pages (partials/share_for_research.html) links to
 #about-sharing. The facts under "How to get your full plan documents" were
-checked on the date the section gives; recheck them before changing it.
+checked on the date the section gives; recheck them before changing it. The
+sections after the form open like the number pages' (a kicker, then the
+heading), and the related pages section (partials/related_pages.html) ends
+the page.
 {% endcomment %}
 <div class="fhi-page fhi-page-reading">
     {% with lede="What is health insurance through work going to cost next year? Help us find out by sharing the documents your plan gives everyone." %}
@@ -310,10 +313,11 @@ checked on the date the section gives; recheck them before changing it.
     {% endif %}
 
     <section class="fhi-stack" id="about-sharing" aria-labelledby="about-sharing-heading">
+        <p class="dw-kicker">What the numbers can't show yet</p>
         <h2 id="about-sharing-heading">Why we're asking</h2>
         {% if job_share %}
         <div class="dw-stats" id="why-numbers">
-            <div class="dw-stat" id="why-job-share"><p class="dw-stat-head"><b class="dw-num">{{ job_share }}</b> <strong>of people have coverage only through a job</strong></p><span>Census Bureau survey, 2026</span></div>
+            <div class="dw-stat" id="why-job-share"><p class="dw-stat-head"><b class="dw-num">{{ job_share }}</b> <strong>of people have coverage only through a job</strong></p><p class="dw-note">Census Bureau survey, 2026</p></div>
             <div class="dw-stat" id="why-no-rates"><p class="dw-stat-head"><b class="dw-num">None</b> <strong>of Denial Watch's denial rates cover plans through work</strong></p><span>Plan documents won't show denial rates, but they show the rules behind denials.</span></div>
         </div>
         {% endif %}
@@ -332,6 +336,7 @@ checked on the date the section gives; recheck them before changing it.
     </section>
 
     <section class="fhi-stack" id="get-your-plan-documents" aria-labelledby="get-your-plan-documents-heading">
+        <p class="dw-kicker">No documents yet?</p>
         <h2 id="get-your-plan-documents-heading">How to get your full plan documents</h2>
         <p>You can ask your plan for its full documents, not just a summary.</p>
 
@@ -454,6 +459,8 @@ Thank you,
         </div>
         <p class="fhi-note" id="plan-documents-checked">Checked October 23, 2026. This is general information, not legal advice.</p>
     </section>
+
+    {% include "partials/related_pages.html" with here="share" %}
     </div>
 </div>
 {% endblock content %}

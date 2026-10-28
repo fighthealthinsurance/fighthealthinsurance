@@ -122,6 +122,7 @@ class CoverageCostsPageTest(TestCase):
                 "What to do now",
                 "Still to come",
                 "Where to find more data like this",
+                "More on costs, coverage and denials",
                 "Sources and method",
             ],
         )

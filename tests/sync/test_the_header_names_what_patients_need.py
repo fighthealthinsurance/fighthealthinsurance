@@ -18,7 +18,7 @@ The dropdowns are <details>, so nothing here needs JavaScript to open.
 
 import re
 
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 
 
@@ -142,16 +142,17 @@ class NothingInTheHeaderNeedsJavaScriptTest(TestCase):
         # one group opening closes the others by hand.
         self.assertIn("other.open = false", html)
 
-    def test_the_menu_and_both_dropdowns_are_details(self):
+    @override_settings(DENIAL_WATCH_PAGE_ENABLED=True)
+    def test_the_menu_and_every_dropdown_are_details(self):
         html = self.client.get(reverse("root")).content.decode()
         nav = _nav(html)
 
         self.assertIn('<details class="fhi-nav"', html)
         self.assertEqual(
             nav.count('<details class="fhi-nav-group" name="fhi-nav-group">'),
-            3,
-            "Explain, Resources and Professional should all be native disclosures "
-            "sharing one name, so that opening one closes the others",
+            4,
+            "Explain, Resources, Denial Watch and Professional should all be native "
+            "disclosures sharing one name, so that opening one closes the others",
         )
 
 
