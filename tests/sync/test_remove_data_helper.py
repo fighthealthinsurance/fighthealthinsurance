@@ -23,6 +23,7 @@ from fighthealthinsurance.models import (
     FollowUp,
     FollowUpSched,
     InterestedProfessional,
+    LostStripeSession,
     MailingListSubscriber,
     OngoingChat,
     PriorAuthRequest,
@@ -104,6 +105,12 @@ class TestRemoveDataHelper(TestCase):
             subject="Introduction",
             template_name="proconnector_intro",
         )
+        LostStripeSession.objects.create(
+            email="Test@Example.com",
+            payment_type="fax",
+            ip_address="203.0.113.7",
+            metadata={"fax_request_uuid": "target-fax"},
+        )
         ChatLeads.objects.create(
             name="Target Lead",
             email=cls.target_email,
@@ -138,6 +145,9 @@ class TestRemoveDataHelper(TestCase):
         OngoingChat.objects.create(hashed_email=cls.other_hash)
         InterestedProfessional.objects.create(
             name="Elizabeth Blackwell", email=cls.other_email
+        )
+        LostStripeSession.objects.create(
+            email=cls.other_email, payment_type="fax", ip_address="203.0.113.8"
         )
         ScheduledEmail.objects.create(
             to_email=cls.other_email,
@@ -180,6 +190,9 @@ class TestRemoveDataHelper(TestCase):
             ).count(),
             "chat_prior_auth": PriorAuthRequest.objects.filter(
                 patient_name="Rebecca Lee Crumpler"
+            ).count(),
+            "lost_stripe_session": LostStripeSession.objects.filter(
+                email__iexact=self.target_email
             ).count(),
         }
 
@@ -321,3 +334,17 @@ class TestRemoveDataHelper(TestCase):
         )
         RemoveDataHelper.remove_data_for_email(self.target_email)
         self.assertTrue(PriorAuthRequest.objects.filter(pk=kept.pk).exists())
+
+    def test_remove_data_deletes_their_expired_checkout_record(self):
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertFalse(
+            LostStripeSession.objects.filter(
+                email__iexact=self.target_email
+            ).exists()
+        )
+
+    def test_remove_data_keeps_other_peoples_expired_checkout_records(self):
+        RemoveDataHelper.remove_data_for_email(self.target_email)
+        self.assertTrue(
+            LostStripeSession.objects.filter(email=self.other_email).exists()
+        )

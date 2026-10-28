@@ -18,6 +18,7 @@ from fighthealthinsurance.models import (
     FollowUp,
     FollowUpSched,
     InterestedProfessional,
+    LostStripeSession,
     MailingListSubscriber,
     OngoingChat,
     PolicyDocument,
@@ -119,6 +120,8 @@ class RemoveDataHelper:
         FollowUp.objects.filter(hashed_email=hashed_email).delete()
         FaxesToSend.objects.filter(hashed_email=hashed_email).delete()
         FaxesToSend.objects.filter(email__iexact=email).delete()
+        # An expired checkout keeps the email and the client IP.
+        LostStripeSession.objects.filter(email__iexact=email).delete()
         # Chat data - use find_chats_by_email to catch all related chats
         # (covers hashed_email, user__email, and professional_user__user__email)
         chats = OngoingChat.find_chats_by_email(email)
