@@ -95,7 +95,10 @@ class ThankyouEmailSender(AsyncEmailSenderMixin):
                 to_email=email,
             )
             interested_pro.thankyou_email_sent = True
-            interested_pro.save()
+            # Update only: a sign-up removed during the send must stay removed.
+            InterestedProfessional.objects.filter(pk=interested_pro.pk).update(
+                thankyou_email_sent=True, mod_date=datetime.date.today()
+            )
             return True
         except Exception as e:
             logger.warning(
