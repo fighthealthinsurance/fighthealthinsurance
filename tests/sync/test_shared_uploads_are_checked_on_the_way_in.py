@@ -405,7 +405,7 @@ class OneAddressSharesTenTimesADayTest(_ShareTestCase):
         return self.share(files, client=Client(HTTP_CF_CONNECTING_IP=address), **fields)
 
     def address_rows(self):
-        budgets = ("files", "opt_in_files", "reminders")
+        budgets = ("files", "links", "opt_in_files", "reminders")
         return SharedPlanDocumentsDay.objects.exclude(name__in=budgets)
 
     def test_ten_a_day_is_the_number(self):
@@ -463,6 +463,16 @@ class OneAddressSharesTenTimesADayTest(_ShareTestCase):
         # The budgets for everyone keep their rows.
         self.assertEqual(
             SharedPlanDocumentsDay.objects.filter(name="files").count(), 2
+        )
+
+    @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_SHARES_PER_ADDRESS=1)
+    def test_the_links_budget_keeps_its_rows_too(self):
+        self.share_from(files=[], plan_links=LINK)
+        tomorrow = timezone.now() + datetime.timedelta(days=1)
+        with patch("django.utils.timezone.now", return_value=tomorrow):
+            self.share_from()
+        self.assertEqual(
+            SharedPlanDocumentsDay.objects.filter(name="links").count(), 1
         )
 
     def test_the_address_is_kept_only_as_a_digest(self):

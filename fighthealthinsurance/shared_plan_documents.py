@@ -211,6 +211,7 @@ def note_shared(request: HttpRequest, files: Sequence[UploadedFile]) -> None:
 _PER_ADDRESS_LABEL = b"fhi-shared-plan-documents-per-ip-v1"
 _BUDGET_NAMES = (
     SharedPlanDocumentsDay.FILES,
+    SharedPlanDocumentsDay.LINKS,
     SharedPlanDocumentsDay.OPT_IN_FILES,
     SharedPlanDocumentsDay.REMINDERS,
 )
