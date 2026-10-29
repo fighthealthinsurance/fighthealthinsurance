@@ -1176,12 +1176,13 @@ class ChooserTaskAdmin(admin.ModelAdmin):
         "task_type",
         "status",
         "source",
+        "case_version",
         "num_candidates_expected",
         "num_candidates_generated",
         "created_at",
     )
     search_fields = ("id", "source")
-    list_filter = ("task_type", "status", "created_at")
+    list_filter = ("task_type", "status", "case_version", "created_at")
     ordering = ("-created_at",)
     readonly_fields = ("id", "created_at", "updated_at")
 
@@ -1213,6 +1214,7 @@ class ChooserVoteAdmin(admin.ModelAdmin):
         "id",
         "task",
         "chosen_candidate",
+        "tied_candidate_ids",
         "session_key",
         "created_at",
     )

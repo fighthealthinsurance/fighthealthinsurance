@@ -189,6 +189,50 @@ class ChooserRankedExportContentTest(StaffExportTestBase):
         )
 
 
+    def test_chooser_ranked_export_splits_ties(self):
+        task = ChooserTask.objects.create(
+            task_type="appeal", status="READY", source="synthetic"
+        )
+        a, b, c = (
+            ChooserCandidate.objects.create(
+                task=task,
+                candidate_index=i,
+                kind="appeal_letter",
+                model_name=f"model-{i}",
+                content=f"Appeal text {i}",
+            )
+            for i in range(3)
+        )
+        presented = [a.id, b.id, c.id]
+        # One vote ties B and C; one picks C outright.
+        ChooserVote.objects.create(
+            task=task,
+            chosen_candidate=b,
+            presented_candidate_ids=presented,
+            tied_candidate_ids=[b.id, c.id],
+            session_key="session-1",
+        )
+        ChooserVote.objects.create(
+            task=task,
+            chosen_candidate=c,
+            presented_candidate_ids=presented,
+            session_key="session-2",
+        )
+
+        record = self.get_export_lines("chooser_ranked_export")[0]
+
+        self.assertEqual(record["chosen_candidate"]["id"], c.id)
+        self.assertEqual(record["vote_count"], 1.5)
+        self.assertEqual(record["total_votes"], 2)
+        self.assertEqual(
+            {
+                x["id"]: (x["votes"], x["tie_count"])
+                for x in record["all_candidates"]
+            },
+            {a.id: (0, 0), b.id: (0.5, 1), c.id: (1.5, 1)},
+        )
+
+
 class DenialAppealExportContentTest(StaffExportTestBase):
     """Test the content of the denial + appeal export."""
 

@@ -16,11 +16,14 @@ from fighthealthinsurance.chooser_tasks import (
     _cached_pmids,
     _evidence_for,
     _generate_appeal_candidates,
+    _generate_single_task,
 )
 from fighthealthinsurance.condition_rankings import SeedPair
+from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.models import (
     ChooserCandidate,
     ChooserTask,
+    PubMedArticleSummarized,
     PubMedMiniArticle,
     PubMedQueryData,
 )
@@ -28,11 +31,15 @@ from fighthealthinsurance.models import (
 _LETTER = "Dear Reviewer, " + "this care is medically necessary. " * 10
 
 
-def _writer(scenario):
+def _writer(scenario, *replies):
+    """A backend that writes ``scenario``, then each of ``replies`` (the
+    interview's answers, say), then letters."""
     model = MagicMock()
     model.name = "model-a"
     model.external = False
-    model._infer_no_context = AsyncMock(side_effect=[scenario] + [_LETTER] * 10)
+    model._infer_no_context = AsyncMock(
+        side_effect=[scenario, *replies] + [_LETTER] * 10
+    )
     return model
 
 
@@ -45,8 +52,10 @@ async def _cached_search(query, pmids, age_minutes=0):
     )
 
 
-async def _article(pmid, title, url=None):
-    await PubMedMiniArticle.objects.acreate(pmid=pmid, title=title, article_url=url)
+async def _article(pmid, title, url=None, abstract=None):
+    await PubMedMiniArticle.objects.acreate(
+        pmid=pmid, title=title, article_url=url, abstract=abstract
+    )
 
 
 def _no_live_search():
@@ -73,6 +82,46 @@ class TestEvidenceFor:
             {"pmid": "3", "title": "A newer study", "url": "https://pubmed.ncbi.nlm.nih.gov/3/"},
             {"pmid": "1", "title": "Imaging for low back pain", "url": "https://example.org/1"},
         ]
+
+    async def test_an_article_is_summarized_by_its_abstract(self):
+        await _cached_search("MRI Lower back pain", ["1"])
+        await _article("1", "Imaging for low back pain", abstract="  Imaging   helped. ")
+
+        with _no_live_search():
+            evidence = await _evidence_for("MRI", "Lower back pain")
+
+        assert evidence[0]["summary"] == "Imaging helped."
+
+    async def test_the_summary_real_appeals_got_is_preferred(self):
+        await _cached_search("MRI Lower back pain", ["1"])
+        await _article("1", "Imaging for low back pain", abstract="The abstract.")
+        await PubMedArticleSummarized.objects.acreate(
+            pmid="1", basic_summary="What appeals were told."
+        )
+
+        with _no_live_search():
+            evidence = await _evidence_for("MRI", "Lower back pain")
+
+        assert evidence[0]["summary"] == "What appeals were told."
+
+    async def test_a_long_abstract_is_cut_at_a_boundary(self):
+        await _cached_search("MRI Lower back pain", ["1"])
+        await _article("1", "Imaging", abstract="A finding was made. " * 100)
+
+        with _no_live_search():
+            summary = (await _evidence_for("MRI", "Lower back pain"))[0]["summary"]
+
+        assert len(summary) <= 600
+        assert summary.endswith("...")
+
+    async def test_an_article_with_nothing_to_summarize_has_no_summary(self):
+        await _cached_search("MRI Lower back pain", ["1"])
+        await _article("1", "Imaging for low back pain")
+
+        with _no_live_search():
+            evidence = await _evidence_for("MRI", "Lower back pain")
+
+        assert "summary" not in evidence[0]
 
     async def test_nothing_cached_and_no_live_search_means_no_evidence(self):
         with _no_live_search():
@@ -208,3 +257,136 @@ class TestSeededScenario:
         task, _ = await self._generate("Procedure: MRI\nDiagnosis: pain\n", SeedPair("MRI", "Lower back pain", 8))
 
         assert task.status == "DISABLED"
+
+
+_SCENARIO = (
+    "Procedure: MRI\nDiagnosis: Lower back pain\n"
+    "Insurance Company: Fictional Mutual\nDenial Reason: not medically necessary.\n"
+    "Case Facts: Patient in their 40s; eight months of symptoms.\n"
+)
+_QUESTIONS = [
+    ("Has the patient tried physical therapy?", "UNKNOWN"),
+    ("How long have the symptoms lasted?", ""),
+]
+_ANSWERS = "A1: Yes, eight weeks, with no change.\nA2: About eight months.\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestInterview:
+    """The simulated question-and-answer session: the app's own question
+    generators (mocked) ask, a scenario writer answers as the patient. The
+    switch is off in tests (hermetic); each case turns it on."""
+
+    async def _generate(self, specific, *replies, generic=None):
+        task = await ChooserTask.objects.acreate(task_type="appeal", status="QUEUED")
+        model = _writer(_SCENARIO, *replies)
+        specific_mock = AsyncMock(return_value=specific)
+        generic_mock = AsyncMock(return_value=generic)
+        with patch("fighthealthinsurance.chooser_tasks.ml_router") as router, patch(
+            "fighthealthinsurance.chooser_tasks._maybe_add_synthesized_candidate",
+            AsyncMock(),
+        ), patch(
+            "fighthealthinsurance.chooser_tasks._pick_seed_pair",
+            AsyncMock(return_value=None),
+        ), patch.object(
+            MLAppealQuestionsHelper, "generate_specific_questions", specific_mock
+        ), patch.object(
+            MLAppealQuestionsHelper, "generate_generic_questions", generic_mock
+        ), _no_live_search(), override_settings(CHOOSER_SIMULATED_QA=True):
+            router.generate_text_backends.return_value = [model]
+            await _generate_appeal_candidates(task)
+        await task.arefresh_from_db()
+        return task, model, specific_mock, generic_mock
+
+    async def test_the_answers_reach_the_case_and_every_draft(self):
+        task, model, specific, _ = await self._generate(_QUESTIONS, _ANSWERS)
+
+        assert task.context_json["qa_pairs"] == [
+            {
+                "question": "Has the patient tried physical therapy?",
+                "answer": "Yes, eight weeks, with no change.",
+            },
+            {"question": "How long have the symptoms lasted?", "answer": "About eight months."},
+        ]
+        # The question generator saw the case as a denial and its facts as
+        # the patient's history, and was allowed outside models.
+        kwargs = specific.await_args.kwargs
+        assert kwargs["denial_text"].startswith("Fictional Mutual denied coverage of MRI")
+        assert kwargs["patient_context"] == "Patient in their 40s; eight months of symptoms"
+        assert kwargs["use_external"] is True
+        interview_prompt = model._infer_no_context.await_args_list[1].kwargs["prompt"]
+        assert "Q1: Has the patient tried physical therapy?" in interview_prompt
+        draft_prompt = model._infer_no_context.await_args_list[2].kwargs["prompt"]
+        assert "A: About eight months." in draft_prompt
+        assert await ChooserCandidate.objects.filter(task=task).acount() >= 1
+
+    async def test_generic_questions_stand_in_when_no_specific_ones_come_back(self):
+        task, _, _, generic = await self._generate(None, _ANSWERS, generic=_QUESTIONS)
+
+        assert generic.await_args.kwargs["procedure"] == "MRI"
+        assert len(task.context_json["qa_pairs"]) == 2
+
+    async def test_junk_and_repeated_questions_are_not_asked(self):
+        questions = _QUESTIONS + [
+            ("Has the patient tried physical therapy?", ""),
+            ("[Question]?", ""),
+        ]
+        _, model, _, _ = await self._generate(questions, _ANSWERS)
+
+        interview_prompt = model._infer_no_context.await_args_list[1].kwargs["prompt"]
+        assert "Q3:" not in interview_prompt
+
+    async def test_no_questions_means_no_interview_and_no_answer_call(self):
+        task, model, _, _ = await self._generate([], generic=[])
+
+        assert "qa_pairs" not in task.context_json
+        # Scenario, then straight to the drafts.
+        draft_prompt = model._infer_no_context.await_args_list[1].kwargs["prompt"]
+        assert draft_prompt.startswith("Write an appeal letter")
+
+    async def test_answers_in_the_wrong_shape_leave_the_case_without_them(self):
+        task, _, _, _ = await self._generate(_QUESTIONS, "I would rather not say.")
+
+        assert "qa_pairs" not in task.context_json
+        assert task.status != "DISABLED"
+
+    async def test_a_failing_question_generator_does_not_stop_the_case(self):
+        task = await ChooserTask.objects.acreate(task_type="appeal", status="QUEUED")
+        model = _writer(_SCENARIO)
+        with patch("fighthealthinsurance.chooser_tasks.ml_router") as router, patch(
+            "fighthealthinsurance.chooser_tasks._maybe_add_synthesized_candidate",
+            AsyncMock(),
+        ), patch(
+            "fighthealthinsurance.chooser_tasks._pick_seed_pair",
+            AsyncMock(return_value=None),
+        ), patch.object(
+            MLAppealQuestionsHelper,
+            "generate_specific_questions",
+            AsyncMock(side_effect=RuntimeError("down")),
+        ), _no_live_search(), override_settings(CHOOSER_SIMULATED_QA=True):
+            router.generate_text_backends.return_value = [model]
+            await _generate_appeal_candidates(task)
+        await task.arefresh_from_db()
+
+        assert "qa_pairs" not in task.context_json
+        assert await ChooserCandidate.objects.filter(task=task).acount() >= 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestCaseVersion:
+    async def _generate(self, task_type):
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_appeal_candidates", AsyncMock()
+        ), patch(
+            "fighthealthinsurance.chooser_tasks._generate_chat_candidates", AsyncMock()
+        ):
+            await _generate_single_task(task_type)
+        return await ChooserTask.objects.alatest("id")
+
+    async def test_a_new_appeal_task_is_stamped_with_the_interview_pipeline(self):
+        assert (await self._generate("appeal")).case_version == 2
+
+    async def test_a_new_chat_task_keeps_the_first_version(self):
+        assert (await self._generate("chat")).case_version == 1

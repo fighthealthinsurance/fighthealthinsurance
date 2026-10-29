@@ -20,6 +20,7 @@ import pytest
 from django.utils import timezone
 
 from fighthealthinsurance.chooser_tasks import (
+    CASE_VERSIONS,
     CHOOSER_GENERATION_CLAIM_SECONDS,
     _claim_generation,
     _count_unscored_tasks,
@@ -39,9 +40,16 @@ from fighthealthinsurance.models import (
 )
 
 
-async def _make_task(task_type="appeal", status="READY", source="synthetic"):
+async def _make_task(
+    task_type="appeal", status="READY", source="synthetic", case_version=None
+):
+    """A task built by the current case pipeline for its type, unless
+    ``case_version`` says otherwise."""
     return await ChooserTask.objects.acreate(
-        task_type=task_type, status=status, source=source
+        task_type=task_type,
+        status=status,
+        source=source,
+        case_version=case_version or CASE_VERSIONS[task_type],
     )
 
 
@@ -128,6 +136,8 @@ class TestCountUnscoredTasks:
         await _make_task(source="real")
         # Excluded: different task type.
         await _make_task(task_type="chat")
+        # Excluded: built by an older case pipeline (votable, served later).
+        await _make_task(case_version=1)
 
         assert await _count_unscored_tasks("appeal") == 2
 

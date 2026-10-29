@@ -335,6 +335,12 @@ class Base(Configuration):
     CHOOSER_PUBMED_SEARCH_TIMEOUT = float(
         os.getenv("CHOOSER_PUBMED_SEARCH_TIMEOUT", "20")
     )
+    CHOOSER_SIMULATED_QA = os.getenv("CHOOSER_SIMULATED_QA", "true").lower() != "false"
+    # Registered backend names (comma-separated) seated in every new arena
+    # task, to try a model out against the rest; arena only, unlike FORCE_MODEL.
+    CHOOSER_FORCE_MODEL = os.getenv("CHOOSER_FORCE_MODEL", "")
+    CHOOSER_MAX_QUESTIONS = int(os.getenv("CHOOSER_MAX_QUESTIONS", "4"))
+    CHOOSER_QA_TIMEOUT = int(os.getenv("CHOOSER_QA_TIMEOUT", "60"))
     CONDITION_RANKING_MIN_PEOPLE = int(os.getenv("CONDITION_RANKING_MIN_PEOPLE", "5"))
     CONDITION_RANKING_LOOKUP_BUDGET = int(
         os.getenv("CONDITION_RANKING_LOOKUP_BUDGET", "30")
@@ -1156,8 +1162,10 @@ class _TestBase(Dev):
     """Process environment shared by Test, TestSync and TestActor."""
 
     # A chooser scenario with no cached evidence must not search PubMed from
-    # a test: tests are hermetic to live backends (see CLAUDE.md).
+    # a test: tests are hermetic to live backends (see CLAUDE.md). Nor may
+    # its simulated interview reach the question generators' backends.
     CHOOSER_PUBMED_LIVE_SEARCH = False
+    CHOOSER_SIMULATED_QA = False
 
     @classmethod
     def pre_setup(cls):

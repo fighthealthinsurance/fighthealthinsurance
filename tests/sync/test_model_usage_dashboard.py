@@ -526,6 +526,60 @@ class ModelUsageDashboardSemanticsTest(ChooserStatsHelperMixin, TestCase):
             self.assertEqual(by_name[loser]["chosen"], 0)
             self.assertAlmostEqual(by_name[loser]["win_rate"], 0.0)
 
+    def test_a_tie_splits_its_vote_between_the_tied_drafts(self):
+        task = self._make_task()
+        a = self._make_candidate(task, 0, "model-a")
+        b = self._make_candidate(task, 1, "model-b")
+        c = self._make_candidate(task, 2, "model-c")
+        ChooserVote.objects.create(
+            task=task,
+            chosen_candidate=a,
+            presented_candidate_ids=[a.id, b.id, c.id],
+            tied_candidate_ids=[a.id, b.id],
+            session_key="sess1",
+        )
+
+        by_name = {r["model_name"]: r for r in self._rows()}
+        self.assertEqual(
+            {name: r["chosen"] for name, r in by_name.items()},
+            {"model-a": 0.5, "model-b": 0.5, "model-c": 0},
+        )
+
+    def test_a_three_way_tie_still_adds_up_to_one_vote(self):
+        task = self._make_task()
+        cands = [self._make_candidate(task, i, f"model-{i}") for i in range(3)]
+        ChooserVote.objects.create(
+            task=task,
+            chosen_candidate=cands[0],
+            presented_candidate_ids=[c.id for c in cands],
+            tied_candidate_ids=[c.id for c in cands],
+            session_key="sess1",
+        )
+        self._vote(task, cands[0], cands, session="sess2")
+
+        rows = self._rows()
+        # Shown to two places, so the total is rounded, as the page does.
+        self.assertEqual(round(sum(r["chosen"] for r in rows)), 2)
+        self.assertEqual(
+            {r["model_name"]: r["chosen"] for r in rows}["model-0"], 1.33
+        )
+
+    def test_a_vote_from_before_ties_counts_for_its_pick(self):
+        # Rows written before the field existed hold NULL.
+        task = self._make_task()
+        a = self._make_candidate(task, 0, "model-a")
+        b = self._make_candidate(task, 1, "model-b")
+        ChooserVote.objects.create(
+            task=task,
+            chosen_candidate=a,
+            presented_candidate_ids=[a.id, b.id],
+            tied_candidate_ids=None,
+            session_key="sess1",
+        )
+
+        by_name = {r["model_name"]: r for r in self._rows()}
+        self.assertEqual(by_name["model-a"]["chosen"], 1)
+
     def test_duplicate_presented_ids_counted_once(self):
         # A historical/hostile vote row with duplicated presented ids must
         # not inflate the denominator.

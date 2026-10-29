@@ -16,10 +16,13 @@ dashboard:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from django.test import override_settings
 from prometheus_client import REGISTRY
 
 from fighthealthinsurance import chooser_tasks
 from fighthealthinsurance.chooser_tasks import (
+    _external_backends_without_fresh_tasks,
+    _forced_arena_models,
     _generate_appeal_candidates,
     _generate_chat_candidates,
     _labeled_fields,
@@ -286,6 +289,96 @@ class TestSelectCandidateModels:
     def test_respects_limit(self):
         models = [self._fake(f"m-{i}", i % 2 == 0) for i in range(10)]
         assert len(_select_candidate_models(models, 3)) == 3
+
+
+class TestForcedArenaModels:
+    """CHOOSER_FORCE_MODEL: a model being tried out gets a seat in every new
+    arena task, beside the usual rotation rather than instead of it."""
+
+    def test_a_forced_model_takes_the_first_slot_whatever_its_kind(self):
+        trial = FakeModel("fhi-trial", external=False)
+        internals = [FakeModel(f"fhi-{i}", external=False) for i in range(4)]
+        externals = [FakeModel("anthropic/claude-sonnet-4-6", external=True)]
+
+        selected = _select_candidate_models(internals + externals, 4, [trial])
+
+        assert selected[0] is trial
+        assert len(selected) == 4
+        # The rest still alternate, so the externals keep their slot.
+        assert any(m.external for m in selected)
+
+    def test_a_forced_model_the_router_also_lists_is_seated_once(self):
+        trial = FakeModel("fhi-trial", external=False)
+        listed = FakeModel("fhi-trial", external=False)
+
+        selected = _select_candidate_models([listed, FakeModel("fhi-0")], 4, [trial])
+
+        assert [m.name for m in selected] == ["fhi-trial", "fhi-0"]
+
+    def test_forced_names_resolve_to_one_registered_instance_each(self):
+        trial, second_host = FakeModel("fhi-trial"), FakeModel("fhi-trial")
+        with override_settings(
+            CHOOSER_FORCE_MODEL=" fhi-trial , not-registered, fhi-trial"
+        ), patch.object(
+            chooser_tasks.ml_router, "models_by_name", {"fhi-trial": [trial, second_host]}
+        ):
+            assert _forced_arena_models() == [trial]
+
+    def test_nothing_is_forced_when_unset(self):
+        with override_settings(CHOOSER_FORCE_MODEL=""):
+            assert _forced_arena_models() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestForcedArenaModelsInGeneration:
+    async def test_a_forced_model_the_router_left_out_writes_a_draft(self):
+        task = await ChooserTask.objects.acreate(
+            task_type="appeal", status="QUEUED", source="synthetic"
+        )
+        scenario = ScenarioModel(SCENARIO_TEXT)
+        trial = FakeModel("fhi-trial", external=False)
+        with override_settings(CHOOSER_FORCE_MODEL="fhi-trial"), patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(
+                return_value=[
+                    scenario,
+                    FakeModel("fhi-2025-nov"),
+                    FakeModel("anthropic/claude-sonnet-4-6", external=True),
+                ]
+            ),
+        ), patch.object(
+            chooser_tasks.ml_router, "models_by_name", {"fhi-trial": [trial]}
+        ), patch.object(
+            chooser_tasks, "_maybe_add_synthesized_candidate", new=AsyncMock()
+        ):
+            await _generate_appeal_candidates(task)
+
+        names = [
+            c.model_name
+            async for c in ChooserCandidate.objects.filter(task=task).order_by(
+                "candidate_index"
+            )
+        ]
+        assert names[0] == "fhi-trial"
+        assert trial.calls == 1
+
+    async def test_the_coverage_refill_asks_for_a_forced_internal_model(self):
+        """An internal model is not normally checked for coverage (internals
+        fill their slots every task); a forced one is, so its first fresh
+        tasks get built without waiting for the pool to run low."""
+        trial = FakeModel("fhi-trial", external=False)
+        with override_settings(CHOOSER_FORCE_MODEL="fhi-trial"), patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(return_value=[FakeModel("fhi-2025-nov")]),
+        ), patch.object(
+            chooser_tasks.ml_router, "models_by_name", {"fhi-trial": [trial]}
+        ):
+            assert await _external_backends_without_fresh_tasks("appeal") == {
+                "fhi-trial"
+            }
 
 
 @pytest.mark.asyncio

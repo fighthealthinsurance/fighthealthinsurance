@@ -2375,9 +2375,12 @@ class ChooserViewSet(viewsets.ViewSet):
         Get the next available chooser task for the given type.
 
         Selection logic:
-        1. Prefer tasks with zero votes
-        2. If none, select tasks with the fewest total votes
-        3. Exclude tasks where this session key has already voted or skipped
+        1. Prefer tasks built by the newest case pipeline
+           (ChooserTask.case_version: the appeal cases with article
+           summaries and a simulated interview), so their votes come first
+        2. Among those, prefer tasks with zero votes
+        3. If none, select tasks with the fewest total votes
+        4. Exclude tasks where this session key has already voted or skipped
         """
         session_key = self._get_session_key(request)
 
@@ -2395,7 +2398,7 @@ class ChooserViewSet(viewsets.ViewSet):
             ChooserTask.objects.filter(task_type=task_type, status="READY")
             .exclude(id__in=excluded_task_ids)
             .annotate(vote_count=Count("votes"))
-            .order_by("vote_count", "created_at")
+            .order_by("-case_version", "vote_count", "created_at")
         )
 
         task = available_tasks.first()
@@ -2494,7 +2497,7 @@ class ChooserViewSet(viewsets.ViewSet):
         """
         Register a user's vote for a chooser task.
 
-        Validates the task exists and is in a votable state, the chosen candidate belongs to the task and was presented, and the session has not already voted on the task; then creates a ChooserVote.
+        Validates the task exists and is in a votable state, the chosen candidate belongs to the task and was presented, any flags and any tie are among the presented candidates (a tie: two or more, unflagged, the chosen one among them), and the session has not already voted on the task; then creates a ChooserVote.
 
         Returns:
             response (Response): On success, a 200 response containing {"success": True, "message": "Vote recorded successfully", "vote_id": <id>}. On failure, a 4xx response with an error message.
@@ -2522,7 +2525,14 @@ class ChooserViewSet(viewsets.ViewSet):
             resolve_candidate(v)
             for v in serializer.validated_data.get("flagged_candidate_ids") or []
         ]
-        if chosen_candidate_id is None or None in presented_resolved + flagged_resolved:
+        tied_resolved = [
+            resolve_candidate(v)
+            for v in serializer.validated_data.get("tied_candidate_ids") or []
+        ]
+        if (
+            chosen_candidate_id is None
+            or None in presented_resolved + flagged_resolved + tied_resolved
+        ):
             return Response(
                 serializers.ErrorSerializer(
                     {"error": "Invalid candidate reference"}
@@ -2536,6 +2546,9 @@ class ChooserViewSet(viewsets.ViewSet):
         )
         flagged_candidate_ids = list(
             dict.fromkeys(cid for cid in flagged_resolved if cid is not None)
+        )
+        tied_candidate_ids = list(
+            dict.fromkeys(cid for cid in tied_resolved if cid is not None)
         )
 
         # Validate task exists and is in valid state
@@ -2615,6 +2628,26 @@ class ChooserViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # A tie names the drafts the voter found equally best: two or more,
+        # all shown, none flagged, and the chosen one among them (it stands
+        # for the tie wherever one pick is read). Counted in display order.
+        if tied_candidate_ids:
+            tie_error = None
+            if len(tied_candidate_ids) < 2:
+                tie_error = "A tie needs at least two candidates"
+            elif any(cid not in presented_candidate_ids for cid in tied_candidate_ids):
+                tie_error = "Tied candidates must be among the presented candidates"
+            elif any(cid in flagged_candidate_ids for cid in tied_candidate_ids):
+                tie_error = "A flagged candidate cannot be tied for best"
+            elif chosen_candidate_id not in tied_candidate_ids:
+                tie_error = "The chosen candidate must be one of the tied candidates"
+            if tie_error:
+                return Response(
+                    serializers.ErrorSerializer({"error": tie_error}).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            tied_candidate_ids.sort(key=presented_candidate_ids.index)
+
         # Every presented id must be one of this task's active candidates,
         # the only ones the next-task endpoint serves: the usage dashboard
         # counts each as a presentation of its model, so an id from another
@@ -2640,6 +2673,7 @@ class ChooserViewSet(viewsets.ViewSet):
                 chosen_candidate=chosen_candidate,
                 presented_candidate_ids=presented_candidate_ids,
                 flagged_candidate_ids=flagged_candidate_ids,
+                tied_candidate_ids=tied_candidate_ids,
                 session_key=session_key,
             )
         except IntegrityError:

@@ -9,9 +9,12 @@ appeal flow, and rank the model backends against each other.
 
 - **The case.** For an appeal task: the treatment and diagnosis, a fictional
   insurer and denial reason, a short list of *case facts* (age range,
-  symptom duration, what was tried, what the clinician documented) and the
-  *evidence on file* (PubMed articles, with links). For a chat task: the
-  conversation and the question the drafts answer.
+  symptom duration, what was tried, what the clinician documented), *what
+  the patient told us* (the app's questions for the case and the made-up
+  patient's answers) and the *evidence on file* (PubMed articles, with links
+  and a short summary of each). Everything shown is exactly what every draft
+  was given. For a chat task: the conversation and the question the drafts
+  answer.
 - **The drafts**, blind. The API sends no model name, synthesized flag or
   metadata (`ChooserCandidateSerializer`), and no row id or
   `candidate_index` either: both run in generation order (internal model
@@ -23,7 +26,14 @@ appeal flow, and rank the model backends against each other.
   brand.
 - **House rules.** Pick the draft you would send; a draft that invents a
   study, a law, a test result, a date or a history that is not in the case is
-  a foul and should never win; skip if unsure.
+  a foul and should never win; call a tie when two or more are equally good;
+  skip if unsure.
+- **Ties.** "It's a tie" switches the page to marking two or more drafts as
+  tied for best. The vote carries them as `tied_candidate_ids` (in display
+  order, none flagged) with `chosen_candidate_id` set to the first of them,
+  so a tie vote still has a chosen candidate. Counting splits the vote
+  evenly between the tied drafts (`ChooserVote.shares`: half a win each for
+  a two-way tie), so every vote still adds up to one.
 - **A flag per draft** ("Makes things up"). Flags ride along with the vote as
   `flagged_candidate_ids`; a flagged draft cannot be the chosen one, and the
   server rejects a vote that tries.
@@ -45,15 +55,53 @@ appeal flow, and rank the model backends against each other.
    used.
 3. **Evidence.** `_evidence_for` attaches up to `CHOOSER_EVIDENCE_LIMIT`
    articles for the pair to `context_json["evidence"]` as `{pmid, title,
-   url}`. It reads the cached PubMed searches first (`PubMedQueryData` rows
-   written by every search, any age) and only searches live when nothing is
-   cached and `CHOOSER_PUBMED_LIVE_SEARCH` allows it (off in tests). Seeded
-   pairs are exactly the ones real appeals already searched for, so a seeded
-   task usually costs no NCBI call.
-4. **Drafts.** Each backend is told the facts are the only facts and the
-   evidence list is the only thing it may cite (`_build_appeal_prompt`), so a
-   draft that makes things up is doing so against instructions, and the
-   voter can check it against the same list.
+   url, summary}`. It reads the cached PubMed searches first
+   (`PubMedQueryData` rows written by every search, any age) and only
+   searches live when nothing is cached and `CHOOSER_PUBMED_LIVE_SEARCH`
+   allows it (off in tests). Seeded pairs are exactly the ones real appeals
+   already searched for, so a seeded task usually costs no NCBI call. The
+   summary is the one real appeals were given for the article
+   (`PubMedArticleSummarized.basic_summary`) when there is one, else the
+   start of its abstract; an article with neither has no summary.
+4. **Interview.** `_interview` runs a simulated question-and-answer
+   session: the app's own question generators
+   (`MLAppealQuestionsHelper.generate_specific_questions`, given the case as
+   the denial and the case facts as the patient's history; the generic,
+   cached-by-pair questions when those come back empty) ask up to
+   `CHOOSER_MAX_QUESTIONS` questions, and a scenario writer answers them in
+   character, consistent with the facts. The pairs are stored in
+   `context_json["qa_pairs"]` as `{question, answer}`, the shape the
+   training loaders already read. Best effort: no questions, or no usable
+   answers, leaves the case without them. `CHOOSER_SIMULATED_QA` turns it
+   off (it is off in tests).
+5. **Drafts.** Each backend is told the facts and the patient's answers are
+   the only facts, and the evidence list is the only thing it may cite, for
+   no more than its summary says (`_build_appeal_prompt`), so a draft that
+   makes things up is doing so against instructions, and the voter can check
+   it against the same list.
+
+### Case versions and what voters see first
+
+`ChooserTask.case_version` records which pipeline built the task
+(`chooser_tasks.CASE_VERSIONS`): appeal tasks built with summaries and an
+interview are version 2; older appeal tasks and every chat task are 1. The
+version marks the pipeline, not what each step found. The next-task endpoint
+serves the newest version first (then fewest votes, then oldest), so new
+cases collect votes before old ones, which stay votable. Only tasks at the
+current version count as fresh for the refill (`_fresh_tasks`), so unvoted
+old tasks never hold off generating new ones.
+
+### Trying out a model (`CHOOSER_FORCE_MODEL`)
+
+To get a new model votes quickly, set `CHOOSER_FORCE_MODEL` to its
+registered router name (a key of `ml_router.models_by_name`, as
+`FORCE_MODEL` takes; several may be given, comma-separated). Every new arena
+task then seats it first, whether or not the router would have picked it,
+and fills the other slots as usual, so it is compared against the regular
+rotation rather than replacing it. The coverage refill treats it like an
+external backend, building fresh tasks until enough of them include it. A
+name the router doesn't know is logged and ignored. Unlike `FORCE_MODEL`, it
+changes nothing outside the arena.
 
 ## Rankings and privacy (`condition_rankings.py`, `public_rankings.py`)
 
@@ -63,7 +111,8 @@ The public page shows two things, both safe to publish:
   `synthetic`, cast since blind voting began (`public_rankings.blind_since`:
   when migration 0240 was applied, or `PUBLIC_RANKINGS_SINCE`), and nothing
   else. Win rate is votes won over votes shown in;
-  "caught making things up" is flags over votes shown in. Models with fewer
+  "caught making things up" is flags over votes shown in. A tie gives each
+  tied draft an even share of the vote. Models with fewer
   than `PUBLIC_RANKINGS_MIN_SHOWN` votes are listed as warming up. Real
   patients' picks, call logs, chat turns and session counts stay on the
   staff dashboard (`/timbit/...`, `ModelUsageDashboardView`).
@@ -113,6 +162,10 @@ environment variables of the same name.
 | `CHOOSER_EVIDENCE_LIMIT` | `5` | Articles attached to a scenario |
 | `CHOOSER_PUBMED_LIVE_SEARCH` | `True` (`False` in tests) | Search PubMed when nothing is cached for the pair |
 | `CHOOSER_PUBMED_SEARCH_TIMEOUT` | `20.0` | Seconds a live search may take |
+| `CHOOSER_SIMULATED_QA` | `True` (`False` in tests) | Give appeal cases a simulated interview |
+| `CHOOSER_MAX_QUESTIONS` | `4` | Questions the simulated patient is asked |
+| `CHOOSER_QA_TIMEOUT` | `60` | Seconds each question generator may take |
+| `CHOOSER_FORCE_MODEL` | `""` | Registered model names seated in every new arena task |
 | `CONDITION_RANKING_MIN_PEOPLE` | `5` | The k in k-anonymity: different people per term |
 | `CONDITION_RANKING_LOOKUP_BUDGET` | `30` | Outside lookups per refresh |
 | `CONDITION_RANKING_RECHECK_DAYS` | `365` | When a stored verdict is asked again |
@@ -127,5 +180,7 @@ environment variables of the same name.
 ## Exports
 
 `charts:chooser_ranked_export` (staff only) carries each candidate's
-`flag_count` beside the vote counts, so the preference data and the
-fabrication flags travel together.
+`votes` (ties split), `tie_count` and `flag_count`, so the preference data,
+the ties and the fabrication flags travel together. `vote_count` is the
+winning candidate's `votes` and `total_votes` the number of votes cast; the
+case (summaries and `qa_pairs` included) rides along in `context`.

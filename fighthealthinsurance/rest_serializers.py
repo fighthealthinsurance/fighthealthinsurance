@@ -955,6 +955,11 @@ class ChooserVoteRequestSerializer(serializers.Serializer):
     flagged_candidate_ids = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
+    # A tie: the presented candidates the voter found equally best. Optional;
+    # when given, two or more, none flagged, chosen_candidate_id among them.
+    tied_candidate_ids = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list
+    )
 
 
 class ChooserVoteResponseSerializer(serializers.Serializer):
