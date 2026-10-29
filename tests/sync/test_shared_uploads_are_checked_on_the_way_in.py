@@ -472,7 +472,7 @@ class OneAddressSharesTenTimesADayTest(_ShareTestCase):
             response = self.share_from(files=[SimpleUploadedFile("eoc.pdf", locked)])
             self.assertRefused(response, "This PDF is locked with a password.")
         with patch.object(chat_forms, "_check_pdf") as check:
-            response = self.share_from()
+            response = self.share_from(files=[SimpleUploadedFile("eoc.pdf", locked)])
         self.assertRefused(response, TOMORROW)
         check.assert_not_called()
         # Refused uploads took attempts, never shares.
