@@ -38,6 +38,15 @@ SITE_BANNER_CANNED_MESSAGES = [
         ),
     ),
     (
+        "Down due to El Niño -- our models run on our own servers",
+        (
+            "Our AI models run on our own servers in the Pacific Northwest, "
+            "and the weather has taken them offline, so we can't generate "
+            "appeals right now. If you're able to wait, please try again "
+            "later today or tomorrow. Thank you for your patience!"
+        ),
+    ),
+    (
         "Scheduled maintenance",
         (
             "We're performing scheduled maintenance and some features may be "

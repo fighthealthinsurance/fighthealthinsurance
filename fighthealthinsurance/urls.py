@@ -14,7 +14,6 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
-import os
 from typing import List, Union
 
 from django.conf import settings
@@ -630,19 +629,12 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
 ]
 
-# Don't break people already in the flow but "drain" the people by replacing scan & index w/ BRB view.
-if os.getenv("BRB") == "BRB":
-    urlpatterns += [
-        path(r"", views.BRB.as_view(), name="root"),
-    ]
-else:
-    urlpatterns += [
-        path(
-            "",
-            views.IndexView.as_view(),
-            name="root",
-        )
-    ]
+# The landing page, or the "be right back" page while BRB takes the site
+# down on purpose (brb.py): only this route changes, so people already in the
+# flow finish while new people are asked to come back later.
+urlpatterns += [
+    path("", views.root_view, name="root"),
+]
 
 # For people in flow
 urlpatterns += [

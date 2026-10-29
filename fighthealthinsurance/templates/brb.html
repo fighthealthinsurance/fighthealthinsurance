@@ -1,34 +1,52 @@
-{% load static %}
-
-<html>
+{% comment %}
+The "be right back" page, served with a 503 in the landing page's place while
+settings.BRB takes the site down on purpose (brb.py, views.BRB). `reason` is
+the story it tells; the body is the template under brb/ that the reason
+names. Standalone on purpose: it loads no stylesheet or script, so it renders
+when nothing else does (a test holds it to that).
+{% endcomment %}
+<!DOCTYPE html>
+<html lang="en">
 <head>
-<title>Fight Health Insurance — We'll Be Right Back</title>
-{% if canonical_url %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fight Health Insurance — {{ reason.title }}</title>
+    {% if canonical_url %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
+    <style>
+        *, *::before, *::after { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 1.5rem 1rem 3rem;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.5;
+            color: #333;
+            background: #f8f9fa;
+        }
+        .brb-page { max-width: 720px; margin: 0 auto; text-align: center; }
+        .brb-page h1 {
+            font-size: 2.25rem;
+            font-weight: 500;
+            line-height: 1.2;
+            margin: 1rem 0 1.5rem;
+        }
+        .brb-page p { font-size: 1.1rem; margin: 0 0 1rem; }
+        .brb-page .brb-lead { font-size: 1.2rem; }
+        .brb-figure { margin: 2rem 0 0; }
+        .brb-figure img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+        }
+        .brb-figure figcaption { color: #555; margin-top: 0.5rem; }
+        /* The site's link green, declared here because this page loads no
+           stylesheet. */
+        a { color: #566b07; }
+    </style>
 </head>
 <body>
-
-<div class="container mt-4 mb-5" style="max-width: 720px; margin: auto; text-align: center;">
-    <h1>We’ll Be Right Back ❤️</h1>
-
-    <p style="font-size: 1.2em; margin-top: 1em;">
-        Soooo… we didn’t expect to be on <strong>PBS over the weekend</strong> 😅 and a <em>lot</em> of folks came by to fight their insurance denials (which honestly: good!).
-    </p>
-
-    <p style="font-size: 1.1em;">
-        To keep things running smoothly, we’re moving to our new servers — yes, the physical — because running AI in the cloud got too expensive.
-        We’re working as fast as we can to bring everything back online.
-    </p>
-
-    <p style="font-size: 1.1em;">
-        We should be back very soon (likely early tomorrow). Thank you for your patience ♥️
-    </p>
-
-    <div style="margin-top: 2em;">
-        <img src="{% static 'images/sleeping-optimized.jpg' %}" alt="Timbit sleeping peacefully"
-             style="max-width: 100%; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.15);" width="1200" height="900" />
-        <p style="color: #555; margin-top: 0.5em;">In the meantime, enjoy this picture of Timbit sleeping while we panic-upgrade servers.</p>
-    </div>
-
-</div>
+    <main class="brb-page">
+        {% include reason.template %}
+    </main>
 </body>
 </html>

@@ -383,6 +383,12 @@ path: its model returns a `create_or_update_appeal` call, and `AppealTool`
   pytest) and never in a deployment. Every other setting, GeoIP included, is
   read with `os.getenv`, and nothing loads `.env` into the process
   environment, so export those: `set -a; . ./.env; set +a`.
+- **Taking the site down on purpose.** `BRB` names why (`EL_NINO`, or `BRB`
+  for the original page): the landing page then serves that story with a
+  503 while every other page keeps working, so people already in the flow
+  finish. `LIVE`, or unset, is the site as usual. `k8s/deploy.yaml` sets
+  it, so changing it is a rollout. The stories, and how to add one:
+  [`fighthealthinsurance/brb.py`](fighthealthinsurance/brb.py).
 - [`.env.example`](.env.example) lists the variables the code reads, with
   what each does, and [API_KEYS_SETUP.md](API_KEYS_SETUP.md) covers the
   external API keys. For model backends, see

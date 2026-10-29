@@ -39,7 +39,11 @@ from django.utils.decorators import classonlymethod, method_decorator
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.views import View, generic
-from django.utils.cache import get_max_age, patch_cache_control
+from django.utils.cache import (
+    add_never_cache_headers,
+    get_max_age,
+    patch_cache_control,
+)
 from django.utils.http import http_date
 from django.views.decorators.cache import cache_control, cache_page
 from django.views.decorators.clickjacking import xframe_options_exempt
@@ -56,6 +60,7 @@ from PIL import Image
 
 from fighthealthinsurance import (
     assistant_handoff_views,
+    brb,
     common_view_logic,
     consent,
     intake_resume,
@@ -384,13 +389,21 @@ class ProVersionThankYouView(TemplateView):
 
 
 class BRB(TemplateView):
-    """Service unavailable page returning HTTP 503 status."""
+    """The "be right back" page: a 503 telling the story settings.BRB names
+    (brb.py) while the site is down on purpose. root_view serves it in the
+    landing page's place."""
 
     template_name = "brb.html"
 
     def get(self, request, *args, **kwargs):
-        response = super().get(request, *args, **kwargs)
-        response.status_code = 503  # Set HTTP status to 503
+        reason = brb.brb_reason() or brb.BRB_REASONS["BRB"]
+        context = self.get_context_data(reason=reason, **kwargs)
+        response = self.render_to_response(context)
+        response.status_code = 503
+        response["Retry-After"] = str(brb.RETRY_AFTER_SECONDS)
+        # Never cached, by a browser or the CDN: the page has to go away
+        # the moment the flag does.
+        add_never_cache_headers(response)
         return response
 
 
@@ -584,6 +597,23 @@ class IndexView(StaticIshView):
     """Homepage view."""
 
     template_name = "index.html"
+
+
+_landing_page = IndexView.as_view()
+_brb_page = BRB.as_view()
+
+
+def root_view(request: HttpRequest, *args: typing.Any, **kwargs: typing.Any):
+    """The landing page, or the "be right back" page while settings.BRB
+    takes the site down on purpose (brb.py).
+
+    Decided on each request rather than when urls.py loads, so a test can
+    set the flag, and only this route changes: people already in the flow
+    finish while new people are asked to come back later.
+    """
+    if brb.brb_reason() is not None:
+        return _brb_page(request, *args, **kwargs)
+    return _landing_page(request, *args, **kwargs)
 
 
 class AboutView(StaticIshView):

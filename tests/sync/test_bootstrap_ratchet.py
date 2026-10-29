@@ -278,8 +278,8 @@ NO_BOOTSTRAP_HERE = (
     # Django's admin, which brings its own stylesheet. Its "active" and
     # "tab-content" are the admin's.
     "admin/fighthealthinsurance/ongoingchat/chat_editor.html",
-    # A standalone page styled inline. Its container, mt-4 and mb-5 style
-    # nothing, because nothing there loads Bootstrap.
+    # The "be right back" page, standalone on purpose so it renders when
+    # nothing else does: its own <style> block, and no stylesheet or script.
     "brb.html",
 )
 

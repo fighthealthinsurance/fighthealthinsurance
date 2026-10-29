@@ -170,6 +170,9 @@ spec:
               exec:
                 command: ["sleep", "15"]
           env:
+          # LIVE, or why the site is down on purpose, e.g. EL_NINO: the
+          # landing page then serves that story with a 503 while the rest of
+          # the site keeps working (fighthealthinsurance/brb.py).
           - name: BRB
             value: "LIVE"
           # The PodMonitor scrapes this pod by IP, so the scrape's Host header
