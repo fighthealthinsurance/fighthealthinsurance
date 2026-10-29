@@ -372,15 +372,17 @@ def record_professional_submission(
 
     if lead is None:
         pro.clicked_for_paid = False
-        pro.save()
-        _log(
-            pro,
-            lead=pro,
-            source=source,
-            outcome=Outcome.NEW,
-            phone_digits=phone_digits,
-            created_lead=True,
-        )
+        # Together, so a failed log can't leave a lead a retry treats as a repeat.
+        with transaction.atomic():
+            pro.save()
+            _log(
+                pro,
+                lead=pro,
+                source=source,
+                outcome=Outcome.NEW,
+                phone_digits=phone_digits,
+                created_lead=True,
+            )
         notify_interested_professional(
             pro, source=source, subject=f"{subject_prefix} #{pro.id}"
         )
@@ -464,7 +466,8 @@ def forget_submissions(email: str) -> None:
 def person_aggregate(function: str, field: str, output_field):
     """One person's aggregate over the log, for annotating an inquiry list.
 
-    A person is the linked lead, or the email for rows with no lead.
+    A person is the linked lead, or the email for rows with no lead; a row
+    with neither is its own person.
     """
 
     def over(rows):
@@ -483,7 +486,10 @@ def person_aggregate(function: str, field: str, output_field):
     by_email = ProfessionalInquiry.objects.annotate(lower_email=Lower("email")).filter(
         interested_professional__isnull=True, lower_email=Lower(OuterRef("email"))
     )
+    # A row with no lead and no email is nobody in particular: it counts alone.
+    by_row = ProfessionalInquiry.objects.filter(pk=OuterRef("pk"))
     return Case(
+        When(interested_professional__isnull=True, email="", then=over(by_row)),
         When(interested_professional__isnull=True, then=over(by_email)),
         default=over(by_lead),
         output_field=output_field,

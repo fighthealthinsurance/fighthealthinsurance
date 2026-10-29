@@ -408,6 +408,7 @@ class ProfessionalInquiryAdmin(admin.ModelAdmin):
         "created_at",
         "outcome",
         "spam_reason",
+        "created_lead",
     )
 
     def has_add_permission(self, request):

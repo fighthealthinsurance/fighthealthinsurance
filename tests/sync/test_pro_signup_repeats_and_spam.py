@@ -496,6 +496,28 @@ class InquiryAdminTest(_SignupCase):
             [row.person_count for row in response.context["cl"].result_list], [2, 2]
         )
 
+    def test_rows_with_no_email_and_no_lead_each_count_alone(self):
+        for _ in range(2):
+            self.client.post(
+                reverse("pro_version_external_signup"),
+                {"website": "http://bot.example"},
+            )
+        response = self.changelist()
+        self.assertEqual(
+            [row.person_count for row in response.context["cl"].result_list], [1, 1]
+        )
+
+    def test_created_lead_is_read_only(self):
+        self.submit()
+        inquiry = ProfessionalInquiry.objects.get()
+        response = self.client.get(
+            reverse(
+                "admin:fighthealthinsurance_professionalinquiry_change",
+                args=[inquiry.pk],
+            )
+        )
+        self.assertNotIn("created_lead", response.context["adminform"].form.fields)
+
     def test_offers_an_outcome_filter(self):
         response = self.changelist()
         self.assertIn(
@@ -650,6 +672,17 @@ class SpamIsNotMatchingEvidenceTest(_SignupCase):
         self.assertEqual(
             self.outcomes()[-1], Outcome.NEW, "a fresh address stays a new lead"
         )
+
+
+class FirstSubmissionAtomicTest(_SignupCase):
+    def test_a_failed_log_leaves_no_lead_behind(self):
+        with patch(
+            "fighthealthinsurance.pro_signups.ProfessionalInquiry.objects.create",
+            side_effect=RuntimeError("log write failed"),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.submit()
+        self.assertFalse(InterestedProfessional.objects.exists())
 
 
 class OverlongPhoneTest(_SignupCase):
