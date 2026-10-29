@@ -4731,8 +4731,9 @@ class SharedPlanDocumentsDay(models.Model):
     """How much of one daily budget has been used on one UTC day: for
     everyone, files or links shared on the share page, copies shared by
     ticking the box on another page, or reminder requests; or one address's shares
-    on the share page, named by a keyed digest of the address and the day
-    (shared_plan_documents.take_share_place). One row per budget per day,
+    on the share page or its posts with files, named by a keyed digest of
+    the address and the day (shared_plan_documents.take_share_place,
+    take_upload_attempt). One row per budget per day,
     shared by every pod (shared_plan_documents.reserve). Counts only."""
 
     FILES = "files"
