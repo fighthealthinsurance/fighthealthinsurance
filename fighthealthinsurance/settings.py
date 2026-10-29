@@ -216,10 +216,10 @@ class Base(Configuration):
     # the page serves 404 and stays out of the sitemap. Dev/Test enable it.
     DENIAL_WATCH_PAGE_ENABLED = _env_flag("DENIAL_WATCH_PAGE_ENABLED")
     # Takes the site down on purpose: the landing page serves a 503 with the
-    # story this names (brb.py: EL_NINO, or BRB for the original page) while
-    # every other page keeps working for people already in the flow. LIVE,
-    # or unset, is the site as usual. k8s/deploy.yaml sets it, so changing
-    # it is a rollout.
+    # story this names (brb.py: EL_NINO, MIGRATION, or BRB for the original
+    # page) while every other page keeps working for people already in the
+    # flow. LIVE, or unset, is the site as usual. k8s/deploy.yaml sets it,
+    # so changing it is a rollout.
     BRB = os.getenv("BRB", "LIVE")
 
     # --- Temporal (durable workflow execution) ---

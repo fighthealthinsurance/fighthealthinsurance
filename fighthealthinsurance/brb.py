@@ -11,6 +11,8 @@ value (k8s/deploy.yaml):
     BRB=LIVE        the site as usual (also when the variable is unset)
     BRB=EL_NINO     the models run on our own servers in the Pacific
                     Northwest, and the weather took them out
+    BRB=MIGRATION   the servers are in the back of the car on the way to
+                    their new home
     BRB=BRB         the original page, from the weekend PBS sent everyone
 
 A value that names no story still takes the site down, since setting it is
@@ -60,6 +62,7 @@ BRB_REASONS = {
     for reason in (
         BrbReason("BRB", "We’ll Be Right Back", "brb/classic.html"),
         BrbReason("EL_NINO", "Back After the Weather", "brb/el_nino.html"),
+        BrbReason("MIGRATION", "Moving Day", "brb/migration.html"),
     )
 }
 

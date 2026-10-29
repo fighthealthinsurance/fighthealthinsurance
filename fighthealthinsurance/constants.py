@@ -47,6 +47,14 @@ SITE_BANNER_CANNED_MESSAGES = [
         ),
     ),
     (
+        "Down for server migration",
+        (
+            "We're moving our servers to a new home, so we can't generate "
+            "appeals for a few hours. Your data is safe; please check back "
+            "later today. Thank you for your patience!"
+        ),
+    ),
+    (
         "Scheduled maintenance",
         (
             "We're performing scheduled maintenance and some features may be "

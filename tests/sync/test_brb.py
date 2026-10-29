@@ -43,6 +43,7 @@ class TestBrbReason(TestCase):
         # The page only replaces the landing page; the banner reaches the rest.
         labels = [label.lower() for label, _ in SITE_BANNER_CANNED_MESSAGES]
         self.assertTrue(any("el niño" in label for label in labels), labels)
+        self.assertTrue(any("server migration" in label for label in labels), labels)
 
 
 class TestBrbPage(TestCase):
@@ -80,6 +81,16 @@ class TestBrbPage(TestCase):
         for name in ("scan", "about"):
             response = self.client.get(reverse(name))
             self.assertEqual(response.status_code, 200, name)
+
+    @override_settings(BRB="MIGRATION")
+    def test_migration_takes_the_landing_page_down_with_the_lesbaru(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 503)
+        self.assertTemplateUsed(response, "brb/migration.html")
+        self.assertContains(response, "Server Migration", status_code=503)
+        self.assertContains(response, "Lesbaru", status_code=503)
+        self.assertContains(response, "lesbaru-optimized.jpg", status_code=503)
+        self.assertContains(response, "license plate blurred", status_code=503)
 
     @override_settings(BRB="BRB")
     def test_the_original_value_still_shows_the_original_page(self):
