@@ -410,6 +410,11 @@ class OneAddressSharesTenTimesADayTest(_ShareTestCase):
             name__startswith=shared_plan_documents.ATTEMPTS_PREFIX
         )
 
+    def attempt_rows(self):
+        return SharedPlanDocumentsDay.objects.filter(
+            name__startswith=shared_plan_documents.ATTEMPTS_PREFIX
+        )
+
     def test_ten_a_day_is_the_number(self):
         self.assertEqual(shared_plan_documents._shares_per_address(), 10)
 
@@ -462,6 +467,8 @@ class OneAddressSharesTenTimesADayTest(_ShareTestCase):
             self.assertStored(self.share_from(), count=2)
         (row,) = self.address_rows()
         self.assertEqual(row.day, tomorrow.date())
+        (attempt,) = self.attempt_rows()
+        self.assertEqual(attempt.day, tomorrow.date())
         # The budgets for everyone keep their rows.
         self.assertEqual(SharedPlanDocumentsDay.objects.filter(name="files").count(), 2)
 
@@ -478,13 +485,15 @@ class OneAddressSharesTenTimesADayTest(_ShareTestCase):
         # Refused uploads took attempts, never shares.
         self.assertFalse(self.address_rows().exists())
 
+    @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_ATTEMPTS_PER_ADDRESS=1)
+    def test_another_address_still_has_its_attempts(self):
+        self.assertStored(self.share_from())
+        self.assertRefused(self.share_from(), TOMORROW, count=1)
+        self.assertStored(self.share_from("198.51.100.4"), count=2)
+
     def test_link_only_shares_take_no_attempt(self):
         self.share_from(files=[], plan_links=LINK)
-        self.assertFalse(
-            SharedPlanDocumentsDay.objects.filter(
-                name__startswith=shared_plan_documents.ATTEMPTS_PREFIX
-            ).exists()
-        )
+        self.assertFalse(self.attempt_rows().exists())
 
     @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_SHARES_PER_ADDRESS=1)
     def test_the_links_budget_keeps_its_rows_too(self):
