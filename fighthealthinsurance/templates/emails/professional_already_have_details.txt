@@ -1,0 +1,7 @@
+{% autoescape off %}{% if name %}Hi {{ name }},{% else %}Hi,{% endif %}
+
+Thanks for getting in touch again. We already have your details from your earlier request, so there's no need to send the form again.{% if intro_sent %} We also sent you an email introducing you to Cofactor AI.{% endif %}
+
+If there's something specific you'd like to discuss, email us at {{ support_email }} and tell us more.
+
+The Fight Health Insurance team{% endautoescape %}

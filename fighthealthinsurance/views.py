@@ -79,7 +79,6 @@ from fighthealthinsurance.denial_context import (
     qa_key_for_question,
     question_text_for_field,
 )
-from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fhi_users.fight_paperwork import (
@@ -91,6 +90,7 @@ from fhi_users.fight_paperwork import (
 )
 from fighthealthinsurance.log_redaction import session_key_prefix_for_log
 from fighthealthinsurance.ml import denial_triage, llm_usage
+from fighthealthinsurance.pro_signups import record_professional_submission
 from fighthealthinsurance.media_references import (
     MEDIA_REFERENCES,
     SOCIAL_MEDIA_REFERENCES,
@@ -109,10 +109,8 @@ from fighthealthinsurance.utils import (
     is_valid_denial_id,
     ai_assistants_page_enabled,
     medicaid_eligibility_page_enabled,
-    notify_interested_professional,
     build_fallback_email,
     mask_email_for_logging,
-    should_notify_returning_lead,
 )
 
 
@@ -249,81 +247,10 @@ class FollowUpView(generic.FormView):
         return render(self.request, "followup_thankyou.html")
 
 
-def _persist_interested_professional_lead(
-    interested_pro: "models.InterestedProfessional",
-    *,
-    source: str,
-    subject_prefix: str,
-) -> None:
-    """Persist a new interested-professional lead and fan out notifications.
-
-    Shared by the on-site /pro_version form (:class:`ProVersionView`), the
-    off-site fightpaperwork.com classic-form endpoint
-    (:class:`ExternalProSignupView`), and direct posts to the thank-you page
-    (:class:`ProVersionThankYouView`) so all intakes dedup, notify, and thank
-    identically.
-
-    Dedup by email (case-insensitive, matching the REST endpoint and the
-    pro-connector queue) keeps one row per address: a returning lead never
-    creates a duplicate InterestedProfessional and never overwrites the
-    stored one. The team is still notified on repeat submissions — repeat
-    interest is real signal, and silently swallowing it makes successful
-    signups look broken — with a "(returning)" subject marker and the freshly
-    submitted field values in the body, bounded to at most one returning
-    notification per address per cooldown window (see
-    should_notify_returning_lead) so re-POSTing an address can't flood the
-    inboxes. The thank-you email goes out immediately for new leads; for
-    returning ones it is only retried when no send has succeeded yet
-    (thankyou_email_sent=False), so repeatedly submitting someone else's
-    address can't be used to spam them. New leads
-    are recorded as not-clicked-for-paid (the pay-to-express-interest choice
-    is no longer collected). Mail failures are logged, never raised, so they
-    can't fail an already-persisted lead.
-    """
-    existing = models.InterestedProfessional.objects.filter(
-        email__iexact=interested_pro.email
-    ).first()
-    if existing is not None:
-        # Borrow the existing row's pk so the notification's admin deep-link
-        # resolves, while the body carries what was just submitted (a fresh
-        # phone number or comment is the interesting part). The unsaved
-        # instance is discarded afterwards — never save() it here, or an
-        # unauthenticated resubmission would overwrite the stored lead.
-        # The cooldown gate bounds inbox amplification: at most one returning
-        # notification per address per window, no matter how fast repeats come.
-        interested_pro.id = existing.id
-        if should_notify_returning_lead(existing.email):
-            notify_interested_professional(
-                interested_pro,
-                source=source,
-                subject=f"{subject_prefix} #{existing.id} (returning)",
-            )
-        if not existing.thankyou_email_sent:
-            try:
-                ThankyouEmailSender().dosend(interested_pro=existing)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"Error retrying pro signup thank-you "
-                    f"(interested_professional_id={existing.id})"
-                )
-        return
-    interested_pro.clicked_for_paid = False
-    interested_pro.save()
-    notify_interested_professional(
-        interested_pro,
-        source=source,
-        subject=f"{subject_prefix} #{interested_pro.id}",
-    )
-    # Send the thank-you email synchronously so the signer gets it right away.
-    # The batched ThankyouEmailSender will skip records where
-    # thankyou_email_sent=True, which dosend() sets on success.
-    try:
-        ThankyouEmailSender().dosend(interested_pro=interested_pro)
-    except Exception:
-        logger.opt(exception=True).warning(
-            f"Error sending immediate pro signup thank-you "
-            f"(interested_professional_id={interested_pro.id})"
-        )
+def _pro_signup_redirect() -> HttpResponseRedirect:
+    """The same thank-you page for every outcome, so the page can't be used
+    to learn whether an address is already on file or what the filter caught."""
+    return HttpResponseRedirect(reverse("pro_version_thankyou"))
 
 
 def _handle_classic_pro_lead_post(
@@ -337,7 +264,7 @@ def _handle_classic_pro_lead_post(
     Fight Paperwork form still POST to directly.
 
     Honeypot first, read straight from the raw POST: a filled "website" field
-    means a bot, so drop the submission silently and land it on the thank-you
+    means a bot, so the submission is logged as spam and lands on the thank-you
     page like any other. Checking before form validation means a bot can't
     dodge the honeypot by also omitting a required field (which would
     otherwise bounce it to /pro_version and reveal the trap). A submission
@@ -349,17 +276,23 @@ def _handle_classic_pro_lead_post(
     on the known senders, this path is rare.
     """
     if request.POST.get("website", "").strip():
-        return HttpResponseRedirect(reverse("pro_version_thankyou"))
+        bot = models.InterestedProfessional(
+            **{
+                field: request.POST.get(field, "")
+                for field in core_forms.ExternalInterestedProfessionalForm.Meta.fields
+            }
+        )
+        record_professional_submission(
+            bot, source=source, subject_prefix=subject_prefix, honeypot=True
+        )
+        return _pro_signup_redirect()
     form = core_forms.ExternalInterestedProfessionalForm(request.POST)
     if not form.is_valid():
         return HttpResponseRedirect(reverse("pro_version"))
-    interested_pro = form.save(commit=False)
-    _persist_interested_professional_lead(
-        interested_pro,
-        source=source,
-        subject_prefix=subject_prefix,
+    record_professional_submission(
+        form.save(commit=False), source=source, subject_prefix=subject_prefix
     )
-    return HttpResponseRedirect(reverse("pro_version_thankyou"))
+    return _pro_signup_redirect()
 
 
 class ProVersionThankYouView(TemplateView):
@@ -426,13 +359,12 @@ class ProVersionView(generic.FormView):
         return reverse("pro_version_thankyou")
 
     def form_valid(self, form):
-        interested_pro = form.save(commit=False)
-        _persist_interested_professional_lead(
-            interested_pro,
+        record_professional_submission(
+            form.save(commit=False),
             source="/pro_version",
             subject_prefix="New pro version signup",
         )
-        return super().form_valid(form)
+        return _pro_signup_redirect()
 
 
 class ExternalProSignupView(View):

@@ -1,0 +1,14 @@
+{% extends "./fhi_base_email.html" %}
+{% block title %}We already have your details{% endblock %}
+{% block content %}
+<p>{% if name %}Hi {{ name }},{% else %}Hi,{% endif %}</p>
+<p>
+Thanks for getting in touch again. We already have your details from your earlier request, so there's no need to send the form again.{% if intro_sent %} We also sent you an email introducing you to Cofactor AI.{% endif %}
+</p>
+<p>
+If there's something specific you'd like to discuss, email us at <a href="mailto:{{ support_email }}">{{ support_email }}</a> and tell us more.
+</p>
+<p>
+The Fight Health Insurance team
+</p>
+{% endblock %}

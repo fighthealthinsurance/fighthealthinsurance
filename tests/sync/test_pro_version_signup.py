@@ -176,7 +176,7 @@ class ProVersionSignupEdgeCaseTest(TestCase):
         # flip thankyou_email_sent is the POST body itself — which Meta.exclude
         # must block. Without this patch, dosend() would always set it to True
         # and we couldn't distinguish a real save-path flip from a leaked POST.
-        with patch("fighthealthinsurance.views.ThankyouEmailSender.dosend"):
+        with patch("fighthealthinsurance.pro_signups.ThankyouEmailSender.dosend"):
             self.client.post(
                 reverse("pro_version"),
                 {
@@ -361,7 +361,7 @@ class ExternalProSignupTest(TestCase):
         self.assertEqual(len(thankyous), 1)
 
     def test_rejects_mass_assignment_of_internal_fields(self):
-        with patch("fighthealthinsurance.views.ThankyouEmailSender.dosend"):
+        with patch("fighthealthinsurance.pro_signups.ThankyouEmailSender.dosend"):
             self.client.post(
                 reverse(self.URL_NAME),
                 {**self.PAYLOAD, "paid": "true", "thankyou_email_sent": "true"},
@@ -398,8 +398,9 @@ class RepeatSignupNotificationTest(TestCase):
     carrying the freshly submitted field values — so repeat interest is never
     silently swallowed. It is bounded to one returning notification per
     address per cooldown window, so re-POSTing an address can't flood the
-    inboxes. The thank-you email is only retried when no send has succeeded
-    yet.
+    inboxes. A repeat never gets the thank-you again: it gets the short
+    "we already have your details" reply instead (see
+    test_pro_signup_repeats_and_spam.py).
     """
 
     PAYLOAD = {"name": "Returning", "email": "returning@clinic.example"}
@@ -442,9 +443,9 @@ class RepeatSignupNotificationTest(TestCase):
             any("Thanks for your interest" in m.subject for m in mail.outbox)
         )
 
-    def test_repeat_submission_retries_unsent_thankyou(self):
-        # A lead whose thank-you never went out (thankyou_email_sent=False)
-        # gets it on resubmission, instead of being stuck silent forever.
+    def test_repeat_submission_does_not_retry_unsent_thankyou(self):
+        # A lead whose thank-you never went out gets the short repeat reply,
+        # not the thank-you.
         InterestedProfessional.objects.create(
             email="unthanked@clinic.example", thankyou_email_sent=False
         )
@@ -452,7 +453,7 @@ class RepeatSignupNotificationTest(TestCase):
             reverse("pro_version"),
             {"name": "Unthanked", "email": "unthanked@clinic.example"},
         )
-        self.assertTrue(
+        self.assertFalse(
             any(
                 "Thanks for your interest" in m.subject
                 and "unthanked@clinic.example" in m.to
