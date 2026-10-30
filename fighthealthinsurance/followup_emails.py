@@ -103,8 +103,10 @@ class ThankyouEmailSender(AsyncEmailSenderMixin):
             )
             return True
         except Exception as e:
+            # Only the type: SMTP refusals carry the full address in their text.
             logger.warning(
-                f"Failed to send thank you email to {mask_email_for_logging(email)}: {e}"
+                f"Failed to send thank you email to {mask_email_for_logging(email)}: "
+                f"{type(e).__name__}"
             )
             return False
 

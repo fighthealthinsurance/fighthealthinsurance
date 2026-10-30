@@ -103,6 +103,18 @@ CASES = [
     *_followups("followup_90day", nothing_made_branch=False),
     ("professional_thankyou", {"name": "Dr. O'Neil"}, FHI_PRO, None),
     ("professional_thankyou", {"name": ""}, FHI_PRO, None),
+    (
+        "professional_already_have_details",
+        {"name": "Dr. O'Neil", "support_email": "support42@fighthealthinsurance.com", "intro_sent": True},
+        FHI_PRO,
+        None,
+    ),
+    (
+        "professional_already_have_details",
+        {"name": "", "support_email": "support42@fighthealthinsurance.com", "intro_sent": False},
+        FHI_PRO,
+        None,
+    ),
     ("checkout_session_expired", {"link": CHECKOUT_LINK, "fax": True}, FHI, CHECKOUT_LINK),
     ("checkout_session_expired", {"link": CHECKOUT_LINK, "fax": False}, FHI, CHECKOUT_LINK),
     # The professional-account emails and the two a provider sent a patient
