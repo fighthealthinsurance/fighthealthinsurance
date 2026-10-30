@@ -9,8 +9,8 @@ at startup, so changing it is a rollout of the web deployment with the new
 value (k8s/deploy.yaml):
 
     BRB=LIVE        the site as usual (also when the variable is unset)
-    BRB=EL_NINO     the models run on our own servers in the Pacific
-                    Northwest, and the weather took them out
+    BRB=EL_NINO     most of the models run on our own servers on the West
+                    Coast, and the weather took them out
     BRB=MIGRATION   the servers are in the back of the car on the way to
                     their new home
     BRB=BRB         the original page, from the weekend PBS sent everyone
@@ -24,10 +24,16 @@ People already in the flow never see this page, so pair the flag with a
 SiteBanner (constants.SITE_BANNER_CANNED_MESSAGES has a message for each
 story) so they hear it too.
 
+When the web tier itself is going away (a migration, say), the same page
+is served as a static site instead: ``manage.py render_brb_static`` renders
+every story into the static-brb repository, and Cloudflare is pointed there
+for the duration (that repository's README has the steps).
+
 To add a story: a template under templates/brb/ with the page's body (an
 <h1>, a few paragraphs and a figure; see the ones there), and a BrbReason
 for it below. The page is standalone on purpose, loading no stylesheet or
-script, so it renders when nothing else does.
+script, so it renders when nothing else does, and it says no-cache and
+noindex in its own <head>, so the static copy says the same from any host.
 """
 
 import functools
@@ -56,6 +62,11 @@ class BrbReason:
     title: str
     template: str
 
+    @property
+    def slug(self) -> str:
+        """The story's file name in the static site: EL_NINO is el-nino."""
+        return self.key.lower().replace("_", "-")
+
 
 BRB_REASONS = {
     reason.key: reason
@@ -78,12 +89,17 @@ def squash(value: str) -> str:
 _REASONS_BY_SQUASHED_KEY = {squash(key): reason for key, reason in BRB_REASONS.items()}
 
 
+def reason_named(value: str) -> Optional[BrbReason]:
+    """The story a value names, spelling forgiven, or None for no story."""
+    return _REASONS_BY_SQUASHED_KEY.get(squash(value))
+
+
 @functools.lru_cache(maxsize=16)
 def _reason_for(raw: str) -> Optional[BrbReason]:
     key = squash(raw)
     if key in ("", LIVE):
         return None
-    reason = _REASONS_BY_SQUASHED_KEY.get(key)
+    reason = reason_named(raw)
     if reason is None:
         # Cached per value, so this is said once per process, not per request.
         logger.warning(

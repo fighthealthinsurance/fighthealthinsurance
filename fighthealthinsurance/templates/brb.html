@@ -3,13 +3,20 @@ The "be right back" page, served with a 503 in the landing page's place while
 settings.BRB takes the site down on purpose (brb.py, views.BRB). `reason` is
 the story it tells; the body is the template under brb/ that the reason
 names. Standalone on purpose: it loads no stylesheet or script, so it renders
-when nothing else does (a test holds it to that).
+when nothing else does (a test holds it to that), and it says no-cache and
+noindex in its own <head>, so the static copy of it that static-brb serves
+while Cloudflare points there says the same from any host
+(management/commands/render_brb_static.py).
 {% endcomment %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Fight Health Insurance — {{ reason.title }}</title>
     {% if canonical_url %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
     <style>

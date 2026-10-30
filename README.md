@@ -389,7 +389,11 @@ path: its model returns a `create_or_update_appeal` call, and `AppealTool`
   503 while every other page keeps working, so people already in the flow
   finish. `LIVE`, or unset, is the site as usual. `k8s/deploy.yaml` sets
   it, so changing it is a rollout. The stories, and how to add one:
-  [`fighthealthinsurance/brb.py`](fighthealthinsurance/brb.py).
+  [`fighthealthinsurance/brb.py`](fighthealthinsurance/brb.py). When the
+  web tier itself is going away, `python manage.py render_brb_static --out
+  ../static-brb` renders the same page as a static site into the
+  [static-brb](https://github.com/fighthealthinsurance/static-brb)
+  repository, which Cloudflare is pointed at for the duration.
 - [`.env.example`](.env.example) lists the variables the code reads, with
   what each does, and [API_KEYS_SETUP.md](API_KEYS_SETUP.md) covers the
   external API keys. For model backends, see

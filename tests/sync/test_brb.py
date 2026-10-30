@@ -2,9 +2,14 @@
 why with a 503 and every other page keeps working (brb.py, views.root_view).
 """
 
+import io
 import re
+import tempfile
+from pathlib import Path
 
 from django.contrib.staticfiles import finders
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
@@ -31,6 +36,11 @@ class TestBrbReason(TestCase):
                 reason = brb.brb_reason()
                 self.assertIsNotNone(reason, value)
                 self.assertEqual(reason.key, "EL_NINO", value)
+
+    def test_reason_named_forgives_spelling_but_invents_no_story(self):
+        self.assertEqual(brb.reason_named("el niño").key, "EL_NINO")
+        self.assertIsNone(brb.reason_named("EL_NINOOO"))
+        self.assertIsNone(brb.reason_named("LIVE"))
 
     def test_a_value_naming_no_story_still_takes_the_site_down(self):
         # A typo under pressure fails toward "down", with the original page.
@@ -75,6 +85,17 @@ class TestBrbPage(TestCase):
         response = self.client.get(self.url)
         self.assertEqual(response["Retry-After"], str(brb.RETRY_AFTER_SECONDS))
         self.assertIn("no-store", response["Cache-Control"])
+        # Said in the page itself too, so the static copy (static-brb) says
+        # the same from any host.
+        self.assertContains(
+            response, '<meta name="robots" content="noindex, nofollow">', status_code=503
+        )
+        self.assertContains(
+            response, '<meta http-equiv="Pragma" content="no-cache">', status_code=503
+        )
+        self.assertContains(
+            response, 'http-equiv="Cache-Control" content="no-cache, no-store', status_code=503
+        )
 
     @override_settings(BRB="EL_NINO")
     def test_the_rest_of_the_site_keeps_working(self):
@@ -123,3 +144,73 @@ class TestBrbPage(TestCase):
                 self.assertIsNotNone(found, f"{key}: {src} is not shipped")
                 with Image.open(found) as image:
                     self.assertEqual(image.size, (width, height), f"{key}: {src}")
+
+
+class TestRenderBrbStatic(TestCase):
+    """manage.py render_brb_static: the same page as a static site, for the
+    static-brb repository that Cloudflare is pointed at while the web tier
+    itself is away."""
+
+    def _render(self, out, **options):
+        stdout = io.StringIO()
+        call_command("render_brb_static", out=out, stdout=stdout, **options)
+        return stdout.getvalue()
+
+    def test_index_tells_the_story_named_and_every_story_has_a_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._render(tmp, story="el nino")
+            out = Path(tmp)
+            index = (out / "index.html").read_text()
+            self.assertIn("El Niño", index)
+            self.assertEqual(index, (out / "404.html").read_text())
+            self.assertEqual(index, (out / "el-nino.html").read_text())
+            self.assertIn("Server Migration", (out / "migration.html").read_text())
+            self.assertIn("PBS", (out / "brb.html").read_text())
+
+    def test_the_pages_say_no_cache_and_noindex_and_fetch_nothing_else(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._render(tmp, story="MIGRATION")
+            index = (Path(tmp) / "index.html").read_text()
+            self.assertIn('<meta name="robots" content="noindex, nofollow">', index)
+            self.assertIn('<meta http-equiv="Pragma" content="no-cache">', index)
+            self.assertNotRegex(index, r"<link\b[^>]*\bstylesheet")
+            self.assertNotRegex(index, r"<script\b")
+            # Rendered without a request, so nothing claims the live site's address.
+            self.assertNotIn('rel="canonical"', index)
+
+    def test_every_picture_is_beside_the_pages_at_a_relative_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._render(tmp)
+            out = Path(tmp)
+            pages = [p for p in out.glob("*.html")]
+            self.assertEqual(len(pages), 2 + len(brb.BRB_REASONS))
+            sources = set()
+            for page in pages:
+                html = page.read_text()
+                self.assertNotIn("/static/", html, page.name)
+                sources |= set(re.findall(r'src="([^"]+)"', html))
+            self.assertTrue(sources)
+            for src in sources:
+                self.assertTrue(src.startswith("images/"), src)
+                self.assertTrue((out / src).is_file(), src)
+            self.assertTrue(any("lesbaru" in src for src in sources), sources)
+
+    def test_the_default_story_is_el_nino(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._render(tmp)
+            self.assertIn("Wrote EL_NINO as index.html", report)
+
+    def test_a_value_naming_no_story_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(CommandError):
+                self._render(tmp, story="nope")
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_the_hosts_own_files_are_left_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            (out / "README.md").write_text("mine")
+            (out / "_headers").write_text("mine too")
+            self._render(tmp)
+            self.assertEqual((out / "README.md").read_text(), "mine")
+            self.assertEqual((out / "_headers").read_text(), "mine too")
