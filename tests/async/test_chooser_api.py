@@ -785,6 +785,13 @@ class ChooserTieVoteAPITest(APITestCase):
         vote = ChooserVote.objects.get(task=self.task)
         self.assertEqual(vote.tied_candidate_ids, [self.c.id, self.a.id])
 
+    def test_a_tie_is_stood_for_by_its_first_draft_shown(self):
+        """The client named A; C was shown first, so C stands for the tie."""
+        self._vote(self.a, [self.a, self.c])
+
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual(vote.chosen_candidate_id, self.c.id)
+
     def test_a_vote_with_one_winner_stores_no_tie(self):
         self._vote(self.a, [])
 

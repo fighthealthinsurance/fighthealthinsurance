@@ -12,7 +12,7 @@ appeal flow, and rank the model backends against each other.
   symptom duration, what was tried, what the clinician documented), *what
   the patient told us* (the app's questions for the case and the made-up
   patient's answers) and the *evidence on file* (PubMed articles, with links
-  and a short summary of each). Everything shown is exactly what every draft
+  and, when one is on file, a short summary). Everything shown is exactly what every draft
   was given. For a chat task: the conversation and the question the drafts
   answer.
 - **The drafts**, blind. The API sends no model name, synthesized flag or
@@ -95,10 +95,12 @@ old tasks never hold off generating new ones.
 
 To get a new model votes quickly, set `CHOOSER_FORCE_MODEL` to its
 registered router name (a key of `ml_router.models_by_name`, as
-`FORCE_MODEL` takes; several may be given, comma-separated). Every new arena
-task then seats it first, whether or not the router would have picked it,
-and fills the other slots as usual, so it is compared against the regular
-rotation rather than replacing it. The coverage refill treats it like an
+`FORCE_MODEL` takes; several may be given, comma-separated, up to
+`CHOOSER_NUM_CANDIDATES`). Every new arena task then seats it first, whether
+or not the router would have picked it, and fills the other slots as usual,
+so it is compared against the regular rotation rather than replacing it. An
+appeal-text fine-tune (one that doesn't follow general instructions) is
+forced into appeal tasks only, as chat routing leaves it out too. The coverage refill treats it like an
 external backend, building fresh tasks until enough of them include it. A
 name the router doesn't know is logged and ignored. Unlike `FORCE_MODEL`, it
 changes nothing outside the arena.

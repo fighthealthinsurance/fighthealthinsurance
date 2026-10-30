@@ -322,11 +322,28 @@ class TestForcedArenaModels:
         ), patch.object(
             chooser_tasks.ml_router, "models_by_name", {"fhi-trial": [trial, second_host]}
         ):
-            assert _forced_arena_models() == [trial]
+            assert _forced_arena_models("appeal") == [trial]
 
     def test_nothing_is_forced_when_unset(self):
         with override_settings(CHOOSER_FORCE_MODEL=""):
-            assert _forced_arena_models() == []
+            assert _forced_arena_models("appeal") == []
+
+    def test_an_appeal_only_model_is_forced_into_appeals_but_not_chat(self):
+        fine_tune = NarrowModel()
+        with override_settings(CHOOSER_FORCE_MODEL="fhi-legacy"), patch.object(
+            chooser_tasks.ml_router, "models_by_name", {"fhi-legacy": [fine_tune]}
+        ):
+            assert _forced_arena_models("appeal") == [fine_tune]
+            assert _forced_arena_models("chat") == []
+
+    def test_no_more_models_are_forced_than_there_are_slots(self):
+        models = {f"m-{i}": [FakeModel(f"m-{i}")] for i in range(6)}
+        with override_settings(CHOOSER_FORCE_MODEL=",".join(models)), patch.object(
+            chooser_tasks.ml_router, "models_by_name", models
+        ), patch.object(chooser_tasks, "CHOOSER_NUM_CANDIDATES", 4):
+            forced = _forced_arena_models("appeal")
+
+        assert [m.name for m in forced] == ["m-0", "m-1", "m-2", "m-3"]
 
 
 @pytest.mark.asyncio

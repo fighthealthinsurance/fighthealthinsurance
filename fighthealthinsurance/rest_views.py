@@ -2620,6 +2620,14 @@ class ChooserViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # A tie is stood for by its first draft shown, whichever of the tied
+        # drafts the client named; every tied id is one of this task's
+        # active candidates by now.
+        if tied_candidate_ids and tied_candidate_ids[0] != chosen_candidate.id:
+            chosen_candidate = ChooserCandidate.objects.get(
+                id=tied_candidate_ids[0], task=task
+            )
+
         # Create the vote
         try:
             vote = ChooserVote.objects.create(

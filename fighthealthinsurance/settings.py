@@ -339,8 +339,8 @@ class Base(Configuration):
     # Registered backend names (comma-separated) seated in every new arena
     # task, to try a model out against the rest; arena only, unlike FORCE_MODEL.
     CHOOSER_FORCE_MODEL = os.getenv("CHOOSER_FORCE_MODEL", "")
-    CHOOSER_MAX_QUESTIONS = int(os.getenv("CHOOSER_MAX_QUESTIONS", "4"))
-    CHOOSER_QA_TIMEOUT = int(os.getenv("CHOOSER_QA_TIMEOUT", "60"))
+    CHOOSER_MAX_QUESTIONS = _env_int("CHOOSER_MAX_QUESTIONS", 4, minimum=1, maximum=10)
+    CHOOSER_QA_TIMEOUT = _env_int("CHOOSER_QA_TIMEOUT", 60, minimum=5, maximum=600)
     CONDITION_RANKING_MIN_PEOPLE = int(os.getenv("CONDITION_RANKING_MIN_PEOPLE", "5"))
     CONDITION_RANKING_LOOKUP_BUDGET = int(
         os.getenv("CONDITION_RANKING_LOOKUP_BUDGET", "30")
@@ -1166,6 +1166,9 @@ class _TestBase(Dev):
     # its simulated interview reach the question generators' backends.
     CHOOSER_PUBMED_LIVE_SEARCH = False
     CHOOSER_SIMULATED_QA = False
+    # A model forced into the arena from the host environment would be asked
+    # for real by every test that builds a task.
+    CHOOSER_FORCE_MODEL = ""
 
     @classmethod
     def pre_setup(cls):

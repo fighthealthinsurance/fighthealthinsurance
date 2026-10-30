@@ -172,15 +172,23 @@ def _split_by_kind(models: List, seen: set) -> Tuple[List, List]:
     return internal, external
 
 
-def _forced_arena_models() -> List:
-    """The backends ``CHOOSER_FORCE_MODEL`` names, one instance each, in the
-    order named: a model being tried out, seated in every new arena task
-    (see _select_candidate_models) so it collects votes against the usual
-    rotation quickly. Names are the router's registered names (the keys of
-    ``models_by_name``, as FORCE_MODEL takes), comma-separated; a name the
-    router doesn't know is logged and ignored. Read per call, so it takes
-    effect at the next task. Unlike FORCE_MODEL, it touches nothing outside
-    the arena and replaces no backend inside it."""
+def _forced_arena_models(task_type: str) -> List:
+    """The backends ``CHOOSER_FORCE_MODEL`` names that can answer a
+    ``task_type`` task, one instance each, in the order named: a model being
+    tried out, seated in every new arena task (see _select_candidate_models)
+    so it collects votes against the usual rotation quickly. Names are the
+    router's registered names (the keys of ``models_by_name``, as
+    FORCE_MODEL takes), comma-separated; a name the router doesn't know is
+    logged and ignored. Read per call, so it takes effect at the next task.
+    Unlike FORCE_MODEL, it touches nothing outside the arena and replaces no
+    backend inside it.
+
+    A chat task skips an appeal-text fine-tune (one that says it doesn't
+    follow general instructions), as the router's chat list does: it would
+    only waste the slot, and the coverage refill would keep building chat
+    tasks waiting for a candidate it never writes. Past CHOOSER_NUM_CANDIDATES
+    names the rest are dropped, with a warning, for the same reason: they
+    would never be seated."""
     raw = getattr(settings, "CHOOSER_FORCE_MODEL", "") or ""
     names = raw.split(",") if isinstance(raw, str) else list(raw)
     forced: List = []
@@ -192,7 +200,22 @@ def _forced_arena_models() -> List:
                 "backend; ignoring it"
             )
             continue
-        forced.append(instances[0])
+        model = instances[0]
+        supports = getattr(model, "supports_general_instructions", None)
+        if task_type == "chat" and supports is not None and not supports():
+            logger.debug(
+                f"CHOOSER_FORCE_MODEL {name!r} answers appeals only; not "
+                "forcing it into chat tasks"
+            )
+            continue
+        forced.append(model)
+    if len(forced) > CHOOSER_NUM_CANDIDATES:
+        logger.warning(
+            f"CHOOSER_FORCE_MODEL names {len(forced)} backends for "
+            f"{CHOOSER_NUM_CANDIDATES} candidate slots; forcing only "
+            f"{[_model_display_name(m) for m in forced[:CHOOSER_NUM_CANDIDATES]]}"
+        )
+        forced = forced[:CHOOSER_NUM_CANDIDATES]
     return forced
 
 
@@ -893,7 +916,7 @@ async def _fill_candidates(
     # Drawn from the same list the coverage refill checks, so the two agree.
     comparable = _comparable_backends(task_type)
     models = _select_candidate_models(
-        comparable, CHOOSER_NUM_CANDIDATES, _forced_arena_models()
+        comparable, CHOOSER_NUM_CANDIDATES, _forced_arena_models(task_type)
     )
     if not models:
         logger.warning(f"No models available for {task_type} candidate generation")
@@ -1181,7 +1204,9 @@ def _comparable_backends(task_type: str) -> List:
         )
     listed = {_model_display_name(m) for m in backends}
     return backends + [
-        m for m in _forced_arena_models() if _model_display_name(m) not in listed
+        m
+        for m in _forced_arena_models(task_type)
+        if _model_display_name(m) not in listed
     ]
 
 
@@ -1233,7 +1258,7 @@ async def _external_backends_without_fresh_tasks(task_type: str) -> set:
     """
     try:
         backends = _comparable_backends(task_type)
-        forced = _forced_arena_models()
+        forced = _forced_arena_models(task_type)
     except Exception as e:
         logger.warning(f"Chooser: could not list backends for {task_type}: {e}")
         return set()
