@@ -284,6 +284,61 @@ class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"
         return build_unsubscribe_url(self.unsubscribe_token)
 
 
+class ProfessionalInquiry(models.Model):
+    """One send of the professional interest form, kept as a log.
+
+    The lead is the InterestedProfessional row; this records every
+    submission, so staff can see repeats, the cap and spam (pro_signups.py).
+    """
+
+    class Outcome(models.TextChoices):
+        NEW = "new", "New"
+        REPEAT = "repeat", "Repeat"
+        CAPPED = "capped", "Capped"
+        SPAM = "spam", "Spam"
+        CLEARED = "cleared", "Not spam (cleared by staff)"
+
+    interested_professional = models.ForeignKey(
+        InterestedProfessional,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="inquiries",
+    )
+    name = models.CharField(max_length=300, default="", blank=True, db_default="")
+    # Not an EmailField: a bot's submission is logged as sent.
+    email = models.CharField(max_length=300, default="", blank=True, db_default="")
+    phone_number = models.CharField(
+        max_length=300, default="", blank=True, db_default=""
+    )
+    phone_digits = models.CharField(
+        max_length=32, default="", blank=True, db_default="", db_index=True
+    )
+    business_name = models.CharField(
+        max_length=300, default="", blank=True, db_default=""
+    )
+    message = models.TextField(default="", blank=True, db_default="")
+    source = models.CharField(max_length=100, default="", blank=True, db_default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_default=Now())
+    outcome = models.CharField(
+        max_length=16,
+        choices=Outcome.choices,
+        default=Outcome.NEW,
+        db_default=Outcome.NEW,
+    )
+    spam_reason = models.CharField(
+        max_length=300, default="", blank=True, db_default=""
+    )
+    # This row made the lead: a first submission, or staff clearing spam.
+    created_lead = models.BooleanField(default=False, db_default=False)
+
+    class Meta:
+        verbose_name_plural = "professional inquiries"
+
+    def __str__(self):
+        return f"{self.email} ({self.outcome})"
+
+
 def build_unsubscribe_url(token: str) -> str:
     """Absolute unsubscribe URL for an unsubscribe token.
 
@@ -4765,8 +4820,9 @@ class SharedPlanDocumentsDay(models.Model):
     """How much of one daily budget has been used on one UTC day: for
     everyone, files or links shared on the share page, copies shared by
     ticking the box on another page, or reminder requests; or one address's shares
-    on the share page, named by a keyed digest of the address and the day
-    (shared_plan_documents.take_share_place). One row per budget per day,
+    on the share page or its posts with files, named by a keyed digest of
+    the address and the day (shared_plan_documents.take_share_place,
+    take_upload_attempt). One row per budget per day,
     shared by every pod (shared_plan_documents.reserve). Counts only."""
 
     FILES = "files"

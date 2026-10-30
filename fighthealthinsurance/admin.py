@@ -4,7 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.db import connection
-from django.db.models import IntegerField
+from django.db.models import Count, DateTimeField, IntegerField
 from django.db.models.expressions import RawSQL
 from django.urls import reverse
 from django.utils import timezone
@@ -57,6 +57,7 @@ from fighthealthinsurance.models import (
     PlanTypesRelation,
     PriorAuthRequest,
     Procedures,
+    ProfessionalInquiry,
     ProposedAppeal,
     ProposedPriorAuth,
     PubMedArticleSummarized,
@@ -333,6 +334,13 @@ class DenialAdmin(admin.ModelAdmin):
     autocomplete_fields = ["insurance_company_obj", "insurance_plan_obj"]
 
 
+def _submissions_link(lead_id: int, count: int):
+    url = reverse("admin:fighthealthinsurance_professionalinquiry_changelist")
+    return format_html(
+        '<a href="{}?interested_professional__id__exact={}">{}</a>', url, lead_id, count
+    )
+
+
 @admin.register(InterestedProfessional)
 class InterestedProfessionalAdmin(admin.ModelAdmin):
     """Admin configuration for InterestedProfessional model."""
@@ -343,10 +351,114 @@ class InterestedProfessionalAdmin(admin.ModelAdmin):
         "email",
         "paid",
         "signup_date",
+        "submissions",
     )
     search_fields = ("name", "email", "business_name")
     list_filter = ("paid", "signup_date", "mod_date")
     ordering = ("-signup_date",)
+    readonly_fields = ("submissions",)
+
+    def get_queryset(self, request):
+        return (
+            super().get_queryset(request).annotate(submission_count=Count("inquiries"))
+        )
+
+    @admin.display(description="Submissions", ordering="submission_count")
+    def submissions(self, obj: InterestedProfessional):
+        count = getattr(obj, "submission_count", None)
+        if count is None:
+            count = obj.inquiries.count()
+        return _submissions_link(obj.id, count)
+
+
+@admin.register(ProfessionalInquiry)
+class ProfessionalInquiryAdmin(admin.ModelAdmin):
+    """Every professional interest form submission (see pro_signups.py).
+
+    A log: rows are read-only. A person is the linked lead, or the email when
+    no lead is linked; their count and dates cover all their submissions.
+    """
+
+    list_display = (
+        "created_at",
+        "email",
+        "name",
+        "business_name",
+        "outcome",
+        "spam_reason",
+        "person_submissions",
+        "person_first",
+        "person_last",
+        "lead",
+        "source",
+    )
+    list_filter = ("outcome", "source", "created_at")
+    search_fields = ("email", "name", "business_name", "phone_number")
+    ordering = ("-created_at",)
+    actions = ["mark_not_spam"]
+    readonly_fields = (
+        "interested_professional",
+        "name",
+        "email",
+        "phone_number",
+        "phone_digits",
+        "business_name",
+        "message",
+        "source",
+        "created_at",
+        "outcome",
+        "spam_reason",
+        "created_lead",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def get_queryset(self, request):
+        from fighthealthinsurance.pro_signups import person_aggregate
+
+        return (
+            super()
+            .get_queryset(request)
+            .select_related("interested_professional")
+            .annotate(
+                person_count=person_aggregate("COUNT", "id", IntegerField()),
+                person_first_at=person_aggregate("MIN", "created_at", DateTimeField()),
+                person_last_at=person_aggregate("MAX", "created_at", DateTimeField()),
+            )
+        )
+
+    @admin.display(description="Their submissions", ordering="person_count")
+    def person_submissions(self, obj: ProfessionalInquiry):
+        return getattr(obj, "person_count", None)
+
+    @admin.display(description="First", ordering="person_first_at")
+    def person_first(self, obj: ProfessionalInquiry):
+        return getattr(obj, "person_first_at", None)
+
+    @admin.display(description="Last", ordering="person_last_at")
+    def person_last(self, obj: ProfessionalInquiry):
+        return getattr(obj, "person_last_at", None)
+
+    @admin.display(description="Lead")
+    def lead(self, obj: ProfessionalInquiry):
+        if obj.interested_professional_id is None:
+            return "-"
+        url = reverse(
+            "admin:fighthealthinsurance_interestedprofessional_change",
+            args=[obj.interested_professional_id],
+        )
+        return format_html('<a href="{}">#{}</a>', url, obj.interested_professional_id)
+
+    @admin.action(description="Not spam: add as a lead (sends nothing)")
+    def mark_not_spam(self, request, queryset):
+        from fighthealthinsurance.pro_signups import mark_not_spam
+
+        cleared = sum(1 for inquiry in queryset if mark_not_spam(inquiry))
+        self.message_user(
+            request,
+            f"Marked {cleared} submission(s) as not spam. Nothing was sent.",
+        )
 
 
 @admin.register(MailingListSubscriber)
