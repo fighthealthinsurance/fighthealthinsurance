@@ -179,6 +179,24 @@ token found` warning; without `LUNA_ROUTE_KEY` it logs `Skipping chat model
 <model id>: Exception` for each LunaRoute model. Either is expected, not a
 fault.
 
+**Fallback keys.** Every key above can be paired with a second key for the
+same provider, set as `SECONDARY_<name>` (`SECONDARY_ANTHROPIC_API_KEY`,
+`SECONDARY_DEEPINFRA_API`, `SECONDARY_AZURE_OPENAI_API_KEY`, and so on). The
+primary key is sent until the provider refuses it: for a rate limit (HTTP
+429), for credit or quota that ran out, or as a revoked key or disabled
+account (HTTP 401/403). That request is then sent again with the fallback key
+before anything is filed against the provider, and the fallback key keeps
+serving while the refused key is passed over: for the response's
+`Retry-After` (60s without one) after a rate limit, for an hour after a
+quota refusal (`FHI_KEY_QUOTA_COOLDOWN_SECONDS`), or for the auth refusal
+cooldown (`FHI_AUTH_REFUSAL_COOLDOWN_SECONDS`, 15 minutes) after a 401/403.
+A key answering 2xx ends its cooldown at once. While every configured key is
+passed over, the model is skipped until the first cooldown ends, and the last
+refusal is filed as it was with one key: a credit refusal pauses the provider
+for the day, and a 429 backs the model off on Anthropic and Azure (DeepInfra
+and Perplexity do not back off after a 429). The fallback key is optional and
+never registers a backend on its own: the primary variable must be set.
+
 **Set up Azure-hosted models (Claude and OpenAI):**
 
 1. In the [Azure AI Foundry](https://ai.azure.com/) / Azure OpenAI portal,

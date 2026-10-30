@@ -1143,6 +1143,162 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+# ---------------------------------------------------------------------------
+# API key fallback
+# ---------------------------------------------------------------------------
+
+
+def secondary_env_name(name: str) -> str:
+    """The environment variable holding the fallback key for ``name``:
+    ``SECONDARY_<name>``, the convention the internal backends already use
+    for their second host (SECONDARY_NEW_HEALTH_BACKEND_HOST)."""
+    return f"SECONDARY_{name}"
+
+
+def api_keys_from_env(name: str, secondary_env: Optional[str] = None) -> List[str]:
+    """The API keys configured for a provider, in the order they are sent:
+    the key in ``name``, then the fallback in ``secondary_env`` (by default
+    ``SECONDARY_<name>``). Blank values are unset, as everywhere in this
+    file (k8s/compose templating can materialize them as empty strings), and
+    a fallback equal to the primary adds nothing, so it is dropped."""
+    keys: List[str] = []
+    for env_name in (name, secondary_env or secondary_env_name(name)):
+        value = get_env_variable(env_name)
+        if value and value.strip() and value not in keys:
+            keys.append(value)
+    return keys
+
+
+def _key_refusal(status: Optional[int], body: str) -> bool:
+    """Whether an HTTP error says the KEY was refused, rather than the
+    request or the endpoint being wrong: a rate limit (429), credit or
+    quota that ran out (ml/spend.py, whatever the status), or a revoked key
+    or disabled account (401/403). Each is something a second key, on its
+    own quota or account, can get past."""
+    return status in (401, 403, 429) or spend.quota_refusal(status or 0, body)
+
+
+def _retry_after_seconds(
+    e: aiohttp.ClientResponseError, default: float = 60.0
+) -> float:
+    """Parse and clamp (1-600s) a Retry-After header from a 429 response."""
+    retry_after = default
+    headers = getattr(e, "headers", None)
+    if headers:
+        retry_header = headers.get("Retry-After", "")
+        if retry_header:
+            try:
+                retry_after = float(retry_header)
+            except ValueError:
+                logger.debug(
+                    f"Non-numeric Retry-After header {retry_header!r}; using "
+                    f"default {retry_after}s"
+                )
+    return max(1.0, min(retry_after, 600.0))
+
+
+class ApiKeyRing:
+    """The keys a backend may send for one provider, in order of preference.
+
+    One key per provider was the rule, so a rate limit or a spent quota on
+    it took the provider out of every fan-out until the limit lifted. With a
+    fallback key configured (api_keys_from_env's SECONDARY_<name>), the
+    transport marks the refused key spent for a while and sends the next
+    one; a key is usable again when its cooldown ends, or at once when it
+    answers 2xx. In memory, per backend instance, and thread-safe: the
+    dual-mode legs run on separate threads and can be refused within
+    microseconds of each other.
+    """
+
+    _NAMES = ("primary key", "secondary key")
+
+    def __init__(self, keys: Union[None, str, Iterable[Optional[str]]]):
+        raw: List[Optional[str]] = (
+            [keys] if keys is None or isinstance(keys, str) else list(keys)
+        )
+        self._keys: List[str] = []
+        for key in raw:
+            if key and key.strip() and key not in self._keys:
+                self._keys.append(key)
+        # What ``current`` reads with no usable key: the one configured
+        # value, so a backend built with token="" (our own servers) or None
+        # keeps sending exactly what it did.
+        self._placeholder: Optional[str] = raw[0] if raw else None
+        # Each spent key's monotonic deadline, after which it is sent again.
+        self._spent_until: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+    @property
+    def keys(self) -> List[str]:
+        return list(self._keys)
+
+    def position(self, key: Optional[str]) -> str:
+        """How a log names ``key``, never by value: "primary key",
+        "secondary key", "key 3 of 3"."""
+        if key not in self._keys:
+            return "key"
+        index = self._keys.index(key)
+        if index < len(self._NAMES):
+            return self._NAMES[index]
+        return f"key {index + 1} of {len(self._keys)}"
+
+    @property
+    def current(self) -> Optional[str]:
+        """The key to send now: the first not marked spent or, when every
+        key is, the one whose cooldown ends soonest, so a call still goes
+        out and can prove the key usable again."""
+        with self._lock:
+            return self._current_locked()
+
+    def _current_locked(self) -> Optional[str]:
+        if not self._keys:
+            return self._placeholder
+        now = time.monotonic()
+        for key in self._keys:
+            until = self._spent_until.get(key)
+            if until is None or until <= now:
+                self._spent_until.pop(key, None)
+                return key
+        return min(self._keys, key=lambda k: self._spent_until[k])
+
+    def spent(self, key: Optional[str]) -> bool:
+        """Whether ``key`` is in a cooldown now."""
+        with self._lock:
+            until = self._spent_until.get(key) if key is not None else None
+            return until is not None and until > time.monotonic()
+
+    def all_spent(self) -> bool:
+        """Whether every key is in a cooldown now (False without keys): the
+        transport then skips the pair, as it skips a parked one, until the
+        first cooldown ends."""
+        if not self._keys:
+            return False
+        now = time.monotonic()
+        with self._lock:
+            return all(self._spent_until.get(k, 0.0) > now for k in self._keys)
+
+    def mark_spent(self, key: Optional[str], seconds: float) -> Optional[str]:
+        """Note that ``key`` was refused for a rate limit or quota, so it is
+        passed over for ``seconds``. Returns the key to send next, or None
+        when there is no other, so the caller files the refusal as before."""
+        if key is None or key not in self._keys or len(self._keys) < 2:
+            return None
+        with self._lock:
+            self._spent_until[key] = time.monotonic() + max(0.0, seconds)
+            nxt = self._current_locked()
+        return None if nxt == key else nxt
+
+    def note_served(self, key: Optional[str]) -> None:
+        """``key`` answered 2xx: whatever cooldown it was under is over."""
+        if key is None:
+            return
+        with self._lock:
+            self._spent_until.pop(key, None)
+
+
 # Per-task inference time budgets (seconds). The full-appeal budget stays at
 # the historical 300s; interactive tasks get tighter bounds because past a
 # certain point a "slow success" is indistinguishable from a failure to the
@@ -2615,7 +2771,9 @@ class RemoteOpenLike(RemoteModel):
         backup_model=None,
     ):
         self.api_base = api_base
-        self.token = token
+        # The key(s) sent to the provider: one str, or the keys of
+        # api_keys_from_env in order of preference (see ApiKeyRing).
+        self._key_ring = ApiKeyRing(token)
         self.model = model
         self.system_prompts_map = system_prompts_map
         self.max_len = max_len or 4096 * 8
@@ -2692,6 +2850,72 @@ class RemoteOpenLike(RemoteModel):
         # also guards _note_transport_failure's strike-list read-modify-write.
         self._timeout_strike_last: dict[tuple[str, str], float] = {}
         self._strike_lock = threading.Lock()
+
+    @property
+    def token(self) -> Optional[str]:
+        """The API key to send now (ApiKeyRing.current): the configured key,
+        or the fallback key while the primary is spent."""
+        return self._key_ring.current
+
+    @token.setter
+    def token(self, value: Union[None, str, Iterable[Optional[str]]]) -> None:
+        self._key_ring = ApiKeyRing(value)
+
+    # How long a key refused for credit or quota is passed over before it is
+    # sent again (a rate limit is passed over for the response's Retry-After,
+    # 60s by default). An hour: a top-up shows within the hour, and the
+    # fallback key is doing the work meanwhile. FHI_KEY_QUOTA_COOLDOWN_SECONDS
+    # overrides it per deployment.
+    KEY_QUOTA_COOLDOWN_SECONDS: ClassVar[float] = 3600.0
+
+    def _key_after_refusal(
+        self,
+        key: Optional[str],
+        api_base: Optional[str],
+        model: str,
+        e: aiohttp.ClientResponseError,
+        body: str,
+        tried: set,
+    ) -> Optional[str]:
+        """When ``key`` was refused for a rate limit or quota and a fallback
+        key is configured, mark it spent and return the key to send the
+        same request with; None otherwise, so the caller files the refusal
+        as it always did (a credit refusal pauses the provider for the day,
+        a 429 backs the model off). ``tried`` holds the keys this call has
+        sent, so each is sent at most once per call however the ring turns.
+        """
+        if len(self._key_ring) < 2 or not _key_refusal(e.status, body):
+            return None
+        tried.add(key)
+        # Clamped like the rate-limit wait: a zero or negative setting would
+        # make the refused key current again at once, and no fallback would
+        # ever be sent.
+        if spend.quota_refusal(e.status, body):
+            why = "credit or quota"
+            seconds = max(
+                1.0,
+                _env_float(
+                    "FHI_KEY_QUOTA_COOLDOWN_SECONDS", self.KEY_QUOTA_COOLDOWN_SECONDS
+                ),
+            )
+        elif e.status == 429:
+            why = "rate limit"
+            seconds = _retry_after_seconds(e)
+        else:
+            # A revoked key or disabled account: passed over for as long as
+            # _note_http_refusal parks a pair that refuses with one key.
+            why = "key or account refused"
+            seconds = max(1.0, _env_float("FHI_AUTH_REFUSAL_COOLDOWN_SECONDS", 900.0))
+        nxt = self._key_ring.mark_spent(key, seconds)
+        if nxt is None or nxt in tried:
+            return None
+        logger.warning(
+            f"{self}: {model} at {api_base} refused the "
+            f"{self._key_ring.position(key)} (HTTP {e.status}, {why}); sending "
+            f"the {self._key_ring.position(nxt)} instead for the next "
+            f"{seconds:.0f}s."
+        )
+        return nxt
 
     def model_is_ok(self):
         """Check that an endpoint this backend infers against serves its
@@ -4041,6 +4265,20 @@ class RemoteOpenLike(RemoteModel):
             return None
         if status not in (401, 403) and not spend.quota_refusal(status, body):
             return None
+        if len(self._key_ring) >= 2:
+            # Filed against the key that was sent (_key_after_refusal parked
+            # it), not the pair: parking the pair would take a fallback key
+            # that still works, or a primary whose rate limit is about to
+            # lift, out with the key that was refused. The pair is skipped
+            # while every key is parked (_local_skip), so a provider that
+            # refuses every key is still not asked on every turn.
+            if self._key_ring.all_spent():
+                logger.warning(
+                    f"{self}: {model} at {api_base} refused every configured "
+                    f"key (HTTP {status}); skipping it until a key's cooldown "
+                    f"ends. Check the API keys and the account."
+                )
+            return "refused"
         window = _env_float("FHI_AUTH_REFUSAL_COOLDOWN_SECONDS", 900.0)
         if not self._pair_refused(api_base, model):
             logger.warning(
@@ -4060,6 +4298,8 @@ class RemoteOpenLike(RemoteModel):
             return "skipped_missing_model", "not served here"
         if self._pair_refused(api_base, model):
             return "skipped_refused", "refused recently (key or account)"
+        if self._key_ring.all_spent():
+            return "skipped_refused", "every key refused or rate limited recently"
         # A provider whose budget for this use is spent, or that refused for
         # credit or quota today (ml/spend.py). Checked at the send too, so a
         # model chosen before the budget ran out (a retry reusing the turn's
@@ -4265,6 +4505,8 @@ class RemoteOpenLike(RemoteModel):
         transport failures. In-memory only, never a network call, so it is
         safe on the request path. These flags live in this process.
         """
+        if self._key_ring.all_spent():
+            return "every configured key refused or rate limited recently"
         pairs = [(self.api_base, self.model)]
         if self.backup_api_base:
             pairs.append((self.backup_api_base, self.backup_model))
@@ -4554,10 +4796,13 @@ class RemoteOpenLike(RemoteModel):
                 # so one sent now is a probe (a deploy check after a top-up):
                 # a 2xx to it lifts the pause (see _lift_credit_pause).
                 paused_at_send = self._credit_paused()
+                # The keys this call has sent (see _key_after_refusal).
+                keys_tried: set[Optional[str]] = set()
                 while True:
+                    key = self.token
                     async with s.post(
                         url,
-                        headers={"Authorization": f"Bearer {self.token}"},
+                        headers={"Authorization": f"Bearer {key}"},
                         json=request_body,
                     ) as response:
                         # An endpoint answered -- whatever the status. Probes
@@ -4574,6 +4819,7 @@ class RemoteOpenLike(RemoteModel):
                         try:
                             response.raise_for_status()
                             self._note_served(api_base, model)
+                            self._key_ring.note_served(key)
                         except aiohttp.ClientResponseError as e:
                             # Carry the provider's body on the exception before
                             # any of the branches below re-raise it. Without
@@ -4611,6 +4857,20 @@ class RemoteOpenLike(RemoteModel):
                                     for k, v in request_body.items()
                                     if k != "temperature"
                                 }
+                                continue
+
+                            if (
+                                self._key_after_refusal(
+                                    key, api_base, model, e, response_body, keys_tried
+                                )
+                                is not None
+                            ):
+                                # The key hit its rate limit or quota while a
+                                # fallback key is configured: send the same
+                                # request with that one before anything is
+                                # filed (a credit refusal would pause the
+                                # provider for the day, a 429 back the model
+                                # off, on the strength of one spent key).
                                 continue
 
                             if _http_error_indicates_context_overflow(
@@ -5588,7 +5848,12 @@ class RemotePerplexity(RemoteFullOpenLike):
         token = get_env_variable("PERPLEXITY_API")
         if token is None or len(token) < 1:
             raise Exception("No token found for perplexity")
-        super().__init__(api_base, token, model=model, dual_mode=dual_mode)
+        super().__init__(
+            api_base,
+            api_keys_from_env("PERPLEXITY_API"),
+            model=model,
+            dual_mode=dual_mode,
+        )
 
     @property
     def supports_system(self):
@@ -5659,7 +5924,11 @@ class DeepInfra(RemoteFullOpenLike):
         # Use model-specific context length, default to 128k for unknown models
         max_len = self.MODEL_CONTEXT_LENGTHS.get(model, 128000)
         super().__init__(
-            api_base, token, model=model, dual_mode=dual_mode, max_len=max_len
+            api_base,
+            api_keys_from_env("DEEPINFRA_API"),
+            model=model,
+            dual_mode=dual_mode,
+            max_len=max_len,
         )
 
     @property
@@ -5901,20 +6170,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         self, e: aiohttp.ClientResponseError, default: float = 60.0
     ) -> float:
         """Parse and clamp (1-600s) a Retry-After header from a 429 response."""
-        retry_after = default
-        headers = getattr(e, "headers", None)
-        if headers:
-            retry_header = headers.get("Retry-After", "")
-            if retry_header:
-                try:
-                    retry_after = float(retry_header)
-                except ValueError:
-                    logger.debug(
-                        f"{type(self).__name__}._infer: Non-numeric Retry-After "
-                        f"header '{retry_header}' for {self.model}; using default "
-                        f"{retry_after}s"
-                    )
-        return max(1.0, min(retry_after, 600.0))
+        return _retry_after_seconds(e, default)
 
     async def _infer(
         self,
@@ -6146,7 +6402,11 @@ class RemoteAnthropic(RateLimitedRemoteOpenLike):
 
         # All Claude models support 200K input context
         super().__init__(
-            api_base, token, model=model, dual_mode=dual_mode, max_len=200000
+            api_base,
+            api_keys_from_env("ANTHROPIC_API_KEY"),
+            model=model,
+            dual_mode=dual_mode,
+            max_len=200000,
         )
 
         self._ensure_rate_limiter(model)
@@ -6317,7 +6577,11 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
 
         api_base = self._normalize_endpoint(endpoint)
         super().__init__(
-            api_base, api_key, model=model, dual_mode=dual_mode, max_len=self.MAX_LEN
+            api_base,
+            api_keys_from_env(self.API_KEY_ENV),
+            model=model,
+            dual_mode=dual_mode,
+            max_len=self.MAX_LEN,
         )
 
         self._ensure_rate_limiter(model)
@@ -6626,8 +6890,9 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         # Filled in by _messages_post for an attempt that got no answer in
         # time, so a caller that asked for it gets ProviderUnavailable.
         transport_failures: List[str] = []
+        # The key goes on in _messages_request, per attempt: a fallback key
+        # replaces one the provider refused for a rate limit or quota.
         headers = {
-            "x-api-key": self.token or "",
             "anthropic-version": self.ANTHROPIC_VERSION,
             "content-type": "application/json",
         }
@@ -6738,11 +7003,18 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         timeout: Optional[float] = None,
         note_failures: bool = True,
         transport_failures: Optional[List[str]] = None,
+        keys_tried: Optional[set] = None,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """POST a single Messages API request (honoring ``timeout`` /
         ``self._timeout``) and parse the response. ``raise_for_status``
         surfaces HTTP errors as ``aiohttp.ClientResponseError`` so 429s reach
         the shared back-off.
+
+        The request carries ``self.token`` as its key. One refused for a
+        rate limit or quota while a fallback key is configured is sent
+        again with that key, within the same budget, before anything is
+        filed (``_key_after_refusal``); ``keys_tried`` carries the keys the
+        call has sent across those retries.
 
         Keeps the shared transport's bookkeeping too: a transport-failure
         strike (``note_failures``, off for probes) and the refusals of
@@ -6753,6 +7025,9 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         ``_messages_post`` records the call metrics.
         """
         effective_timeout = timeout if timeout is not None else self._timeout
+        key = self.token
+        headers = {**headers, "x-api-key": key or ""}
+        started = time.monotonic()
         try:
             return await self._messages_post(
                 url,
@@ -6767,6 +7042,40 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             if _http_error_indicates_unsupported_temperature(e.status, body_text):
                 # _do_infer retries without the field; nothing to file.
                 raise
+            if keys_tried is None:
+                keys_tried = set()
+            if (
+                self._key_after_refusal(
+                    key, self.api_base, self.model, e, body_text, keys_tried
+                )
+                is not None
+            ):
+                # As on the shared transport: the fallback key gets the same
+                # request before the refusal is filed. The retry shares the
+                # first attempt's budget rather than starting a fresh one.
+                retry_timeout = effective_timeout
+                if retry_timeout is not None:
+                    retry_timeout -= time.monotonic() - started
+                    if retry_timeout <= 0:
+                        logger.warning(
+                            f"No budget left to retry {self.model} with the "
+                            f"{self._key_ring.position(self.token)} after a "
+                            f"{effective_timeout:.0f}s attempt."
+                        )
+                        if transport_failures is not None:
+                            transport_failures.append(
+                                f"{self.model} via {self.api_base}: timed out"
+                            )
+                        return None
+                return await self._messages_request(
+                    url,
+                    headers,
+                    body,
+                    timeout=retry_timeout,
+                    note_failures=note_failures,
+                    transport_failures=transport_failures,
+                    keys_tried=keys_tried,
+                )
             if _http_error_indicates_context_overflow(e.status, body_text):
                 # As on the shared transport (__infer): the prompt outran the
                 # model's context window, a per-request condition rather
@@ -6846,6 +7155,7 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                     try:
                         response.raise_for_status()
                         self._note_served(self.api_base, self.model)
+                        self._key_ring.note_served(headers.get("x-api-key"))
                     except aiohttp.ClientResponseError as e:
                         # Carry the body alongside the reason phrase (never
                         # over it) so _do_infer can classify a rejection.
