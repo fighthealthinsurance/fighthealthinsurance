@@ -606,6 +606,7 @@ class RemoveMyDataTest(_SignupCase):
     def test_deletes_phone_matched_submissions_from_another_address(self):
         self.submit()
         self.submit(email="office@apgar.example")
+        self.assertEqual(self.outcomes(), [Outcome.NEW, Outcome.REPEAT])
         RemoveDataHelper.remove_data_for_email(self.EMAIL)
         self.assertFalse(ProfessionalInquiry.objects.exists())
 
