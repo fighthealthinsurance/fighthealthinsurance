@@ -147,8 +147,9 @@ class TestApiKeysFromEnv:
         with patch.dict(os.environ, env, clear=True):
             assert api_keys_from_env("DEEPINFRA_API") == ["k1", "k2"]
 
-    def test_a_blank_fallback_is_unset(self):
-        env = {"DEEPINFRA_API": "k1", "SECONDARY_DEEPINFRA_API": ""}
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_a_blank_fallback_is_unset(self, blank):
+        env = {"DEEPINFRA_API": "k1", "SECONDARY_DEEPINFRA_API": blank}
         with patch.dict(os.environ, env, clear=True):
             assert api_keys_from_env("DEEPINFRA_API") == ["k1"]
 
@@ -216,7 +217,18 @@ class TestApiKeyRing:
         assert len(ApiKeyRing(token)) == 0
 
     def test_blank_and_repeated_keys_are_dropped(self):
-        assert ApiKeyRing(["k1", "", None, "k1", "k2"]).keys == ["k1", "k2"]
+        assert ApiKeyRing(["k1", "", " ", None, "k1", "k2"]).keys == ["k1", "k2"]
+
+    def test_all_spent_only_when_every_key_is(self):
+        ring = ApiKeyRing(["k1", "k2"])
+        assert not ring.all_spent()
+        ring.mark_spent("k1", 100)
+        assert not ring.all_spent()
+        ring.mark_spent("k2", 100)
+        assert ring.all_spent()
+        ring.note_served("k2")
+        assert not ring.all_spent()
+        assert not ApiKeyRing("").all_spent()
 
     def test_keys_are_named_by_position_not_value(self):
         ring = ApiKeyRing(["k1", "k2", "k3"])
@@ -325,14 +337,73 @@ class TestSharedTransport:
         assert backend.rate_limiter.get_status()["exhausted"]
 
     @pytest.mark.asyncio
-    async def test_a_refusal_that_is_not_about_quota_is_not_retried(
+    async def test_a_revoked_key_is_replaced_within_the_call(
         self, monkeypatch, make_fake_model_post
     ):
-        """A revoked key (401) is filed as a refusal, as it always was: the
-        fallback is for a spent key, not a wrong one."""
-        posts = _SequencedPost(make_fake_model_post(401, INVALID_KEY_BODY))
-        assert await _answered(monkeypatch, _two_keys(), posts) is None
-        assert posts.bearer_tokens == ["first-key"]
+        """A 401 is a fact about the key that was sent, not the endpoint:
+        the fallback key gets the request and the model is not parked."""
+        backend = _two_keys()
+        posts = _SequencedPost(
+            make_fake_model_post(401, INVALID_KEY_BODY),
+            make_fake_model_post(200, json_data=GOOD_JSON),
+        )
+        result = await _answered(monkeypatch, backend, posts)
+        assert result is not None and result[0] == LONG_REPLY
+        assert posts.bearer_tokens == ["first-key", "second-key"]
+        assert not backend._pair_refused(backend.api_base, backend.model)
+        assert backend.is_available()
+
+    @pytest.mark.asyncio
+    async def test_a_bad_fallback_key_does_not_park_a_rate_limited_primary(
+        self, monkeypatch, make_fake_model_post
+    ):
+        """The primary hits its rate limit and the fallback turns out to be
+        revoked: the model is skipped only until the primary's short limit
+        lifts, not for the 900s a refused endpoint is parked."""
+        backend = _two_keys()
+        posts = _SequencedPost(
+            make_fake_model_post(429, "rate limited"),
+            make_fake_model_post(401, INVALID_KEY_BODY),
+        )
+        assert await _answered(monkeypatch, backend, posts) is None
+        assert posts.bearer_tokens == ["first-key", "second-key"]
+        assert not backend._pair_refused(backend.api_base, backend.model)
+        assert not backend.is_available()
+        backend._key_ring.note_served("first-key")
+        assert backend.is_available()
+        assert backend.token == "first-key"
+
+    @pytest.mark.asyncio
+    async def test_with_every_key_revoked_the_model_is_skipped_without_a_request(
+        self, monkeypatch, make_fake_model_post
+    ):
+        backend = _two_keys()
+        posts = _SequencedPost(
+            make_fake_model_post(401, INVALID_KEY_BODY),
+            make_fake_model_post(401, INVALID_KEY_BODY),
+            make_fake_model_post(200, json_data=GOOD_JSON),
+        )
+        assert await _answered(monkeypatch, backend, posts) is None
+        assert posts.bearer_tokens == ["first-key", "second-key"]
+        assert not backend.is_available()
+        # The next call goes nowhere: both keys are parked.
+        assert await _answered(monkeypatch, backend, posts) is None
+        assert len(posts.bearer_tokens) == 2
+
+    @pytest.mark.asyncio
+    async def test_a_zero_quota_cooldown_still_sends_the_fallback(
+        self, monkeypatch, make_fake_model_post
+    ):
+        """FHI_KEY_QUOTA_COOLDOWN_SECONDS=0 must not make the refused key
+        current again before the fallback is chosen."""
+        monkeypatch.setenv("FHI_KEY_QUOTA_COOLDOWN_SECONDS", "0")
+        posts = _SequencedPost(
+            make_fake_model_post(400, CREDIT_BODY),
+            make_fake_model_post(200, json_data=GOOD_JSON),
+        )
+        result = await _answered(monkeypatch, _anthropic(), posts)
+        assert result is not None and result[0] == LONG_REPLY
+        assert posts.bearer_tokens == ["first-key", "second-key"]
 
     @pytest.mark.asyncio
     async def test_the_switch_is_logged_by_position_never_by_value(

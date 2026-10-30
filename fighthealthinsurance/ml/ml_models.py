@@ -1164,17 +1164,18 @@ def api_keys_from_env(name: str, secondary_env: Optional[str] = None) -> List[st
     keys: List[str] = []
     for env_name in (name, secondary_env or secondary_env_name(name)):
         value = get_env_variable(env_name)
-        if value and value not in keys:
+        if value and value.strip() and value not in keys:
             keys.append(value)
     return keys
 
 
 def _key_refusal(status: Optional[int], body: str) -> bool:
-    """Whether an HTTP error says the KEY is spent, rather than the request
-    or the endpoint being wrong: a rate limit (429), or credit or quota that
-    ran out (ml/spend.py, whatever the status). Either is something a second
-    key, on its own quota or account, can get past."""
-    return status == 429 or spend.quota_refusal(status or 0, body)
+    """Whether an HTTP error says the KEY was refused, rather than the
+    request or the endpoint being wrong: a rate limit (429), credit or
+    quota that ran out (ml/spend.py, whatever the status), or a revoked key
+    or disabled account (401/403). Each is something a second key, on its
+    own quota or account, can get past."""
+    return status in (401, 403, 429) or spend.quota_refusal(status or 0, body)
 
 
 def _retry_after_seconds(
@@ -1217,7 +1218,7 @@ class ApiKeyRing:
         )
         self._keys: List[str] = []
         for key in raw:
-            if key and key not in self._keys:
+            if key and key.strip() and key not in self._keys:
                 self._keys.append(key)
         # What ``current`` reads with no usable key: the one configured
         # value, so a backend built with token="" (our own servers) or None
@@ -1268,6 +1269,16 @@ class ApiKeyRing:
         with self._lock:
             until = self._spent_until.get(key) if key is not None else None
             return until is not None and until > time.monotonic()
+
+    def all_spent(self) -> bool:
+        """Whether every key is in a cooldown now (False without keys): the
+        transport then skips the pair, as it skips a parked one, until the
+        first cooldown ends."""
+        if not self._keys:
+            return False
+        now = time.monotonic()
+        with self._lock:
+            return all(self._spent_until.get(k, 0.0) > now for k in self._keys)
 
     def mark_spent(self, key: Optional[str], seconds: float) -> Optional[str]:
         """Note that ``key`` was refused for a rate limit or quota, so it is
@@ -2865,22 +2876,33 @@ class RemoteOpenLike(RemoteModel):
         if len(self._key_ring) < 2 or not _key_refusal(e.status, body):
             return None
         tried.add(key)
-        quota = spend.quota_refusal(e.status, body)
-        seconds = (
-            _env_float(
-                "FHI_KEY_QUOTA_COOLDOWN_SECONDS", self.KEY_QUOTA_COOLDOWN_SECONDS
+        # Clamped like the rate-limit wait: a zero or negative setting would
+        # make the refused key current again at once, and no fallback would
+        # ever be sent.
+        if spend.quota_refusal(e.status, body):
+            why = "credit or quota"
+            seconds = max(
+                1.0,
+                _env_float(
+                    "FHI_KEY_QUOTA_COOLDOWN_SECONDS", self.KEY_QUOTA_COOLDOWN_SECONDS
+                ),
             )
-            if quota
-            else _retry_after_seconds(e)
-        )
+        elif e.status == 429:
+            why = "rate limit"
+            seconds = _retry_after_seconds(e)
+        else:
+            # A revoked key or disabled account: passed over for as long as
+            # _note_http_refusal parks a pair that refuses with one key.
+            why = "key or account refused"
+            seconds = max(1.0, _env_float("FHI_AUTH_REFUSAL_COOLDOWN_SECONDS", 900.0))
         nxt = self._key_ring.mark_spent(key, seconds)
         if nxt is None or nxt in tried:
             return None
         logger.warning(
             f"{self}: {model} at {api_base} refused the "
-            f"{self._key_ring.position(key)} (HTTP {e.status}, "
-            f"{'credit or quota' if quota else 'rate limit'}); sending the "
-            f"{self._key_ring.position(nxt)} instead for the next {seconds:.0f}s."
+            f"{self._key_ring.position(key)} (HTTP {e.status}, {why}); sending "
+            f"the {self._key_ring.position(nxt)} instead for the next "
+            f"{seconds:.0f}s."
         )
         return nxt
 
@@ -4232,6 +4254,20 @@ class RemoteOpenLike(RemoteModel):
             return None
         if status not in (401, 403) and not spend.quota_refusal(status, body):
             return None
+        if len(self._key_ring) >= 2:
+            # Filed against the key that was sent (_key_after_refusal parked
+            # it), not the pair: parking the pair would take a fallback key
+            # that still works, or a primary whose rate limit is about to
+            # lift, out with the key that was refused. The pair is skipped
+            # while every key is parked (_local_skip), so a provider that
+            # refuses every key is still not asked on every turn.
+            if self._key_ring.all_spent():
+                logger.warning(
+                    f"{self}: {model} at {api_base} refused every configured "
+                    f"key (HTTP {status}); skipping it until a key's cooldown "
+                    f"ends. Check the API keys and the account."
+                )
+            return "refused"
         window = _env_float("FHI_AUTH_REFUSAL_COOLDOWN_SECONDS", 900.0)
         if not self._pair_refused(api_base, model):
             logger.warning(
@@ -4251,6 +4287,8 @@ class RemoteOpenLike(RemoteModel):
             return "skipped_missing_model", "not served here"
         if self._pair_refused(api_base, model):
             return "skipped_refused", "refused recently (key or account)"
+        if self._key_ring.all_spent():
+            return "skipped_refused", "every key refused or rate limited recently"
         # A provider whose budget for this use is spent, or that refused for
         # credit or quota today (ml/spend.py). Checked at the send too, so a
         # model chosen before the budget ran out (a retry reusing the turn's
@@ -4456,6 +4494,8 @@ class RemoteOpenLike(RemoteModel):
         transport failures. In-memory only, never a network call, so it is
         safe on the request path. These flags live in this process.
         """
+        if self._key_ring.all_spent():
+            return "every configured key refused or rate limited recently"
         pairs = [(self.api_base, self.model)]
         if self.backup_api_base:
             pairs.append((self.backup_api_base, self.backup_model))
