@@ -1893,6 +1893,56 @@ section:not(.slider) .share-subcopy,
     color: #1565c0;
 }
 
+/* The regulator-letters callout (partials/regulator_letters_callout.html):
+   an info box with the brand lime on its edge, where it carried that edge
+   inline. .alert-box p zeroes paragraph margins, so its paragraphs and its
+   two lists are given their gaps here. */
+.fhi-regulator-callout {
+    border-left-color: var(--fhi-lime);
+}
+.fhi-regulator-callout p,
+.fhi-regulator-steps,
+.fhi-regulator-reasons {
+    margin: 0.5rem 0;
+}
+.fhi-regulator-steps,
+.fhi-regulator-reasons {
+    padding-left: 1.5rem;
+    line-height: 1.6;
+}
+.fhi-regulator-steps li,
+.fhi-regulator-reasons li {
+    margin: 0.25rem 0;
+}
+.fhi-regulator-callout .fhi-stack {
+    margin: 0.75rem 0;
+}
+.fhi-regulator-callout .fhi-regulator-note {
+    font-size: 0.9rem;
+    color: var(--fhi-ink-2);
+}
+/* When the denial carries reasons to involve a regulator, the same callout
+   grows: a thicker edge, more room, the step-title size for its heading and
+   the lead size for its text, and the page's shadow to lift it. The colours
+   are .alert-box-info's own, so the blue heading keeps its 5.03:1. */
+.fhi-regulator-callout-likely {
+    padding: 2rem;
+    border-left-width: 8px;
+    box-shadow: var(--fhi-shadow);
+}
+.container-narrow .fhi-regulator-callout-likely > :is(h2, h3, h4) {
+    font-size: var(--fhi-text-section);
+    line-height: var(--fhi-line-heading);
+    margin-bottom: 0.75rem;
+}
+.fhi-regulator-callout-likely p,
+.fhi-regulator-callout-likely li {
+    font-size: var(--fhi-text-lead);
+}
+.fhi-regulator-callout-likely .fhi-regulator-reasons li {
+    font-weight: 600;
+}
+
 /* Navigation/Form actions row */
 .form-nav-row {
     margin-top: 1.5rem;

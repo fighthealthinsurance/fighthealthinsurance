@@ -1912,10 +1912,27 @@ class ChooseAppeal(View):
         # Add the possible articles for inclusion
         add_pubmed_article_fields(fax_form, candidate_articles)
 
+        # choose_appeal hands back the fax details, not the denial, so the
+        # regulator-letters callout reads the row itself. A denial the triple
+        # does not name (None) leaves the callout at its normal size.
+        from fighthealthinsurance.escalation_addresses import (
+            regulator_escalation_reasons,
+        )
+
+        denial = common_view_logic.get_denial_for_action(
+            form.cleaned_data["denial_id"],
+            form.cleaned_data["email"],
+            form.cleaned_data["semi_sekret"],
+        )
+        regulator_reasons = (
+            regulator_escalation_reasons(denial) if denial is not None else []
+        )
+
         return render(
             request,
             "appeal.html",
             context={
+                "regulator_reasons": regulator_reasons,
                 "appeal": form.cleaned_data["appeal_text"],
                 "user_email": form.cleaned_data["email"],
                 "denial_id": form.cleaned_data["denial_id"],
@@ -1987,6 +2004,10 @@ class GenerateAppeal(View):
     def _appeals_context(
         *, request, denial, denial_id: str, email: str, semi_sekret: str, elems: dict
     ) -> dict:
+        from fighthealthinsurance.escalation_addresses import (
+            regulator_escalation_reasons,
+        )
+
         return {
             # Raw dict; appeals.html serializes it with |json_script. The old
             # json.dumps + {% autoescape off %} pair let any user-typed answer
@@ -1998,6 +2019,9 @@ class GenerateAppeal(View):
             "semi_sekret": semi_sekret,
             "current_step": 7,
             "use_external": denial.use_external,
+            # Why a regulator should hear about this denial, if anything says
+            # so; the regulator-letters callout grows when there is a reason.
+            "regulator_reasons": regulator_escalation_reasons(denial),
             "back_url": build_back_url(
                 request, "find_next_steps", denial_id, email, semi_sekret
             ),
