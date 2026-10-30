@@ -119,6 +119,9 @@ class ArenaForCrawlersAndAgentsTest(TestCase):
         self.assertIn(f"- [Appeal Arena rankings]({origin}{rankings_twin}): ", body)
         self.assertIn(f"- [Appeal Arena]({origin}{reverse('chooser')}): ", body)
         self.assertNotIn(agent_docs.twin_path_for(reverse("chooser")), body)
+        # The intro's rule names the exception, so an agent does not ask
+        # for /chooser.md and get a 404.
+        self.assertIn("Every public page except the Appeal Arena has a markdown twin", body)
 
 
 @override_settings(ARENA_RANKINGS_PAGE_ENABLED=False)

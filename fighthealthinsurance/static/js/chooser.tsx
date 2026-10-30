@@ -172,10 +172,11 @@ interface Rankings {
 
 const STANDINGS_ROWS = 3;
 
-// "hidden" when the rankings page answers 404: it is behind
-// ARENA_RANKINGS_PAGE_ENABLED, and nothing here should link to it then.
-// null when the fetch merely failed: the link alone is shown.
-type RankingsState = Rankings | null | "hidden";
+// "pending" until the first answer, so the link never flashes before a
+// 404; "hidden" when the rankings page answers 404 (it is behind
+// ARENA_RANKINGS_PAGE_ENABLED, and nothing here should link to it then);
+// null when the fetch merely failed, which shows the link alone.
+type RankingsState = Rankings | null | "hidden" | "pending";
 
 const fetchRankings = async (): Promise<RankingsState> => {
   try {
@@ -202,7 +203,7 @@ const ratePercent = (rate: number | null): string =>
 // Who is winning, in a glance: each table's all-time leader and its top few
 // rows, with the link to the full rankings. Without data it is just the link.
 const Standings: React.FC<{ rankings: RankingsState }> = ({ rankings }) => {
-  if (rankings === "hidden") {
+  if (rankings === "hidden" || rankings === "pending") {
     return null;
   }
   if (!rankings) {
@@ -944,7 +945,7 @@ const ChooserInterface: React.FC = () => {
   const [scoreboard, setScoreboard] = useState<Scoreboard>({ rounds: 0, fouls: 0 });
   const [lastRoundFouls, setLastRoundFouls] = useState(0);
   const [lastRoundTie, setLastRoundTie] = useState(false);
-  const [rankings, setRankings] = useState<RankingsState>(null);
+  const [rankings, setRankings] = useState<RankingsState>("pending");
 
   useEffect(() => {
     setScoreboard(readScoreboard());

@@ -149,9 +149,19 @@ def _leader(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _table(kind: str, kind_label: str, since: Optional[datetime.datetime]):
+def _table(
+    kind: str, kind_label: str, since: Optional[datetime.datetime]
+) -> Dict[str, Any]:
+    """One leaderboard: its rows, how many of them are ranked (past warming
+    up, so the ones a leader is ahead of), and its leader."""
     rows = _model_rows(kind, since)
-    return {"kind": kind, "label": kind_label, "rows": rows, "leader": _leader(rows)}
+    return {
+        "kind": kind,
+        "label": kind_label,
+        "rows": rows,
+        "ranked": sum(1 for r in rows if not r["warming_up"]),
+        "leader": _leader(rows),
+    }
 
 
 def _totals(since: Optional[datetime.datetime]) -> Dict[str, int]:
@@ -189,7 +199,7 @@ def compute_rankings(now: Optional[datetime.datetime] = None) -> Dict[str, Any]:
     """Everything the page and its JSON show, uncached."""
     now = now or timezone.now()
     floor = blind_since()
-    windows = []
+    windows: List[Dict[str, Any]] = []
     for slug, label, days in WINDOWS:
         since = _later(now - datetime.timedelta(days=days) if days else None, floor)
         windows.append(

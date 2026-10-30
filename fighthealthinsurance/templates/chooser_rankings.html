@@ -26,7 +26,7 @@
                     {% if t.leader %}
                     <h3 class="fhi-card-title arena-leader-model"><span class="arena-trophy" aria-hidden="true">🏆</span> {{ t.leader.model }}</h3>
                     <p class="arena-leader-stat"><b class="arena-leader-num">{{ t.leader.win_rate|floatformat:0 }}%</b> <span>win rate: picked in {{ t.leader.won|floatformat:"-1" }} of the {{ t.leader.shown }} votes it was shown in</span></p>
-                    <p class="fhi-hint">Caught making things up in {{ t.leader.flag_rate|floatformat:0 }}% of those votes.{% if t.rows|length > 1 %} {{ t.rows|length|add:"-1" }} other model{{ t.rows|length|add:"-1"|pluralize }} ranked below it.{% endif %}</p>
+                    <p class="fhi-hint">Caught making things up in {{ t.leader.flag_rate|floatformat:0 }}% of those votes.{% if t.ranked > 1 %} {{ t.ranked|add:"-1" }} other model{{ t.ranked|add:"-1"|pluralize }} ranked below it.{% endif %}</p>
                     <a class="fhi-card-action" href="#window-all">See the full table</a>
                     {% else %}
                     <h3 class="fhi-card-title arena-leader-model">No leader yet</h3>

@@ -239,6 +239,21 @@ class ChooserRankingsLeaderTest(TestCase):
         self.assertTrue(by_model["model-c"]["warming_up"])
         self.assertEqual(data["leaders"]["appeal_letter"]["model"], "model-a")
 
+    def test_only_ranked_models_count_as_below_the_leader(self):
+        """A warming-up model is listed, not ranked, so the leader is not
+        "ahead" of it yet."""
+        task, (c, d) = _task(models=("model-c", "model-d"))
+        _vote(task, [c, d], c, "session-leader-5")
+        with mock.patch.object(public_rankings, "PUBLIC_RANKINGS_MIN_SHOWN", 3):
+            data = public_rankings.compute_rankings()
+            body = self.client.get(reverse("chooser_rankings")).content.decode()
+
+        appeals = data["windows"][0]["tables"][0]
+        self.assertEqual(len(appeals["rows"]), 4)
+        self.assertEqual(appeals["ranked"], 2)
+        card = body[body.index('id="leader-appeal_letter"') : body.index('id="leader-chat_response"')]
+        self.assertIn("1 other model ranked below it", card)
+
     def test_the_page_opens_with_who_is_winning(self):
         with mock.patch.object(public_rankings, "PUBLIC_RANKINGS_MIN_SHOWN", 3):
             body = self.client.get(reverse("chooser_rankings")).content.decode()

@@ -123,9 +123,9 @@ We do not take the models' word for it, or only our own tests' either. In the
 <a href="{% url 'chooser' %}">Appeal Arena</a>, visitors read several AI drafts for the same
 made-up case side by side, without knowing which model wrote which, pick the one they
 would send, and flag any draft that invents a study, a law or a test result.
-Those votes decide which drafts the real appeal flow prefers{% if arena_rankings_enabled %}, and they are public:
-the <a href="{% url 'chooser_rankings' %}">Appeal Arena rankings</a> show which models are
-winning and how often each gets caught making things up{% endif %}.
+Those votes help train the selector that picks drafts in the real appeal flow{% if arena_rankings_enabled %}, and
+their totals are public: the <a href="{% url 'chooser_rankings' %}">Appeal Arena rankings</a> show
+which models are winning and how often each gets caught making things up{% endif %}.
 </p>
 
 <h2>Sustainability</h2>

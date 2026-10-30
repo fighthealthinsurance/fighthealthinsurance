@@ -87,7 +87,7 @@
 <section id="arena-home" class="start-section" aria-labelledby="arena-home-title">
     <div class="fhi-column fhi-column-wide fhi-stack fhi-stack-centred">
         <h2 class="start-section-title" id="arena-home-title">Which AI writes the best appeal? You decide.</h2>
-        <p class="start-section-subtitle">In the Appeal Arena you read a few AI drafts for the same made-up denial, pick the one you would send, and call out any that make things up.{% if arena_rankings_enabled %} Every vote is public: see which models are winning.{% else %} Your votes decide which drafts the appeal flow prefers.{% endif %}</p>
+        <p class="start-section-subtitle">In the Appeal Arena you read a few AI drafts for the same made-up denial, pick the one you would send, and call out any that make things up.{% if arena_rankings_enabled %} The totals are public: see which models are winning.{% else %} Your votes help train the selector that picks drafts in the appeal flow.{% endif %}</p>
         <div class="fhi-cluster fhi-cluster-center">
             <a class="fhi-button fhi-button-secondary" href="{% url 'chooser' %}">Step into the Arena</a>
             {% if arena_rankings_enabled %}<a class="fhi-button fhi-button-secondary" href="{% url 'chooser_rankings' %}">See which AI is winning</a>{% endif %}

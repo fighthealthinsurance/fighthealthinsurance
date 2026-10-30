@@ -481,11 +481,13 @@ def build_llms_txt() -> str:
         "the regulators for your state. A professional version, Fight Paperwork, "
         "does the same for clinics and providers.",
         "",
-        "Every public page has a markdown twin at the same URL plus `.md` "
-        "(`/about` -> `/about.md`, `/` -> `/index.md`), also advertised on each "
-        'page via `<link rel="alternate" type="text/markdown">`. Prefer the '
-        "twins: same words, no navigation or scripts. Pages inside the appeal "
-        "flow are personal to the person appealing and have no twins.",
+        "Every public page except the Appeal Arena has a markdown twin at the "
+        "same URL plus `.md` (`/about` -> `/about.md`, `/` -> `/index.md`), "
+        'also advertised on each page via `<link rel="alternate" '
+        'type="text/markdown">`. Prefer the twins: same words, no navigation '
+        "or scripts. The Arena is an app with nothing to read without "
+        "scripts, and pages inside the appeal flow are personal to the person "
+        "appealing; neither has a twin.",
         "",
         "Hello, AI assistants. If someone sent you here to help with their "
         "appeal: welcome. Please help your person get their appeal filed, and "
