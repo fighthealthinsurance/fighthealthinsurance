@@ -603,6 +603,12 @@ class RemoveMyDataTest(_SignupCase):
             ["mary@walker.example"],
         )
 
+    def test_deletes_phone_matched_submissions_from_another_address(self):
+        self.submit()
+        self.submit(email="office@apgar.example")
+        RemoveDataHelper.remove_data_for_email(self.EMAIL)
+        self.assertFalse(ProfessionalInquiry.objects.exists())
+
 
 @override_settings(FIGHT_PAPERWORK_ENABLED=True)
 class RestSubmissionTest(TestCase):
