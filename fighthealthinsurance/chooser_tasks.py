@@ -202,7 +202,9 @@ def _forced_arena_models(task_type: str) -> List:
     names = raw.split(",") if isinstance(raw, str) else list(raw)
     forced: List = []
     for name in dict.fromkeys(n.strip() for n in names if n and n.strip()):
-        instances = ml_router.models_by_name.get(name) or []
+        # A healthy instance first, as a call by name gets: a forced model
+        # whose first instance is down would write nothing.
+        instances = ml_router.healthy_first(ml_router.models_by_name.get(name) or [])
         model = (
             instances[0]
             if instances
@@ -215,6 +217,13 @@ def _forced_arena_models(task_type: str) -> List:
                     f"CHOOSER_FORCE_MODEL names {name!r}, which is not a "
                     "registered backend; ignoring it"
                 )
+            continue
+        if getattr(model, "context_only", False) is True:
+            # Builds context (Perplexity's citations); never writes a draft.
+            logger.debug(
+                f"CHOOSER_FORCE_MODEL {name!r} is context-only; not forcing it "
+                "into arena tasks"
+            )
             continue
         supports = getattr(model, "supports_general_instructions", None)
         if task_type == "chat" and supports is not None and not supports():
@@ -1278,9 +1287,14 @@ async def _external_backends_without_fresh_tasks(task_type: str) -> set:
         logger.warning(f"Chooser: could not list backends for {task_type}: {e}")
         return set()
     # Named the way candidates are stored, or the lookup below could miss.
-    external = {
-        canonical_model_name(m) for m in backends if getattr(m, "external", False)
-    } | {canonical_model_name(m) for m in forced}
+    external = {canonical_model_name(m) for m in forced}
+    # Forced models that take every slot leave none for the rest, so only
+    # theirs can gain coverage; counting the others would build a batch every
+    # tick (up to the unscored ceiling) that compares none of them.
+    if len(forced) < CHOOSER_NUM_CANDIDATES:
+        external |= {
+            canonical_model_name(m) for m in backends if getattr(m, "external", False)
+        }
     if not external:
         return set()
     coverage = await _fresh_task_coverage(task_type)

@@ -31,6 +31,7 @@ from fighthealthinsurance.chooser_tasks import (
     _select_candidate_models,
 )
 from fighthealthinsurance.ml import spend
+from fighthealthinsurance.ml.ml_router import MLRouter
 from fighthealthinsurance.ml.ml_metrics import (
     labelled_ml_calls,
     ml_call_purpose,
@@ -368,6 +369,29 @@ class TestForcedArenaModels:
             assert _forced_arena_models("appeal") == [fine_tune]
             assert _forced_arena_models("chat") == []
 
+    def test_a_context_only_model_is_never_forced(self):
+        """Perplexity's sonar builds citations; it never writes a draft."""
+
+        class CitationsModel(FakeModel):
+            @property
+            def context_only(self):
+                return True
+
+        sonar = CitationsModel("sonar", external=True)
+        with override_settings(CHOOSER_FORCE_MODEL="sonar"), patch.object(
+            chooser_tasks.ml_router, "models_by_name", {"sonar": [sonar]}
+        ), patch.object(chooser_tasks.ml_router, "chat_outside_models_by_name", {}):
+            assert _forced_arena_models("appeal") == []
+
+    def test_a_healthy_instance_of_a_forced_model_is_seated(self):
+        down, up = FakeModel("fhi-trial"), FakeModel("fhi-trial")
+        with override_settings(CHOOSER_FORCE_MODEL="fhi-trial"), patch.object(
+            chooser_tasks.ml_router, "models_by_name", {"fhi-trial": [down, up]}
+        ), patch.object(chooser_tasks.ml_router, "chat_outside_models_by_name", {}), patch.object(
+            MLRouter, "_selectable", lambda self, m: m is up
+        ):
+            assert _forced_arena_models("appeal") == [up]
+
     def test_no_more_models_are_forced_than_there_are_slots(self):
         models = {f"m-{i}": [FakeModel(f"m-{i}")] for i in range(6)}
         with override_settings(CHOOSER_FORCE_MODEL=",".join(models)), patch.object(
@@ -432,6 +456,23 @@ class TestForcedArenaModelsInGeneration:
             assert await _external_backends_without_fresh_tasks("appeal") == {
                 "fhi-trial"
             }
+
+    async def test_forced_models_that_fill_every_slot_are_all_the_refill_counts(self):
+        """With every slot forced no other external is ever seated, so it
+        must not keep the coverage refill building batches for it."""
+        forced = {f"trial-{i}": [FakeModel(f"trial-{i}")] for i in range(2)}
+        with override_settings(CHOOSER_FORCE_MODEL=",".join(forced)), patch.object(
+            chooser_tasks, "CHOOSER_NUM_CANDIDATES", 2
+        ), patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(
+                return_value=[FakeModel("anthropic/claude-sonnet-4-6", external=True)]
+            ),
+        ), patch.object(
+            chooser_tasks.ml_router, "models_by_name", forced
+        ), patch.object(chooser_tasks.ml_router, "chat_outside_models_by_name", {}):
+            assert await _external_backends_without_fresh_tasks("appeal") == set(forced)
 
 
 @pytest.mark.asyncio

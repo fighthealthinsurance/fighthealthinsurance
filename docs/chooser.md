@@ -12,9 +12,11 @@ appeal flow, and rank the model backends against each other.
   symptom duration, what was tried, what the clinician documented), *what
   the patient told us* (the app's questions for the case and the made-up
   patient's answers) and the *evidence on file* (PubMed articles, with links
-  and, when one is on file, a short summary). Everything shown is exactly what every draft
-  was given. For a chat task: the conversation and the question the drafts
-  answer.
+  and, when one is on file, a short summary). Everything shown is exactly
+  what every model-written draft was given; the synthesized draft, which
+  combines them, gets the treatment, diagnosis, denial reason and the drafts,
+  not the facts, answers or evidence. For a chat task: the conversation and
+  the question the drafts answer.
 - **The drafts**, blind. The API sends no model name, synthesized flag or
   metadata (`ChooserCandidateSerializer`), and no row id or
   `candidate_index` either: both run in generation order (internal model

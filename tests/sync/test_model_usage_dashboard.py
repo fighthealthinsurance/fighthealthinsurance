@@ -544,6 +544,11 @@ class ModelUsageDashboardSemanticsTest(ChooserStatsHelperMixin, TestCase):
             {name: r["chosen"] for name, r in by_name.items()},
             {"model-a": 0.5, "model-b": 0.5, "model-c": 0},
         )
+        # A tie is still one presentation of each draft shown.
+        self.assertEqual(
+            {name: r["presented"] for name, r in by_name.items()},
+            {"model-a": 1, "model-b": 1, "model-c": 1},
+        )
 
     def test_a_three_way_tie_still_adds_up_to_one_vote(self):
         task = self._make_task()
