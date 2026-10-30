@@ -2380,6 +2380,16 @@ def medicaid_eligibility_page_enabled() -> bool:
     return bool(getattr(settings, "MEDICAID_ELIGIBILITY_PAGE_ENABLED", False))
 
 
+def arena_rankings_page_enabled() -> bool:
+    """Whether the public Appeal Arena rankings page is live.
+
+    The view, the sitemap, the menu and every page that links it ask here,
+    for the same reason as denial_watch_page_enabled: one flag, read in one
+    place. The Arena itself (/chooser/) is not behind it.
+    """
+    return bool(getattr(settings, "ARENA_RANKINGS_PAGE_ENABLED", False))
+
+
 def denial_watch_page_enabled() -> bool:
     """Whether the Denial Watch public-data page is live.
 

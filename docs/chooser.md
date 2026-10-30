@@ -7,6 +7,15 @@ appeal flow, and rank the model backends against each other.
 
 ## Where they are linked from
 
+The rankings page is staged behind `ARENA_RANKINGS_PAGE_ENABLED` (off by
+default; Dev and the test configurations turn it on): while it is off the
+page and its JSON serve 404 for every method, every link below to it is
+hidden, it is out of the sitemap and `llms.txt`, its markdown twin is gone,
+and the Arena's standings panel (which learns of the 404 from the JSON)
+shows nothing. The Arena itself is not behind the flag. One function reads
+it, `utils.arena_rankings_page_enabled`, and the templates get it as
+`arena_rankings_enabled` from `context_processors.arena_rankings_context`.
+
 Both pages are reachable without knowing the URL: the Resources menu
 (`Appeal Arena`, `Which AI Wins: Rankings`) and the footer on every page, the
 `Which AI writes the best appeal?` section on the home page, the
@@ -250,6 +259,7 @@ environment variables of the same name.
 | `CONDITION_RANKING_REFRESH_SECONDS` | `3600` | How often `refresh_if_due` refreshes |
 | `CONDITION_RANKING_REFRESH_TIMEOUT` | `180` | Seconds the refill actor waits on one refresh |
 | `CONDITION_RANKING_LIMIT` | `25` | Rows per list on the public page |
+| `ARENA_RANKINGS_PAGE_ENABLED` | `False` (`True` in Dev and tests) | Serve the public rankings page and link to it |
 | `PUBLIC_RANKINGS_CACHE_SECONDS` | `900` | How long the page's numbers are cached |
 | `PUBLIC_RANKINGS_MIN_SHOWN` | `10` | Votes before a model is ranked rather than warming up |
 | `PUBLIC_RANKINGS_SINCE` | migration 0240's applied time | Earliest vote the public page counts; `""` counts all |

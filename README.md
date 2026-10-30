@@ -352,7 +352,7 @@ path: its model returns a `create_or_update_appeal` call, and `AppealTool`
 | Appeal flow | `/scan`, `/process`, `/categorize_review`, `/find_next_steps`, `/generate_appeal`, `/choose_appeal` | `fighthealthinsurance/urls.py` |
 | Proposed appeal, appeal | A generated draft (`ProposedAppeal`, several per denial); the finalized letter (`Appeal`) | `fighthealthinsurance/models.py` |
 | Prior auth | Prior authorization requests and generated drafts | `PriorAuthRequest`, `ProposedPriorAuth` in `fighthealthinsurance/models.py`; `ws/prior-auth/` |
-| Chooser (Appeal Arena) | Visitors pick the best of several blind model drafts on synthetic cases and flag drafts that make things up; a public, synthetic-only ranking lives at `/chooser/rankings/` (see `docs/chooser.md`) | `ChooserTask`, `ChooserCandidate`, `ChooserVote`; `fighthealthinsurance/chooser_tasks.py`, `condition_rankings.py`, `public_rankings.py` |
+| Chooser (Appeal Arena) | Visitors pick the best of several blind model drafts on synthetic cases and flag drafts that make things up; a public, synthetic-only ranking lives at `/chooser/rankings/` behind `ARENA_RANKINGS_PAGE_ENABLED` (see `docs/chooser.md`) | `ChooserTask`, `ChooserCandidate`, `ChooserVote`; `fighthealthinsurance/chooser_tasks.py`, `condition_rankings.py`, `public_rankings.py` |
 | Microsite | A treatment-specific landing page at `/microsite/<slug>/`, listed at `/treatments/` | `fighthealthinsurance/static/microsites.json`, `fighthealthinsurance/microsites.py` |
 | Patient, professional, domain | The two user types; a `UserDomain` is a practice | `fhi_users/models.py` |
 | Fight Paperwork | The professional version, at fightpaperwork.com | `fighthealthinsurance/settings.py` |

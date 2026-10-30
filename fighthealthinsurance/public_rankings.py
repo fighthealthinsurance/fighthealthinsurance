@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, cast
 
 from django.conf import settings
 from django.core.cache import cache
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.generic import TemplateView
 from loguru import logger
@@ -34,6 +34,7 @@ from loguru import logger
 from fighthealthinsurance import condition_rankings
 from fighthealthinsurance.models import ChooserTask, ChooserVote
 from fighthealthinsurance.staff_views import ModelUsageDashboardView
+from fighthealthinsurance.utils import arena_rankings_page_enabled
 
 PUBLIC_RANKINGS_CACHE_SECONDS = getattr(
     settings, "PUBLIC_RANKINGS_CACHE_SECONDS", 15 * 60
@@ -236,7 +237,17 @@ def rankings() -> Dict[str, Any]:
 
 
 class ChooserRankingsView(TemplateView):
+    """The page and its JSON. Staged behind ARENA_RANKINGS_PAGE_ENABLED: the
+    route always exists so reverse() and templates never break, but every
+    method 404s until the flag is on, and the links to it hide with it
+    (``context_processors.arena_rankings_context``, the sitemap)."""
+
     template_name = "chooser_rankings.html"
+
+    def dispatch(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
+        if not arena_rankings_page_enabled():
+            raise Http404("This page is not available yet.")
+        return super().dispatch(request, *args, **kwargs)
 
     def get(self, request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponse:
         if request.GET.get("format") == "json":

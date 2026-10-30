@@ -117,6 +117,16 @@ def agent_docs_context(request):
     return {"markdown_twin_url": agent_docs.twin_path_for(request.path)}
 
 
+def arena_rankings_context(request):
+    """Whether to link the Appeal Arena rankings page: the menu, the footer,
+    the home page, About our AI, How to Help and the staff dashboard all
+    hide their links while ARENA_RANKINGS_PAGE_ENABLED is off, the same flag
+    that makes the page itself 404."""
+    from fighthealthinsurance.utils import arena_rankings_page_enabled
+
+    return {"arena_rankings_enabled": arena_rankings_page_enabled()}
+
+
 def denial_watch_context(request):
     """Whether to show the links to Denial Watch and its open enrollment page,
     and the home page's pill and highlight cards.

@@ -215,6 +215,10 @@ class Base(Configuration):
     # Denial Watch, the public-data trends page. Off by default until launch:
     # the page serves 404 and stays out of the sitemap. Dev/Test enable it.
     DENIAL_WATCH_PAGE_ENABLED = _env_flag("DENIAL_WATCH_PAGE_ENABLED")
+    # The Appeal Arena rankings page (/chooser/rankings/, "who is winning").
+    # Off by default: the page and its JSON serve 404, nothing links to it,
+    # and it stays out of the sitemap and llms.txt. Dev/Test enable it.
+    ARENA_RANKINGS_PAGE_ENABLED = _env_flag("ARENA_RANKINGS_PAGE_ENABLED")
 
     # --- Temporal (durable workflow execution) ---
     # Off by default: fax sending stays on the Ray fax actor until
@@ -810,6 +814,7 @@ class Base(Configuration):
                     "fighthealthinsurance.context_processors.advanced_ocr_context",
                     "fighthealthinsurance.context_processors.feature_pages_context",
                     "fighthealthinsurance.context_processors.denial_watch_context",
+                    "fighthealthinsurance.context_processors.arena_rankings_context",
                 ],
             },
         },
@@ -1075,6 +1080,7 @@ class Dev(Base):
     MCP_DRAFT_IN_CHAT_ENABLED = _env_flag("MCP_DRAFT_IN_CHAT_ENABLED", "1")
     # Keep the (pre-launch) Denial Watch page routable locally and in tests.
     DENIAL_WATCH_PAGE_ENABLED = True
+    ARENA_RANKINGS_PAGE_ENABLED = True
     CSRF_TRUSTED_ORIGINS = [
         "https://fightpaperwork.com",
         "https://localhost:3000",

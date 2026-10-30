@@ -89,9 +89,9 @@
             <a href="{% url 'chooser' %}" class="fhi-button fhi-button-secondary">
                 Appeal Arena
             </a>
-            where you pick the best of several AI-written appeals on synthetic cases,
+            where you pick the best of several AI-written appeals on synthetic cases{% if arena_rankings_enabled %},
             and see which models are winning in the
-            <a href="{% url 'chooser_rankings' %}">Appeal Arena rankings</a>.
+            <a href="{% url 'chooser_rankings' %}">Appeal Arena rankings</a>{% endif %}.
         </p>
         <p style="text-align: center;">
             Have your health plan's documents?

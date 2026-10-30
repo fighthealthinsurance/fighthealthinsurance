@@ -170,7 +170,7 @@
                                 <li><a href="{% url 'blog' %}">Blog</a></li>
                                 {# The Arena and its scoreboard: judge AI drafts, then see which models are winning. #}
                                 <li><a href="{% url 'chooser' %}" id="arenalink">Appeal Arena</a></li>
-                                <li><a href="{% url 'chooser_rankings' %}" id="arenarankingslink">Which AI Wins: Rankings</a></li>
+                                {% if arena_rankings_enabled %}<li><a href="{% url 'chooser_rankings' %}" id="arenarankingslink">Which AI Wins: Rankings</a></li>{% endif %}
                             </ul>
                         </details>
                     </li>
@@ -285,7 +285,7 @@
                 <a href="{% url 'about' %}">About Us</a>
                 <a href="{% url 'about-ai' %}">About Our AI</a>
                 <a href="{% url 'chooser' %}">Appeal Arena</a>
-                <a href="{% url 'chooser_rankings' %}">AI Rankings</a>
+                {% if arena_rankings_enabled %}<a href="{% url 'chooser_rankings' %}">AI Rankings</a>{% endif %}
                 {% if ai_assistants_on %}<a href="{% url 'ai-assistants' %}">Your AI Assistant</a>{% endif %}
                 {% if denial_watch_enabled %}<a href="{% url 'denial-watch' %}">Denial Watch</a>{% endif %}
                 <a href="{% url 'contact' %}">Contact</a>
