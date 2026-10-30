@@ -459,8 +459,15 @@ def _is_valid_email(value: str) -> bool:
 
 
 def forget_submissions(email: str) -> None:
-    """Delete this address's logged submissions (Remove my data)."""
-    ProfessionalInquiry.objects.filter(email__iexact=(email or "").strip()).delete()
+    """Delete this address's logged submissions (Remove my data).
+
+    Includes rows linked to this address's lead, such as a phone match sent
+    from another address, since the lead itself is deleted too.
+    """
+    email = (email or "").strip()
+    ProfessionalInquiry.objects.filter(
+        Q(email__iexact=email) | Q(interested_professional__email__iexact=email)
+    ).delete()
 
 
 def person_aggregate(function: str, field: str, output_field):
