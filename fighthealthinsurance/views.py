@@ -4392,11 +4392,12 @@ class SharePlanDocumentsView(FormView):
             return redirect(self.get_success_url())
         if not shared_plan_documents.render_token_ok(request.POST.get("rendered")):
             return self._refuse(shared_plan_documents.TRY_AGAIN)
-        problem = shared_plan_documents.daily_limit_problem(
-            request, request.FILES.getlist("plan_documents")
-        )
+        files = request.FILES.getlist("plan_documents")
+        problem = shared_plan_documents.daily_limit_problem(request, files)
         if problem:
             return self._refuse(problem)
+        if files and not shared_plan_documents.take_upload_attempt(request):
+            return self._refuse(shared_plan_documents.SESSION_LIMIT_MESSAGE)
         return super().post(request, *args, **kwargs)
 
     def _refuse(self, message: str) -> HttpResponse:
