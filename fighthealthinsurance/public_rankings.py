@@ -1,7 +1,10 @@
 """The public rankings page: ``/chooser/rankings/``.
 
 What the Appeal Arena's votes say about the models, for anyone to read,
-and which conditions and treatments people fight denials over most.
+and which conditions and treatments people fight denials over most. Each
+table names its leader (the first model past PUBLIC_RANKINGS_MIN_SHOWN), and
+``leaders`` at the top of the data repeats the all-time ones so the page and
+the Arena's landing can say who is winning without reading the tables.
 
 Everything on it is either synthetic or aggregate:
 
@@ -135,6 +138,21 @@ def _model_rows(kind: str, since: Optional[datetime.datetime]) -> List[Dict[str,
     return out
 
 
+def _leader(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The model winning a table: its first ranked row, or None while every
+    model is still warming up (a leader on three votes is noise, and the
+    page says so instead of crowning one)."""
+    for r in rows:
+        if not r["warming_up"]:
+            return r
+    return None
+
+
+def _table(kind: str, kind_label: str, since: Optional[datetime.datetime]):
+    rows = _model_rows(kind, since)
+    return {"kind": kind, "label": kind_label, "rows": rows, "leader": _leader(rows)}
+
+
 def _totals(since: Optional[datetime.datetime]) -> Dict[str, int]:
     votes = ChooserVote.objects.filter(task__source=SYNTHETIC_SOURCE)
     if since is not None:
@@ -178,17 +196,17 @@ def compute_rankings(now: Optional[datetime.datetime] = None) -> Dict[str, Any]:
                 "slug": slug,
                 "label": label,
                 "tables": [
-                    {
-                        "kind": kind,
-                        "label": kind_label,
-                        "rows": _model_rows(kind, since),
-                    }
-                    for kind, kind_label in KINDS
+                    _table(kind, kind_label, since) for kind, kind_label in KINDS
                 ],
             }
         )
+    # Who is winning, in one place: the all-time leader of each table, for
+    # the top of the page and for anything that embeds the JSON (the Arena's
+    # own landing shows the appeal-letter standings from it).
+    leaders = {t["kind"]: t["leader"] for t in windows[0]["tables"]}
     return {
         "generated_at": now.isoformat(),
+        "leaders": leaders,
         "min_shown": PUBLIC_RANKINGS_MIN_SHOWN,
         "k_anonymity": condition_rankings.CONDITION_RANKING_MIN_PEOPLE,
         "blind_since": floor.isoformat() if floor else None,

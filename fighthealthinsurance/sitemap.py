@@ -56,6 +56,9 @@ class StaticViewSitemap(Sitemap):
             "contact",
             "blog",
             "microsite_directory",
+            # The Appeal Arena and its public scoreboard (docs/chooser.md).
+            "chooser",
+            "chooser_rankings",
         ]
         # The experimental Medicaid eligibility page only serves (and is only
         # discoverable) when its staging flag is on; see views.py.

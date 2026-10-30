@@ -144,6 +144,149 @@ const writeScoreboard = (board: Scoreboard): void => {
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+// The public scoreboard (public_rankings.py, `?format=json`): synthetic
+// votes only, already aggregated, so showing it here gives away nothing
+// about the drafts in play (those are served blind, in random order).
+interface RankingRow {
+  rank: number;
+  model: string;
+  won: number;
+  shown: number;
+  win_rate: number | null;
+  flag_rate: number | null;
+  warming_up: boolean;
+}
+
+interface RankingTable {
+  kind: string;
+  label: string;
+  rows: RankingRow[];
+  leader: RankingRow | null;
+}
+
+interface Rankings {
+  min_shown: number;
+  totals: { votes: number; tasks_judged: number; tasks_ready: number };
+  windows: Array<{ slug: string; label: string; tables: RankingTable[] }>;
+}
+
+const STANDINGS_ROWS = 3;
+
+// "hidden" when the rankings page answers 404: it is behind
+// ARENA_RANKINGS_PAGE_ENABLED, and nothing here should link to it then.
+// null when the fetch merely failed: the link alone is shown.
+type RankingsState = Rankings | null | "hidden";
+
+const fetchRankings = async (): Promise<RankingsState> => {
+  try {
+    const response = await fetch(`${RANKINGS_URL}?format=json`, {
+      headers: { Accept: "application/json" },
+    });
+    if (response.status === 404) {
+      return "hidden";
+    }
+    if (!response.ok) {
+      return null;
+    }
+    const data = (await response.json()) as Rankings;
+    return Array.isArray(data.windows) && data.windows.length > 0 ? data : null;
+  } catch {
+    // The standings are a nicety; the Arena works without them.
+    return null;
+  }
+};
+
+const ratePercent = (rate: number | null): string =>
+  rate === null ? "\u2014" : `${Math.round(rate)}%`;
+
+// Who is winning, in a glance: each table's all-time leader and its top few
+// rows, with the link to the full rankings. Without data it is just the link.
+const Standings: React.FC<{ rankings: RankingsState }> = ({ rankings }) => {
+  if (rankings === "hidden") {
+    return null;
+  }
+  if (!rankings) {
+    return (
+      <Text size="sm" c="dimmed" ta="center">
+        Curious who is winning?{" "}
+        <Anchor href={RANKINGS_URL}>See the rankings</Anchor>.
+      </Text>
+    );
+  }
+  const allTime = rankings.windows[0];
+  return (
+    <Paper
+      shadow="sm"
+      p="md"
+      radius="md"
+      withBorder
+      style={{ width: "100%", maxWidth: "760px" }}
+      data-testid="arena-standings"
+    >
+      <Group justify="space-between" align="baseline" mb="xs">
+        <Text fw={700}>Standings</Text>
+        <Text size="xs" c="dimmed">
+          {plural(rankings.totals.votes, "vote")} so far &middot;{" "}
+          {allTime.label.toLowerCase()}
+        </Text>
+      </Group>
+      <SimpleGrid
+        cols={{ base: 1, sm: allTime.tables.length > 1 ? 2 : 1 }}
+        spacing="md"
+      >
+        {allTime.tables.map((table) => {
+          const ranked = table.rows
+            .filter((r) => !r.warming_up)
+            .slice(0, STANDINGS_ROWS);
+          return (
+            <Box key={table.kind}>
+              <Text size="sm" fw={600}>
+                {table.label}
+              </Text>
+              {table.leader ? (
+                <>
+                  <Text size="sm">
+                    <span aria-hidden="true">🏆</span> Leading:{" "}
+                    <strong>{table.leader.model}</strong> with a{" "}
+                    {ratePercent(table.leader.win_rate)} win rate over{" "}
+                    {plural(table.leader.shown, "vote")}.
+                  </Text>
+                  <List size="sm" spacing={2} mt={4} type="ordered">
+                    {ranked.map((row) => (
+                      <List.Item key={row.model}>
+                        {row.model}: {ratePercent(row.win_rate)} win rate
+                        {row.flag_rate !== null && row.flag_rate > 0
+                          ? `, caught making things up ${ratePercent(row.flag_rate)}`
+                          : ""}
+                      </List.Item>
+                    ))}
+                  </List>
+                </>
+              ) : (
+                <Text size="sm" c="dimmed">
+                  No leader yet: a model is ranked once it has been judged{" "}
+                  {plural(rankings.min_shown, "time")}. Your votes decide it.
+                </Text>
+              )}
+            </Box>
+          );
+        })}
+      </SimpleGrid>
+      <Group justify="center" mt="md">
+        <Button
+          component="a"
+          href={RANKINGS_URL}
+          variant="outline"
+          radius="md"
+          size="sm"
+        >
+          See the full rankings
+        </Button>
+      </Group>
+    </Paper>
+  );
+};
+
 // ---------------------------------------------------------------------------
 // Referee aids: the reviewer's verdicts and the citation check
 
@@ -801,9 +944,19 @@ const ChooserInterface: React.FC = () => {
   const [scoreboard, setScoreboard] = useState<Scoreboard>({ rounds: 0, fouls: 0 });
   const [lastRoundFouls, setLastRoundFouls] = useState(0);
   const [lastRoundTie, setLastRoundTie] = useState(false);
+  const [rankings, setRankings] = useState<RankingsState>(null);
 
   useEffect(() => {
     setScoreboard(readScoreboard());
+    let cancelled = false;
+    fetchRankings().then((data) => {
+      if (!cancelled) {
+        setRankings(data);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const fetchNextTask = useCallback(async (taskType: TaskType) => {
@@ -1126,9 +1279,7 @@ const ChooserInterface: React.FC = () => {
               Judge Chat Replies
             </Button>
           </Group>
-          <Text size="sm" c="dimmed" ta="center">
-            Curious who is winning? <Anchor href={RANKINGS_URL}>See the rankings</Anchor>.
-          </Text>
+          <Standings rankings={rankings} />
           <Text size="sm" c="dimmed" ta="center">
             Thanks for helping us choose better responses and fight bad insurance decisions 💪
           </Text>
@@ -1190,9 +1341,7 @@ const ChooserInterface: React.FC = () => {
               Switch arena
             </Button>
           </Group>
-          <Text size="sm" c="dimmed" ta="center">
-            <Anchor href={RANKINGS_URL}>See how the models rank</Anchor>
-          </Text>
+          <Standings rankings={rankings} />
           <Text size="sm" c="dimmed" ta="center">
             Thanks for helping us choose better responses and fight bad insurance decisions 💪
           </Text>

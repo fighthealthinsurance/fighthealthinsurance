@@ -83,6 +83,17 @@
     </div>
 </section>
 {% endif %}
+{# The Arena: the one place a visitor can judge the AI and see which model is winning. #}
+<section id="arena-home" class="start-section" aria-labelledby="arena-home-title">
+    <div class="fhi-column fhi-column-wide fhi-stack fhi-stack-centred">
+        <h2 class="start-section-title" id="arena-home-title">Which AI writes the best appeal? You decide.</h2>
+        <p class="start-section-subtitle">In the Appeal Arena you read a few AI drafts for the same made-up denial, pick the one you would send, and call out any that make things up. Every vote is public: see which models are winning.</p>
+        <div class="fhi-cluster fhi-cluster-center">
+            <a class="fhi-button fhi-button-secondary" href="{% url 'chooser' %}">Step into the Arena</a>
+            <a class="fhi-button fhi-button-secondary" href="{% url 'chooser_rankings' %}">See which AI is winning</a>
+        </div>
+    </div>
+</section>
 {% if ai_assistants_on %}
 <section id="ai-assistants-home" class="start-section">
     <div class="fhi-column fhi-column-wide fhi-stack fhi-stack-centred">

@@ -54,6 +54,10 @@ EXTRA_TWIN_URL_NAMES = frozenset(
     }
 )
 
+# Sitemap pages with no markdown twin: the Arena is a React app, so its page
+# holds nothing to read without scripts. llms.txt lists it by its own URL.
+NO_TWIN_URL_NAMES = frozenset({"chooser"})
+
 # Short notes for the llms.txt page list, keyed by URL name. Pages without an
 # entry are listed by URL alone.
 PAGE_NOTES: dict[str, tuple[str, str]] = {
@@ -68,6 +72,17 @@ PAGE_NOTES: dict[str, tuple[str, str]] = {
         "they cannot do",
     ),
     "how-to-help": ("How to help", "ways to support the project"),
+    "chooser": (
+        "Appeal Arena",
+        "judge several AI-written appeal drafts on a synthetic case, blind, and "
+        "flag any that make things up; an interactive page, not readable as text",
+    ),
+    "chooser_rankings": (
+        "Appeal Arena rankings",
+        "which AI models are winning the Arena: win rate and how often each is "
+        "caught making things up, plus the most-appealed conditions and "
+        "treatments; the same data at ?format=json",
+    ),
     "ai-assistants": (
         "Use it with your AI assistant",
         "how to connect an AI assistant to the MCP server, what it can look up, "
@@ -154,7 +169,9 @@ _HEADING = re.compile(r"^h([1-6])$")
 
 def static_twin_url_names() -> frozenset[str]:
     """URL names eligible for a markdown twin."""
-    return frozenset(StaticViewSitemap().items()) | EXTRA_TWIN_URL_NAMES
+    return (
+        frozenset(StaticViewSitemap().items()) | EXTRA_TWIN_URL_NAMES
+    ) - NO_TWIN_URL_NAMES
 
 
 def twin_eligible(url_name: Optional[str]) -> bool:
@@ -482,7 +499,10 @@ def build_llms_txt() -> str:
         EXTRA_TWIN_URL_NAMES - {"blog-post", "state_help", "microsite"}
     ):
         try:
-            url = _twin_link(name)
+            if name in NO_TWIN_URL_NAMES:
+                url = CANONICAL_ORIGIN + reverse(name)
+            else:
+                url = _twin_link(name)
         except Exception:  # route not mounted in this deployment
             continue
         title, note = PAGE_NOTES.get(

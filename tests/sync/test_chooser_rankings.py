@@ -193,6 +193,89 @@ class ChooserRankingsPageTest(TestCase):
         self.assertEqual([r["rank"] for r in rows], [1, 2, 3, 4])
 
 
+class ChooserRankingsLeaderTest(TestCase):
+    """Who is winning: each table names its leader, the first model past
+    warming up, and the page says so at the top rather than leaving the
+    reader to work it out from the table."""
+
+    def setUp(self):
+        task, (a, b) = _task()
+        _vote(task, [a, b], a, "session-leader-1")
+        _vote(task, [a, b], a, "session-leader-2", flagged=[b])
+        _vote(task, [a, b], b, "session-leader-3")
+
+    def test_no_leader_while_every_model_is_warming_up(self):
+        data = public_rankings.compute_rankings()
+
+        appeals = data["windows"][0]["tables"][0]
+        self.assertTrue(all(r["warming_up"] for r in appeals["rows"]))
+        self.assertIsNone(appeals["leader"])
+        self.assertEqual(data["leaders"], {"appeal_letter": None, "chat_response": None})
+
+    def test_the_first_ranked_model_leads_and_the_json_repeats_it(self):
+        with mock.patch.object(public_rankings, "PUBLIC_RANKINGS_MIN_SHOWN", 3):
+            data = public_rankings.compute_rankings()
+
+        appeals = data["windows"][0]["tables"][0]
+        self.assertEqual(appeals["leader"]["model"], "model-a")
+        self.assertEqual(appeals["leader"]["rank"], 1)
+        self.assertAlmostEqual(appeals["leader"]["win_rate"], 200.0 / 3)
+        self.assertEqual(data["leaders"]["appeal_letter"]["model"], "model-a")
+        # No chat replies have been judged: that table has rows to show
+        # nothing for, and no leader.
+        self.assertIsNone(data["windows"][0]["tables"][1]["leader"])
+        self.assertIsNone(data["leaders"]["chat_response"])
+
+    def test_a_warming_up_model_never_leads_however_high_its_rate(self):
+        """A model on one unbeaten vote is not winning anything yet."""
+        task, (c, d) = _task(models=("model-c", "model-d"))
+        _vote(task, [c, d], c, "session-leader-4")
+        with mock.patch.object(public_rankings, "PUBLIC_RANKINGS_MIN_SHOWN", 3):
+            data = public_rankings.compute_rankings()
+
+        rows = data["windows"][0]["tables"][0]["rows"]
+        by_model = {r["model"]: r for r in rows}
+        self.assertEqual(by_model["model-c"]["win_rate"], 100.0)
+        self.assertTrue(by_model["model-c"]["warming_up"])
+        self.assertEqual(data["leaders"]["appeal_letter"]["model"], "model-a")
+
+    def test_the_page_opens_with_who_is_winning(self):
+        with mock.patch.object(public_rankings, "PUBLIC_RANKINGS_MIN_SHOWN", 3):
+            body = self.client.get(reverse("chooser_rankings")).content.decode()
+
+        self.assertIn('href="#leaders">Who is winning</a>', body)
+        card = body[body.index('id="leader-appeal_letter"') : body.index('id="leader-chat_response"')]
+        self.assertIn("model-a", card)
+        self.assertIn("67%", card)
+        self.assertIn("2 of the 3 votes", card)
+        self.assertIn("1 other model ranked below it", card)
+        # The leader's row is marked in the table, and the win rate also
+        # draws as a bar so the standings read at a glance.
+        self.assertIn('class="arena-leading"', body)
+        self.assertIn("Leading: model-a", body)
+        self.assertIn('style="width: 67%"', body)
+        self.assertLess(body.index('id="leaders"'), body.index('id="window-all"'))
+
+    def test_the_page_says_when_nobody_leads_yet(self):
+        body = self.client.get(reverse("chooser_rankings")).content.decode()
+
+        card = body[body.index('id="leader-appeal_letter"') : body.index('id="leader-chat_response"')]
+        self.assertIn("No leader yet", card)
+        self.assertIn("still warming up", card)
+        self.assertIn(reverse("chooser"), card)
+        self.assertNotIn('class="arena-leading"', body)
+        chat = body[body.index('id="leader-chat_response"') : body.index('class="fhi-notice')]
+        self.assertIn("No votes have been cast yet", chat)
+
+    def test_the_json_carries_the_leaders(self):
+        with mock.patch.object(public_rankings, "PUBLIC_RANKINGS_MIN_SHOWN", 3):
+            response = self.client.get(reverse("chooser_rankings") + "?format=json")
+
+        data = json.loads(response.content)
+        self.assertEqual(data["leaders"]["appeal_letter"]["model"], "model-a")
+        self.assertEqual(data["windows"][0]["tables"][0]["leader"]["model"], "model-a")
+
+
 class ChooserRankingsTermsTest(TestCase):
     def setUp(self):
         for i in range(7):

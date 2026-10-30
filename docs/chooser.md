@@ -5,6 +5,20 @@ synthetic case, and `/chooser/rankings/` is the public scoreboard built from
 those votes. The votes train the selector that picks drafts in the real
 appeal flow, and rank the model backends against each other.
 
+## Where they are linked from
+
+Both pages are reachable without knowing the URL: the Resources menu
+(`Appeal Arena`, `Which AI Wins: Rankings`) and the footer on every page, the
+`Which AI writes the best appeal?` section on the home page, the
+`Which Model Writes the Best Appeal?` section of About our AI, the Help
+Patients section of How to Help, and the staff dashboard. Both are in the
+static sitemap; the rankings page has a markdown twin and both are listed in
+`llms.txt` (the Arena by its own URL, since it is a React app with nothing
+to read without scripts: `agent_docs.NO_TWIN_URL_NAMES`). The Arena's own
+landing and vote-confirmation screens fetch `/chooser/rankings/?format=json`
+and show the standings (each table's leader and its top three), with a link
+to the full page; without the JSON they show the link alone.
+
 ## What a visitor sees
 
 - **The case.** For an appeal task: the treatment and diagnosis, a fictional
@@ -169,7 +183,12 @@ The public page shows two things, both safe to publish:
   else. Win rate is votes won over votes shown in;
   "caught making things up" is flags over votes shown in. A tie gives each
   tied draft an even share of the vote. Models with fewer
-  than `PUBLIC_RANKINGS_MIN_SHOWN` votes are listed as warming up. Real
+  than `PUBLIC_RANKINGS_MIN_SHOWN` votes are listed as warming up. Each
+  table names its **leader**, the first ranked model (best win rate, ties to
+  the one flagged less), or none while every model is warming up; the page
+  opens with the all-time leaders (`Who is winning`), marks the leading row
+  in each table, and draws every win rate as a bar. The JSON repeats the
+  all-time leaders under `leaders`, keyed by kind. Real
   patients' picks, call logs, chat turns and session counts stay on the
   staff dashboard (`/timbit/...`, `ModelUsageDashboardView`).
 - **Most-appealed conditions and treatments**: aggregates over
