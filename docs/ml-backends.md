@@ -166,13 +166,14 @@ such as `sonar` are not listed in that line.
 
 Perplexity is context-only: it finds citations and never generates an appeal
 by itself. LunaRoute (`https://gw.lunaroute.com/v1`, OpenAI-compatible)
-offers `lunaroute/deepseek-4.1-flash` and `lunaroute/glm-5.3` outside every
-general pool, the way DeepInfra's chat-only models are: no appeal, summary or
-question goes to them, so no patient's text does. The Appeal Arena tries them
-on its synthetic cases (`CHOOSER_FORCE_MODEL`, see
-[chooser.md](chooser.md)); chat would only if `FHI_CHAT_OUTSIDE_MODELS` named
-one. Like every remote model they also need to be on `ENABLED_REMOTE_MODELS`
-when that allow-list is set. When DeepInfra, Perplexity or LunaRoute has no
+offers `lunaroute/deepseek-4.1-flash` and `lunaroute/glm-5.3` for synthetic
+text only (`synthetic_only`): they are registered by name outside every
+general pool, and chat refuses them even if `FHI_CHAT_OUTSIDE_MODELS` names
+one, so no appeal, summary, question or conversation of a person's reaches
+LunaRoute, and the privacy policy need not name it. The Appeal Arena tries
+them on its synthetic cases (`CHOOSER_FORCE_MODEL`, see
+[chooser.md](chooser.md)). Like every remote model they also need to be on
+`ENABLED_REMOTE_MODELS` when that allow-list is set. When DeepInfra, Perplexity or LunaRoute has no
 key, building the router logs a `Skipping model ... No token found` warning.
 That is expected, not a fault.
 

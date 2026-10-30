@@ -278,7 +278,7 @@ class TestInterview:
     generators (mocked) ask, a scenario writer answers as the patient. The
     switch is off in tests (hermetic); each case turns it on."""
 
-    async def _generate(self, specific, *replies, generic=None):
+    async def _generate(self, specific, *replies, generic=None, others=()):
         task = await ChooserTask.objects.acreate(task_type="appeal", status="QUEUED")
         model = _writer(_SCENARIO, *replies)
         specific_mock = AsyncMock(return_value=specific)
@@ -294,7 +294,7 @@ class TestInterview:
         ), patch.object(
             MLAppealQuestionsHelper, "generate_generic_questions", generic_mock
         ), _no_live_search(), override_settings(CHOOSER_SIMULATED_QA=True):
-            router.generate_text_backends.return_value = [model]
+            router.generate_text_backends.return_value = [model, *others]
             await _generate_appeal_candidates(task)
         await task.arefresh_from_db()
         return task, model, specific_mock, generic_mock
@@ -320,6 +320,27 @@ class TestInterview:
         draft_prompt = model._infer_no_context.await_args_list[2].kwargs["prompt"]
         assert "A: About eight months." in draft_prompt
         assert await ChooserCandidate.objects.filter(task=task).acount() >= 1
+
+    async def test_every_backend_drafts_from_the_answers(self):
+        """Each backend asked for a draft is given the patient's answers, not
+        only the one that also wrote the case."""
+        other = MagicMock()
+        other.name = "model-b"
+        other.external = True
+        other._infer_no_context = AsyncMock(return_value=_LETTER)
+
+        task, model, _, _ = await self._generate(_QUESTIONS, _ANSWERS, others=[other])
+
+        for backend in (model, other):
+            drafts = [
+                call.kwargs["prompt"]
+                for call in backend._infer_no_context.await_args_list
+                if call.kwargs["prompt"].startswith("Write an appeal letter")
+            ]
+            assert drafts, backend.name
+            assert all("A: About eight months." in p for p in drafts), backend.name
+        names = [c.model_name async for c in ChooserCandidate.objects.filter(task=task)]
+        assert sorted(names) == ["model-a", "model-b"]
 
     async def test_generic_questions_stand_in_when_no_specific_ones_come_back(self):
         task, _, _, generic = await self._generate(None, _ANSWERS, generic=_QUESTIONS)

@@ -13,16 +13,20 @@ message is sent."""
 import os
 import pathlib
 import re
+from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
+from fighthealthinsurance.ml import ml_models
 from fighthealthinsurance.ml.ml_models import (
+    LunaRoute,
     ModelDescription,
     RemoteFullOpenLike,
     RemoteModel,
     candidate_model_backends,
 )
+from fighthealthinsurance.ml.ml_router import MLRouter
 
 TEMPLATES = (
     pathlib.Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "templates"
@@ -116,18 +120,21 @@ SCRUBBED_IN_THE_BROWSER = {
 def _external_chat_backends(
     backends: list[type[RemoteModel]] = candidate_model_backends,
 ) -> set[str]:
-    """Class names of the backends that declare themselves external and not
-    context-only, the ones a chat can send a conversation to. Each class is
-    judged by what it declares, not by the models it lists, because a backend
-    lists nothing until its key is set and the test environment sets none.
-    ``external`` and ``context_only`` are constant properties, so a bare
-    instance answers without credentials."""
+    """Class names of the backends that declare themselves external, not
+    context-only and not synthetic-only, the ones a chat can send a
+    conversation to. Each class is judged by what it declares, not by the
+    models it lists, because a backend lists nothing until its key is set and
+    the test environment sets none. ``external``, ``context_only`` and
+    ``synthetic_only`` are constant properties, so a bare instance answers
+    without credentials. A synthetic-only backend (the arena's) is left out
+    because the router refuses it to every chat path; ChatConsentCopyTest
+    checks that refusal, so the exemption cannot outlive it."""
     names = set()
     for backend_cls in backends:
         if backend_cls.__name__ in SHARED_BACKEND_BASES:
             continue
         bare = object.__new__(backend_cls)
-        if bare.external and not bare.context_only:
+        if bare.external and not bare.context_only and not bare.synthetic_only:
             names.add(backend_cls.__name__)
     return names
 
@@ -202,6 +209,42 @@ class ChatConsentCopyTest(TestCase):
         self._assert_every_external_chat_backend_is_named(
             [*candidate_model_backends, UnconfiguredInternalBackend]
         )
+
+    def test_a_synthetic_only_backend_reaches_no_chat_path(self):
+        """LunaRoute is exempt from naming because no conversation can reach
+        it: configured, and named on every chat roster setting, chat's
+        outside models, the side-by-side model and the general pools still
+        leave it out."""
+        names = list(LunaRoute.ARENA_MODELS)
+        with patch.object(ml_models, "get_env_variable", return_value="lr_test"):
+            router = MLRouter()
+        # Registered, so the arena can use it by name.
+        self.assertLessEqual(set(names), set(router.chat_outside_models_by_name))
+        with override_settings(
+            FHI_CHAT_OUTSIDE_MODELS=names, FHI_CHAT_SIDE_BY_SIDE_MODEL=names[0]
+        ):
+            self.assertEqual(router.chat_outside_models(), [])
+            self.assertEqual(router.chat_outside_models(names, fail_open=True), [])
+            self.assertIsNone(router.chat_side_by_side_model())
+        pooled = {str(m) for m in router.all_models_by_cost}
+        self.assertFalse(any("lunaroute" in p.lower() for p in pooled), pooled)
+
+    def test_only_a_declared_synthetic_only_backend_is_exempt(self):
+        class SyntheticOutsideBackend(RemoteFullOpenLike):
+            @property
+            def synthetic_only(self):
+                return True
+
+        class UnnamedOutsideBackend(RemoteFullOpenLike):
+            pass
+
+        self._assert_every_external_chat_backend_is_named(
+            [*candidate_model_backends, SyntheticOutsideBackend]
+        )
+        with self.assertRaises(AssertionError):
+            self._assert_every_external_chat_backend_is_named(
+                [*candidate_model_backends, UnnamedOutsideBackend]
+            )
 
     def test_skipped_bases_are_bases_that_register_no_models(self):
         by_name = {cls.__name__: cls for cls in candidate_model_backends}

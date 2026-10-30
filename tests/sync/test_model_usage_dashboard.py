@@ -557,11 +557,11 @@ class ModelUsageDashboardSemanticsTest(ChooserStatsHelperMixin, TestCase):
         )
         self._vote(task, cands[0], cands, session="sess2")
 
-        rows = self._rows()
-        # Shown to two places, so the total is rounded, as the page does.
-        self.assertEqual(round(sum(r["chosen"] for r in rows)), 2)
+        # Each model's share, shown to two places: a whole vote plus a third
+        # for the model that also won outright, a third for each of the others.
         self.assertEqual(
-            {r["model_name"]: r["chosen"] for r in rows}["model-0"], 1.33
+            {r["model_name"]: r["chosen"] for r in self._rows()},
+            {"model-0": 1.33, "model-1": 0.33, "model-2": 0.33},
         )
 
     def test_a_vote_from_before_ties_counts_for_its_pick(self):

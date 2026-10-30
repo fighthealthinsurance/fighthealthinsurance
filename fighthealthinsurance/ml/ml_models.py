@@ -2336,6 +2336,17 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
         """
         return False
 
+    @property
+    def synthetic_only(self):
+        """Whether this model may only ever see synthetic, model-written text
+        (the Appeal Arena's cases), never a person's. The router serves such
+        a model to nothing that carries a person's words: it puts none in a
+        general pool (one a backend lists in ``models()`` is skipped), and
+        MLRouter.chat_outside_models refuses it even when the roster names
+        it. So its company need not be in the privacy policy, and the
+        consent guard test exempts it on this property."""
+        return False
+
 
 @dataclass(kw_only=True)
 class ModelDescription:
@@ -5716,13 +5727,14 @@ class LunaRoute(RemoteFullOpenLike):
     """LunaRoute's inference gateway, which speaks the OpenAI Chat
     Completions shape at ``gw.lunaroute.com/v1`` (docs.lunaroute.com).
 
-    Its models are offered outside every general pool (``chat_models``), so
-    no appeal, summary or question is ever routed to them and no patient's
-    text reaches them, unless FHI_CHAT_OUTSIDE_MODELS names one for chat.
-    The Appeal Arena tries them on its synthetic cases by name
-    (CHOOSER_FORCE_MODEL). Moving one into ``models()`` would make it a
-    backup for real appeals; that is a decision about where patient data
-    goes, not a routing tweak.
+    Synthetic-only: its models are registered by name outside every general
+    pool (``chat_models``, which also gives them the deploy health check and
+    a status page row), and chat refuses them even if the roster names one
+    (``synthetic_only``), so no appeal, summary, question or conversation of
+    a person's reaches them. The Appeal Arena tries them on its synthetic
+    cases by name (CHOOSER_FORCE_MODEL). Serving them anything of a person's
+    would make LunaRoute a provider the privacy policy has to name; that is
+    a decision about where people's data goes, not a routing tweak.
     """
 
     PROVIDER_LABEL: ClassVar[str] = "LunaRoute"
@@ -5754,6 +5766,10 @@ class LunaRoute(RemoteFullOpenLike):
 
     @property
     def supports_system(self):
+        return True
+
+    @property
+    def synthetic_only(self):
         return True
 
     def quality(self) -> int:

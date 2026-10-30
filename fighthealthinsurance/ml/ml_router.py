@@ -121,6 +121,15 @@ class MLRouter(object):
                         continue
                     if m.model is None:
                         m.model = backend(model=m.internal_name)
+                    # A synthetic-only model (ml_models.RemoteModelLike.
+                    # synthetic_only) never joins a general pool: those carry
+                    # people's appeals, summaries and questions.
+                    if getattr(m.model, "synthetic_only", False) is True:
+                        logger.warning(
+                            f"MLRouter: {m.name} is synthetic-only; keeping it "
+                            "out of the general pools"
+                        )
+                        continue
                     # Honor the ENABLED_REMOTE_MODELS allow-list (if set): only
                     # register a *remote* generation model whose friendly name
                     # (or internal name) is listed. Always-enabled regardless of
@@ -277,7 +286,13 @@ class MLRouter(object):
                     (m for m in self.models_by_name.get(name, []) if m.external),
                     None,
                 )
-            if model is not None and model not in found:
+            # A synthetic-only model (the arena's) never gets a person's
+            # conversation, whatever the roster names.
+            if (
+                model is not None
+                and model not in found
+                and getattr(model, "synthetic_only", False) is not True
+            ):
                 found.append(model)
         available = [m for m in found if self._selectable(m)]
         if found and not available:
