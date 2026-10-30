@@ -3,8 +3,11 @@ from them. No database, no models."""
 
 from fighthealthinsurance.chooser_tasks import (
     CHOOSER_MAX_FACTS,
+    _answers_from_response,
     _build_appeal_prompt,
+    _denial_letter,
     _facts_from_response,
+    _interview_prompt,
     _scenario_prompt,
 )
 from fighthealthinsurance.condition_rankings import SeedPair
@@ -102,6 +105,76 @@ def test_appeal_prompt_without_evidence_says_to_cite_nothing():
     prompt = _build_appeal_prompt({"procedure": "MRI", "diagnosis": "Lower back pain"})
     assert "Case facts" not in prompt
     assert "there is none on file, so cite no studies" in prompt
+
+
+def test_appeal_prompt_gives_the_patients_answers_and_the_article_summaries():
+    prompt = _build_appeal_prompt(
+        {
+            "procedure": "MRI",
+            "diagnosis": "Lower back pain",
+            "qa_pairs": [
+                {"question": "Has the patient tried physical therapy?", "answer": "Yes, for eight weeks."},
+                {"question": "Unanswered?", "answer": ""},
+            ],
+            "evidence": [
+                {"pmid": "123", "title": "MRI for low back pain", "summary": "Imaging changed care in 30%."},
+            ],
+        }
+    )
+    assert "Q: Has the patient tried physical therapy?\nA: Yes, for eight weeks." in prompt
+    assert "Unanswered?" not in prompt
+    assert "- MRI for low back pain (PMID 123)\n  Summary: Imaging changed care in 30%." in prompt
+    assert "Use only the case facts and the patient's answers above" in prompt
+    assert "claim no more for a study than its summary says" in prompt
+
+
+def test_appeal_prompt_without_answers_relies_on_the_facts_alone():
+    prompt = _build_appeal_prompt({"procedure": "MRI", "facts": ["Patient in their 40s"]})
+    assert "patient's answers" not in prompt
+    assert "Use only the case facts above" in prompt
+
+
+def test_the_denial_letter_for_the_question_generators_names_the_case():
+    letter = _denial_letter(
+        {
+            "procedure": "MRI",
+            "diagnosis": "Lower back pain",
+            "insurance_company": "Fictional Mutual",
+            "denial_text_preview": "Not medically necessary.",
+        }
+    )
+    assert letter == (
+        "Fictional Mutual denied coverage of MRI for Lower back pain. "
+        "Reason given: Not medically necessary."
+    )
+
+
+def test_interview_prompt_numbers_the_questions_and_the_answer_lines():
+    prompt = _interview_prompt(
+        {"procedure": "MRI", "facts": ["Patient in their 40s"]},
+        ["Has the patient tried physical therapy?", "How long have symptoms lasted?"],
+    )
+    assert "- Patient in their 40s" in prompt
+    assert "Q2: How long have symptoms lasted?" in prompt
+    assert "A2: [the patient's answer to Q2]" in prompt
+    assert "A3:" not in prompt
+
+
+def test_answers_are_read_by_number_in_the_questions_order():
+    questions = ["Tried physical therapy?", "Any imaging before?", "Still working?"]
+    reply = (
+        "**A2:** No imaging so far.\n"
+        "A1: \"Yes, eight weeks of it, with no change.\"\n"
+        "A3: [the patient's answer to Q3]\n"
+    )
+    assert _answers_from_response(reply, questions) == [
+        {"question": "Tried physical therapy?", "answer": "Yes, eight weeks of it, with no change."},
+        {"question": "Any imaging before?", "answer": "No imaging so far."},
+    ]
+
+
+def test_a_reply_in_another_shape_gives_no_answers():
+    assert _answers_from_response("I'd rather not say.", ["Tried physical therapy?"]) == []
 
 
 def test_facts_keep_their_leading_numbers():

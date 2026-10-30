@@ -159,7 +159,8 @@ branch with a literal class so the contrast gate can measure every tag.
       <td class="num">{{ r.shadow_promises|floatformat:2 }}</td>
       <td class="num">{{ r.shadow_composite|floatformat:2 }}</td>
       {% elif kind == "votes" %}
-      <td class="num">{{ r.chosen }}</td>
+      {# A tie splits its vote: a share shows as e.g. 2.5. #}
+      <td class="num">{{ r.chosen|floatformat:"-1" }}</td>
       <td class="num">{{ r.presented }}</td>
       {% if r.win_rate is None %}
       {# No presented count => no denominator; never show this as 0.0%. #}

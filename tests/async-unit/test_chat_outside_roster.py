@@ -89,12 +89,41 @@ class ChatOnlyModelsTest(SimpleTestCase):
         with patch.object(ml_models, "get_env_variable", return_value="test-key"):
             router = MLRouter()
         names = set(router.chat_outside_models_by_name)
-        self.assertEqual(names, set(ml_models.DeepInfra.CHAT_MODELS))
+        self.assertEqual(
+            names,
+            set(ml_models.DeepInfra.CHAT_MODELS)
+            | set(ml_models.LunaRoute.ARENA_MODELS),
+        )
         general = {getattr(m, "model", None) for m in router.all_models_by_cost} | set(
             router.models_by_name
         )
         for name in ml_models.DeepInfra.CHAT_MODELS:
             self.assertNotIn(name, general)
+
+    def test_lunaroute_models_reach_no_general_pool(self):
+        """LunaRoute is for the arena's synthetic cases: its models must
+        never be a backup for a real appeal, summary or question."""
+        with patch.object(ml_models, "get_env_variable", return_value="lr_test"):
+            router = MLRouter()
+        general = {str(m) for m in router.all_models_by_cost} | set(
+            router.models_by_name
+        )
+        for name, model_id in ml_models.LunaRoute.ARENA_MODELS.items():
+            model = router.chat_outside_models_by_name[name]
+            self.assertEqual(
+                (model.api_base, model.model, model.name),
+                ("https://gw.lunaroute.com/v1", model_id, name),
+            )
+            self.assertTrue(model.external)
+            self.assertNotIn(name, general)
+            self.assertFalse(any(model_id in g for g in general), general)
+
+    def test_lunaroute_without_its_key_registers_nothing(self):
+        env = {"DEEPINFRA_API": "test-key"}
+        with patch.object(ml_models, "get_env_variable", side_effect=env.get):
+            router = MLRouter()
+        for name in ml_models.LunaRoute.ARENA_MODELS:
+            self.assertNotIn(name, router.chat_outside_models_by_name)
 
     def test_every_chat_model_is_length_capped_and_thinking_is_never_disabled(self):
         with patch.object(ml_models, "get_env_variable", return_value="test-key"):

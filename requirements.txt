@@ -32,7 +32,7 @@ drf-spectacular
 english-words>=2.0.0
 flake8-django
 geoip2fast==1.2.2  # IP -> US state guess + ASN for chat; needs FHI_GEOIP_CITY_DB (see README "GeoIP")
-git+https://github.com/jazzband/django-cookie-consent.git#egg=django-cookie-consent
+git+https://github.com/jazzband/django-cookie-consent.git@ded2a6d4c070f34faac568b78acb2ba4bc8e7ac2#egg=django-cookie-consent
 git+https://github.com/fighthealthinsurance/django-encrypted-model-fields.git@d96965e40e8b40da72fbc78cb968258a4d1bcdf1
 git+https://github.com/fighthealthinsurance/llm-result-utils.git@f24e0bf7fa485d682fe3e42df831623c55844462
 icd10-cm

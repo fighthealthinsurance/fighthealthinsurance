@@ -28,6 +28,7 @@ import { getCSRFToken } from "./shared";
 // visitor is the referee. Two things make a vote worth collecting here:
 // the drafts are blind (the API sends no model names), and a draft that
 // makes things up can be flagged, so a letter cannot win on invented facts.
+// Drafts that are equally good can be called a tie, which splits the vote.
 
 // Types for Chooser API responses. Candidates carry no model name, row id
 // or stored order on purpose: `id` is an opaque token the vote endpoint
@@ -42,6 +43,14 @@ interface EvidenceItem {
   pmid?: string;
   title?: string;
   url?: string;
+  summary?: string;
+}
+
+// The patient's answers to the questions the app asked them; the drafts
+// were given these as facts about the patient.
+interface QAPair {
+  question: string;
+  answer: string;
 }
 
 interface ChooserTaskContext {
@@ -51,6 +60,7 @@ interface ChooserTaskContext {
   insurance_company?: string;
   facts?: string[];
   evidence?: EvidenceItem[];
+  qa_pairs?: QAPair[];
   seeded?: boolean;
   prompt?: string;
   history?: Array<{ role: string; content: string }>;
@@ -70,6 +80,10 @@ interface ChooserState {
   task: ChooserTask | null;
   selectedCandidate: ChooserCandidate | null;
   flaggedIds: string[];
+  // Tie mode: the referee marks two or more drafts as equally best instead
+  // of picking one.
+  tieMode: boolean;
+  tiedIds: string[];
   error: string | null;
   taskType: TaskType | null;
 }
@@ -128,7 +142,7 @@ const HouseRules: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
           <strong>House rules:</strong> pick the draft you would actually send. A draft
           that makes something up (a study, a law, a test result, a date, a history
           that is not in the case) is committing a foul: flag it, and never pick it.
-          Not sure? Skip the round.
+          Too close to call? Call a tie. Not sure? Skip the round.
         </Text>
       </Paper>
     );
@@ -145,9 +159,14 @@ const HouseRules: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
         </List.Item>
         <List.Item>
           <strong>Making things up is a foul.</strong> Each case lists what is known
-          about the patient and the evidence on file. A draft that invents a study,
+          about the patient, what the patient answered when the app asked, and the
+          evidence on file. A draft that invents a study,
           a law, a test result, a date or a history that is not there should never
           win, however good it sounds. Flag it with 🚩 and pick another.
+        </List.Item>
+        <List.Item>
+          <strong>Too close to call? Call a tie.</strong> If two or more drafts are
+          equally good, mark them all; the vote is split between them.
         </List.Item>
         <List.Item>
           <strong>Not sure? Skip it.</strong> A skipped round beats a coin flip.
@@ -171,10 +190,50 @@ const CaseRow: React.FC<{ label: string; value?: string }> = ({ label, value }) 
   );
 };
 
+// One article on file: its title (linked), its PMID, and the summary the
+// drafts were given, clamped to a few lines until opened.
+const EvidenceRow: React.FC<{ item: EvidenceItem }> = ({ item }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <List.Item>
+      {item.url ? (
+        <Anchor href={item.url} target="_blank" rel="noopener noreferrer" size="sm">
+          {item.title}
+        </Anchor>
+      ) : (
+        item.title
+      )}
+      {item.pmid ? (
+        <Text span size="xs" c="dimmed">
+          {" "}
+          (PMID {item.pmid})
+        </Text>
+      ) : null}
+      {item.summary ? (
+        <Box>
+          <Text size="xs" c="dimmed" lineClamp={open ? undefined : 3}>
+            {item.summary}
+          </Text>
+          <Button
+            size="compact-xs"
+            variant="subtle"
+            color="gray"
+            px={0}
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? "Less" : "What it found"}
+          </Button>
+        </Box>
+      ) : null}
+    </List.Item>
+  );
+};
+
 // The denial the drafts answer: the pair, the insurer's reason, what is known
-// about the patient, and the evidence a draft may cite.
+// about the patient, what they told the app, and the evidence a draft may cite.
 const AppealCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
   const facts = context.facts ?? [];
+  const qaPairs = (context.qa_pairs ?? []).filter((p) => p.question && p.answer);
   const evidence = (context.evidence ?? []).filter((e) => e.title);
   return (
     <Stack gap="md">
@@ -200,6 +259,29 @@ const AppealCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
           </Text>
         )}
       </Box>
+      {qaPairs.length > 0 && (
+        <Box>
+          <Text size="sm" fw={600} mb={4}>
+            What the patient told us
+          </Text>
+          <Text size="xs" c="dimmed" mb={6}>
+            The questions the app asked this (made-up) patient, and their answers. The
+            drafts had these too, and may rely on them like the facts above.
+          </Text>
+          <Stack gap={6}>
+            {qaPairs.map((pair, idx) => (
+              <Box key={`qa-${idx}`}>
+                <Text size="sm" fw={500}>
+                  Q: {pair.question}
+                </Text>
+                <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                  A: {pair.answer}
+                </Text>
+              </Box>
+            ))}
+          </Stack>
+        </Box>
+      )}
       <Box>
         <Text size="sm" fw={600} mb={4}>
           Evidence on file
@@ -207,21 +289,7 @@ const AppealCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
         {evidence.length > 0 ? (
           <List size="sm" spacing={4}>
             {evidence.map((item, idx) => (
-              <List.Item key={`evidence-${item.pmid ?? idx}`}>
-                {item.url ? (
-                  <Anchor href={item.url} target="_blank" rel="noopener noreferrer" size="sm">
-                    {item.title}
-                  </Anchor>
-                ) : (
-                  item.title
-                )}
-                {item.pmid ? (
-                  <Text span size="xs" c="dimmed">
-                    {" "}
-                    (PMID {item.pmid})
-                  </Text>
-                ) : null}
-              </List.Item>
+              <EvidenceRow key={`evidence-${item.pmid ?? idx}`} item={item} />
             ))}
           </List>
         ) : (
@@ -231,7 +299,8 @@ const AppealCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
           </Text>
         )}
         <Text size="xs" c="dimmed" mt={4}>
-          A draft may cite only what is listed here. Anything else is a foul.
+          A draft may cite only what is listed here, and claim no more for a study than
+          it found. Anything else is a foul.
         </Text>
       </Box>
     </Stack>
@@ -294,10 +363,11 @@ const CandidateCard: React.FC<{
   candidate: ChooserCandidate;
   label: string;
   isSelected: boolean;
+  tieMode: boolean;
   isFlagged: boolean;
   onSelect: () => void;
   onToggleFlag: () => void;
-}> = ({ candidate, label, isSelected, isFlagged, onSelect, onToggleFlag }) => {
+}> = ({ candidate, label, isSelected, tieMode, isFlagged, onSelect, onToggleFlag }) => {
   const [expanded, setExpanded] = useState(false);
   const border = isSelected
     ? `3px solid ${THEME.colors.primary}`
@@ -313,7 +383,7 @@ const CandidateCard: React.FC<{
       role="button"
       tabIndex={0}
       aria-pressed={isSelected}
-      aria-label={`Pick draft ${label}`}
+      aria-label={tieMode ? `Mark draft ${label} as tied for best` : `Pick draft ${label}`}
       onClick={() => {
         // Highlighting a passage to re-read it ends in a click on the card;
         // that is not a pick.
@@ -344,7 +414,7 @@ const CandidateCard: React.FC<{
           </Text>
           {isSelected && (
             <Badge color="green" variant="light">
-              Your pick
+              {tieMode ? "Tied for best" : "Your pick"}
             </Badge>
           )}
           {isFlagged && (
@@ -402,6 +472,8 @@ const ChooserInterface: React.FC = () => {
     task: null,
     selectedCandidate: null,
     flaggedIds: [],
+    tieMode: false,
+    tiedIds: [],
     error: null,
     taskType: null,
   });
@@ -409,6 +481,7 @@ const ChooserInterface: React.FC = () => {
   const [hasAcceptedTos, setHasAcceptedTos] = useState(false);
   const [scoreboard, setScoreboard] = useState<Scoreboard>({ rounds: 0, fouls: 0 });
   const [lastRoundFouls, setLastRoundFouls] = useState(0);
+  const [lastRoundTie, setLastRoundTie] = useState(false);
 
   useEffect(() => {
     setScoreboard(readScoreboard());
@@ -440,6 +513,8 @@ const ChooserInterface: React.FC = () => {
         task,
         selectedCandidate: null,
         flaggedIds: [],
+        tieMode: false,
+        tiedIds: [],
       }));
     } catch (error) {
       setState((prev) => ({
@@ -451,7 +526,13 @@ const ChooserInterface: React.FC = () => {
   }, []);
 
   const submitVote = useCallback(async () => {
-    if (!state.task || !state.selectedCandidate) return;
+    if (!state.task) return;
+    // A tie goes out in display order, its first draft standing as the pick.
+    const tied = state.tieMode
+      ? state.task.candidates.filter((c) => state.tiedIds.includes(c.id)).map((c) => c.id)
+      : [];
+    const chosenId = state.tieMode ? tied[0] : state.selectedCandidate?.id;
+    if (!chosenId || (state.tieMode && tied.length < 2)) return;
     const fouls = state.flaggedIds.length;
 
     setState((prev) => ({ ...prev, mode: "loading" }));
@@ -466,9 +547,10 @@ const ChooserInterface: React.FC = () => {
         credentials: "include",
         body: JSON.stringify({
           task_id: state.task.task_id,
-          chosen_candidate_id: state.selectedCandidate.id,
+          chosen_candidate_id: chosenId,
           presented_candidate_ids: state.task.candidates.map((c) => c.id),
           flagged_candidate_ids: state.flaggedIds,
+          tied_candidate_ids: tied,
         }),
       });
 
@@ -481,6 +563,7 @@ const ChooserInterface: React.FC = () => {
       writeScoreboard(next);
       setScoreboard(next);
       setLastRoundFouls(fouls);
+      setLastRoundTie(tied.length > 0);
       setState((prev) => ({ ...prev, mode: "confirmation" }));
     } catch (error) {
       setState((prev) => ({
@@ -489,15 +572,53 @@ const ChooserInterface: React.FC = () => {
         error: error instanceof Error ? error.message : "Failed to submit vote",
       }));
     }
-  }, [state.task, state.selectedCandidate, state.flaggedIds, scoreboard]);
+  }, [
+    state.task,
+    state.selectedCandidate,
+    state.flaggedIds,
+    state.tieMode,
+    state.tiedIds,
+    scoreboard,
+  ]);
 
   const handleSelectCandidate = useCallback((candidate: ChooserCandidate) => {
-    // A flagged draft cannot be picked: the voter clears the flag first.
-    // Silently dropping the flag on a click (a stray one, say, after
+    // A flagged draft cannot be picked (or tied): the voter clears the flag
+    // first. Silently dropping the flag on a click (a stray one, say, after
     // highlighting text) would turn a foul into the winner.
-    setState((prev) =>
-      prev.flaggedIds.includes(candidate.id) ? prev : { ...prev, selectedCandidate: candidate },
-    );
+    setState((prev) => {
+      if (prev.flaggedIds.includes(candidate.id)) return prev;
+      if (prev.tieMode) {
+        // In a tie, a click adds the draft to the tie or takes it out.
+        return {
+          ...prev,
+          tiedIds: prev.tiedIds.includes(candidate.id)
+            ? prev.tiedIds.filter((id) => id !== candidate.id)
+            : [...prev.tiedIds, candidate.id],
+        };
+      }
+      return { ...prev, selectedCandidate: candidate };
+    });
+  }, []);
+
+  const handleToggleTieMode = useCallback(() => {
+    setState((prev) => {
+      if (!prev.tieMode) {
+        // The current pick starts the tie.
+        return {
+          ...prev,
+          tieMode: true,
+          tiedIds: prev.selectedCandidate ? [prev.selectedCandidate.id] : [],
+        };
+      }
+      // Back to one pick: the first tied draft on the page, if any.
+      const first = prev.task?.candidates.find((c) => prev.tiedIds.includes(c.id)) ?? null;
+      return {
+        ...prev,
+        tieMode: false,
+        tiedIds: [],
+        selectedCandidate: first ?? prev.selectedCandidate,
+      };
+    });
   }, []);
 
   const handleToggleFlag = useCallback((candidate: ChooserCandidate) => {
@@ -508,11 +629,12 @@ const ChooserInterface: React.FC = () => {
         flaggedIds: flagged
           ? prev.flaggedIds.filter((id) => id !== candidate.id)
           : [...prev.flaggedIds, candidate.id],
-        // Flagging the current pick un-picks it.
+        // Flagging the current pick un-picks it, and takes it out of a tie.
         selectedCandidate:
           !flagged && prev.selectedCandidate?.id === candidate.id
             ? null
             : prev.selectedCandidate,
+        tiedIds: flagged ? prev.tiedIds : prev.tiedIds.filter((id) => id !== candidate.id),
       };
     });
   }, []);
@@ -558,6 +680,8 @@ const ChooserInterface: React.FC = () => {
       task: null,
       selectedCandidate: null,
       flaggedIds: [],
+      tieMode: false,
+      tiedIds: [],
       error: null,
       taskType: null,
     });
@@ -571,7 +695,11 @@ const ChooserInterface: React.FC = () => {
     }
   }, [state.taskType, fetchNextTask, resetToSelection]);
 
-  // Keyboard: A to F pick a draft, Enter casts the vote.
+  // The vote can be cast: one pick, or a tie of two or more.
+  const canVote = state.tieMode ? state.tiedIds.length >= 2 : Boolean(state.selectedCandidate);
+
+  // Keyboard: A to F pick a draft (or, in a tie, add or remove it), Enter
+  // casts the vote.
   useEffect(() => {
     // Not on the single-draft screen either: it offers no vote.
     if (state.mode !== "voting" || !state.task || state.task.candidates.length < 2) return;
@@ -586,13 +714,13 @@ const ChooserInterface: React.FC = () => {
       const index = LABELS.indexOf(event.key.toUpperCase());
       if (index >= 0 && index < task.candidates.length) {
         handleSelectCandidate(task.candidates[index]);
-      } else if (event.key === "Enter" && state.selectedCandidate) {
+      } else if (event.key === "Enter" && canVote) {
         submitVote();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [state.mode, state.task, state.selectedCandidate, handleSelectCandidate, submitVote]);
+  }, [state.mode, state.task, canVote, handleSelectCandidate, submitVote]);
 
   const primaryButton = (enabled: boolean) => ({
     background: enabled ? THEME.buttonSharedStyles.background : "#cccccc",
@@ -727,7 +855,7 @@ const ChooserInterface: React.FC = () => {
             ✓ Vote counted!
           </Title>
           <Text size="lg" ta="center">
-            Round {scoreboard.rounds} done
+            Round {scoreboard.rounds} {lastRoundTie ? "called a tie" : "done"}
             {lastRoundFouls > 0 ? ` with ${plural(lastRoundFouls, "foul")} called` : ""}.
             Thank you for refereeing.
           </Text>
@@ -790,9 +918,21 @@ const ChooserInterface: React.FC = () => {
       );
     }
 
-    const selectedLabel = state.selectedCandidate
-      ? LABELS[state.task.candidates.findIndex((c) => c.id === state.selectedCandidate?.id)]
-      : null;
+    const labelOf = (id: string) =>
+      LABELS[state.task!.candidates.findIndex((c) => c.id === id)] ?? "?";
+    const selectedLabel = state.selectedCandidate ? labelOf(state.selectedCandidate.id) : null;
+    const tiedLabels = state.task.candidates
+      .filter((c) => state.tiedIds.includes(c.id))
+      .map((c) => labelOf(c.id));
+    let castLabel: string;
+    if (state.tieMode) {
+      castLabel =
+        tiedLabels.length >= 2
+          ? `Cast a tie: Drafts ${tiedLabels.join(" & ")}`
+          : "Mark two or more drafts as tied";
+    } else {
+      castLabel = selectedLabel ? `Cast vote for Draft ${selectedLabel}` : "Pick a draft to vote";
+    }
 
     return (
       <Container size="xl" py="xl">
@@ -831,7 +971,12 @@ const ChooserInterface: React.FC = () => {
                 key={candidate.id}
                 candidate={candidate}
                 label={LABELS[index] || String(index + 1)}
-                isSelected={state.selectedCandidate?.id === candidate.id}
+                isSelected={
+                  state.tieMode
+                    ? state.tiedIds.includes(candidate.id)
+                    : state.selectedCandidate?.id === candidate.id
+                }
+                tieMode={state.tieMode}
                 isFlagged={state.flaggedIds.includes(candidate.id)}
                 onSelect={() => handleSelectCandidate(candidate)}
                 onToggleFlag={() => handleToggleFlag(candidate)}
@@ -844,11 +989,21 @@ const ChooserInterface: React.FC = () => {
             <Button
               size="lg"
               radius="md"
-              disabled={!state.selectedCandidate}
+              disabled={!canVote}
               onClick={submitVote}
-              style={primaryButton(Boolean(state.selectedCandidate))}
+              style={primaryButton(canVote)}
             >
-              {selectedLabel ? `Cast vote for Draft ${selectedLabel}` : "Pick a draft to vote"}
+              {castLabel}
+            </Button>
+            <Button
+              size="lg"
+              radius="md"
+              variant={state.tieMode ? "filled" : "light"}
+              color="grape"
+              aria-pressed={state.tieMode}
+              onClick={handleToggleTieMode}
+            >
+              {state.tieMode ? "No tie: pick one" : "It's a tie"}
             </Button>
             <Button size="lg" radius="md" variant="light" onClick={skipTask} loading={isSkipping}>
               Skip this round
@@ -859,9 +1014,9 @@ const ChooserInterface: React.FC = () => {
           </Group>
 
           <Text size="sm" c="dimmed" ta="center">
-            Click a draft (or press its letter) to pick it, flag any that make things up, then
-            cast your vote. A flagged draft cannot be picked until you clear the flag. Skip if
-            you are unsure.
+            {state.tieMode
+              ? "Click each draft that is tied for best (or press its letters), then cast the tie. The vote is split between them. A flagged draft cannot be part of a tie."
+              : "Click a draft (or press its letter) to pick it, flag any that make things up, then cast your vote. A flagged draft cannot be picked until you clear the flag. Two or more equally good? Call it a tie. Skip if you are unsure."}
           </Text>
         </Stack>
       </Container>
