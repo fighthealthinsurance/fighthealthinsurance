@@ -232,6 +232,38 @@ class RegulatorEscalationReasonsTest(TestCase):
         )
         self.assertTrue(regulator_escalation_reasons(denial))
 
+    def test_a_rights_notice_about_a_possible_upholding_is_not_a_reason(self):
+        """A first denial's rights notice uses the same words about what
+        could happen next (the triage fixture's letter is one): that is
+        not an appeal already decided."""
+        denial = _FakeDenial(
+            state="",
+            denial_text=(
+                "The MRI was denied as not medically necessary. You have the "
+                "right to appeal. If our decision is upheld you may request "
+                "an external review by 10/15/2026. Once you have exhausted "
+                "your internal appeals, you will receive a final adverse "
+                "determination letter."
+            ),
+        )
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_a_decision_upheld_in_the_letters_own_voice_is_a_reason(self):
+        denial = _FakeDenial(
+            state="", denial_text="We reviewed your appeal. Our decision is upheld."
+        )
+        self.assertTrue(regulator_escalation_reasons(denial))
+
+    def test_a_conditional_sentence_does_not_shield_the_next_one(self):
+        denial = _FakeDenial(
+            state="",
+            denial_text=(
+                "If you disagree you may appeal. We have upheld our original "
+                "decision."
+            ),
+        )
+        self.assertTrue(regulator_escalation_reasons(denial))
+
     def test_the_external_review_rights_notice_alone_is_not_a_reason(self):
         """Every first-level denial carries this notice, so it says nothing
         about where the person is in the process."""

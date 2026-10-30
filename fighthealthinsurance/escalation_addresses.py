@@ -235,8 +235,10 @@ def get_recipients_for_denial(denial: Any) -> List[EscalationRecipient]:
 # say nothing about where this person is in the process.
 _APPEAL_ALREADY_DECIDED_RE = re.compile(
     r"("
-    r"\buph[eo]ld\b"
-    r"|\bour (original|initial|previous|prior) (decision|determination|denial)\b"
+    r"\b(we|has|have|is|are|was|were|been)\s+(also\s+)?uph[eo]ld\b"
+    r"|\buph[eo]ld\s+(our|the|its|this|that)\b"
+    r"|\bour (original|initial|previous|prior|earlier) "
+    r"(decision|determination|denial)\b"
     r"|\bfinal (adverse|internal)? ?(benefit )?(determination|decision)\b"
     r"|\bexhausted\b.{0,40}\bappeal"
     r"|\b(second|2nd|level[- ](2|two|ii))[- ]level\b"
@@ -244,6 +246,33 @@ _APPEAL_ALREADY_DECIDED_RE = re.compile(
     r")",
     re.IGNORECASE | re.UNICODE | re.DOTALL,
 )
+# The same words in a clause about what could happen, not what did: the
+# rights notice on a first denial says "If our decision is upheld you may
+# request an external review", and "once you have exhausted your internal
+# appeals". Any of these in the clause before the match disqualifies it.
+_CONDITIONAL_CLAUSE_RE = re.compile(
+    r"\b(if|should|unless|in the event|may|might|would|will|could"
+    r"|once you|when you|after you|until you)\b",
+    re.IGNORECASE,
+)
+_CLAUSE_BREAK_RE = re.compile(r"[.;:!?\n]")
+# How far back a clause is read for a conditional. Longer than any clause
+# a letter is likely to hold, short enough that the sentence before cannot
+# lend its "if" to this one when the break between them is unpunctuated.
+_CLAUSE_LOOKBACK_CHARS = 200
+
+
+def _appeal_already_decided(denial_text: str) -> bool:
+    """Whether the letter says an appeal on this denial has been decided."""
+    for match in _APPEAL_ALREADY_DECIDED_RE.finditer(denial_text):
+        before = denial_text[
+            max(0, match.start() - _CLAUSE_LOOKBACK_CHARS) : match.start()
+        ]
+        clause = _CLAUSE_BREAK_RE.split(before)[-1]
+        if not _CONDITIONAL_CLAUSE_RE.search(clause):
+            return True
+    return False
+
 
 # Denial types where the denial itself is the kind of thing a regulator
 # looks into, by name (fixture rows are matched by name, never by pk, as
@@ -281,8 +310,7 @@ def regulator_escalation_reasons(denial: Any) -> List[str]:
     """
     reasons: List[str] = []
 
-    denial_text = getattr(denial, "denial_text", "") or ""
-    if _APPEAL_ALREADY_DECIDED_RE.search(denial_text):
+    if _appeal_already_decided(getattr(denial, "denial_text", "") or ""):
         reasons.append(
             "Your letter reads like an appeal that has already been denied "
             "once. That is when a regulator complaint helps most."
