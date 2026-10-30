@@ -162,10 +162,19 @@ such as `sonar` are not listed in that line.
 | Anthropic (direct) | `RemoteAnthropic` | `ANTHROPIC_API_KEY` | `anthropic/` |
 | DeepInfra | `DeepInfra` | `DEEPINFRA_API` | the model id |
 | Perplexity (citations only) | `RemotePerplexity` | `PERPLEXITY_API` | `sonar` |
+| LunaRoute (Appeal Arena only) | `LunaRoute` | `LUNA_ROUTE_KEY` | `lunaroute/` |
 
 Perplexity is context-only: it finds citations and never generates an appeal
-by itself. When DeepInfra or Perplexity has no key, building the router logs a
-`Skipping model ... No token found` warning. That is expected, not a fault.
+by itself. LunaRoute (`https://gw.lunaroute.com/v1`, OpenAI-compatible)
+offers `lunaroute/deepseek-4.1-flash` and `lunaroute/glm-5.3` outside every
+general pool, the way DeepInfra's chat-only models are: no appeal, summary or
+question goes to them, so no patient's text does. The Appeal Arena tries them
+on its synthetic cases (`CHOOSER_FORCE_MODEL`, see
+[chooser.md](chooser.md)); chat would only if `FHI_CHAT_OUTSIDE_MODELS` named
+one. Like every remote model they also need to be on `ENABLED_REMOTE_MODELS`
+when that allow-list is set. When DeepInfra, Perplexity or LunaRoute has no
+key, building the router logs a `Skipping model ... No token found` warning.
+That is expected, not a fault.
 
 **Set up Azure-hosted models (Claude and OpenAI):**
 

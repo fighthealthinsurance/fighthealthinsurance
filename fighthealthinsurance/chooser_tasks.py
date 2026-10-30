@@ -172,16 +172,25 @@ def _split_by_kind(models: List, seen: set) -> Tuple[List, List]:
     return internal, external
 
 
+# CHOOSER_FORCE_MODEL names already reported as unregistered, so a name for
+# a provider this deployment has no key for is logged once per process, not
+# on every task and refill tick.
+_UNREGISTERED_FORCED_NAMES: set = set()
+
+
 def _forced_arena_models(task_type: str) -> List:
     """The backends ``CHOOSER_FORCE_MODEL`` names that can answer a
     ``task_type`` task, one instance each, in the order named: a model being
     tried out, seated in every new arena task (see _select_candidate_models)
     so it collects votes against the usual rotation quickly. Names are the
-    router's registered names (the keys of ``models_by_name``, as
-    FORCE_MODEL takes), comma-separated; a name the router doesn't know is
-    logged and ignored. Read per call, so it takes effect at the next task.
-    Unlike FORCE_MODEL, it touches nothing outside the arena and replaces no
-    backend inside it.
+    router's registered names, comma-separated: the keys of
+    ``models_by_name`` (as FORCE_MODEL takes), or of
+    ``chat_outside_models_by_name`` for a model kept out of every general
+    pool (LunaRoute's, say), which the arena can try on its synthetic cases
+    without it ever seeing a patient's. A name the router doesn't know is
+    logged once and ignored. Read per call, so it takes effect at the next
+    task. Unlike FORCE_MODEL, it touches nothing outside the arena and
+    replaces no backend inside it.
 
     A chat task skips an appeal-text fine-tune (one that says it doesn't
     follow general instructions), as the router's chat list does: it would
@@ -194,13 +203,19 @@ def _forced_arena_models(task_type: str) -> List:
     forced: List = []
     for name in dict.fromkeys(n.strip() for n in names if n and n.strip()):
         instances = ml_router.models_by_name.get(name) or []
-        if not instances:
-            logger.warning(
-                f"CHOOSER_FORCE_MODEL names {name!r}, which is not a registered "
-                "backend; ignoring it"
-            )
+        model = (
+            instances[0]
+            if instances
+            else ml_router.chat_outside_models_by_name.get(name)
+        )
+        if model is None:
+            if name not in _UNREGISTERED_FORCED_NAMES:
+                _UNREGISTERED_FORCED_NAMES.add(name)
+                logger.warning(
+                    f"CHOOSER_FORCE_MODEL names {name!r}, which is not a "
+                    "registered backend; ignoring it"
+                )
             continue
-        model = instances[0]
         supports = getattr(model, "supports_general_instructions", None)
         if task_type == "chat" and supports is not None and not supports():
             logger.debug(

@@ -338,7 +338,12 @@ class Base(Configuration):
     CHOOSER_SIMULATED_QA = os.getenv("CHOOSER_SIMULATED_QA", "true").lower() != "false"
     # Registered backend names (comma-separated) seated in every new arena
     # task, to try a model out against the rest; arena only, unlike FORCE_MODEL.
-    CHOOSER_FORCE_MODEL = os.getenv("CHOOSER_FORCE_MODEL", "")
+    # Temporarily LunaRoute's two models (ml_models.LunaRoute), to get them
+    # votes; set CHOOSER_FORCE_MODEL="" to stop. A name with no backend
+    # registered (no LUNA_ROUTE_KEY) is logged once and skipped.
+    CHOOSER_FORCE_MODEL = os.getenv(
+        "CHOOSER_FORCE_MODEL", "lunaroute/deepseek-4.1-flash,lunaroute/glm-5.3"
+    )
     CHOOSER_MAX_QUESTIONS = _env_int("CHOOSER_MAX_QUESTIONS", 4, minimum=1, maximum=10)
     CHOOSER_QA_TIMEOUT = _env_int("CHOOSER_QA_TIMEOUT", 60, minimum=5, maximum=600)
     CONDITION_RANKING_MIN_PEOPLE = int(os.getenv("CONDITION_RANKING_MIN_PEOPLE", "5"))

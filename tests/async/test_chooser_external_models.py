@@ -321,8 +321,40 @@ class TestForcedArenaModels:
             CHOOSER_FORCE_MODEL=" fhi-trial , not-registered, fhi-trial"
         ), patch.object(
             chooser_tasks.ml_router, "models_by_name", {"fhi-trial": [trial, second_host]}
+        ), patch.object(
+            chooser_tasks.ml_router, "chat_outside_models_by_name", {}
         ):
             assert _forced_arena_models("appeal") == [trial]
+
+    def test_a_model_kept_out_of_the_general_pools_can_be_forced(self):
+        """LunaRoute's models are on the chat roster only, never in a general
+        pool; the arena still finds them by name."""
+        luna = FakeModel("lunaroute/glm-5.3", external=True)
+        with override_settings(CHOOSER_FORCE_MODEL="lunaroute/glm-5.3"), patch.object(
+            chooser_tasks.ml_router, "models_by_name", {}
+        ), patch.object(
+            chooser_tasks.ml_router,
+            "chat_outside_models_by_name",
+            {"lunaroute/glm-5.3": luna},
+        ):
+            assert _forced_arena_models("appeal") == [luna]
+
+    def test_an_unregistered_name_is_reported_once(self):
+        """A deployment without the provider's key would otherwise log the
+        default's names on every task and every refill tick."""
+        with override_settings(CHOOSER_FORCE_MODEL="lunaroute/glm-5.3"), patch.object(
+            chooser_tasks.ml_router, "models_by_name", {}
+        ), patch.object(
+            chooser_tasks.ml_router, "chat_outside_models_by_name", {}
+        ), patch.object(
+            chooser_tasks, "_UNREGISTERED_FORCED_NAMES", set()
+        ), patch.object(
+            chooser_tasks, "logger"
+        ) as log:
+            assert _forced_arena_models("appeal") == []
+            assert _forced_arena_models("chat") == []
+
+        assert log.warning.call_count == 1
 
     def test_nothing_is_forced_when_unset(self):
         with override_settings(CHOOSER_FORCE_MODEL=""):
@@ -332,7 +364,7 @@ class TestForcedArenaModels:
         fine_tune = NarrowModel()
         with override_settings(CHOOSER_FORCE_MODEL="fhi-legacy"), patch.object(
             chooser_tasks.ml_router, "models_by_name", {"fhi-legacy": [fine_tune]}
-        ):
+        ), patch.object(chooser_tasks.ml_router, "chat_outside_models_by_name", {}):
             assert _forced_arena_models("appeal") == [fine_tune]
             assert _forced_arena_models("chat") == []
 
@@ -340,6 +372,8 @@ class TestForcedArenaModels:
         models = {f"m-{i}": [FakeModel(f"m-{i}")] for i in range(6)}
         with override_settings(CHOOSER_FORCE_MODEL=",".join(models)), patch.object(
             chooser_tasks.ml_router, "models_by_name", models
+        ), patch.object(
+            chooser_tasks.ml_router, "chat_outside_models_by_name", {}
         ), patch.object(chooser_tasks, "CHOOSER_NUM_CANDIDATES", 4):
             forced = _forced_arena_models("appeal")
 
@@ -368,6 +402,8 @@ class TestForcedArenaModelsInGeneration:
         ), patch.object(
             chooser_tasks.ml_router, "models_by_name", {"fhi-trial": [trial]}
         ), patch.object(
+            chooser_tasks.ml_router, "chat_outside_models_by_name", {}
+        ), patch.object(
             chooser_tasks, "_maybe_add_synthesized_candidate", new=AsyncMock()
         ):
             await _generate_appeal_candidates(task)
@@ -392,7 +428,7 @@ class TestForcedArenaModelsInGeneration:
             MagicMock(return_value=[FakeModel("fhi-2025-nov")]),
         ), patch.object(
             chooser_tasks.ml_router, "models_by_name", {"fhi-trial": [trial]}
-        ):
+        ), patch.object(chooser_tasks.ml_router, "chat_outside_models_by_name", {}):
             assert await _external_backends_without_fresh_tasks("appeal") == {
                 "fhi-trial"
             }

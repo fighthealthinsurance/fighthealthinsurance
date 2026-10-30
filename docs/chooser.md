@@ -102,8 +102,15 @@ so it is compared against the regular rotation rather than replacing it. An
 appeal-text fine-tune (one that doesn't follow general instructions) is
 forced into appeal tasks only, as chat routing leaves it out too. The coverage refill treats it like an
 external backend, building fresh tasks until enough of them include it. A
-name the router doesn't know is logged and ignored. Unlike `FORCE_MODEL`, it
-changes nothing outside the arena.
+name the router doesn't know is logged once and ignored. Unlike
+`FORCE_MODEL`, it changes nothing outside the arena.
+
+A forced name can also be a model kept out of every general pool (one a
+backend lists in `chat_models()`), so a provider can be tried on the arena's
+synthetic cases without being offered any real traffic. For now the default is
+LunaRoute's two models, `lunaroute/deepseek-4.1-flash,lunaroute/glm-5.3`
+(see [ml-backends.md](ml-backends.md)); they are seated only where
+`LUNA_ROUTE_KEY` is set, and `CHOOSER_FORCE_MODEL=""` turns forcing off.
 
 ## Rankings and privacy (`condition_rankings.py`, `public_rankings.py`)
 
@@ -167,7 +174,7 @@ environment variables of the same name.
 | `CHOOSER_SIMULATED_QA` | `True` (`False` in tests) | Give appeal cases a simulated interview |
 | `CHOOSER_MAX_QUESTIONS` | `4` | Questions the simulated patient is asked |
 | `CHOOSER_QA_TIMEOUT` | `60` | Seconds each question generator may take |
-| `CHOOSER_FORCE_MODEL` | `""` | Registered model names seated in every new arena task |
+| `CHOOSER_FORCE_MODEL` | LunaRoute's two models, for now (`""` in tests) | Registered model names seated in every new arena task |
 | `CONDITION_RANKING_MIN_PEOPLE` | `5` | The k in k-anonymity: different people per term |
 | `CONDITION_RANKING_LOOKUP_BUDGET` | `30` | Outside lookups per refresh |
 | `CONDITION_RANKING_RECHECK_DAYS` | `365` | When a stored verdict is asked again |

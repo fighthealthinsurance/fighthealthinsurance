@@ -5712,6 +5712,62 @@ class DeepInfra(RemoteFullOpenLike):
         ]
 
 
+class LunaRoute(RemoteFullOpenLike):
+    """LunaRoute's inference gateway, which speaks the OpenAI Chat
+    Completions shape at ``gw.lunaroute.com/v1`` (docs.lunaroute.com).
+
+    Its models are offered outside every general pool (``chat_models``), so
+    no appeal, summary or question is ever routed to them and no patient's
+    text reaches them, unless FHI_CHAT_OUTSIDE_MODELS names one for chat.
+    The Appeal Arena tries them on its synthetic cases by name
+    (CHOOSER_FORCE_MODEL). Moving one into ``models()`` would make it a
+    backup for real appeals; that is a decision about where patient data
+    goes, not a routing tweak.
+    """
+
+    PROVIDER_LABEL: ClassVar[str] = "LunaRoute"
+    API_BASE: ClassVar[str] = "https://gw.lunaroute.com/v1"
+    # Friendly name -> LunaRoute model id. "glm-5.3" is the id LunaRoute's
+    # docs use; its docs list no id for DeepSeek 4.1 Flash, and
+    # "deepseek-4.1-flash" follows the same bare form. The deploy health
+    # check reads the live catalog (GET /v1/models) and flags an id it
+    # doesn't serve.
+    ARENA_MODELS: ClassVar[dict[str, str]] = {
+        "lunaroute/deepseek-4.1-flash": "deepseek-4.1-flash",
+        "lunaroute/glm-5.3": "glm-5.3",
+    }
+
+    @classmethod
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        return cls._classify_env_keys("LUNA_ROUTE_KEY")
+
+    def __init__(self, model: str, dual_mode: bool = False):
+        # Keys start with "lr_"; LunaRoute reads one sent as a Bearer token.
+        token = get_env_variable("LUNA_ROUTE_KEY")
+        if token is None or len(token) < 1:
+            raise Exception("No token found for LunaRoute")
+        # LunaRoute publishes no context limits; 128k, like DeepInfra's
+        # default for a model it has no figure for.
+        super().__init__(
+            self.API_BASE, token, model=model, dual_mode=dual_mode, max_len=128000
+        )
+
+    @property
+    def supports_system(self):
+        return True
+
+    def quality(self) -> int:
+        """Below the internal models' range (>=101), like DeepInfra's."""
+        return 80
+
+    @classmethod
+    def chat_models(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(cost=0, name=name, internal_name=model_id)
+            for name, model_id in cls.ARENA_MODELS.items()
+        ]
+
+
 class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
     """``RemoteFullOpenLike`` with shared per-model rate limiting and 429
     back-off, used by the external paid backends (Anthropic, Azure).
