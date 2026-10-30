@@ -44,6 +44,7 @@ DERIVED_FROM_HEALTH_HISTORY = (
     "generated_questions",
     "generated_questions_for",
     "candidate_generated_questions",
+    "followup_questions",
 )
 
 

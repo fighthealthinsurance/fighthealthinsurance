@@ -21,6 +21,7 @@ STAGE_OF_PAGE = {
     "categorize.html": "Check details",
     "find_next_steps_loading.html": "Answer questions",
     "outside_help.html": "Answer questions",
+    "followup_questions.html": "Answer questions",
     "appeals.html": "Get your appeal",
     "appeal.html": "Send",
 }

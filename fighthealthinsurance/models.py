@@ -2593,6 +2593,11 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # the current inputs is kept over a later duplicate (answers are filed
     # against it). Null on rows from before this column.
     generated_questions_for = models.CharField(max_length=64, null=True, blank=True)
+    # The optional follow-up rounds asked after the questions page
+    # (ml/followup_questions.py, which documents the shape): every check
+    # made, the answers it read and the follow-ups it asked, for the
+    # procedure and diagnosis it was made for. Null until the first check.
+    followup_questions = models.JSONField(null=True, blank=True)
     # ML-generated citations for the appeal
     ml_citation_context = models.JSONField(null=True, blank=True)
     # ML-generated summary of relevant plan document sections

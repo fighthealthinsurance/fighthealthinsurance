@@ -40,7 +40,9 @@ Additional Resources & Questions
   <p><strong>A few more questions</strong> to help us create a better appeal for your situation:</p>
 </div>
 {% endif %}
-<form class="fhi-stack fhi-stack-loose" action="{% url 'generate_appeal' %}" method="post">
+{# answers_action is generate_appeal_loading while a follow-up round could #}
+{# still be asked (ml/followup_questions.py), which waits on models.      #}
+<form class="fhi-stack fhi-stack-loose" action="{% url answers_action|default:'generate_appeal' %}" method="post">
   {# The mark of a questionnaire submission: only this form can withdraw an answer. #}
   <input type="hidden" name="questionnaire" value="1">
   {% csrf_token %}

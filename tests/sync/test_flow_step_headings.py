@@ -98,6 +98,10 @@ FLOW_PAGES = {
             "financial_assistance": None,
         },
     ),
+    "followup_questions.html": (
+        "Questions",
+        {"current_step": 6, "followup_form": "", "carried": [("denial_id", "1")]},
+    ),
     "appeals.html": (
         "Your appeal",
         {

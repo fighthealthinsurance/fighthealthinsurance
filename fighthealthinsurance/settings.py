@@ -425,6 +425,16 @@ class Base(Configuration):
     TYPESAFE_RESEARCH_JUDGING_ENABLED = (
         os.getenv("TYPESAFE_RESEARCH_JUDGING_ENABLED", "false").lower() == "true"
     )
+    # Follow-up questions (ml/followup_questions.py): after the questions
+    # page, check whether the answers are enough for the appeal and, if not,
+    # ask a few more first. On unless set to false/0/no/off; it fails open.
+    # Jev answers the "enough?" for people who allowed outside models when
+    # TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED is on (same key, off by default);
+    # one of our own models answers it otherwise.
+    FHI_FOLLOWUP_QUESTIONS_ENABLED = _env_flag("FHI_FOLLOWUP_QUESTIONS_ENABLED", "1")
+    TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED = (
+        os.getenv("TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED", "false").lower() == "true"
+    )
     # Chat shadow scoring (ml/chat_shadow.py): same key, its own switch. When
     # on, a background task scores delivered chat replies for the staff
     # dashboard, only in chats that allowed outside models: every turn that
@@ -1219,6 +1229,10 @@ class Test(_TestBase):
     TYPESAFE_DEADLINE_SHOW_ENABLED = False
     TYPESAFE_RESEARCH_JUDGING_ENABLED = False
     TYPESAFE_CHAT_SHADOW_ENABLED = False
+    # The follow-up round waits on models: off under test, opted into with
+    # override_settings and stubbed models.
+    FHI_FOLLOWUP_QUESTIONS_ENABLED = False
+    TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED = False
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
@@ -1301,6 +1315,10 @@ class TestSync(_TestBase):
     TYPESAFE_DEADLINE_SHOW_ENABLED = False
     TYPESAFE_RESEARCH_JUDGING_ENABLED = False
     TYPESAFE_CHAT_SHADOW_ENABLED = False
+    # The follow-up round waits on models: off under test, opted into with
+    # override_settings and stubbed models.
+    FHI_FOLLOWUP_QUESTIONS_ENABLED = False
+    TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED = False
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
@@ -1366,6 +1384,10 @@ class TestActor(_TestBase):
     TYPESAFE_DEADLINE_SHOW_ENABLED = False
     TYPESAFE_RESEARCH_JUDGING_ENABLED = False
     TYPESAFE_CHAT_SHADOW_ENABLED = False
+    # The follow-up round waits on models: off under test, opted into with
+    # override_settings and stubbed models.
+    FHI_FOLLOWUP_QUESTIONS_ENABLED = False
+    TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED = False
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False

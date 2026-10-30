@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block title %}
+A Few More Questions
+{% endblock title %}
+{% load static %}
+{% block content %}
+
+<div class="container-narrow">
+  {% include 'partials/flow_progress.html' with current_step=current_step|default:6 %}
+
+  <h1 class="fhi-step-title">Questions</h1>
+
+<div class="alert-box alert-box-warning-light">
+  <p><strong>A few more questions.</strong> Thanks for your answers. Based on them, a little more detail could make your appeal stronger.</p>
+  <p>Answer what you can. Anything you leave blank is fine: we will write your appeal either way.</p>
+</div>
+{# GenerateAppeal._render_followups: everything the questions page posted is #}
+{# carried along as it was, so the appeal is written from all of the answers. #}
+<form class="fhi-stack fhi-stack-loose" action="{% url 'generate_appeal' %}" method="post">
+  {% csrf_token %}
+  {% for key, value in carried %}
+  <input type="hidden" name="{{ key }}" value="{{ value }}">
+  {% endfor %}
+  <div class="scroll-x">
+    <table class="simple-table fhi-form-table">
+      {{ followup_form.as_table }}
+    </table>
+  </div>
+  <div class="form-nav-row">
+    {% if back_url %}
+    <a href="{{ back_url }}" rel="prev" class="fhi-button fhi-button-neutral">
+      ← {{ back_label|default:"Back" }}
+    </a>
+    {% endif %}
+    <input type="submit" value="Generate My Appeal &rarr;" id="submit" class="fhi-button fhi-button-primary">
+  </div>
+</form>
+</div>
+{% endblock content %}

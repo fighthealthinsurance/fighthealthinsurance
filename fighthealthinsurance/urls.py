@@ -583,6 +583,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="generate_appeal",
     ),
     path(
+        "generate_appeal_loading",
+        sensitive_post_parameters("email")(views.GenerateAppealLoading.as_view()),
+        name="generate_appeal_loading",
+    ),
+    path(
         "choose_appeal",
         sensitive_post_parameters("email")(views.ChooseAppeal.as_view()),
         name="choose_appeal",
