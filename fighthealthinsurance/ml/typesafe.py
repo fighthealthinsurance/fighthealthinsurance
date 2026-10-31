@@ -406,6 +406,8 @@ async def ask(
     # OpenCode serves only the public base Jev model. A configured model that
     # differs from our pinned base is a fine-tune/alias and must go directly
     # to TypeSafe, which owns that model namespace.
+    if not use_opencode:
+        _refuse_while_cooling()
     attempts: list[tuple[str, str, str, bool]] = []
     if use_opencode:
         attempts.append((OPENCODE_API_URL, str(opencode_token), OPENCODE_MODEL, False))
@@ -423,8 +425,6 @@ async def ask(
         )
     if not attempts:
         raise TypeSafeError(NO_KEY)
-    if not use_opencode:
-        _refuse_while_cooling()
     # The connect bound is kept well inside the total and inside a caller's
     # own wait_for of the same length (the chat gate's), so a host that
     # cannot be reached fails here as a connect timeout, which counts toward
