@@ -26,9 +26,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # that are read from the environment, off by default, and gate an unfinished
 # feature. --all-experiments sets each one to "true", which both of
 # settings.py's parsers accept (_env_flag and the == "true" comparisons).
-# When you add an experimental flag, add it here too (see AGENTS.md);
-# tests/async-unit/test_run_local_experimental_flags.py checks that each name
-# is still a flag settings.py reads.
+# When you add an experimental flag, add it here too (see AGENTS.md), and to
+# fighthealthinsurance/experiments.py, which lists it on the staff Experiments
+# page; tests/async-unit/test_run_local_experimental_flags.py checks that each
+# name is still a flag settings.py reads and that the two lists agree.
 #
 # Left out on purpose:
 # - TEMPORAL_ENABLED, the TEMPORAL_*_ENABLED flows and
