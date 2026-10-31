@@ -4392,6 +4392,14 @@ class ChooserTask(ExportModelOperationsMixin("ChooserTask"), models.Model):  # t
     # served the newest version first, and only tasks of the current version
     # count as fresh when the refill decides whether to generate more.
     case_version = models.PositiveSmallIntegerField(default=1, db_default=1)
+    # How much work the case is to judge, from chooser_complexity.COMPLEXITY_MIN
+    # (1, the simplest) to COMPLEXITY_MAX (5): the reading and cross-checking
+    # load of its drafts, case and evidence (chooser_complexity.score_task),
+    # stamped when the task goes READY. NULL for a task not scored yet (one
+    # from before the score existed, or whose scoring failed). The next-task
+    # ordering treats NULL as the hardest without writing that down, so a
+    # real score can be filled in later (manage.py score_chooser_complexity).
+    complexity = models.PositiveSmallIntegerField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
