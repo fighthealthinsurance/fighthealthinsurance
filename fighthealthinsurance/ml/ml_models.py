@@ -5953,10 +5953,10 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_path = (
-            get_env_variable("ALPHA_HEALTH_BACKEND_MODEL")
-            or "/models/fhi-2025-nov-q8-vllm-compressed"
-        )
+        # The wire id scrump's vLLM lists at /v1/models, and what prod sets.
+        # The /models probe matches it exactly, so a stale path here takes
+        # the backend out of routing.
+        model_path = get_env_variable("ALPHA_HEALTH_BACKEND_MODEL") or "fhi-local"
         return [
             ModelDescription(
                 cost=3,
