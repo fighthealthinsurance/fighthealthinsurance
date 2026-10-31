@@ -114,6 +114,33 @@ interface Scoreboard {
   fouls: number;
 }
 
+// The "I'm not a robot" check at the start of the Arena, on the same terms
+// as the site's other forms. The page carries the site key only while the
+// captcha is enforced; the tick's token rides on the first next-task
+// request in this header, and the server remembers a good one for the
+// session (ChooserViewSet._captcha_gate), so the box is ticked once.
+const CAPTCHA_HEADER = "X-Recaptcha-Response";
+const CAPTCHA_ERROR = "captcha_required";
+
+interface Grecaptcha {
+  render: (
+    container: HTMLElement,
+    params: {
+      sitekey: string;
+      callback: (token: string) => void;
+      "expired-callback": () => void;
+      "error-callback": () => void;
+    },
+  ) => number;
+  reset: (widgetId?: number) => void;
+}
+
+declare global {
+  interface Window {
+    grecaptcha?: Partial<Grecaptcha>;
+  }
+}
+
 const SCOREBOARD_KEY = "fhi-arena-scoreboard";
 const RANKINGS_URL = "/chooser/rankings/";
 const LABELS = ["A", "B", "C", "D", "E", "F"];
@@ -286,6 +313,59 @@ const Standings: React.FC<{ rankings: RankingsState }> = ({ rankings }) => {
       </Group>
     </Paper>
   );
+};
+
+// The reCAPTCHA checkbox. The script loads on its own (chooser.html); this
+// waits for it, draws the widget once, and reports the tick's token, or
+// null when it expires. A change of `resetKey` clears the box, for a tick
+// the server would not take.
+const CaptchaBox: React.FC<{
+  siteKey: string;
+  resetKey: number;
+  onToken: (token: string | null) => void;
+}> = ({ siteKey, resetKey, onToken }) => {
+  const boxRef = React.useRef<HTMLDivElement>(null);
+  const widgetRef = React.useRef<number | null>(null);
+  const onTokenRef = React.useRef(onToken);
+  onTokenRef.current = onToken;
+
+  useEffect(() => {
+    let cancelled = false;
+    const tryRender = (): boolean => {
+      const api = window.grecaptcha;
+      if (!boxRef.current || widgetRef.current !== null || !api || !api.render) {
+        return false;
+      }
+      widgetRef.current = api.render(boxRef.current, {
+        sitekey: siteKey,
+        callback: (token: string) => onTokenRef.current(token),
+        "expired-callback": () => onTokenRef.current(null),
+        "error-callback": () => onTokenRef.current(null),
+      });
+      return true;
+    };
+    if (tryRender()) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      if (cancelled || tryRender()) {
+        window.clearInterval(timer);
+      }
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [siteKey]);
+
+  useEffect(() => {
+    if (resetKey > 0 && widgetRef.current !== null && window.grecaptcha?.reset) {
+      window.grecaptcha.reset(widgetRef.current);
+      onTokenRef.current(null);
+    }
+  }, [resetKey]);
+
+  return <div ref={boxRef} data-testid="arena-captcha" />;
 };
 
 // ---------------------------------------------------------------------------
@@ -929,7 +1009,7 @@ const CandidateCard: React.FC<{
 // ---------------------------------------------------------------------------
 // The arena
 
-const ChooserInterface: React.FC = () => {
+const ChooserInterface: React.FC<{ captchaSiteKey: string }> = ({ captchaSiteKey }) => {
   const [state, setState] = useState<ChooserState>({
     mode: "selection",
     task: null,
@@ -942,6 +1022,15 @@ const ChooserInterface: React.FC = () => {
   });
   const [isSkipping, setIsSkipping] = useState(false);
   const [hasAcceptedTos, setHasAcceptedTos] = useState(false);
+  // The captcha: the tick's token until it is spent, "passed" once the
+  // server has taken one for this session, and a notice when it would not.
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaPassed, setCaptchaPassed] = useState(false);
+  const [captchaResets, setCaptchaResets] = useState(0);
+  const [captchaNotice, setCaptchaNotice] = useState<string | null>(null);
+  const captchaNeeded = Boolean(captchaSiteKey) && !captchaPassed;
+  const captchaReady = !captchaNeeded || captchaToken !== null;
+  const canStart = hasAcceptedTos && captchaReady;
   const [scoreboard, setScoreboard] = useState<Scoreboard>({ rounds: 0, fouls: 0 });
   const [lastRoundFouls, setLastRoundFouls] = useState(0);
   const [lastRoundTie, setLastRoundTie] = useState(false);
@@ -964,11 +1053,41 @@ const ChooserInterface: React.FC = () => {
     setState((prev) => ({ ...prev, mode: "loading", error: null, taskType }));
 
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (captchaToken) {
+        headers[CAPTCHA_HEADER] = captchaToken;
+      }
       const response = await fetch(`/ziggy/rest/chooser/next/${taskType}/`, {
         method: "GET",
-        headers: { "Content-Type": "application/json" },
+        headers,
         credentials: "include",
       });
+
+      if (response.status === 403) {
+        // The "I'm not a robot" check: the tick was missing, spent or
+        // refused. Back to the landing with the box cleared and the reason.
+        let message = "Please tick the \"I'm not a robot\" box, then try again.";
+        try {
+          const body = (await response.json()) as { error?: string; message?: string };
+          if (body.error === CAPTCHA_ERROR && body.message) {
+            message = body.message;
+          }
+        } catch {
+          // No JSON: the default message stands.
+        }
+        setCaptchaPassed(false);
+        setCaptchaToken(null);
+        setCaptchaResets((n) => n + 1);
+        setCaptchaNotice(message);
+        setState((prev) => ({ ...prev, mode: "selection", task: null, taskType: null }));
+        return;
+      }
+      if (captchaToken) {
+        // A tick is single use; a good one is now on the session.
+        setCaptchaToken(null);
+        setCaptchaPassed(true);
+        setCaptchaNotice(null);
+      }
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -996,7 +1115,7 @@ const ChooserInterface: React.FC = () => {
         error: error instanceof Error ? error.message : "An error occurred",
       }));
     }
-  }, []);
+  }, [captchaToken]);
 
   const submitVote = useCallback(async () => {
     if (!state.task) return;
@@ -1255,27 +1374,54 @@ const ChooserInterface: React.FC = () => {
               </Anchor>
             </Text>
           </Paper>
+          {captchaNeeded && (
+            <Paper shadow="sm" p="md" radius="md" withBorder style={{ width: "100%", maxWidth: "760px" }}>
+              <Text size="sm" mb="xs">
+                One more thing: show us you are a person, not a script.
+              </Text>
+              <CaptchaBox
+                siteKey={captchaSiteKey}
+                resetKey={captchaResets}
+                onToken={(token) => {
+                  setCaptchaToken(token);
+                  if (token) {
+                    setCaptchaNotice(null);
+                  }
+                }}
+              />
+              {captchaNotice && (
+                <Text size="sm" c="red" mt="xs" data-testid="arena-captcha-notice">
+                  {captchaNotice}
+                </Text>
+              )}
+            </Paper>
+          )}
           {!hasAcceptedTos && (
             <Text size="sm" c="orange" ta="center">
               Please accept the Terms of Service before stepping into the Arena.
+            </Text>
+          )}
+          {hasAcceptedTos && !captchaReady && (
+            <Text size="sm" c="orange" ta="center">
+              Please tick the &ldquo;I&rsquo;m not a robot&rdquo; box before stepping into the Arena.
             </Text>
           )}
           <Group gap="lg" mt="md">
             <Button
               size="xl"
               radius="md"
-              disabled={!hasAcceptedTos}
+              disabled={!canStart}
               onClick={() => fetchNextTask("appeal")}
-              style={primaryButton(hasAcceptedTos)}
+              style={primaryButton(canStart)}
             >
               Judge Appeal Letters
             </Button>
             <Button
               size="xl"
               radius="md"
-              disabled={!hasAcceptedTos}
+              disabled={!canStart}
               onClick={() => fetchNextTask("chat")}
-              style={primaryButton(hasAcceptedTos)}
+              style={primaryButton(canStart)}
             >
               Judge Chat Replies
             </Button>
@@ -1510,7 +1656,7 @@ const App: React.FC = () => {
             padding: "20px 0",
           }}
         >
-          <ChooserInterface />
+          <ChooserInterface captchaSiteKey={captchaSiteKey} />
         </Box>
       </ErrorBoundary>
     </MantineProvider>
@@ -1519,6 +1665,7 @@ const App: React.FC = () => {
 
 // Mount the React app
 const container = document.getElementById("chooser-root");
+const captchaSiteKey = container?.dataset.recaptchaSiteKey ?? "";
 if (container) {
   const root = createRoot(container);
   root.render(<App />);

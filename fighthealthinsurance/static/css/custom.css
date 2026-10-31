@@ -1013,6 +1013,9 @@ li > a.link {
    size: each button brings its own, so the primary reads as the primary. */
 .hero-cta-group a {flex:0 1 auto; text-align:center; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; margin: 0; max-width: 400px;}
 .hero-cta-secondary a {flex:0 1 auto; max-width: 250px;}
+/* The Arena's label is the longest of the five: room for it on one line,
+   and the row wraps before the button squeezes its words onto two. */
+#improvemodels {flex-shrink: 0; max-width: 300px;}
 /* A page's primary action in the hero: bold, and lifted off the photograph
    by a lime glow. On a picture no stylesheet can read, the fill alone
    cannot say where the button ends; the glow does, without the line a

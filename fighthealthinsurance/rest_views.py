@@ -2305,6 +2305,47 @@ class ChooserViewSet(viewsets.ViewSet):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    # The "I'm not a robot" check at the start of the Arena. The page sends
+    # the tick's token in this header with its first next-task request; a
+    # good one marks the session, so the box is ticked once per session,
+    # not once per round. Votes and skips then need the mark too.
+    CAPTCHA_HEADER = "X-Recaptcha-Response"
+    CAPTCHA_SESSION_KEY = "chooser_captcha_passed"
+    CAPTCHA_ERROR = "captcha_required"
+
+    def _captcha_gate(self, request: Request) -> Optional[Response]:
+        """None when the captcha is off (see ReCaptchaOptionalMixin) or this
+        session has passed it, else the 403 to answer with. The token is
+        checked with Google through ChooserCaptchaForm, the same field the
+        site's other forms use, so its reasons (an unticked box, an expired
+        or reused tick, Google out of reach, a refused answer) come back as
+        that field's codes in ``code`` with its message in ``message``."""
+        from fighthealthinsurance.forms import (
+            ChooserCaptchaForm,
+            ReCaptchaOptionalMixin,
+        )
+
+        if not ReCaptchaOptionalMixin._is_recaptcha_enabled():
+            return None
+        if request.session.get(self.CAPTCHA_SESSION_KEY):
+            return None
+        token = request.headers.get(self.CAPTCHA_HEADER, "")
+        form = ChooserCaptchaForm(data={"g-recaptcha-response": token} if token else {})
+        if form.is_valid():
+            request.session[self.CAPTCHA_SESSION_KEY] = True
+            request.session.save()
+            return None
+        errors = form.errors.as_data().get("captcha", [])
+        code = next((str(e.code) for e in errors if e.code), "required")
+        message = next(
+            (m for e in errors for m in e.messages),
+            'Please tick the "I\'m not a robot" box first.',
+        )
+        return Response(
+            {"error": self.CAPTCHA_ERROR, "code": code, "message": message},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     def _get_session_key(self, request: Request) -> str:
         """Get or create a session key for the request."""
         if not request.session.session_key:
@@ -2336,6 +2377,9 @@ class ChooserViewSet(viewsets.ViewSet):
         3. If none, select tasks with the fewest total votes
         4. Exclude tasks where this session key has already voted or skipped
         """
+        denied = self._captcha_gate(request)
+        if denied is not None:
+            return denied
         session_key = self._get_session_key(request)
 
         # Get tasks that this session has already voted on or skipped
@@ -2476,6 +2520,9 @@ class ChooserViewSet(viewsets.ViewSet):
                 serializers.ErrorSerializer({"error": str(serializer.errors)}).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        denied = self._captcha_gate(request)
+        if denied is not None:
+            return denied
 
         session_key = self._get_session_key(request)
         task_id = serializer.validated_data["task_id"]
@@ -2695,6 +2742,9 @@ class ChooserViewSet(viewsets.ViewSet):
                 serializers.ErrorSerializer({"error": str(serializer.errors)}).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        denied = self._captcha_gate(request)
+        if denied is not None:
+            return denied
 
         session_key = self._get_session_key(request)
         task_id = serializer.validated_data["task_id"]

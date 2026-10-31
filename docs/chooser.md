@@ -87,6 +87,24 @@ to the full page; without the JSON they show the link alone.
 - A per-browser scoreboard (rounds judged, fouls called) in `localStorage`;
   nothing about it is sent anywhere.
 
+## The door: "I'm not a robot"
+
+The Arena starts with the same reCAPTCHA checkbox as the site's other
+public forms, on the same terms (`forms.ReCaptchaOptionalMixin`: both
+`RECAPTCHA_PUBLIC_KEY` and `RECAPTCHA_PRIVATE_KEY` set and
+`RECAPTCHA_TESTING` off; Dev and the tests have it off). The page carries
+the site key on `#chooser-root` only then, the app draws the box on its
+landing beside the terms checkbox, and the tick's token rides on the first
+next-task request in the `X-Recaptcha-Response` header. The server checks
+it through `forms.ChooserCaptchaForm` (so Google's answers are read by
+`CheckboxReCaptchaField`, like everywhere else), marks the session, and
+from then on asks for nothing: votes and skips need the mark, not a token.
+A request without the mark gets a 403 `captcha_required` with the field's
+`code` (`required`, `captcha_expired`, `captcha_error`, `captcha_invalid`)
+and message; the app goes back to its landing, clears the box and shows
+the message. The Arena is linked from the home hero as "Help Improve Our
+Models".
+
 ## How a case is made (`chooser_tasks.py`)
 
 1. **Seed pair.** When `CHOOSER_SEED_FROM_RANKINGS` is on (default) the
