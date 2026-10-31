@@ -807,6 +807,41 @@ class MLRouter(object):
         )
         return models
 
+    def synthesis_backends(
+        self, use_external: bool = False
+    ) -> tuple[list[RemoteModelLike], list[RemoteModelLike]]:
+        """The backends that merge several appeal drafts into one letter, as
+        ``(ours, hosted)``: our own models, strongest first, and the hosted
+        models ``synthesize_appeals`` holds back behind them, to ask when
+        none of ours answers.
+
+        Synthesis is an instruction-following task ("combine these drafts"),
+        not the appeal-from-a-denial task the fine-tunes were trained on, so
+        the appeal-only backends (fhi-legacy) are left out. Unlike
+        ``_general_purpose_only`` this never falls back to them: fhi-legacy
+        answers a synthesis prompt with a stray number ("0.000"), which costs
+        a call and then fails the length check, and the drafts it was meant
+        to merge are still delivered as they are. The health filter fails
+        open only when no hosted model is in the race: beside one that can
+        answer, an internal the sweep marked down would only hold the race
+        open for its full timeout.
+
+        ``hosted`` is empty unless ``use_external``: the drafts were written
+        under that same consent, so merging them outside adds no exposure
+        when it is given, and never happens when it is not. Two of them, not
+        the usual three: a backup wants one good answer and a spare, not a
+        fan-out, and each is a paid call over every draft.
+        """
+        forced = self._get_forced_models("for synthesis", use_external=use_external)
+        if forced:
+            return forced, []
+        hosted = self.best_external_models(limit=2) if use_external else []
+        general = [
+            m for m in self.internal_models_by_cost if m.supports_general_instructions()
+        ]
+        ours = self._filter_available(general, "synthesis", fail_open=not hosted)
+        return sorted(ours, key=lambda m: -m.quality()), hosted
+
     def full_find_citation_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
         Return models for finding citations.

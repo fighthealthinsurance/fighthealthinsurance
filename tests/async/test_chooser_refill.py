@@ -628,6 +628,23 @@ class TestPrefillForATypeASessionUsedUp:
 
 
 @pytest.mark.asyncio
+async def test_appeal_synthesis_for_the_chooser_may_use_hosted_models():
+    """The chooser's drafts come from every backend, hosted ones included,
+    so their merge may fall back to a hosted model too."""
+    with patch(
+        "fighthealthinsurance.generate_appeal.AppealGenerator.synthesize_appeals",
+        new=AsyncMock(return_value="A merged letter. " * 20),
+    ) as synthesize:
+        result = await _synthesize_appeal_candidate(
+            {"procedure": "MRI", "diagnosis": "back pain"}, ["draft one", "draft two"]
+        )
+
+    assert result == "A merged letter. " * 20
+    assert synthesize.call_args.kwargs["use_external"] is True
+    assert synthesize.call_args.kwargs["purpose"] == "other"
+
+
+@pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
 class TestSynthesizedCandidate:
     """_maybe_add_synthesized_candidate appends a synthesized candidate."""

@@ -94,6 +94,10 @@ class TestMissingModelCooldown:
         assert cap.messages("ERROR") == []
         # The skip is visible at DEBUG for traceability.
         assert any("not served here" in m for m in cap.messages("DEBUG"))
+        # ...and is decided before the "Calling" line, so the log does not
+        # read as a second attempt that failed: one such line, for the
+        # request that went on the wire.
+        assert sum("Calling nope-model" in m for m in cap.messages("DEBUG")) == 1
 
     @pytest.mark.asyncio
     async def test_cooldown_expiry_probes_endpoint_again(

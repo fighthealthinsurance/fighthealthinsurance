@@ -1997,6 +1997,9 @@ async def _synthesize_appeal_candidate(
             # Synthetic chooser traffic, not a user's appeal: kept out of the
             # appeal series of the fhi_ml_call* metrics.
             purpose="other",
+            # The chooser's drafts come from every backend, hosted ones
+            # included (see the module docstring), so their merge may too.
+            use_external=True,
         )
     except Exception as e:
         logger.opt(exception=True).warning(

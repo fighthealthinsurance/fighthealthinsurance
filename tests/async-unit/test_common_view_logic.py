@@ -2095,6 +2095,46 @@ class TestCommonViewLogic(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_synthesis_gets_the_denial_s_external_model_consent(
+        self, mock_appeal_generator
+    ):
+        """The merge of the drafts falls back to a hosted model only under the
+        same consent the drafts were written with."""
+        for denial_id, consent in ((91, True), (92, False)):
+            with self.subTest(use_external=consent):
+                email, denial = self._create_test_denial(denial_id, gen_attempts=3)
+                denial.use_external = consent
+                denial.save()
+                # Two existing drafts, so the run reaches the synthesis step.
+                for i in range(2):
+                    ProposedAppeal.objects.create(
+                        for_denial=denial,
+                        appeal_text=f"An existing appeal draft number {i} of real length.",
+                        speculative=False,
+                        context_level="full",
+                    )
+                mock_appeal_generator.make_appeals.return_value = iter([])
+                mock_appeal_generator.synthesize_appeals = AsyncMock(return_value=None)
+
+                async def test():
+                    try:
+                        await self.collect_appeal_responses(
+                            {
+                                "denial_id": denial_id,
+                                "email": email,
+                                "semi_sekret": denial.semi_sekret,
+                            }
+                        )
+                        mock_appeal_generator.synthesize_appeals.assert_awaited_once()
+                        kwargs = mock_appeal_generator.synthesize_appeals.call_args.kwargs
+                        self.assertIs(kwargs["use_external"], consent)
+                    finally:
+                        await Denial.objects.filter(denial_id=denial_id).adelete()
+
+                async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_late_live_draft_is_not_counted_as_a_speculative_appeal(
         self, mock_appeal_generator
     ):
