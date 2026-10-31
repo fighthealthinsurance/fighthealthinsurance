@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; background: #f5f5f5; color: #222; }
+    h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+    h2 { color: #555; margin-top: 0; border-left: 4px solid #007bff; padding-left: 10px; }
+    .status-section { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .nav-back { display: inline-block; margin-bottom: 14px; margin-right: 14px; color: #0056b3; text-decoration: none; }
+    .nav-back:hover { text-decoration: underline; }
+    .meta { color: #666; font-size: 0.9em; margin-bottom: 18px; }
+    .status-badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.82em; font-weight: bold; color: white; }
+    .status-badge.ok { background: #1e7e34; }
+    .status-badge.bad { background: #dc3545; }
+    .status-badge.warn { background: #f0ad4e; color: #333; }
+    .status-badge.unknown { background: #5a6268; }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.78em; background: #e9ecef; color: #555; }
+    .error-text { color: #dc3545; }
+    table.status { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    table.status th, table.status td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; vertical-align: top; }
+    table.status td.key { width: 180px; color: #666; }
+    .answer { font-size: 3em; font-weight: bold; margin: 6px 0; }
+    .answer.yes { color: #1e7e34; }
+    .answer.no { color: #dc3545; }
+    blockquote.state { background: #f8f9fa; border-left: 4px solid #dee2e6; margin: 8px 0; padding: 10px 14px; }
+    button { margin-top: 8px; padding: 10px 22px; background: #0056b3; color: white; border: none; border-radius: 4px; font-size: 1em; cursor: pointer; }
+    button:hover { background: #004085; }
+  </style>
+</head>
+<body>
+  <a class="nav-back" href="{% url 'staff_dashboard' %}">&laquo; Back to Staff Dashboard</a>
+  <a class="nav-back" href="{% url 'admin_status' %}#jev">&laquo; Back to System Status</a>
+  <h1>{{ title }}</h1>
+  <p class="meta">
+    Asks TypeSafe&rsquo;s Jev (<code>{{ model }}</code>) one yes/no question about a fixed sentence and shows
+    the answer, so you can tell a Jev that answers from one that is down, refused, cooling down or
+    unpaid. A real (billable) call, counted under TypeSafe&rsquo;s &ldquo;other&rdquo; use; it never runs
+    by simply loading this page.
+  </p>
+
+  <div class="status-section">
+    <h2>&#127849; {{ question }}</h2>
+    <p class="meta" style="margin-bottom: 6px;">The text Jev is given:</p>
+    <blockquote class="state">{{ state }}</blockquote>
+    <p class="meta">
+      API key: {% if key_present %}present{% else %}<span class="error-text">missing (TYPESAFE_API_KEY): nothing is sent</span>{% endif %}
+      &middot; Y at a probability of {{ yes_at }} or more
+      &middot; waits up to {{ timeout_seconds|floatformat:0 }} s for the answer, after up to {{ ledger_wait_seconds|floatformat:0 }} s for this pod&rsquo;s spend ledger to load
+    </p>
+    <form method="post" action="{% url 'admin_jev_test' %}">
+      {% csrf_token %}
+      <button type="submit">{% if result %}Ask again{% else %}Ask Jev{% endif %}: &ldquo;{{ question }}&rdquo; Y/N</button>
+    </form>
+  </div>
+
+  {% if result %}
+  <div class="status-section" id="result">
+    <h2>Answer</h2>
+    {% if result.ok %}
+      <div class="answer {% if result.answer == "Y" %}yes{% else %}no{% endif %}">{{ result.answer }}</div>
+      <p class="meta">
+        <span class="status-badge ok">{{ result.category }}</span>
+        {{ result.answered_model|default:model }} put the probability at <strong>{{ result.probability }}</strong>
+        {% if result.latency_ms is not None %}&middot; {{ result.latency_ms }} ms{% endif %}.
+        {% if result.answer == "N" %}<span class="error-text">A Timbit is a doughnut hole, so an N means {{ result.answered_model|default:model }} is answering but not well.</span>{% endif %}
+      </p>
+    {% else %}
+      <p class="meta">
+        {% if result.category == "NOT_CONFIGURED" %}<span class="status-badge unknown">{{ result.category }}</span>{% else %}<span class="status-badge bad">{{ result.category }}</span>{% endif %}
+        <span class="error-text">{{ result.error }}</span>{% if result.hint %} ({{ result.hint }}){% endif %}
+        {% if result.latency_ms is not None %}&middot; {{ result.latency_ms }} ms{% endif %}
+      </p>
+      <p class="meta">No answer, so no Y or N. A &ldquo;skipped&rdquo; error means nothing was sent; the rest are TypeSafe&rsquo;s answer or the failure to reach it.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+</body>
+</html>

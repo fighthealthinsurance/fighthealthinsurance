@@ -15,7 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from fighthealthinsurance import mcp_call_counts, mcp_server
-from fighthealthinsurance.ml import letter_quality, spend
+from fighthealthinsurance.ml import chat_gate, letter_quality, spend
 from fighthealthinsurance.models import (
     AssistantDraft,
     AssistantHandoff,
@@ -2238,3 +2238,311 @@ class AdminStatusLLMUsageTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["llm_usage"]["error"], "RuntimeError")
         self.assertContains(response, "ERROR")
+
+
+class AdminStatusJevPanelTest(TestCase):
+    """The Jev (TypeSafe) panel on the status board: configured or not, why
+    this pod skips Jev, each use's state, and the test-decision button.
+    Loading the page never calls TypeSafe."""
+
+    def setUp(self):
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+
+    def _get(self):
+        from fighthealthinsurance.ml import typesafe
+
+        with mock.patch(_MODELS, return_value=[]), mock.patch(
+            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
+        ), mock.patch(_FAX, return_value=_ok_fax_backends()), mock.patch.object(
+            typesafe, "ask", side_effect=AssertionError("the page called TypeSafe")
+        ):
+            return self.client.get(reverse("admin_status"))
+
+    @override_settings(TYPESAFE_API_KEY=None)
+    def test_without_a_key_the_panel_says_not_configured(self):
+        response = self._get()
+        self.assertContains(response, "Jev (TypeSafe)")
+        self.assertContains(response, "NOT CONFIGURED")
+        self.assertContains(response, "missing (TYPESAFE_API_KEY)")
+        self.assertEqual(response.context["jev"]["level"], "not_configured")
+        self.assertFalse(response.context["jev"]["key_present"])
+
+    @override_settings(TYPESAFE_API_KEY=None)
+    def test_the_test_decision_button_is_there_even_unconfigured(self):
+        response = self._get()
+        self.assertContains(response, reverse("admin_jev_test"))
+        self.assertContains(response, "Is timbit a doughnut hole?")
+        self.assertContains(response, "not sent without an API key")
+
+    @override_settings(TYPESAFE_API_KEY="k", TYPESAFE_MODEL="jev-9.9.9")
+    def test_with_a_key_but_no_ledger_the_panel_says_skipped_and_why(self):
+        """A pod whose spend ledger has not loaded refuses every TypeSafe
+        request (ml/spend.py), and the panel says so instead of OK."""
+        with mock.patch.object(spend, "loaded", return_value=False):
+            response = self._get()
+        self.assertContains(response, "SKIPPED")
+        self.assertContains(response, "spend ledger has not loaded")
+        self.assertContains(response, "model: jev-9.9.9")
+        self.assertContains(response, "API key: present")
+        self.assertEqual(response.context["jev"]["level"], "skipped")
+
+    @override_settings(TYPESAFE_API_KEY="k", TYPESAFE_LETTER_RANKING_ENABLED=True)
+    def test_a_recent_answer_reads_ok(self):
+        ExternalServiceHealth.objects.create(
+            service=letter_quality.SERVICE, last_success_at=timezone.now()
+        )
+        with mock.patch.object(spend, "loaded", return_value=True):
+            response = self._get()
+        self.assertEqual(response.context["jev"]["level"], "ok")
+        self.assertContains(response, 'class="status-badge ok">OK<')
+        self.assertContains(response, "Letter ranking")
+        self.assertContains(response, "TYPESAFE_LETTER_RANKING_ENABLED: on")
+
+    @override_settings(TYPESAFE_API_KEY="k", TYPESAFE_LETTER_RANKING_ENABLED=True)
+    def test_a_newer_failure_reads_failing_with_its_hint(self):
+        now = timezone.now()
+        ExternalServiceHealth.objects.create(
+            service=letter_quality.SERVICE,
+            last_success_at=now - datetime.timedelta(hours=2),
+            last_failure_at=now,
+            last_failure="HTTP 401",
+        )
+        with mock.patch.object(spend, "loaded", return_value=True):
+            response = self._get()
+        self.assertEqual(response.context["jev"]["level"], "failing")
+        self.assertContains(response, "FAILING")
+        self.assertContains(response, "the API key was rejected")
+
+    @override_settings(
+        TYPESAFE_API_KEY="k",
+        TYPESAFE_LETTER_RANKING_ENABLED=False,
+        TYPESAFE_DENIAL_TRIAGE_ENABLED=False,
+        FHI_CHAT_JEV_GATE_ENABLED=False,
+        TYPESAFE_CHAT_SHADOW_ENABLED=False,
+        TYPESAFE_RESEARCH_JUDGING_ENABLED=False,
+    )
+    def test_configured_with_every_switch_off_reads_off(self):
+        with mock.patch.object(spend, "loaded", return_value=True):
+            response = self._get()
+        self.assertEqual(response.context["jev"]["level"], "off")
+        self.assertContains(response, "every use&rsquo;s switch is off")
+
+    @override_settings(
+        TYPESAFE_API_KEY="k",
+        TYPESAFE_LETTER_RANKING_ENABLED=False,
+        TYPESAFE_DENIAL_TRIAGE_ENABLED=False,
+        FHI_CHAT_JEV_GATE_ENABLED=True,
+        TYPESAFE_CHAT_SHADOW_ENABLED=True,
+        TYPESAFE_RESEARCH_JUDGING_ENABLED=False,
+    )
+    def test_every_use_that_is_on_being_refused_reads_skipped_not_idle(self):
+        """Chat's share of the TypeSafe budget can be spent while the general
+        budget still allows, so the general skip reason is None; the badge
+        must still say SKIPPED, with the uses' own reason."""
+        ExternalServiceHealth.objects.create(
+            service=chat_gate.SERVICE, last_success_at=timezone.now()
+        )
+        with mock.patch.object(spend, "loaded", return_value=True), mock.patch.object(
+            spend, "allows", side_effect=lambda provider, use: use != spend.CHAT
+        ):
+            response = self._get()
+        jev = response.context["jev"]
+        self.assertEqual(jev["level"], "skipped")
+        self.assertContains(response, "SKIPPED")
+        self.assertContains(response, "every use that is on is refused right now")
+        self.assertContains(response, "budget is spent for chat")
+        self.assertEqual(
+            jev["uses_skip"],
+            "TypeSafe's budget is spent for chat (FHI_SPEND_TYPESAFE_* in ml/spend.py)",
+        )
+        # The general budget, which the test decision spends, still allows:
+        # the headline must not say this pod sends nothing.
+        self.assertIsNone(jev["skip"])
+        self.assertNotContains(response, "sends Jev nothing right now")
+        self.assertContains(response, "may still send")
+
+    @override_settings(
+        TYPESAFE_API_KEY="k",
+        TYPESAFE_LETTER_RANKING_ENABLED=False,
+        TYPESAFE_DENIAL_TRIAGE_ENABLED=False,
+        FHI_CHAT_JEV_GATE_ENABLED=True,
+        TYPESAFE_CHAT_SHADOW_ENABLED=True,
+        TYPESAFE_RESEARCH_JUDGING_ENABLED=True,
+    )
+    def test_uses_refused_for_different_reasons_are_each_named_once(self):
+        """Two chat uses and research judging, each out of its own budget:
+        the chat reason once, then the research one."""
+        with mock.patch.object(spend, "loaded", return_value=True), mock.patch.object(
+            spend,
+            "allows",
+            side_effect=lambda provider, use: use not in (spend.CHAT, spend.RESEARCH),
+        ):
+            response = self._get()
+        jev = response.context["jev"]
+        self.assertEqual(jev["level"], "skipped")
+        self.assertEqual(
+            jev["uses_skip"],
+            "TypeSafe's budget is spent for chat (FHI_SPEND_TYPESAFE_* in ml/spend.py); "
+            "TypeSafe's budget is spent for research (FHI_SPEND_TYPESAFE_* in ml/spend.py)",
+        )
+
+    @override_settings(TYPESAFE_API_KEY="k")
+    def test_the_status_page_does_not_tally_triage_deadlines(self):
+        """The dashboard's Jev panel tallies deadline labels over every
+        triaged denial; this page shows no tally, so it must not run it."""
+        with mock.patch.object(spend, "loaded", return_value=True):
+            response = self._get()
+        self.assertIsNone(response.context["jev"]["deadlines"])
+        self.assertIsNone(response.context["jev"]["deadlines_error"])
+
+    @override_settings(TYPESAFE_API_KEY="k")
+    def test_an_unreadable_panel_is_an_error_row_not_a_broken_page(self):
+        with mock.patch(
+            "fighthealthinsurance.staff_views.ModelUsageDashboardView._jev_panel",
+            side_effect=RuntimeError("boom"),
+        ):
+            response = self._get()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["jev"]["error"], "RuntimeError")
+        self.assertContains(response, "Ray Polling Actors")
+
+
+class AdminJevTestViewTest(TestCase):
+    """The test-decision page asks Jev "Is timbit a doughnut hole?" on a
+    POST only, and shows Y or N with the probability, or why it failed or
+    was not sent."""
+
+    _ANSWER = {"model": "jev-1.13.0", "answers": {"probe": {"noul": 0.93}}}
+
+    def setUp(self):
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+
+    def _post(self, ask):
+        from fighthealthinsurance.ml import typesafe
+
+        with mock.patch.object(typesafe, "ask", ask), mock.patch.object(
+            spend._ledger, "wait_until_loaded", return_value=True
+        ):
+            return self.client.post(reverse("admin_jev_test"))
+
+    def test_non_staff_are_redirected(self):
+        self.client.logout()
+        User.objects.create_user(username="plain", password="pw123")
+        self.client.login(username="plain", password="pw123")
+        response = self.client.post(reverse("admin_jev_test"))
+        self.assertEqual(response.status_code, 302)
+
+    @override_settings(TYPESAFE_API_KEY="k")
+    def test_a_get_shows_the_question_and_sends_nothing(self):
+        from fighthealthinsurance.ml import typesafe
+
+        with mock.patch.object(typesafe, "ask") as ask:
+            response = self.client.get(reverse("admin_jev_test"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Is timbit a doughnut hole?")
+        self.assertContains(response, "Tim Hortons")
+        self.assertIsNone(response.context["result"])
+        ask.assert_not_called()
+
+    @override_settings(TYPESAFE_API_KEY="k")
+    def test_a_confident_yes_reads_y_with_the_probability(self):
+        from fighthealthinsurance.staff_views import (
+            JEV_TEST_QUESTIONS,
+            JEV_TEST_STATE,
+        )
+
+        ask = mock.AsyncMock(return_value=self._ANSWER)
+        response = self._post(ask)
+        self.assertEqual(response.status_code, 200)
+        result = response.context["result"]
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["answer"], "Y")
+        self.assertEqual(result["probability"], 0.93)
+        self.assertContains(response, 'class="answer yes">Y<')
+        self.assertContains(response, "<strong>0.93</strong>")
+        state, questions = ask.await_args.args
+        self.assertEqual(state, JEV_TEST_STATE)
+        self.assertEqual(questions, JEV_TEST_QUESTIONS)
+        self.assertEqual(
+            questions["probe"]["instructions"], "Is timbit a doughnut hole?"
+        )
+        self.assertEqual(ask.await_args.kwargs["use"], spend.OTHER)
+        self.assertEqual(ask.await_args.kwargs["task"], "probe")
+
+    @override_settings(TYPESAFE_API_KEY="k")
+    def test_a_low_probability_reads_n(self):
+        answer = {"model": "jev-1.13.0", "answers": {"probe": {"noul": 0.2}}}
+        response = self._post(mock.AsyncMock(return_value=answer))
+        result = response.context["result"]
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["answer"], "N")
+        self.assertContains(response, 'class="answer no">N<')
+        self.assertContains(response, "answering but not well")
+
+    @override_settings(TYPESAFE_API_KEY="k")
+    def test_a_probability_at_the_threshold_reads_y(self):
+        answer = {"model": "jev-1.13.0", "answers": {"probe": {"noul": 0.5}}}
+        response = self._post(mock.AsyncMock(return_value=answer))
+        self.assertEqual(response.context["result"]["answer"], "Y")
+
+    @override_settings(TYPESAFE_API_KEY="k")
+    def test_the_probability_is_shown_unrounded(self):
+        """Rounded to three places, 0.4999 would read 0.500 beside an N."""
+        answer = {"model": "jev-1.13.0", "answers": {"probe": {"noul": 0.4999}}}
+        response = self._post(mock.AsyncMock(return_value=answer))
+        self.assertEqual(response.context["result"]["answer"], "N")
+        self.assertContains(response, "<strong>0.4999</strong>")
+
+    @override_settings(TYPESAFE_API_KEY="k", TYPESAFE_MODEL="jev-latest")
+    def test_the_model_that_answered_is_named_not_the_alias(self):
+        answer = {"model": "jev-1.14.0", "answers": {"probe": {"noul": 0.9}}}
+        response = self._post(mock.AsyncMock(return_value=answer))
+        self.assertEqual(response.context["result"]["answered_model"], "jev-1.14.0")
+        self.assertContains(response, "jev-1.14.0 put the probability")
+
+    @override_settings(TYPESAFE_API_KEY=None)
+    def test_without_a_key_nothing_is_sent_and_the_page_says_so(self):
+        ask = mock.AsyncMock(return_value=self._ANSWER)
+        response = self._post(ask)
+        result = response.context["result"]
+        self.assertFalse(result["ok"])
+        self.assertIsNone(result["answer"])
+        self.assertEqual(result["category"], "NOT_CONFIGURED")
+        self.assertContains(response, "skipped: TYPESAFE_API_KEY is not set")
+        ask.assert_not_awaited()
+
+    @override_settings(TYPESAFE_API_KEY="k")
+    def test_a_rejected_key_reads_as_auth_with_the_hint(self):
+        from fighthealthinsurance.ml import typesafe
+
+        ask = mock.AsyncMock(
+            side_effect=typesafe.TypeSafeError("HTTP 401", status=401)
+        )
+        response = self._post(ask)
+        result = response.context["result"]
+        self.assertFalse(result["ok"])
+        self.assertIsNone(result["answer"])
+        self.assertEqual(result["category"], "FAIL_AUTH")
+        self.assertContains(response, "FAIL_AUTH")
+        self.assertContains(response, "HTTP 401")
+        self.assertContains(response, "the API key was rejected")
+
+    @override_settings(TYPESAFE_API_KEY="k")
+    def test_a_spent_budget_is_skipped_not_sent(self):
+        """ask() refuses before sending when the use's budget is spent; the
+        page says it was skipped and why, in the billing category."""
+        # The real ask() refuses before it builds a request, so nothing
+        # here can reach the network.
+        with mock.patch.object(
+            spend._ledger, "wait_until_loaded", return_value=True
+        ), mock.patch.object(spend, "allows", return_value=False), mock.patch.object(
+            spend, "loaded", return_value=True
+        ), mock.patch("aiohttp.ClientSession") as session:
+            response = self.client.post(reverse("admin_jev_test"))
+        session.assert_not_called()
+        result = response.context["result"]
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["category"], "FAIL_BILLING")
+        self.assertContains(response, "skipped: TypeSafe&#x27;s budget is spent")

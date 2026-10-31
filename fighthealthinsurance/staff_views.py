@@ -508,6 +508,7 @@ class AdminStatusView(generic.TemplateView):
         ctx["generated_at"] = timezone.now()
         ctx["deployment"] = self._deployment_status()
         ctx["models"] = self._model_status()
+        ctx["jev"] = self._jev_status()
         ctx["mcp"] = self._mcp_status()
         ctx["actors"] = self._actor_status()
         ctx["fax"] = self._fax_backend_status()
@@ -587,6 +588,65 @@ class AdminStatusView(generic.TemplateView):
             logger.opt(exception=True).error("Error computing model status")
             out["ok"] = False
             out["error"] = str(e)
+        return out
+
+    @staticmethod
+    def _jev_status() -> Dict[str, Any]:
+        """TypeSafe's Jev on the status board: whether it is configured, the
+        model and endpoint every request names, why this pod is skipping it
+        right now if it is, each use's switch and last outcome, and the
+        newest deploy-time probe (ModelUsageDashboardView._jev_panel). One
+        level for the badge: ``not_configured`` without TYPESAFE_API_KEY,
+        ``skipped`` when configured but ask() would refuse (a spent or
+        paused budget, a cooldown, a refused setting), for every use
+        (``skip``) or for every use whose switch is on (``uses_skip``: a
+        use's own budget, such as chat's share, can be spent while the
+        general one, which the test decision spends, is not), ``failing`` when
+        a use's newest outcome in the window is a failure, ``ok`` when a use
+        answered in the window, ``off`` when every use's switch is off, and
+        ``idle`` otherwise.
+
+        Reads rows, settings and this pod's state only; never calls
+        TypeSafe. Jev is asked only from the test-decision button
+        (AdminJevTestView), which this panel links to.
+        """
+        from django.conf import settings
+
+        out: Dict[str, Any] = {"ok": True, "error": None}
+        try:
+            # Without the triage deadline tally, which this page does not
+            # show and which scans every triaged denial.
+            out.update(ModelUsageDashboardView._jev_panel(deadlines=False))
+            out["url"] = str(getattr(settings, "TYPESAFE_API_URL", "") or "")
+            out["skip"] = None if not out["key_present"] else _jev_skip_reason()
+            out["uses_skip"] = None
+            on_rows = [row for row in out["rows"] if row["on"]]
+            levels = {row["level"] for row in on_rows}
+            if not out["key_present"]:
+                out["level"] = "not_configured"
+            elif out["skip"]:
+                out["level"] = "skipped"
+            elif on_rows and all(row["skip"] for row in on_rows):
+                # Every use that is on is refused for its own reason (its
+                # budget), which the general skip reason above misses. Kept
+                # apart from ``skip``: the test decision spends the general
+                # budget, so this pod may still send that.
+                out["level"] = "skipped"
+                out["uses_skip"] = "; ".join(
+                    dict.fromkeys(str(row["skip"]) for row in on_rows)
+                )
+            elif "failing" in levels:
+                out["level"] = "failing"
+            elif "ok" in levels:
+                out["level"] = "ok"
+            elif not on_rows:
+                out["level"] = "off"
+            else:
+                out["level"] = "idle"
+        except Exception as e:
+            logger.opt(exception=True).error("Error computing Jev status")
+            out["ok"] = False
+            out["error"] = type(e).__name__
         return out
 
     # The MCP flags shown, and what the chat path needs besides them.
@@ -1547,6 +1607,107 @@ class AdminModelQueryView(View):
             "result": result,
             "error": error,
         }
+
+
+# The test decision the status board's button asks Jev: a fixed sentence
+# or two and one yes/no question, like the deploy-time probe
+# (model_health_check.TYPESAFE_PROBE_STATE): no user data, a few dozen
+# tokens. The state says what a Timbit is, so the right answer is yes.
+JEV_TEST_QUESTION = "Is timbit a doughnut hole?"
+JEV_TEST_STATE = (
+    "A Timbit is a bite-sized ball of fried dough sold by Tim Hortons, a "
+    "Canadian coffee and doughnut chain. Timbits are made from the dough "
+    "cut out of the centre of a doughnut."
+)
+JEV_TEST_QUESTIONS = {"probe": {"type": "noul", "instructions": JEV_TEST_QUESTION}}
+# A probability at or above this reads as Y.
+JEV_TEST_YES_AT = 0.5
+# How long the button waits for Jev's answer. Shorter than the deploy
+# check's 30 s: someone is watching this one.
+JEV_TEST_TIMEOUT_SECONDS = 20.0
+
+
+class AdminJevTestView(View):
+    """Staff page that asks TypeSafe's Jev one test decision ("Is timbit a
+    doughnut hole?") and shows what came back: Y or N with the probability,
+    the latency and the model that answered, or why it failed or was not
+    sent (no API key, a spent budget, a cooldown, a refused setting), in the
+    categories the deploy-time check uses (model_health_check.check_typesafe
+    with this page's state and question).
+
+    Reached from the Jev panel of the system status page. A GET only shows
+    the question and the button; the POST makes the real (billable) call,
+    counted under TypeSafe's "other" use and as a probe in the LLM usage
+    metrics, so it is never made by simply loading a page.
+    """
+
+    template_name = "admin_jev_test.html"
+
+    def get(self, request):
+        return self._render(request, result=None)
+
+    def post(self, request):
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance.ml import model_health_check as mhc
+
+        entry = mhc.typesafe_entry()
+        if entry.enabled:
+            logger.info(
+                f"Staff user {request.user.username} asking Jev the test decision"
+            )
+            try:
+                entry = async_to_sync(mhc.check_typesafe)(
+                    entry,
+                    JEV_TEST_TIMEOUT_SECONDS,
+                    state=JEV_TEST_STATE,
+                    questions=JEV_TEST_QUESTIONS,
+                )
+            except Exception as e:
+                # check_typesafe categorizes what ask() raises; this is a
+                # failure of the check itself (the bridge, the ledger wait).
+                logger.opt(exception=True).error("Jev test decision failed")
+                entry.category = mhc.CATEGORY_OTHER
+                entry.error = type(e).__name__
+        # Without a key the entry already reads "skipped: " and why, and
+        # nothing was sent.
+        return self._render(request, result=entry)
+
+    def _render(self, request, result):
+        from fighthealthinsurance.ml import model_health_check as mhc
+
+        ctx: Dict[str, Any] = {
+            "title": "Jev test decision",
+            "question": JEV_TEST_QUESTION,
+            "state": JEV_TEST_STATE,
+            "model": typesafe.model_name(),
+            "key_present": typesafe.configured(),
+            "yes_at": JEV_TEST_YES_AT,
+            "timeout_seconds": JEV_TEST_TIMEOUT_SECONDS,
+            # check_typesafe first waits this long for this pod's spend
+            # ledger, before the call's own timeout starts.
+            "ledger_wait_seconds": mhc.TYPESAFE_LEDGER_WAIT_SECONDS,
+            "result": None,
+        }
+        if result is not None:
+            probability = result.probability
+            ctx["result"] = {
+                "ok": result.ok,
+                "category": result.category,
+                "error": result.error,
+                "hint": AdminStatusView._scoring_failure_hint(result.error),
+                "latency_ms": result.latency_ms,
+                "probability": probability,
+                # The model TypeSafe said answered: the versioned id, even
+                # when TYPESAFE_MODEL names an alias.
+                "answered_model": result.answered_model,
+                "answer": (
+                    None
+                    if probability is None
+                    else ("Y" if probability >= JEV_TEST_YES_AT else "N")
+                ),
+            }
+        return render(request, self.template_name, ctx)
 
 
 class ResendStuckFaxView(View):
@@ -3396,15 +3557,17 @@ class ModelUsageDashboardView(generic.TemplateView):
     JEV_WINDOW = datetime.timedelta(hours=24)
 
     @classmethod
-    def _jev_panel(cls) -> Dict[str, Any]:
+    def _jev_panel(cls, deadlines: bool = True) -> Dict[str, Any]:
         """Is Jev working: every use of TypeSafe's Jev on one panel, each
         with its switch, why it is skipped now if it is (_jev_uses), the
         last success and failure its health row recorded, and a level from
         those; then the newest deploy-time probe
         (ml/model_health_check.check_typesafe) and the staff tally of triage
         deadlines, which decides when readers may be told them
-        (TYPESAFE_DEADLINE_SHOW_ENABLED). TypeSafe's spend and any pause are
-        in the chat routing policy panel's spend rows.
+        (TYPESAFE_DEADLINE_SHOW_ENABLED), unless ``deadlines`` is False: the
+        tally is an aggregate over every triaged denial, so a page that does
+        not show it (the status page) leaves it out. TypeSafe's spend and
+        any pause are in the chat routing policy panel's spend rows.
 
         Reads rows, settings and this pod's state only; never calls
         TypeSafe. Each part fails on its own: an unreadable part reads as an
@@ -3451,6 +3614,8 @@ class ModelUsageDashboardView(generic.TemplateView):
         except Exception as e:
             logger.opt(exception=True).warning("Jev panel: probe unreadable")
             panel["probe_error"] = type(e).__name__
+        if not deadlines:
+            return panel
         try:
             panel["deadlines"] = {
                 "show_on": denial_triage.deadline_show_enabled(),
