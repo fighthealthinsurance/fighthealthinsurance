@@ -92,8 +92,8 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
   .dw-back a { font-weight: 600; text-decoration: underline; }
   .dw-method { display: grid; gap: var(--fhi-space-2); }
   /* Where people get coverage: one donut, each person in one slice, in the coverage purples. The marketplace slice is the
-     darkest and stands out past the ring, with its share in the middle; job-based is a step lighter than it and every
-     other kind lighter again; no coverage is an empty slice. The list beside it says every share in words. */
+     darkest and stands out past the ring, with its share in the middle; Medicare is two steps lighter and job-based two
+     lighter again; the other kinds are striped; no coverage is an empty slice. The list beside it says every share in words. */
   .dw-mix { display: grid; grid-template-columns: minmax(9rem, 25rem) minmax(0, 30rem); gap: var(--fhi-space-3) var(--fhi-space-6); align-items: center; }
   .dw-mix > * { margin: 0; }
   .dw-mix > .dw-note { grid-column: 1 / -1; }
@@ -107,13 +107,17 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
   .dw-mix-ring-label .dw-num { font-weight: 700; fill: var(--fhi-ink); }
   .dw-mix-big { font-size: 28px; font-weight: 700; fill: var(--fhi-ink); }
   .dw-mix-small { font-size: 14px; fill: var(--fhi-ink-2); }
-  /* Medicare and Medicaid two steps apart, so they read as different even side by side; the three smallest kinds share Medicaid's step. */
-  .dw-mix-job { fill: var(--dw-health-2); background-color: var(--dw-health-2); }
+  /* Solid kinds sit two steps apart, since one step apart two light purples look alike; the ramp has no fourth such step, so Medicaid and the three smallest kinds are striped. */
+  .dw-mix-job { fill: var(--dw-health-1); background-color: var(--dw-health-1); }
   .dw-mix-medicare { fill: var(--dw-health-3); background-color: var(--dw-health-3); }
-  .dw-mix-other-individual, .dw-mix-medicaid-chip, .dw-mix-military-va, .dw-mix-more-than-one { fill: var(--dw-health-1); background-color: var(--dw-health-1); }
+  .dw-mix-other-individual, .dw-mix-medicaid-chip, .dw-mix-military-va, .dw-mix-more-than-one { fill: url(#dw-mix-stripes); background: repeating-linear-gradient(135deg, var(--dw-health-3) 0 2px, var(--dw-health-1) 2px 5px); }
+  .dw-mix-stripe-ground { fill: var(--dw-health-1); }
+  .dw-mix-stripe { fill: var(--dw-health-3); }
   .dw-mix-marketplace { fill: var(--dw-health-5); background-color: var(--dw-health-5); }
   .dw-mix-uninsured { fill: var(--dw-paper); background-color: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-health-3); }
   .dw-mix-donut path.dw-mix-uninsured { stroke: var(--dw-health-3); }
+  /* The job slice is too light to stand out from white on its own, so it gets the empty slice's outline. */
+  .dw-mix-donut path.dw-mix-job { stroke: var(--dw-health-3); }
   .dw-mix-list { display: grid; gap: var(--fhi-space-1); padding: 0; list-style: none; font-size: var(--fhi-text-small); color: var(--fhi-ink-2); }
   .dw-mix-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--fhi-space-2); align-items: baseline; }
   .dw-mix-list .dw-num { font-weight: 700; color: var(--fhi-ink); }

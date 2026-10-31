@@ -2817,6 +2817,7 @@ DW_PAIRS = (
     # must stand out from the white gaps between slices.
     ("--dw-health-5", "--dw-paper", 3.0, "the marketplace slice beside its white gaps"),
     ("--dw-health-3", "--dw-paper", 3.0, "the ring of the empty slice for no coverage"),
+    ("--dw-health-3", "--dw-paper", 3.0, "the outline of the light job slice"),
     # A pressed toggle button is filled with its section's colour.
     ("--dw-paper", "--dw-deny", 4.5, "white words on a pressed denial toggle"),
     ("--dw-paper", "--dw-health-4", 4.5, "white words on a pressed coverage and health toggle"),
