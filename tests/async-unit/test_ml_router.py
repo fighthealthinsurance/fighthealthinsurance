@@ -1380,7 +1380,7 @@ class TestMLRouterFullQABackends(unittest.TestCase):
 
 class TestMLRouterSynthesisBackends(unittest.TestCase):
     """synthesis_backends() hands synthesize_appeals its two pools: our own
-    instruction-following models, and the hosted backup it holds back.
+    instruction-following models, and the hosted ones that compete with them.
 
     From the 2026-10-31 log: fhi-legacy, asked to merge three drafts,
     answered "0.000"; the newer internal model was not served; nothing
@@ -1418,7 +1418,7 @@ class TestMLRouterSynthesisBackends(unittest.TestCase):
         self.assertEqual(self.router.synthesis_backends(use_external=False), ([], []))
         self.assertEqual(
             self.router.synthesis_backends(use_external=True),
-            ([], [self.claude, self.sonar]),
+            ([], [self.claude, self.sonar, self.gemma]),
         )
 
     def test_ours_are_strongest_first(self):
@@ -1428,18 +1428,18 @@ class TestMLRouterSynthesisBackends(unittest.TestCase):
 
         self.assertEqual(ours, [self.alpha, self.new])
 
-    def test_hosted_models_only_with_consent_and_two_at_most(self):
-        install_models(self.router, [self.new], self.externals)
+    def test_hosted_models_only_with_consent_and_the_best_three(self):
+        extra = make_routed_mock(70, external=True, name="extra")
+        install_models(self.router, [self.new], {**self.externals, "extra": [extra]})
 
         self.assertEqual(self.router.synthesis_backends(use_external=False)[1], [])
-        # Best quality first, and a backup wants a good answer and a spare,
-        # not a fan-out of paid calls.
+        # Best quality first, as for the drafts.
         self.assertEqual(
             self.router.synthesis_backends(use_external=True)[1],
-            [self.claude, self.sonar],
+            [self.claude, self.sonar, self.gemma],
         )
 
-    def test_a_hosted_model_marked_down_is_not_a_backup(self):
+    def test_a_hosted_model_marked_down_is_not_asked(self):
         self.claude.is_available.return_value = False
         install_models(self.router, [self.new], self.externals)
 
@@ -1448,7 +1448,7 @@ class TestMLRouterSynthesisBackends(unittest.TestCase):
             [self.sonar, self.gemma],
         )
 
-    def test_down_internals_give_way_to_the_hosted_backup(self):
+    def test_down_internals_give_way_to_hosted_models(self):
         """Beside a hosted model that can answer, an internal the sweep marked
         down would only hold the race open for its full timeout."""
         self.new.is_available.return_value = False
@@ -1456,10 +1456,10 @@ class TestMLRouterSynthesisBackends(unittest.TestCase):
 
         self.assertEqual(
             self.router.synthesis_backends(use_external=True),
-            ([], [self.claude, self.sonar]),
+            ([], [self.claude, self.sonar, self.gemma]),
         )
 
-    def test_down_internals_fail_open_without_a_hosted_backup(self):
+    def test_down_internals_fail_open_without_hosted_models(self):
         self.new.is_available.return_value = False
         install_models(self.router, [self.new], self.externals)
 
@@ -1467,7 +1467,7 @@ class TestMLRouterSynthesisBackends(unittest.TestCase):
             self.router.synthesis_backends(use_external=False), ([self.new], [])
         )
 
-    def test_forced_models_are_asked_first_with_no_backup(self):
+    def test_forced_models_are_the_only_ones_asked(self):
         install_models(self.router, [self.legacy, self.new], self.externals)
         self.router.models_by_name["new"] = [self.new]
 

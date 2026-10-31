@@ -1516,10 +1516,6 @@ async def best_within_timelimit(
     score_fn: Callable[[T, Awaitable[T]], float],
     timeout: float,
     extended_timeout: Optional[float] = None,
-    *,
-    deferred: Optional[Collection[Awaitable[T]]] = None,
-    defer_seconds: float = 0.0,
-    stage: Optional["StagedStart"] = None,
 ) -> Optional[T]:
     """
     Runs a list of async tasks concurrently.
@@ -1528,13 +1524,6 @@ async def best_within_timelimit(
     ``extended_timeout`` extra seconds and takes the first usable result to
     arrive. Ignores late results; every still-pending task is cancelled on
     every exit path.
-
-    ``deferred``, ``defer_seconds`` and ``stage`` stage the start exactly as
-    in :func:`best_two_within_timelimit`: the tasks in ``deferred`` are held
-    back for ``defer_seconds`` while the others run, and start only when
-    nothing usable has arrived by then, or at once when every other task
-    has finished with nothing usable. Without them every task starts at
-    once, as before.
 
     Results scored ``-inf`` are treated as INVALID (like falsy results): they
     are never returned, even if they are the only thing that completed.
@@ -1555,13 +1544,7 @@ async def best_within_timelimit(
         completes within timeout + extended_timeout.
     """
     best_and_second = await best_two_within_timelimit(
-        tasks,
-        score_fn,
-        timeout,
-        extended_timeout,
-        deferred=deferred,
-        defer_seconds=defer_seconds,
-        stage=stage,
+        tasks, score_fn, timeout, extended_timeout
     )
     return best_and_second.best
 

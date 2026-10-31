@@ -307,12 +307,12 @@ class TestSynthesizeAppeals(unittest.TestCase):
         self.assertNotIn(weak_1, prompt)
         self.assertNotIn(weak_2, prompt)
 
-    # --- the hosted backup -------------------------------------------------
+    # --- hosted models ------------------------------------------------------
     # The 2026-10-31 log: fhi-legacy (appeal-only) answered the synthesis
     # prompt with "\n\n0.000", the newer internal model was skipped as not
     # served here, and with no other model asked the user got no merged
     # letter. Now the appeal-only fine-tune is not asked at all (router
-    # tests), and with the user's consent the hosted models stand by.
+    # tests), and with the user's consent the best hosted models compete.
 
     @staticmethod
     def _backend(reply, *, quality=200, name="model"):
@@ -332,7 +332,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
         self, mock_router
     ):
         ours = self._backend("\n\n0.000", quality=101, name="fhi-legacy")
-        hosted = self._backend(self.LETTER, quality=210, name="hosted")
+        hosted = self._backend(self.LETTER, quality=92, name="hosted")
         mock_router.synthesis_backends.return_value = ([ours], [hosted])
         provenance: dict = {}
 
@@ -346,84 +346,44 @@ class TestSynthesizeAppeals(unittest.TestCase):
 
         self.assertEqual(result, self.LETTER)
         self.assertIs(provenance["model"], hosted)
-        ours._infer_no_context.assert_awaited_once()
-        hosted._infer_no_context.assert_awaited_once()
 
     @patch("fighthealthinsurance.generate_appeal.ml_router")
-    def test_hosted_models_never_start_when_one_of_ours_answers(self, mock_router):
-        """A hosted call is a paid call over every draft: not made when our
-        own model has already merged them."""
-        ours = self._backend(self.LETTER, name="ours")
-        hosted = self._backend("A hosted letter. " * 20, quality=210, name="hosted")
+    def test_hosted_models_compete_with_ours_and_the_better_letter_wins(
+        self, mock_router
+    ):
+        """No hold-back: with the user's consent the hosted models are asked
+        beside ours from the start, and a better hosted letter beats ours."""
+        fuller = "\n\n".join(
+            [
+                "Dear Appeals Department,",
+                "I am writing to appeal the denial of my transesophageal "
+                "echocardiogram, which my neurologist ordered after a "
+                "cryptogenic stroke.",
+                "A negative transthoracic echocardiogram does not rule out a "
+                "patent foramen ovale; the clinical evidence shows TEE is the "
+                "study that can.",
+                "The procedure is medically necessary under the plan's policy, "
+                "and it will decide whether closure is indicated.",
+                "Please reverse the denial and authorize the study.",
+                "Sincerely, the patient",
+            ]
+        )
+        ours = self._backend(self.LETTER, quality=200, name="ours")
+        hosted = self._backend(fuller, quality=92, name="hosted")
         mock_router.synthesis_backends.return_value = ([ours], [hosted])
+        self.assertGreater(
+            AppealGenerator._score_appeal_text(fuller) + 92 * 0.3,
+            AppealGenerator._score_appeal_text(self.LETTER) + 200 * 0.3,
+            "precondition: the hosted letter scores higher",
+        )
 
         result = asyncio.run(
             self._run_synthesize(appeal_texts=self.sample_appeals, use_external=True)
         )
 
-        self.assertEqual(result, self.LETTER)
-        hosted._infer_no_context.assert_not_awaited()
-
-    @patch("fighthealthinsurance.generate_appeal.best_within_timelimit")
-    @patch("fighthealthinsurance.generate_appeal.ml_router")
-    def test_hosted_tasks_are_held_back_behind_ours(
-        self, mock_router, mock_best_within
-    ):
-        ours = self._backend(self.LETTER, name="ours")
-        hosted = [
-            self._backend(self.LETTER, quality=210, name="hosted-1"),
-            self._backend(self.LETTER, quality=205, name="hosted-2"),
-        ]
-        mock_router.synthesis_backends.return_value = ([ours], hosted)
-        seen = {}
-
-        async def record(tasks, **kwargs):
-            seen["tasks"] = list(tasks)
-            seen.update(kwargs)
-            for task in tasks:
-                task.close()
-            return None
-
-        mock_best_within.side_effect = record
-
-        asyncio.run(
-            self._run_synthesize(appeal_texts=self.sample_appeals, use_external=True)
-        )
-
-        # Ours first, then the hosted ones, which are the held-back tasks.
-        self.assertEqual(len(seen["tasks"]), 3)
-        self.assertEqual(list(seen["deferred"]), seen["tasks"][1:])
-        self.assertEqual(
-            seen["defer_seconds"], AppealGenerator.SYNTHESIS_HOSTED_DELAY_SECONDS
-        )
-        self.assertLess(
-            AppealGenerator.SYNTHESIS_HOSTED_DELAY_SECONDS,
-            AppealGenerator.SYNTHESIS_TIMEOUT_SECONDS,
-        )
-
-    @patch("fighthealthinsurance.generate_appeal.best_within_timelimit")
-    @patch("fighthealthinsurance.generate_appeal.ml_router")
-    def test_nothing_is_held_back_when_only_hosted_models_remain(
-        self, mock_router, mock_best_within
-    ):
-        """With none of ours to go first there is nothing to wait for."""
-        hosted = self._backend(self.LETTER, quality=210, name="hosted")
-        mock_router.synthesis_backends.return_value = ([], [hosted])
-        seen = {}
-
-        async def record(tasks, **kwargs):
-            seen.update(kwargs)
-            for task in tasks:
-                task.close()
-            return None
-
-        mock_best_within.side_effect = record
-
-        asyncio.run(
-            self._run_synthesize(appeal_texts=self.sample_appeals, use_external=True)
-        )
-
-        self.assertEqual(seen["defer_seconds"], 0.0)
+        self.assertEqual(result, fuller)
+        ours._infer_no_context.assert_awaited_once()
+        hosted._infer_no_context.assert_awaited_once()
 
     @patch("fighthealthinsurance.generate_appeal.ml_router")
     def test_consent_is_passed_to_the_router_and_defaults_to_no(self, mock_router):

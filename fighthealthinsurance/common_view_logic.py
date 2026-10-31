@@ -7436,8 +7436,9 @@ class AppealsBackendHelper:
                         diagnosis=(str(denial.diagnosis) if denial.diagnosis else None),
                         provenance=synthesis_provenance,
                         # The user's external-model consent, as for the
-                        # drafts: with it, a hosted model merges them when
-                        # none of ours can; without it, only ours are asked.
+                        # drafts: with it, the best hosted models compete
+                        # with ours to merge them; without it, only ours are
+                        # asked.
                         use_external=bool(getattr(denial, "use_external", False)),
                     )
                 )

@@ -11,7 +11,6 @@ from concurrent.futures import wait as futures_wait
 from dataclasses import dataclass
 from typing import (
     Any,
-    Awaitable,
     Callable,
     Coroutine,
     Iterator,
@@ -120,7 +119,6 @@ from .payer_policy_helper import (
 from .process_denial import ProcessDenialRegex
 from .pubmed_tools import PubMedTools
 from .utils import (
-    StagedStart,
     best_within_timelimit,
     describe_unusable_appeal,
     is_real_appeal,
@@ -1735,14 +1733,10 @@ class AppealGenerator(object):
     )
 
     MAX_SYNTHESIS_DRAFTS = 3
-    # The synthesis race. Our own models get the first
-    # SYNTHESIS_HOSTED_DELAY_SECONDS of the window to themselves; the hosted
-    # models (only with the user's external-model consent) start when that
-    # delay passes with nothing usable, or at once when every one of ours
-    # has already finished with nothing (skipped as not served, refused, a
-    # stray number), and never when one of ours has answered.
+    # The synthesis race: every model asked starts at once (hosted ones too,
+    # with the user's external-model consent), and the best letter within
+    # the window wins.
     SYNTHESIS_TIMEOUT_SECONDS = 60
-    SYNTHESIS_HOSTED_DELAY_SECONDS = 30
     # Shorter than this is not a letter: a fine-tune asked to merge drafts
     # answers "0.000", and a model that gave up early returns a fragment.
     MIN_SYNTHESIS_CHARS = 50
@@ -3844,11 +3838,11 @@ class AppealGenerator(object):
     ) -> Optional[str]:
         """
         Synthesize multiple appeal drafts into one best appeal: every
-        instruction-following internal model is asked in parallel and the
-        best result within the window wins. With ``use_external`` the hosted
-        models stand by as a backup (see ``MLRouter.synthesis_backends`` and
-        the SYNTHESIS_* constants): they start only when none of ours has
-        answered, so a deployment whose own models are down, not served or
+        instruction-following internal model, and with ``use_external`` the
+        best hosted models too (see ``MLRouter.synthesis_backends``), is
+        asked in parallel and the best letter within the window wins. So a
+        user who allowed hosted models gets the best merge any of them can
+        write, and a deployment whose own models are down, not served or
         appeal-only still gets a merged letter instead of nothing.
 
         Args:
@@ -3862,7 +3856,7 @@ class AppealGenerator(object):
                 the reserved ``synthesized`` name (the dashboard's bucket);
                 without this the author's identity was simply dropped.
             use_external: The user's external-model consent. Without it no
-                hosted model is asked, whatever ours do.
+                hosted model is asked.
 
         Returns:
             The synthesized appeal text, or None if synthesis fails.
@@ -3958,16 +3952,13 @@ class AppealGenerator(object):
             return None
 
         # Build tasks and map each coroutine to its model's quality score.
-        # Ours first, then the hosted backup, which the race holds back.
+        # Ours first, so an exact score tie goes to our own model.
         task_quality: dict[int, float] = {}
         tasks: List[Coroutine[Any, Any, Optional[Tuple[str, RemoteModelLike]]]] = []
-        hosted_tasks: List[Awaitable[Optional[Tuple[str, RemoteModelLike]]]] = []
         for m in ours + hosted:
             coro = try_model(m)
             task_quality[id(coro)] = float(m.quality())
             tasks.append(coro)
-            if m in hosted:
-                hosted_tasks.append(coro)
 
         def score_fn(
             result: Optional[Tuple[str, RemoteModelLike]], awaitable: Any
@@ -3978,19 +3969,10 @@ class AppealGenerator(object):
             model_score = task_quality.get(id(awaitable), 100.0)
             return text_score + model_score * 0.3
 
-        # What the race did with the hosted backup, for the log lines below.
-        stage = StagedStart()
         asked = f"{len(ours)} internal + {len(hosted)} hosted"
         try:
             best = await best_within_timelimit(
-                tasks,
-                score_fn=score_fn,
-                timeout=self.SYNTHESIS_TIMEOUT_SECONDS,
-                deferred=hosted_tasks,
-                defer_seconds=(
-                    self.SYNTHESIS_HOSTED_DELAY_SECONDS if ours and hosted else 0.0
-                ),
-                stage=stage,
+                tasks, score_fn=score_fn, timeout=self.SYNTHESIS_TIMEOUT_SECONDS
             )
             if best:
                 text, winner = best
@@ -4000,13 +3982,12 @@ class AppealGenerator(object):
                     f"Synthesized {len(appeal_texts)} appeals into one "
                     f"({len(text)} chars) via {winner} "
                     f"({'hosted' if winner in hosted else 'internal'}); "
-                    f"{asked} asked, hosted start: {stage.outcome or 'none'}"
+                    f"{asked} asked"
                 )
                 return str(text)
             logger.warning(
                 f"Appeal synthesis produced nothing from {asked} models "
-                f"(use_external={use_external}, hosted start: "
-                f"{stage.outcome or 'none'}); the drafts stand as they are"
+                f"(use_external={use_external}); the drafts stand as they are"
             )
         except Exception as e:
             logger.warning(f"All synthesis models failed within time limit: {e}")

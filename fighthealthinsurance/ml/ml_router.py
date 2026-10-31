@@ -811,9 +811,9 @@ class MLRouter(object):
         self, use_external: bool = False
     ) -> tuple[list[RemoteModelLike], list[RemoteModelLike]]:
         """The backends that merge several appeal drafts into one letter, as
-        ``(ours, hosted)``: our own models, strongest first, and the hosted
-        models ``synthesize_appeals`` holds back behind them, to ask when
-        none of ours answers.
+        ``(ours, hosted)``: our own models, strongest first, and the best
+        hosted ones. ``synthesize_appeals`` asks all of them at once and
+        keeps the best letter.
 
         Synthesis is an instruction-following task ("combine these drafts"),
         not the appeal-from-a-denial task the fine-tunes were trained on, so
@@ -828,14 +828,13 @@ class MLRouter(object):
 
         ``hosted`` is empty unless ``use_external``: the drafts were written
         under that same consent, so merging them outside adds no exposure
-        when it is given, and never happens when it is not. Two of them, not
-        the usual three: a backup wants one good answer and a spare, not a
-        fan-out, and each is a paid call over every draft.
+        when it is given, and never happens when it is not. It is the same
+        best-three the drafts themselves were written by.
         """
         forced = self._get_forced_models("for synthesis", use_external=use_external)
         if forced:
             return forced, []
-        hosted = self.best_external_models(limit=2) if use_external else []
+        hosted = self.best_external_models() if use_external else []
         general = [
             m for m in self.internal_models_by_cost if m.supports_general_instructions()
         ]

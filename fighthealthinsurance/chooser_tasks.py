@@ -1998,7 +1998,8 @@ async def _synthesize_appeal_candidate(
             # appeal series of the fhi_ml_call* metrics.
             purpose="other",
             # The chooser's drafts come from every backend, hosted ones
-            # included (see the module docstring), so their merge may too.
+            # included (see the module docstring), so their merge may be
+            # written by one too.
             use_external=True,
         )
     except Exception as e:
