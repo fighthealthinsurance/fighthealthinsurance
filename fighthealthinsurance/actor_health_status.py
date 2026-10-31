@@ -76,7 +76,7 @@ def check_actor_health() -> Dict[str, Any]:
 
             # Try to call health_check method with a timeout
             try:
-                result = ray.get(actor.health_check.remote(), timeout=5)
+                result: Any = ray.get(actor.health_check.remote(), timeout=5)
                 if result:
                     alive_count += 1
                     details.append(ActorHealthDetail(name=actor_name, alive=True))
