@@ -315,8 +315,8 @@ class Base(Configuration):
             "azure-openai/gpt-5.5,"
             "mistralai/Mistral-Small-3.2-24B-Instruct-2506,"
             "zai-org/GLM-5.3-Flash,"
-            "deepseek-ai/DeepSeek-V4.1-Flash,"
-            "Qwen/Qwen3.8-2.4T-A95B",
+            "deepseek-ai/DeepSeek-V4.1-Flash-1017,"
+            "Qwen/Qwen3.8-Max",
         ).split(",")
         if name.strip()
     ]

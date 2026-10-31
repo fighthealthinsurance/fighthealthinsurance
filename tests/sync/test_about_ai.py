@@ -87,8 +87,13 @@ class DataFilesTest(TestCase):
         first = ai.models[0]
         retired = dataclasses.replace(first, retired="2027-01-01")
         changed = dataclasses.replace(ai, models=[retired] + ai.models[1:])
+        self.assertIn(first.id, [m.id for m in ai.in_use])
         self.assertNotIn(retired.id, [m.id for m in changed.in_use])
-        self.assertEqual([m.id for m in changed.retired], [retired.id])
+        # Only it joins the ones the data file already retires.
+        self.assertEqual(
+            [m.id for m in changed.retired],
+            [retired.id] + [m.id for m in ai.retired],
+        )
 
     def test_a_retired_model_of_ours_is_still_an_fhi_model(self):
         ai = dataclasses.replace(mt.load(), show_details=False)

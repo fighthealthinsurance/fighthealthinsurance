@@ -6031,7 +6031,7 @@ class DeepInfra(RemoteFullOpenLike):
     # Model context lengths (in tokens) - most modern models support 128k
     MODEL_CONTEXT_LENGTHS: ClassVar[dict[str, int]] = {
         "google/gemma-4-26B-A4B-it": 260000,
-        "deepseek-ai/DeepSeek-V4-Pro": 1048000,
+        "deepseek-ai/DeepSeek-V4-Pro-0813": 1048000,
     }
 
     # Routing quality per model, kept below the internal models' range (>=101)
@@ -6040,7 +6040,7 @@ class DeepInfra(RemoteFullOpenLike):
     # back to a mid value.
     _MODEL_QUALITY: ClassVar[dict[str, int]] = {
         # Currently registered by models() (flagship Pro deepseek + gemma-4).
-        "deepseek-ai/DeepSeek-V4-Pro": 92,
+        "deepseek-ai/DeepSeek-V4-Pro-0813": 92,
         "google/gemma-4-26B-A4B-it": 80,
     }
 
@@ -6075,26 +6075,36 @@ class DeepInfra(RemoteFullOpenLike):
     # Outside models for chat only (MLRouter.chat_outside_models), kept out of
     # the general pools so appeals and summaries route exactly as before.
     # Chosen 2026-09-27 from the FHI model eval: no Gemma (we host our own).
+    # Refreshed 2026-10-31 against DeepInfra's catalog: DeepSeek V4.1 Flash
+    # moved to its 1017 release (same price, shorter answers) and
+    # Qwen3.8-2.4T-A95B, which DeepInfra retired on 2026-10-12, became
+    # Qwen3.8-Max, the same 2.4T Qwen flagship served without reasoning at a
+    # lower price ($1.65/$4.95 against $2/$6 per million tokens). DeepInfra's
+    # own suggested replacement, GLM-5.3, is a coding model that scored 0.70
+    # in the September letter test, so it was not taken. Kimi-K3 stays: it
+    # was the best writer in that test and is asked only for side-by-sides.
     CHAT_MODELS: ClassVar[List[str]] = [
         "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
         "zai-org/GLM-5.3-Flash",
-        "deepseek-ai/DeepSeek-V4.1-Flash",
-        "Qwen/Qwen3.8-2.4T-A95B",
+        "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+        "Qwen/Qwen3.8-Max",
         "moonshotai/Kimi-K3",
     ]
-    # Chat replies are short: cap each model's output. Qwen3.8 and Kimi-K3
-    # reason before they answer, and the cap counts the reasoning too, so
-    # theirs are higher. In a streamed timing run (2026-09-27, 20 chat-sized
-    # questions each) Qwen at 800 spent the whole cap reasoning on 2 of 20,
-    # and Kimi at 800 did on 13 of 20 and cut the other 7 short. DeepInfra
-    # refuses to turn Qwen's thinking off ("Disabling thinking is not
-    # supported"), so no such flag is sent. A reply that is all reasoning
-    # comes back empty and the fan-out treats it as unusable.
+    # Chat replies are short: cap each model's output. Kimi-K3 reasons
+    # before it answers, and the cap counts the reasoning too, so its cap is
+    # higher. In a streamed timing run (2026-09-27, 20 chat-sized questions
+    # each) Kimi at 800 spent the whole cap reasoning on 13 of 20 and cut
+    # the other 7 short; the retired Qwen3.8-2.4T did so on 2 of 20 at 800,
+    # which is why its cap was 1600, and DeepInfra refused to turn its
+    # thinking off ("Disabling thinking is not supported"), so no such flag
+    # is sent to any model. Qwen3.8-Max does not reason, so it gets the
+    # plain cap. A reply that is all reasoning comes back empty and the
+    # fan-out treats it as unusable.
     _CHAT_REQUEST_EXTRAS: ClassVar[dict[str, dict[str, Any]]] = {
         "mistralai/Mistral-Small-3.2-24B-Instruct-2506": {"max_tokens": 1024},
         "zai-org/GLM-5.3-Flash": {"max_tokens": 1024},
-        "deepseek-ai/DeepSeek-V4.1-Flash": {"max_tokens": 1024},
-        "Qwen/Qwen3.8-2.4T-A95B": {"max_tokens": 1600},
+        "deepseek-ai/DeepSeek-V4.1-Flash-1017": {"max_tokens": 1024},
+        "Qwen/Qwen3.8-Max": {"max_tokens": 1024},
         "moonshotai/Kimi-K3": {"max_tokens": 3000},
     }
 
@@ -6111,10 +6121,13 @@ class DeepInfra(RemoteFullOpenLike):
     @classmethod
     def models(cls) -> List[ModelDescription]:
         return [
+            # The official V4-Pro release (DeepInfra: "superseding the
+            # preview version"), same price as the preview it replaced
+            # on 2026-10-31.
             ModelDescription(
                 cost=260,
-                name="deepseek-ai/DeepSeek-V4-Pro",
-                internal_name="deepseek-ai/DeepSeek-V4-Pro",
+                name="deepseek-ai/DeepSeek-V4-Pro-0813",
+                internal_name="deepseek-ai/DeepSeek-V4-Pro-0813",
             ),
             ModelDescription(
                 cost=35,

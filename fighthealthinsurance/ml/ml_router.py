@@ -626,7 +626,7 @@ class MLRouter(object):
         servers are available.
 
         FLOW:
-        1. Router returns ["fhi-2025", "deepseek-ai/DeepSeek-V4-Pro"]
+        1. Router returns ["fhi-2025", "deepseek-ai/DeepSeek-V4-Pro-0813"]
         2. Caller looks up models_by_name["fhi-2025"] → [server1, server2, server3]
         3. Caller submits to the first server that accepts the submission and
            moves to the next only when a submission fails (get_model_result);

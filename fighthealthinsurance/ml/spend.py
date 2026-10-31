@@ -118,18 +118,18 @@ WRITE_EVERY_SECONDS = 1.0
 TYPESAFE_USD_PER_MTOK = 0.042
 
 # DeepInfra list prices, (input, output) US dollars per million tokens, from
-# api.deepinfra.com/models/list on 2026-09-27. Used only when a response
+# api.deepinfra.com/models/list on 2026-10-31. Used only when a response
 # carries no estimated_cost of its own. A model missing here is charged at
 # FALLBACK_USD_PER_MTOK, high on purpose, so an unpriced model uses up its
 # budget early rather than late.
 DEEPINFRA_USD_PER_MTOK: Dict[str, Tuple[float, float]] = {
     "mistralai/Mistral-Small-3.2-24B-Instruct-2506": (0.075, 0.2),
     "zai-org/GLM-5.3-Flash": (0.15, 0.5),
-    "deepseek-ai/DeepSeek-V4.1-Flash": (0.2, 0.6),
-    "Qwen/Qwen3.8-2.4T-A95B": (2.0, 6.0),
+    "deepseek-ai/DeepSeek-V4.1-Flash-1017": (0.2, 0.6),
+    "Qwen/Qwen3.8-Max": (1.65, 4.951),
     "moonshotai/Kimi-K3": (2.85, 14.25),
-    "deepseek-ai/DeepSeek-V4-Pro": (1.3, 2.6),
-    "google/gemma-4-26B-A4B-it": (0.1, 0.4),
+    "deepseek-ai/DeepSeek-V4-Pro-0813": (1.3, 2.6),
+    "google/gemma-4-26B-A4B-it": (0.07, 0.34),
 }
 FALLBACK_USD_PER_MTOK: Tuple[float, float] = (3.0, 15.0)
 
