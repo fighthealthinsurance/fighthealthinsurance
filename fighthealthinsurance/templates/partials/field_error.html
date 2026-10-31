@@ -10,5 +10,6 @@
    It is a live region that stays in the accessibility tree while it is
    empty, so filling it is read out. custom.css takes an empty one out of the
    layout with :empty, so nothing, not even a space, sits between its tags
-   while it is empty. {% endcomment %}
-<div class="fhi-field-error" id="{{ id }}" aria-live="polite" data-message="{{ message }}"{% if invalid_message %} data-invalid-message="{{ invalid_message }}"{% endif %}>{% if errors %}{% if filled %}{{ errors|join:" " }}{% else %}{{ message }}{% endif %}{% endif %}</div>
+   while it is empty. Several of the server's messages, such as one for
+   each file refused in an upload, go one to a line. {% endcomment %}
+<div class="fhi-field-error" id="{{ id }}" aria-live="polite" data-message="{{ message }}"{% if invalid_message %} data-invalid-message="{{ invalid_message }}"{% endif %}>{% if errors %}{% if filled %}{% for error in errors %}{{ error }}{% if not forloop.last %}<br>{% endif %}{% endfor %}{% else %}{{ message }}{% endif %}{% endif %}</div>
