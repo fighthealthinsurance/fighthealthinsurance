@@ -90,6 +90,7 @@ from fighthealthinsurance.utils import (
     STAGE_EARLY,
     STAGE_SKIPPED,
 )
+from fighthealthinsurance.upload_limits import MAX_STORED_POLICY_DOCUMENT_BYTES
 from fighthealthinsurance.models import (
     ChatTurn,
     ChooserCandidate,
@@ -240,7 +241,12 @@ class PolicyDocumentDownloadView(View):
         ).first()
         if doc is None or not doc.document_enc:
             raise Http404("No file for that policy document")
-        content = read_and_decrypt_file(doc.document_enc)
+        # Bounded like every other read of these rows: nothing larger than an
+        # encrypted upload at the limit should be there, and a read of a
+        # whole file of any size is where the memory would go.
+        content = read_and_decrypt_file(
+            doc.document_enc, max_bytes=MAX_STORED_POLICY_DOCUMENT_BYTES
+        )
         if not content:
             raise Http404("No file for that policy document")
         logger.info(f"Staff user {request.user.pk} downloaded policy document {pk}")
@@ -279,7 +285,7 @@ class PolicyDocumentTextView(View):
     MAX_CHARS = 3_000_000
     TIMEOUT_SECONDS = 60
     # The encrypted file is about a third bigger than the 20MB upload limit.
-    MAX_STORED_BYTES = 32 * 1024 * 1024
+    MAX_STORED_BYTES = MAX_STORED_POLICY_DOCUMENT_BYTES
 
     def get(self, request, pk) -> HttpResponseBase:
         from fighthealthinsurance.chat_forms import policy_document_extension

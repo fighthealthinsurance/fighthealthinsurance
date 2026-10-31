@@ -277,15 +277,33 @@ class ExtraLinkFetcher:
                 response.raise_for_status()
 
                 content_type = response.headers.get("Content-Type", "unknown")
-                content = await response.read()
-
-                if len(content) > self.MAX_FILE_SIZE:
-                    raise ValueError(
-                        f"File too large: {len(content)} bytes "
-                        f"(max {self.MAX_FILE_SIZE})"
-                    )
-
+                content = await self._read_body_within_limit(response)
                 return content, content_type, len(content)
+
+    async def _read_body_within_limit(self, response: Any) -> bytes:
+        """The response body, read in chunks and stopped at MAX_FILE_SIZE.
+
+        A declared Content-Length over the limit is refused before a byte is
+        read, and a body that turns out longer is refused as soon as it
+        passes the limit, so a large or endless body never sits in memory
+        whole before the check. Raises ValueError either way.
+        """
+        content_length = response.headers.get("Content-Length")
+        if content_length and content_length.isdigit():
+            if int(content_length) > self.MAX_FILE_SIZE:
+                raise ValueError(
+                    f"File too large: {content_length} bytes "
+                    f"(max {self.MAX_FILE_SIZE})"
+                )
+        chunks = bytearray()
+        async for chunk in response.content.iter_chunked(64 * 1024):
+            chunks.extend(chunk)
+            if len(chunks) > self.MAX_FILE_SIZE:
+                raise ValueError(
+                    f"File too large: >{self.MAX_FILE_SIZE} bytes "
+                    f"(max {self.MAX_FILE_SIZE})"
+                )
+        return bytes(chunks)
 
     def _detect_document_type(self, url: str, content_type: str) -> str:
         """
@@ -549,27 +567,7 @@ class ExtraLinkFetcher:
 
                     response.raise_for_status()
                     content_type = response.headers.get("Content-Type", "unknown")
-
-                    # Reject early if Content-Length exceeds limit
-                    content_length = response.headers.get("Content-Length")
-                    if content_length and content_length.isdigit():
-                        if int(content_length) > self.MAX_FILE_SIZE:
-                            raise ValueError(
-                                f"File too large: {content_length} bytes "
-                                f"(max {self.MAX_FILE_SIZE})"
-                            )
-
-                    # Stream response to avoid memory spikes on large files
-                    chunks = bytearray()
-                    async for chunk in response.content.iter_chunked(64 * 1024):
-                        chunks.extend(chunk)
-                        if len(chunks) > self.MAX_FILE_SIZE:
-                            raise ValueError(
-                                f"File too large: >{self.MAX_FILE_SIZE} bytes "
-                                f"(max {self.MAX_FILE_SIZE})"
-                            )
-
-                    content = bytes(chunks)
+                    content = await self._read_body_within_limit(response)
                     return content, content_type, len(content)
 
             raise ValueError(f"Too many redirects (max {max_redirects})")

@@ -20,6 +20,7 @@ from django.db import IntegrityError
 
 from fighthealthinsurance.models import PolicyDocument, PolicyDocumentAnalysis
 from fighthealthinsurance.ml.ml_inference import infer_with_fallback
+from fighthealthinsurance.upload_limits import MAX_STORED_POLICY_DOCUMENT_BYTES
 from fighthealthinsurance.ml.ml_document_extraction import (
     aextract_text_from_bytes,
     read_and_decrypt_file,
@@ -280,8 +281,13 @@ class MLPolicyDocHelper:
 
             async with asyncio.timeout(cls.TIMEOUT_SECONDS):
                 # Step 1: Read and decrypt the file, then extract text
+                # Bounded: the upload was held to MAX_POLICY_DOCUMENT_BYTES,
+                # and this is what that is once encrypted, so the read is the
+                # ceiling rather than whatever the file happens to be.
                 decrypted_bytes = await asyncio.to_thread(
-                    read_and_decrypt_file, file_field
+                    read_and_decrypt_file,
+                    file_field,
+                    MAX_STORED_POLICY_DOCUMENT_BYTES,
                 )
                 if not decrypted_bytes:
                     logger.warning(

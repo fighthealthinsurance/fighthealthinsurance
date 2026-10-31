@@ -215,3 +215,46 @@ class TestExtraLinkPdfText:
 
         with pytest.raises(ValueError, match="cannot be decrypted"):
             await fetcher._extract_pdf_text(pdf)
+
+
+class _FakeContent:
+    """Stands in for aiohttp's ``response.content`` stream."""
+
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    async def iter_chunked(self, _size):
+        for chunk in self._chunks:
+            yield chunk
+
+
+class _FakeResponse:
+    def __init__(self, chunks, headers=None):
+        self.content = _FakeContent(chunks)
+        self.headers = headers or {}
+
+
+@pytest.mark.asyncio
+class TestExtraLinkDownloadIsBounded:
+    """The download stops at MAX_FILE_SIZE without buffering the whole body
+    first, by Content-Length and by the running total."""
+
+    async def test_a_declared_length_over_the_cap_is_refused_before_reading(self):
+        fetcher = ExtraLinkFetcher()
+        response = _FakeResponse(
+            [b"x"], headers={"Content-Length": str(fetcher.MAX_FILE_SIZE + 1)}
+        )
+        with pytest.raises(ValueError, match="too large"):
+            await fetcher._read_body_within_limit(response)
+
+    async def test_a_body_that_grows_past_the_cap_is_refused(self):
+        fetcher = ExtraLinkFetcher()
+        with patch.object(ExtraLinkFetcher, "MAX_FILE_SIZE", 100):
+            response = _FakeResponse([b"a" * 60, b"b" * 60])
+            with pytest.raises(ValueError, match="too large"):
+                await fetcher._read_body_within_limit(response)
+
+    async def test_a_body_within_the_cap_comes_back_whole(self):
+        fetcher = ExtraLinkFetcher()
+        response = _FakeResponse([b"hello ", b"world"])
+        assert await fetcher._read_body_within_limit(response) == b"hello world"
