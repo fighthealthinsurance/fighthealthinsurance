@@ -94,6 +94,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="admin_status",
     ),
     path(
+        "timbit/help/experiments",
+        staff_member_required(staff_views.ExperimentsView.as_view()),
+        name="staff_experiments",
+    ),
+    path(
         "timbit/temporal",
         staff_member_required(staff_views.TemporalUIProxyView.as_view()),
         name="temporal_ui_root",

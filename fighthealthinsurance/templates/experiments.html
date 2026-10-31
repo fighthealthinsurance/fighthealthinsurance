@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+    h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+    h2 { color: #333; font-size: 1.15rem; margin: 0 0 8px; }
+    .nav-back { display: inline-block; margin-bottom: 14px; color: #0056b3; text-decoration: none; }
+    .nav-back:hover { text-decoration: underline; }
+    .summary-note { color: #666; font-size: 0.9rem; margin-bottom: 18px; }
+    .counts { margin-bottom: 18px; }
+    .panel { background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; padding: 14px 18px; margin-bottom: 20px; }
+    /* A wide table scrolls inside its own box on a narrow screen, so the page itself never scrolls sideways. */
+    .scroll-x { overflow-x: auto; }
+    table.experiments { width: 100%; min-width: 640px; border-collapse: collapse; }
+    table.experiments th, table.experiments td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.92rem; vertical-align: top; }
+    table.experiments th { background: #f0f4f8; }
+    td.state { width: 150px; }
+    td.name { width: 300px; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.8rem; font-weight: bold; white-space: nowrap; }
+    .pill-ok { background: #d4edda; color: #155724; }
+    .pill-fail { background: #f8d7da; color: #721c24; }
+    .pill-warn { background: #fff3cd; color: #856404; }
+    .pill-off { background: #e2e3e5; color: #383d41; }
+    .chip { display: inline-block; margin: 4px 4px 0 0; padding: 1px 7px; border-radius: 9px; font-size: 0.8rem; white-space: nowrap; background: #e2e3e5; color: #383d41; }
+    .sub { font-size: 0.85rem; margin-top: 4px; }
+    /* Two families, so browsers skip the 13px monospace default that would shrink code below the floor. */
+    code { font-family: monospace, monospace; font-size: 0.85rem; }
+    .missing { color: #856404; }
+    .muted { color: #666; }
+  </style>
+</head>
+<body>
+  <a class="nav-back" href="{% url 'staff_dashboard' %}">&laquo; Back to Staff Dashboard</a>
+  <h1>{{ title }}</h1>
+  <p class="summary-note">
+    Experimental feature flags as this pod loaded its settings at start-up
+    (generated {{ generated_at|date:"Y-m-d H:i:s T" }}). Deployment
+    <code>{{ deployment.id }}</code> &middot; environment
+    <code>{{ deployment.environment }}</code>. Flags come from the environment,
+    so changing one takes a restart, and pods mid-rollout can differ.
+  </p>
+  <p class="counts">
+    <span class="pill pill-ok">{{ counts.on }} on</span>
+    <span class="pill pill-warn">{{ counts.inert }} set, not in effect</span>
+    <span class="pill pill-off">{{ counts.off }} off</span>
+    {% if counts.unknown %}<span class="pill pill-fail">{{ counts.unknown }} check failed</span>{% endif %}
+  </p>
+
+  {% for group in groups %}
+  <div class="panel">
+    <h2>{{ group.name }}</h2>
+    <div class="scroll-x">
+      <table class="experiments">
+        <thead>
+          <tr><th>State</th><th>Experiment</th><th>What it does</th></tr>
+        </thead>
+        <tbody>
+          {% for row in group.rows %}
+          {% with exp=row.experiment %}
+          <tr>
+            <td class="state">
+              {% if row.state == "on" %}
+                <span class="pill {% if exp.kill_switch %}pill-warn{% else %}pill-ok{% endif %}">{% if exp.kill_switch %}ENGAGED{% else %}ON{% endif %}</span>
+              {% elif row.state == "inert" %}
+                <span class="pill pill-warn">SET, NOT IN EFFECT</span>
+              {% elif row.state == "unknown" %}
+                <span class="pill pill-fail">CHECK FAILED</span>
+              {% else %}
+                <span class="pill pill-off">OFF</span>
+              {% endif %}
+            </td>
+            <td class="name">
+              <strong>{{ exp.label }}</strong>
+              <div class="sub"><code>{{ exp.setting }}</code></div>
+              {% if exp.kill_switch %}<span class="chip">kill switch</span>{% endif %}
+              {% if not exp.all_experiments %}<span class="chip">not in run_local.sh --all-experiments</span>{% endif %}
+            </td>
+            <td>
+              {{ exp.description }}
+              {% if exp.needs %}
+              <div class="sub muted">Needs: {% for name in exp.needs %}<code>{{ name }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}</div>
+              {% endif %}
+              {% if row.state == "inert" %}
+                {% if row.missing %}
+                <div class="sub missing">Not in effect: unset {% for name in row.missing %}<code>{{ name }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}.</div>
+                {% else %}
+                <div class="sub missing">Not in effect: <code>{{ exp.live_check }}</code> says it is off.</div>
+                {% endif %}
+              {% elif row.state == "unknown" %}
+                <div class="sub missing">Its live check, <code>{{ exp.live_check }}</code>, raised {{ row.error }}.</div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endwith %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+</body>
+</html>

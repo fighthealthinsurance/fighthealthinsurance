@@ -3,13 +3,16 @@
 The script exports each name in its EXPERIMENTAL_FLAGS array as "true". A
 name settings.py no longer reads (a flag renamed or removed), or one read by
 a parser that "true" doesn't satisfy, would still be printed as enabled at
-startup while doing nothing. These pin the list to settings.py.
+startup while doing nothing. These pin the list to settings.py, and to the
+registry the staff Experiments page lists (fighthealthinsurance/experiments.py).
 """
 
 import re
 from pathlib import Path
 
 import pytest
+
+from fighthealthinsurance.experiments import EXPERIMENTS
 
 REPO_DIR = Path(__file__).resolve().parent.parent.parent
 RUN_LOCAL = REPO_DIR / "scripts" / "run_local.sh"
@@ -38,7 +41,16 @@ def test_experimental_flags_have_no_duplicates():
     assert len(names) == len(set(names))
 
 
-@pytest.mark.parametrize("name", _experimental_flags())
+def test_all_experiments_turns_on_exactly_the_registry_flags_marked_for_it():
+    """A flag added to one list and not the other is missing from the staff
+    Experiments page, or from --all-experiments."""
+    registry = {e.setting for e in EXPERIMENTS if e.all_experiments}
+    assert set(_experimental_flags()) == registry
+
+
+@pytest.mark.parametrize(
+    "name", sorted(set(_experimental_flags()) | {e.setting for e in EXPERIMENTS})
+)
 def test_experimental_flag_is_read_by_settings_and_true_turns_it_on(name):
     """settings.py reads it with _env_flag (1/true/yes/on) or with
     os.getenv(name, "false").lower() == "true"; "true" satisfies both."""
@@ -50,6 +62,6 @@ def test_experimental_flag_is_read_by_settings_and_true_turns_it_on(name):
         settings_text,
     )
     assert env_flag or equals_true, (
-        f"{name} is in run_local.sh's EXPERIMENTAL_FLAGS but settings.py does "
-        "not read it as an env flag that 'true' turns on"
+        f"{name} is an experimental flag (run_local.sh or experiments.py) but "
+        "settings.py does not read it as an env flag that 'true' turns on"
     )

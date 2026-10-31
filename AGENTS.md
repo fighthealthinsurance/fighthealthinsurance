@@ -41,6 +41,10 @@ repository map), see [README.md](README.md).
   --all-experiments` turns it on and lists it at startup. If it should stay
   out (it needs outside infrastructure, like the Temporal flags, or it is a
   kill switch), add it to the "Left out on purpose" comment there instead.
-  Remove a flag's entry when you remove the flag:
+  Either way, also add an `Experiment` entry to
+  `fighthealthinsurance/experiments.py` (with `all_experiments=False` for
+  the left-out ones), so the staff Experiments page (`/timbit/help/experiments`)
+  shows it, and list in its `needs` any other setting it does nothing
+  without. Remove a flag's entries when you remove the flag:
   `tests/async-unit/test_run_local_experimental_flags.py` fails on a name
-  `settings.py` no longer reads.
+  `settings.py` no longer reads, or when the two lists disagree.
