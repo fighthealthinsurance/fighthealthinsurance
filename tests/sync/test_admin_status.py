@@ -15,7 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from fighthealthinsurance import mcp_call_counts, mcp_server
-from fighthealthinsurance.ml import letter_quality, spend
+from fighthealthinsurance.ml import chat_gate, letter_quality, spend
 from fighthealthinsurance.models import (
     AssistantDraft,
     AssistantHandoff,
@@ -2327,6 +2327,33 @@ class AdminStatusJevPanelTest(TestCase):
             response = self._get()
         self.assertEqual(response.context["jev"]["level"], "off")
         self.assertContains(response, "every use&rsquo;s switch is off")
+
+    @override_settings(
+        TYPESAFE_API_KEY="k",
+        TYPESAFE_LETTER_RANKING_ENABLED=False,
+        TYPESAFE_DENIAL_TRIAGE_ENABLED=False,
+        FHI_CHAT_JEV_GATE_ENABLED=True,
+        TYPESAFE_CHAT_SHADOW_ENABLED=True,
+        TYPESAFE_RESEARCH_JUDGING_ENABLED=False,
+    )
+    def test_every_use_that_is_on_being_refused_reads_skipped_not_idle(self):
+        """Chat's share of the TypeSafe budget can be spent while the general
+        budget still allows, so the general skip reason is None; the badge
+        must still say SKIPPED, with the uses' own reason."""
+        ExternalServiceHealth.objects.create(
+            service=chat_gate.SERVICE, last_success_at=timezone.now()
+        )
+        with mock.patch.object(spend, "loaded", return_value=True), mock.patch.object(
+            spend, "allows", side_effect=lambda provider, use: use != spend.CHAT
+        ):
+            response = self._get()
+        self.assertEqual(response.context["jev"]["level"], "skipped")
+        self.assertContains(response, "SKIPPED")
+        self.assertContains(response, "budget is spent for chat")
+        self.assertEqual(
+            response.context["jev"]["skip"],
+            "TypeSafe's budget is spent for chat (FHI_SPEND_TYPESAFE_* in ml/spend.py)",
+        )
 
     @override_settings(TYPESAFE_API_KEY="k")
     def test_an_unreadable_panel_is_an_error_row_not_a_broken_page(self):

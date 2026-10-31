@@ -596,8 +596,10 @@ class AdminStatusView(generic.TemplateView):
         newest deploy-time probe (ModelUsageDashboardView._jev_panel). One
         level for the badge: ``not_configured`` without TYPESAFE_API_KEY,
         ``skipped`` when configured but ask() would refuse (a spent or
-        paused budget, a cooldown, a refused setting), ``failing`` when a
-        use's newest outcome in the window is a failure, ``ok`` when a use
+        paused budget, a cooldown, a refused setting), for every use or for
+        every use whose switch is on (a use's own budget, such as chat's
+        share, can be spent while the general one is not), ``failing`` when
+        a use's newest outcome in the window is a failure, ``ok`` when a use
         answered in the window, ``off`` when every use's switch is off, and
         ``idle`` otherwise.
 
@@ -612,16 +614,24 @@ class AdminStatusView(generic.TemplateView):
             out.update(ModelUsageDashboardView._jev_panel())
             out["url"] = str(getattr(settings, "TYPESAFE_API_URL", "") or "")
             out["skip"] = None if not out["key_present"] else _jev_skip_reason()
-            levels = {row["level"] for row in out["rows"]}
+            on_rows = [row for row in out["rows"] if row["on"]]
+            levels = {row["level"] for row in on_rows}
             if not out["key_present"]:
                 out["level"] = "not_configured"
             elif out["skip"]:
                 out["level"] = "skipped"
+            elif on_rows and all(row["skip"] for row in on_rows):
+                # Every use that is on is refused for its own reason (its
+                # budget), which the general skip reason above misses.
+                out["level"] = "skipped"
+                out["skip"] = "; ".join(
+                    dict.fromkeys(str(row["skip"]) for row in on_rows)
+                )
             elif "failing" in levels:
                 out["level"] = "failing"
             elif "ok" in levels:
                 out["level"] = "ok"
-            elif levels <= {"off"}:
+            elif not on_rows:
                 out["level"] = "off"
             else:
                 out["level"] = "idle"
