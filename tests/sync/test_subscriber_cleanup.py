@@ -2,10 +2,12 @@
 ``cleanup_subscribers`` management command, and the staff review page."""
 
 from io import StringIO
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db.models import QuerySet
 from django.test import TestCase
 from django.urls import reverse
 
@@ -67,10 +69,14 @@ class AnalyzeRecordTest(TestCase):
             hygiene.HEADER_INJECTION, self._codes(name="Jane\nBcc: victim@example.org")
         )
 
-    def test_mail_header_in_comments_is_header_injection(self):
-        self.assertIn(
-            hygiene.HEADER_INJECTION, self._codes(comments="Content-Type: text/html")
+    def test_mail_header_in_comments_is_review_only(self):
+        """Comments are written by our code or staff, never a signup form, so a
+        header-looking line there is a signal for a human, not bulk junk."""
+        codes = self._codes(
+            email="jane@hospital.org", comments="Content-Type: text/html"
         )
+        self.assertEqual(codes, [hygiene.HEADER_IN_COMMENTS])
+        self.assertFalse(hygiene.REASONS[hygiene.HEADER_IN_COMMENTS].auto_cleanable)
 
     def test_bare_newline_in_name_is_header_injection(self):
         self.assertIn(hygiene.HEADER_INJECTION, self._codes(name="Jane\nDoe"))
@@ -237,6 +243,31 @@ class DeleteSubscribersTest(TestCase):
         self.assertEqual(deleted, 0)
         self.assertTrue(MailingListSubscriber.objects.filter(id=subscriber.id).exists())
 
+    def test_unreviewed_only_takes_a_row_lock(self):
+        """SQLite takes no row locks, so a two-connection race can't be tested
+        here; assert the lock is requested instead."""
+        subscriber = make_subscriber("someone@example.com")
+        real = QuerySet.select_for_update
+        calls = []
+
+        def spy(qs, *args, **kwargs):
+            calls.append(qs)
+            return real(qs, *args, **kwargs)
+
+        with patch.object(QuerySet, "select_for_update", spy):
+            hygiene.delete_subscribers([subscriber.id], unreviewed_only=True)
+
+        self.assertTrue(calls)
+
+    def test_keep_does_not_overwrite_an_existing_review(self):
+        subscriber = make_subscriber("someone@example.com")
+        hygiene.mark_subscribers_reviewed([subscriber.id], actor="first")
+
+        hygiene.mark_subscribers_reviewed([subscriber.id], actor="second")
+
+        subscriber.refresh_from_db()
+        self.assertEqual(subscriber.cleanup_reviewed_by, "first")
+
     def test_delete_with_no_ids_is_a_no_op(self):
         make_subscriber("jane@hospital.org")
         self.assertEqual(hygiene.delete_subscribers([]), 0)
@@ -358,6 +389,15 @@ class SubscriberCleanupViewTest(TestCase):
         )
         self.assertTrue(MailingListSubscriber.objects.filter(id=self.good.id).exists())
 
+    def test_keep_selected_ignores_rows_outside_the_queue(self):
+        self.login()
+        self.client.post(
+            self.url,
+            {"action": "keep_selected", "subscriber_id": [str(self.good.id)]},
+        )
+        self.good.refresh_from_db()
+        self.assertIsNone(self.good.cleanup_reviewed_at)
+
     def test_keep_only_touches_the_rows_ticked(self):
         """Keep must not sweep up other flagged rows (nothing is pre-checked)."""
         self.login()
@@ -371,7 +411,7 @@ class SubscriberCleanupViewTest(TestCase):
     def test_no_row_is_pre_checked(self):
         self.login()
         response = self.client.get(self.url)
-        self.assertNotContains(response, "checked>")
+        self.assertNotRegex(response.content.decode(), r"<input[^>]*\bchecked\b")
 
     def test_keep_selected_marks_reviewed_and_clears_the_queue(self):
         self.login()
@@ -410,6 +450,23 @@ class SubscriberCleanupViewTest(TestCase):
         self.login()
         response = self.client.get(self.url, {"page": "99"})
         self.assertEqual(response.context["page_number"], 1)
+
+    def test_later_page_shows_the_rows_after_the_first_page(self):
+        self.login()
+        page_size = 100  # SubscriberCleanupView.page_size
+        for i in range(page_size + 5):
+            make_subscriber(f"bot{i}@example.com")
+        response = self.client.get(self.url, {"page": "2"})
+
+        self.assertEqual(response.context["page_number"], 2)
+        all_flagged = sorted(
+            hygiene.scan_subscribers().findings,
+            key=lambda f: (not f.auto_cleanable, f.record.pk),
+        )
+        self.assertEqual(
+            [row["id"] for row in response.context["rows"]],
+            [f.record.pk for f in all_flagged[page_size:]],
+        )
 
     def test_include_leads_scans_the_other_tables(self):
         self.login()

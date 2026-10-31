@@ -14,7 +14,7 @@ Examples::
     # Delete the unambiguous junk (unmailable, invalid, spam markup)
     python manage.py cleanup_subscribers --apply
 
-    # Delete only URL-in-name form spam
+    # Delete only rows with a link or markup in the name or phone field
     python manage.py cleanup_subscribers --apply --reasons link_in_fields
 """
 

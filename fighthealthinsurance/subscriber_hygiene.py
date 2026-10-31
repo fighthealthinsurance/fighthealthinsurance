@@ -21,8 +21,8 @@ into two buckets:
     person could act on, so deleting them breaks no unsubscribe link. Bulk
     deletion targets only these.
   * review-only -- a *signal*, not a verdict (duplicate and alias-duplicate,
-    spam-associated TLD, internal test address, role account, link in comments,
-    suspicious unicode). A human decides; nothing bulk-deletes these.
+    spam-associated TLD, internal test address, role account, link or mail
+    header in comments, suspicious unicode). A human decides; nothing bulk-deletes these.
 
 The same analysis runs over the other inbound-contact tables (chat leads, demo
 requests, interested professionals) so staff can *see* suspicious rows there,
@@ -78,6 +78,7 @@ INVALID_EMAIL = "invalid_email"
 DUPLICATE = "duplicate_email"
 LINK_IN_FIELDS = "link_in_fields"
 LINK_IN_COMMENTS = "link_in_comments"
+HEADER_IN_COMMENTS = "header_in_comments"
 HEADER_INJECTION = "header_injection"
 CONTROL_IN_EMAIL = "control_chars_in_email"
 SPAM_TLD = "spam_tld"
@@ -131,9 +132,18 @@ REASONS: Dict[str, Reason] = {
         Reason(
             HEADER_INJECTION,
             "Header-injection attempt",
-            "Newlines or mail headers (bcc:, content-type:) embedded in a field "
-            "-- an attempt to inject extra headers into outgoing mail.",
+            "A line break or a mail header (bcc:, content-type:) in a name or "
+            "phone field -- single-line form inputs, so this came from a crafted "
+            "request trying to inject headers into outgoing mail.",
             auto_cleanable=True,
+        ),
+        Reason(
+            HEADER_IN_COMMENTS,
+            "Mail header in comments",
+            "A line in the comments field starts like a mail header (bcc:, "
+            "content-type:). Comments are written by our code or by staff, not "
+            "by signup forms, so this is worth a look, not a bulk delete.",
+            auto_cleanable=False,
         ),
         Reason(
             CONTROL_IN_EMAIL,
@@ -426,9 +436,12 @@ def _check_text_fields(record: ContactRecord, finding: Finding) -> None:
             finding.add(code, f"{label} contains {marker!r}")
         header = _HEADER_LINE.search(value)
         if header:
-            finding.add(
-                HEADER_INJECTION, f"{label} contains a {header.group(1)}: header"
+            # Only the single-line form inputs are reachable by a signup bot;
+            # comments are written by our code or staff, so there it's a signal.
+            code = (
+                HEADER_INJECTION if label in _SINGLE_LINE_FIELDS else HEADER_IN_COMMENTS
             )
+            finding.add(code, f"{label} contains a {header.group(1)}: header")
         elif label in _SINGLE_LINE_FIELDS and ("\n" in value or "\r" in value):
             finding.add(HEADER_INJECTION, f"{label} contains a newline")
         if has_suspicious_unicode(value):
@@ -694,6 +707,10 @@ def mark_subscribers_reviewed(ids: Iterable[int], actor: str = "") -> int:
     id_list = list(ids)
     if not id_list:
         return 0
-    return MailingListSubscriber.objects.filter(id__in=id_list).update(
+    # Only rows nobody has reviewed yet: a second Keep on the same row (two
+    # staff, or a double submit) must not overwrite who reviewed it and when.
+    return MailingListSubscriber.objects.filter(
+        id__in=id_list, cleanup_reviewed_at__isnull=True
+    ).update(
         cleanup_reviewed_at=timezone.now(), cleanup_reviewed_by=(actor or "")[:150]
     )
