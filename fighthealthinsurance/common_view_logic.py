@@ -7435,6 +7435,11 @@ class AppealsBackendHelper:
                         procedure=(str(denial.procedure) if denial.procedure else None),
                         diagnosis=(str(denial.diagnosis) if denial.diagnosis else None),
                         provenance=synthesis_provenance,
+                        # The user's external-model consent, as for the
+                        # drafts: with it, the best hosted models compete
+                        # with ours to merge them; without it, only ours are
+                        # asked.
+                        use_external=bool(getattr(denial, "use_external", False)),
                     )
                 )
                 # Emit keepalives while synthesis is running, up to 120s

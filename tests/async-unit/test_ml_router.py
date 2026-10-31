@@ -1378,6 +1378,105 @@ class TestMLRouterFullQABackends(unittest.TestCase):
                 self.assertEqual([m for m in result if m.external], [])
 
 
+class TestMLRouterSynthesisBackends(unittest.TestCase):
+    """synthesis_backends() hands synthesize_appeals its two pools: our own
+    instruction-following models, and the hosted ones that compete with them.
+
+    From the 2026-10-31 log: fhi-legacy, asked to merge three drafts,
+    answered "0.000"; the newer internal model was not served; nothing
+    else was asked, and the user got no merged letter.
+    """
+
+    def setUp(self):
+        self.router = MLRouter()
+        install_models(self.router, [])
+        self.legacy = make_routed_mock(101, general=False, name="legacy")
+        self.new = make_routed_mock(200, name="new")
+        self.alpha = make_routed_mock(210, name="alpha")
+        self.gemma = make_routed_mock(80, external=True, name="gemma")
+        self.claude = make_routed_mock(210, external=True, name="claude")
+        self.sonar = make_routed_mock(100, external=True, name="sonar")
+        self.externals = {
+            GEMMA: [self.gemma],
+            "claude": [self.claude],
+            "sonar": [self.sonar],
+        }
+
+    def test_the_appeal_only_fine_tune_is_never_asked(self):
+        install_models(self.router, [self.legacy, self.new], self.externals)
+
+        ours, hosted = self.router.synthesis_backends(use_external=False)
+
+        self.assertEqual((ours, hosted), ([self.new], []))
+
+    def test_no_fallback_to_the_fine_tune_when_it_is_all_we_have(self):
+        """Unlike the chat and QA pools, which fail open to it: it answers
+        the synthesis prompt with a stray number, and the drafts it was to
+        merge are delivered as they are."""
+        install_models(self.router, [self.legacy], self.externals)
+
+        self.assertEqual(self.router.synthesis_backends(use_external=False), ([], []))
+        self.assertEqual(
+            self.router.synthesis_backends(use_external=True),
+            ([], [self.claude, self.sonar, self.gemma]),
+        )
+
+    def test_ours_are_strongest_first(self):
+        install_models(self.router, [self.new, self.alpha], self.externals)
+
+        ours, _hosted = self.router.synthesis_backends(use_external=True)
+
+        self.assertEqual(ours, [self.alpha, self.new])
+
+    def test_hosted_models_only_with_consent_and_the_best_three(self):
+        extra = make_routed_mock(70, external=True, name="extra")
+        install_models(self.router, [self.new], {**self.externals, "extra": [extra]})
+
+        self.assertEqual(self.router.synthesis_backends(use_external=False)[1], [])
+        # Best quality first, as for the drafts.
+        self.assertEqual(
+            self.router.synthesis_backends(use_external=True)[1],
+            [self.claude, self.sonar, self.gemma],
+        )
+
+    def test_a_hosted_model_marked_down_is_not_asked(self):
+        self.claude.is_available.return_value = False
+        install_models(self.router, [self.new], self.externals)
+
+        self.assertEqual(
+            self.router.synthesis_backends(use_external=True)[1],
+            [self.sonar, self.gemma],
+        )
+
+    def test_down_internals_give_way_to_hosted_models(self):
+        """Beside a hosted model that can answer, an internal the sweep marked
+        down would only hold the race open for its full timeout."""
+        self.new.is_available.return_value = False
+        install_models(self.router, [self.new], self.externals)
+
+        self.assertEqual(
+            self.router.synthesis_backends(use_external=True),
+            ([], [self.claude, self.sonar, self.gemma]),
+        )
+
+    def test_down_internals_fail_open_without_hosted_models(self):
+        self.new.is_available.return_value = False
+        install_models(self.router, [self.new], self.externals)
+
+        self.assertEqual(
+            self.router.synthesis_backends(use_external=False), ([self.new], [])
+        )
+
+    def test_forced_models_are_the_only_ones_asked(self):
+        install_models(self.router, [self.legacy, self.new], self.externals)
+        self.router.models_by_name["new"] = [self.new]
+
+        with patch.dict(os.environ, {"FORCE_MODEL": "new"}):
+            self.assertEqual(
+                self.router.synthesis_backends(use_external=True), ([self.new], [])
+            )
+
+
 class TestMLRouterSummarizeChatHistory(unittest.TestCase):
     """Tests for MLRouter.summarize_chat_history method."""
 

@@ -64,7 +64,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
 
         mock_model = MagicMock(spec=RemoteModelLike)
         mock_model._infer_no_context = infer
-        mock_router.internal_models_by_cost = [mock_model]
+        mock_router.synthesis_backends.return_value = ([mock_model], [])
 
         async def call_first_task(tasks, **_kwargs):
             return await tasks[0]
@@ -97,7 +97,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
 
     @patch("fighthealthinsurance.generate_appeal.ml_router")
     def test_returns_none_when_no_models_available(self, mock_router):
-        mock_router.internal_models_by_cost = []
+        mock_router.synthesis_backends.return_value = ([], [])
         result = asyncio.run(self._run_synthesize(appeal_texts=self.sample_appeals))
         self.assertIsNone(result)
 
@@ -105,10 +105,10 @@ class TestSynthesizeAppeals(unittest.TestCase):
     @patch("fighthealthinsurance.generate_appeal.ml_router")
     def test_returns_synthesized_text_on_success(self, mock_router, mock_best_within):
         mock_model = MagicMock(spec=RemoteModelLike)
-        mock_router.internal_models_by_cost = [mock_model]
+        mock_router.synthesis_backends.return_value = ([mock_model], [])
 
         synthesized_text = "This is a well-crafted synthesized appeal letter that combines all the best arguments from the drafts provided."
-        mock_best_within.return_value = (synthesized_text, mock_router.internal_models_by_cost[0])
+        mock_best_within.return_value = (synthesized_text, mock_model)
 
         result = asyncio.run(
             self._run_synthesize(
@@ -123,12 +123,13 @@ class TestSynthesizeAppeals(unittest.TestCase):
         # Verify timeout=60
         call_kwargs = mock_best_within.call_args.kwargs
         self.assertEqual(call_kwargs["timeout"], 60)
+        self.assertEqual(AppealGenerator.SYNTHESIS_TIMEOUT_SECONDS, 60)
 
     @patch("fighthealthinsurance.generate_appeal.ml_router")
     def test_returns_none_when_result_too_short(self, mock_router):
         mock_model = MagicMock(spec=RemoteModelLike)
         mock_model._infer_no_context = AsyncMock(return_value="Too short")
-        mock_router.internal_models_by_cost = [mock_model]
+        mock_router.synthesis_backends.return_value = ([mock_model], [])
 
         result = asyncio.run(self._run_synthesize(appeal_texts=self.sample_appeals))
         self.assertIsNone(result)
@@ -139,7 +140,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
         mock_model._infer_no_context = AsyncMock(
             side_effect=Exception("Model exploded")
         )
-        mock_router.internal_models_by_cost = [mock_model]
+        mock_router.synthesis_backends.return_value = ([mock_model], [])
 
         result = asyncio.run(self._run_synthesize(appeal_texts=self.sample_appeals))
         self.assertIsNone(result)
@@ -151,9 +152,12 @@ class TestSynthesizeAppeals(unittest.TestCase):
         model_a = MagicMock(spec=RemoteModelLike)
         model_b = MagicMock(spec=RemoteModelLike)
         model_c = MagicMock(spec=RemoteModelLike)
-        mock_router.internal_models_by_cost = [model_a, model_b, model_c]
+        mock_router.synthesis_backends.return_value = (
+            [model_a, model_b, model_c],
+            [],
+        )
 
-        mock_best_within.return_value = ("A" * 100, mock_router.internal_models_by_cost[0])
+        mock_best_within.return_value = ("A" * 100, model_a)
 
         asyncio.run(self._run_synthesize(appeal_texts=self.sample_appeals))
 
@@ -168,7 +172,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
     ):
         mock_model = MagicMock(spec=RemoteModelLike)
         mock_model._infer_no_context = AsyncMock(return_value="A" * 100)
-        mock_router.internal_models_by_cost = [mock_model]
+        mock_router.synthesis_backends.return_value = ([mock_model], [])
 
         denial_text = "Your claim for knee replacement has been denied."
         procedure = "Total knee arthroplasty"
@@ -214,7 +218,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
     def test_uses_low_temperature(self, mock_router, mock_best_within):
         mock_model = MagicMock(spec=RemoteModelLike)
         mock_model._infer_no_context = AsyncMock(return_value="A" * 100)
-        mock_router.internal_models_by_cost = [mock_model]
+        mock_router.synthesis_backends.return_value = ([mock_model], [])
 
         async def call_first_task(tasks, **_kwargs):
             return await tasks[0]
@@ -231,7 +235,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
     def test_denial_text_truncated_at_3000_chars(self, mock_router, mock_best_within):
         mock_model = MagicMock(spec=RemoteModelLike)
         mock_model._infer_no_context = AsyncMock(return_value="A" * 100)
-        mock_router.internal_models_by_cost = [mock_model]
+        mock_router.synthesis_backends.return_value = ([mock_model], [])
 
         async def call_first_task(tasks, **_kwargs):
             return await tasks[0]
@@ -262,7 +266,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
         """When more than MAX_SYNTHESIS_DRAFTS are provided, only the top-scored are used."""
         mock_model = MagicMock(spec=RemoteModelLike)
         mock_model._infer_no_context = AsyncMock(return_value="A" * 100)
-        mock_router.internal_models_by_cost = [mock_model]
+        mock_router.synthesis_backends.return_value = ([mock_model], [])
 
         async def call_first_task(tasks, **_kwargs):
             return await tasks[0]
@@ -302,3 +306,103 @@ class TestSynthesizeAppeals(unittest.TestCase):
         self.assertIn(good_3, prompt)
         self.assertNotIn(weak_1, prompt)
         self.assertNotIn(weak_2, prompt)
+
+    # --- hosted models ------------------------------------------------------
+    # The 2026-10-31 log: fhi-legacy (appeal-only) answered the synthesis
+    # prompt with "\n\n0.000", the newer internal model was skipped as not
+    # served here, and with no other model asked the user got no merged
+    # letter. Now the appeal-only fine-tune is not asked at all (router
+    # tests), and with the user's consent the best hosted models compete.
+
+    @staticmethod
+    def _backend(reply, *, quality=200, name="model"):
+        model = MagicMock(spec=RemoteModelLike, name=name)
+        model.quality.return_value = quality
+        model._infer_no_context = AsyncMock(return_value=reply)
+        return model
+
+    LETTER = (
+        "Dear Appeals Department, I am writing to appeal the denial of my "
+        "transesophageal echocardiogram; the evidence of medical necessity "
+        "follows. " * 3
+    )
+
+    @patch("fighthealthinsurance.generate_appeal.ml_router")
+    def test_hosted_model_merges_when_ours_answer_with_a_stray_number(
+        self, mock_router
+    ):
+        ours = self._backend("\n\n0.000", quality=101, name="fhi-legacy")
+        hosted = self._backend(self.LETTER, quality=92, name="hosted")
+        mock_router.synthesis_backends.return_value = ([ours], [hosted])
+        provenance: dict = {}
+
+        result = asyncio.run(
+            self._run_synthesize(
+                appeal_texts=self.sample_appeals,
+                provenance=provenance,
+                use_external=True,
+            )
+        )
+
+        self.assertEqual(result, self.LETTER)
+        self.assertIs(provenance["model"], hosted)
+
+    @patch("fighthealthinsurance.generate_appeal.ml_router")
+    def test_hosted_models_compete_with_ours_and_the_better_letter_wins(
+        self, mock_router
+    ):
+        """No hold-back: with the user's consent the hosted models are asked
+        beside ours from the start, and a better hosted letter beats ours."""
+        fuller = "\n\n".join(
+            [
+                "Dear Appeals Department,",
+                "I am writing to appeal the denial of my transesophageal "
+                "echocardiogram, which my neurologist ordered after a "
+                "cryptogenic stroke.",
+                "A negative transthoracic echocardiogram does not rule out a "
+                "patent foramen ovale; the clinical evidence shows TEE is the "
+                "study that can.",
+                "The procedure is medically necessary under the plan's policy, "
+                "and it will decide whether closure is indicated.",
+                "Please reverse the denial and authorize the study.",
+                "Sincerely, the patient",
+            ]
+        )
+        ours = self._backend(self.LETTER, quality=200, name="ours")
+        hosted = self._backend(fuller, quality=92, name="hosted")
+        mock_router.synthesis_backends.return_value = ([ours], [hosted])
+        self.assertGreater(
+            AppealGenerator._score_appeal_text(fuller) + 92 * 0.3,
+            AppealGenerator._score_appeal_text(self.LETTER) + 200 * 0.3,
+            "precondition: the hosted letter scores higher",
+        )
+
+        result = asyncio.run(
+            self._run_synthesize(appeal_texts=self.sample_appeals, use_external=True)
+        )
+
+        self.assertEqual(result, fuller)
+        ours._infer_no_context.assert_awaited_once()
+        hosted._infer_no_context.assert_awaited_once()
+
+    @patch("fighthealthinsurance.generate_appeal.ml_router")
+    def test_consent_is_passed_to_the_router_and_defaults_to_no(self, mock_router):
+        mock_router.synthesis_backends.return_value = ([], [])
+
+        asyncio.run(self._run_synthesize(appeal_texts=self.sample_appeals))
+        mock_router.synthesis_backends.assert_called_once_with(use_external=False)
+
+        mock_router.synthesis_backends.reset_mock()
+        asyncio.run(
+            self._run_synthesize(appeal_texts=self.sample_appeals, use_external=True)
+        )
+        mock_router.synthesis_backends.assert_called_once_with(use_external=True)
+
+    @patch("fighthealthinsurance.generate_appeal.ml_router")
+    def test_a_stray_number_from_every_model_yields_none(self, mock_router):
+        ours = self._backend("\n\n0.000", quality=101, name="fhi-legacy")
+        mock_router.synthesis_backends.return_value = ([ours], [])
+
+        result = asyncio.run(self._run_synthesize(appeal_texts=self.sample_appeals))
+
+        self.assertIsNone(result)

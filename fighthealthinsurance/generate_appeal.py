@@ -1733,6 +1733,13 @@ class AppealGenerator(object):
     )
 
     MAX_SYNTHESIS_DRAFTS = 3
+    # The synthesis race: every model asked starts at once (hosted ones too,
+    # with the user's external-model consent), and the best letter within
+    # the window wins.
+    SYNTHESIS_TIMEOUT_SECONDS = 60
+    # Shorter than this is not a letter: a fine-tune asked to merge drafts
+    # answers "0.000", and a model that gave up early returns a fragment.
+    MIN_SYNTHESIS_CHARS = 50
 
     @staticmethod
     def _score_appeal_text(text: str, diagnosis: Optional[str] = None) -> float:
@@ -3827,10 +3834,16 @@ class AppealGenerator(object):
         diagnosis: Optional[str] = None,
         provenance: Optional[dict] = None,
         purpose: str = "appeal",
+        use_external: bool = False,
     ) -> Optional[str]:
         """
-        Synthesize multiple appeal drafts into one best appeal by trying ALL
-        internal models in parallel and picking the best result within 60s.
+        Synthesize multiple appeal drafts into one best appeal: every
+        instruction-following internal model, and with ``use_external`` the
+        best hosted models too (see ``MLRouter.synthesis_backends``), is
+        asked in parallel and the best letter within the window wins. So a
+        user who allowed hosted models gets the best merge any of them can
+        write, and a deployment whose own models are down, not served or
+        appeal-only still gets a merged letter instead of nothing.
 
         Args:
             appeal_texts: List of appeal letter texts to synthesize from.
@@ -3842,6 +3855,8 @@ class AppealGenerator(object):
                 which model actually wrote the letter. The stored row keeps
                 the reserved ``synthesized`` name (the dashboard's bucket);
                 without this the author's identity was simply dropped.
+            use_external: The user's external-model consent. Without it no
+                hosted model is asked.
 
         Returns:
             The synthesized appeal text, or None if synthesis fails.
@@ -3860,9 +3875,17 @@ class AppealGenerator(object):
                 f"Selected top {self.MAX_SYNTHESIS_DRAFTS} drafts for synthesis"
             )
 
-        all_internal = ml_router.internal_models_by_cost
-        if not all_internal:
-            logger.warning("No internal models available for appeal synthesis")
+        ours, hosted = ml_router.synthesis_backends(use_external=use_external)
+        if not ours and not hosted:
+            logger.warning(
+                "No model available for appeal synthesis: no instruction-"
+                "following internal model"
+                + (
+                    " and no hosted model"
+                    if use_external
+                    else ", and hosted models are not allowed for this denial"
+                )
+            )
             return None
 
         # Build the user prompt with all drafts
@@ -3904,11 +3927,17 @@ class AppealGenerator(object):
                         prompt=prompt,
                         temperature=0.3,
                     )
-                if result and len(result.strip()) > 50:
-                    logger.debug(
-                        f"Synthesis candidate from {model}: {len(result)} chars"
-                    )
+                got = len(result.strip()) if result else 0
+                if got >= self.MIN_SYNTHESIS_CHARS:
+                    logger.debug(f"Synthesis candidate from {model}: {got} chars")
                     return str(result), model
+                # Nothing, or not a letter: a backend that was skipped (not
+                # served here, refused), one that answered with a stray
+                # number, or one that gave up. Said here, so the race's "no
+                # usable result" line has a cause beside it.
+                logger.debug(
+                    f"Synthesis via {model} returned nothing usable ({got} chars)"
+                )
             except Exception as e:
                 if isinstance(e, MODEL_TRANSPORT_ERRORS):
                     logger.debug(
@@ -3922,10 +3951,11 @@ class AppealGenerator(object):
                     )
             return None
 
-        # Build tasks and map each coroutine to its model's quality score
+        # Build tasks and map each coroutine to its model's quality score.
+        # Ours first, so an exact score tie goes to our own model.
         task_quality: dict[int, float] = {}
         tasks: List[Coroutine[Any, Any, Optional[Tuple[str, RemoteModelLike]]]] = []
-        for m in all_internal:
+        for m in ours + hosted:
             coro = try_model(m)
             task_quality[id(coro)] = float(m.quality())
             tasks.append(coro)
@@ -3939,18 +3969,26 @@ class AppealGenerator(object):
             model_score = task_quality.get(id(awaitable), 100.0)
             return text_score + model_score * 0.3
 
+        asked = f"{len(ours)} internal + {len(hosted)} hosted"
         try:
-            best = await best_within_timelimit(tasks, score_fn=score_fn, timeout=60)
+            best = await best_within_timelimit(
+                tasks, score_fn=score_fn, timeout=self.SYNTHESIS_TIMEOUT_SECONDS
+            )
             if best:
                 text, winner = best
                 if provenance is not None:
                     provenance["model"] = winner
                 logger.info(
                     f"Synthesized {len(appeal_texts)} appeals into one "
-                    f"({len(text)} chars) via {winner}, best of "
-                    f"{len(all_internal)} models"
+                    f"({len(text)} chars) via {winner} "
+                    f"({'hosted' if winner in hosted else 'internal'}); "
+                    f"{asked} asked"
                 )
                 return str(text)
+            logger.warning(
+                f"Appeal synthesis produced nothing from {asked} models "
+                f"(use_external={use_external}); the drafts stand as they are"
+            )
         except Exception as e:
             logger.warning(f"All synthesis models failed within time limit: {e}")
         return None

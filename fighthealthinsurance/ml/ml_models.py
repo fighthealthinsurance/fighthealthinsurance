@@ -4709,14 +4709,13 @@ class RemoteOpenLike(RemoteModel):
         if api_base is None:
             return None
         metric_model, leg, endpoint = self._metric_identity(api_base, model)
-        logger.debug(
-            f"Calling {model} at {api_base} (prompt_len={len(prompt) if prompt else 0}, "
-            f"system_prompt_len={len(system_prompt) if system_prompt else 0})"
-        )
         # Recently answered "model does not exist", refused us, spent its
         # budget or failed to connect: skip quietly until that passes instead
         # of re-hitting (and re-logging) it on every call. The startup probe
         # (raise_http_errors) always asks live so it reports current reality.
+        # Decided before the "Calling" line below: a skipped model never goes
+        # on the wire, and a log that said "Calling X" and then "skipping X"
+        # read as an attempt that failed.
         skip = None if raise_http_errors else self._local_skip(api_base, model)
         if skip is not None:
             reason, why = skip
@@ -4728,6 +4727,10 @@ class RemoteOpenLike(RemoteModel):
             # rate does not fall during the outage that started the skip.
             record_ml_failure(metric_model, reason, leg=leg, endpoint=endpoint)
             return None
+        logger.debug(
+            f"Calling {model} at {api_base} (prompt_len={len(prompt) if prompt else 0}, "
+            f"system_prompt_len={len(system_prompt) if system_prompt else 0})"
+        )
         if self.token is None:
             logger.warning(f"No token provided for {model}")
         if prompt is None:
