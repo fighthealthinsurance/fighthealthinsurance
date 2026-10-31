@@ -1710,11 +1710,9 @@ class ChooserCaptchaGateTest(APITestCase):
         submit.assert_not_called()
 
 
-class ChooserWarmupOrderingTest(APITestCase):
-    """A new judge is started on the simplest cases that have evidence, and
-    the complexity of what they are served rises with their votes
-    (chooser_complexity.ordered_for_judge). An unscored task is served as
-    the hardest and stays unscored."""
+class _ArenaOrderingBase(APITestCase):
+    """Arena tasks of a given complexity, evidence and case version, votes
+    by this client's session and by others, and the next task served."""
 
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
@@ -1768,10 +1766,18 @@ class ChooserWarmupOrderingTest(APITestCase):
         for index in range(count):
             self._vote(task, f"other-session-{index}")
 
-    def _next(self, task_type="appeal"):
-        response = self.client.get(reverse(f"chooser-next-{task_type}"))
+    def _next(self, task_type="appeal", difficulty=None):
+        url = reverse(f"chooser-next-{task_type}")
+        params = {"difficulty": difficulty} if difficulty is not None else {}
+        response = self.client.get(url, params)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         return response.json()["task_id"]
+
+class ChooserWarmupOrderingTest(_ArenaOrderingBase):
+    """A new judge is started on the simplest cases that have evidence, and
+    the complexity of what they are served rises with their votes
+    (chooser_complexity.ordered_for_judge). An unscored task is served as
+    the hardest and stays unscored."""
 
     def test_a_new_judge_gets_the_simplest_case_that_has_evidence(self):
         self._task(complexity=1, evidence=False)
@@ -1885,3 +1891,85 @@ class ChooserWarmupOrderingTest(APITestCase):
         only = self._task(complexity=5, evidence=False)
 
         self.assertEqual(self._next(), only.id)
+
+
+class ChooserCasePreferenceTest(_ArenaOrderingBase):
+    """After their first round a judge is asked whether they want complex or
+    straightforward cases; the page sends the answer as the ``difficulty``
+    parameter (chooser_complexity.ordered_for_judge)."""
+
+    def test_complex_serves_the_most_complex_case_first(self):
+        self._task(complexity=1)
+        hardest = self._task(complexity=4)
+        self._task(complexity=3)
+
+        self.assertEqual(self._next(difficulty="complex"), hardest.id)
+
+    def test_complex_counts_an_unscored_case_as_the_most_complex(self):
+        self._task(complexity=4)
+        unscored = self._task(complexity=None)
+
+        self.assertEqual(self._next(difficulty="complex"), unscored.id)
+
+    def test_complex_leaves_an_unscored_case_unscored(self):
+        unscored = self._task(complexity=None)
+
+        self._next(difficulty="complex")
+
+        unscored.refresh_from_db()
+        self.assertIsNone(unscored.complexity)
+
+    def test_complex_cases_still_come_with_evidence_first(self):
+        self._task(complexity=5, evidence=False)
+        with_evidence = self._task(complexity=2)
+
+        self.assertEqual(self._next(difficulty="complex"), with_evidence.id)
+
+    def test_complex_still_serves_the_newest_pipeline_first(self):
+        self._task(complexity=5, case_version=1)
+        newest = self._task(complexity=2, case_version=2)
+
+        self.assertEqual(self._next(difficulty="complex"), newest.id)
+
+    def test_complex_spreads_votes_past_a_much_judged_case(self):
+        judged_enough = self._task(complexity=5)
+        self._votes_by_others(judged_enough, 5)
+        less_judged = self._task(complexity=3)
+
+        self.assertEqual(self._next(difficulty="complex"), less_judged.id)
+
+    @override_settings(CHOOSER_WARMUP_ROUNDS_PER_LEVEL=1)
+    def test_straightforward_holds_after_the_warm_up(self):
+        # Four rounds judged: warmed up, so the usual order would serve the
+        # older, harder case.
+        for _ in range(4):
+            self._vote_as_this_session(self._task(complexity=5, evidence=False))
+        self._task(complexity=3)
+        simplest = self._task(complexity=1)
+
+        self.assertEqual(self._next(difficulty="straightforward"), simplest.id)
+
+    @override_settings(CHOOSER_WARMUP_ROUNDS_PER_LEVEL=0)
+    def test_straightforward_applies_with_the_warm_up_off(self):
+        self._task(complexity=3)
+        simplest = self._task(complexity=1)
+
+        self.assertEqual(self._next(difficulty="straightforward"), simplest.id)
+
+    def test_straightforward_serves_the_simplest_left_when_none_is_a_one(self):
+        self._task(complexity=4)
+        simplest_left = self._task(complexity=2)
+
+        self.assertEqual(self._next(difficulty="straightforward"), simplest_left.id)
+
+    def test_an_unknown_difficulty_keeps_the_warm_up(self):
+        self._task(complexity=3)
+        simplest = self._task(complexity=1)
+
+        self.assertEqual(self._next(difficulty="brutal"), simplest.id)
+
+    def test_chat_cases_follow_the_preference_too(self):
+        self._task(complexity=1, task_type="chat")
+        hardest = self._task(complexity=4, task_type="chat")
+
+        self.assertEqual(self._next("chat", difficulty="complex"), hardest.id)

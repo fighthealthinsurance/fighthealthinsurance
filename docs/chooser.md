@@ -292,6 +292,22 @@ votes, then oldest. From level 5 on, and with the rounds setting at 0, the
 usual order alone. The staff export (below) carries each task's
 `complexity`, so a vote's difficulty can be read alongside it.
 
+**After their first round, the judge is asked what kind of case they want
+next**: "Keep them straightforward", "Bring on complex ones" or "Either is
+fine". The "Vote counted" screen asks until it is answered, and each answer
+also starts the next round; once answered it shows a switcher instead, on
+that screen and on the start page, so the choice can change between rounds.
+The answer is kept in the browser (`localStorage`), like the scoreboard, and
+goes to the next-task endpoints as `?difficulty=straightforward` or
+`?difficulty=complex` ("Either" sends nothing, which keeps the warm-up). The
+server keeps the warm-up's first keys (evidence first, then cases judged
+fewer than `CHOOSER_WARMUP_SATURATION_VOTES` times, then the newest case
+version) and then orders by complexity: `straightforward` holds the level
+at 1 however many rounds are judged, so the simplest case left comes first;
+`complex` serves the most complex case left first, an unscored case
+counting as a 5. Both apply with the warm-up off too, since the judge asked;
+an unknown value is ignored. The choice is not stored with the vote.
+
 ### Trying out a model (`CHOOSER_FORCE_MODEL`)
 
 To get a new model votes quickly, set `CHOOSER_FORCE_MODEL` to its

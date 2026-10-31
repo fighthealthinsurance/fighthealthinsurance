@@ -165,6 +165,24 @@ class TestCitations:
         assert cc.count_citations(["[1] " * 50, "[2] " * 50]) == 20
 
 
+class TestPreferenceFrom:
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("complex", cc.COMPLEX),
+            (" Complex ", cc.COMPLEX),
+            ("straightforward", cc.STRAIGHTFORWARD),
+            ("STRAIGHTFORWARD", cc.STRAIGHTFORWARD),
+        ],
+    )
+    def test_a_listed_preference_is_read_whatever_its_case(self, raw, expected):
+        assert cc.preference_from(raw) == expected
+
+    @pytest.mark.parametrize("raw", [None, "", "either", "hard", "mixed"])
+    def test_anything_else_is_no_preference(self, raw):
+        assert cc.preference_from(raw) is None
+
+
 class TestWarmupLevel:
     def test_one_vote_a_level_by_default(self):
         assert [cc.warmup_level(r) for r in range(0, 6)] == [1, 2, 3, 4, 5, 5]

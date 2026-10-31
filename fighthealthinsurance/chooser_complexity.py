@@ -18,7 +18,7 @@ COMPLEXITY_MAX without storing that, so a real score can be filled in later.
 
 import dataclasses
 import re
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 from django.conf import settings
 from django.db.models import Case, F, IntegerField, QuerySet, Value, When
@@ -213,30 +213,28 @@ def warmup_level(rounds: int) -> int:
 # pipeline first (its votes are wanted first), then fewest votes, then oldest.
 USUAL_ORDER = ("-case_version", "vote_count", "created_at")
 
+# What a judge may ask for once they have judged a round (the next-task
+# endpoints' ``difficulty`` parameter): the simplest cases from then on, or
+# the most complex. No answer, or one not on this list, keeps the warm-up.
+STRAIGHTFORWARD = "straightforward"
+COMPLEX = "complex"
+PREFERENCES = (STRAIGHTFORWARD, COMPLEX)
 
-def ordered_for_judge(tasks: "QuerySet", task_type: str, rounds: int) -> "QuerySet":
-    """``tasks`` (annotated with ``vote_count``) in the order they are served
-    to a judge who has cast ``rounds`` votes on ``task_type`` tasks.
 
-    While the judge is warming up (warmup_level below COMPLEXITY_MAX):
+def preference_from(raw: Optional[str]) -> Optional[str]:
+    """The case preference ``raw`` asks for, one of PREFERENCES, or None for
+    none: absent, empty and unknown values all keep the warm-up."""
+    value = (raw or "").strip().lower()
+    return value if value in PREFERENCES else None
 
-    1. an appeal case with evidence attached before one without, so the
-       first rounds still practise checking citations;
-    2. a case judged fewer than warmup_saturation_votes() times before one
-       judged that often, so the simplest cases do not take every new
-       judge's first votes while the rest wait;
-    3. the newest case pipeline first, as always;
-    4. then by how far a case's complexity is above the judge's level, an
-       unscored case counting as COMPLEXITY_MAX: every case within reach
-       ties at zero and the usual keys decide between them, and when none
-       is within reach the nearest is served;
-    5. then fewest votes, then oldest.
 
-    Once warmed up, or with the warm-up off, the usual order alone.
-    """
-    level = warmup_level(rounds)
-    if level >= COMPLEXITY_MAX:
-        return tasks.order_by(*USUAL_ORDER)
+def _spread_first(tasks: "QuerySet", task_type: str) -> Tuple["QuerySet", List[str]]:
+    """``tasks`` with the keys that lead every complexity-aware order, and
+    the keys themselves: an appeal case with evidence attached before one
+    without, so a judge still checks citations whatever the complexity; and
+    a case judged fewer than warmup_saturation_votes() times before one
+    judged that often, so the cases a preference favours do not take every
+    vote while the rest wait."""
     keys: List[str] = []
     if task_type == "appeal":
         # evidence[0] exists: the list is non-empty. A missing key, a NULL
@@ -249,17 +247,75 @@ def ordered_for_judge(tasks: "QuerySet", task_type: str, rounds: int) -> "QueryS
             )
         )
         keys.append("no_evidence")
+    tasks = tasks.annotate(
+        saturated=Case(
+            When(vote_count__gte=warmup_saturation_votes(), then=Value(1)),
+            default=Value(0),
+            output_field=IntegerField(),
+        )
+    )
+    keys.append("saturated")
+    return tasks, keys
+
+
+def ordered_for_judge(
+    tasks: "QuerySet",
+    task_type: str,
+    rounds: int,
+    preference: Optional[str] = None,
+) -> "QuerySet":
+    """``tasks`` (annotated with ``vote_count``) in the order they are served
+    to a judge who has cast ``rounds`` votes on ``task_type`` tasks and asked
+    for ``preference`` (one of PREFERENCES, or None).
+
+    With no preference, while the judge is warming up (warmup_level below
+    COMPLEXITY_MAX), and always with a preference:
+
+    1. an appeal case with evidence attached before one without;
+    2. a case judged fewer than warmup_saturation_votes() times before one
+       judged that often (see _spread_first);
+    3. the newest case pipeline first, as always;
+    4. then by complexity. Warming up, by how far a case is above the
+       judge's level: every case within reach ties at zero and the usual
+       keys decide between them, and when none is within reach the nearest
+       is served. STRAIGHTFORWARD holds the level at COMPLEXITY_MIN however
+       many rounds are judged, so the simplest case left comes first.
+       COMPLEX serves the most complex case left first. An unscored case
+       counts as COMPLEXITY_MAX throughout;
+    5. then fewest votes, then oldest.
+
+    A preference applies with the warm-up off too: it was asked for. With
+    no preference, once warmed up or with the warm-up off, the usual order
+    alone.
+    """
+    if preference == COMPLEX:
+        tasks, keys = _spread_first(tasks, task_type)
+        # How far below the top a case is. Like over_level below, only ever
+        # a non-negative subtraction, and no NULL reaches it.
+        tasks = tasks.annotate(
+            below_max=Case(
+                When(complexity__isnull=True, then=Value(0)),
+                When(
+                    complexity__lt=COMPLEXITY_MAX,
+                    then=Value(COMPLEXITY_MAX) - F("complexity"),
+                ),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+        )
+        return tasks.order_by(
+            *keys, "-case_version", "below_max", "vote_count", "created_at"
+        )
+    level = COMPLEXITY_MIN if preference == STRAIGHTFORWARD else warmup_level(rounds)
+    if level >= COMPLEXITY_MAX:
+        return tasks.order_by(*USUAL_ORDER)
+    tasks, keys = _spread_first(tasks, task_type)
     # A CASE rather than GREATEST(COALESCE(..) - level, 0): the subtraction
     # only runs where it stays positive, since on MySQL the column is an
     # unsigned smallint and a negative difference is an error, not a number;
     # and the unscored branch never reaches a NULL, whose handling GREATEST
     # and SQLite's MAX disagree on.
     tasks = tasks.annotate(
-        saturated=Case(
-            When(vote_count__gte=warmup_saturation_votes(), then=Value(1)),
-            default=Value(0),
-            output_field=IntegerField(),
-        ),
         over_level=Case(
             When(complexity__isnull=True, then=Value(COMPLEXITY_MAX - level)),
             When(complexity__gt=level, then=F("complexity") - Value(level)),
@@ -268,5 +324,5 @@ def ordered_for_judge(tasks: "QuerySet", task_type: str, rounds: int) -> "QueryS
         ),
     )
     return tasks.order_by(
-        *keys, "saturated", "-case_version", "over_level", "vote_count", "created_at"
+        *keys, "-case_version", "over_level", "vote_count", "created_at"
     )
