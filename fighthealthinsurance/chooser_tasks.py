@@ -23,24 +23,31 @@ import threading
 from typing import Any, Awaitable, Callable, List, Optional, Tuple, cast
 
 from django.conf import settings
-from django.db.models import Count, QuerySet
+from django.db.models import Count, Q, QuerySet
 from django.utils import timezone
 
 from channels.db import database_sync_to_async
 from loguru import logger
 
+from fighthealthinsurance.context_utils import truncate_at_boundary
 from fighthealthinsurance.ml import llm_usage
+from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.ml.ml_metrics import ml_call_purpose_override
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.ml.model_identity import (
     SYNTHESIZED_MODEL_NAME,
     canonical_model_name,
 )
+from fighthealthinsurance.ml.question_parsing import (
+    MAX_QUESTION_CHARS,
+    is_junk_question,
+)
 from fighthealthinsurance import condition_rankings
 from fighthealthinsurance.models import (
     ChooserCandidate,
     ChooserTask,
     ModelHealthAlertState,
+    PubMedArticleSummarized,
     PubMedMiniArticle,
     PubMedQueryData,
 )
@@ -101,9 +108,38 @@ CHOOSER_PUBMED_SEARCH_TIMEOUT = getattr(settings, "CHOOSER_PUBMED_SEARCH_TIMEOUT
 # Case facts kept per scenario, and the longest one.
 CHOOSER_MAX_FACTS = 6
 _MAX_FACT_CHARS = 240
-# Evidence rows carry a PMID, a title and (when known) a link; no abstracts,
-# so the voter and the drafts see exactly the same list.
-_EVIDENCE_KEYS = ("pmid", "title", "url")
+# Evidence rows carry a PMID, a title, (when known) a link, and (when one is
+# on file) a short summary: the summary real appeals were given for the
+# article, else the start of its abstract. The voter is shown exactly what
+# the drafts were given, summaries included.
+_EVIDENCE_KEYS = ("pmid", "title", "url", "summary")
+_EVIDENCE_SUMMARY_CHARS = 600
+# The case-building pipeline that writes a new task of each type (stored as
+# ChooserTask.case_version). Appeal cases at 2 also carry article summaries
+# and a simulated question-and-answer session with the patient. Voters get
+# the newest version first, and only tasks at the current version count as
+# fresh (see _fresh_tasks), so the refill keeps the new kind coming while
+# older tasks stay votable. Bump a type's version when its cases change in
+# a way votes should be told apart by.
+CASE_VERSIONS = {"appeal": 2, "chat": 1}
+# The simulated interview (see _interview): how many of the app's questions
+# the fictional patient is asked, how long the question generators may take,
+# and the longest answer kept.
+CHOOSER_MAX_QUESTIONS = getattr(settings, "CHOOSER_MAX_QUESTIONS", 4)
+CHOOSER_QA_TIMEOUT = getattr(settings, "CHOOSER_QA_TIMEOUT", 60)
+_MAX_ANSWER_CHARS = 400
+
+
+def _case_version(task_type: str) -> int:
+    """The version a new ``task_type`` task is built at (see CASE_VERSIONS)."""
+    return CASE_VERSIONS.get(task_type, 1)
+
+
+def _simulated_qa_allowed() -> bool:
+    """Whether appeal cases get a simulated question-and-answer session.
+    Read per call, like the live-search switch: off in tests, which would
+    otherwise reach the question generators' real backends."""
+    return bool(getattr(settings, "CHOOSER_SIMULATED_QA", True))
 
 
 def _pubmed_live_search_allowed() -> bool:
@@ -136,7 +172,80 @@ def _split_by_kind(models: List, seen: set) -> Tuple[List, List]:
     return internal, external
 
 
-def _select_candidate_models(models: List, limit: int) -> List:
+# CHOOSER_FORCE_MODEL names already reported as unregistered, so a name for
+# a provider this deployment has no key for is logged once per process, not
+# on every task and refill tick.
+_UNREGISTERED_FORCED_NAMES: set = set()
+
+
+def _forced_arena_models(task_type: str) -> List:
+    """The backends ``CHOOSER_FORCE_MODEL`` names that can answer a
+    ``task_type`` task, one instance each, in the order named: a model being
+    tried out, seated in every new arena task (see _select_candidate_models)
+    so it collects votes against the usual rotation quickly. Names are the
+    router's registered names, comma-separated: the keys of
+    ``models_by_name`` (as FORCE_MODEL takes), or of
+    ``chat_outside_models_by_name`` for a model kept out of every general
+    pool (LunaRoute's, say), which the arena can try on its synthetic cases
+    without it ever seeing a patient's. A name the router doesn't know is
+    logged once and ignored. Read per call, so it takes effect at the next
+    task. Unlike FORCE_MODEL, it touches nothing outside the arena and
+    replaces no backend inside it.
+
+    A chat task skips an appeal-text fine-tune (one that says it doesn't
+    follow general instructions), as the router's chat list does: it would
+    only waste the slot, and the coverage refill would keep building chat
+    tasks waiting for a candidate it never writes. Past CHOOSER_NUM_CANDIDATES
+    names the rest are dropped, with a warning, for the same reason: they
+    would never be seated."""
+    raw = getattr(settings, "CHOOSER_FORCE_MODEL", "") or ""
+    names = raw.split(",") if isinstance(raw, str) else list(raw)
+    forced: List = []
+    for name in dict.fromkeys(n.strip() for n in names if n and n.strip()):
+        # A healthy instance first, as a call by name gets: a forced model
+        # whose first instance is down would write nothing.
+        instances = ml_router.healthy_first(ml_router.models_by_name.get(name) or [])
+        model = (
+            instances[0]
+            if instances
+            else ml_router.chat_outside_models_by_name.get(name)
+        )
+        if model is None:
+            if name not in _UNREGISTERED_FORCED_NAMES:
+                _UNREGISTERED_FORCED_NAMES.add(name)
+                logger.warning(
+                    f"CHOOSER_FORCE_MODEL names {name!r}, which is not a "
+                    "registered backend; ignoring it"
+                )
+            continue
+        if getattr(model, "context_only", False) is True:
+            # Builds context (Perplexity's citations); never writes a draft.
+            logger.debug(
+                f"CHOOSER_FORCE_MODEL {name!r} is context-only; not forcing it "
+                "into arena tasks"
+            )
+            continue
+        supports = getattr(model, "supports_general_instructions", None)
+        if task_type == "chat" and supports is not None and not supports():
+            logger.debug(
+                f"CHOOSER_FORCE_MODEL {name!r} answers appeals only; not "
+                "forcing it into chat tasks"
+            )
+            continue
+        forced.append(model)
+    if len(forced) > CHOOSER_NUM_CANDIDATES:
+        logger.warning(
+            f"CHOOSER_FORCE_MODEL names {len(forced)} backends for "
+            f"{CHOOSER_NUM_CANDIDATES} candidate slots; forcing only "
+            f"{[_model_display_name(m) for m in forced[:CHOOSER_NUM_CANDIDATES]]}"
+        )
+        forced = forced[:CHOOSER_NUM_CANDIDATES]
+    return forced
+
+
+def _select_candidate_models(
+    models: List, limit: int, forced: Optional[List] = None
+) -> List:
     """Pick up to ``limit`` distinct-by-name backends for candidate generation.
 
     The router's backend lists intentionally repeat models (e.g. the primary
@@ -145,12 +254,21 @@ def _select_candidate_models(models: List, limit: int) -> List:
     backends unmeasured. Instead: dedupe by friendly name, then alternate
     internal/external so both pools get compared, shuffling the external pool
     so different external providers get coverage across tasks.
+
+    ``forced`` backends (CHOOSER_FORCE_MODEL) take the first slots, whatever
+    their kind, and the rest are filled as above.
     """
-    internal, external = _split_by_kind(models, set())
+    selected: List = []
+    seen: set = set()
+    for model in forced or []:
+        name = _model_display_name(model)
+        if name not in seen and len(selected) < limit:
+            seen.add(name)
+            selected.append(model)
+    internal, external = _split_by_kind(models, seen)
     # Randomize external order for coverage across tasks; keep the internal
     # ordering (cost/quality ranked by the router).
     random.shuffle(external)
-    selected: List = []
     i = e = 0
     while len(selected) < limit and (i < len(internal) or e < len(external)):
         if i < len(internal):
@@ -440,6 +558,12 @@ async def _store_titles(pmids: List[str]) -> None:
                 await PubMedMiniArticle.objects.acreate(
                     pmid=pmid, title=title, abstract=abstract
                 )
+            elif abstract:
+                # The abstract is what the case summarizes the article from
+                # when no appeal has summarized it yet.
+                await PubMedMiniArticle.objects.filter(
+                    Q(abstract__isnull=True) | Q(abstract=""), pmid=pmid
+                ).aupdate(abstract=abstract)
 
     try:
         await asyncio.wait_for(fetch_all(), timeout=CHOOSER_PUBMED_SEARCH_TIMEOUT)
@@ -447,14 +571,37 @@ async def _store_titles(pmids: List[str]) -> None:
         logger.debug("Chooser: ran out of time fetching PubMed titles")
 
 
+async def _summaries_for(pmids: List[str]) -> dict:
+    """``{pmid: summary}`` for the articles an appeal already summarized
+    (PubMedArticleSummarized.basic_summary, what real appeals are given as
+    their PubMed context). Nothing is fetched or summarized here."""
+    summaries: dict = {}
+    async for pmid, summary in (
+        PubMedArticleSummarized.objects.filter(pmid__in=pmids)
+        .exclude(basic_summary__isnull=True)
+        .exclude(basic_summary="")
+        .values_list("pmid", "basic_summary")
+    ):
+        summaries.setdefault(pmid, summary)
+    return summaries
+
+
+def _evidence_summary(summary: Optional[str], abstract: Optional[str]) -> str:
+    """What the case says an article found: its stored summary, else the
+    start of its abstract, cut at a sentence or word boundary."""
+    text = " ".join((summary or abstract or "").replace("\x00", "").split())
+    return truncate_at_boundary(text, _EVIDENCE_SUMMARY_CHARS)
+
+
 async def _evidence_for(procedure: str, diagnosis: str) -> List[dict]:
     """The evidence a scenario's drafts may cite: up to CHOOSER_EVIDENCE_LIMIT
-    articles for the procedure and diagnosis, each a PMID, a title and a
-    link. Cached searches first; a live search only when nothing is cached
-    and CHOOSER_PUBMED_LIVE_SEARCH allows it. With live search allowed,
-    articles with no stored title have it fetched; otherwise they are
-    skipped: the list is for the voter to check citations against, so
-    every row must be readable."""
+    articles for the procedure and diagnosis, each a PMID, a title, a link
+    and, when one is on file, a summary (see _evidence_summary). Cached
+    searches first; a live search only when nothing is cached and
+    CHOOSER_PUBMED_LIVE_SEARCH allows it. With live search allowed, articles
+    with no stored title have it fetched; otherwise they are skipped: the
+    list is for the voter to check citations against, so every row must be
+    readable."""
     query = f"{procedure} {diagnosis}".strip()
     if not query:
         return []
@@ -489,19 +636,21 @@ async def _evidence_for(procedure: str, diagnosis: str) -> List[dict]:
         .exclude(title__isnull=True)
         .exclude(title="")
     }
+    summaries = await _summaries_for(list(titles))
     evidence: List[dict] = []
     for pmid in pmids:
         article = titles.get(pmid)
         if article is None:
             continue
-        evidence.append(
-            {
-                "pmid": pmid,
-                "title": (article.title or "").strip()[:300],
-                "url": article.article_url
-                or f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-            }
-        )
+        item = {
+            "pmid": pmid,
+            "title": (article.title or "").strip()[:300],
+            "url": article.article_url or f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+        }
+        summary = _evidence_summary(summaries.get(pmid), article.abstract)
+        if summary:
+            item["summary"] = summary
+        evidence.append(item)
         if len(evidence) >= CHOOSER_EVIDENCE_LIMIT:
             break
     return evidence
@@ -584,6 +733,152 @@ async def _ask_writer(writer, system_prompt: str, prompt: str) -> Optional[str]:
     return str(reply) if reply else None
 
 
+def _denial_letter(context: dict) -> str:
+    """The synthetic denial in the few lines the question generators read as
+    the letter: they want a denial text, and a case has only its parts."""
+    procedure = context.get("procedure") or "the requested care"
+    diagnosis = context.get("diagnosis")
+    insurer = context.get("insurance_company") or "The plan"
+    letter = f"{insurer} denied coverage of {procedure}"
+    if diagnosis:
+        letter += f" for {diagnosis}"
+    reason = context.get("denial_text_preview")
+    return f"{letter}. Reason given: {reason}" if reason else f"{letter}."
+
+
+async def _case_questions(context: dict) -> List[str]:
+    """The questions the app would ask this patient, from the generators the
+    appeal flow itself uses (MLAppealQuestionsHelper): the case-specific
+    ones, given the denial and the case facts as the patient's history, and
+    the generic ones for the pair when those come back empty. Up to
+    CHOOSER_MAX_QUESTIONS, junk and repeats dropped; the generators' own
+    suggested answers are not kept, since the patient answers them all.
+    Labelled "other" in the call metrics, like the rest of the chooser's
+    synthetic traffic."""
+    procedure = context.get("procedure") or ""
+    diagnosis = context.get("diagnosis") or ""
+    facts = "; ".join(str(f) for f in (context.get("facts") or []) if f)
+    with ml_call_purpose_override("other"):
+        found = await MLAppealQuestionsHelper.generate_specific_questions(
+            denial_text=_denial_letter(context),
+            patient_context=facts or None,
+            procedure=procedure,
+            diagnosis=diagnosis,
+            timeout=CHOOSER_QA_TIMEOUT,
+            # Synthetic case: external backends allowed (module docstring).
+            use_external=True,
+        )
+        if not found:
+            found = await MLAppealQuestionsHelper.generate_generic_questions(
+                procedure=procedure, diagnosis=diagnosis, timeout=CHOOSER_QA_TIMEOUT
+            )
+    questions: List[str] = []
+    for row in found or []:
+        question = str(row[0] if isinstance(row, (list, tuple)) else row).strip()
+        if (
+            not question
+            or len(question) > MAX_QUESTION_CHARS
+            or is_junk_question(question)
+            or question.lower() in {q.lower() for q in questions}
+        ):
+            continue
+        questions.append(question)
+        if len(questions) >= CHOOSER_MAX_QUESTIONS:
+            break
+    return questions
+
+
+_PATIENT_SYSTEM_PROMPT = (
+    "You role-play a fictional patient answering their appeal assistant's "
+    "questions, for a synthetic case used to compare appeal-writing models. "
+    "Answer plainly, in the first person, and never contradict the case."
+)
+
+
+def _interview_prompt(context: dict, questions: List[str]) -> str:
+    """What the fictional patient is asked: the case, then the questions."""
+    lines = [
+        "Here is a fictional patient's health insurance denial:",
+        f"Procedure: {context.get('procedure') or ''}",
+        f"Diagnosis: {context.get('diagnosis') or ''}",
+        f"Insurance Company: {context.get('insurance_company') or ''}",
+        f"Denial Reason: {context.get('denial_text_preview') or ''}",
+    ]
+    facts = [str(f) for f in (context.get("facts") or []) if f]
+    if facts:
+        lines.append("Case facts:")
+        lines.extend(f"- {fact}" for fact in facts)
+    lines.append("\nThe patient's appeal assistant asked them:")
+    lines.extend(f"Q{i}: {q}" for i, q in enumerate(questions, start=1))
+    lines.append(
+        "\nAnswer each question as this patient would, in one or two plain "
+        "sentences. Stay consistent with the case facts; where they do not "
+        "settle a question, give a realistic answer that fits the case, or say "
+        "the patient does not know. No names, no dates, no member, claim or "
+        "phone numbers.\n"
+        "Reply in EXACTLY this format, one line per question:"
+    )
+    lines.extend(
+        f"A{i}: [the patient's answer to Q{i}]" for i in range(1, len(questions) + 1)
+    )
+    return "\n".join(lines)
+
+
+def _clean_answer(raw: str) -> str:
+    """One answer without markdown or wrapping quotes, cut to
+    _MAX_ANSWER_CHARS; "" for an echo of the format's placeholder."""
+    answer = _strip_label_emphasis(raw).replace("**", "").strip().strip('"').strip()
+    if answer.startswith("["):
+        return ""
+    return truncate_at_boundary(answer, _MAX_ANSWER_CHARS)
+
+
+def _answers_from_response(text: str, questions: List[str]) -> List[dict]:
+    """The ``{"question", "answer"}`` pairs in the patient's reply, in the
+    questions' order; a question left unanswered is left out."""
+    fields = _labeled_fields(text)
+    pairs: List[dict] = []
+    for i, question in enumerate(questions, start=1):
+        answer = _clean_answer(fields.get(f"a{i}", ""))
+        if len(answer) >= 2:
+            pairs.append({"question": question, "answer": answer})
+    return pairs
+
+
+async def _interview(task: ChooserTask, context: dict, writers: List) -> List[dict]:
+    """A simulated question-and-answer session with the case's patient: the
+    app's own questions for the case (_case_questions), answered in
+    character by the first scenario writer that answers usably. The drafts
+    get the answers as facts about the patient, and the voter sees them.
+    Best effort: nothing comes back when the switch is off
+    (CHOOSER_SIMULATED_QA), no question came back, or no writer answered,
+    and the case goes on without one."""
+    if not _simulated_qa_allowed():
+        return []
+    try:
+        questions = await _case_questions(context)
+    except Exception as e:
+        logger.opt(exception=True).warning(
+            f"ChooserTask {task.id}: could not generate questions: {e}"
+        )
+        return []
+    if not questions:
+        logger.info(f"ChooserTask {task.id}: no questions for the interview")
+        return []
+    prompt = _interview_prompt(context, questions)
+    for writer in writers:
+        pairs = _answers_from_response(
+            await _ask_writer(writer, _PATIENT_SYSTEM_PROMPT, prompt) or "", questions
+        )
+        if pairs:
+            return pairs
+        logger.info(
+            f"ChooserTask {task.id}: {_model_display_name(writer)} gave no "
+            "usable interview answers"
+        )
+    return []
+
+
 def _usable_question(question: Optional[str]) -> bool:
     """Long enough to be a question, and short enough to be one message."""
     return question is not None and 10 <= len(question) <= 1000
@@ -644,7 +939,9 @@ async def _fill_candidates(
     """
     # Drawn from the same list the coverage refill checks, so the two agree.
     comparable = _comparable_backends(task_type)
-    models = _select_candidate_models(comparable, CHOOSER_NUM_CANDIDATES)
+    models = _select_candidate_models(
+        comparable, CHOOSER_NUM_CANDIDATES, _forced_arena_models(task_type)
+    )
     if not models:
         logger.warning(f"No models available for {task_type} candidate generation")
         return
@@ -916,22 +1213,39 @@ async def _refill_reason(task_type: str) -> Optional[str]:
 
 def _comparable_backends(task_type: str) -> List:
     """The backends candidate generation draws from for ``task_type``, and
-    so the ones the coverage refill checks. (``ml_router`` is a proxy, so
-    its methods read as Any to mypy; hence the casts.)"""
+    so the ones the coverage refill checks: the router's list, plus any
+    CHOOSER_FORCE_MODEL backend it left out (one still being tried out may
+    not have made the router's cut yet). (``ml_router`` is a proxy, so its
+    methods read as Any to mypy; hence the casts.)"""
     if task_type == "appeal":
-        return cast(List, ml_router.generate_text_backends(use_external=True))
-    # explore=False: every roster model that can be asked, so each gets
-    # compared, and the same list each time: which models need fresh tasks
-    # must not depend on a chat turn's random draw.
-    return cast(List, ml_router.get_chat_backends(use_external=True, explore=False))
+        backends = cast(List, ml_router.generate_text_backends(use_external=True))
+    else:
+        # explore=False: every roster model that can be asked, so each gets
+        # compared, and the same list each time: which models need fresh
+        # tasks must not depend on a chat turn's random draw.
+        backends = cast(
+            List, ml_router.get_chat_backends(use_external=True, explore=False)
+        )
+    listed = {_model_display_name(m) for m in backends}
+    return backends + [
+        m
+        for m in _forced_arena_models(task_type)
+        if _model_display_name(m) not in listed
+    ]
 
 
 def _fresh_tasks(task_type: str) -> "QuerySet[ChooserTask]":
-    """READY synthetic tasks of ``task_type`` with no vote yet: the fresh
-    ("unscored") tasks, the ones still able to gather new preference data."""
+    """READY synthetic tasks of ``task_type`` at the current case version
+    (CASE_VERSIONS) with no vote yet: the fresh ("unscored") tasks, the ones
+    still able to gather new preference data. An older-version task stays
+    votable but is served after the current ones, so an unvoted one would
+    otherwise hold the refill off while voters see the new kind run out."""
     return (
         ChooserTask.objects.filter(
-            task_type=task_type, status="READY", source="synthetic"
+            task_type=task_type,
+            status="READY",
+            source="synthetic",
+            case_version__gte=_case_version(task_type),
         )
         .annotate(vote_count=Count("votes"))
         .filter(vote_count=0)
@@ -956,22 +1270,31 @@ async def _fresh_task_coverage(task_type: str) -> dict:
 
 
 async def _external_backends_without_fresh_tasks(task_type: str) -> set:
-    """External backends the chooser would compare today that fewer than
-    ``CHOOSER_MIN_UNSCORED_TASKS`` fresh tasks actually compare.
+    """External backends the chooser would compare today, and any
+    CHOOSER_FORCE_MODEL backend, that fewer than ``CHOOSER_MIN_UNSCORED_TASKS``
+    fresh tasks actually compare.
 
-    Externals only: the internal backends fill their candidate slots on every
-    task, while the externals rotate through theirs, and comparing providers
-    is what the chooser is for.
+    Externals only otherwise: the internal backends fill their candidate
+    slots on every task, while the externals rotate through theirs, and
+    comparing providers is what the chooser is for. A forced backend is
+    checked whatever its kind: the pool it was just forced into has no fresh
+    task with it yet, and getting it votes is why it was forced.
     """
     try:
         backends = _comparable_backends(task_type)
+        forced = _forced_arena_models(task_type)
     except Exception as e:
         logger.warning(f"Chooser: could not list backends for {task_type}: {e}")
         return set()
     # Named the way candidates are stored, or the lookup below could miss.
-    external = {
-        canonical_model_name(m) for m in backends if getattr(m, "external", False)
-    }
+    external = {canonical_model_name(m) for m in forced}
+    # Forced models that take every slot leave none for the rest, so only
+    # theirs can gain coverage; counting the others would build a batch every
+    # tick (up to the unscored ceiling) that compares none of them.
+    if len(forced) < CHOOSER_NUM_CANDIDATES:
+        external |= {
+            canonical_model_name(m) for m in backends if getattr(m, "external", False)
+        }
     if not external:
         return set()
     coverage = await _fresh_task_coverage(task_type)
@@ -992,7 +1315,8 @@ async def _count_ready_tasks(task_type: str) -> int:
 
 
 async def _count_unscored_tasks(task_type: str) -> int:
-    """Count READY synthetic tasks of a type that have not yet received a vote.
+    """Count READY synthetic tasks of a type, at its current case version,
+    that have not yet received a vote (see _fresh_tasks).
 
     These are the tasks still able to gather fresh preference data; once a
     task has any vote it is "scored" and contributes diminishing value, so we
@@ -1049,6 +1373,7 @@ async def _generate_single_task(task_type: str) -> bool:
         task_type=task_type,
         status="QUEUED",
         source="synthetic",
+        case_version=_case_version(task_type),
         num_candidates_expected=CHOOSER_NUM_CANDIDATES,
         num_candidates_generated=0,
     )
@@ -1086,7 +1411,14 @@ async def _generate_single_task(task_type: str) -> bool:
 
 
 async def _generate_appeal_candidates(task: ChooserTask):
-    """Generate appeal letter candidates for a task using ONLY synthetic data from ML."""
+    """Generate appeal letter candidates for a task using ONLY synthetic data from ML.
+
+    The case is built the way a real appeal's inputs are: a scenario (the
+    pair, the insurer, the denial reason, the case facts), the PubMed
+    evidence for the pair with a summary of each article (_evidence_for),
+    and the patient's answers to the app's own questions (_interview). Every
+    draft is given all of it, and the voter is shown all of it.
+    """
 
     # Use ML to generate a synthetic denial scenario. Synthetic data only, so
     # external backends are allowed (and wanted — see module docstring).
@@ -1175,6 +1507,11 @@ async def _generate_appeal_candidates(task: ChooserTask):
                 f"ChooserTask {task.id}: could not attach evidence: {e}"
             )
             context["evidence"] = []
+        # What the patient said when the app asked its questions. Best
+        # effort too: a case without answers is still worth a vote.
+        qa_pairs = await _interview(task, context, writers)
+        if qa_pairs:
+            context["qa_pairs"] = qa_pairs
         task.context_json = context
         await database_sync_to_async(task.save)()
 
@@ -1370,13 +1707,30 @@ def _build_appeal_prompt(context: dict) -> str:
     if facts:
         parts.append("\nCase facts (the only facts known about this patient):")
         parts.extend(f"- {fact}" for fact in facts)
+    qa_pairs = [
+        p
+        for p in (context.get("qa_pairs") or [])
+        if isinstance(p, dict) and p.get("question") and p.get("answer")
+    ]
+    if qa_pairs:
+        parts.append(
+            "\nThe patient's answers to the appeal assistant's questions "
+            "(as reliable as the case facts):"
+        )
+        for pair in qa_pairs:
+            parts.append(f"Q: {pair['question']}")
+            parts.append(f"A: {pair['answer']}")
     evidence = [e for e in (context.get("evidence") or []) if e.get("title")]
     if evidence:
         parts.append("\nEvidence on file (the only studies you may cite):")
-        parts.extend(
-            f"- {e['title']} (PMID {e['pmid']})" if e.get("pmid") else f"- {e['title']}"
-            for e in evidence
-        )
+        for e in evidence:
+            parts.append(
+                f"- {e['title']} (PMID {e['pmid']})"
+                if e.get("pmid")
+                else f"- {e['title']}"
+            )
+            if e.get("summary"):
+                parts.append(f"  Summary: {e['summary']}")
 
     parts.append(
         "\nPlease write a professional appeal letter that argues why this treatment "
@@ -1384,9 +1738,16 @@ def _build_appeal_prompt(context: dict) -> str:
         "guidelines or regulations."
     )
     parts.append(
-        "Use only the case facts above; where a detail is not given, leave it out or "
+        "Use only the case facts"
+        + (" and the patient's answers" if qa_pairs else "")
+        + " above; where a detail is not given, leave it out or "
         "say the records will show it, rather than inventing it. Cite only the "
         "evidence on file, by title or PMID"
+        + (
+            ", and claim no more for a study than its summary says"
+            if any(e.get("summary") for e in evidence)
+            else ""
+        )
         + (
             "; if nothing on file fits, cite nothing"
             if evidence

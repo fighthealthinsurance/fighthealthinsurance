@@ -87,6 +87,7 @@ TASKS = (
     # Reading and research.
     "entity_extraction",
     "questions",
+    "followup_questions",
     "citations",
     "doc_summary",
     "policy_analysis",
@@ -97,6 +98,7 @@ TASKS = (
     "reply_gate",
     "reply_shadow",
     "research_judging",
+    "followup_check",
     # Everything else.
     "chooser",
     "staff_query",

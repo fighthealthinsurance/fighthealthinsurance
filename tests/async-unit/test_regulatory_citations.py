@@ -294,6 +294,13 @@ class TestMedicareAdvantageOnlyHooks(unittest.TestCase):
         assert block is not None
         self.assertIn("CMS-4201-F", block)
 
+    def test_left_out_for_another_public_program_beside_a_private_plan(self):
+        for programs in (("medicare", "erisa"), ("medicaid", "erisa")):
+            with self.subTest(programs=programs):
+                block = get_regulatory_citation_context("CA", programs=programs)
+                assert block is not None
+                self.assertNotIn("CMS-4201-F", block)
+
     def test_cms_0057_f_still_rides_along_for_marketplace_plans(self):
         block = get_regulatory_citation_context("CA", programs=("marketplace",))
         assert block is not None

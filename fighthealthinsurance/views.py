@@ -525,9 +525,17 @@ class AboutView(StaticIshView):
 
 
 class AboutAIView(StaticIshView):
-    """About our AI page."""
+    """About our AI page: which models we use and where they run, from the
+    data files in static/model_transparency/."""
 
     template_name = "about_ai.html"
+
+    def get_context_data(self, **kwargs):
+        from fighthealthinsurance.model_transparency import load
+
+        context = super().get_context_data(**kwargs)
+        context["ai"] = load()
+        return context
 
 
 class HowToHelpView(StaticIshView):
@@ -1692,6 +1700,7 @@ class FindNextSteps(View):
                 "pharmacy_suggestion": next_step_info.pharmacy_coupon_suggestion,
                 "financial_assistance": next_step_info.financial_assistance,
                 "appeal_deadline_note": next_step_info.appeal_deadline_note,
+                "answers_action": next_step_info.answers_action,
                 "current_step": 6,
                 "back_url": build_back_url(
                     request, "categorize_review", denial_id, email, semi_sekret
@@ -1740,6 +1749,7 @@ class FindNextSteps(View):
                     "pharmacy_suggestion": next_step_info.pharmacy_coupon_suggestion,
                     "financial_assistance": next_step_info.financial_assistance,
                     "appeal_deadline_note": next_step_info.appeal_deadline_note,
+                    "answers_action": next_step_info.answers_action,
                     "current_step": 6,
                     "back_url": build_back_url(
                         request,
@@ -1771,6 +1781,46 @@ class FindNextSteps(View):
                 "current_step": 5,
                 "back_url": _back,
                 "back_label": "Back to plan documents",
+            },
+        )
+
+
+class GenerateAppealLoading(View):
+    """Interim loading screen in front of generate_appeal while the optional
+    follow-up round (ml/followup_questions.py) could still be asked: that
+    check waits on models before the next page can render."""
+
+    def post(self, request):
+        form = core_forms.DenialRefForm(request.POST)
+        if not form.is_valid():
+            # The same recovery as GenerateAppeal.post.
+            logger.debug(f"GenerateAppealLoading: invalid ref form {form.errors}")
+            return redirect("scan")
+        return render(
+            request,
+            "find_next_steps_loading.html",
+            context={
+                "payload": request.POST,
+                "next_action": "generate_appeal",
+                "loading_title": "Checking Your Answers",
+                "loading_message": (
+                    "Checking whether we have what we need for your appeal..."
+                ),
+                "slow_message": (
+                    "This one is taking longer than usual. We are asking whether "
+                    "your answers leave anything your appeal needs. The page "
+                    "moves on by itself as soon as we know, and your appeal is "
+                    "written either way."
+                ),
+                "current_step": 6,
+                "back_url": build_back_url(
+                    request,
+                    "find_next_steps",
+                    form.cleaned_data["denial_id"],
+                    form.cleaned_data["email"],
+                    form.cleaned_data["semi_sekret"],
+                ),
+                "back_label": "Back to questions",
             },
         )
 
@@ -1912,10 +1962,27 @@ class ChooseAppeal(View):
         # Add the possible articles for inclusion
         add_pubmed_article_fields(fax_form, candidate_articles)
 
+        # choose_appeal hands back the fax details, not the denial, so the
+        # regulator-letters callout reads the row itself. A denial the triple
+        # does not name (None) leaves the callout at its normal size.
+        from fighthealthinsurance.escalation_addresses import (
+            regulator_escalation_reasons,
+        )
+
+        denial = common_view_logic.get_denial_for_action(
+            form.cleaned_data["denial_id"],
+            form.cleaned_data["email"],
+            form.cleaned_data["semi_sekret"],
+        )
+        regulator_reasons = (
+            regulator_escalation_reasons(denial) if denial is not None else []
+        )
+
         return render(
             request,
             "appeal.html",
             context={
+                "regulator_reasons": regulator_reasons,
                 "appeal": form.cleaned_data["appeal_text"],
                 "user_email": form.cleaned_data["email"],
                 "denial_id": form.cleaned_data["denial_id"],
@@ -1987,6 +2054,10 @@ class GenerateAppeal(View):
     def _appeals_context(
         *, request, denial, denial_id: str, email: str, semi_sekret: str, elems: dict
     ) -> dict:
+        from fighthealthinsurance.escalation_addresses import (
+            regulator_escalation_reasons,
+        )
+
         return {
             # Raw dict; appeals.html serializes it with |json_script. The old
             # json.dumps + {% autoescape off %} pair let any user-typed answer
@@ -1998,6 +2069,9 @@ class GenerateAppeal(View):
             "semi_sekret": semi_sekret,
             "current_step": 7,
             "use_external": denial.use_external,
+            # Why a regulator should hear about this denial, if anything says
+            # so; the regulator-letters callout grows when there is a reason.
+            "regulator_reasons": regulator_escalation_reasons(denial),
             "back_url": build_back_url(
                 request, "find_next_steps", denial_id, email, semi_sekret
             ),
@@ -2078,7 +2152,11 @@ class GenerateAppeal(View):
         # Query dict is of lists
         elems = dict((k, v[0]) for k, v in elems.items())
         try:
-            generated_questions: list[tuple[str, str]] = denial.generated_questions  # type: ignore
+            # The follow-ups after the generated set, so a positional key
+            # from an older page still resolves against the generated set.
+            generated_questions: list = list(
+                denial.generated_questions or []
+            ) + common_view_logic.FindNextStepsHelper.followup_rows(denial)
             restricted = [
                 "csrfmiddlewaretoken",
                 "denial_id",
@@ -2136,6 +2214,15 @@ class GenerateAppeal(View):
                 f"keys={sorted(elems.keys())}: {e}"
             )
 
+        # The optional follow-up round (ml/followup_questions.py): when the
+        # answers just saved leave something an appeal needs, ask for it
+        # before generating.
+        followups = common_view_logic.FindNextStepsHelper.followups_after_answers(
+            denial, posted=elems.keys()
+        )
+        if followups:
+            return self._render_followups(request, form, denial, followups)
+
         elems.pop("csrfmiddlewaretoken", None)
         return render(
             request,
@@ -2148,6 +2235,38 @@ class GenerateAppeal(View):
                 semi_sekret=form.cleaned_data["semi_sekret"],
                 elems=elems,
             ),
+        )
+
+    @staticmethod
+    def _render_followups(request, form, denial, followups) -> HttpResponse:
+        """The follow-up page. It posts back here with everything the
+        questions page posted carried along unchanged, so this view saves
+        the whole questionnaire again (with the follow-ups' answers added)
+        and the appeal is generated from all of it."""
+        helper = common_view_logic.FindNextStepsHelper
+        followup_form = helper.generated_questions_form(followups, load_qa(denial))
+        rendered = set(followup_form.fields)
+        carried = [
+            (key, value)
+            for key, values in request.POST.lists()
+            if key != "csrfmiddlewaretoken" and key not in rendered
+            for value in values
+        ]
+        denial_id = form.cleaned_data["denial_id"]
+        email = form.cleaned_data["email"]
+        semi_sekret = form.cleaned_data["semi_sekret"]
+        return render(
+            request,
+            "followup_questions.html",
+            context={
+                "followup_form": followup_form,
+                "carried": carried,
+                "current_step": 6,
+                "back_url": build_back_url(
+                    request, "find_next_steps", denial_id, email, semi_sekret
+                ),
+                "back_label": "Back to questions",
+            },
         )
 
 

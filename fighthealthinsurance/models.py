@@ -2593,6 +2593,11 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # the current inputs is kept over a later duplicate (answers are filed
     # against it). Null on rows from before this column.
     generated_questions_for = models.CharField(max_length=64, null=True, blank=True)
+    # The optional follow-up rounds asked after the questions page
+    # (ml/followup_questions.py, which documents the shape): every check
+    # made, the answers it read and the follow-ups it asked, for the
+    # procedure and diagnosis it was made for. Null until the first check.
+    followup_questions = models.JSONField(null=True, blank=True)
     # ML-generated citations for the appeal
     ml_citation_context = models.JSONField(null=True, blank=True)
     # ML-generated summary of relevant plan document sections
@@ -4358,6 +4363,13 @@ class ChooserTask(ExportModelOperationsMixin("ChooserTask"), models.Model):  # t
     source = models.CharField(max_length=50, default="synthetic")
     num_candidates_expected = models.IntegerField(default=4)
     num_candidates_generated = models.IntegerField(default=0)
+    # Which case-building pipeline wrote the task (chooser_tasks.CASE_VERSIONS):
+    # 1 for the facts-and-titles case, 2 for appeal cases that also carry
+    # article summaries and a simulated question-and-answer session with the
+    # patient. It marks the pipeline, not what each step found. Voters are
+    # served the newest version first, and only tasks of the current version
+    # count as fresh when the refill decides whether to generate more.
+    case_version = models.PositiveSmallIntegerField(default=1, db_default=1)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -4434,6 +4446,13 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
     # preference, and so a letter that merely sounds good does not win on
     # the strength of facts it made up.
     flagged_candidate_ids = models.JSONField(default=list, blank=True)
+    # A tie: the presented candidates the voter judged equally best, in the
+    # order shown. Empty (or NULL, on a row written before this field) for a
+    # vote with one winner. Otherwise two or more, none flagged, and
+    # chosen_candidate is one of them (the first shown), so a tie vote still
+    # has a chosen candidate; counting is tie-aware and splits the vote
+    # evenly between the tied candidates (see _chooser_stats).
+    tied_candidate_ids = models.JSONField(default=list, blank=True, null=True)
     session_key = models.CharField(max_length=100, db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -4447,6 +4466,26 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
         ]
         verbose_name = "Chooser Vote"
         verbose_name_plural = "Chooser Votes"
+
+    @staticmethod
+    def shares(
+        chosen_candidate_id: int, tied_candidate_ids: typing.Optional[list]
+    ) -> dict[int, float]:
+        """How one vote's single point is shared out: all of it to the chosen
+        candidate, or an even share to each candidate of a tie (1/k for a
+        k-way tie). Every count of chooser wins goes through this, so a tie
+        never counts as a full win for whichever draft stands for it."""
+        tied = list(dict.fromkeys(tied_candidate_ids or []))
+        if len(tied) >= 2:
+            return {cid: 1.0 / len(tied) for cid in tied}
+        return {chosen_candidate_id: 1.0}
+
+    @staticmethod
+    def rounded_credit(credit: float) -> typing.Union[int, float]:
+        """A total of shares for display: whole votes as an int, as before
+        ties, and anything else to two places."""
+        rounded = round(credit, 2)
+        return int(rounded) if rounded == int(rounded) else rounded
 
     def __str__(self):
         """

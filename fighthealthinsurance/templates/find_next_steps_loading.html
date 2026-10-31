@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block title %}
-Getting Your Questions Ready
+{{ loading_title|default:"Getting Your Questions Ready" }}
 {% endblock title %}
 {% load static %}
 {% block content %}
@@ -11,7 +11,7 @@ Getting Your Questions Ready
 
   <div class="alert-box alert-box-info" style="text-align:center; margin-top:1rem;">
     <h2 class="fhi-callout-title" style="margin-bottom:0.5rem;">Good vibes loading ✨</h2>
-    <p style="margin-bottom:0.25rem;"><strong>Figuring out which questions we need to ask...</strong></p>
+    <p style="margin-bottom:0.25rem;"><strong>{{ loading_message|default:"Figuring out which questions we need to ask..." }}</strong></p>
     <p style="margin:0; color:#4f5b67;">This usually takes just a few seconds.</p>
   </div>
 
@@ -20,7 +20,9 @@ Getting Your Questions Ready
     <span class="fhi-visually-hidden">Loading questions…</span>
   </div>
 
-  <form class="fhi-stack" id="next-steps-form" action="{% url 'find_next_steps' %}" method="post">
+  {# Also the loading page in front of generate_appeal (GenerateAppealLoading), #}
+  {# which passes next_action and its own messages.                          #}
+  <form class="fhi-stack" id="next-steps-form" action="{% url next_action|default:'find_next_steps' %}" method="post">
     {% csrf_token %}
     {% for key, values in payload.lists %}
       {% if key != 'csrfmiddlewaretoken' %}
@@ -43,12 +45,16 @@ Getting Your Questions Ready
   </form>
 
   {# Outside the form, and no submit control in it: the auto-submitted POST #}
-  {# is still in flight here and find_next_steps is not idempotent.         #}
+  {# is still in flight here and neither target is idempotent.              #}
   <div id="slow-explanation" style="display:none; text-align:center; margin-top:1rem;">
     <p style="margin-bottom:0.75rem; color:#4f5b67;">
+      {% if slow_message %}
+      {{ slow_message }}
+      {% else %}
       This one is taking longer than usual. We ask a couple of models what is worth
       asking you about this denial, and they are still thinking. The page moves on by
       itself as soon as one of them answers.
+      {% endif %}
     </p>
     {% if back_url %}
     <a href="{{ back_url }}" rel="prev" class="fhi-button fhi-button-neutral">← {{ back_label|default:"Back to review" }}</a>

@@ -465,44 +465,45 @@ def generate_chooser_ranked_lines():
         .prefetch_related("candidates")
     )
 
-    # Batch all vote counts in a single query to avoid N+1
-    all_vote_counts = (
-        ChooserVote.objects.filter(task__in=tasks_with_votes)
-        .values("task_id", "chosen_candidate_id")
-        .annotate(vote_count=Count("id"))
-    )
-    # Build {task_id: [(chosen_candidate_id, vote_count), ...]} sorted by vote_count desc
-    votes_by_task: dict[int, list[tuple[int, int]]] = {}
-    for row in all_vote_counts:
-        votes_by_task.setdefault(row["task_id"], []).append(
-            (row["chosen_candidate_id"], row["vote_count"])
-        )
-    for task_id in votes_by_task:
-        votes_by_task[task_id].sort(key=lambda x: x[1], reverse=True)
-
-    # How often each candidate was flagged as making things up, by task.
+    # One pass over the votes (no N+1): each vote's point goes to its chosen
+    # candidate, or splits evenly between a tie's candidates
+    # (ChooserVote.shares); plus how often each candidate was tied for best
+    # and how often it was flagged as making things up.
+    credit_by_task: dict[int, Counter] = {}
+    ties_by_task: dict[int, Counter] = {}
     flags_by_task: dict[int, Counter] = {}
-    for task_id, flagged_ids in ChooserVote.objects.filter(
+    votes_by_task: Counter = Counter()
+    for task_id, chosen_id, flagged_ids, tied_ids in ChooserVote.objects.filter(
         task__in=tasks_with_votes
-    ).values_list("task_id", "flagged_candidate_ids"):
+    ).values_list(
+        "task_id", "chosen_candidate_id", "flagged_candidate_ids", "tied_candidate_ids"
+    ):
+        votes_by_task[task_id] += 1
+        shares = ChooserVote.shares(chosen_id, tied_ids)
+        credit_by_task.setdefault(task_id, Counter()).update(shares)
+        if len(shares) > 1:
+            ties_by_task.setdefault(task_id, Counter()).update(shares.keys())
         if flagged_ids:
             flags_by_task.setdefault(task_id, Counter()).update(set(flagged_ids))
 
     for task in tasks_with_votes:
-        task_votes = votes_by_task.get(task.id)
-        if not task_votes:
+        task_credit = credit_by_task.get(task.id)
+        if not task_credit:
             continue
 
         candidates_by_id = {c.id: c for c in task.candidates.all()}
 
-        top_candidate_id, top_vote_count = task_votes[0]
-        chosen = candidates_by_id.get(top_candidate_id)
-        if chosen is None:
+        # The most-voted candidate; a dead heat goes to the lower index.
+        ranked = sorted(
+            (cid for cid in task_credit if cid in candidates_by_id),
+            key=lambda cid: (-task_credit[cid], candidates_by_id[cid].candidate_index),
+        )
+        if not ranked:
             continue
-
-        total_votes = sum(vc for _, vc in task_votes)
+        chosen = candidates_by_id[ranked[0]]
 
         task_flags = flags_by_task.get(task.id, Counter())
+        task_ties = ties_by_task.get(task.id, Counter())
         all_candidates = [
             {
                 "id": c.id,
@@ -512,6 +513,8 @@ def generate_chooser_ranked_lines():
                 "synthesized": c.synthesized,
                 "content": c.content,
                 "metadata": c.metadata,
+                "votes": ChooserVote.rounded_credit(task_credit.get(c.id, 0.0)),
+                "tie_count": task_ties.get(c.id, 0),
                 "flag_count": task_flags.get(c.id, 0),
             }
             for c in candidates_by_id.values()
@@ -532,8 +535,8 @@ def generate_chooser_ranked_lines():
                 "synthesized": chosen.synthesized,
                 "content": chosen.content,
             },
-            "vote_count": top_vote_count,
-            "total_votes": total_votes,
+            "vote_count": ChooserVote.rounded_credit(task_credit[chosen.id]),
+            "total_votes": votes_by_task[task.id],
             "all_candidates": all_candidates,
         }
         yield json.dumps(record, default=str) + "\n"

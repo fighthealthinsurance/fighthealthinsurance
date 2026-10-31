@@ -63,7 +63,7 @@ NEW_SAME_PATH = {
 }
 
 GEMMA = "google/gemma-4-26B-A4B-it"
-DEEPSEEK = "deepseek-ai/DeepSeek-V4-Pro"
+DEEPSEEK = "deepseek-ai/DeepSeek-V4-Pro-0813"
 
 
 def _is_routing_setting(name: str) -> bool:
@@ -76,6 +76,7 @@ def _is_routing_setting(name: str) -> bool:
         in (
             "ENABLED_REMOTE_MODELS",
             "FORCE_MODEL",
+            "LUNA_ROUTE_KEY",
             "FHI_DEPLOYMENT_ID",
             "FHI_RELEASE",
             "FHI_VERSION",
@@ -624,8 +625,8 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 DEEPSEEK,
                 # DeepInfra's chat-only models (quality 82, the default for
                 # a model it does not list), then by name.
-                "Qwen/Qwen3.8-2.4T-A95B",
-                "deepseek-ai/DeepSeek-V4.1-Flash",
+                "Qwen/Qwen3.8-Max",
+                "deepseek-ai/DeepSeek-V4.1-Flash-1017",
                 "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
                 "moonshotai/Kimi-K3",
                 "zai-org/GLM-5.3-Flash",
@@ -637,6 +638,10 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 "azure-openai/gpt-5.5",
                 # Retired.
                 "fhi-2025-may-0.3-float16-q8-vllm-compressed",
+                # LunaRoute's arena models, not configured here (no
+                # LUNA_ROUTE_KEY): off.
+                "lunaroute/deepseek-4.1-flash",
+                "lunaroute/glm-5.3",
                 # TypeSafe (Jev), not configured here: off, with the others.
                 "jev-1.13.0",
             ],

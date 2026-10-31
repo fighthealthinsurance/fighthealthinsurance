@@ -38,7 +38,7 @@
                     <tr>
                         <th>#</th>
                         <th>Model</th>
-                        <th class="num" title="Votes this model's draft won">Won</th>
+                        <th class="num" title="Votes this model's draft won; a tie splits its vote between the tied drafts">Won</th>
                         <th class="num" title="Votes this model's draft was shown in">Shown</th>
                         <th class="num" title="Won / shown">Win rate</th>
                         <th class="num" title="Votes in which a referee flagged this model's draft as making things up, over votes shown in">Caught making things up</th>
@@ -49,7 +49,7 @@
                     <tr{% if r.warming_up %} class="warming-up"{% endif %}>
                         <td>{{ r.rank }}</td>
                         <td>{{ r.model }}{% if r.warming_up %} <span class="fhi-badge fhi-badge-info" title="Fewer than {{ data.min_shown }} votes so far">warming up</span>{% endif %}</td>
-                        <td class="num">{{ r.won }}</td>
+                        <td class="num">{{ r.won|floatformat:"-1" }}</td>
                         <td class="num">{{ r.shown }}</td>
                         <td class="num">{% if r.win_rate is None %}&mdash;{% else %}{{ r.win_rate|floatformat:0 }}%{% endif %}</td>
                         <td class="num">{% if r.flag_rate is None %}&mdash;{% else %}{{ r.flag_rate|floatformat:0 }}%{% endif %}</td>
@@ -111,10 +111,10 @@
         <section id="how">
             <h2>How this is counted</h2>
             <ul>
-                <li><strong>Win rate</strong> is votes a model's draft won over votes it was shown in. Drafts are shown blind (the page gets opaque references, never a model name or a stored order), in random order, so a vote is for the letter, not the brand. Only votes cast since blind voting began count.</li>
+                <li><strong>Win rate</strong> is votes a model's draft won over votes it was shown in. A referee who finds two or more drafts equally good can call a tie, which splits that vote evenly between them (half a win each for a two-way tie). Drafts are shown blind (the page gets opaque references, never a model name or a stored order), in random order, so a vote is for the letter, not the brand. Only votes cast since blind voting began count.</li>
                 <li><strong>Caught making things up</strong> is how often a referee flagged the draft for inventing a study, a law, a test result, a date or a history that was not in the case. A draft can be flagged and still lose honestly; a flagged draft can never be the vote.</li>
                 <li><strong>Warming up</strong> marks a model with fewer than {{ data.min_shown }} votes; its rates are listed but not ranked against the rest.</li>
-                <li><strong>Cases are synthetic.</strong> Each one is written by a model about a real condition and treatment pair, with made-up facts and the published evidence already on file for that pair. No real patient's letter is ever shown.</li>
+                <li><strong>Cases are synthetic.</strong> Each one is written by a model about a real condition and treatment pair, with made-up facts and the published evidence already on file for that pair. Newer cases also carry a summary of each study and the made-up patient's answers to the questions the app would ask, and every draft is given the same. No real patient's letter is ever shown.</li>
                 <li>The same data is available as <a href="?format=json">JSON</a>. Counts refresh every few minutes.</li>
             </ul>
         </section>

@@ -480,9 +480,16 @@ def applicable_hooks(
     public_only = bool(public) and not keys & PRIVATE_COVERAGE
     if public_only:
         hooks = [h for h in hooks if h.public_programs & public]
-    elif not public:
-        # No public program known: drop rules written only for one.
-        hooks = [h for h in hooks if not h.public_programs or h.federal_marketplace]
+    else:
+        # Drop rules written only for a public program the patient doesn't
+        # have (none known, or Original Medicare beside an employer plan).
+        hooks = [
+            h
+            for h in hooks
+            if not h.public_programs
+            or h.federal_marketplace
+            or h.public_programs & public
+        ]
     if self_insured is True:
         hooks = [h for h in hooks if h.applies_to_self_insured]
     return hooks

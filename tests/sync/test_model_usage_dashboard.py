@@ -526,6 +526,65 @@ class ModelUsageDashboardSemanticsTest(ChooserStatsHelperMixin, TestCase):
             self.assertEqual(by_name[loser]["chosen"], 0)
             self.assertAlmostEqual(by_name[loser]["win_rate"], 0.0)
 
+    def test_a_tie_splits_its_vote_between_the_tied_drafts(self):
+        task = self._make_task()
+        a = self._make_candidate(task, 0, "model-a")
+        b = self._make_candidate(task, 1, "model-b")
+        c = self._make_candidate(task, 2, "model-c")
+        ChooserVote.objects.create(
+            task=task,
+            chosen_candidate=a,
+            presented_candidate_ids=[a.id, b.id, c.id],
+            tied_candidate_ids=[a.id, b.id],
+            session_key="sess1",
+        )
+
+        by_name = {r["model_name"]: r for r in self._rows()}
+        self.assertEqual(
+            {name: r["chosen"] for name, r in by_name.items()},
+            {"model-a": 0.5, "model-b": 0.5, "model-c": 0},
+        )
+        # A tie is still one presentation of each draft shown.
+        self.assertEqual(
+            {name: r["presented"] for name, r in by_name.items()},
+            {"model-a": 1, "model-b": 1, "model-c": 1},
+        )
+
+    def test_a_three_way_tie_still_adds_up_to_one_vote(self):
+        task = self._make_task()
+        cands = [self._make_candidate(task, i, f"model-{i}") for i in range(3)]
+        ChooserVote.objects.create(
+            task=task,
+            chosen_candidate=cands[0],
+            presented_candidate_ids=[c.id for c in cands],
+            tied_candidate_ids=[c.id for c in cands],
+            session_key="sess1",
+        )
+        self._vote(task, cands[0], cands, session="sess2")
+
+        # Each model's share, shown to two places: a whole vote plus a third
+        # for the model that also won outright, a third for each of the others.
+        self.assertEqual(
+            {r["model_name"]: r["chosen"] for r in self._rows()},
+            {"model-0": 1.33, "model-1": 0.33, "model-2": 0.33},
+        )
+
+    def test_a_vote_from_before_ties_counts_for_its_pick(self):
+        # Rows written before the field existed hold NULL.
+        task = self._make_task()
+        a = self._make_candidate(task, 0, "model-a")
+        b = self._make_candidate(task, 1, "model-b")
+        ChooserVote.objects.create(
+            task=task,
+            chosen_candidate=a,
+            presented_candidate_ids=[a.id, b.id],
+            tied_candidate_ids=None,
+            session_key="sess1",
+        )
+
+        by_name = {r["model_name"]: r for r in self._rows()}
+        self.assertEqual(by_name["model-a"]["chosen"], 1)
+
     def test_duplicate_presented_ids_counted_once(self):
         # A historical/hostile vote row with duplicated presented ids must
         # not inflate the denominator.

@@ -24,6 +24,7 @@ from fighthealthinsurance.common_view_logic import (
     FindNextStepsHelper,
 )
 from fighthealthinsurance.form_utils import magic_combined_form
+from fighthealthinsurance.ml import followup_questions as fq
 from fighthealthinsurance.ml import denial_triage as dt
 from fighthealthinsurance.ml import research_judging as rj
 from fighthealthinsurance.ml import spend, typesafe
@@ -396,6 +397,7 @@ class JevDashboardPanelTest(TestCase):
                 "typesafe-chat-gate",
                 "typesafe-chat",
                 rj.SERVICE,
+                fq.SERVICE,
             },
         )
         self.assertTrue(all(r["level"] == "off" for r in panel["rows"]))

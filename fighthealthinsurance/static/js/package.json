@@ -30,6 +30,7 @@
     "tesseract.js": "^5.0.3"
   },
   "devDependencies": {
+    "baseline-browser-mapping": "^2.11.34",
     "copy-webpack-plugin": "^13.0.1",
     "prettier": "3.5.3",
     "terser-webpack-plugin": "^5.3.16",

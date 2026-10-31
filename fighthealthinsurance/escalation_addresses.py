@@ -17,6 +17,7 @@ text; this module is the complementary "where do we send a letter"
 address book that combines per-state DOI data and national resources.
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
@@ -225,3 +226,123 @@ def get_recipients_for_denial(denial: Any) -> List[EscalationRecipient]:
         recipients.append(_dol_ebsa_recipient())
 
     return recipients
+
+
+# Wording in a denial letter that says an appeal has already been decided:
+# the insurer upheld itself, calls this its final word, or names a second
+# level. Deliberately not "external review" or "independent review": a
+# first-level denial carries those as a required notice of rights, so they
+# say nothing about where this person is in the process.
+_APPEAL_ALREADY_DECIDED_RE = re.compile(
+    r"("
+    r"\b(we|has|have|is|are|was|were|been)\s+(also\s+)?uph[eo]ld\b"
+    r"|\buph[eo]ld\s+(our|the|its|this|that)\b"
+    r"|\bour (original|initial|previous|prior|earlier) "
+    r"(decision|determination|denial)\b"
+    r"|\bfinal (adverse|internal)? ?(benefit )?(determination|decision)\b"
+    r"|\bexhausted\b.{0,40}\bappeal"
+    r"|\b(second|2nd|level[- ](2|two|ii))[- ]level\b"
+    r"|\blevel[- ](2|two|ii)\b.{0,20}\bappeal"
+    r")",
+    re.IGNORECASE | re.UNICODE | re.DOTALL,
+)
+# The same words in a clause about what could happen, not what did: the
+# rights notice on a first denial says "If our decision is upheld you may
+# request an external review", and "once you have exhausted your internal
+# appeals". Any of these in the clause before the match disqualifies it.
+_CONDITIONAL_CLAUSE_RE = re.compile(
+    r"\b(if|should|unless|in the event|may|might|would|will|could"
+    r"|once you|when you|after you|until you)\b",
+    re.IGNORECASE,
+)
+_CLAUSE_BREAK_RE = re.compile(r"[.;:!?\n]")
+# How far back a clause is read for a conditional. Longer than any clause
+# a letter is likely to hold, short enough that the sentence before cannot
+# lend its "if" to this one when the break between them is unpunctuated.
+_CLAUSE_LOOKBACK_CHARS = 200
+
+
+def _appeal_already_decided(denial_text: str) -> bool:
+    """Whether the letter says an appeal on this denial has been decided."""
+    for match in _APPEAL_ALREADY_DECIDED_RE.finditer(denial_text):
+        before = denial_text[
+            max(0, match.start() - _CLAUSE_LOOKBACK_CHARS) : match.start()
+        ]
+        clause = _CLAUSE_BREAK_RE.split(before)[-1]
+        if not _CONDITIONAL_CLAUSE_RE.search(clause):
+            return True
+    return False
+
+
+# Denial types where the denial itself is the kind of thing a regulator
+# looks into, by name (fixture rows are matched by name, never by pk, as
+# ml/denial_triage.py does). "Limit for filing expired" is left out: that
+# is usually the provider's timely-filing problem, not the insurer's.
+_REGULATOR_POLICED_DENIAL_TYPES: dict[str, str] = {
+    "Pre-Existing Condition": (
+        "Your denial cites a pre-existing condition. Health plans generally "
+        "may not deny coverage on that basis, and regulators look into "
+        "denials that do."
+    ),
+    "Preventive Care": (
+        "Your denial is for preventive care, which most plans are required "
+        "to cover. Regulators look into denials of required benefits."
+    ),
+    "In-Network Treated as Out of Network": (
+        "An in-network provider was billed as out of network. Network "
+        "adequacy and out-of-network billing are things regulators police."
+    ),
+    "Provider Bill (possible balance billing)": (
+        "This looks like a balance bill. Surprise and balance billing is "
+        "regulated, and regulators take complaints about it."
+    ),
+}
+
+
+def regulator_escalation_reasons(denial: Any) -> List[str]:
+    """Plain-English reasons a regulator should hear about this denial.
+
+    Empty when nothing in the denial points that way; the appeal pages then
+    show the regulator-letter callout at its normal size. Each reason is a
+    sentence for the person, in the same restrained voice as the recipient
+    rationales above. Rule-based and read from the row as it is: no model
+    call, no extra lookups beyond the denial's own relations.
+    """
+    reasons: List[str] = []
+
+    if _appeal_already_decided(getattr(denial, "denial_text", "") or ""):
+        reasons.append(
+            "Your letter reads like an appeal that has already been denied "
+            "once. That is when a regulator complaint helps most."
+        )
+
+    regulator = getattr(denial, "regulator", None)
+    regulator_name = (getattr(regulator, "name", "") or "").strip()
+    if regulator_name:
+        reasons.append(
+            f"Your denial letter names {regulator_name}, a regulator that "
+            "oversees this kind of plan and takes consumer complaints."
+        )
+
+    if _is_erisa_likely(denial):
+        reasons.append(
+            "This looks like an employer self-funded (ERISA) plan, so the U.S. "
+            "Department of Labor also oversees how the appeal is handled."
+        )
+
+    if getattr(denial, "urgent", False):
+        reasons.append(
+            "You marked this care as urgent. A regulator complaint can go out "
+            "with your appeal instead of waiting on it."
+        )
+
+    denial_type_manager = getattr(denial, "denial_type", None)
+    if denial_type_manager is not None and hasattr(denial_type_manager, "all"):
+        for denial_type in denial_type_manager.all():
+            reason = _REGULATOR_POLICED_DENIAL_TYPES.get(
+                getattr(denial_type, "name", "") or ""
+            )
+            if reason is not None and reason not in reasons:
+                reasons.append(reason)
+
+    return reasons

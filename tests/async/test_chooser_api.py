@@ -444,6 +444,15 @@ class ChooserTaskSelectionOrderingTest(APITestCase):
         data = response.json()
         self.assertEqual(data["task_id"], self.task_no_votes.id)
 
+    def test_newer_case_version_served_before_fewer_votes(self):
+        """A case from the newest pipeline (summaries and an interview) is
+        served first, even over an older case nobody has voted on yet."""
+        ChooserTask.objects.filter(pk=self.task_two_votes.pk).update(case_version=2)
+
+        response = self.client.get(reverse("chooser-next-appeal"))
+
+        self.assertEqual(response.json()["task_id"], self.task_two_votes.id)
+
 
 class ChooserVoteAPITest(APITestCase):
     """Test the POST /api/chooser/vote endpoint."""
@@ -732,6 +741,91 @@ class ChooserVoteAPITest(APITestCase):
 
         # Verify vote was created
         self.assertEqual(ChooserVote.objects.filter(task=self.task).count(), 1)
+
+
+class ChooserTieVoteAPITest(APITestCase):
+    """Votes that call a tie between two or more drafts."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        self.task = ChooserTask.objects.create(task_type="appeal", status="READY")
+        self.a, self.b, self.c = (
+            ChooserCandidate.objects.create(
+                task=self.task,
+                candidate_index=i,
+                kind="appeal_letter",
+                model_name=f"model-{i}",
+                content=f"Content {i}",
+            )
+            for i in range(3)
+        )
+        # The display order the page reported: C, A, B.
+        self.presented = [candidate_token(c.id) for c in (self.c, self.a, self.b)]
+
+    def _vote(self, chosen, tied, flagged=()):
+        return self.client.post(
+            reverse("chooser-vote"),
+            json.dumps(
+                {
+                    "task_id": self.task.id,
+                    "chosen_candidate_id": candidate_token(chosen.id),
+                    "presented_candidate_ids": self.presented,
+                    "tied_candidate_ids": [candidate_token(c.id) for c in tied],
+                    "flagged_candidate_ids": [candidate_token(c.id) for c in flagged],
+                }
+            ),
+            content_type="application/json",
+        )
+
+    def test_a_tie_is_stored_in_display_order(self):
+        response = self._vote(self.a, [self.a, self.c], flagged=[self.b])
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual(vote.tied_candidate_ids, [self.c.id, self.a.id])
+
+    def test_a_tie_is_stood_for_by_its_first_draft_shown(self):
+        """The client named A; C was shown first, so C stands for the tie."""
+        self._vote(self.a, [self.a, self.c])
+
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual(vote.chosen_candidate_id, self.c.id)
+
+    def test_a_vote_with_one_winner_stores_no_tie(self):
+        self._vote(self.a, [])
+
+        self.assertEqual(ChooserVote.objects.get(task=self.task).tied_candidate_ids, [])
+
+    def test_a_tie_of_one_is_rejected(self):
+        response = self._vote(self.a, [self.a])
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("at least two", response.json()["error"])
+        self.assertEqual(ChooserVote.objects.count(), 0)
+
+    def test_a_flagged_draft_cannot_be_tied_for_best(self):
+        response = self._vote(self.a, [self.a, self.b], flagged=[self.b])
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("flagged", response.json()["error"])
+        self.assertEqual(ChooserVote.objects.count(), 0)
+
+    def test_the_chosen_draft_must_be_in_the_tie(self):
+        response = self._vote(self.a, [self.b, self.c])
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("tied", response.json()["error"])
+        self.assertEqual(ChooserVote.objects.count(), 0)
+
+    def test_a_tie_with_a_draft_not_shown_is_rejected(self):
+        self.presented = [candidate_token(c.id) for c in (self.a, self.b)]
+
+        response = self._vote(self.a, [self.a, self.c])
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("presented", response.json()["error"])
+        self.assertEqual(ChooserVote.objects.count(), 0)
 
 
 class ChooserChatHistoryTest(APITestCase):

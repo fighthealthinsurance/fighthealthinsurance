@@ -244,3 +244,32 @@ def parse_appeal_questions(text: Optional[str]) -> Optional[List[Tuple[str, str]
     if not pairs and _said_no_questions(text):
         return []
     return pairs or None
+
+
+_YES_NO_LEAD = re.compile(r"^\s*[*`\"']*\s*(yes|no)\b", re.IGNORECASE)
+
+
+def parse_yes_no(text: Optional[str]) -> Optional[bool]:
+    """A model's YES or NO (the follow-up round's "enough?" question):
+    True for yes, False for no, None when the reply says neither, or both.
+
+    Read after any reasoning the model left in (up to its last </think>):
+    a line that is just the word, allowing for markdown around it, or else
+    a reply that starts with it ("No, the history does not say...")."""
+    if text is None:
+        return None
+    text = text.rsplit("</think>", 1)[-1]
+    said = {
+        word
+        for word in (
+            line.strip().strip("*`'\".!: ").upper() for line in text.split("\n")
+        )
+        if word in ("YES", "NO")
+    }
+    if not said:
+        lead = _YES_NO_LEAD.match(text)
+        if lead:
+            said.add(lead.group(1).upper())
+    if len(said) != 1:
+        return None
+    return said.pop() == "YES"

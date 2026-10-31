@@ -1,23 +1,42 @@
 import asyncio
 import re
 import time
-from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple, cast
+from typing import (
+    Any,
+    Callable,
+    Collection,
+    Coroutine,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    cast,
+)
 
 from channels.db import database_sync_to_async
 from django.db import transaction
 from loguru import logger
 
+from fighthealthinsurance.denial_context import (
+    generated_question_fields,
+    load_qa,
+    question_field_name,
+)
 from fighthealthinsurance.denial_history_consent import (
     ahistory_may_be_used,
     still_allowed,
 )
-from fighthealthinsurance.ml import llm_usage, spend
+from fighthealthinsurance.ml import followup_questions, llm_usage, spend
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.ml.question_parsing import (
     clean_suggested_answer,
     is_junk_question,
 )
-from fighthealthinsurance.models import Denial, GenericQuestionGeneration
+from fighthealthinsurance.models import (
+    Denial,
+    ExternalServiceHealth,
+    GenericQuestionGeneration,
+)
 from fighthealthinsurance.utils import best_within_timelimit
 
 # Maps a get_appeal_questions coroutine to the originating model's quality score
@@ -144,6 +163,50 @@ async def claim_generated_questions(
         denial_id, questions, generated_for, used_history, for_letter
     )
     return cast(Optional[List[Tuple[str, str]]], stored)
+
+
+def _claim_followups_sync(
+    denial_id: int,
+    questions: List[Tuple[str, str]],
+    *,
+    generated_for: str,
+    for_letter: Optional[str],
+    used_history: bool,
+    posted: Collection[str],
+) -> List[Tuple[str, str]]:
+    """Record a finished follow-up check on the locked row and return the
+    follow-ups to show, as claim_generated_questions does for the first
+    round: nothing is kept for inputs or consent that changed meanwhile."""
+    with transaction.atomic():
+        fresh = Denial.objects.select_for_update().get(denial_id=denial_id)
+        if (
+            questions_fingerprint(fresh.procedure, fresh.diagnosis) != generated_for
+            or fresh.denial_text != for_letter
+        ):
+            # Corrected, or a new letter, while this ran: about something else.
+            return []
+        if followup_questions.checked(fresh.followup_questions, generated_for):
+            # Another post finished first; its round stands.
+            return followup_questions.to_reshow(
+                fresh.followup_questions, generated_for, posted, question_field_name
+            )
+        if used_history and fresh.health_history_consent is False:
+            logger.info(
+                f"Health history consent was withdrawn while follow-up "
+                f"questions for denial {denial_id} were being checked; keeping "
+                "neither the result nor a copy of it"
+            )
+            return []
+        fresh.followup_questions = followup_questions.record_for(
+            generated_for, questions
+        )
+        fresh.save(update_fields=["followup_questions"])
+        return list(questions)
+
+
+async def _note_followup_jev_failure(summary: str) -> None:
+    # Cross-pod record for the status page: why the last call failed.
+    await ExternalServiceHealth.anote_failure(followup_questions.SERVICE, summary)
 
 
 class MLAppealQuestionsHelper:
@@ -561,3 +624,138 @@ class MLAppealQuestionsHelper:
             used_history,
             for_letter=denial.denial_text,
         )
+
+    @staticmethod
+    async def _answers_enough(
+        denial: Denial, answered: List[Tuple[str, str]], history: Optional[str]
+    ) -> Optional[bool]:
+        """Step 1 of ml/followup_questions.py: Jev with the person's consent
+        to outside models, else (or when Jev gives nothing) one of our own
+        models. None when neither answered."""
+        if followup_questions.jev_enabled() and denial.use_external:
+            try:
+                from fighthealthinsurance.common_view_logic import scoring_redactions
+
+                state = followup_questions.build_state(
+                    denial.denial_text,
+                    denial.procedure,
+                    denial.diagnosis,
+                    history,
+                    answered,
+                    await database_sync_to_async(scoring_redactions)(denial),
+                )
+            except Exception:
+                # No identifier list, nothing goes to Jev: the generic
+                # patterns alone are not a promise we can keep.
+                logger.opt(exception=True).warning(
+                    f"Could not build the follow-up check for denial "
+                    f"{denial.denial_id}; asking our own model"
+                )
+            else:
+                enough = await followup_questions.judge_enough(
+                    state, on_failure=_note_followup_jev_failure
+                )
+                if enough is not None:
+                    await ExternalServiceHealth.anote_success(
+                        followup_questions.SERVICE
+                    )
+                    return enough >= followup_questions.ENOUGH_AT
+        model = ml_router.best_internal_model()
+        if model is None:
+            return None
+        try:
+            return await asyncio.wait_for(
+                model.answers_are_enough(
+                    denial_text=denial.denial_text,
+                    procedure=denial.procedure,
+                    diagnosis=denial.diagnosis,
+                    answered=answered,
+                    patient_context=history,
+                ),
+                timeout=followup_questions.LOCAL_GATE_TIMEOUT_SECONDS,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            # TimeoutError included: no verdict, so step 2 decides.
+            logger.debug(f"Follow-up yes/no from {model} failed: {type(e).__name__}")
+            return None
+
+    @staticmethod
+    async def _check_for_followups(
+        denial: Denial, answered: List[Tuple[str, str]], history: Optional[str]
+    ) -> Optional[List[Tuple[str, str]]]:
+        """Steps 1 and 2 of ml/followup_questions.py: the follow-ups to ask,
+        [] when the answers are enough, None when no model answered."""
+        if await MLAppealQuestionsHelper._answers_enough(denial, answered, history):
+            return []
+        model = ml_router.best_internal_model()
+        if model is None:
+            return None
+        candidates = await model.get_followup_questions(
+            denial_text=denial.denial_text,
+            procedure=denial.procedure,
+            diagnosis=denial.diagnosis,
+            answered=answered,
+            patient_context=history,
+            max_questions=followup_questions.MAX_QUESTIONS,
+        )
+        if candidates is None:
+            return None
+        asked = [
+            q for q, _ in generated_question_fields(denial.generated_questions).values()
+        ]
+        return followup_questions.new_candidates(candidates, asked)[
+            : followup_questions.MAX_QUESTIONS
+        ]
+
+    @staticmethod
+    @spend.for_denial_channel
+    @llm_usage.for_denial(task="followup_questions")
+    async def followup_questions_for_denial(
+        denial: Denial, posted: Collection[str] = ()
+    ) -> List[Tuple[str, str]]:
+        """The follow-up questions to ask now, after the questions page, or
+        [] to go straight on to the appeal (ml/followup_questions.py).
+
+        ``posted`` is the field names the submission carried: follow-ups
+        already asked are shown again only to a post that carried none of
+        their fields. Never raises past a model failure or a timeout; both
+        mean no follow-ups.
+        """
+        if not followup_questions.enabled():
+            return []
+        generated_for = questions_fingerprint(denial.procedure, denial.diagnosis)
+        if followup_questions.checked(denial.followup_questions, generated_for):
+            return followup_questions.to_reshow(
+                denial.followup_questions, generated_for, posted, question_field_name
+            )
+        answered = followup_questions.answered_pairs(load_qa(denial))
+        if not answered:
+            # Every box left blank is an answer too: go on to the appeal.
+            return []
+        # Only if they said it could be used; re-read at the handover, as
+        # generate_questions_for_denial does.
+        history = denial.health_history if await ahistory_may_be_used(denial) else None
+        try:
+            async with asyncio.timeout(followup_questions.TIMEOUT_SECONDS):
+                questions = await MLAppealQuestionsHelper._check_for_followups(
+                    denial, answered, history
+                )
+        except TimeoutError:
+            logger.info(
+                f"Follow-up check for denial {denial.denial_id} ran out of time; "
+                "going on to the appeal without one"
+            )
+            return []
+        if questions is None:
+            return []
+        claimed = await database_sync_to_async(_claim_followups_sync)(
+            denial.denial_id,
+            questions,
+            generated_for=generated_for,
+            for_letter=denial.denial_text,
+            used_history=bool(history),
+            posted=posted,
+        )
+        return cast(List[Tuple[str, str]], claimed)

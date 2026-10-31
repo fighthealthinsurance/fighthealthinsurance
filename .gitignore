@@ -186,3 +186,6 @@ default/
 
 # GeoIP city database fetched by scripts/fetch_geoip_db.sh (see README "GeoIP")
 geoip_data
+
+# Local files for Continue extension
+.continue/

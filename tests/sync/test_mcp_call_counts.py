@@ -149,6 +149,19 @@ class BumpConnectTest(TestCase):
         mcp_call_counts.bump_connect("", now=NOW)
         self.assertEqual(connects(), {"": 1})
 
+    def test_a_name_that_cleans_to_nothing_is_not_counted_as_none_given(self):
+        mcp_call_counts.bump_connect("クロード", now=NOW)
+        self.assertEqual(connects(), {mcp_call_counts.UNREADABLE_CLIENT: 1})
+
+    def test_a_client_named_other_is_kept_apart_from_the_overflow(self):
+        mcp_call_counts.bump_connect("other", now=NOW)
+        for i in range(mcp_call_counts.MAX_CLIENTS_PER_HOUR):
+            mcp_call_counts.bump_connect(f"app-{i}", now=NOW)
+        totals = connects()
+        self.assertEqual(
+            (totals["other"], totals[mcp_call_counts.OTHER_CLIENT]), (1, 1)
+        )
+
     def test_past_the_hourly_cap_a_new_name_counts_as_other(self):
         cap = mcp_call_counts.MAX_CLIENTS_PER_HOUR
         for i in range(cap):

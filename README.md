@@ -196,7 +196,7 @@ and on every pull request.
 
 Not in CI: the `prettier` env, pyright, and Python 3.11/3.12
 test runs. [`update-browserslist-db.yml`](.github/workflows/update-browserslist-db.yml)
-refreshes the Browserslist database once a quarter (or by hand) and opens a
+refreshes the browser data (`caniuse-lite` and `baseline-browser-mapping`) once a month (or by hand) and opens a
 pull request.
 
 ## Repository map

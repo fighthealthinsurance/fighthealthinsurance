@@ -315,8 +315,8 @@ class Base(Configuration):
             "azure-openai/gpt-5.5,"
             "mistralai/Mistral-Small-3.2-24B-Instruct-2506,"
             "zai-org/GLM-5.3-Flash,"
-            "deepseek-ai/DeepSeek-V4.1-Flash,"
-            "Qwen/Qwen3.8-2.4T-A95B",
+            "deepseek-ai/DeepSeek-V4.1-Flash-1017,"
+            "Qwen/Qwen3.8-Max",
         ).split(",")
         if name.strip()
     ]
@@ -335,6 +335,17 @@ class Base(Configuration):
     CHOOSER_PUBMED_SEARCH_TIMEOUT = float(
         os.getenv("CHOOSER_PUBMED_SEARCH_TIMEOUT", "20")
     )
+    CHOOSER_SIMULATED_QA = os.getenv("CHOOSER_SIMULATED_QA", "true").lower() != "false"
+    # Registered backend names (comma-separated) seated in every new arena
+    # task, to try a model out against the rest; arena only, unlike FORCE_MODEL.
+    # Temporarily LunaRoute's two models (ml_models.LunaRoute), to get them
+    # votes; set CHOOSER_FORCE_MODEL="" to stop. A name with no backend
+    # registered (no LUNA_ROUTE_KEY) is logged once and skipped.
+    CHOOSER_FORCE_MODEL = os.getenv(
+        "CHOOSER_FORCE_MODEL", "lunaroute/deepseek-4.1-flash,lunaroute/glm-5.3"
+    )
+    CHOOSER_MAX_QUESTIONS = _env_int("CHOOSER_MAX_QUESTIONS", 4, minimum=1, maximum=10)
+    CHOOSER_QA_TIMEOUT = _env_int("CHOOSER_QA_TIMEOUT", 60, minimum=5, maximum=600)
     CONDITION_RANKING_MIN_PEOPLE = int(os.getenv("CONDITION_RANKING_MIN_PEOPLE", "5"))
     CONDITION_RANKING_LOOKUP_BUDGET = int(
         os.getenv("CONDITION_RANKING_LOOKUP_BUDGET", "30")
@@ -413,6 +424,16 @@ class Base(Configuration):
     # appeal's research and offered unticked on the fax page.
     TYPESAFE_RESEARCH_JUDGING_ENABLED = (
         os.getenv("TYPESAFE_RESEARCH_JUDGING_ENABLED", "false").lower() == "true"
+    )
+    # Follow-up questions (ml/followup_questions.py): after the questions
+    # page, check whether the answers are enough for the appeal and, if not,
+    # ask a few more first. On unless set to false/0/no/off; it fails open.
+    # Jev answers the "enough?" for people who allowed outside models when
+    # TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED is on (same key, off by default);
+    # one of our own models answers it otherwise.
+    FHI_FOLLOWUP_QUESTIONS_ENABLED = _env_flag("FHI_FOLLOWUP_QUESTIONS_ENABLED", "1")
+    TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED = (
+        os.getenv("TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED", "false").lower() == "true"
     )
     # Chat shadow scoring (ml/chat_shadow.py): same key, its own switch. When
     # on, a background task scores delivered chat replies for the staff
@@ -1156,8 +1177,13 @@ class _TestBase(Dev):
     """Process environment shared by Test, TestSync and TestActor."""
 
     # A chooser scenario with no cached evidence must not search PubMed from
-    # a test: tests are hermetic to live backends (see CLAUDE.md).
+    # a test: tests are hermetic to live backends (see CLAUDE.md). Nor may
+    # its simulated interview reach the question generators' backends.
     CHOOSER_PUBMED_LIVE_SEARCH = False
+    CHOOSER_SIMULATED_QA = False
+    # A model forced into the arena from the host environment would be asked
+    # for real by every test that builds a task.
+    CHOOSER_FORCE_MODEL = ""
 
     @classmethod
     def pre_setup(cls):
@@ -1203,6 +1229,10 @@ class Test(_TestBase):
     TYPESAFE_DEADLINE_SHOW_ENABLED = False
     TYPESAFE_RESEARCH_JUDGING_ENABLED = False
     TYPESAFE_CHAT_SHADOW_ENABLED = False
+    # The follow-up round waits on models: off under test, opted into with
+    # override_settings and stubbed models.
+    FHI_FOLLOWUP_QUESTIONS_ENABLED = False
+    TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED = False
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
@@ -1285,6 +1315,10 @@ class TestSync(_TestBase):
     TYPESAFE_DEADLINE_SHOW_ENABLED = False
     TYPESAFE_RESEARCH_JUDGING_ENABLED = False
     TYPESAFE_CHAT_SHADOW_ENABLED = False
+    # The follow-up round waits on models: off under test, opted into with
+    # override_settings and stubbed models.
+    FHI_FOLLOWUP_QUESTIONS_ENABLED = False
+    TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED = False
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False
@@ -1350,6 +1384,10 @@ class TestActor(_TestBase):
     TYPESAFE_DEADLINE_SHOW_ENABLED = False
     TYPESAFE_RESEARCH_JUDGING_ENABLED = False
     TYPESAFE_CHAT_SHADOW_ENABLED = False
+    # The follow-up round waits on models: off under test, opted into with
+    # override_settings and stubbed models.
+    FHI_FOLLOWUP_QUESTIONS_ENABLED = False
+    TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED = False
     # A developer's routing-policy settings must not change how test chats
     # route; tests that need a policy opt in with override_settings.
     FHI_CHAT_POLICY_APPLY = False

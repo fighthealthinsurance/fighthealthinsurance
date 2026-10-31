@@ -1,17 +1,24 @@
 name: Update Browserslist DB
 
 # Keeps the frontend browser support baseline current by refreshing the
-# Browserslist database (the `caniuse-lite` + `baseline-browser-mapping`
-# packages) that webpack consults when compiling the React/TS bundle.
-# Stale data produces "Browserslist: caniuse-lite is outdated" build warnings
+# browser data that webpack consults when compiling the React/TS bundle:
+#
+#   * `caniuse-lite`             - refreshed via `update-browserslist-db`
+#   * `baseline-browser-mapping` - bumped to its latest release directly, since
+#                                  `update-browserslist-db` leaves it alone
+#
+# Stale data produces build warnings such as
+# "Browserslist: caniuse-lite is outdated" and
+# "[baseline-browser-mapping] The data in this module is over two months old",
 # and can miss newer browsers, so we refresh it on a schedule and open a PR
 # with the change for review.
 
 on:
   schedule:
-    # 06:00 UTC on the 1st day of every 3rd month (Jan, Apr, Jul, Oct),
-    # i.e. roughly once a quarter / every few months.
-    - cron: "0 6 1 */3 *"
+    # 06:00 UTC on the 1st day of every month. `baseline-browser-mapping`
+    # starts warning once its data is over two months old, so a quarterly
+    # cadence is not enough to keep the build quiet.
+    - cron: "0 6 1 * *"
   # Allow maintainers to trigger the refresh on demand from the Actions tab.
   workflow_dispatch: {}
 
@@ -31,11 +38,11 @@ jobs:
         with:
           # Fetch real bytes for LFS-tracked assets (see .gitattributes) so this
           # job can never commit pointer stubs over them. The `add-paths` below
-          # already scopes the commit to package-lock.json, but this keeps the
-          # checkout honest if that scope is ever widened.
+          # already scopes the commit to package.json + package-lock.json, but
+          # this keeps the checkout honest if that scope is ever widened.
           lfs: true
           # Don't leave the job's write token in the local git config: the
-          # updater step below runs third-party npm code, and create-pull-request
+          # updater steps below run third-party npm code, and create-pull-request
           # authenticates its own push via its `token` input, so nothing here
           # needs persisted checkout credentials.
           persist-credentials: false
@@ -46,13 +53,27 @@ jobs:
           node-version: 22
           check-latest: true
 
-      - name: Update Browserslist database
+      - name: Update Browserslist database (caniuse-lite)
         working-directory: fighthealthinsurance/static/js
         # Pin the updater tool to a known-good version (bump intentionally)
         # rather than @latest, so a scheduled run can't pull and execute an
         # unvetted release. The tool still fetches the newest browser DATA
-        # (caniuse-lite / baseline-browser-mapping), which is the point.
+        # (caniuse-lite), which is the point.
         run: npx --yes update-browserslist-db@1.1.3
+
+      - name: Update baseline-browser-mapping
+        working-directory: fighthealthinsurance/static/js
+        # `update-browserslist-db` does not touch `baseline-browser-mapping`,
+        # so bump it the way its own staleness warning recommends
+        # (`npm i baseline-browser-mapping@latest -D`). It is a pure data
+        # package that we never execute, and `--package-lock-only` rewrites
+        # package.json + package-lock.json without installing node_modules or
+        # running any lifecycle scripts, so this pulls data, not code.
+        run: >-
+          npm install --save-dev --package-lock-only --ignore-scripts
+          --fetch-retries=5 --fetch-retry-mintimeout=20000
+          --fetch-retry-maxtimeout=120000 --fetch-retry-factor=2
+          baseline-browser-mapping@latest
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
@@ -61,20 +82,27 @@ jobs:
           # triggers the CI workflows; fall back to the default GITHUB_TOKEN,
           # which opens the PR but (by design) will not kick off other workflows.
           token: ${{ secrets.BROWSERSLIST_UPDATE_TOKEN || github.token }}
-          add-paths: fighthealthinsurance/static/js/package-lock.json
+          add-paths: |
+            fighthealthinsurance/static/js/package.json
+            fighthealthinsurance/static/js/package-lock.json
           branch: chore/update-browserslist-db
           delete-branch: true
-          commit-message: "chore(deps): update Browserslist DB (caniuse-lite)"
-          title: "chore(deps): update Browserslist DB"
+          commit-message: "chore(deps): update browser data (caniuse-lite, baseline-browser-mapping)"
+          title: "chore(deps): update browser data (caniuse-lite, baseline-browser-mapping)"
           body: |
-            Automated refresh of the Browserslist database via
-            `npx update-browserslist-db`, run from
-            `fighthealthinsurance/static/js`.
+            Automated monthly refresh of the browser data used by webpack, run
+            from `fighthealthinsurance/static/js`:
 
-            This bumps the `caniuse-lite` and `baseline-browser-mapping` entries
-            in `package-lock.json` so the browser support baseline used by
-            webpack stays current and the "caniuse-lite is outdated" build
-            warning stays quiet.
+            * `npx update-browserslist-db` bumps `caniuse-lite` in
+              `package-lock.json`.
+            * `npm install --save-dev baseline-browser-mapping@latest` bumps
+              `baseline-browser-mapping` in `package.json` and
+              `package-lock.json`.
+
+            Together these keep the browser support baseline current and
+            silence the "caniuse-lite is outdated" and
+            "[baseline-browser-mapping] The data in this module is over two
+            months old" build warnings.
 
             Opened automatically by the `Update Browserslist DB` workflow. If no
             update was available this PR will not be created.

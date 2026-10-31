@@ -3,9 +3,21 @@ import datetime
 import io
 import json
 import statistics
+import types
 from urllib.parse import urlencode
 from collections import Counter, defaultdict
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -109,6 +121,7 @@ from fighthealthinsurance.ml import (
     denial_triage,
     letter_quality,
     model_query,
+    followup_questions,
     research_judging,
     spend,
     typesafe,
@@ -2745,7 +2758,7 @@ def _pick_counts(chosen_qs: QuerySet) -> Counter:
 
 
 def _merge_stats(
-    chosen: Dict[str, int],
+    chosen: Mapping[str, Union[int, float]],
     presented: Dict[str, int],
     quality: Optional[Dict[str, Dict[str, Any]]] = None,
     flagged: Optional[Dict[str, int]] = None,
@@ -2990,6 +3003,16 @@ def _jev_uses() -> List[Dict[str, Any]]:
             "TYPESAFE_RESEARCH_JUDGING_ENABLED",
             spend.RESEARCH,
         ),
+        (
+            "Follow-up questions",
+            # The round runs without Jev; this row is about its Jev half.
+            types.SimpleNamespace(
+                enabled=followup_questions.jev_enabled,
+                SERVICE=followup_questions.SERVICE,
+            ),
+            "TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED",
+            spend.TRIAGE,
+        ),
     )
     rows: List[Dict[str, Any]] = []
     for label, feature, flag, use in uses:
@@ -3165,8 +3188,10 @@ class ModelUsageDashboardView(generic.TemplateView):
                     "totals": {
                         # Every chosen row in the window, re-picks included.
                         "picks": sum(r["chosen"] for r in proposed),
-                        "chooser_votes": sum(
-                            r["chosen"] for r in chooser_appeal + chooser_chat
+                        # Rounded: a tie splits its vote into shares, and
+                        # the shares of every vote add back up to one.
+                        "chooser_votes": round(
+                            sum(r["chosen"] for r in chooser_appeal + chooser_chat)
                         ),
                         "chooser_skips": participation[slug]["skips"],
                         "chooser_sessions": participation[slug]["sessions"],
@@ -4057,12 +4082,11 @@ class ModelUsageDashboardView(generic.TemplateView):
         if source is not None:
             votes = votes.filter(task__source=source)
         chosen_qs = _within(votes, since, until)
-        chosen: Counter = Counter()
-        for name, count in chosen_qs.values_list(
-            "chosen_candidate__model_name"
-        ).annotate(c=Count("id")):
-            label = normalize_model_label(name) or UNKNOWN_MODEL_LABEL
-            chosen[label] += count
+        # Chosen: one vote's worth of credit per vote event, to its chosen
+        # candidate, or split evenly between the candidates of a tie
+        # (ChooserVote.shares), so a k-way tie gives each 1/k and every vote
+        # still adds up to one.
+        chosen_credit: Counter = Counter()
 
         # Presented: walk votes' presented_candidate_ids JSON lists into a
         # counter. We reuse chosen_qs (same filter) and call .iterator() so
@@ -4081,18 +4105,31 @@ class ModelUsageDashboardView(generic.TemplateView):
         # presented one (the vote endpoint checks), so the lookup below
         # covers both.
         flag_counter: Counter = Counter()
-        for ids, flagged_ids in chosen_qs.values_list(
-            "presented_candidate_ids", "flagged_candidate_ids"
+        for chosen_id, ids, flagged_ids, tied_ids in chosen_qs.values_list(
+            "chosen_candidate_id",
+            "presented_candidate_ids",
+            "flagged_candidate_ids",
+            "tied_candidate_ids",
         ).iterator():
+            chosen_credit.update(ChooserVote.shares(chosen_id, tied_ids))
             if ids:
                 counter.update(set(ids))
             if flagged_ids:
                 flag_counter.update(set(flagged_ids))
         cand_to_model = dict(
             ChooserCandidate.objects.filter(
-                id__in=list(set(counter) | set(flag_counter)), kind=kind
+                id__in=list(set(counter) | set(flag_counter) | set(chosen_credit)),
+                kind=kind,
             ).values_list("id", "model_name")
         )
+        chosen_by_label: Counter = Counter()
+        for cid, credit in chosen_credit.items():
+            label = normalize_model_label(cand_to_model.get(cid)) or UNKNOWN_MODEL_LABEL
+            chosen_by_label[label] += credit
+        chosen = {
+            label: ChooserVote.rounded_credit(credit)
+            for label, credit in chosen_by_label.items()
+        }
         presented: Counter = Counter()
         for cid, n in counter.items():
             presented_label = normalize_model_label(cand_to_model.get(cid))
@@ -4103,7 +4140,7 @@ class ModelUsageDashboardView(generic.TemplateView):
             flagged_label = normalize_model_label(cand_to_model.get(cid))
             if flagged_label is not None:
                 flagged[flagged_label] += n
-        return _merge_stats(dict(chosen), dict(presented), flagged=dict(flagged))
+        return _merge_stats(chosen, dict(presented), flagged=dict(flagged))
 
     @staticmethod
     def _chooser_participation(
