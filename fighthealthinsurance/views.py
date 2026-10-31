@@ -4230,6 +4230,13 @@ class ChooserView(TemplateView):
         context["recaptcha_domain"] = getattr(
             settings, "RECAPTCHA_DOMAIN", DEFAULT_RECAPTCHA_DOMAIN
         )
+        # A session that has passed the check keeps its mark across reloads,
+        # so the page says so and the app asks for no second tick.
+        from fighthealthinsurance.rest_views import ChooserViewSet
+
+        context["captcha_passed"] = bool(
+            self.request.session.get(ChooserViewSet.CAPTCHA_SESSION_KEY)
+        )
 
         # Trigger async pre-fill of tasks so user doesn't have to wait
         from fighthealthinsurance.chooser_tasks import trigger_prefill_async

@@ -10,7 +10,7 @@
 
 {% block content %}
 {# The site key is here only while the captcha is enforced; the app then draws the "I'm not a robot" box on its landing. #}
-<div id="chooser-root"{% if captcha_site_key %} data-recaptcha-site-key="{{ captcha_site_key }}"{% endif %}></div>
+<div id="chooser-root"{% if captcha_site_key %} data-recaptcha-site-key="{{ captcha_site_key }}"{% endif %}{% if captcha_passed %} data-captcha-passed="1"{% endif %}></div>
 {% if captcha_site_key %}<script src="https://{{ recaptcha_domain }}/recaptcha/api.js?render=explicit" async defer></script>{% endif %}
 <script src="{% bundle 'chooser' %}"></script>
 {% endblock %}

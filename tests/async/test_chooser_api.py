@@ -1488,6 +1488,7 @@ class ChooserCaptchaGateTest(APITestCase):
     def test_a_skip_or_vote_needs_the_session_mark_too(self):
         body = {"task_id": self.task.id}
         before = self.client.post(self.skip_url, body, format="json")
+        self.assertFalse(ChooserSkip.objects.filter(task=self.task).exists())
         with patch(
             "fighthealthinsurance.forms.recaptcha_client.submit",
             return_value=_google_says(True),
@@ -1503,6 +1504,59 @@ class ChooserCaptchaGateTest(APITestCase):
             status.HTTP_400_BAD_REQUEST,
             "a vote with a bad body is a bad request even once the mark is set",
         )
+
+    @override_settings(**CAPTCHA_ON)
+    def test_a_well_formed_vote_after_the_mark_is_stored(self):
+        a, b = ChooserCandidate.objects.filter(task=self.task).order_by("candidate_index")
+        body = {
+            "task_id": self.task.id,
+            "chosen_candidate_id": candidate_token(a.id),
+            "presented_candidate_ids": [candidate_token(a.id), candidate_token(b.id)],
+        }
+        with patch(
+            "fighthealthinsurance.forms.recaptcha_client.submit",
+            return_value=_google_says(True),
+        ):
+            self.client.get(self.next_url, **{self.CAPTCHA_HEADER: "tick"})
+        response = self.client.post(reverse("chooser-vote"), body, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(ChooserVote.objects.filter(task=self.task).count(), 1)
+
+    @override_settings(
+        **CAPTCHA_ON,
+        # The test settings use DummyCache, which would count nothing.
+        CACHES={
+            "default": {
+                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+                "LOCATION": "chooser-captcha-cap",
+            }
+        },
+    )
+    def test_too_many_checks_from_one_address_are_told_to_wait(self):
+        """Each token is a call to Google; the cap stops a flood of junk."""
+        from django.core.cache import cache
+
+        from fighthealthinsurance.rest_views import ChooserViewSet
+
+        cache.clear()
+        with patch(
+            "fighthealthinsurance.forms.recaptcha_client.submit",
+            return_value=_google_says(False, ["invalid-input-response"]),
+        ) as submit, patch.object(ChooserViewSet, "CAPTCHA_MAX_CHECKS", 2):
+            answers = [
+                self.client.get(
+                    self.next_url, **{self.CAPTCHA_HEADER: f"junk-{i}"}, REMOTE_ADDR="203.0.113.9"
+                )
+                for i in range(3)
+            ]
+
+        self.assertEqual([r.status_code for r in answers], [403, 403, 403])
+        self.assertEqual(
+            [r.json()["code"] for r in answers],
+            ["captcha_invalid", "captcha_invalid", "captcha_rate_limited"],
+        )
+        self.assertEqual(submit.call_count, 2, "the third token never reached Google")
 
     @override_settings(**CAPTCHA_ON)
     def test_a_well_formed_vote_without_the_mark_is_refused_and_not_stored(self):

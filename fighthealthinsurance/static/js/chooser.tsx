@@ -1000,7 +1000,10 @@ const CandidateCard: React.FC<{
 // ---------------------------------------------------------------------------
 // The arena
 
-const ChooserInterface: React.FC<{ captchaSiteKey: string }> = ({ captchaSiteKey }) => {
+const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed: boolean }> = ({
+  captchaSiteKey,
+  captchaAlreadyPassed,
+}) => {
   const [state, setState] = useState<ChooserState>({
     mode: "selection",
     task: null,
@@ -1016,7 +1019,7 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string }> = ({ captchaSiteKey
   // The captcha: the tick's token until it is spent, "passed" once the
   // server has taken one for this session, and a notice when it would not.
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
-  const [captchaPassed, setCaptchaPassed] = useState(false);
+  const [captchaPassed, setCaptchaPassed] = useState(captchaAlreadyPassed);
   const [captchaResets, setCaptchaResets] = useState(0);
   const [captchaNotice, setCaptchaNotice] = useState<string | null>(null);
   const captchaNeeded = Boolean(captchaSiteKey) && !captchaPassed;
@@ -1094,8 +1097,11 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string }> = ({ captchaSiteKey
         backToCaptcha(refusal);
         return;
       }
-      if (captchaToken) {
-        // A tick is single use; a good one is now on the session.
+      if (captchaToken && (response.ok || response.status === 404)) {
+        // A tick is single use, and both of these answers come from past
+        // the gate (an empty arena is a 404), so the session now holds
+        // the mark. Any other failure may have come before the gate and
+        // spent nothing; the next try sends the tick again.
         setCaptchaToken(null);
         setCaptchaPassed(true);
         setCaptchaNotice(null);
@@ -1678,7 +1684,7 @@ const App: React.FC = () => {
             padding: "20px 0",
           }}
         >
-          <ChooserInterface captchaSiteKey={captchaSiteKey} />
+          <ChooserInterface captchaSiteKey={captchaSiteKey} captchaAlreadyPassed={captchaAlreadyPassed} />
         </Box>
       </ErrorBoundary>
     </MantineProvider>
@@ -1688,6 +1694,7 @@ const App: React.FC = () => {
 // Mount the React app
 const container = document.getElementById("chooser-root");
 const captchaSiteKey = container?.dataset.recaptchaSiteKey ?? "";
+const captchaAlreadyPassed = container?.dataset.captchaPassed === "1";
 if (container) {
   const root = createRoot(container);
   root.render(<App />);

@@ -12,6 +12,7 @@ from django.http import FileResponse, Http404, StreamingHttpResponse
 from django.http.response import HttpResponseBase
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import get_object_or_404
+from django.core.cache import cache
 from django.utils import timezone
 
 from asgiref.sync import async_to_sync
@@ -2312,6 +2313,34 @@ class ChooserViewSet(viewsets.ViewSet):
     CAPTCHA_HEADER = "X-Recaptcha-Response"
     CAPTCHA_SESSION_KEY = "chooser_captcha_passed"
     CAPTCHA_ERROR = "captcha_required"
+    # Every token sent is a call to Google from a worker, on an endpoint
+    # anyone can reach, so an address gets this many checks per window
+    # (counted in the shared cache) before it is told to wait. A person
+    # ticks once; a flood of junk tokens stops at the cap.
+    CAPTCHA_MAX_CHECKS = 20
+    CAPTCHA_CHECK_WINDOW_SECONDS = 10 * 60
+
+    @staticmethod
+    def _client_address(request: Request) -> str:
+        """The address a captcha check is charged to: the first hop of
+        X-Forwarded-For behind the proxy, else the peer."""
+        forwarded = str(request.META.get("HTTP_X_FORWARDED_FOR", ""))
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return str(request.META.get("REMOTE_ADDR", ""))
+
+    def _captcha_check_allowed(self, request: Request) -> bool:
+        """Count this check against the address; False once the window's
+        cap is spent. A cache that cannot answer allows the check: the
+        cap is a guard, not the gate."""
+        key = f"chooser_captcha_checks:{self._client_address(request)}"
+        try:
+            if cache.add(key, 1, self.CAPTCHA_CHECK_WINDOW_SECONDS):
+                return True
+            return int(cache.incr(key)) <= self.CAPTCHA_MAX_CHECKS
+        except Exception as e:
+            logger.debug(f"Captcha check cap unavailable: {e}")
+            return True
 
     def _captcha_gate(self, request: Request) -> Optional[Response]:
         """None when the captcha is off (see ReCaptchaOptionalMixin) or this
@@ -2330,6 +2359,15 @@ class ChooserViewSet(viewsets.ViewSet):
         if request.session.get(self.CAPTCHA_SESSION_KEY):
             return None
         token = request.headers.get(self.CAPTCHA_HEADER, "")
+        if token and not self._captcha_check_allowed(request):
+            return Response(
+                {
+                    "error": self.CAPTCHA_ERROR,
+                    "code": "captcha_rate_limited",
+                    "message": "Too many tries. Please wait a few minutes, then tick the box again.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
         form = ChooserCaptchaForm(data={"g-recaptcha-response": token} if token else {})
         if form.is_valid():
             request.session[self.CAPTCHA_SESSION_KEY] = True

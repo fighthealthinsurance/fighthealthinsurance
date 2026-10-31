@@ -12,7 +12,10 @@ default; Dev and the test configurations turn it on): while it is off the
 page and its JSON serve 404 for every method, every link below to it is
 hidden, it is out of the sitemap and `llms.txt`, its markdown twin is gone,
 and the Arena's standings panel (which learns of the 404 from the JSON)
-shows nothing. The Arena itself is not behind the flag. One function reads
+shows nothing. The JSON is served with `Cache-Control: public` for
+`PUBLIC_RANKINGS_CACHE_SECONDS`, so a browser or shared cache can keep
+answering with the last copy for up to that long (15 minutes by default)
+after the flag goes off. The Arena itself is not behind the flag. One function reads
 it, `utils.arena_rankings_page_enabled`, and the templates get it as
 `arena_rankings_enabled` from `context_processors.arena_rankings_context`.
 
@@ -102,7 +105,12 @@ from then on asks for nothing: votes and skips need the mark, not a token.
 A request without the mark gets a 403 `captcha_required` with the field's
 `code` (`required`, `captcha_expired`, `captcha_error`, `captcha_invalid`)
 and message; the app goes back to its landing, clears the box and shows
-the message. The Arena is linked from the home hero as "Help Improve Our
+the message. Each token sent is a call to Google, so an address gets
+`CAPTCHA_MAX_CHECKS` checks per `CAPTCHA_CHECK_WINDOW_SECONDS` (20 per ten
+minutes, counted in the shared cache) before it is told to wait
+(`captcha_rate_limited`). A session that has passed keeps its mark: the
+page carries `data-captcha-passed` on `#chooser-root`, so a reload asks
+for no second tick. The Arena is linked from the home hero as "Help Improve Our
 Models".
 
 ## How a case is made (`chooser_tasks.py`)
