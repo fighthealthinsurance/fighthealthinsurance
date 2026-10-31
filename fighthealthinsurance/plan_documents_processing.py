@@ -27,6 +27,7 @@ from typing import Optional
 from django.utils import timezone
 
 from fighthealthinsurance.models import PolicyDocument
+from fighthealthinsurance.upload_limits import MAX_STORED_POLICY_DOCUMENT_BYTES
 
 #: What a reading reports for a row that is no longer there.
 GONE = "gone"
@@ -36,7 +37,7 @@ MAX_PAGES = 1500
 MAX_CHARS = 2_000_000
 READ_SECONDS = 60
 # The encrypted file is about a third bigger than the 20MB upload limit.
-MAX_STORED_BYTES = 32 * 1024 * 1024
+MAX_STORED_BYTES = MAX_STORED_POLICY_DOCUMENT_BYTES
 # More rows than one share can hold (ten files on the share page).
 MAX_ROWS_PER_BATCH = 50
 

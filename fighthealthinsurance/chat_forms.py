@@ -20,46 +20,16 @@ from fighthealthinsurance.forms import REFERRAL_SOURCE_CHOICES
 from fighthealthinsurance.models import Denial, PolicyDocument
 from fighthealthinsurance.state_help import get_states_sorted_by_name
 
-SUPPORTED_POLICY_EXTENSIONS = {".pdf", ".docx", ".txt"}
-MAX_POLICY_DOCUMENT_BYTES = 20 * 1024 * 1024
-
-# Magic bytes for file type validation
-_PDF_MAGIC = b"%PDF"
-_DOCX_MAGIC = b"PK"  # ZIP-based format
-
-
-def policy_document_extension(name: str) -> str:
-    """The file's extension, lowercased with its dot, or "" when it has none."""
-    return "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
-
-
-def validate_policy_document(file: UploadedFile) -> None:
-    """Raise ValidationError unless ``file`` is a policy document we can read:
-    a supported extension, at most MAX_POLICY_DOCUMENT_BYTES, and for PDF and
-    DOCX the right first bytes."""
-    if file.size is not None and file.size > MAX_POLICY_DOCUMENT_BYTES:
-        raise forms.ValidationError(
-            "File size must be less than 20MB. Please upload a smaller file."
-        )
-    ext = policy_document_extension(file.name or "")
-    if not ext:
-        raise forms.ValidationError(
-            f"File must have an extension. Please upload a {', '.join(sorted(SUPPORTED_POLICY_EXTENSIONS))} file."
-        )
-    if ext not in SUPPORTED_POLICY_EXTENSIONS:
-        raise forms.ValidationError(
-            f"Unsupported file type. Please upload one of: {', '.join(sorted(SUPPORTED_POLICY_EXTENSIONS))}"
-        )
-    # Magic byte check for PDF and DOCX (stronger than MIME type)
-    header = file.read(8)
-    file.seek(0)
-    if ext == ".pdf" and not header.startswith(_PDF_MAGIC):
-        raise forms.ValidationError("The file does not appear to be a valid PDF.")
-    if ext == ".docx" and not header.startswith(_DOCX_MAGIC):
-        raise forms.ValidationError(
-            "The file does not appear to be a valid DOCX document."
-        )
-
+# The checks every policy document upload shares (and their numbers) live in
+# upload_limits; they are named here as well, where callers have always found them.
+from fighthealthinsurance.upload_limits import (  # noqa: E402
+    MAX_POLICY_DOCUMENT_BYTES,
+    MAX_UPLOAD_FILES,
+    MAX_UPLOAD_TOTAL_BYTES,
+    SUPPORTED_POLICY_EXTENSIONS,
+    policy_document_extension,
+    validate_policy_document,
+)
 
 # A Word file locked with a password, or an old .doc, is an OLE file, not a zip.
 _OLE_MAGIC = b"\xd0\xcf\x11\xe0"
@@ -398,11 +368,11 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
     documents, or both, and the agreement: no name, and an email only so a
     removal request finds them."""
 
-    MAX_FILES = 10
+    MAX_FILES = MAX_UPLOAD_FILES
     MAX_LINKS = MAX_SHARED_LINKS
     NOTHING_TO_SHARE = "Choose at least one file or add a link to share."
     # All the files in one upload, with room under the proxy's 80MB limit.
-    MAX_TOTAL_BYTES = 60 * 1024 * 1024
+    MAX_TOTAL_BYTES = MAX_UPLOAD_TOTAL_BYTES
     # The optional fields, shown folded under "About the plan".
     ABOUT_THE_PLAN = (
         "insurer_name",

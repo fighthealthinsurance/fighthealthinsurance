@@ -6,6 +6,7 @@
     {% csrf_token %}
     <h2>Transfered to our server for Optical Character Recognition (OCR) (may be temporarily stored)</h2>
     <label for="uploader">Scan & OCR your health insurance denial (select all pages)</label>
+    <p class="fhi-hint" id="uploader_limits">Images only, up to {{ max_ocr_files }} at a time and {{ max_ocr_file_mb }}MB each.</p>
     {% include "partials/file_drop_box.html" with name="uploader" multiple=True %}
     <fieldset class="fhi-fieldset fhi-stack" aria-describedby="agreements_hint">
 	<legend><h2>Policies</h2></legend>

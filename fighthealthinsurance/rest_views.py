@@ -52,6 +52,7 @@ from fighthealthinsurance.ml.ml_models import (
 )
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.chooser_tokens import candidate_token, resolve_candidate
+from fighthealthinsurance.upload_limits import stored_size_limit
 from fighthealthinsurance.models import (
     Appeal,
     AppealAttachment,
@@ -1650,7 +1651,7 @@ class SendToUserViewSet(viewsets.ViewSet, SerializerMixin):
 
 def attachment_read_limit() -> int:
     """The most stored bytes a download reads: the upload limit, plus encryption's growth of about a third."""
-    return serializers.MAX_ATTACHMENT_BYTES * 4 // 3 + 1024 * 1024
+    return stored_size_limit(serializers.MAX_ATTACHMENT_BYTES)
 
 
 class AppealAttachmentViewSet(viewsets.ViewSet):

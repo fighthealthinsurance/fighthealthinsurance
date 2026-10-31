@@ -10,6 +10,7 @@ import re
 import functools
 import secrets
 import time
+import io
 import typing
 from datetime import date, datetime, time as dt_time, timedelta
 from typing import TypedDict
@@ -23,6 +24,7 @@ from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 from django.http import (
+    FileResponse,
     HttpRequest,
     HttpResponse,
     HttpResponseBase,
@@ -56,6 +58,7 @@ from PIL import Image
 
 from fighthealthinsurance import (
     assistant_handoff_views,
+    upload_limits,
     common_view_logic,
     consent,
     intake_resume,
@@ -211,8 +214,17 @@ def render_ocr_error(
         context={
             "error": text,
             "form": form,
+            **_ocr_limits_context(),
         },
     )
+
+
+def _ocr_limits_context() -> dict:
+    """The server-OCR upload limits, for the page's hint and its script."""
+    return {
+        "max_ocr_files": upload_limits.MAX_OCR_FILES,
+        "max_ocr_file_mb": upload_limits.megabytes(upload_limits.MAX_OCR_FILE_BYTES),
+    }
 
 
 def csrf_failure(request, reason="", template_name="403_csrf.html"):
@@ -2399,18 +2411,27 @@ class OCRView(View):
         return render(
             request,
             "server_side_ocr.html",
-            context={"form": core_forms.ServerOCRForm()},
+            context={"form": core_forms.ServerOCRForm(), **_ocr_limits_context()},
         )
 
     def post(self, request):
         # The boxes come first: no upload is read until they are ticked.
         form = core_forms.ServerOCRForm(request.POST)
         if not form.is_valid():
-            return render(request, "server_side_ocr.html", context={"form": form})
+            return render(
+                request,
+                "server_side_ocr.html",
+                context={"form": form, **_ocr_limits_context()},
+            )
         consent.note_server_ocr_consent(request.session, form.cleaned_data)
         try:
             files = dict(request.FILES.lists())
             uploader = files["uploader"]
+            # Before any file is read: the count and each file's size, which
+            # Django measured as the files arrived.
+            refused = self.refusal(uploader)
+            if refused is not None:
+                return render_ocr_error(request, refused, form)
             doc_txt = self._ocr(uploader)
             return render(
                 request,
@@ -2432,13 +2453,40 @@ class OCRView(View):
         except KeyError:
             return render_ocr_error(request, "Missing file", form)
 
+    @staticmethod
+    def refusal(uploads) -> typing.Optional[str]:
+        """Why the upload is refused, or None when it is within the limits.
+
+        Checked before any file is read, from the sizes Django measured as
+        the files arrived."""
+        if len(uploads) > upload_limits.MAX_OCR_FILES:
+            return (
+                f"Too many files: up to {upload_limits.MAX_OCR_FILES} images at a time."
+            )
+        for upload in uploads:
+            size = getattr(upload, "size", None)
+            if size is not None and size > upload_limits.MAX_OCR_FILE_BYTES:
+                return (
+                    "File too large: each image can be up to "
+                    f"{upload_limits.megabytes(upload_limits.MAX_OCR_FILE_BYTES)}MB."
+                )
+        return None
+
     def _ocr(self, uploader):
         def ocr_upload(x):
             try:
                 import pytesseract
 
+                # Image.open reads only the header, so the size is known
+                # before anything is decoded; an image past the pixel cap is
+                # skipped rather than decoded here or by the fallback below.
                 img = Image.open(x)
-                return pytesseract.image_to_string(img)
+                if img.width * img.height > upload_limits.MAX_OCR_IMAGE_PIXELS:
+                    logger.warning("Skipped an OCR upload over the pixel cap")
+                    return ""
+                return pytesseract.image_to_string(
+                    img, timeout=upload_limits.OCR_SECONDS_PER_IMAGE
+                )
             except Exception:
                 easy_ocr_reader = getattr(self, "_easy_ocr_reader", None)
                 if easy_ocr_reader is None:
@@ -2965,6 +3013,14 @@ def stored_health_history(denial_id) -> str:
     if denial is None:
         return ""
     return denial.health_history or ""
+
+
+def _plan_document_limits_context() -> dict:
+    """The plan-document upload limits, for the page's hint."""
+    return {
+        "max_files": upload_limits.MAX_UPLOAD_FILES,
+        "max_file_mb": upload_limits.megabytes(upload_limits.MAX_UPLOAD_FILE_BYTES),
+    }
 
 
 def plan_document_count(denial_id) -> int:
@@ -3569,6 +3625,7 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
                 "next": reverse("dvc"),
                 "current_step": 3,
                 "plan_document_count": plan_document_count(denial_response.denial_id),
+                **_plan_document_limits_context(),
                 "back_url": build_back_url(
                     self.request,
                     "hh",
@@ -3601,6 +3658,7 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
         context["plan_document_count"] = plan_document_count(
             denial_ref.get("denial_id")
         )
+        context.update(_plan_document_limits_context())
         context["back_url"] = self.get_back_url("hh", denial_ref)
         return context
 
@@ -3671,9 +3729,13 @@ class AppealFileView(View):
         appeal = get_object_or_404(
             models.Appeal.filter_to_allowed_appeals(current_user), uuid=appeal_uuid
         )
-        file = appeal.document_enc.open()
-        content = Cryptographer.decrypted(file.read())
-        return HttpResponse(content, content_type="application/pdf")
+        if not appeal.document_enc:
+            return HttpResponse(status=404)
+        # The PDF is one this server assembled, so its size is ours; the
+        # handle is closed once read rather than left to the collector.
+        with appeal.document_enc.open() as file:
+            content = Cryptographer.decrypted(file.read())
+        return FileResponse(io.BytesIO(content), content_type="application/pdf")
 
 
 class StripeWebhookView(View):

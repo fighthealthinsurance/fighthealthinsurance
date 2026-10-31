@@ -30,6 +30,7 @@ from fighthealthinsurance.document_grep import (
     passage_text,
     select_passages,
 )
+from fighthealthinsurance.upload_limits import MAX_STORED_POLICY_DOCUMENT_BYTES
 from fighthealthinsurance.ml.ml_document_extraction import (
     PARSED_EXTENSIONS,
     aextract_text_from_bytes,
@@ -72,14 +73,17 @@ class MLPlanDocHelper:
     # Maximum characters to send to the model for summarization
     MAX_CONTEXT_LENGTH = 8000
     #: The largest stored document this will open. Checked before the read,
-    #: since reading is where the memory goes.
+    #: since reading is where the memory goes. It bounds the STORED bytes, which
+    #: are the upload once encrypted and so about a third bigger: at 25MB this
+    #: skipped, without a word to the person, every plan document between
+    #: 18.75MB and the 20MB the upload allows.
     #:
     #: This bounds the INPUT, not what a parser makes of it. A compressed
     #: format expands far beyond its stored size, which is a pre-existing
     #: exposure for the Word documents this has always accepted and not
     #: something this number fixes. Bounding decompressed members is its own
     #: change.
-    MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
+    MAX_DOCUMENT_BYTES = MAX_STORED_POLICY_DOCUMENT_BYTES
     # Maximum time to spend on plan document summarization
     TIMEOUT_SECONDS = 60
     #: Search strings asked for (and kept) when documents are too long.

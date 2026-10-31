@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 else:
     _ReCaptchaMixinBase = object
 
-from fighthealthinsurance import consent
+from fighthealthinsurance import consent, upload_limits
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.letter_placeholders import (
     blanks_to_name,
@@ -414,6 +414,18 @@ class PlanDocumentsForm(DenialRefForm):
     plan_documents = MultipleFileField(required=False)
     # Not the appeal's: DenialCollectedView takes it out before update_denial.
     share_for_research = share_for_research_field()
+
+    def clean_plan_documents(self) -> list:
+        """The same checks as every other plan document upload (a supported
+        format, at most 20MB each) before any file is stored: the files are
+        encrypted and kept, and the appeal's reader skips one it cannot
+        parse or that is over its size, so an unchecked file was stored for
+        nothing and counted on the page as added."""
+        files = [f for f in self.cleaned_data.get("plan_documents") or [] if f]
+        upload_limits.validate_uploads(
+            files, each=[upload_limits.validate_policy_document]
+        )
+        return files
 
 
 class ChooseAppealForm(DenialRefForm):
@@ -840,7 +852,18 @@ class FollowUpForm(forms.Form):
     followup_documents = MultipleFileField(
         required=False,
         label="Optional: Any documents you wish to share",
+        help_text=(
+            f"Up to {upload_limits.MAX_UPLOAD_FILES} files, "
+            f"{upload_limits.megabytes(upload_limits.MAX_UPLOAD_FILE_BYTES)}MB each."
+        ),
     )
+
+    def clean_followup_documents(self) -> list:
+        """Any format, since nothing parses these; a cap on each file and on
+        the upload, since each is encrypted and kept."""
+        files = [f for f in self.cleaned_data.get("followup_documents") or [] if f]
+        upload_limits.validate_uploads(files, each=[upload_limits.validate_upload_size])
+        return files
 
 
 # New form for activating pro users

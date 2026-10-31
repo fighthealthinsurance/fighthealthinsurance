@@ -481,3 +481,49 @@ class TestCombinedStorageExists(TestCase):
             first.exists.call_args_list + second.exists.call_args_list,
             [call(name="foo.txt"), call(name="foo.txt")],
         )
+
+
+class TestCombinedStorageSaveTimeout(TestCase):
+    """A write cut off at the timeout must not leave a partial file behind
+    under the name every reader will open."""
+
+    def test_a_timed_out_write_has_its_partial_copy_removed(self):
+        import time
+        from unittest.mock import patch
+
+        slow = _make_storage()
+
+        def slow_save(**kwargs):
+            time.sleep(0.5)
+            return "foo.txt"
+
+        slow.save.side_effect = slow_save
+        slow.exists.return_value = True
+        fast = _make_storage()
+        fast.save.return_value = "foo.txt"
+
+        storage = CombinedStorage(slow, fast)
+        with patch(
+            "fighthealthinsurance.combined_storage.SAVE_TIMEOUT_SECONDS", 0.1
+        ), patch(
+            "fighthealthinsurance.combined_storage.SAVE_SECONDS_PER_MEGABYTE", 0.0
+        ):
+            result = storage.save("foo.txt", ContentFile(b"payload"))
+
+        # The slow backend timed out, so its partial copy is deleted and the
+        # fast backend's successful name is what callers get.
+        self.assertEqual(result, "foo.txt")
+        slow.delete.assert_called_once_with("foo.txt")
+        fast.save.assert_called_once()
+
+    def test_a_write_within_the_window_keeps_no_partial_copy(self):
+        first = _make_storage()
+        first.save.return_value = "foo.txt"
+        second = _make_storage()
+        second.save.return_value = "foo.txt"
+
+        storage = CombinedStorage(first, second)
+        storage.save("foo.txt", ContentFile(b"payload"))
+
+        first.delete.assert_not_called()
+        second.delete.assert_not_called()
