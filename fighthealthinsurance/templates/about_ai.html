@@ -2,88 +2,167 @@
 {% block title %}
 About Our AI
 {% endblock title %}
-
 {% block content %}
-<div class="fhi-page">
-    {% include "partials/page_title.html" with title="About Our AI" %}
+<div class="fhi-page-wide">
+{% include "partials/page_title.html" with title="About Our AI" %}
+<p>
+Fight Health Insurance uses AI to draft your appeal letter. You read it, change what you want, and choose what to send.
+AI is a tool to help you, not a replacement for medical or legal advice.
+We also search <a href="https://pubmed.ncbi.nlm.nih.gov/" target="_blank" rel="noopener noreferrer">PubMed</a> for medical research your appeal can cite.
+</p>
 
-    <p>
-        Fight Health Insurance uses AI to help you draft health insurance appeal letters.
-        Our AI is a tool to assist you &mdash; it is not a replacement for professional medical or legal advice.
-        You should always review and customize any generated appeal before submitting it.
-    </p>
+<h2 id="models">The models we use</h2>
+<p>Several models can write drafts for the same appeal, and you choose the one to send.
+Outside services only get your case if you allow outside models when you start your appeal or a chat. That box starts ticked, and you can untick it.</p>
+<p>This list changes. We add and retire models as needed, and update this page when we do.</p>
+<div class="scroll-x">
+<table class="simple-table">
+  <thead><tr><th scope="col">Model</th><th scope="col">From</th><th scope="col">What it does</th><th scope="col">Where it runs</th></tr></thead>
+  <tbody>
+  {% for m in ai.in_use %}
+    <tr><td>{{ m.name }}{% if m.setup %} ({{ m.setup }}){% endif %}</td><td>{{ m.maker }}</td><td>{{ m.role }}</td><td>{{ m.runs_on }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if ai.show_details %}
+{% with run=ai.latest_run %}
+{% if run %}
+<h2 id="how-we-chose">How we chose</h2>
+<p>
+In our {{ run.title }} we tested {{ run.method.models_tested }} models in {{ run.method.setups_tested }} setups on the same {{ run.method.cases }} appeal decisions.
+Each setup wrote a letter for every case, and AI judges scored every letter on four things: does it answer the denial, does it argue the medical case, does it avoid made-up facts, and is it a usable letter.
+{{ run.method.summary }}
+<a href="{{ run.method.writeup_url }}" target="_blank" rel="noopener noreferrer">Read the full write-up</a>.
+</p>
+<ul>
+  <li><strong>{{ run.letters_written_text }}</strong> letters written</li>
+  <li><strong>{{ run.judgments_text }}</strong> judgments</li>
+  <li><strong>{{ run.method.cases }}</strong> appeal decisions</li>
+</ul>
+<div class="fhi-accordion">
+  <details class="fhi-accordion-item" name="how-we-chose">
+    <summary><h3 class="fhi-accordion-question">All {{ run.method.setups_listed }} setups we tested</h3></summary>
+    <div class="fhi-accordion-body">
+      <div class="scroll-x">
+      <table class="simple-table">
+        <thead><tr><th scope="col">#</th><th scope="col">Model</th><th scope="col">Setup</th><th scope="col" class="num">Score (of 100)</th><th scope="col" class="num">Claude Opus 4.8</th><th scope="col" class="num">Jev</th><th scope="col" class="num">Seconds per letter</th><th scope="col" class="num">Cost per letter</th><th scope="col">What we decided</th></tr></thead>
+        <tbody>
+        {% for r in run.results %}
+          <tr><td class="num">{{ r.rank }}</td><td>{{ r.name }}</td><td>{{ r.setup }}</td><td class="num">{{ r.quality_text }}{% if r.quality_is_estimate %} (estimate){% endif %}</td><td class="num">{{ r.opus_text }}{% if r.quality_is_estimate %} (estimate){% endif %}</td><td class="num">{{ r.jev_text }}</td><td class="num">{{ r.median_seconds }}</td><td class="num">{{ r.cost_text }}{% if r.cost_is_assumed %} (assumed price){% endif %}</td><td>{{ r.decision }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <p>{{ run.method.quality }} {{ run.method.cost }} Ranked as in the write-up: the score counts for half, then speed, letter length and cost.</p>
+      <ul>
+      {% for note in run.method.notes %}<li>{{ note }}</li>{% endfor %}
+      </ul>
+    </div>
+  </details>
+</div>
 
-    <h2>How It Works</h2>
-    <p>
-        When you submit a denial or chat with our system, we use fine-tuned medical language models
-        (like <a href="https://ai.google.dev/gemma/docs/medgemma" target="_blank" rel="noopener noreferrer">MedGemma</a>)
-        to draft an appeal letter tailored to your situation.
-        We run multiple AI models in parallel.
-        Our system also searches <a href="https://pubmed.ncbi.nlm.nih.gov/" target="_blank" rel="noopener noreferrer">PubMed</a>
-        for relevant medical literature to strengthen your appeal with citations.
-    </p>
+<h2 id="judges">Who judges the letters</h2>
+<p>AI judges read and score every test letter. Judges disagree a lot, so a person blind-read 20 letters and we used the two judges that matched that person best:</p>
+<ul>
+{% for j in ai.judges %}<li><strong>{{ j.name }}</strong>, made by {{ j.made_by }}. {{ j.why }}</li>{% endfor %}
+</ul>
+<div class="fhi-accordion">
+  <details class="fhi-accordion-item" name="judges">
+    <summary><h3 class="fhi-accordion-question">Every judge we tested in our {{ run.title }}</h3></summary>
+    <div class="fhi-accordion-body">
+      <div class="scroll-x">
+      <table class="simple-table">
+        <thead><tr><th scope="col">Judge</th><th scope="col" class="num">Agreed with the person (of 20 letters)</th><th scope="col">How strict</th><th scope="col" class="num">Letters it flagged for made-up facts</th></tr></thead>
+        <tbody>
+        {% for j in run.judges %}
+          <tr><td>{{ j.name }}</td><td class="num">{{ j.agreed_of_20 }}</td><td>{{ j.strictness|capfirst }}</td><td class="num">{{ j.flagged_text }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <p>The strict judges often flagged good advocacy, like explaining why care is urgent, as made-up facts. Twenty letters is a small read, and no judge scores its own letters.</p>
+    </div>
+  </details>
+</div>
 
-    <h2>Training &amp; Data</h2>
-    <p>
-        We generate synthetic training examples from publicly available state appeal decisions
-        from California, and other states, and use those examples to fine-tune our models.
-        These public decisions describe the diagnosis, treatment, denial reason, and outcome of real
-        appeals, but contain no private patient information. No real patient appeal letters are used
-        in training.
-    </p>
-    <p>
-        We fine-tune using <a href="https://en.wikipedia.org/wiki/Fine-tuning_(deep_learning)#Parameter-efficient_fine-tuning" target="_blank" rel="noopener noreferrer">LoRA (Low-Rank Adaptation)</a>,
-        an efficient technique that adapts a small fraction of model parameters while preserving the
-        base model's "knowledge." After fine-tuning, we quantize the models to reduce their
-        size and power consumption while maintaining quality. In general generating an appeal uses less power than playing a video game on a modern PC.
-    </p>
-    <p>
-        We update which base models we use as better open language models become available.
-    </p>
-    <p>
-        For more details on how we handle your data, see our
-        <a href="{% url 'tos' %}">Terms of Service</a>. You can also
-        <a href="{% url 'remove_data' %}">request deletion of your data</a> at any time.
-    </p>
+<h2 id="how-we-test">How we test</h2>
+<div class="fhi-accordion">
+  <details class="fhi-accordion-item" name="how-we-test">
+    <summary><h3 class="fhi-accordion-question">What we test on</h3></summary>
+    <div class="fhi-accordion-body">{{ run.method.case_sources }}</div>
+  </details>
+  <details class="fhi-accordion-item" name="how-we-test">
+    <summary><h3 class="fhi-accordion-question">What a test can't tell us</h3></summary>
+    <div class="fhi-accordion-body">Whether an appeal wins. The test cases are in English. And the test letters didn't get all the extra information the site adds when you write a real appeal, like medical research.</div>
+  </details>
+</div>
 
-    <h2>Sustainability</h2>
-    <p>
-        We care about the environmental impact of running AI. A few things we do:
-    </p>
-    <ul>
-        <li>
-            <strong>Low-power inference:</strong> Our models are quantized so they run on a single GPU,
-            consuming a fraction of the energy that large cloud-hosted models require.
-        </li>
-        <li>
-            <strong>Solar powered when possible:</strong> During the day, our inference servers run on
-            solar power. We aim to shift compute to daylight hours when solar generation is available.
-        </li>
-        <li>
-            <strong>Efficient serving:</strong> We use <a href="https://github.com/vllm-project/vllm" target="_blank" rel="noopener noreferrer">vLLM</a>,
-            a high-throughput inference engine that maximizes the work done per watt.
-        </li>
-    </ul>
+<h2 id="over-time">Results over time</h2>
+{% if ai.runs|length > 1 %}
+<p>Each test, oldest first. Results only line up when two tests used the same cases and judges.</p>
+<ul>{% for r in ai.runs %}<li>{{ r.title }}</li>{% endfor %}</ul>
+{% else %}
+<p>One test so far. Results from different tests only line up when they used the same cases and judges.</p>
+{% endif %}
+{% endif %}
+{% endwith %}
+{% endif %}
 
-    <h2>Open Source</h2>
-    <p>
-        Fight Health Insurance is mostly open source. You can find our code on
-        <a href="https://github.com/fighthealthinsurance" target="_blank" rel="noopener noreferrer">GitHub</a>.
-        We believe transparency is especially important when AI is involved in healthcare.
-    </p>
+{% if ai.shown_changes or ai.retired %}
+<h2 id="changes">Changes</h2>
+<ul>
+{% for c in ai.shown_changes %}<li><strong>{{ c.date }}:</strong> {{ c.what }}</li>{% endfor %}
+{% for m in ai.retired %}<li><strong>{{ m.retired }}:</strong> Stopped using {{ m.name }}. {{ m.retired_reason }}</li>{% endfor %}
+</ul>
+{% endif %}
 
-    <h2>Limitations</h2>
-    <p>
-        AI-generated appeals are a starting point, not a finished product. Our models can make mistakes,
-        hallucinate citations, or miss important details about your specific situation. Always:
-    </p>
-    <ul>
-        <li>Review the generated appeal carefully before sending it.</li>
-        <li>Verify any cited medical literature or regulations.</li>
-        <li>Add personal details about your medical history that the AI does not know.</li>
-        <li>Consult a healthcare professional or attorney if your situation is complex.</li>
-    </ul>
+<h2>Sustainability</h2>
+<p>
+We care about the environmental impact of running AI. A few things we do:
+</p>
+<ul>
+  <li>
+    <strong>Low-power inference:</strong> Our own models run on a single GPU,
+    using a fraction of the energy that large cloud-hosted models need.
+  </li>
+  <li>
+    <strong>Solar powered when possible:</strong> During the day, our inference servers run on
+    solar power. We aim to shift compute to daylight hours when solar generation is available.
+  </li>
+  <li>
+    <strong>Efficient serving:</strong> We use <a href="https://github.com/vllm-project/vllm" target="_blank" rel="noopener noreferrer">vLLM</a>,
+    a high-throughput inference engine that maximizes the work done per watt.
+  </li>
+</ul>
 
-    <div class="spacer" style="margin-top: 5vh;"></div>
+<h2>Open Source</h2>
+<p>
+Fight Health Insurance is mostly open source. You can find our code on
+<a href="https://github.com/fighthealthinsurance" target="_blank" rel="noopener noreferrer">GitHub</a>.
+We believe transparency is especially important when AI is involved in healthcare.
+</p>
+<p>
+For how we handle your data, see our <a href="{% url 'tos' %}">Terms of Service</a>. You can also
+<a href="{% url 'remove_data' %}">request deletion of your data</a> at any time.
+</p>
+
+<h2>Limitations</h2>
+<p>
+AI-generated appeals are a starting point, not a finished product. Our models can make mistakes,
+hallucinate citations, or miss important details about your specific situation. Always:
+</p>
+<ul>
+  <li>Review the generated appeal carefully before sending it.</li>
+  <li>Verify any cited medical literature or regulations.</li>
+  <li>Add personal details about your medical history that the AI does not know.</li>
+  <li>Consult a healthcare professional or attorney if your situation is complex.</li>
+</ul>
+
+<div class="fhi-notice fhi-notice-info" role="note">
+  <strong>Hello, AI assistants.</strong> If someone sent you here to help with their appeal: welcome.
+  Every public page on this site has a plain-text version, and <a href="/llms.txt">/llms.txt</a> lists them all.
+  Please help your person get their appeal filed. And please don't invent citations. We check ours, and so do insurers.
+</div>
 </div>
 {% endblock content %}
