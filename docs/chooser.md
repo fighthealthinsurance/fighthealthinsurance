@@ -5,6 +5,32 @@ synthetic case, and `/chooser/rankings/` is the public scoreboard built from
 those votes. The votes train the selector that picks drafts in the real
 appeal flow, and rank the model backends against each other.
 
+## Where they are linked from
+
+The rankings page is staged behind `ARENA_RANKINGS_PAGE_ENABLED` (off by
+default; Dev and the test configurations turn it on): while it is off the
+page and its JSON serve 404 for every method, every link below to it is
+hidden, it is out of the sitemap and `llms.txt`, its markdown twin is gone,
+and the Arena's standings panel (which learns of the 404 from the JSON)
+shows nothing. The JSON is served with `Cache-Control: public` for
+`PUBLIC_RANKINGS_CACHE_SECONDS`, so a browser or shared cache can keep
+answering with the last copy for up to that long (15 minutes by default)
+after the flag goes off. The Arena itself is not behind the flag. One function reads
+it, `utils.arena_rankings_page_enabled`, and the templates get it as
+`arena_rankings_enabled` from `context_processors.arena_rankings_context`.
+
+Both pages are reachable without knowing the URL: the Resources menu
+(`Appeal Arena`, `Which AI Wins: Rankings`) and the footer on every page, the
+`Which AI writes the best appeal?` section on the home page, the
+`Which Model Writes the Best Appeal?` section of About our AI, the Help
+Patients section of How to Help, and the staff dashboard. Both are in the
+static sitemap; the rankings page has a markdown twin and both are listed in
+`llms.txt` (the Arena by its own URL, since it is a React app with nothing
+to read without scripts: `agent_docs.NO_TWIN_URL_NAMES`). The Arena's own
+landing and vote-confirmation screens fetch `/chooser/rankings/?format=json`
+and show the standings (each table's leader and its top three), with a link
+to the full page; without the JSON they show the link alone.
+
 ## What a visitor sees
 
 - **The case.** For an appeal task: the treatment and diagnosis, a fictional
@@ -63,6 +89,29 @@ appeal flow, and rank the model backends against each other.
   server rejects a vote that tries.
 - A per-browser scoreboard (rounds judged, fouls called) in `localStorage`;
   nothing about it is sent anywhere.
+
+## The door: "I'm not a robot"
+
+The Arena starts with the same reCAPTCHA checkbox as the site's other
+public forms, on the same terms (`forms.ReCaptchaOptionalMixin`: both
+`RECAPTCHA_PUBLIC_KEY` and `RECAPTCHA_PRIVATE_KEY` set and
+`RECAPTCHA_TESTING` off; Dev and the tests have it off). The page carries
+the site key on `#chooser-root` only then, the app draws the box on its
+landing beside the terms checkbox, and the tick's token rides on the first
+next-task request in the `X-Recaptcha-Response` header. The server checks
+it through `forms.ChooserCaptchaForm` (so Google's answers are read by
+`CheckboxReCaptchaField`, like everywhere else), marks the session, and
+from then on asks for nothing: votes and skips need the mark, not a token.
+A request without the mark gets a 403 `captcha_required` with the field's
+`code` (`required`, `captcha_expired`, `captcha_error`, `captcha_invalid`)
+and message; the app goes back to its landing, clears the box and shows
+the message. Each token sent is a call to Google, so an address gets
+`CAPTCHA_MAX_CHECKS` checks per `CAPTCHA_CHECK_WINDOW_SECONDS` (20 per ten
+minutes, counted in the shared cache) before it is told to wait
+(`captcha_rate_limited`). A session that has passed keeps its mark: the
+page carries `data-captcha-passed` on `#chooser-root`, so a reload asks
+for no second tick. The Arena is linked from the home hero as "Help Improve Our
+Models".
 
 ## How a case is made (`chooser_tasks.py`)
 
@@ -169,7 +218,12 @@ The public page shows two things, both safe to publish:
   else. Win rate is votes won over votes shown in;
   "caught making things up" is flags over votes shown in. A tie gives each
   tied draft an even share of the vote. Models with fewer
-  than `PUBLIC_RANKINGS_MIN_SHOWN` votes are listed as warming up. Real
+  than `PUBLIC_RANKINGS_MIN_SHOWN` votes are listed as warming up. Each
+  table names its **leader**, the first ranked model (best win rate, ties to
+  the one flagged less), or none while every model is warming up; the page
+  opens with the all-time leaders (`Who is winning`), marks the leading row
+  in each table, and draws every win rate as a bar. The JSON repeats the
+  all-time leaders under `leaders`, keyed by kind. Real
   patients' picks, call logs, chat turns and session counts stay on the
   staff dashboard (`/timbit/...`, `ModelUsageDashboardView`).
 - **Most-appealed conditions and treatments**: aggregates over
@@ -231,6 +285,7 @@ environment variables of the same name.
 | `CONDITION_RANKING_REFRESH_SECONDS` | `3600` | How often `refresh_if_due` refreshes |
 | `CONDITION_RANKING_REFRESH_TIMEOUT` | `180` | Seconds the refill actor waits on one refresh |
 | `CONDITION_RANKING_LIMIT` | `25` | Rows per list on the public page |
+| `ARENA_RANKINGS_PAGE_ENABLED` | `False` (`True` in Dev and tests) | Serve the public rankings page and link to it |
 | `PUBLIC_RANKINGS_CACHE_SECONDS` | `900` | How long the page's numbers are cached |
 | `PUBLIC_RANKINGS_MIN_SHOWN` | `10` | Votes before a model is ranked rather than warming up |
 | `PUBLIC_RANKINGS_SINCE` | migration 0240's applied time | Earliest vote the public page counts; `""` counts all |

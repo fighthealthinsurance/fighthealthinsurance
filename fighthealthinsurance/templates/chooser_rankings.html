@@ -1,14 +1,43 @@
 {% extends 'base.html' %}
 
-{% block title %}Appeal Arena Rankings - Fight Health Insurance{% endblock title %}
-{% block metatitle %}Appeal Arena Rankings - Fight Health Insurance{% endblock metatitle %}
-{% block metadescription %}Which AI models write the appeal letters people pick, how often each gets caught making things up, and the conditions and treatments people fight insurance denials over most.{% endblock metadescription %}
+{% block title %}Appeal Arena Rankings: Which AI Writes the Best Appeal - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Appeal Arena Rankings: Which AI Writes the Best Appeal - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Which AI models are winning the Appeal Arena: the appeal letters people pick when they judge drafts side by side, how often each model gets caught making things up, and the conditions and treatments people fight insurance denials over most.{% endblock metadescription %}
 
 {% block content %}
 <div class="fhi-page-wide arena-rankings">
     {% include "partials/page_title.html" with title="Appeal Arena Rankings" lede="Which AI drafts win when people judge them side by side, which ones get caught making things up, and what people are fighting insurance over." %}
 
+    <nav class="fhi-jump-links" aria-label="On this page">
+        <a href="#leaders">Who is winning</a>
+        {% for w in data.windows %}<a href="#window-{{ w.slug }}">{{ w.label }}</a>{% endfor %}
+        <a href="#conditions">What people fight over</a>
+        <a href="#how">How this is counted</a>
+    </nav>
+
     <div class="fhi-stack fhi-stack-loose">
+        {# The answer first: the model winning each table, all time. A table whose models are all still warming up has no leader and says so. #}
+        <section id="leaders" aria-labelledby="leaders-title">
+            <h2 id="leaders-title">Who is winning</h2>
+            <div class="fhi-cards arena-leaders">
+                {% for t in data.windows.0.tables %}
+                <div class="fhi-card arena-leader" id="leader-{{ t.kind }}">
+                    <p class="arena-kicker">{{ t.label }} &middot; all time</p>
+                    {% if t.leader %}
+                    <h3 class="fhi-card-title arena-leader-model"><span class="arena-trophy" aria-hidden="true">🏆</span> {{ t.leader.model }}</h3>
+                    <p class="arena-leader-stat"><b class="arena-leader-num">{{ t.leader.win_rate|floatformat:0 }}%</b> <span>win rate: picked in {{ t.leader.won|floatformat:"-1" }} of the {{ t.leader.shown }} votes it was shown in</span></p>
+                    <p class="fhi-hint">Caught making things up in {{ t.leader.flag_rate|floatformat:0 }}% of those votes.{% if t.ranked > 1 %} {{ t.ranked|add:"-1" }} other model{{ t.ranked|add:"-1"|pluralize }} ranked below it.{% endif %}</p>
+                    <a class="fhi-card-action" href="#window-all">See the full table</a>
+                    {% else %}
+                    <h3 class="fhi-card-title arena-leader-model">No leader yet</h3>
+                    <p>{% if t.rows %}Every model here is still warming up: none has been judged {{ data.min_shown }} times yet.{% else %}No votes have been cast yet.{% endif %} The first to {{ data.min_shown }} votes gets ranked.</p>
+                    <a class="fhi-button fhi-button-primary fhi-card-action" href="{% url 'chooser' %}">Be the referee</a>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+
         <div class="fhi-notice fhi-notice-info">
             <strong>All synthetic, all aggregate.</strong> Every vote below was cast in the
             <a href="{% url 'chooser' %}">Appeal Arena</a> on a made-up case. The condition and
@@ -30,7 +59,7 @@
         <section id="window-{{ w.slug }}">
             <h2>Model rankings &middot; {{ w.label }}</h2>
             {% for t in w.tables %}
-            <h3>{{ t.label }}</h3>
+            <h3>{{ t.label }}{% if t.leader %} <span class="fhi-badge fhi-badge-info arena-leader-badge">Leading: {{ t.leader.model }}</span>{% endif %}</h3>
             {% if t.rows %}
             <div class="arena-scroll">
             <table class="arena-table">
@@ -40,18 +69,18 @@
                         <th>Model</th>
                         <th class="num" title="Votes this model's draft won; a tie splits its vote between the tied drafts">Won</th>
                         <th class="num" title="Votes this model's draft was shown in">Shown</th>
-                        <th class="num" title="Won / shown">Win rate</th>
+                        <th class="num arena-rate-head" title="Won / shown">Win rate</th>
                         <th class="num" title="Votes in which a referee flagged this model's draft as making things up, over votes shown in">Caught making things up</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for r in t.rows %}
-                    <tr{% if r.warming_up %} class="warming-up"{% endif %}>
+                    <tr{% if r.warming_up %} class="warming-up"{% elif t.leader and r.rank == t.leader.rank %} class="arena-leading"{% endif %}>
                         <td>{{ r.rank }}</td>
-                        <td>{{ r.model }}{% if r.warming_up %} <span class="fhi-badge fhi-badge-info" title="Fewer than {{ data.min_shown }} votes so far">warming up</span>{% endif %}</td>
+                        <td>{% if t.leader and r.rank == t.leader.rank %}<span class="arena-trophy" aria-label="Leading">🏆</span> {% endif %}{{ r.model }}{% if r.warming_up %} <span class="fhi-badge fhi-badge-info" title="Fewer than {{ data.min_shown }} votes so far">warming up</span>{% endif %}</td>
                         <td class="num">{{ r.won|floatformat:"-1" }}</td>
                         <td class="num">{{ r.shown }}</td>
-                        <td class="num">{% if r.win_rate is None %}&mdash;{% else %}{{ r.win_rate|floatformat:0 }}%{% endif %}</td>
+                        <td class="num arena-rate">{% if r.win_rate is None %}&mdash;{% else %}<span class="arena-rate-number">{{ r.win_rate|floatformat:0 }}%</span><span class="arena-bar" aria-hidden="true"><span class="arena-bar-fill" style="width: {{ r.win_rate|floatformat:0 }}%"></span></span>{% endif %}</td>
                         <td class="num">{% if r.flag_rate is None %}&mdash;{% else %}{{ r.flag_rate|floatformat:0 }}%{% endif %}</td>
                     </tr>
                     {% endfor %}
@@ -112,8 +141,9 @@
             <h2>How this is counted</h2>
             <ul>
                 <li><strong>Win rate</strong> is votes a model's draft won over votes it was shown in. A referee who finds two or more drafts equally good can call a tie, which splits that vote evenly between them (half a win each for a two-way tie). Drafts are shown blind (the page gets opaque references, never a model name or a stored order), in random order, so a vote is for the letter, not the brand. Only votes cast since blind voting began count.</li>
+                <li><strong>Leading</strong> is the ranked model with the best win rate; a tie goes to the one caught making things up less often.</li>
                 <li><strong>Caught making things up</strong> is how often a referee flagged the draft for inventing a study, a law, a test result, a date or a history that was not in the case. A draft can be flagged and still lose honestly; a flagged draft can never be the vote.</li>
-                <li><strong>Warming up</strong> marks a model with fewer than {{ data.min_shown }} votes; its rates are listed but not ranked against the rest.</li>
+                <li><strong>Warming up</strong> marks a model with fewer than {{ data.min_shown }} votes; its rates are listed but not ranked against the rest, and it cannot lead.</li>
                 <li><strong>Cases are synthetic.</strong> Each one is written by a model about a real condition and treatment pair, with made-up facts and the published evidence already on file for that pair. Newer cases also carry a summary of each study and the made-up patient's answers to the questions the app would ask, and every draft is given the same. No real patient's letter is ever shown.</li>
                 <li>The same data is available as <a href="?format=json">JSON</a>. Counts refresh every few minutes.</li>
             </ul>
@@ -129,6 +159,12 @@
 
 {% block extra_style %}
 <style>
+    .arena-leaders { margin-top: 0.5rem; }
+    .arena-kicker { font-size: var(--fhi-text-small); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fhi-green-ink); }
+    .arena-leader-model { font-size: var(--fhi-text-subsection); }
+    .arena-leader-stat { margin: 0; }
+    .arena-leader-num { font-size: 2rem; font-weight: 700; color: #5a6b1b; display: block; line-height: 1.1; }
+    .arena-leader-badge { font-weight: 500; vertical-align: middle; }
     .arena-totals { gap: 1rem; }
     .arena-total { padding: 1rem 1.5rem; text-align: center; min-width: 9rem; }
     .arena-total-number { font-size: 2rem; font-weight: 700; color: #5a6b1b; }
@@ -138,6 +174,12 @@
     .arena-table th, .arena-table td { padding: 0.4rem 0.6rem; text-align: left; border-bottom: 1px solid #e5e7eb; }
     .arena-table th.num, .arena-table td.num { text-align: right; }
     .arena-table tr.warming-up td { color: #6b7280; }
+    .arena-table tr.arena-leading td { background: #f6f9ea; font-weight: 600; }
+    /* The win rate reads twice: as a number and as a bar, so the standings show at a glance. */
+    .arena-table th.arena-rate-head { min-width: 9rem; }
+    .arena-rate { white-space: nowrap; }
+    .arena-rate-number { display: inline-block; min-width: 3em; }
+    .arena-rate .arena-bar { display: inline-block; width: 5rem; vertical-align: middle; margin-left: 0.5rem; }
     .arena-columns { display: grid; grid-template-columns: 1fr; gap: 2rem; }
     @media (min-width: 768px) { .arena-columns { grid-template-columns: 1fr 1fr; } }
     .arena-terms { list-style: none; padding: 0; margin: 0; counter-reset: term; }
@@ -145,7 +187,7 @@
     .arena-term-row { display: flex; justify-content: space-between; gap: 1rem; }
     .arena-term-name::before { counter-increment: term; content: counter(term) ". "; color: #6b7280; }
     .arena-term-count { color: #6b7280; white-space: nowrap; }
-    .arena-bar { height: 6px; background: #eef2e4; border-radius: 3px; overflow: hidden; }
-    .arena-bar-fill { height: 100%; background: #a5c422; }
+    .arena-bar { display: block; height: 6px; background: #eef2e4; border-radius: 3px; overflow: hidden; }
+    .arena-bar-fill { display: block; height: 100%; background: #a5c422; }
 </style>
 {% endblock extra_style %}

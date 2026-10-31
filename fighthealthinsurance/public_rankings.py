@@ -1,7 +1,10 @@
 """The public rankings page: ``/chooser/rankings/``.
 
 What the Appeal Arena's votes say about the models, for anyone to read,
-and which conditions and treatments people fight denials over most.
+and which conditions and treatments people fight denials over most. Each
+table names its leader (the first model past PUBLIC_RANKINGS_MIN_SHOWN), and
+``leaders`` at the top of the data repeats the all-time ones so the page and
+the Arena's landing can say who is winning without reading the tables.
 
 Everything on it is either synthetic or aggregate:
 
@@ -23,7 +26,7 @@ from typing import Any, Dict, List, Optional, cast
 
 from django.conf import settings
 from django.core.cache import cache
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.generic import TemplateView
 from loguru import logger
@@ -31,6 +34,7 @@ from loguru import logger
 from fighthealthinsurance import condition_rankings
 from fighthealthinsurance.models import ChooserTask, ChooserVote
 from fighthealthinsurance.staff_views import ModelUsageDashboardView
+from fighthealthinsurance.utils import arena_rankings_page_enabled
 
 PUBLIC_RANKINGS_CACHE_SECONDS = getattr(
     settings, "PUBLIC_RANKINGS_CACHE_SECONDS", 15 * 60
@@ -135,6 +139,31 @@ def _model_rows(kind: str, since: Optional[datetime.datetime]) -> List[Dict[str,
     return out
 
 
+def _leader(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The model winning a table: its first ranked row, or None while every
+    model is still warming up (a leader on three votes is noise, and the
+    page says so instead of crowning one)."""
+    for r in rows:
+        if not r["warming_up"]:
+            return r
+    return None
+
+
+def _table(
+    kind: str, kind_label: str, since: Optional[datetime.datetime]
+) -> Dict[str, Any]:
+    """One leaderboard: its rows, how many of them are ranked (past warming
+    up, so the ones a leader is ahead of), and its leader."""
+    rows = _model_rows(kind, since)
+    return {
+        "kind": kind,
+        "label": kind_label,
+        "rows": rows,
+        "ranked": sum(1 for r in rows if not r["warming_up"]),
+        "leader": _leader(rows),
+    }
+
+
 def _totals(since: Optional[datetime.datetime]) -> Dict[str, int]:
     votes = ChooserVote.objects.filter(task__source=SYNTHETIC_SOURCE)
     if since is not None:
@@ -170,7 +199,7 @@ def compute_rankings(now: Optional[datetime.datetime] = None) -> Dict[str, Any]:
     """Everything the page and its JSON show, uncached."""
     now = now or timezone.now()
     floor = blind_since()
-    windows = []
+    windows: List[Dict[str, Any]] = []
     for slug, label, days in WINDOWS:
         since = _later(now - datetime.timedelta(days=days) if days else None, floor)
         windows.append(
@@ -178,17 +207,17 @@ def compute_rankings(now: Optional[datetime.datetime] = None) -> Dict[str, Any]:
                 "slug": slug,
                 "label": label,
                 "tables": [
-                    {
-                        "kind": kind,
-                        "label": kind_label,
-                        "rows": _model_rows(kind, since),
-                    }
-                    for kind, kind_label in KINDS
+                    _table(kind, kind_label, since) for kind, kind_label in KINDS
                 ],
             }
         )
+    # Who is winning, in one place: the all-time leader of each table, for
+    # the top of the page and for anything that embeds the JSON (the Arena's
+    # own landing shows the appeal-letter standings from it).
+    leaders = {t["kind"]: t["leader"] for t in windows[0]["tables"]}
     return {
         "generated_at": now.isoformat(),
+        "leaders": leaders,
         "min_shown": PUBLIC_RANKINGS_MIN_SHOWN,
         "k_anonymity": condition_rankings.CONDITION_RANKING_MIN_PEOPLE,
         "blind_since": floor.isoformat() if floor else None,
@@ -218,7 +247,17 @@ def rankings() -> Dict[str, Any]:
 
 
 class ChooserRankingsView(TemplateView):
+    """The page and its JSON. Staged behind ARENA_RANKINGS_PAGE_ENABLED: the
+    route always exists so reverse() and templates never break, but every
+    method 404s until the flag is on, and the links to it hide with it
+    (``context_processors.arena_rankings_context``, the sitemap)."""
+
     template_name = "chooser_rankings.html"
+
+    def dispatch(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
+        if not arena_rankings_page_enabled():
+            raise Http404("This page is not available yet.")
+        return super().dispatch(request, *args, **kwargs)
 
     def get(self, request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponse:
         if request.GET.get("format") == "json":

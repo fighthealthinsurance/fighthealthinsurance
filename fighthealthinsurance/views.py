@@ -4275,6 +4275,28 @@ class ChooserView(TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["title"] = "Help Us Improve Our Chooser"
+        # The "I'm not a robot" check at the start of the Arena, on the same
+        # terms as the site's other forms: the page gets the site key only
+        # while the captcha is enforced (ChooserViewSet._captcha_gate).
+        from django_recaptcha.constants import DEFAULT_RECAPTCHA_DOMAIN
+
+        from fighthealthinsurance.forms import ReCaptchaOptionalMixin
+
+        context["captcha_site_key"] = (
+            getattr(settings, "RECAPTCHA_PUBLIC_KEY", "")
+            if ReCaptchaOptionalMixin._is_recaptcha_enabled()
+            else ""
+        )
+        context["recaptcha_domain"] = getattr(
+            settings, "RECAPTCHA_DOMAIN", DEFAULT_RECAPTCHA_DOMAIN
+        )
+        # A session that has passed the check keeps its mark across reloads,
+        # so the page says so and the app asks for no second tick.
+        from fighthealthinsurance.rest_views import ChooserViewSet
+
+        context["captcha_passed"] = bool(
+            self.request.session.get(ChooserViewSet.CAPTCHA_SESSION_KEY)
+        )
 
         # Trigger async pre-fill of tasks so user doesn't have to wait
         from fighthealthinsurance.chooser_tasks import trigger_prefill_async

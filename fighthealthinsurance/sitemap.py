@@ -25,6 +25,7 @@ from loguru import logger
 
 from fighthealthinsurance.utils import (
     ai_assistants_page_enabled,
+    arena_rankings_page_enabled,
     denial_watch_page_enabled,
     medicaid_eligibility_page_enabled,
 )
@@ -56,6 +57,8 @@ class StaticViewSitemap(Sitemap):
             "contact",
             "blog",
             "microsite_directory",
+            # The Appeal Arena (docs/chooser.md).
+            "chooser",
         ]
         # The experimental Medicaid eligibility page only serves (and is only
         # discoverable) when its staging flag is on; see views.py.
@@ -65,6 +68,9 @@ class StaticViewSitemap(Sitemap):
             items.append("ai-assistants")
         if denial_watch_page_enabled():
             items.extend(["denial-watch", "open-enrollment"])
+        # The Arena's public scoreboard, while ARENA_RANKINGS_PAGE_ENABLED.
+        if arena_rankings_page_enabled():
+            items.append("chooser_rankings")
         return items
 
     def location(self, item: str) -> str:

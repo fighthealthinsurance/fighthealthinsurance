@@ -114,6 +114,33 @@ interface Scoreboard {
   fouls: number;
 }
 
+// The "I'm not a robot" check at the start of the Arena, on the same terms
+// as the site's other forms. The page carries the site key only while the
+// captcha is enforced; the tick's token rides on the first next-task
+// request in this header, and the server remembers a good one for the
+// session (ChooserViewSet._captcha_gate), so the box is ticked once.
+const CAPTCHA_HEADER = "X-Recaptcha-Response";
+const CAPTCHA_ERROR = "captcha_required";
+
+interface Grecaptcha {
+  render: (
+    container: HTMLElement,
+    params: {
+      sitekey: string;
+      callback: (token: string) => void;
+      "expired-callback": () => void;
+      "error-callback": () => void;
+    },
+  ) => number;
+  reset: (widgetId?: number) => void;
+}
+
+declare global {
+  interface Window {
+    grecaptcha?: Partial<Grecaptcha>;
+  }
+}
+
 const SCOREBOARD_KEY = "fhi-arena-scoreboard";
 const RANKINGS_URL = "/chooser/rankings/";
 const LABELS = ["A", "B", "C", "D", "E", "F"];
@@ -143,6 +170,194 @@ const writeScoreboard = (board: Scoreboard): void => {
 };
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// The public scoreboard (public_rankings.py, `?format=json`): synthetic
+// votes only, already aggregated, so showing it here gives away nothing
+// about the drafts in play (those are served blind, in random order).
+interface RankingRow {
+  rank: number;
+  model: string;
+  won: number;
+  shown: number;
+  win_rate: number | null;
+  flag_rate: number | null;
+  warming_up: boolean;
+}
+
+interface RankingTable {
+  kind: string;
+  label: string;
+  rows: RankingRow[];
+  leader: RankingRow | null;
+}
+
+interface Rankings {
+  min_shown: number;
+  totals: { votes: number; tasks_judged: number; tasks_ready: number };
+  windows: Array<{ slug: string; label: string; tables: RankingTable[] }>;
+}
+
+const STANDINGS_ROWS = 3;
+
+// "pending" until the first answer, so the link never flashes before a
+// 404; "hidden" when the rankings page answers 404 (it is behind
+// ARENA_RANKINGS_PAGE_ENABLED, and nothing here should link to it then)
+// and when the fetch merely failed: without an answer the page may be
+// off, and the menu and footer link it whenever it is on, so the Arena
+// shows nothing rather than a link that may be a 404.
+type RankingsState = Rankings | "hidden" | "pending";
+
+const fetchRankings = async (): Promise<RankingsState> => {
+  try {
+    const response = await fetch(`${RANKINGS_URL}?format=json`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) {
+      return "hidden";
+    }
+    const data = (await response.json()) as Rankings;
+    return Array.isArray(data.windows) && data.windows.length > 0 ? data : "hidden";
+  } catch {
+    // The standings are a nicety; the Arena works without them.
+    return "hidden";
+  }
+};
+
+const ratePercent = (rate: number | null): string =>
+  rate === null ? "\u2014" : `${Math.round(rate)}%`;
+
+// Who is winning, in a glance: each table's all-time leader and its top few
+// rows, with the link to the full rankings. Without data it is nothing.
+const Standings: React.FC<{ rankings: RankingsState }> = ({ rankings }) => {
+  if (rankings === "hidden" || rankings === "pending") {
+    return null;
+  }
+  const allTime = rankings.windows[0];
+  return (
+    <Paper
+      shadow="sm"
+      p="md"
+      radius="md"
+      withBorder
+      style={{ width: "100%", maxWidth: "760px" }}
+      data-testid="arena-standings"
+    >
+      <Group justify="space-between" align="baseline" mb="xs">
+        <Text fw={700}>Standings</Text>
+        <Text size="xs" c="dimmed">
+          {plural(rankings.totals.votes, "vote")} so far &middot;{" "}
+          {allTime.label.toLowerCase()}
+        </Text>
+      </Group>
+      <SimpleGrid
+        cols={{ base: 1, sm: allTime.tables.length > 1 ? 2 : 1 }}
+        spacing="md"
+      >
+        {allTime.tables.map((table) => {
+          const ranked = table.rows
+            .filter((r) => !r.warming_up)
+            .slice(0, STANDINGS_ROWS);
+          return (
+            <Box key={table.kind}>
+              <Text size="sm" fw={600}>
+                {table.label}
+              </Text>
+              {table.leader ? (
+                <>
+                  <Text size="sm">
+                    <span aria-hidden="true">🏆</span> Leading:{" "}
+                    <strong>{table.leader.model}</strong> with a{" "}
+                    {ratePercent(table.leader.win_rate)} win rate over{" "}
+                    {plural(table.leader.shown, "vote")}.
+                  </Text>
+                  <List size="sm" spacing={2} mt={4} type="ordered">
+                    {ranked.map((row) => (
+                      <List.Item key={row.model}>
+                        {row.model}: {ratePercent(row.win_rate)} win rate
+                        {row.flag_rate !== null && row.flag_rate > 0
+                          ? `, caught making things up ${ratePercent(row.flag_rate)}`
+                          : ""}
+                      </List.Item>
+                    ))}
+                  </List>
+                </>
+              ) : (
+                <Text size="sm" c="dimmed">
+                  No leader yet: a model is ranked once it has been judged{" "}
+                  {plural(rankings.min_shown, "time")}. Your votes decide it.
+                </Text>
+              )}
+            </Box>
+          );
+        })}
+      </SimpleGrid>
+      <Group justify="center" mt="md">
+        <Button
+          component="a"
+          href={RANKINGS_URL}
+          variant="outline"
+          radius="md"
+          size="sm"
+        >
+          See the full rankings
+        </Button>
+      </Group>
+    </Paper>
+  );
+};
+
+// The reCAPTCHA checkbox. The script loads on its own (chooser.html); this
+// waits for it, draws the widget once, and reports the tick's token, or
+// null when it expires. A change of `resetKey` clears the box, for a tick
+// the server would not take.
+const CaptchaBox: React.FC<{
+  siteKey: string;
+  resetKey: number;
+  onToken: (token: string | null) => void;
+}> = ({ siteKey, resetKey, onToken }) => {
+  const boxRef = React.useRef<HTMLDivElement>(null);
+  const widgetRef = React.useRef<number | null>(null);
+  const onTokenRef = React.useRef(onToken);
+  onTokenRef.current = onToken;
+
+  useEffect(() => {
+    let cancelled = false;
+    const tryRender = (): boolean => {
+      const api = window.grecaptcha;
+      if (!boxRef.current || widgetRef.current !== null || !api || !api.render) {
+        return false;
+      }
+      widgetRef.current = api.render(boxRef.current, {
+        sitekey: siteKey,
+        callback: (token: string) => onTokenRef.current(token),
+        "expired-callback": () => onTokenRef.current(null),
+        "error-callback": () => onTokenRef.current(null),
+      });
+      return true;
+    };
+    if (tryRender()) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      if (cancelled || tryRender()) {
+        window.clearInterval(timer);
+      }
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [siteKey]);
+
+  useEffect(() => {
+    if (resetKey > 0 && widgetRef.current !== null && window.grecaptcha?.reset) {
+      window.grecaptcha.reset(widgetRef.current);
+      onTokenRef.current(null);
+    }
+  }, [resetKey]);
+
+  return <div ref={boxRef} data-testid="arena-captcha" />;
+};
 
 // ---------------------------------------------------------------------------
 // Referee aids: the reviewer's verdicts and the citation check
@@ -785,7 +1000,10 @@ const CandidateCard: React.FC<{
 // ---------------------------------------------------------------------------
 // The arena
 
-const ChooserInterface: React.FC = () => {
+const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed: boolean }> = ({
+  captchaSiteKey,
+  captchaAlreadyPassed,
+}) => {
   const [state, setState] = useState<ChooserState>({
     mode: "selection",
     task: null,
@@ -798,23 +1016,106 @@ const ChooserInterface: React.FC = () => {
   });
   const [isSkipping, setIsSkipping] = useState(false);
   const [hasAcceptedTos, setHasAcceptedTos] = useState(false);
+  // The captcha: the tick's token until it is spent, "passed" once the
+  // server has taken one for this session, and a notice when it would not.
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaPassed, setCaptchaPassed] = useState(captchaAlreadyPassed);
+  const [captchaResets, setCaptchaResets] = useState(0);
+  const [captchaNotice, setCaptchaNotice] = useState<string | null>(null);
+  const captchaNeeded = Boolean(captchaSiteKey) && !captchaPassed;
+  const captchaReady = !captchaNeeded || captchaToken !== null;
+  const canStart = hasAcceptedTos && captchaReady;
+
+  // The gate refused a request: the tick was missing, spent or refused, or
+  // the session lost its mark. Back to the landing with the box cleared and
+  // the server's reason. A page that loaded while the captcha was off has
+  // no site key to draw a box with, so it reloads to get one.
+  const backToCaptcha = useCallback(
+    (message: string | undefined) => {
+      if (!captchaSiteKey) {
+        window.location.reload();
+        return;
+      }
+      setCaptchaPassed(false);
+      setCaptchaToken(null);
+      setCaptchaResets((n) => n + 1);
+      setCaptchaNotice(message || "Please tick the \"I'm not a robot\" box, then try again.");
+      setState((prev) => ({ ...prev, mode: "selection", task: null, taskType: null }));
+    },
+    [captchaSiteKey],
+  );
+
+  // The gate's answer, when a response is its 403; undefined otherwise.
+  const captchaRefusal = async (response: Response): Promise<string | undefined> => {
+    if (response.status !== 403) {
+      return undefined;
+    }
+    try {
+      const body = (await response.clone().json()) as { error?: string; message?: string };
+      if (body.error === CAPTCHA_ERROR) {
+        return body.message || "";
+      }
+    } catch {
+      // Not the gate's JSON.
+    }
+    return undefined;
+  };
   const [scoreboard, setScoreboard] = useState<Scoreboard>({ rounds: 0, fouls: 0 });
   const [lastRoundFouls, setLastRoundFouls] = useState(0);
   const [lastRoundTie, setLastRoundTie] = useState(false);
+  const [rankings, setRankings] = useState<RankingsState>("pending");
 
   useEffect(() => {
     setScoreboard(readScoreboard());
+    let cancelled = false;
+    fetchRankings().then((data) => {
+      if (!cancelled) {
+        setRankings(data);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  // Each next-task request takes a number; an answer to an older request
+  // (a double press, a skip racing a reload) is dropped, so it neither
+  // seats a stale case nor sends the referee back to the box.
+  const requestSeq = React.useRef(0);
+
   const fetchNextTask = useCallback(async (taskType: TaskType) => {
+    const seq = ++requestSeq.current;
+    const stale = () => seq !== requestSeq.current;
     setState((prev) => ({ ...prev, mode: "loading", error: null, taskType }));
 
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (captchaToken) {
+        headers[CAPTCHA_HEADER] = captchaToken;
+      }
       const response = await fetch(`/ziggy/rest/chooser/next/${taskType}/`, {
         method: "GET",
-        headers: { "Content-Type": "application/json" },
+        headers,
         credentials: "include",
       });
+
+      const refusal = await captchaRefusal(response);
+      if (stale()) {
+        return;
+      }
+      if (refusal !== undefined) {
+        backToCaptcha(refusal);
+        return;
+      }
+      if (captchaToken && (response.ok || response.status === 404)) {
+        // A tick is single use, and both of these answers come from past
+        // the gate (an empty arena is a 404), so the session now holds
+        // the mark. Any other failure may have come before the gate and
+        // spent nothing; the next try sends the tick again.
+        setCaptchaToken(null);
+        setCaptchaPassed(true);
+        setCaptchaNotice(null);
+      }
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -826,6 +1127,9 @@ const ChooserInterface: React.FC = () => {
       }
 
       const task: ChooserTask = await response.json();
+      if (stale()) {
+        return;
+      }
       setState((prev) => ({
         ...prev,
         mode: "voting",
@@ -836,13 +1140,16 @@ const ChooserInterface: React.FC = () => {
         tiedIds: [],
       }));
     } catch (error) {
+      if (stale()) {
+        return;
+      }
       setState((prev) => ({
         ...prev,
         mode: "error",
         error: error instanceof Error ? error.message : "An error occurred",
       }));
     }
-  }, []);
+  }, [captchaToken, backToCaptcha]);
 
   const submitVote = useCallback(async () => {
     if (!state.task) return;
@@ -874,6 +1181,11 @@ const ChooserInterface: React.FC = () => {
       });
 
       if (!response.ok) {
+        const refusal = await captchaRefusal(response);
+        if (refusal !== undefined) {
+          backToCaptcha(refusal);
+          return;
+        }
         const errorData = await response.json();
         throw new Error(errorData.error || "Failed to submit vote");
       }
@@ -898,7 +1210,7 @@ const ChooserInterface: React.FC = () => {
     state.tieMode,
     state.tiedIds,
     scoreboard,
-  ]);
+  , backToCaptcha]);
 
   const handleSelectCandidate = useCallback((candidate: ChooserCandidate) => {
     // A flagged draft cannot be picked (or tied): the voter clears the flag
@@ -975,6 +1287,11 @@ const ChooserInterface: React.FC = () => {
       });
 
       if (!response.ok) {
+        const refusal = await captchaRefusal(response);
+        if (refusal !== undefined) {
+          backToCaptcha(refusal);
+          return;
+        }
         const errorData = await response.json();
         throw new Error(errorData.error || "Failed to skip task");
       }
@@ -991,7 +1308,7 @@ const ChooserInterface: React.FC = () => {
     } finally {
       setIsSkipping(false);
     }
-  }, [state.task, state.taskType, fetchNextTask]);
+  }, [state.task, state.taskType, fetchNextTask, backToCaptcha]);
 
   const resetToSelection = useCallback(() => {
     setState({
@@ -1101,34 +1418,59 @@ const ChooserInterface: React.FC = () => {
               </Anchor>
             </Text>
           </Paper>
+          {captchaNeeded && (
+            <Paper shadow="sm" p="md" radius="md" withBorder style={{ width: "100%", maxWidth: "760px" }}>
+              <Text size="sm" mb="xs">
+                One more thing: show us you are a person, not a script.
+              </Text>
+              <CaptchaBox
+                siteKey={captchaSiteKey}
+                resetKey={captchaResets}
+                onToken={(token) => {
+                  setCaptchaToken(token);
+                  if (token) {
+                    setCaptchaNotice(null);
+                  }
+                }}
+              />
+              {captchaNotice && (
+                <Text size="sm" c="red" mt="xs" data-testid="arena-captcha-notice">
+                  {captchaNotice}
+                </Text>
+              )}
+            </Paper>
+          )}
           {!hasAcceptedTos && (
             <Text size="sm" c="orange" ta="center">
               Please accept the Terms of Service before stepping into the Arena.
+            </Text>
+          )}
+          {hasAcceptedTos && !captchaReady && (
+            <Text size="sm" c="orange" ta="center">
+              Please tick the &ldquo;I&rsquo;m not a robot&rdquo; box before stepping into the Arena.
             </Text>
           )}
           <Group gap="lg" mt="md">
             <Button
               size="xl"
               radius="md"
-              disabled={!hasAcceptedTos}
+              disabled={!canStart}
               onClick={() => fetchNextTask("appeal")}
-              style={primaryButton(hasAcceptedTos)}
+              style={primaryButton(canStart)}
             >
               Judge Appeal Letters
             </Button>
             <Button
               size="xl"
               radius="md"
-              disabled={!hasAcceptedTos}
+              disabled={!canStart}
               onClick={() => fetchNextTask("chat")}
-              style={primaryButton(hasAcceptedTos)}
+              style={primaryButton(canStart)}
             >
               Judge Chat Replies
             </Button>
           </Group>
-          <Text size="sm" c="dimmed" ta="center">
-            Curious who is winning? <Anchor href={RANKINGS_URL}>See the rankings</Anchor>.
-          </Text>
+          <Standings rankings={rankings} />
           <Text size="sm" c="dimmed" ta="center">
             Thanks for helping us choose better responses and fight bad insurance decisions 💪
           </Text>
@@ -1190,9 +1532,7 @@ const ChooserInterface: React.FC = () => {
               Switch arena
             </Button>
           </Group>
-          <Text size="sm" c="dimmed" ta="center">
-            <Anchor href={RANKINGS_URL}>See how the models rank</Anchor>
-          </Text>
+          <Standings rankings={rankings} />
           <Text size="sm" c="dimmed" ta="center">
             Thanks for helping us choose better responses and fight bad insurance decisions 💪
           </Text>
@@ -1360,7 +1700,7 @@ const App: React.FC = () => {
             padding: "20px 0",
           }}
         >
-          <ChooserInterface />
+          <ChooserInterface captchaSiteKey={captchaSiteKey} captchaAlreadyPassed={captchaAlreadyPassed} />
         </Box>
       </ErrorBoundary>
     </MantineProvider>
@@ -1369,6 +1709,8 @@ const App: React.FC = () => {
 
 // Mount the React app
 const container = document.getElementById("chooser-root");
+const captchaSiteKey = container?.dataset.recaptchaSiteKey ?? "";
+const captchaAlreadyPassed = container?.dataset.captchaPassed === "1";
 if (container) {
   const root = createRoot(container);
   root.render(<App />);

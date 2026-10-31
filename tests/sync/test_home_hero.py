@@ -1,5 +1,6 @@
 """The home hero, as Melanie chose it (2026-10-02): everything on the
-photograph in one band. The headline, Generate an Appeal and four ways in,
+photograph in one band. The headline, Generate an Appeal and five ways in
+(the Appeal Arena joined the four on 2026-10-31),
 the trust chips, Why Fight Health Insurance? beside Pay what you want, and
 How It Works. Built without Bootstrap's classes, with a focus ring you can
 see on the photograph."""
@@ -29,15 +30,23 @@ def _body(selector: str) -> str:
 
 
 class HomeHeroTest(SimpleTestCase):
-    def test_the_hero_offers_four_ways_in_beside_generate_an_appeal(self):
+    def test_the_hero_offers_five_ways_in_beside_generate_an_appeal(self):
         for link_id in (
             "scanlink",
             "explaindeniallink",
             "chatlink",
             "howtohelp",
+            "improvemodels",
             "professional",
         ):
             self.assertIn(f'id="{link_id}"', HERO)
+
+    def test_the_arena_button_asks_for_help_improving_the_models(self):
+        self.assertIn(
+            '<a href="{% url \'chooser\' %}" class="fhi-button secondary-cta" '
+            'id="improvemodels">Help Improve Our Models</a>',
+            HERO,
+        )
 
     def test_why_pay_and_how_it_works_sit_in_the_hero(self):
         for block in ("benefits-card", "payment-card-wrapper", 'id="how-it-works"'):

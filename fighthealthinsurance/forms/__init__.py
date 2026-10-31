@@ -150,6 +150,17 @@ class ReCaptchaOptionalMixin(_ReCaptchaMixinBase):
         )
 
 
+class ChooserCaptchaForm(ReCaptchaOptionalMixin, forms.Form):
+    """The Appeal Arena's "I'm not a robot" check: the same checkbox the
+    site's other public forms use. The Arena is a React page, so the tick's
+    token arrives on the first next-task request (rest_views.ChooserViewSet)
+    rather than in a form post; checking it through this form keeps one
+    rule for when the captcha is on (both keys set, RECAPTCHA_TESTING off)
+    and one reading of Google's answers (CheckboxReCaptchaField)."""
+
+    captcha = forms.CharField(required=False, widget=forms.HiddenInput())
+
+
 # Actual forms
 class _InterestedProfessionalFieldsForm(forms.ModelForm):
     """Shared field declarations for the interested-professional intake forms.

@@ -216,12 +216,19 @@
           <div class="link-description">Which ML models users pick and what state each is in now, for the chooser and the denial flow (all time / 1 day / 7 days / 30 days), plus appeal call outcomes (1 day / 7 days / 30 days), and the appeal prompt switch with its comparison; or all of it by calendar month or quarter</div>
         </a>
       </li>
+      {% if arena_rankings_enabled %}
       <li>
         <a href="{% url 'chooser_rankings' %}">
           <strong>Appeal Arena Rankings (public)</strong>
           <div class="link-description">The public, synthetic-only view of the chooser's votes: model win rates and how often each model is flagged for making things up, plus the most-appealed conditions and treatments (k-anonymous, vocabulary-checked). What the world sees; check it before a promo</div>
         </a>
       </li>
+      {% else %}
+      <li>
+        <strong>Appeal Arena Rankings (public)</strong>
+        <div class="link-description">Off: the public rankings page serves 404 and nothing links to it until ARENA_RANKINGS_PAGE_ENABLED is set</div>
+      </li>
+      {% endif %}
       <li>
         <a href="{% url 'model_backend_status' %}">
           <strong>Model Backend Status</strong>

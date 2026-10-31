@@ -12,6 +12,7 @@ from django.http import FileResponse, Http404, StreamingHttpResponse
 from django.http.response import HttpResponseBase
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import get_object_or_404
+from django.core.cache import cache
 from django.utils import timezone
 
 from asgiref.sync import async_to_sync
@@ -2306,6 +2307,88 @@ class ChooserViewSet(viewsets.ViewSet):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    # The "I'm not a robot" check at the start of the Arena. The page sends
+    # the tick's token in this header with its first next-task request; a
+    # good one marks the session, so the box is ticked once per session,
+    # not once per round. Votes and skips then need the mark too.
+    CAPTCHA_HEADER = "X-Recaptcha-Response"
+    CAPTCHA_SESSION_KEY = "chooser_captcha_passed"
+    CAPTCHA_ERROR = "captcha_required"
+    # Every token sent is a call to Google from a worker, on an endpoint
+    # anyone can reach, so an address gets this many checks per window
+    # (counted in the shared cache) before it is told to wait. A person
+    # ticks once; a flood of junk tokens stops at the cap.
+    CAPTCHA_MAX_CHECKS = 20
+    CAPTCHA_CHECK_WINDOW_SECONDS = 10 * 60
+
+    @staticmethod
+    def _client_address(request: Request) -> str:
+        """The address a captcha check is charged to: what Cloudflare saw
+        (CF-Connecting-IP, which it overwrites on every request, so the
+        requester cannot pick it; see client_network), else the peer, for
+        local runs and in-cluster calls that never passed Cloudflare."""
+        from fighthealthinsurance import client_network
+
+        address = client_network.cf_ip_from_meta(request.META)
+        if address and address != client_network.NO_ADDRESS:
+            return address
+        return str(request.META.get("REMOTE_ADDR", ""))
+
+    def _captcha_check_allowed(self, request: Request) -> bool:
+        """Count this check against the address; False once the window's
+        cap is spent. A cache that cannot answer allows the check: the
+        cap is a guard, not the gate."""
+        key = f"chooser_captcha_checks:{self._client_address(request)}"
+        try:
+            if cache.add(key, 1, self.CAPTCHA_CHECK_WINDOW_SECONDS):
+                return True
+            return int(cache.incr(key)) <= self.CAPTCHA_MAX_CHECKS
+        except Exception as e:
+            logger.debug(f"Captcha check cap unavailable: {e}")
+            return True
+
+    def _captcha_gate(self, request: Request) -> Optional[Response]:
+        """None when the captcha is off (see ReCaptchaOptionalMixin) or this
+        session has passed it, else the 403 to answer with. The token is
+        checked with Google through ChooserCaptchaForm, the same field the
+        site's other forms use, so its reasons (an unticked box, an expired
+        or reused tick, Google out of reach, a refused answer) come back as
+        that field's codes in ``code`` with its message in ``message``."""
+        from fighthealthinsurance.forms import (
+            ChooserCaptchaForm,
+            ReCaptchaOptionalMixin,
+        )
+
+        if not ReCaptchaOptionalMixin._is_recaptcha_enabled():
+            return None
+        if request.session.get(self.CAPTCHA_SESSION_KEY):
+            return None
+        token = request.headers.get(self.CAPTCHA_HEADER, "")
+        if token and not self._captcha_check_allowed(request):
+            return Response(
+                {
+                    "error": self.CAPTCHA_ERROR,
+                    "code": "captcha_rate_limited",
+                    "message": "Too many tries. Please wait a few minutes, then tick the box again.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        form = ChooserCaptchaForm(data={"g-recaptcha-response": token} if token else {})
+        if form.is_valid():
+            request.session[self.CAPTCHA_SESSION_KEY] = True
+            request.session.save()
+            return None
+        errors = form.errors.as_data().get("captcha", [])
+        code = next((str(e.code) for e in errors if e.code), "required")
+        message = next(
+            (m for e in errors for m in e.messages),
+            'Please tick the "I\'m not a robot" box first.',
+        )
+        return Response(
+            {"error": self.CAPTCHA_ERROR, "code": code, "message": message},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     def _get_session_key(self, request: Request) -> str:
         """Get or create a session key for the request."""
         if not request.session.session_key:
@@ -2337,6 +2420,9 @@ class ChooserViewSet(viewsets.ViewSet):
         3. If none, select tasks with the fewest total votes
         4. Exclude tasks where this session key has already voted or skipped
         """
+        denied = self._captcha_gate(request)
+        if denied is not None:
+            return denied
         session_key = self._get_session_key(request)
 
         # Get tasks that this session has already voted on or skipped
@@ -2477,6 +2563,9 @@ class ChooserViewSet(viewsets.ViewSet):
                 serializers.ErrorSerializer({"error": str(serializer.errors)}).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        denied = self._captcha_gate(request)
+        if denied is not None:
+            return denied
 
         session_key = self._get_session_key(request)
         task_id = serializer.validated_data["task_id"]
@@ -2696,6 +2785,9 @@ class ChooserViewSet(viewsets.ViewSet):
                 serializers.ErrorSerializer({"error": str(serializer.errors)}).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        denied = self._captcha_gate(request)
+        if denied is not None:
+            return denied
 
         session_key = self._get_session_key(request)
         task_id = serializer.validated_data["task_id"]

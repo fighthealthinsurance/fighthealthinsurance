@@ -1384,3 +1384,199 @@ class ChooserVoteIntegrityTest(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(ChooserVote.objects.count(), 0)
+
+
+CAPTCHA_ON = dict(
+    RECAPTCHA_TESTING=False,
+    RECAPTCHA_PUBLIC_KEY="test-public-key",
+    RECAPTCHA_PRIVATE_KEY="test-private-key",
+)
+
+
+def _google_says(is_valid, error_codes=()):
+    """What django-recaptcha's client returns for a tick."""
+    return MagicMock(is_valid=is_valid, error_codes=list(error_codes))
+
+
+class ChooserCaptchaGateTest(APITestCase):
+    """The "I'm not a robot" check at the start of the Arena: on the same
+    terms as the site's other forms (both keys set, testing off), the first
+    next-task request carries the tick's token, a good one marks the
+    session, and a vote or skip needs that mark too."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+    CAPTCHA_HEADER = "HTTP_X_RECAPTCHA_RESPONSE"
+
+    def setUp(self):
+        self.task = ChooserTask.objects.create(
+            task_type="appeal", status="READY", context_json={"procedure": "PT"}
+        )
+        for i, name in enumerate(("model-a", "model-b")):
+            ChooserCandidate.objects.create(
+                task=self.task,
+                candidate_index=i,
+                kind="appeal_letter",
+                model_name=name,
+                content=f"Draft {name}",
+            )
+        self.next_url = reverse("chooser-next-appeal")
+        self.skip_url = reverse("chooser-skip")
+
+    def test_off_in_testing_mode_no_tick_is_asked_for(self):
+        """RECAPTCHA_TESTING is on in the test settings, as in dev."""
+        response = self.client.get(self.next_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    @override_settings(**CAPTCHA_ON)
+    def test_without_a_tick_the_arena_asks_for_one(self):
+        with patch("fighthealthinsurance.forms.recaptcha_client.submit") as submit:
+            response = self.client.get(self.next_url)
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.json()["error"], "captcha_required")
+        self.assertEqual(response.json()["code"], "required")
+        submit.assert_not_called()
+
+    @override_settings(**CAPTCHA_ON)
+    def test_a_good_tick_opens_the_session_once(self):
+        with patch(
+            "fighthealthinsurance.forms.recaptcha_client.submit",
+            return_value=_google_says(True),
+        ) as submit:
+            first = self.client.get(self.next_url, **{self.CAPTCHA_HEADER: "tick-1"})
+            # The next round carries no token: the session remembers.
+            second = self.client.get(self.next_url)
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        submit.assert_called_once()
+        self.assertEqual(submit.call_args.kwargs["recaptcha_response"], "tick-1")
+        self.assertTrue(self.client.session["chooser_captcha_passed"])
+
+    @override_settings(**CAPTCHA_ON)
+    def test_a_refused_tick_is_told_apart_from_an_expired_one(self):
+        with patch(
+            "fighthealthinsurance.forms.recaptcha_client.submit",
+            return_value=_google_says(False, ["invalid-input-response"]),
+        ):
+            refused = self.client.get(self.next_url, **{self.CAPTCHA_HEADER: "bad"})
+        with patch(
+            "fighthealthinsurance.forms.recaptcha_client.submit",
+            return_value=_google_says(False, ["timeout-or-duplicate"]),
+        ):
+            expired = self.client.get(self.next_url, **{self.CAPTCHA_HEADER: "old"})
+
+        self.assertEqual(refused.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(refused.json()["code"], "captcha_invalid")
+        self.assertEqual(expired.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(expired.json()["code"], "captcha_expired")
+        self.assertIn("Tick it again", expired.json()["message"])
+        self.assertNotIn("chooser_captcha_passed", self.client.session)
+
+    @override_settings(**CAPTCHA_ON)
+    def test_google_out_of_reach_is_a_retry_not_a_refusal(self):
+        with patch(
+            "fighthealthinsurance.forms.recaptcha_client.submit",
+            side_effect=OSError("no route"),
+        ):
+            response = self.client.get(self.next_url, **{self.CAPTCHA_HEADER: "tick"})
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.json()["code"], "captcha_error")
+
+    @override_settings(**CAPTCHA_ON)
+    def test_a_skip_or_vote_needs_the_session_mark_too(self):
+        body = {"task_id": self.task.id}
+        before = self.client.post(self.skip_url, body, format="json")
+        self.assertFalse(ChooserSkip.objects.filter(task=self.task).exists())
+        with patch(
+            "fighthealthinsurance.forms.recaptcha_client.submit",
+            return_value=_google_says(True),
+        ):
+            self.client.get(self.next_url, **{self.CAPTCHA_HEADER: "tick"})
+        after = self.client.post(self.skip_url, body, format="json")
+
+        self.assertEqual(before.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(before.json()["error"], "captcha_required")
+        self.assertEqual(after.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            self.client.post(reverse("chooser-vote"), {}, format="json").status_code,
+            status.HTTP_400_BAD_REQUEST,
+            "a vote with a bad body is a bad request even once the mark is set",
+        )
+
+    @override_settings(**CAPTCHA_ON)
+    def test_a_well_formed_vote_after_the_mark_is_stored(self):
+        a, b = ChooserCandidate.objects.filter(task=self.task).order_by("candidate_index")
+        body = {
+            "task_id": self.task.id,
+            "chosen_candidate_id": candidate_token(a.id),
+            "presented_candidate_ids": [candidate_token(a.id), candidate_token(b.id)],
+        }
+        with patch(
+            "fighthealthinsurance.forms.recaptcha_client.submit",
+            return_value=_google_says(True),
+        ):
+            self.client.get(self.next_url, **{self.CAPTCHA_HEADER: "tick"})
+        response = self.client.post(reverse("chooser-vote"), body, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(ChooserVote.objects.filter(task=self.task).count(), 1)
+
+    @override_settings(
+        **CAPTCHA_ON,
+        # The test settings use DummyCache, which would count nothing.
+        CACHES={
+            "default": {
+                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+                "LOCATION": "chooser-captcha-cap",
+            }
+        },
+    )
+    def test_too_many_checks_from_one_address_are_told_to_wait(self):
+        """Each token is a call to Google; the cap stops a flood of junk."""
+        from django.core.cache import cache
+
+        from fighthealthinsurance.rest_views import ChooserViewSet
+
+        cache.clear()
+        with patch(
+            "fighthealthinsurance.forms.recaptcha_client.submit",
+            return_value=_google_says(False, ["invalid-input-response"]),
+        ) as submit, patch.object(ChooserViewSet, "CAPTCHA_MAX_CHECKS", 2):
+            answers = [
+                self.client.get(
+                    self.next_url,
+                    **{self.CAPTCHA_HEADER: f"junk-{i}"},
+                    # The address Cloudflare saw; a forged X-Forwarded-For
+                    # does not move the count.
+                    HTTP_CF_CONNECTING_IP="203.0.113.9",
+                    HTTP_X_FORWARDED_FOR=f"198.51.100.{i}",
+                )
+                for i in range(3)
+            ]
+
+        self.assertEqual([r.status_code for r in answers], [403, 403, 403])
+        self.assertEqual(
+            [r.json()["code"] for r in answers],
+            ["captcha_invalid", "captcha_invalid", "captcha_rate_limited"],
+        )
+        self.assertEqual(submit.call_count, 2, "the third token never reached Google")
+
+    @override_settings(**CAPTCHA_ON)
+    def test_a_well_formed_vote_without_the_mark_is_refused_and_not_stored(self):
+        """The gate sits after the body check, so a vote that would count
+        is still turned away, and nothing is written."""
+        a, b = ChooserCandidate.objects.filter(task=self.task).order_by("candidate_index")
+        body = {
+            "task_id": self.task.id,
+            "chosen_candidate_id": candidate_token(a.id),
+            "presented_candidate_ids": [candidate_token(a.id), candidate_token(b.id)],
+        }
+        with patch("fighthealthinsurance.forms.recaptcha_client.submit") as submit:
+            response = self.client.post(reverse("chooser-vote"), body, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.json()["error"], "captcha_required")
+        self.assertEqual(ChooserVote.objects.filter(task=self.task).count(), 0)
+        submit.assert_not_called()
