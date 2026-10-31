@@ -311,6 +311,21 @@ class RegulatorEscalationReasonsTest(TestCase):
         denial = _FakeDenial(state="", regulator=regulator)
         self.assertEqual(regulator_escalation_reasons(denial), [])
 
+    def test_a_regulator_row_without_a_regex_is_named_when_its_name_is_in_the_letter(
+        self,
+    ):
+        """The state rows the model's answer creates carry no regex; the
+        letter naming one is still the letter naming it."""
+        regulator = _fake_regulator("Texas Department of Insurance", regex="")
+        denial = _FakeDenial(
+            state="",
+            regulator=regulator,
+            denial_text="You may contact the Texas  Department of\nInsurance.",
+        )
+        reasons = regulator_escalation_reasons(denial)
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("Texas Department of Insurance", reasons[0])
+
     def test_first_denial_rights_notices_are_not_an_appeal_already_decided(self):
         for text in (
             "You have the right to appeal our initial determination within 180 days.",

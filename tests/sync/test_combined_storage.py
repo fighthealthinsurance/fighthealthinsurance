@@ -424,6 +424,44 @@ class TestCombinedStorageSaveWhereALaterBackendHoldsTheName(TestCase):
         self.assertEqual(contents, [b"new plan"] * 3)
 
 
+class TestCombinedStorageSaveWhereALaterBackendHoldsTheUniqueName(TestCase):
+    """The race unique_name leaves: backend 1 already holds the very name
+    the save makes. That backend's file is kept, and its renamed copy of the
+    new upload removed, as before unique names."""
+
+    TOKEN = "T" * NAME_TOKEN_LENGTH
+
+    def setUp(self):
+        dirs = [tempfile.TemporaryDirectory() for _ in range(3)]
+        for d in dirs:
+            self.addCleanup(d.cleanup)
+        self.backends = [FileSystemStorage(location=d.name) for d in dirs]
+        self.taken = f"SBC_{self.TOKEN}.pdf"
+        self.backends[1].save(self.taken, ContentFile(b"older plan"))
+        self.storage = CombinedStorage(*self.backends)
+        with patch(
+            "fighthealthinsurance.combined_storage.get_random_string",
+            return_value=self.TOKEN,
+        ):
+            self.name = self.storage.save("SBC.pdf", ContentFile(b"new plan"))
+
+    def read(self, backend):
+        with backend.open(self.name) as f:
+            return f.read()
+
+    def test_the_generated_name_is_returned(self):
+        self.assertEqual(self.name, self.taken)
+
+    def test_each_backend_holds_what_it_should_under_that_name(self):
+        self.assertEqual(
+            [self.read(b) for b in self.backends],
+            [b"new plan", b"older plan", b"new plan"],
+        )
+
+    def test_that_backend_keeps_no_extra_copy(self):
+        self.assertEqual(self.backends[1].listdir("")[1], [self.taken])
+
+
 class TestUniqueName(TestCase):
     def test_keeps_the_extension_last(self):
         self.assertTrue(unique_name("SBC.pdf").endswith(".pdf"))

@@ -61,14 +61,21 @@ PLAN_KINDS = frozenset(
 )
 
 
+def _spaced(text: str) -> str:
+    """``text`` lowercased with each run of whitespace as one space."""
+    return " ".join(text.lower().split())
+
+
 def letter_names_regulator(denial: Any) -> bool:
     """Whether the denial letter itself names the regulator linked to it.
 
     A regex match (``ProcessDenialRegex.get_regulator``) means the letter
     names the regulator; a regulator the model inferred from the letter is
-    linked with no match, so it is only who likely oversees the plan. Text
-    that says "your letter names X", and signals documented as "the letter
-    named ERISA", must check this rather than the bare link.
+    linked with no match, so it is only who likely oversees the plan. A row
+    with no regex (the state departments and agencies ``_regulator_row_for``
+    creates) is named when its name is in the letter. Text that says "your
+    letter names X", and signals documented as "the letter named ERISA",
+    must check this rather than the bare link.
     """
     regulator = getattr(denial, "regulator", None)
     if regulator is None:
@@ -77,8 +84,12 @@ def letter_names_regulator(denial: Any) -> bool:
     positive: Any = getattr(regulator, "regex", None)
     negative: Any = getattr(regulator, "negative_regex", None)
     try:
-        # An empty pattern compiles to match-everything, so it names nothing.
-        if not getattr(positive, "pattern", "") or positive.search(text) is None:
+        # An empty pattern compiles to match-everything, so the row's name
+        # stands in for it.
+        if not getattr(positive, "pattern", ""):
+            name = _spaced(getattr(regulator, "name", "") or "")
+            return bool(name) and name in _spaced(text)
+        if positive.search(text) is None:
             return False
         if getattr(negative, "pattern", "") and negative.search(text) is not None:
             return False

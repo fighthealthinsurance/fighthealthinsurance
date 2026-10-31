@@ -470,6 +470,7 @@ def share_opt_in_copies(
     details: Mapping[str, Any],
     hashed_email: Optional[str],
     document_type: str = "other",
+    already_shared: Optional[set[str]] = None,
 ) -> list[PolicyDocument]:
     """Shared copies of files a person also ticked the box to share, made
     once the page's own work is saved, as rows of their own.
@@ -477,6 +478,9 @@ def share_opt_in_copies(
     Only files that pass validate_shared_document are shared, within today's
     budgets; the rest are left out without a word, since the page they came
     from has already done what it was for. Never raises, for the same reason.
+    With ``already_shared`` (fingerprints), a passing file whose fingerprint
+    is in it, or that repeats one passed earlier in ``files``, is left out
+    too.
     """
     from django.core.exceptions import ValidationError
 
@@ -500,11 +504,22 @@ def share_opt_in_copies(
             except ValidationError:
                 continue
             passing.append(uploaded)
-        if len(passing) < len(files):
+        if len(passing) < len(candidates):
             logger.info(
-                f"Left {len(files) - len(passing)} opted-in file(s) from {source} "
+                f"Left {len(candidates) - len(passing)} opted-in file(s) from {source} "
                 "unshared: they failed the closer look"
             )
+        if already_shared is not None:
+            # After the closer look, so a copy that fails it never stands in
+            # for one that passes.
+            fresh: list[UploadedFile] = []
+            for uploaded in passing:
+                digest = fingerprint(uploaded)
+                if digest in already_shared:
+                    continue
+                already_shared.add(digest)
+                fresh.append(uploaded)
+            passing = fresh
         if not passing:
             return []
         if daily_limit_problem(request, passing, source=source):
@@ -545,29 +560,20 @@ def share_explain_policy_copy(
     )
 
 
-def _not_yet_shared_from_appeal(
-    files: Sequence[UploadedFile], hashed_email: Optional[str]
-) -> list[UploadedFile]:
-    """``files`` less any this address already shared from an appeal, and
-    less a second pick of one file in the same upload."""
-    held: set[str] = set()
-    if hashed_email:
-        held = set(
-            PolicyDocument.objects.filter(
-                source=PolicyDocument.SOURCE_SHARED_APPEAL,
-                hashed_email=hashed_email,
-            )
-            .exclude(fingerprint="")
-            .values_list("fingerprint", flat=True)
+def _shared_from_appeal(hashed_email: Optional[str]) -> set[str]:
+    """The fingerprints of files this address already shared from an appeal.
+    One that could not be read is left out, since reading it again may work."""
+    if not hashed_email:
+        return set()
+    return set(
+        PolicyDocument.objects.filter(
+            source=PolicyDocument.SOURCE_SHARED_APPEAL,
+            hashed_email=hashed_email,
         )
-    fresh: list[UploadedFile] = []
-    for uploaded in files:
-        digest = fingerprint(uploaded)
-        if digest in held:
-            continue
-        held.add(digest)
-        fresh.append(uploaded)
-    return fresh
+        .exclude(fingerprint="")
+        .exclude(processing_status=PolicyDocument.PROCESSING_UNREADABLE)
+        .values_list("fingerprint", flat=True)
+    )
 
 
 def share_appeal_plan_documents(
@@ -591,13 +597,11 @@ def share_appeal_plan_documents(
         details = details_from_denial(denial)
         # The appeal keeps one copy of each file (a replayed post, or the
         # same file picked again), so research gets one too.
-        files = _not_yet_shared_from_appeal(files, denial.hashed_email)
+        already_shared = _shared_from_appeal(denial.hashed_email)
     except Exception:
         logger.opt(exception=True).warning(
             "Could not read the appeal for an opted-in share"
         )
-        return []
-    if not files:
         return []
     return share_opt_in_copies(
         request,
@@ -605,6 +609,7 @@ def share_appeal_plan_documents(
         source=PolicyDocument.SOURCE_SHARED_APPEAL,
         details=details,
         hashed_email=denial.hashed_email,
+        already_shared=already_shared,
     )
 
 

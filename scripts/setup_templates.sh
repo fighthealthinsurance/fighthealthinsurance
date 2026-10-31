@@ -60,11 +60,17 @@ npm run build
 popd
 
 # Waited on one at a time: a bare `wait` returns 0 whatever they exit with,
-# so a template that fails validation would not stop the build.
+# so a template that fails validation would not stop the build. Its status is
+# kept until collectstatic is done too, so set -e cannot exit with that still
+# writing.
 ./manage.py validate_templates &
 validate_pid=$!
 ./manage.py collectstatic --no-input "${COLLECTSTATIC_IGNORES[@]}" &
 collectstatic_pid=$!
-wait "${validate_pid}"
+validate_status=0
+wait "${validate_pid}" || validate_status=$?
 wait "${collectstatic_pid}"
+if [ "${validate_status}" -ne 0 ]; then
+  exit "${validate_status}"
+fi
 

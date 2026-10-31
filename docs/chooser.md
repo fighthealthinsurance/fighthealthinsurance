@@ -239,10 +239,10 @@ interview are version 2; older appeal tasks and every chat task are 1. The
 version marks the pipeline, not what each step found. The next-task endpoint
 serves the newest version first (then fewest votes, then oldest), so new
 cases collect votes before old ones, which stay votable; a judge who is
-warming up (see below) is ramped through the cases by complexity, newest
-version first among those judged equally often (an older case judged fewer
-than `CHOOSER_WARMUP_SATURATION_VOTES` times still comes before a newer one
-judged that often). Only tasks at the
+warming up (see below) is served appeal cases with evidence first, then
+cases judged fewer than `CHOOSER_WARMUP_SATURATION_VOTES` times, then the
+newest version, then by complexity (so an older case still short of that
+many votes comes before a newer one that has them). Only tasks at the
 current version count as fresh for the refill (`_fresh_tasks`), so unvoted
 old tasks never hold off generating new ones.
 

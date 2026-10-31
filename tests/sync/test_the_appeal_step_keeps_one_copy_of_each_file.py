@@ -174,6 +174,45 @@ class TheFingerprintIsKeyedTest(_OneCopyTestCase):
             ).count(),
             1,
         )
+        self.assertEqual(
+            shared_plan_documents.shared_today(PolicyDocument.SOURCE_SHARED_APPEAL),
+            1,
+        )
+
+    def test_a_shared_copy_that_could_not_be_read_is_shared_again(self):
+        """Unreadable can mean the reads ran out of retries, so the same file
+        again is worth a second try."""
+        self.post([pdf()], share_for_research="on")
+        PolicyDocument.objects.filter(
+            source=PolicyDocument.SOURCE_SHARED_APPEAL
+        ).update(processing_status=PolicyDocument.PROCESSING_UNREADABLE)
+        self.post([pdf()], share_for_research="on")
+        self.assertEqual(
+            PolicyDocument.objects.filter(
+                source=PolicyDocument.SOURCE_SHARED_APPEAL
+            ).count(),
+            2,
+        )
+
+    def test_a_copy_that_fails_the_closer_look_does_not_stand_in_for_one_that_passes(
+        self,
+    ):
+        from django.core.exceptions import ValidationError
+
+        with patch(
+            "fighthealthinsurance.chat_forms.validate_shared_document",
+            side_effect=[ValidationError("not this one"), None],
+        ):
+            self.post(
+                [pdf(name="first.pdf"), pdf(name="second.pdf")],
+                share_for_research="on",
+            )
+        self.assertEqual(
+            PolicyDocument.objects.filter(
+                source=PolicyDocument.SOURCE_SHARED_APPEAL
+            ).count(),
+            1,
+        )
 
 
 class TwoSavesAtOnceTest(_OneCopyTestCase):
