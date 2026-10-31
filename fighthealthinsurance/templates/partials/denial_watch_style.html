@@ -116,6 +116,8 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
   .dw-mix-marketplace { fill: var(--dw-health-5); background-color: var(--dw-health-5); }
   .dw-mix-uninsured { fill: var(--dw-paper); background-color: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-health-3); }
   .dw-mix-donut path.dw-mix-uninsured { stroke: var(--dw-health-3); }
+  /* The job slice is too light to stand out from white on its own, so it gets the empty slice's outline. */
+  .dw-mix-donut path.dw-mix-job { stroke: var(--dw-health-3); }
   .dw-mix-list { display: grid; gap: var(--fhi-space-1); padding: 0; list-style: none; font-size: var(--fhi-text-small); color: var(--fhi-ink-2); }
   .dw-mix-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--fhi-space-2); align-items: baseline; }
   .dw-mix-list .dw-num { font-weight: 700; color: var(--fhi-ink); }

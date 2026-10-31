@@ -722,17 +722,17 @@ class TestOpenEnrollmentPopulation(TestCase):
 
 def _kind_colours() -> dict[str, tuple[str, str]]:
     """Each kind's slice fill and legend swatch colour, by its class, from the style partial; a striped kind's are "stripes"."""
+    # One pass in stylesheet order, so a later rule for a class wins as it does in CSS.
     found = {}
-    for selectors, fill, swatch in re.findall(
-        r"^  (\.dw-mix-[\w-]+(?:, \.dw-mix-[\w-]+)*) \{ fill: var\((--dw-[\w-]+)\); background-color: var\((--dw-[\w-]+)\);", STYLE, re.M
+    for rule in re.finditer(
+        r"^  (?P<sel>\.dw-mix-[\w-]+(?:, \.dw-mix-[\w-]+)*) \{ (?:fill: var\((?P<fill>--dw-[\w-]+)\); background-color: var\((?P<swatch>--dw-[\w-]+)\);"
+        r"|fill: url\(#dw-mix-stripes\); background: " + re.escape(STRIPES_SWATCH) + r"; \})",
+        STYLE,
+        re.M,
     ):
-        for selector in selectors.split(", "):
-            found[selector.removeprefix(".dw-mix-")] = (fill, swatch)
-    for selectors in re.findall(
-        r"^  (\.dw-mix-[\w-]+(?:, \.dw-mix-[\w-]+)*) \{ fill: url\(#dw-mix-stripes\); background: " + re.escape(STRIPES_SWATCH) + "; \}", STYLE, re.M
-    ):
-        for selector in selectors.split(", "):
-            found[selector.removeprefix(".dw-mix-")] = ("stripes", "stripes")
+        colours = (rule["fill"], rule["swatch"]) if rule["fill"] else ("stripes", "stripes")
+        for selector in rule["sel"].split(", "):
+            found[selector.removeprefix(".dw-mix-")] = colours
     return found
 
 
@@ -800,6 +800,11 @@ class TestCoverageMixColours(TestCase):
     def test_no_coverage_is_an_empty_outlined_slice_not_grey(self):
         self.assertIn(".dw-mix-uninsured { fill: var(--dw-paper); background-color: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-health-3); }", STYLE)
         self.assertIn(".dw-mix-donut path.dw-mix-uninsured { stroke: var(--dw-health-3); }", STYLE)
+
+    def test_the_light_job_slice_is_outlined(self):
+        # health-1 is under 3:1 on white, so the slice's edge is drawn in health-3 (measured in test_contrast).
+        self.assertEqual(_kind_colours()["job"], ("--dw-health-1", "--dw-health-1"))
+        self.assertIn(".dw-mix-donut path.dw-mix-job { stroke: var(--dw-health-3); }", STYLE)
 
     def test_no_grey_red_green_or_denial_blue(self):
         for token in ("--dw-na", "--dw-bad", "--dw-good", "--dw-deny", "--dw-count"):
