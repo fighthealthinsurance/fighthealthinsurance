@@ -412,7 +412,7 @@ async def ask(
     if use_opencode:
         attempts.append((OPENCODE_API_URL, str(opencode_token), OPENCODE_MODEL, False))
     premium_allowed = spend.allows(spend.TYPESAFE, use) and (
-        _cooldown[0] <= time.monotonic()
+        not use_opencode or _cooldown[0] <= time.monotonic()
     )
     if premium_token and premium_allowed:
         attempts.append(
