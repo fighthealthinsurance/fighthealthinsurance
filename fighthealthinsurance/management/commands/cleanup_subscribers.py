@@ -11,11 +11,11 @@ Examples::
     # ...including the other inbound-contact tables (report only, never deleted)
     python manage.py cleanup_subscribers --all-sources
 
-    # Delete the unambiguous junk (unmailable, invalid, duplicate, spam markup)
+    # Delete the unambiguous junk (unmailable, invalid, spam markup)
     python manage.py cleanup_subscribers --apply
 
-    # Delete only exact duplicates
-    python manage.py cleanup_subscribers --apply --reasons duplicate_email
+    # Delete only URL-in-name form spam
+    python manage.py cleanup_subscribers --apply --reasons link_in_fields
 """
 
 from typing import Any, List
@@ -80,6 +80,8 @@ class Command(BaseCommand):
         apply_changes: bool = options["apply"]
         force: bool = options["force"]
         limit: int = options["limit"]
+        if limit < 0:
+            raise CommandError("--limit must be 0 or more.")
         requested = [
             code.strip() for code in options["reasons"].split(",") if code.strip()
         ]
@@ -128,7 +130,12 @@ class Command(BaseCommand):
             )
             return
 
-        deleted = hygiene.delete_subscribers(targets, actor="cleanup_subscribers")
+        deleted = hygiene.delete_subscribers(
+            targets,
+            actor="cleanup_subscribers",
+            # Re-check at delete time: a row staff kept after the scan stays.
+            unreviewed_only=not options["include_reviewed"],
+        )
         self.stdout.write(self.style.SUCCESS(f"\nDeleted {deleted} subscriber row(s)."))
 
     def _report(self, result: hygiene.ScanResult, limit: int) -> None:

@@ -16,12 +16,13 @@ decide what to do:
 Every finding carries a reason code (see :data:`REASONS`). Reasons are split
 into two buckets:
 
-  * ``auto_cleanable`` -- unambiguous junk (unmailable, malformed, duplicate,
-    URL-in-name spam, header-injection attempts). Bulk deletion targets only
-    these.
-  * review-only -- a *signal*, not a verdict (spam-associated TLD, internal test
-    address, role account, alias-duplicate, suspicious unicode). A human decides;
-    nothing bulk-deletes these.
+  * ``auto_cleanable`` -- unambiguous junk (unmailable, malformed, URL-in-name
+    spam, header-injection attempts). None of these rows ever received mail a
+    person could act on, so deleting them breaks no unsubscribe link. Bulk
+    deletion targets only these.
+  * review-only -- a *signal*, not a verdict (duplicate and alias-duplicate,
+    spam-associated TLD, internal test address, role account, link in comments,
+    suspicious unicode). A human decides; nothing bulk-deletes these.
 
 The same analysis runs over the other inbound-contact tables (chat leads, demo
 requests, interested professionals) so staff can *see* suspicious rows there,
@@ -36,6 +37,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
+from django.db import transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 
@@ -75,6 +77,7 @@ UNSENDABLE = "unsendable_email"
 INVALID_EMAIL = "invalid_email"
 DUPLICATE = "duplicate_email"
 LINK_IN_FIELDS = "link_in_fields"
+LINK_IN_COMMENTS = "link_in_comments"
 HEADER_INJECTION = "header_injection"
 CONTROL_IN_EMAIL = "control_chars_in_email"
 SPAM_TLD = "spam_tld"
@@ -103,19 +106,27 @@ REASONS: Dict[str, Reason] = {
         ),
         Reason(
             DUPLICATE,
-            "Duplicate of a newer row",
-            "Another row holds the same address (case-insensitively). The newest "
-            "row is the one our signup paths keep updating, so older copies are "
-            "dead weight (sends and unsubscribes already treat the address as "
-            "one person).",
-            auto_cleanable=True,
+            "Duplicate address",
+            "Another row holds the same address (case-insensitively). Harmless "
+            "as it stands: sends and unsubscribes already treat the address as "
+            "one person. Deleting a copy retires the unsubscribe link already "
+            "mailed from that row, so Keep is usually the right call.",
+            auto_cleanable=False,
         ),
         Reason(
             LINK_IN_FIELDS,
-            "URL / markup in name or comments",
-            "Links or BBCode/HTML in a name, phone, or comments field: the "
-            "signature of an automated form-spam submission.",
+            "URL / markup in name or phone",
+            "Links or BBCode/HTML in a name or phone field: the signature of an "
+            "automated form-spam submission.",
             auto_cleanable=True,
+        ),
+        Reason(
+            LINK_IN_COMMENTS,
+            "URL / markup in comments",
+            "A link in the comments field. No signup form writes free text there "
+            '(our code stores fixed notes like "From appeal flow"), so this came '
+            "from an admin edit or an import -- worth a look, not a bulk delete.",
+            auto_cleanable=False,
         ),
         Reason(
             HEADER_INJECTION,
@@ -248,6 +259,9 @@ _DOT_INSENSITIVE_DOMAINS: frozenset[str] = frozenset({"gmail.com", "googlemail.c
 # Longest plausible values; anything past these is a pasted payload, not a name.
 _MAX_NAME_LEN = 200
 _MAX_PHONE_LEN = 40
+
+# How many sibling row ids an alias-duplicate finding names before summarizing.
+_ALIAS_SAMPLE = 5
 
 
 @dataclass(frozen=True)
@@ -408,7 +422,8 @@ def _check_text_fields(record: ContactRecord, finding: Finding) -> None:
             continue
         marker = _contains(value, _LINK_MARKERS)
         if marker:
-            finding.add(LINK_IN_FIELDS, f"{label} contains {marker!r}")
+            code = LINK_IN_FIELDS if label in _SINGLE_LINE_FIELDS else LINK_IN_COMMENTS
+            finding.add(code, f"{label} contains {marker!r}")
         header = _HEADER_LINE.search(value)
         if header:
             finding.add(
@@ -436,11 +451,14 @@ def analyze_record(record: ContactRecord) -> Finding:
 def _add_duplicate_findings(
     records: Sequence[ContactRecord], findings: Dict[int, Finding]
 ) -> None:
-    """Flag exact duplicates (delete-safe) and alias duplicates (review-only).
+    """Flag exact duplicates and alias duplicates (both review-only).
 
-    For exact duplicates we keep the highest pk: the signup paths look up the
-    newest row for an address and update it in place, so that row holds the
-    freshest name/referral data.
+    For exact duplicates the row to keep is the newest one that is not itself
+    junk: the signup paths look up the newest row for an address and update it
+    in place, so it holds the freshest name/referral data -- unless a bot later
+    reused the address, in which case that newest row is the junk and the
+    person's own older row is the one to keep. Must run after the single-row
+    checks, which it reads from ``findings``.
     """
     by_email: Dict[str, List[ContactRecord]] = {}
     by_mailbox: Dict[str, List[ContactRecord]] = {}
@@ -455,10 +473,18 @@ def _add_duplicate_findings(
         if len(group) < 2:
             continue
         ordered = sorted(group, key=lambda r: r.pk)
-        keeper = ordered[-1]
-        for record in ordered[:-1]:
+        clean = [
+            r
+            for r in ordered
+            if r.pk not in findings or not findings[r.pk].auto_cleanable
+        ]
+        keeper = (clean or ordered)[-1]
+        for record in ordered:
+            if record.pk == keeper.pk:
+                continue
+            relation = "newer" if keeper.pk > record.pk else "older"
             findings.setdefault(record.pk, Finding(record=record)).add(
-                DUPLICATE, f"same address as newer row #{keeper.pk}"
+                DUPLICATE, f"same address as {relation} row #{keeper.pk}"
             )
 
     for group in by_mailbox.values():
@@ -466,11 +492,18 @@ def _add_duplicate_findings(
         if len(distinct) < 2:
             # Either a single row or an exact-duplicate group already handled above.
             continue
+        # A bot can mint thousands of +tag variants of one inbox, so name a
+        # few siblings and count the rest rather than listing every one on
+        # every row (which grows with the square of the group).
+        pks = sorted(r.pk for r in group)
         for record in group:
-            others = sorted(r.pk for r in group if r.pk != record.pk)
+            sample = [pk for pk in pks[: _ALIAS_SAMPLE + 1] if pk != record.pk]
+            sample = sample[:_ALIAS_SAMPLE]
+            detail = "same mailbox as " + ", ".join(f"#{pk}" for pk in sample)
+            if len(pks) - 1 > len(sample):
+                detail += f" and {len(pks) - 1 - len(sample)} more"
             findings.setdefault(record.pk, Finding(record=record)).add(
-                ALIAS_DUPLICATE,
-                "same mailbox as " + ", ".join(f"#{pk}" for pk in others),
+                ALIAS_DUPLICATE, detail
             )
 
 
@@ -622,24 +655,37 @@ def _scan_interested_professionals() -> ScanResult:
     return result
 
 
-def delete_subscribers(ids: Iterable[int], actor: str = "") -> int:
+def delete_subscribers(
+    ids: Iterable[int], actor: str = "", unreviewed_only: bool = False
+) -> int:
     """Delete mailing list subscribers by id. Returns the number deleted.
 
     Deletion is the correct "cleanup" here: unsubscribing is already modelled as
     deleting the row (see UnsubscribeView), and RemoveDataHelper deletes these
     rows too, so there is no soft-delete state to respect.
+
+    ``unreviewed_only`` re-checks the review state at delete time, under a row
+    lock, so a row staff marked "keep" after the caller's scan is spared. The
+    staff page always sets it; the command sets it unless --include-reviewed.
     """
     id_list = list(ids)
     if not id_list:
         return 0
-    qs = MailingListSubscriber.objects.filter(id__in=id_list)
-    # Log what goes away (masked) so a bad cleanup is at least reconstructible.
-    for sub in qs:
-        logger.info(
-            f"Subscriber cleanup: deleting #{sub.id} "
-            f"{mask_email_for_logging(sub.email)}" + (f" (by {actor})" if actor else "")
-        )
-    deleted, _ = qs.delete()
+    with transaction.atomic():
+        qs = MailingListSubscriber.objects.select_for_update().filter(id__in=id_list)
+        if unreviewed_only:
+            qs = qs.filter(cleanup_reviewed_at__isnull=True)
+        rows = list(qs)
+        # Log what goes away (masked) so a bad cleanup is at least reconstructible.
+        for sub in rows:
+            logger.info(
+                f"Subscriber cleanup: deleting #{sub.id} "
+                f"{mask_email_for_logging(sub.email)}"
+                + (f" (by {actor})" if actor else "")
+            )
+        deleted, _ = MailingListSubscriber.objects.filter(
+            id__in=[sub.id for sub in rows]
+        ).delete()
     return deleted
 
 

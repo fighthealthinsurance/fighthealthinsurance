@@ -44,6 +44,7 @@ from django.http import (
     HttpResponseForbidden,
     StreamingHttpResponse,
 )
+from django.contrib import messages
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.db.models import Q
@@ -5659,26 +5660,37 @@ class SubscriberCleanupView(View):
     def post(self, request) -> HttpResponse:
         action = request.POST.get("action")
         actor = getattr(request.user, "username", "") or ""
-        selected = self._selected_ids(request)
 
-        if action == "delete_selected":
+        if action in ("delete_selected", "keep_selected"):
+            # Act only on rows the queue is showing right now: a stale tab or a
+            # crafted request must not delete or hide a clean subscriber, or a
+            # row someone else already reviewed.
+            queue = {
+                f.record.pk for f in subscriber_hygiene.scan_subscribers().findings
+            }
+            selected = [pk for pk in self._selected_ids(request) if pk in queue]
             if not selected:
-                return self._render(request, error="No subscribers were selected.")
-            deleted = subscriber_hygiene.delete_subscribers(selected, actor=actor)
-            logger.info(
-                f"Staff user {actor} deleted {deleted} mailing list subscriber(s) "
-                "from the cleanup queue"
-            )
-            return self._render(request, notice=f"Deleted {deleted} subscriber(s).")
-
-        if action == "keep_selected":
-            if not selected:
-                return self._render(request, error="No subscribers were selected.")
-            kept = subscriber_hygiene.mark_subscribers_reviewed(selected, actor=actor)
-            return self._render(
-                request,
-                notice=f"Marked {kept} subscriber(s) as reviewed; they will stay.",
-            )
+                return self._render(
+                    request, error="No subscribers in the queue were selected."
+                )
+            if action == "delete_selected":
+                deleted = subscriber_hygiene.delete_subscribers(
+                    selected, actor=actor, unreviewed_only=True
+                )
+                logger.info(
+                    f"Staff user {actor} deleted {deleted} mailing list "
+                    "subscriber(s) from the cleanup queue"
+                )
+                messages.success(request, f"Deleted {deleted} subscriber(s).")
+            else:
+                kept = subscriber_hygiene.mark_subscribers_reviewed(
+                    selected, actor=actor
+                )
+                messages.success(
+                    request,
+                    f"Marked {kept} subscriber(s) as reviewed; they will stay.",
+                )
+            return redirect(request.get_full_path())
 
         if action == "delete_auto":
             if request.POST.get("confirm") != "yes":
@@ -5688,15 +5700,20 @@ class SubscriberCleanupView(View):
                     "auto-cleanable row.",
                 )
             # Re-scan rather than trusting ids from the form: the page may be
-            # stale, and this action is a bulk delete.
+            # stale, and this action is a bulk delete. unreviewed_only re-checks
+            # at delete time, so a row kept in another tab since the scan stays.
             result = subscriber_hygiene.scan_subscribers()
             ids = [f.record.pk for f in result.auto_cleanable_findings]
-            deleted = subscriber_hygiene.delete_subscribers(ids, actor=actor)
+            deleted = subscriber_hygiene.delete_subscribers(
+                ids, actor=actor, unreviewed_only=True
+            )
             logger.info(
                 f"Staff user {actor} bulk-deleted {deleted} auto-cleanable "
                 "mailing list subscriber(s)"
             )
-            return self._render(request, notice=f"Deleted {deleted} subscriber(s).")
+            messages.success(request, f"Deleted {deleted} subscriber(s).")
+            # Redirect so a refresh re-runs the GET, not the bulk delete.
+            return redirect(request.get_full_path())
 
         return self._render(request, error=f"Unknown action: {action}", status=400)
 
@@ -5714,7 +5731,6 @@ class SubscriberCleanupView(View):
         self,
         request,
         *,
-        notice: Optional[str] = None,
         error: Optional[str] = None,
         status: int = 200,
     ) -> HttpResponse:
@@ -5729,13 +5745,15 @@ class SubscriberCleanupView(View):
             page_number = max(1, int(request.GET.get("page", 1)))
         except (TypeError, ValueError):
             page_number = 1
+        total_pages = max(1, -(-len(findings) // self.page_size))
+        # Clamp: deleting the last rows of the last page leaves ?page=N past
+        # the end, which would show an empty page with no way back.
+        page_number = min(page_number, total_pages)
         start = (page_number - 1) * self.page_size
         page = findings[start : start + self.page_size]
-        total_pages = max(1, -(-len(findings) // self.page_size))
 
         context: Dict[str, Any] = {
             "title": "Subscriber Cleanup",
-            "notice": notice,
             "error": error,
             "scanned": result.scanned,
             "flagged_count": result.flagged_count,

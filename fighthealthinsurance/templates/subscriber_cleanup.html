@@ -93,7 +93,7 @@
     <a href="{% url 'staff_dashboard' %}">&larr; Staff dashboard</a>
   </p>
 
-  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+  {% for message in messages %}<div class="notice">{{ message }}</div>{% endfor %}
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
   <div class="panel">
@@ -145,12 +145,12 @@
         {% for row in rows %}
         <tr>
           <td><input type="checkbox" name="subscriber_id" value="{{ row.id }}"
-                     {% if row.auto_cleanable %}checked{% endif %}></td>
+                     aria-label="Select subscriber #{{ row.id }} ({{ row.email }})"></td>
           <td>{{ row.id }}</td>
           <td class="wrap">{{ row.email }}</td>
           <td class="wrap">{{ row.name }}</td>
           <td class="wrap">{{ row.phone }}</td>
-          <td class="wrap">{{ row.comments|truncatechars:120 }}</td>
+          <td class="wrap">{{ row.comments }}</td>
           <td>{{ row.signup_date|default:"—" }}</td>
           <td>
             {% for reason in row.reasons %}
@@ -174,9 +174,10 @@
         </button>
       </div>
       <p class="muted">
-        Auto-cleanable rows are pre-checked. "Keep" marks a row reviewed so it
-        never appears in this queue again; deletion is permanent (the same thing
-        unsubscribing does).
+        Nothing is pre-checked: both buttons act on exactly the rows you tick.
+        "Keep" marks a row reviewed so it never appears in this queue again;
+        deletion is permanent (the same thing unsubscribing does). To clear the
+        auto-cleanable rows in one go, use Bulk cleanup below.
       </p>
     </div>
 

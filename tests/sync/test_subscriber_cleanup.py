@@ -53,10 +53,14 @@ class AnalyzeRecordTest(TestCase):
         codes = self._codes(name="Buy now http://spam.example")
         self.assertIn(hygiene.LINK_IN_FIELDS, codes)
 
-    def test_url_in_comments_is_form_spam(self):
-        self.assertIn(
-            hygiene.LINK_IN_FIELDS, self._codes(comments="check www.spam.example")
+    def test_url_in_comments_is_review_only(self):
+        """No signup form writes free text into comments, so a link there came
+        from an admin edit -- a signal for a human, never a bulk delete."""
+        codes = self._codes(
+            email="jane@hospital.org", comments="check www.spam.example"
         )
+        self.assertEqual(codes, [hygiene.LINK_IN_COMMENTS])
+        self.assertFalse(hygiene.REASONS[hygiene.LINK_IN_COMMENTS].auto_cleanable)
 
     def test_newline_in_name_is_header_injection(self):
         self.assertIn(
@@ -86,10 +90,12 @@ class AnalyzeRecordTest(TestCase):
         )
 
     def test_zero_width_character_in_name_is_suspicious_unicode(self):
-        self.assertIn(hygiene.SUSPICIOUS_UNICODE, self._codes(name="Ja​ne"))
+        self.assertIn(hygiene.SUSPICIOUS_UNICODE, self._codes(name="Ja\u200bne"))
 
     def test_control_character_in_address_is_flagged(self):
-        self.assertIn(hygiene.CONTROL_IN_EMAIL, self._codes(email="jane​@hospital.org"))
+        self.assertIn(
+            hygiene.CONTROL_IN_EMAIL, self._codes(email="jane\u200b@hospital.org")
+        )
 
     def test_spam_tld_is_review_only(self):
         codes = self._codes(email="someone@vendor.ru")
@@ -131,11 +137,24 @@ class ScanSubscribersTest(TestCase):
         self.assertIn(hygiene.DUPLICATE, flagged[older.id].codes)
         self.assertIn(f"#{newer.id}", flagged[older.id].details[hygiene.DUPLICATE])
 
-    def test_duplicate_is_auto_cleanable(self):
+    def test_duplicate_is_review_only(self):
+        """Deleting a duplicate retires the unsubscribe link already mailed from
+        it, so duplicates are never part of a bulk delete."""
         make_subscriber("jane@hospital.org")
         make_subscriber("JANE@hospital.org")
         result = hygiene.scan_subscribers()
-        self.assertEqual(len(result.auto_cleanable_findings), 1)
+        self.assertEqual(result.auto_cleanable_findings, [])
+
+    def test_junk_newer_copy_is_not_chosen_as_the_duplicate_keeper(self):
+        """When a bot reuses a real address, the person's own older row is the
+        one to keep; the newer spam row is the junk."""
+        real = make_subscriber("jane@hospital.org", name="Jane Doe")
+        spam = make_subscriber("Jane@Hospital.org", name="http://spam.example")
+
+        flagged = {f.record.pk: f for f in hygiene.scan_subscribers().findings}
+
+        self.assertNotIn(real.id, flagged)
+        self.assertIn(hygiene.DUPLICATE, flagged[spam.id].codes)
 
     def test_alias_duplicates_are_review_only(self):
         make_subscriber("jane@gmail.com")
@@ -147,6 +166,20 @@ class ScanSubscribersTest(TestCase):
         for finding in result.findings:
             self.assertEqual(finding.codes, [hygiene.ALIAS_DUPLICATE])
             self.assertFalse(finding.auto_cleanable)
+
+    def test_alias_detail_is_bounded_for_large_groups(self):
+        """A bot minting many +tag variants must not make every row carry the
+        id of every other row."""
+        for i in range(20):
+            make_subscriber(f"jane+{i}@gmail.com")
+
+        details = [
+            f.details[hygiene.ALIAS_DUPLICATE]
+            for f in hygiene.scan_subscribers().findings
+        ]
+
+        self.assertTrue(all(d.count("#") <= 5 for d in details))
+        self.assertTrue(all(d.endswith("and 14 more") for d in details))
 
     def test_reviewed_rows_are_excluded_from_the_queue(self):
         subscriber = make_subscriber("someone@example.com")
@@ -192,6 +225,17 @@ class DeleteSubscribersTest(TestCase):
         self.assertEqual(deleted, 1)
         self.assertFalse(MailingListSubscriber.objects.filter(id=doomed.id).exists())
         self.assertTrue(MailingListSubscriber.objects.filter(id=kept.id).exists())
+
+    def test_unreviewed_only_spares_a_row_kept_since_the_scan(self):
+        """Simulates staff pressing Keep between a scan and the delete."""
+        subscriber = make_subscriber("someone@example.com")
+        ids = [f.record.pk for f in hygiene.scan_subscribers().findings]
+        hygiene.mark_subscribers_reviewed([subscriber.id])
+
+        deleted = hygiene.delete_subscribers(ids, unreviewed_only=True)
+
+        self.assertEqual(deleted, 0)
+        self.assertTrue(MailingListSubscriber.objects.filter(id=subscriber.id).exists())
 
     def test_delete_with_no_ids_is_a_no_op(self):
         make_subscriber("jane@hospital.org")
@@ -246,6 +290,10 @@ class CleanupSubscribersCommandTest(TestCase):
             MailingListSubscriber.objects.filter(id=self.review_only.id).exists()
         )
 
+    def test_negative_limit_is_rejected(self):
+        with self.assertRaises(CommandError):
+            self._run("--limit", "-1")
+
     def test_unknown_reason_code_is_rejected(self):
         with self.assertRaises(CommandError):
             self._run("--reasons", "not_a_real_reason")
@@ -284,13 +332,46 @@ class SubscriberCleanupViewTest(TestCase):
 
     def test_delete_selected_removes_the_checked_rows(self):
         self.login()
-        response = self.client.post(
+        self.client.post(
             self.url,
             {"action": "delete_selected", "subscriber_id": [str(self.junk.id)]},
         )
-        self.assertEqual(response.status_code, 200)
         self.assertFalse(MailingListSubscriber.objects.filter(id=self.junk.id).exists())
+
+    def test_delete_selected_redirects_so_refresh_does_not_resubmit(self):
+        self.login()
+        response = self.client.post(
+            self.url,
+            {"action": "delete_selected", "subscriber_id": [str(self.junk.id)]},
+            follow=True,
+        )
+        self.assertRedirects(response, self.url)
+        self.assertContains(response, "Deleted 1 subscriber(s).")
+
+    def test_selected_actions_ignore_rows_outside_the_queue(self):
+        """A stale tab or crafted request naming a clean subscriber must not
+        delete it."""
+        self.login()
+        self.client.post(
+            self.url,
+            {"action": "delete_selected", "subscriber_id": [str(self.good.id)]},
+        )
         self.assertTrue(MailingListSubscriber.objects.filter(id=self.good.id).exists())
+
+    def test_keep_only_touches_the_rows_ticked(self):
+        """Keep must not sweep up other flagged rows (nothing is pre-checked)."""
+        self.login()
+        self.client.post(
+            self.url,
+            {"action": "keep_selected", "subscriber_id": [str(self.review_only.id)]},
+        )
+        self.junk.refresh_from_db()
+        self.assertIsNone(self.junk.cleanup_reviewed_at)
+
+    def test_no_row_is_pre_checked(self):
+        self.login()
+        response = self.client.get(self.url)
+        self.assertNotContains(response, "checked>")
 
     def test_keep_selected_marks_reviewed_and_clears_the_queue(self):
         self.login()
@@ -322,8 +403,13 @@ class SubscriberCleanupViewTest(TestCase):
     def test_delete_with_nothing_selected_reports_an_error(self):
         self.login()
         response = self.client.post(self.url, {"action": "delete_selected"})
-        self.assertContains(response, "No subscribers were selected.")
+        self.assertContains(response, "No subscribers in the queue were selected.")
         self.assertEqual(MailingListSubscriber.objects.count(), 3)
+
+    def test_page_past_the_end_is_clamped_to_the_last_page(self):
+        self.login()
+        response = self.client.get(self.url, {"page": "99"})
+        self.assertEqual(response.context["page_number"], 1)
 
     def test_include_leads_scans_the_other_tables(self):
         self.login()
