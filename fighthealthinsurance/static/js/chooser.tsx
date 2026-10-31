@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Alert,
@@ -29,6 +29,13 @@ import { getCSRFToken } from "./shared";
 // the drafts are blind (the API sends no model names), and a draft that
 // makes things up can be flagged, so a letter cannot win on invented facts.
 // Drafts that are equally good can be called a tie, which splits the vote.
+//
+// The referee gets two aids, both computed from what is on the page and
+// neither sent anywhere: each study on file carries the verdict of an
+// automated reviewer of its abstract (does it support the treatment, argue
+// against it, or miss the point), and each draft's PMIDs are matched to the
+// evidence on file, so a citation that is not on file, or leans on a study
+// that argues against the treatment, is pointed out before the vote.
 
 // Types for Chooser API responses. Candidates carry no model name, row id
 // or stored order on purpose: `id` is an opaque token the vote endpoint
@@ -39,11 +46,23 @@ interface ChooserCandidate {
   content: string;
 }
 
+// What the automated reviewer made of one study for this treatment and
+// condition (research_judging.Judgment.as_dict): a verdict in a word and
+// the three probabilities behind it. Attached as the case is served; a
+// study nobody has reviewed has none. The drafts never saw it.
+interface EvidenceJudgment {
+  verdict: string;
+  on_topic: number;
+  supports: number;
+  undermines: number;
+}
+
 interface EvidenceItem {
   pmid?: string;
   title?: string;
   url?: string;
   summary?: string;
+  judgment?: EvidenceJudgment;
 }
 
 // The patient's answers to the questions the app asked them; the drafts
@@ -126,6 +145,237 @@ const writeScoreboard = (board: Scoreboard): void => {
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 // ---------------------------------------------------------------------------
+// Referee aids: the reviewer's verdicts and the citation check
+
+// How each verdict reads on the page. Colors are Mantine's names.
+const VERDICTS: Record<string, { label: string; color: string; hint: string }> = {
+  supports: {
+    label: "Supports the treatment",
+    color: "green",
+    hint: "The abstract reports the treatment as effective, beneficial or recommended for this condition.",
+  },
+  mixed: {
+    label: "Mixed",
+    color: "yellow",
+    hint: "The abstract argues both ways. A draft may cite it, but should say what it actually found.",
+  },
+  against: {
+    label: "Argues against",
+    color: "red",
+    hint: "The abstract reports the treatment as ineffective, harmful or unsupported. A draft that cites it as support is misreading it; that is a foul.",
+  },
+  off_topic: {
+    label: "Off topic",
+    color: "gray",
+    hint: "Not about this treatment for this condition. A draft that cites it as evidence for the case is stretching.",
+  },
+  unclear: {
+    label: "Unclear",
+    color: "gray",
+    hint: "The reviewer could not tell whether it helps the case.",
+  },
+};
+
+type VerdictLook = (typeof VERDICTS)[string];
+
+const verdictOf = (item?: EvidenceItem): VerdictLook | null =>
+  item?.judgment ? (VERDICTS[item.judgment.verdict] ?? null) : null;
+
+const percent = (p: number): string => `${Math.round(p * 100)}%`;
+
+// A PMID as a draft writes one ("PMID 12345678", "PMID: 12345678",
+// "PubMed ID 12345678") or a PubMed link. Two capture groups; one is set.
+const PMID_PATTERN =
+  "\\b(?:PMID|PubMed\\s+ID)\\s*[:#]?\\s*(\\d{4,9})\\b|pubmed\\.ncbi\\.nlm\\.nih\\.gov\\/(\\d{4,9})";
+
+const pubmedUrl = (pmid: string): string => `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
+
+// One PMID a draft cites, checked against the evidence on file.
+interface Citation {
+  pmid: string;
+  // The study on file it names, if any. Not on file: the draft was told
+  // to cite only the evidence listed, and the referee cannot check it here.
+  item?: EvidenceItem;
+}
+
+const checkCitations = (content: string, evidence: EvidenceItem[]): Citation[] => {
+  const citations: Citation[] = [];
+  const re = new RegExp(PMID_PATTERN, "gi");
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(content)) !== null) {
+    const pmid = match[1] ?? match[2];
+    if (!pmid || citations.some((c) => c.pmid === pmid)) continue;
+    citations.push({ pmid, item: evidence.find((e) => String(e.pmid) === pmid) });
+  }
+  return citations;
+};
+
+// How a cited PMID reads on the page: not on file first, then what the
+// reviewer made of the study, then simply on file. `suspicious` marks the
+// two the referee should look into before voting.
+interface CitationLook {
+  label: string;
+  color: string;
+  hint: string;
+  suspicious: boolean;
+}
+
+const citationLook = (citation: Citation): CitationLook => {
+  if (!citation.item) {
+    return {
+      label: "not on file",
+      color: "red",
+      hint: "This PMID is not in the evidence on file, and the drafts were told to cite only what is. Open it: if it does not exist, or does not say what the draft claims, that is a foul.",
+      suspicious: true,
+    };
+  }
+  const verdict = verdictOf(citation.item);
+  const kind = citation.item.judgment?.verdict;
+  if (verdict && (kind === "against" || kind === "off_topic")) {
+    return {
+      label: verdict.label.toLowerCase(),
+      color: "orange",
+      hint: `On file, but the reviewer read it as ${verdict.label.toLowerCase()}. ${verdict.hint} Check what the draft claims it found.`,
+      suspicious: true,
+    };
+  }
+  if (verdict && kind === "mixed") {
+    return { label: "mixed", color: "yellow", hint: `On file. ${verdict.hint}`, suspicious: false };
+  }
+  return {
+    label: "on file",
+    color: "green",
+    hint: verdict
+      ? `On file. ${verdict.hint}`
+      : "On file. Check that the draft claims no more for it than its summary says.",
+    suspicious: false,
+  };
+};
+
+// Details the case never gives (no names, no dates, no member or claim
+// numbers), so a draft that states one has made it up. A fill-in such as
+// "[Date]" or "XXXX" is fine and is not matched.
+const MONTHS =
+  "(?:January|February|March|April|May|June|July|August|September|October|November|December)";
+const DATE_RE = new RegExp(
+  `\\b${MONTHS}\\s+\\d{1,2},?\\s+(?:19|20)\\d{2}\\b|\\b\\d{1,2}\\s+${MONTHS},?\\s+(?:19|20)\\d{2}\\b|\\b(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\\d|3[01])/(?:19|20)\\d{2}\\b`,
+  "i",
+);
+const ID_RE =
+  /\b(?:member|subscriber|claim|policy|group|reference|authorization|auth|case)\s*(?:id|number|no\.?|#)\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9-]{4,})\b/i;
+
+const inventedDetails = (content: string): string[] => {
+  const hints: string[] = [];
+  const date = DATE_RE.exec(content);
+  if (date) hints.push(`Gives a date: ${date[0]}`);
+  const id = ID_RE.exec(content);
+  if (id && !/^[xX#_-]+$/.test(id[1])) hints.push(`Gives a number: ${id[0]}`);
+  return hints;
+};
+
+// The draft's text with each PMID marked by how its check came out, so the
+// referee sees the citations where they are made.
+const MARK_COLORS: Record<string, string> = {
+  red: "#ffe3e3",
+  orange: "#ffe8cc",
+  yellow: "#fff3bf",
+  green: "#e9fac8",
+};
+
+const HighlightedDraft: React.FC<{ content: string; citations: Citation[] }> = ({
+  content,
+  citations,
+}) => {
+  if (citations.length === 0) return <>{content}</>;
+  const parts: React.ReactNode[] = [];
+  const re = new RegExp(PMID_PATTERN, "gi");
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(content)) !== null) {
+    const pmid = match[1] ?? match[2];
+    const citation = citations.find((c) => c.pmid === pmid);
+    if (!citation) continue;
+    const look = citationLook(citation);
+    parts.push(content.slice(last, match.index));
+    parts.push(
+      <mark
+        key={`${match.index}-${pmid}`}
+        title={look.hint}
+        style={{
+          backgroundColor: MARK_COLORS[look.color] ?? MARK_COLORS.green,
+          textDecoration: look.suspicious ? "underline wavy" : undefined,
+          borderRadius: "3px",
+          padding: "0 2px",
+        }}
+      >
+        {match[0]}
+      </mark>,
+    );
+    last = match.index + match[0].length;
+  }
+  parts.push(content.slice(last));
+  return <>{parts}</>;
+};
+
+// The chips under a draft's title: each PMID it cites, linked to PubMed so
+// the referee can open it, and any detail the case never gave. Kept out of
+// the card's click and key handling, like the flag control.
+const CitationCheck: React.FC<{
+  citations: Citation[];
+  hints: string[];
+  hasEvidence: boolean;
+}> = ({ citations, hints, hasEvidence }) => {
+  if (citations.length === 0 && hints.length === 0) {
+    return hasEvidence ? (
+      <Text size="xs" c="dimmed">
+        Cites no PMID.
+      </Text>
+    ) : null;
+  }
+  return (
+    <div
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <Group gap={6}>
+        {citations.map((citation) => {
+          const look = citationLook(citation);
+          return (
+            <Badge
+              key={citation.pmid}
+              component="a"
+              href={citation.item?.url || pubmedUrl(citation.pmid)}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={look.hint}
+              aria-label={`PMID ${citation.pmid}, ${look.label}; opens PubMed in a new tab`}
+              color={look.color}
+              variant={look.suspicious ? "filled" : "light"}
+              size="sm"
+              style={{ cursor: "pointer", textTransform: "none" }}
+            >
+              PMID {citation.pmid} · {look.label}
+            </Badge>
+          );
+        })}
+        {hints.map((hint) => (
+          <Badge
+            key={hint}
+            color="orange"
+            variant="light"
+            size="sm"
+            title="The case gives no names, dates or numbers, so a draft that states one has made it up (a fill-in like [Date] is fine)."
+            style={{ textTransform: "none" }}
+          >
+            {hint}
+          </Badge>
+        ))}
+      </Group>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Pieces
 
 const HouseRules: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
@@ -142,6 +392,7 @@ const HouseRules: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
           <strong>House rules:</strong> pick the draft you would actually send. A draft
           that makes something up (a study, a law, a test result, a date, a history
           that is not in the case) is committing a foul: flag it, and never pick it.
+          The PMIDs each draft cites are checked against the evidence on file for you.
           Too close to call? Call a tie. Not sure? Skip the round.
         </Text>
       </Paper>
@@ -163,6 +414,14 @@ const HouseRules: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
           evidence on file. A draft that invents a study,
           a law, a test result, a date or a history that is not there should never
           win, however good it sounds. Flag it with 🚩 and pick another.
+        </List.Item>
+        <List.Item>
+          <strong>Check the citations.</strong> Under each draft, the PMIDs it cites are
+          matched to the evidence on file, and each study on file carries an automated
+          reviewer&rsquo;s verdict on whether it supports the treatment. A PMID that is
+          not on file cannot be checked here: open it, and if it is not real, or not
+          what the draft claims, that is a foul. A draft that leans on a study that
+          argues against the treatment is not helping the patient either.
         </List.Item>
         <List.Item>
           <strong>Too close to call? Call a tie.</strong> If two or more drafts are
@@ -190,10 +449,30 @@ const CaseRow: React.FC<{ label: string; value?: string }> = ({ label, value }) 
   );
 };
 
-// One article on file: its title (linked), its PMID, and the summary the
-// drafts were given, clamped to a few lines until opened.
+// The reviewer's verdict on one study, as a badge; nothing for a study
+// nobody has reviewed.
+const VerdictBadge: React.FC<{ item: EvidenceItem }> = ({ item }) => {
+  const verdict = verdictOf(item);
+  if (!verdict) return null;
+  return (
+    <Badge
+      color={verdict.color}
+      variant="light"
+      size="sm"
+      title={verdict.hint}
+      style={{ textTransform: "none", verticalAlign: "middle" }}
+    >
+      {verdict.label}
+    </Badge>
+  );
+};
+
+// One article on file: its title (linked), its PMID, the reviewer's verdict
+// when there is one, and the summary the drafts were given, clamped to a
+// few lines until opened; opened, the reviewer's numbers too.
 const EvidenceRow: React.FC<{ item: EvidenceItem }> = ({ item }) => {
   const [open, setOpen] = useState(false);
+  const judgment = item.judgment;
   return (
     <List.Item>
       {item.url ? (
@@ -206,14 +485,22 @@ const EvidenceRow: React.FC<{ item: EvidenceItem }> = ({ item }) => {
       {item.pmid ? (
         <Text span size="xs" c="dimmed">
           {" "}
-          (PMID {item.pmid})
+          (PMID {item.pmid}){" "}
         </Text>
       ) : null}
+      <VerdictBadge item={item} />
       {item.summary ? (
         <Box>
           <Text size="xs" c="dimmed" lineClamp={open ? undefined : 3}>
             {item.summary}
           </Text>
+          {open && judgment ? (
+            <Text size="xs" c="dimmed" mt={2}>
+              Reviewer: {percent(judgment.on_topic)} about this treatment and condition
+              &middot; {percent(judgment.supports)} supports it &middot;{" "}
+              {percent(judgment.undermines)} argues against it.
+            </Text>
+          ) : null}
           <Button
             size="compact-xs"
             variant="subtle"
@@ -235,6 +522,7 @@ const AppealCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
   const facts = context.facts ?? [];
   const qaPairs = (context.qa_pairs ?? []).filter((p) => p.question && p.answer);
   const evidence = (context.evidence ?? []).filter((e) => e.title);
+  const reviewed = evidence.some((e) => verdictOf(e) !== null);
   return (
     <Stack gap="md">
       <Stack gap={6}>
@@ -301,6 +589,9 @@ const AppealCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
         <Text size="xs" c="dimmed" mt={4}>
           A draft may cite only what is listed here, and claim no more for a study than
           it found. Anything else is a foul.
+          {reviewed
+            ? " Each verdict is an automated reviewer's reading of the abstract: whether the study is about this treatment for this condition, and whether it supports it. The drafts saw the summaries, not the verdicts. A hint, not a ruling: open the study when it matters."
+            : ""}
         </Text>
       </Box>
     </Stack>
@@ -365,10 +656,33 @@ const CandidateCard: React.FC<{
   isSelected: boolean;
   tieMode: boolean;
   isFlagged: boolean;
+  // The case's evidence, for the citation check; an appeal draft is also
+  // checked for details the case never gave. A chat reply may rightly name
+  // a date, so it gets neither.
+  evidence: EvidenceItem[];
+  checkFacts: boolean;
   onSelect: () => void;
   onToggleFlag: () => void;
-}> = ({ candidate, label, isSelected, tieMode, isFlagged, onSelect, onToggleFlag }) => {
+}> = ({
+  candidate,
+  label,
+  isSelected,
+  tieMode,
+  isFlagged,
+  evidence,
+  checkFacts,
+  onSelect,
+  onToggleFlag,
+}) => {
   const [expanded, setExpanded] = useState(false);
+  const citations = useMemo(
+    () => (checkFacts ? checkCitations(candidate.content, evidence) : []),
+    [candidate.content, evidence, checkFacts],
+  );
+  const hints = useMemo(
+    () => (checkFacts ? inventedDetails(candidate.content) : []),
+    [candidate.content, checkFacts],
+  );
   const border = isSelected
     ? `3px solid ${THEME.colors.primary}`
     : isFlagged
@@ -441,9 +755,14 @@ const CandidateCard: React.FC<{
           />
         </div>
       </Group>
+      {checkFacts ? (
+        <Box mb="sm">
+          <CitationCheck citations={citations} hints={hints} hasEvidence={evidence.length > 0} />
+        </Box>
+      ) : null}
       <ScrollArea h={expanded ? undefined : 320} offsetScrollbars>
         <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
-          {candidate.content}
+          <HighlightedDraft content={candidate.content} citations={citations} />
         </Text>
       </ScrollArea>
       <Group justify="flex-end" mt="xs">
@@ -886,6 +1205,7 @@ const ChooserInterface: React.FC = () => {
   if (state.mode === "voting" && state.task) {
     const hasEnoughCandidates = state.task.candidates.length >= 2;
     const isAppeal = state.task.task_type !== "chat";
+    const caseEvidence = (state.task.task_context.evidence ?? []).filter((e) => e.pmid);
 
     // If only one candidate, show a message and skip options
     if (!hasEnoughCandidates) {
@@ -978,6 +1298,8 @@ const ChooserInterface: React.FC = () => {
                 }
                 tieMode={state.tieMode}
                 isFlagged={state.flaggedIds.includes(candidate.id)}
+                evidence={caseEvidence}
+                checkFacts={isAppeal}
                 onSelect={() => handleSelectCandidate(candidate)}
                 onToggleFlag={() => handleToggleFlag(candidate)}
               />

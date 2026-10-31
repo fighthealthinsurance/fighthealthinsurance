@@ -17,6 +17,28 @@ appeal flow, and rank the model backends against each other.
   combines them, gets the treatment, diagnosis, denial reason and the drafts,
   not the facts, answers or evidence. For a chat task: the conversation and
   the question the drafts answer.
+- **Two referee aids**, on top of the case and neither given to the drafts:
+  - *The reviewer's verdict* on each study on file: a badge (supports the
+    treatment, mixed, argues against, off topic, unclear) from Jev's
+    research judgment of the article for the case's treatment and condition
+    (`ml/research_judging.py`, the same judgments that order a real appeal's
+    articles), with the three probabilities behind it under "What it
+    found". A study nobody has judged has no badge. The page says the drafts
+    saw the summaries, not the verdicts, and calls it a hint, not a ruling.
+  - *The citation check* under each draft: every PMID the draft cites (as
+    "PMID 12345678", "PubMed ID 12345678" or a PubMed link) is matched to
+    the evidence on file and shown as a chip that opens PubMed, and marked
+    in the draft's text. **Not on file** (red): the drafts were told to cite
+    only the evidence listed, and the voter cannot check it here; the chip
+    opens PubMed so they can. **Argues against** or **off topic** (orange):
+    on file, but the reviewer read the study that way, so the voter should
+    check what the draft claims it found. **Mixed** (yellow) and **on file**
+    (green) otherwise. An appeal draft is also checked for details the case
+    never gives, a calendar date or a member, claim or similar number
+    (a fill-in such as "[Date]" is fine), shown as an orange hint. Chat
+    replies get neither check: a chat reply may rightly name a date. All of
+    this runs in the browser from what is already on the page; nothing is
+    sent anywhere, and the vote carries only the voter's flags.
 - **The drafts**, blind. The API sends no model name, synthesized flag or
   metadata (`ChooserCandidateSerializer`), and no row id or
   `candidate_index` either: both run in generation order (internal model
@@ -64,7 +86,17 @@ appeal flow, and rank the model backends against each other.
    already searched for, so a seeded task usually costs no NCBI call. The
    summary is the one real appeals were given for the article
    (`PubMedArticleSummarized.basic_summary`) when there is one, else the
-   start of its abstract; an article with neither has no summary.
+   start of its abstract; an article with neither has no summary. The
+   articles kept are then judged for the pair by Jev when
+   `CHOOSER_JUDGE_EVIDENCE` and research judging are both on
+   (`_judge_evidence`, through `pubmed_tools.judge_missing`): a judgment
+   already stored for the pair, by this or by a real appeal, is not asked
+   for again, and new ones are stored in `PubMedArticleJudgment`, where the
+   next case or appeal about the pair reads them. Nothing is kept on the
+   case: the drafts are told the summaries, never the verdicts. The pair is
+   k-anonymous and the case synthetic, so no consent is involved, and what
+   is sent is the article's public title and abstract and the pair. Best
+   effort, bounded by `CHOOSER_EVIDENCE_JUDGING_TIMEOUT`.
 4. **Interview.** `_interview` runs a simulated question-and-answer
    session: the app's own question generators
    (`MLAppealQuestionsHelper.generate_specific_questions`, given the case as
@@ -81,6 +113,19 @@ appeal flow, and rank the model backends against each other.
    no more than its summary says (`_build_appeal_prompt`), so a draft that
    makes things up is doing so against instructions, and the voter can check
    it against the same list.
+
+### What the voter is served (`annotate_evidence_verdicts`)
+
+The next-task endpoint serves an appeal case with each evidence row carrying
+`judgment` (`{verdict, on_topic, supports, undermines}`,
+`research_judging.Judgment.as_dict`) when a judgment under the current rubric
+is stored for the PMID and the case's treatment and condition. It is read as
+the case is served, not stored with it: a case built before its articles
+were judged shows the verdicts too, and `context_json` stays exactly what
+the drafts were given. It reads only (`pubmed_tools.stored_judgments_for`)
+and shows nothing while research judging is switched off, the kill switch
+for stored judgments everywhere. A case it cannot be read for is served
+without it. The citation check needs nothing from the server.
 
 ### Case versions and what voters see first
 
@@ -174,6 +219,8 @@ environment variables of the same name.
 | `CHOOSER_PUBMED_LIVE_SEARCH` | `True` (`False` in tests) | Search PubMed when nothing is cached for the pair |
 | `CHOOSER_PUBMED_SEARCH_TIMEOUT` | `20.0` | Seconds a live search may take |
 | `CHOOSER_SIMULATED_QA` | `True` (`False` in tests) | Give appeal cases a simulated interview |
+| `CHOOSER_JUDGE_EVIDENCE` | `True` (`False` in tests) | Have Jev judge a case's evidence as it is built (needs `TYPESAFE_RESEARCH_JUDGING_ENABLED`) |
+| `CHOOSER_EVIDENCE_JUDGING_TIMEOUT` | `60` | Seconds a case waits for those verdicts |
 | `CHOOSER_MAX_QUESTIONS` | `4` | Questions the simulated patient is asked |
 | `CHOOSER_QA_TIMEOUT` | `60` | Seconds each question generator may take |
 | `CHOOSER_FORCE_MODEL` | LunaRoute's two models, for now (`""` in tests) | Registered model names seated in every new arena task |

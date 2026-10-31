@@ -336,6 +336,16 @@ class Base(Configuration):
         os.getenv("CHOOSER_PUBMED_SEARCH_TIMEOUT", "20")
     )
     CHOOSER_SIMULATED_QA = os.getenv("CHOOSER_SIMULATED_QA", "true").lower() != "false"
+    # Whether a case's evidence is judged by Jev as the case is built (on
+    # topic, supports, against), for the verdicts the arena shows voters.
+    # Needs TYPESAFE_RESEARCH_JUDGING_ENABLED too; off keeps the research
+    # budget for real appeals.
+    CHOOSER_JUDGE_EVIDENCE = (
+        os.getenv("CHOOSER_JUDGE_EVIDENCE", "true").lower() != "false"
+    )
+    CHOOSER_EVIDENCE_JUDGING_TIMEOUT = float(
+        os.getenv("CHOOSER_EVIDENCE_JUDGING_TIMEOUT", "60")
+    )
     # Registered backend names (comma-separated) seated in every new arena
     # task, to try a model out against the rest; arena only, unlike FORCE_MODEL.
     # Temporarily LunaRoute's two models (ml_models.LunaRoute), to get them
@@ -1181,6 +1191,9 @@ class _TestBase(Dev):
     # its simulated interview reach the question generators' backends.
     CHOOSER_PUBMED_LIVE_SEARCH = False
     CHOOSER_SIMULATED_QA = False
+    # Nor may a case's evidence be sent to Jev; a test that wants that turns
+    # it on along with research judging itself.
+    CHOOSER_JUDGE_EVIDENCE = False
     # A model forced into the arena from the host environment would be asked
     # for real by every test that builds a task.
     CHOOSER_FORCE_MODEL = ""

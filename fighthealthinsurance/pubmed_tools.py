@@ -90,19 +90,91 @@ def judgment_of(row: PubMedArticleJudgment) -> research_judging.Judgment:
     )
 
 
+def stored_judgments_for(
+    procedure: Optional[str], diagnosis: Optional[str], pmids: list[str]
+) -> dict[str, research_judging.Judgment]:
+    """What is already known about these articles for one treatment and
+    condition. Reads only; sends nothing anywhere. Nothing while judging is
+    switched off: the switch is the kill switch for the judgments already
+    stored too. Also read for the Appeal Arena's synthetic cases
+    (chooser_tasks.annotate_evidence_verdicts), which have no denial."""
+    if not research_judging.enabled():
+        return {}
+    if not (procedure or "").strip() or not pmids:
+        return {}
+    key = research_judging.treatment_key(procedure, diagnosis)
+    return {row.pmid: judgment_of(row) for row in judgment_rows(pmids, key)}
+
+
 def stored_judgments(
     denial: Denial, pmids: list[str]
 ) -> dict[str, research_judging.Judgment]:
-    """What is already known about these articles for this denial's
-    treatment and condition. Reads only; sends nothing anywhere. Nothing
-    while judging is switched off: the switch is the kill switch for the
-    judgments already stored too."""
-    if not research_judging.enabled():
-        return {}
-    if not (denial.procedure or "").strip() or not pmids:
-        return {}
-    key = research_judging.treatment_key(denial.procedure, denial.diagnosis)
-    return {row.pmid: judgment_of(row) for row in judgment_rows(pmids, key)}
+    """stored_judgments_for the denial's treatment and condition."""
+    return stored_judgments_for(denial.procedure, denial.diagnosis, pmids)
+
+
+async def judge_missing(
+    articles: list[Any],
+    procedure: Optional[str],
+    diagnosis: Optional[str],
+    known: dict[str, research_judging.Judgment],
+) -> dict[str, research_judging.Judgment]:
+    """Ask Jev about up to research_judging.MAX_ARTICLES of ``articles``
+    (anything with ``pmid``, ``title`` and ``abstract``) that ``known`` has
+    no judgment for, for this treatment and condition, and return ``known``
+    with the new judgments added. Each is stored (PubMedArticleJudgment, so
+    the next case about the pair reads it) as it lands, so a caller that
+    stops waiting keeps what arrived. Jev's health is noted either way.
+
+    What it does not do: check the switch, consent or the spend channel.
+    Those are the caller's (judge_articles for a denial; the Appeal Arena's
+    synthetic cases need no consent), and the treatment and condition are
+    the only thing about the case that is sent (ml/research_judging.py).
+    """
+    key = research_judging.treatment_key(procedure, diagnosis)
+    by_pmid = {a.pmid: a for a in articles if a.pmid}
+    missing = [pmid for pmid in by_pmid if pmid not in known][
+        : research_judging.MAX_ARTICLES
+    ]
+    if not missing:
+        return known
+    gate = asyncio.Semaphore(research_judging.CONCURRENCY)
+
+    async def note_failure(summary: str) -> None:
+        await ExternalServiceHealth.anote_failure(research_judging.SERVICE, summary)
+
+    async def one(pmid: str) -> None:
+        article = by_pmid[pmid]
+        async with gate:
+            judgment = await research_judging.judge_article(
+                article.title,
+                article.abstract,
+                procedure,
+                diagnosis,
+                on_failure=note_failure,
+            )
+        if judgment is None:
+            return
+        known[pmid] = judgment
+        await ExternalServiceHealth.anote_success(research_judging.SERVICE)
+        try:
+            await PubMedArticleJudgment.objects.aget_or_create(
+                pmid=pmid,
+                treatment_key=key,
+                scorer=judgment.scorer,
+                defaults={
+                    "on_topic": judgment.on_topic,
+                    "supports": judgment.supports,
+                    "undermines": judgment.undermines,
+                },
+            )
+        except Exception as e:
+            # Another case stored the same judgment first; ours is kept
+            # in memory for this build either way.
+            logger.debug(f"article judgment not stored: {type(e).__name__}")
+
+    await asyncio.gather(*(one(pmid) for pmid in missing))
+    return known
 
 
 PER_QUERY = 2
@@ -1168,52 +1240,12 @@ class PubMedTools(object):
             use_external=True,
         ).aexists():
             return judgments
-        by_pmid = {a.pmid: a for a in articles if a.pmid}
-        missing = [pmid for pmid in pmids if pmid not in judgments][
-            : research_judging.MAX_ARTICLES
-        ]
-        if not missing:
-            return judgments
-        gate = asyncio.Semaphore(research_judging.CONCURRENCY)
-
-        async def note_failure(summary: str) -> None:
-            await ExternalServiceHealth.anote_failure(research_judging.SERVICE, summary)
-
-        async def one(pmid: str) -> None:
-            article = by_pmid[pmid]
-            async with gate:
-                judgment = await research_judging.judge_article(
-                    article.title,
-                    article.abstract,
-                    denial.procedure,
-                    denial.diagnosis,
-                    on_failure=note_failure,
-                )
-            if judgment is None:
-                return
-            judgments[pmid] = judgment
-            await ExternalServiceHealth.anote_success(research_judging.SERVICE)
-            try:
-                await PubMedArticleJudgment.objects.aget_or_create(
-                    pmid=pmid,
-                    treatment_key=key,
-                    scorer=judgment.scorer,
-                    defaults={
-                        "on_topic": judgment.on_topic,
-                        "supports": judgment.supports,
-                        "undermines": judgment.undermines,
-                    },
-                )
-            except Exception as e:
-                # Another case stored the same judgment first; ours is kept
-                # in memory for this build either way.
-                logger.debug(f"article judgment not stored: {type(e).__name__}")
-
         # The spend channel (site or assistant) is a context variable, so the
-        # tasks gather starts inherit it.
+        # tasks the gather inside starts inherit it.
         with spend.for_channel(spend.channel_of(denial)):
-            await asyncio.gather(*(one(pmid) for pmid in missing))
-        return judgments
+            return await judge_missing(
+                articles, denial.procedure, denial.diagnosis, judgments
+            )
 
     async def _judged_for_context(
         self,
