@@ -26,6 +26,7 @@ _INTAKE_ON = dict(
     TEMPORAL_APPEAL_JOURNEY_ENABLED=True,
     TEMPORAL_INTAKE_JOURNEY_ENABLED=True,
     TEMPORAL_APPEAL_TASK_QUEUE="q-appeal",
+    TEMPORAL_INTAKE_TASK_QUEUE="q-intake",
 )
 _CLIENT = "fighthealthinsurance.temporal_client.get_temporal_client"
 _EMAIL = "person@example.com"
@@ -253,6 +254,8 @@ class TestDelivery(TransactionTestCase):
         assert kwargs["id"] == f"intake-{denial.uuid}"
         assert kwargs["start_signal"] == "form_completed"
         assert policy == Policy.ALLOW_DUPLICATE
+        assert kwargs["task_queue"] == "q-intake"
+        assert client.start_workflow.call_args.args[1].appeal_task_queue == "q-appeal"
         row.refresh_from_db()
         assert row.acked_at is not None
 
@@ -281,6 +284,7 @@ class TestDelivery(TransactionTestCase):
         with patch(_CLIENT, AsyncMock(return_value=client)):
             assert intake_outbox.deliver(row) is True
         policy, Policy = _reuse(client.start_workflow.call_args.kwargs)
+        assert client.start_workflow.call_args.kwargs["task_queue"] == "q-intake"
         assert policy == Policy.REJECT_DUPLICATE
         client.get_workflow_handle.return_value.describe.assert_awaited_once()
         row.refresh_from_db()

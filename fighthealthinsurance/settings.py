@@ -593,6 +593,8 @@ class Base(Configuration):
     # (separate failure domain; PR #963 review). Point a dedicated
     # worker deployment at it for full resource isolation.
     TEMPORAL_APPEAL_TASK_QUEUE = os.getenv("TEMPORAL_APPEAL_TASK_QUEUE", "fhi-appeals")
+    # The intake journey has its own queue, so slow generations never delay it.
+    TEMPORAL_INTAKE_TASK_QUEUE = os.getenv("TEMPORAL_INTAKE_TASK_QUEUE", "fhi-intake")
     # The chat routing policy runs on its own queue too, hosted as its own
     # Worker in the appeal-worker process, so a slow generation holding the
     # appeal Worker's slots never delays it.

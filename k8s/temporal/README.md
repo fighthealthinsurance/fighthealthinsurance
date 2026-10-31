@@ -166,6 +166,7 @@ once via the shared secret.
 | `TEMPORAL_HOST` | `temporal-frontend:7233` | web + worker |
 | `TEMPORAL_NAMESPACE` | `default` | web + worker |
 | `TEMPORAL_TASK_QUEUE` | `fhi-fax` | web + worker |
+| `TEMPORAL_INTAKE_TASK_QUEUE` | `fhi-intake` | web + worker |
 
 (The worker Deployment also sets `TEMPORAL_ENABLED=true` explicitly, so it is
 always on regardless of the shared secret.)
@@ -338,6 +339,25 @@ the UI then expects to be served under the public path, i.e.
 `fhi-research` namespace: pick it in the UI's namespace menu, or open
 `/timbit/temporal/namespaces/fhi-research/workflows`. The proxy passes every
 namespace's pages through.
+
+## Seeing one case at a time
+
+Each case has its own task queue, so the UI's list can show one at a time. These
+links open the filtered list:
+
+| Case | Queues | Link |
+| --- | --- | --- |
+| Create the appeal letter: intake | `fhi-intake` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-intake%22` |
+| Create the appeal letter: generation | `fhi-appeals` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-appeals%22` |
+| Submit the letter by fax | `fhi-fax` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-fax%22` |
+| Evals | `fhi-eval`, `fhi-eval-writer` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-eval%22` |
+
+To follow one denial, open `intake-<denial uuid>` and `generate-appeal-<denial uuid>`
+by workflow id; a child's page links to its parent. Fax ids are `send-fax-<fax uuid>`.
+Email isn't a Temporal workflow.
+
+Journeys that started before `fhi-intake` existed finish on `fhi-appeals`, so
+both queues stay hosted while any are open.
 
 ## Rollback
 

@@ -532,6 +532,28 @@ class Command(BaseCommand):
                 runs.append(appeal_worker.run())
                 workers.append(appeal_worker)
                 queues.append(appeal_queue)
+                if intake_enabled:
+                    # Its own Worker, so a nudge or a journey's next step never
+                    # waits behind a generation for a slot. --task-queue never
+                    # changes this queue.
+                    intake_queue = settings.TEMPORAL_INTAKE_TASK_QUEUE
+                    intake_worker = Worker(
+                        client,
+                        task_queue=intake_queue,
+                        workflows=workflow_registry.intake_workflows(),
+                        activities=[
+                            intake_activities.send_abandonment_nudge,
+                            intake_activities.close_incomplete_journey,
+                            journey_activities.check_generation_postcondition,
+                        ],
+                        max_concurrent_activities=4,
+                        # Covers the journey's one-minute activities, inside
+                        # the appeal worker's 300s drain and the pod's grace.
+                        graceful_shutdown_timeout=timedelta(minutes=2),
+                    )
+                    runs.append(intake_worker.run())
+                    workers.append(intake_worker)
+                    queues.append(intake_queue)
             if hosts_policy and policy_enabled:
                 # Its own Worker, so the policy run never waits for a slot
                 # behind a long appeal generation. One activity at a time is

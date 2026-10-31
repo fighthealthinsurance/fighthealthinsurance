@@ -60,6 +60,9 @@ def _recording_worker_cls():
     return cls
 
 
+from fighthealthinsurance.workflows.generate_appeal import GenerateAppealWorkflow
+from fighthealthinsurance.workflows.intake_journey import IntakeJourneyWorkflow
+
 _BASE_SETTINGS = dict(
     TEMPORAL_ENABLED=True,
     TEMPORAL_APPEAL_JOURNEY_ENABLED=True,
@@ -67,6 +70,7 @@ _BASE_SETTINGS = dict(
     TEMPORAL_CHAT_POLICY_ENABLED=False,
     TEMPORAL_TASK_QUEUE="q-fax",
     TEMPORAL_APPEAL_TASK_QUEUE="q-appeal",
+    TEMPORAL_INTAKE_TASK_QUEUE="q-intake",
     TEMPORAL_CHAT_POLICY_TASK_QUEUE="q-policy",
     TEMPORAL_PLAN_DOCUMENTS_ENABLED=False,
     TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE="q-plan-docs",
@@ -928,6 +932,24 @@ def test_all_role_with_policy_on_hosts_every_queue():
         "q-appeal",
         "q-policy",
     ]
+
+
+def test_intake_flag_adds_its_own_queue_and_old_runs_can_still_finish():
+    kwargs = _run_capture({"queues": "appeal"}, TEMPORAL_INTAKE_JOURNEY_ENABLED=True)
+    by_queue = {k["task_queue"]: k for k in kwargs}
+    assert list(by_queue) == ["q-appeal", "q-intake"]
+    assert IntakeJourneyWorkflow in by_queue["q-intake"]["workflows"]
+    assert GenerateAppealWorkflow not in by_queue["q-intake"]["workflows"]
+    assert IntakeJourneyWorkflow in by_queue["q-appeal"]["workflows"]
+    for queue in by_queue.values():
+        names = {f.__name__ for f in queue["activities"]}
+        assert {"send_abandonment_nudge", "close_incomplete_journey"} <= names
+        assert "check_generation_postcondition" in names
+
+
+def test_intake_queue_stays_off_with_its_flag_and_in_the_fax_role():
+    assert _run_with("appeal") == ["q-appeal"]
+    assert _run_with("fax", TEMPORAL_INTAKE_JOURNEY_ENABLED=True) == ["q-fax"]
 
 
 def test_policy_off_changes_nothing():

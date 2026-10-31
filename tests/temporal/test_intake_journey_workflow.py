@@ -310,3 +310,34 @@ async def test_the_site_writing_the_letters_completes_the_journey():
     assert site_holds.await_count == 1
     assert precheck.await_count == 2
     assert rec.calls == []
+
+
+@pytest.mark.asyncio
+async def test_generation_child_runs_on_the_appeal_queue_when_named():
+    """Moved to its own queue, the journey must not pull generation with it."""
+    rec = _Recorder()
+    intake_queue, appeal_queue = str(uuid.uuid4()), str(uuid.uuid4())
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        intake_worker = Worker(
+            env.client,
+            task_queue=intake_queue,
+            workflows=[IntakeJourneyWorkflow],
+            activities=rec.activities(),
+        )
+        appeal_worker = Worker(
+            env.client, task_queue=appeal_queue, workflows=[_StubGenerateAppeal]
+        )
+        async with intake_worker, appeal_worker:
+            handle = await env.client.start_workflow(
+                IntakeJourneyWorkflow.run,
+                IntakeJourneyInput(
+                    hashed_email="h",
+                    denial_uuid=str(uuid.uuid4()),
+                    appeal_task_queue=appeal_queue,
+                ),
+                id=f"intake-{uuid.uuid4()}",
+                task_queue=intake_queue,
+            )
+            await handle.signal(IntakeJourneyWorkflow.form_completed)
+            # Left on the intake queue the child has no worker and never finishes.
+            assert await asyncio.wait_for(handle.result(), 30) == "completed"
