@@ -835,9 +835,10 @@ class MLRouter(object):
         if forced:
             return forced, []
         hosted = self.best_external_models() if use_external else []
-        general = [
-            m for m in self.internal_models_by_cost if m.supports_general_instructions()
-        ]
+        # Never the appeal-only fine-tune, hosted models or not (see above).
+        general = self._general_purpose_only(
+            self.internal_models_by_cost, "synthesis", fail_open=False
+        )
         ours = self._filter_available(general, "synthesis", fail_open=not hosted)
         return sorted(ours, key=lambda m: -m.quality()), hosted
 
