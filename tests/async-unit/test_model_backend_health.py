@@ -1585,6 +1585,16 @@ class TestTypeSafeProbe:
         assert ask.await_args.kwargs["use"] == spend.OTHER
         assert ask.await_args.kwargs["task"] == "probe"
         assert result.probability == 0.97
+        assert result.answered_model == "jev-1.13.0"
+
+    def test_an_answer_too_large_for_a_float_is_malformed(self):
+        """float() of a huge integer raises OverflowError, not ValueError."""
+        ask = AsyncMock(
+            return_value={"model": "jev-1.13.0", "answers": {"probe": {"noul": 10**400}}}
+        )
+        result = self._probe(ask)
+        assert not result.ok
+        assert result.category == mhc.CATEGORY_MALFORMED_RESPONSE
 
     def test_a_pass_with_its_own_state_and_question(self):
         """The staff test-decision button asks its own question; the answer

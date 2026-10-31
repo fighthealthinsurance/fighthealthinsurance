@@ -611,7 +611,9 @@ class AdminStatusView(generic.TemplateView):
 
         out: Dict[str, Any] = {"ok": True, "error": None}
         try:
-            out.update(ModelUsageDashboardView._jev_panel())
+            # Without the triage deadline tally, which this page does not
+            # show and which scans every triaged denial.
+            out.update(ModelUsageDashboardView._jev_panel(deadlines=False))
             out["url"] = str(getattr(settings, "TYPESAFE_API_URL", "") or "")
             out["skip"] = None if not out["key_present"] else _jev_skip_reason()
             on_rows = [row for row in out["rows"] if row["on"]]
@@ -1666,6 +1668,8 @@ class AdminJevTestView(View):
         return self._render(request, result=entry)
 
     def _render(self, request, result):
+        from fighthealthinsurance.ml import model_health_check as mhc
+
         ctx: Dict[str, Any] = {
             "title": "Jev test decision",
             "question": JEV_TEST_QUESTION,
@@ -1674,6 +1678,9 @@ class AdminJevTestView(View):
             "key_present": typesafe.configured(),
             "yes_at": JEV_TEST_YES_AT,
             "timeout_seconds": JEV_TEST_TIMEOUT_SECONDS,
+            # check_typesafe first waits this long for this pod's spend
+            # ledger, before the call's own timeout starts.
+            "ledger_wait_seconds": mhc.TYPESAFE_LEDGER_WAIT_SECONDS,
             "result": None,
         }
         if result is not None:
@@ -1685,6 +1692,9 @@ class AdminJevTestView(View):
                 "hint": AdminStatusView._scoring_failure_hint(result.error),
                 "latency_ms": result.latency_ms,
                 "probability": probability,
+                # The model TypeSafe said answered: the versioned id, even
+                # when TYPESAFE_MODEL names an alias.
+                "answered_model": result.answered_model,
                 "answer": (
                     None
                     if probability is None
@@ -3531,15 +3541,17 @@ class ModelUsageDashboardView(generic.TemplateView):
     JEV_WINDOW = datetime.timedelta(hours=24)
 
     @classmethod
-    def _jev_panel(cls) -> Dict[str, Any]:
+    def _jev_panel(cls, deadlines: bool = True) -> Dict[str, Any]:
         """Is Jev working: every use of TypeSafe's Jev on one panel, each
         with its switch, why it is skipped now if it is (_jev_uses), the
         last success and failure its health row recorded, and a level from
         those; then the newest deploy-time probe
         (ml/model_health_check.check_typesafe) and the staff tally of triage
         deadlines, which decides when readers may be told them
-        (TYPESAFE_DEADLINE_SHOW_ENABLED). TypeSafe's spend and any pause are
-        in the chat routing policy panel's spend rows.
+        (TYPESAFE_DEADLINE_SHOW_ENABLED), unless ``deadlines`` is False: the
+        tally is an aggregate over every triaged denial, so a page that does
+        not show it (the status page) leaves it out. TypeSafe's spend and
+        any pause are in the chat routing policy panel's spend rows.
 
         Reads rows, settings and this pod's state only; never calls
         TypeSafe. Each part fails on its own: an unreadable part reads as an
@@ -3586,6 +3598,8 @@ class ModelUsageDashboardView(generic.TemplateView):
         except Exception as e:
             logger.opt(exception=True).warning("Jev panel: probe unreadable")
             panel["probe_error"] = type(e).__name__
+        if not deadlines:
+            return panel
         try:
             panel["deadlines"] = {
                 "show_on": denial_triage.deadline_show_enabled(),

@@ -45,7 +45,8 @@
     <blockquote class="state">{{ state }}</blockquote>
     <p class="meta">
       API key: {% if key_present %}present{% else %}<span class="error-text">missing (TYPESAFE_API_KEY): nothing is sent</span>{% endif %}
-      &middot; Y at a probability of {{ yes_at }} or more &middot; waits up to {{ timeout_seconds|floatformat:0 }} s
+      &middot; Y at a probability of {{ yes_at }} or more
+      &middot; waits up to {{ timeout_seconds|floatformat:0 }} s for the answer, after up to {{ ledger_wait_seconds|floatformat:0 }} s for this pod&rsquo;s spend ledger to load
     </p>
     <form method="post" action="{% url 'admin_jev_test' %}">
       {% csrf_token %}
@@ -60,9 +61,9 @@
       <div class="answer {% if result.answer == "Y" %}yes{% else %}no{% endif %}">{{ result.answer }}</div>
       <p class="meta">
         <span class="status-badge ok">{{ result.category }}</span>
-        Jev put the probability at <strong>{{ result.probability|floatformat:3 }}</strong>
+        {{ result.answered_model|default:model }} put the probability at <strong>{{ result.probability }}</strong>
         {% if result.latency_ms is not None %}&middot; {{ result.latency_ms }} ms{% endif %}.
-        {% if result.answer == "N" %}<span class="error-text">A Timbit is a doughnut hole, so an N means {{ model }} is answering but not well.</span>{% endif %}
+        {% if result.answer == "N" %}<span class="error-text">A Timbit is a doughnut hole, so an N means {{ result.answered_model|default:model }} is answering but not well.</span>{% endif %}
       </p>
     {% else %}
       <p class="meta">

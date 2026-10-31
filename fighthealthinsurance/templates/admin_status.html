@@ -165,7 +165,7 @@
         </tbody>
       </table>
       <p class="meta" style="margin-top: 10px;">
-        Deploy-time probe:
+        Newest check (the deploy hook or <code>check_model_backends</code>):
         {% if jev.probe_error %}could not be read ({{ jev.probe_error }}).
         {% elif jev.probe %}
           {% if jev.probe.ok %}<span class="status-badge ok">{{ jev.probe.category }}</span>{% elif jev.probe.category == "NOT_CONFIGURED" %}<span class="status-badge unknown">{{ jev.probe.category }}</span>{% else %}<span class="status-badge bad">{{ jev.probe.category }}</span>{% endif %}

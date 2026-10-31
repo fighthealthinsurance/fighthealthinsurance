@@ -2356,6 +2356,15 @@ class AdminStatusJevPanelTest(TestCase):
         )
 
     @override_settings(TYPESAFE_API_KEY="k")
+    def test_the_status_page_does_not_tally_triage_deadlines(self):
+        """The dashboard's Jev panel tallies deadline labels over every
+        triaged denial; this page shows no tally, so it must not run it."""
+        with mock.patch.object(spend, "loaded", return_value=True):
+            response = self._get()
+        self.assertIsNone(response.context["jev"]["deadlines"])
+        self.assertIsNone(response.context["jev"]["deadlines_error"])
+
+    @override_settings(TYPESAFE_API_KEY="k")
     def test_an_unreadable_panel_is_an_error_row_not_a_broken_page(self):
         with mock.patch(
             "fighthealthinsurance.staff_views.ModelUsageDashboardView._jev_panel",
@@ -2420,7 +2429,7 @@ class AdminJevTestViewTest(TestCase):
         self.assertEqual(result["answer"], "Y")
         self.assertEqual(result["probability"], 0.93)
         self.assertContains(response, 'class="answer yes">Y<')
-        self.assertContains(response, "0.930")
+        self.assertContains(response, "<strong>0.93</strong>")
         state, questions = ask.await_args.args
         self.assertEqual(state, JEV_TEST_STATE)
         self.assertEqual(questions, JEV_TEST_QUESTIONS)
@@ -2439,6 +2448,27 @@ class AdminJevTestViewTest(TestCase):
         self.assertEqual(result["answer"], "N")
         self.assertContains(response, 'class="answer no">N<')
         self.assertContains(response, "answering but not well")
+
+    @override_settings(TYPESAFE_API_KEY="k")
+    def test_a_probability_at_the_threshold_reads_y(self):
+        answer = {"model": "jev-1.13.0", "answers": {"probe": {"noul": 0.5}}}
+        response = self._post(mock.AsyncMock(return_value=answer))
+        self.assertEqual(response.context["result"]["answer"], "Y")
+
+    @override_settings(TYPESAFE_API_KEY="k")
+    def test_the_probability_is_shown_unrounded(self):
+        """Rounded to three places, 0.4999 would read 0.500 beside an N."""
+        answer = {"model": "jev-1.13.0", "answers": {"probe": {"noul": 0.4999}}}
+        response = self._post(mock.AsyncMock(return_value=answer))
+        self.assertEqual(response.context["result"]["answer"], "N")
+        self.assertContains(response, "<strong>0.4999</strong>")
+
+    @override_settings(TYPESAFE_API_KEY="k", TYPESAFE_MODEL="jev-latest")
+    def test_the_model_that_answered_is_named_not_the_alias(self):
+        answer = {"model": "jev-1.14.0", "answers": {"probe": {"noul": 0.9}}}
+        response = self._post(mock.AsyncMock(return_value=answer))
+        self.assertEqual(response.context["result"]["answered_model"], "jev-1.14.0")
+        self.assertContains(response, "jev-1.14.0 put the probability")
 
     @override_settings(TYPESAFE_API_KEY=None)
     def test_without_a_key_nothing_is_sent_and_the_page_says_so(self):

@@ -290,6 +290,10 @@ class BackendCheckResult:
     # question with (0 to 1), set by check_typesafe when it passed: the
     # staff test-decision button shows it.
     probability: Optional[float] = None
+    # Not persisted. The model TypeSafe said answered (typesafe.reported_model:
+    # the versioned id, even when the request named an alias), set by
+    # check_typesafe whenever an answer came back.
+    answered_model: str = ""
     # Not persisted. The staff status page reads the model's routing traits
     # from these: the instance the router registered, or, when there is none,
     # the backend class, so it can still say what the model would be.
@@ -1037,11 +1041,12 @@ async def check_typesafe(
             result.error = letter_quality.failure_summary(e)
         return result
     result.latency_ms = int((time.monotonic() - start) * 1000)
+    result.answered_model = typesafe.reported_model(payload)
     try:
         answer = payload["answers"]["probe"]["noul"]
         if isinstance(answer, bool) or not 0.0 <= float(answer) <= 1.0:
             raise ValueError("not a probability")
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         result.category = CATEGORY_MALFORMED_RESPONSE
         result.error = "no probability in the answer to the probe question"
         return result
