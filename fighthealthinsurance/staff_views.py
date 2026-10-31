@@ -3,6 +3,7 @@ import datetime
 import io
 import json
 import statistics
+import threading
 import types
 from urllib.parse import urlencode
 from collections import Counter, defaultdict
@@ -180,6 +181,38 @@ from fighthealthinsurance.utils import mask_email_for_logging
 # a row lands last instead of raising. Timezone-aware because everything it is
 # compared against (the Temporal SDK's timestamps) is.
 _UNDATED = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+
+# Phoenix panel (AdminStatusView._phoenix_status): its budget, read cap,
+# and the one-check-at-a-time lock with the last result it hands out.
+_PHOENIX_BUDGET_S = 8.0
+_PHOENIX_MAX_BODY_BYTES = 4 * 1024 * 1024
+_PHOENIX_RESULT_FRESH_S = 60.0
+_PHOENIX_CHECK_LOCK = threading.Lock()
+_PHOENIX_LAST_RESULT: Dict[str, Any] = {}
+
+
+class _PhoenixDeadline(Exception):
+    """The Phoenix check ran out of its budget."""
+
+
+class _PhoenixRedirect(Exception):
+    """Phoenix answered 3xx; the panel never follows one."""
+
+
+class _PhoenixBodyTooLarge(Exception):
+    """A Phoenix response went past the read cap."""
+
+
+def _log_phoenix_failure(what: str, exc: Exception) -> None:
+    """Log a Phoenix failure by exception type and HTTP status only."""
+    status = None
+    response = getattr(exc, "response", None)
+    if response is not None:
+        status = getattr(response, "status_code", None)
+    logger.warning(
+        "Phoenix {} failed: {} (HTTP status {})", what, type(exc).__name__, status
+    )
 
 
 def _parse_iso(value: Any) -> Optional[datetime.datetime]:
@@ -1342,25 +1375,32 @@ class AdminStatusView(generic.TemplateView):
     def _phoenix_error_message(exc: Exception) -> str:
         """One operator-readable sentence for a Phoenix failure.
 
-        Same idea as ``_temporal_error_message``: a bare "401" or a connection
-        traceback says nothing about whose problem it is, so the failures we
-        can explain get a hint, and anything else falls back to the exception
-        type plus its text so it never renders blank. Phoenix holds the letter
-        eval traces only; nothing user-facing depends on it, and the messages
-        say so.
+        Same idea as ``_temporal_error_message``, but every message here is
+        fixed text chosen by error class: no exception text, URL or response
+        content is ever rendered. Phoenix holds the letter eval traces only;
+        nothing user-facing depends on it, and the messages say so.
         """
-        detail = str(exc).strip()
-        if isinstance(exc, TimeoutError) or isinstance(exc, requests.Timeout):
+        if isinstance(exc, (TimeoutError, requests.Timeout, _PhoenixDeadline)):
             return (
                 "Phoenix did not answer within the status page's 8s budget: "
                 "the phoenix pod in fhi-eval is unreachable or overloaded. "
                 "Letter evals may not be recording; appeals are unaffected."
             )
+        if isinstance(exc, _PhoenixRedirect):
+            return (
+                "Phoenix answered with a redirect, which this page does not "
+                "follow: check PHOENIX_BASE_URL points straight at the "
+                "phoenix service."
+            )
+        if isinstance(exc, _PhoenixBodyTooLarge):
+            return (
+                "Phoenix sent a larger response than this page reads -- a bug "
+                "in this page or a misrouted PHOENIX_BASE_URL, not an outage."
+            )
         if isinstance(exc, requests.ConnectionError):
             return (
                 "Could not connect to Phoenix: check the phoenix pod in "
-                "fhi-eval and PHOENIX_BASE_URL. Appeals are unaffected. "
-                f"Detail: {type(exc).__name__}"
+                "fhi-eval and PHOENIX_BASE_URL. Appeals are unaffected."
             )
         if isinstance(exc, requests.HTTPError) and exc.response is not None:
             code = exc.response.status_code
@@ -1371,13 +1411,21 @@ class AdminStatusView(generic.TemplateView):
                     "access. A config problem, not a Phoenix outage."
                 )
             return (
-                f"Phoenix answered HTTP {code} to {exc.response.url}. "
-                "A 404 or 422 usually means the REST API changed under a "
-                "Phoenix upgrade -- a bug in this page, not an outage."
+                f"Phoenix answered HTTP {code}. A 404 or 422 usually means "
+                "the REST API changed under a Phoenix upgrade -- a bug in "
+                "this page, not an outage."
             )
-        if not detail:
-            return f"{type(exc).__name__} (no detail)"
-        return f"{type(exc).__name__}: {detail}"
+        if isinstance(exc, ValueError):
+            return (
+                "Phoenix sent a response this page could not read as JSON: "
+                "check PHOENIX_BASE_URL points at the phoenix service."
+            )
+        if isinstance(exc, requests.RequestException):
+            return (
+                "The request to Phoenix could not be made: check "
+                "PHOENIX_BASE_URL and PHOENIX_API_KEY are well formed."
+            )
+        return f"Phoenix status check failed ({type(exc).__name__})."
 
     @staticmethod
     def _phoenix_status() -> Dict[str, Any]:
@@ -1395,8 +1443,9 @@ class AdminStatusView(generic.TemplateView):
         examples are never copied out of a response, because they can carry
         letter text or eval answer keys.
 
-        Bounded: a fixed, small number of requests under a single 8s budget,
-        so a wedged Phoenix degrades to an error row.
+        Bounded: one check at a time across page loads, no request started
+        after the 8s deadline, and every response read under a byte cap and
+        the same deadline, so a wedged Phoenix degrades to an error row.
         """
         from django.conf import settings
 
@@ -1414,30 +1463,58 @@ class AdminStatusView(generic.TemplateView):
         }
         if not enabled:
             return out
-        try:
-            import concurrent.futures
-            import time
+        import time
 
-            budget = 8.0
-            deadline = time.monotonic() + budget
+        # One check at a time: a second page load while one runs shows the
+        # last result if it is fresh, and otherwise says a check is running.
+        if not _PHOENIX_CHECK_LOCK.acquire(blocking=False):
+            last = _PHOENIX_LAST_RESULT.get("out")
+            at = _PHOENIX_LAST_RESULT.get("at") or 0.0
+            if last is not None and time.monotonic() - at < _PHOENIX_RESULT_FRESH_S:
+                return dict(last)
+            out["ok"] = False
+            out["error"] = (
+                "A Phoenix check is already running for another page load; "
+                "reload in a few seconds."
+            )
+            return out
+        try:
+            deadline = time.monotonic() + _PHOENIX_BUDGET_S
             headers = {"Accept": "application/json"}
             api_key = getattr(settings, "PHOENIX_API_KEY", "") or ""
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
 
             def get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
-                # Each request gets what is left of the budget as its socket
-                # timeout, so a thread abandoned by the outer timeout below
-                # does not linger past it.
-                remaining = max(0.5, deadline - time.monotonic())
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise _PhoenixDeadline()
                 resp = requests.get(
                     f"{base_url}{path}",
                     params=params,
                     headers=headers,
                     timeout=remaining,
+                    allow_redirects=False,
+                    stream=True,
                 )
-                resp.raise_for_status()
-                body = resp.json()
+                try:
+                    if 300 <= resp.status_code < 400:
+                        raise _PhoenixRedirect()
+                    resp.raise_for_status()
+                    # The socket timeout only bounds silence between bytes,
+                    # so the read itself checks the deadline and a byte cap.
+                    chunks: List[bytes] = []
+                    size = 0
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        size += len(chunk)
+                        if size > _PHOENIX_MAX_BODY_BYTES:
+                            raise _PhoenixBodyTooLarge()
+                        if time.monotonic() > deadline:
+                            raise _PhoenixDeadline()
+                        chunks.append(chunk)
+                finally:
+                    resp.close()
+                body = json.loads(b"".join(chunks) or b"{}")
                 return body if isinstance(body, dict) else {}
 
             def iso(when: datetime.datetime) -> str:
@@ -1532,9 +1609,7 @@ class AdminStatusView(generic.TemplateView):
                 except Exception as e:
                     # The trace counts say whether evals are landing at all,
                     # so a failed experiment listing costs the table only.
-                    logger.opt(exception=True).warning(
-                        "Phoenix experiment listing failed"
-                    )
+                    _log_phoenix_failure("experiment listing", e)
                     experiments_error = AdminStatusView._phoenix_error_message(e)
                 experiments.sort(
                     key=lambda row: row["created"] or _UNDATED, reverse=True
@@ -1547,20 +1622,18 @@ class AdminStatusView(generic.TemplateView):
                     "experiments_error": experiments_error,
                 }
 
-            # Not a `with` block: its exit would wait on a wedged request and
-            # defeat the budget.
-            pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-            try:
-                data = pool.submit(gather).result(timeout=budget)
-            finally:
-                pool.shutdown(wait=False)
+            data = gather()
             out["projects"] = data["projects"]
             out["experiments"] = data["experiments"]
             out["experiments_error"] = data["experiments_error"]
         except Exception as e:
-            logger.opt(exception=True).warning("Phoenix status check failed")
+            _log_phoenix_failure("status check", e)
             out["ok"] = False
             out["error"] = AdminStatusView._phoenix_error_message(e)
+        finally:
+            _PHOENIX_LAST_RESULT["out"] = dict(out)
+            _PHOENIX_LAST_RESULT["at"] = time.monotonic()
+            _PHOENIX_CHECK_LOCK.release()
         return out
 
     @staticmethod

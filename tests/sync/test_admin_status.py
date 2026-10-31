@@ -2,6 +2,7 @@
 fax/model health helpers it relies on."""
 
 import datetime
+import json
 import os
 import tempfile
 import threading
@@ -14,7 +15,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from fighthealthinsurance import mcp_call_counts, mcp_server
+from fighthealthinsurance import mcp_call_counts, mcp_server, staff_views
 from fighthealthinsurance.ml import chat_gate, letter_quality, spend
 from fighthealthinsurance.models import (
     AssistantDraft,
@@ -2561,15 +2562,18 @@ class _FakePhoenixResponse:
         self.status_code = status_code
         self.url = url
 
-    def json(self):
-        return self._body
+    def iter_content(self, chunk_size=1):
+        yield json.dumps(self._body).encode()
+
+    def close(self):
+        pass
 
     def raise_for_status(self):
         if self.status_code >= 400:
             raise requests.HTTPError(f"{self.status_code} error", response=self)
 
 
-def _fake_phoenix_get(url, params=None, headers=None, timeout=None):
+def _fake_phoenix_get(url, params=None, headers=None, timeout=None, **kw):
     """Stands in for Phoenix's REST API, returning every field its schema
     allows, sensitive ones included, so the tests can check the panel drops
     them."""
@@ -2656,21 +2660,21 @@ def _fake_phoenix_get(url, params=None, headers=None, timeout=None):
     return _FakePhoenixResponse({}, status_code=404, url=url)
 
 
-def _experiments_refused(url, params=None, headers=None, timeout=None):
+def _experiments_refused(url, params=None, headers=None, timeout=None, **kw):
     if "/datasets" in url:
         return _FakePhoenixResponse({}, status_code=500, url=url)
-    return _fake_phoenix_get(url, params, headers, timeout)
+    return _fake_phoenix_get(url, params, headers, timeout, **kw)
 
 
-def _unauthorized(url, params=None, headers=None, timeout=None):
+def _unauthorized(url, params=None, headers=None, timeout=None, **kw):
     return _FakePhoenixResponse({}, status_code=401, url=url)
 
 
-def _timed_out(url, params=None, headers=None, timeout=None):
+def _timed_out(url, params=None, headers=None, timeout=None, **kw):
     raise requests.Timeout("read timed out")
 
 
-def _refused(url, params=None, headers=None, timeout=None):
+def _refused(url, params=None, headers=None, timeout=None, **kw):
     raise requests.ConnectionError("connection refused")
 
 
@@ -2690,6 +2694,7 @@ class AdminStatusPhoenixTest(TestCase):
         User.objects.create_user(username="staff", password="pw123", is_staff=True)
         self.client.login(username="staff", password="pw123")
         _PHOENIX_CALLS.clear()
+        staff_views._PHOENIX_LAST_RESULT.clear()
 
     def _get(self):
         with mock.patch(_MODELS, return_value=[]), mock.patch(
@@ -2782,3 +2787,120 @@ class AdminStatusPhoenixTest(TestCase):
         message = AdminStatusView._phoenix_error_message(TimeoutError())
         self.assertIn("8s budget", message)
         self.assertIn("appeals are unaffected", message)
+
+    def test_messages_and_logs_never_carry_the_key_or_url(self):
+        # Exception text can carry request headers or URLs with parameters;
+        # neither the rendered message nor the log line may repeat it.
+        leaky = "Bearer test-key http://phoenix.test/v1/projects?limit=10"
+
+        def raising(url, params=None, headers=None, timeout=None, **kw):
+            raise requests.exceptions.InvalidHeader(leaky)
+
+        def http_error(url, params=None, headers=None, timeout=None, **kw):
+            return _FakePhoenixResponse(
+                {}, status_code=500, url="http://phoenix.test/v1/projects?limit=10"
+            )
+
+        for fake in (raising, http_error):
+            with mock.patch(_PHOENIX_GET, new=fake), mock.patch.object(
+                staff_views, "logger"
+            ) as log:
+                staff_views._PHOENIX_LAST_RESULT.clear()
+                response = self._get()
+            error = response.context["phoenix"]["error"]
+            logged = repr(log.mock_calls)
+            for text in (error, logged, response.content.decode()):
+                self.assertNotIn("test-key", text)
+                self.assertNotIn("limit=10", text)
+            self.assertNotIn("phoenix.test/v1", error + logged)
+            log.opt.assert_not_called()
+
+    def test_no_request_starts_after_the_deadline(self):
+        # A clock that jumps past the budget once the first request is made
+        # and its body read.
+        def clock():
+            return 100.0 if _PHOENIX_CALLS and reads["done"] else 0.0
+
+        reads = {"done": False}
+
+        class Once(_FakePhoenixResponse):
+            def iter_content(self, chunk_size=1):
+                yield from super().iter_content(chunk_size)
+                reads["done"] = True
+
+        def once(url, params=None, headers=None, timeout=None, **kw):
+            resp = _fake_phoenix_get(url, params, headers, timeout, **kw)
+            return Once(resp._body, resp.status_code, resp.url)
+
+        with mock.patch(_PHOENIX_GET, new=once), mock.patch(
+            "time.monotonic", new=clock
+        ):
+            response = self._get()
+        self.assertEqual(len(_PHOENIX_CALLS), 1)
+        self.assertIn("8s budget", response.context["phoenix"]["error"])
+
+    def test_concurrent_page_load_does_not_start_a_second_check(self):
+        self.assertTrue(staff_views._PHOENIX_CHECK_LOCK.acquire(blocking=False))
+        try:
+            with mock.patch(_PHOENIX_GET) as mock_get:
+                response = self._get()
+            mock_get.assert_not_called()
+            self.assertIn("already running", response.context["phoenix"]["error"])
+        finally:
+            staff_views._PHOENIX_CHECK_LOCK.release()
+
+    @mock.patch(_PHOENIX_GET, new=_fake_phoenix_get)
+    def test_concurrent_page_load_reuses_a_fresh_result(self):
+        self._get()
+        calls = len(_PHOENIX_CALLS)
+        self.assertTrue(staff_views._PHOENIX_CHECK_LOCK.acquire(blocking=False))
+        try:
+            response = self._get()
+        finally:
+            staff_views._PHOENIX_CHECK_LOCK.release()
+        self.assertEqual(len(_PHOENIX_CALLS), calls)
+        self.assertTrue(response.context["phoenix"]["ok"])
+
+    def test_redirect_is_an_error_and_not_followed(self):
+        seen = []
+
+        def redirecting(url, params=None, headers=None, timeout=None, **kw):
+            seen.append(kw.get("allow_redirects"))
+            return _FakePhoenixResponse({}, status_code=302)
+
+        with mock.patch(_PHOENIX_GET, new=redirecting):
+            response = self._get()
+        self.assertEqual(seen, [False])
+        self.assertIn("redirect", response.context["phoenix"]["error"])
+
+    def test_oversized_body_is_cut_off(self):
+        class Huge(_FakePhoenixResponse):
+            def iter_content(self, chunk_size=1):
+                while True:
+                    yield b"x" * 65536
+
+        def huge(url, params=None, headers=None, timeout=None, **kw):
+            return Huge({})
+
+        with mock.patch(_PHOENIX_GET, new=huge):
+            response = self._get()
+        self.assertIn("larger response", response.context["phoenix"]["error"])
+
+    def test_trickling_body_stops_at_the_deadline(self):
+        clock = {"now": 0.0}
+
+        class Trickle(_FakePhoenixResponse):
+            def iter_content(self, chunk_size=1):
+                while True:
+                    clock["now"] += 1.0
+                    yield b" "
+
+        def trickle(url, params=None, headers=None, timeout=None, **kw):
+            return Trickle({})
+
+        with mock.patch(_PHOENIX_GET, new=trickle), mock.patch(
+            "time.monotonic", new=lambda: clock["now"]
+        ):
+            response = self._get()
+        self.assertIn("8s budget", response.context["phoenix"]["error"])
+        self.assertLess(clock["now"], 20)
