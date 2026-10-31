@@ -52,6 +52,23 @@ SERVICE = "typesafe-research"
 OFF_TOPIC_BELOW = 0.3
 UNDERMINES_AT = 0.6
 SUPPORTS_BELOW = 0.4
+# Where a judgment reads as plainly in the treatment's favour (see
+# Judgment.verdict); between this and SUPPORTS_BELOW it is unclear.
+SUPPORTS_AT = 0.6
+# The one-word readings of a judgment, for a page that shows one: the
+# Appeal Arena's evidence list (chooser_tasks.annotate_evidence_verdicts).
+VERDICT_OFF_TOPIC = "off_topic"
+VERDICT_AGAINST = "against"
+VERDICT_MIXED = "mixed"
+VERDICT_SUPPORTS = "supports"
+VERDICT_UNCLEAR = "unclear"
+VERDICTS = (
+    VERDICT_OFF_TOPIC,
+    VERDICT_AGAINST,
+    VERDICT_MIXED,
+    VERDICT_SUPPORTS,
+    VERDICT_UNCLEAR,
+)
 # Where an article nobody judged sorts among judged ones: no evidence
 # either way.
 UNJUDGED_SUPPORT = 0.5
@@ -150,11 +167,35 @@ class Judgment:
     scorer: str = SCORER
 
     @property
+    def verdict(self) -> str:
+        """The judgment in a word (one of VERDICTS), read the way ``drop``
+        reads it: off topic first, then against the treatment (undermines
+        it without also supporting it), mixed (argues both ways), supports,
+        and unclear when the probabilities say nothing firm. ``drop`` is
+        true for exactly the first two."""
+        if self.on_topic < OFF_TOPIC_BELOW:
+            return VERDICT_OFF_TOPIC
+        if self.undermines >= UNDERMINES_AT:
+            return VERDICT_AGAINST if self.supports < SUPPORTS_BELOW else VERDICT_MIXED
+        if self.supports >= SUPPORTS_AT:
+            return VERDICT_SUPPORTS
+        return VERDICT_UNCLEAR
+
+    @property
     def drop(self) -> bool:
         """Leave it out of what we quote (and untick it on the fax page)."""
-        return self.on_topic < OFF_TOPIC_BELOW or (
-            self.undermines >= UNDERMINES_AT and self.supports < SUPPORTS_BELOW
-        )
+        return self.verdict in (VERDICT_OFF_TOPIC, VERDICT_AGAINST)
+
+    def as_dict(self) -> dict[str, typing.Any]:
+        """The verdict and its probabilities (two places), as a page is
+        given them. Not the scorer: it names the model release, which is
+        operations detail, not something a reader weighs."""
+        return {
+            "verdict": self.verdict,
+            "on_topic": round(self.on_topic, 2),
+            "supports": round(self.supports, 2),
+            "undermines": round(self.undermines, 2),
+        }
 
 
 class JudgingError(Exception):

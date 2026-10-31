@@ -11,13 +11,16 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from fhi_users.models import ExtraUserProperties, ProfessionalUser, UserDomain
+from fighthealthinsurance.chooser_tasks import annotate_evidence_verdicts
 from fighthealthinsurance.chooser_tokens import candidate_token, resolve_candidate
+from fighthealthinsurance.ml import research_judging
 from fighthealthinsurance.models import (
     ChooserCandidate,
     ChooserSkip,
     ChooserTask,
     ChooserVote,
     Denial,
+    PubMedArticleJudgment,
 )
 
 User = get_user_model()
@@ -1211,6 +1214,108 @@ class ChooserTaskContextTest(APITestCase):
         self.assertEqual(context["prompt"], "How do I appeal a prior auth denial?")
         self.assertIn("history", context)
         self.assertEqual(len(context["history"]), 2)
+
+
+# Research judging on: its key and its switch. Stored judgments are shown
+# only while it is on (the switch is their kill switch too).
+RESEARCH_ON = dict(TYPESAFE_API_KEY="k", TYPESAFE_RESEARCH_JUDGING_ENABLED=True)
+
+
+class ChooserEvidenceVerdictTest(APITestCase):
+    """Jev's stored verdict on each article rides along with an appeal case
+    as it is served (task_context.evidence[].judgment), a referee aid read
+    at serve time and never written to the case."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        self.context = {
+            "procedure": "MRI",
+            "diagnosis": "Lower back pain",
+            "evidence": [
+                {"pmid": "1", "title": "For", "url": "https://pubmed.ncbi.nlm.nih.gov/1/"},
+                {"pmid": "2", "title": "Against", "summary": "It did not help."},
+                {"pmid": "3", "title": "Unjudged"},
+            ],
+        }
+        self.task = ChooserTask.objects.create(
+            task_type="appeal", status="READY", context_json=self.context
+        )
+        for index, name in enumerate(("model-a", "model-b")):
+            ChooserCandidate.objects.create(
+                task=self.task,
+                candidate_index=index,
+                kind="appeal_letter",
+                model_name=name,
+                content=f"Draft {index} cites PMID 1.",
+            )
+        self.key = research_judging.treatment_key("MRI", "Lower back pain")
+        self._judge("1", self.key, on_topic=0.9, supports=0.85, undermines=0.05)
+        self._judge("2", self.key, on_topic=0.9, supports=0.1, undermines=0.8)
+
+    def _judge(self, pmid, key, scorer=research_judging.SCORER, **probabilities):
+        PubMedArticleJudgment.objects.create(
+            pmid=pmid, treatment_key=key, scorer=scorer, **probabilities
+        )
+
+    def _served_evidence(self):
+        response = self.client.get(reverse("chooser-next-appeal"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        return response.json()["task_context"]["evidence"]
+
+    def test_each_judged_article_carries_its_verdict(self):
+        with override_settings(**RESEARCH_ON):
+            evidence = self._served_evidence()
+        self.assertEqual(
+            evidence[0]["judgment"],
+            {"verdict": "supports", "on_topic": 0.9, "supports": 0.85, "undermines": 0.05},
+        )
+        self.assertEqual(evidence[1]["judgment"]["verdict"], "against")
+        # The rest of the article is served as stored.
+        self.assertEqual(evidence[1]["summary"], "It did not help.")
+        self.assertNotIn("judgment", evidence[2])
+
+    def test_the_stored_case_is_not_changed(self):
+        with override_settings(**RESEARCH_ON):
+            self._served_evidence()
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.context_json, self.context)
+
+    def test_switched_off_no_verdict_is_shown(self):
+        evidence = self._served_evidence()
+        self.assertFalse(any("judgment" in item for item in evidence))
+
+    def test_a_judgment_for_another_pair_is_not_shown(self):
+        other = research_judging.treatment_key("MRI", "Neck pain")
+        self._judge("3", other, on_topic=0.9, supports=0.9, undermines=0.0)
+        with override_settings(**RESEARCH_ON):
+            evidence = self._served_evidence()
+        self.assertNotIn("judgment", evidence[2])
+
+    def test_a_judgment_under_another_rubric_is_not_shown(self):
+        self._judge(
+            "3",
+            self.key,
+            scorer="typesafe/jev-1.13.0/research-rubric-0",
+            on_topic=0.9,
+            supports=0.9,
+            undermines=0.0,
+        )
+        with override_settings(**RESEARCH_ON):
+            evidence = self._served_evidence()
+        self.assertNotIn("judgment", evidence[2])
+
+    def test_a_case_without_evidence_is_served_as_it_is(self):
+        context = {"procedure": "MRI", "diagnosis": "Lower back pain", "evidence": []}
+        with override_settings(**RESEARCH_ON):
+            self.assertIs(annotate_evidence_verdicts(context), context)
+
+    def test_annotation_leaves_the_given_context_alone(self):
+        context = json.loads(json.dumps(self.context))
+        with override_settings(**RESEARCH_ON):
+            annotated = annotate_evidence_verdicts(context)
+        self.assertEqual(context, self.context)
+        self.assertIn("judgment", annotated["evidence"][0])
 
 
 class ChooserVoteIntegrityTest(APITestCase):

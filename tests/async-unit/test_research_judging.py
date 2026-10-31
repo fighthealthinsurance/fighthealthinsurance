@@ -169,6 +169,34 @@ class TestDropAndOrder:
     def test_drop(self, judgment, dropped):
         assert judgment.drop is dropped
 
+    @pytest.mark.parametrize(
+        "judgment,verdict",
+        [
+            # Off topic comes first, however the other two read.
+            (rj.Judgment(on_topic=0.1, supports=0.9, undermines=0.0), "off_topic"),
+            (rj.Judgment(on_topic=0.9, supports=0.2, undermines=0.8), "against"),
+            (rj.Judgment(on_topic=0.9, supports=0.6, undermines=0.7), "mixed"),
+            (rj.Judgment(on_topic=0.9, supports=0.8, undermines=0.1), "supports"),
+            # Neither for nor against with any confidence.
+            (rj.Judgment(on_topic=0.9, supports=0.5, undermines=0.3), "unclear"),
+            (rj.Judgment(on_topic=0.9, supports=0.2, undermines=0.3), "unclear"),
+        ],
+    )
+    def test_verdict(self, judgment, verdict):
+        assert judgment.verdict == verdict
+        assert verdict in rj.VERDICTS
+        # Dropping is the verdict read as a yes or no, never a third rule.
+        assert judgment.drop is (verdict in ("off_topic", "against"))
+
+    def test_as_dict_carries_the_verdict_and_rounded_probabilities_only(self):
+        judgment = rj.Judgment(on_topic=0.912, supports=0.777, undermines=0.051)
+        assert judgment.as_dict() == {
+            "verdict": "supports",
+            "on_topic": 0.91,
+            "supports": 0.78,
+            "undermines": 0.05,
+        }
+
     def test_order_puts_support_first_and_unjudged_in_the_middle(self):
         articles = ["weak", "unjudged", "strong", "off", "strong"]
         judgments = {

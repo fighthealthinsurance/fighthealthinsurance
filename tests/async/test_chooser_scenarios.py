@@ -19,10 +19,12 @@ from fighthealthinsurance.chooser_tasks import (
     _generate_single_task,
 )
 from fighthealthinsurance.condition_rankings import SeedPair
+from fighthealthinsurance.ml import research_judging
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.models import (
     ChooserCandidate,
     ChooserTask,
+    PubMedArticleJudgment,
     PubMedArticleSummarized,
     PubMedMiniArticle,
     PubMedQueryData,
@@ -190,6 +192,134 @@ class TestEvidenceFor:
             evidence = await _evidence_for("MRI", "Lower back pain")
 
         assert [(e["pmid"], e["title"]) for e in evidence] == [("333", "Fetched later")]
+
+
+# Research judging on (its key and switch), and the arena allowed to use it.
+JUDGING_ON = dict(
+    TYPESAFE_API_KEY="test-key",
+    TYPESAFE_RESEARCH_JUDGING_ENABLED=True,
+    CHOOSER_JUDGE_EVIDENCE=True,
+)
+
+
+def _jev_answer(on_topic=0.9, supports=0.8, undermines=0.1):
+    """What TypeSafe answers for one article (research_judging.parse)."""
+    return {
+        "model": "jev-1.13.0",
+        "answers": {
+            "on_topic": {"type": "noul", "noul": on_topic},
+            "supports": {"type": "noul", "noul": supports},
+            "undermines": {"type": "noul", "noul": undermines},
+        },
+        "usage": {"input_tokens": 300},
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestEvidenceJudging:
+    """Jev's verdict on a case's evidence: asked for as the case is built,
+    stored for the pair (so the voter's page and the next case read it),
+    and never put on the case, which is what the drafts are given. Every
+    request is stubbed at research_judging._post; the switches are off in
+    tests and each case turns them on."""
+
+    async def _evidence(self, post):
+        with _no_live_search(), patch.object(research_judging, "_post", post):
+            return await _evidence_for("MRI", "Lower back pain")
+
+    async def test_the_verdict_is_stored_for_the_pair_and_kept_off_the_case(self):
+        await _cached_search("MRI Lower back pain", ["1"])
+        await _article("1", "Imaging for low back pain", abstract="Imaging helped.")
+        post = AsyncMock(return_value=_jev_answer(supports=0.8))
+
+        with override_settings(**JUDGING_ON):
+            evidence = await self._evidence(post)
+
+        assert evidence == [
+            {
+                "pmid": "1",
+                "title": "Imaging for low back pain",
+                "url": "https://pubmed.ncbi.nlm.nih.gov/1/",
+                "summary": "Imaging helped.",
+            }
+        ]
+        stored = await PubMedArticleJudgment.objects.aget(pmid="1")
+        assert stored.treatment_key == research_judging.treatment_key(
+            "MRI", "Lower back pain"
+        )
+        assert stored.supports == pytest.approx(0.8)
+        # The article and the pair are what went; the case has nothing else.
+        state, questions = post.await_args.args[0], post.await_args.args[1]
+        assert "Imaging helped." in state
+        assert '"MRI"' in questions["supports"]["instructions"]
+        assert '"Lower back pain"' in questions["supports"]["instructions"]
+
+    async def test_a_verdict_already_stored_for_the_pair_is_not_asked_again(self):
+        await _cached_search("MRI Lower back pain", ["1"])
+        await _article("1", "Imaging for low back pain", abstract="Imaging helped.")
+        await PubMedArticleJudgment.objects.acreate(
+            pmid="1",
+            treatment_key=research_judging.treatment_key("MRI", "Lower back pain"),
+            on_topic=0.9,
+            supports=0.7,
+            undermines=0.1,
+            scorer=research_judging.SCORER,
+        )
+        post = AsyncMock(side_effect=AssertionError("Jev was asked again"))
+
+        with override_settings(**JUDGING_ON):
+            evidence = await self._evidence(post)
+
+        assert [e["pmid"] for e in evidence] == ["1"]
+        post.assert_not_awaited()
+
+    async def test_an_abstract_an_appeal_stored_stands_in_for_a_missing_one(self):
+        await _cached_search("MRI Lower back pain", ["1"])
+        await _article("1", "Imaging for low back pain")
+        await PubMedArticleSummarized.objects.acreate(
+            pmid="1", abstract="The abstract an appeal fetched."
+        )
+        post = AsyncMock(return_value=_jev_answer())
+
+        with override_settings(**JUDGING_ON):
+            await self._evidence(post)
+
+        assert "The abstract an appeal fetched." in post.await_args.args[0]
+
+    async def test_the_arena_switch_keeps_the_case_off_jev(self):
+        """Research judging on for real appeals, the arena told not to use
+        it: nothing is sent, and the case is built as before."""
+        await _cached_search("MRI Lower back pain", ["1"])
+        await _article("1", "Imaging for low back pain", abstract="Imaging helped.")
+        post = AsyncMock(return_value=_jev_answer())
+
+        with override_settings(**dict(JUDGING_ON, CHOOSER_JUDGE_EVIDENCE=False)):
+            evidence = await self._evidence(post)
+
+        assert [e["pmid"] for e in evidence] == ["1"]
+        post.assert_not_awaited()
+
+    async def test_research_judging_off_sends_nothing(self):
+        await _cached_search("MRI Lower back pain", ["1"])
+        await _article("1", "Imaging for low back pain", abstract="Imaging helped.")
+        post = AsyncMock(return_value=_jev_answer())
+
+        with override_settings(CHOOSER_JUDGE_EVIDENCE=True):
+            await self._evidence(post)
+
+        post.assert_not_awaited()
+
+    async def test_a_failing_judge_leaves_the_case_its_evidence(self):
+        await _cached_search("MRI Lower back pain", ["1"])
+        await _article("1", "Imaging for low back pain", abstract="Imaging helped.")
+        post = AsyncMock(side_effect=RuntimeError("TypeSafe is down"))
+
+        with override_settings(**JUDGING_ON):
+            evidence = await self._evidence(post)
+
+        assert [e["pmid"] for e in evidence] == ["1"]
+        assert await PubMedArticleJudgment.objects.acount() == 0
 
 
 @pytest.mark.asyncio

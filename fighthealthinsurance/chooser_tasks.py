@@ -20,6 +20,7 @@ import json
 import random
 import re
 import threading
+from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, List, Optional, Tuple, cast
 
 from django.conf import settings
@@ -30,7 +31,7 @@ from channels.db import database_sync_to_async
 from loguru import logger
 
 from fighthealthinsurance.context_utils import truncate_at_boundary
-from fighthealthinsurance.ml import llm_usage
+from fighthealthinsurance.ml import llm_usage, research_judging
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.ml.ml_metrics import ml_call_purpose_override
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -105,6 +106,12 @@ CHOOSER_SEED_FROM_RANKINGS = getattr(settings, "CHOOSER_SEED_FROM_RANKINGS", Tru
 CHOOSER_EVIDENCE_LIMIT = getattr(settings, "CHOOSER_EVIDENCE_LIMIT", 5)
 # Seconds a live PubMed search for a scenario's evidence may take.
 CHOOSER_PUBMED_SEARCH_TIMEOUT = getattr(settings, "CHOOSER_PUBMED_SEARCH_TIMEOUT", 20.0)
+# Seconds a case waits for Jev's verdicts on its evidence (see
+# _judge_evidence) before going on without them; verdicts that landed in
+# time are stored either way.
+CHOOSER_EVIDENCE_JUDGING_TIMEOUT = getattr(
+    settings, "CHOOSER_EVIDENCE_JUDGING_TIMEOUT", 60.0
+)
 # Case facts kept per scenario, and the longest one.
 CHOOSER_MAX_FACTS = 6
 _MAX_FACT_CHARS = 240
@@ -147,6 +154,18 @@ def _pubmed_live_search_allowed() -> bool:
     Read per call so tests, and an operator short on NCBI quota, can turn
     it off; the seeded path rarely needs it."""
     return bool(getattr(settings, "CHOOSER_PUBMED_LIVE_SEARCH", True))
+
+
+def _evidence_judging_allowed() -> bool:
+    """Whether a case's evidence is judged by Jev as the case is built (see
+    _judge_evidence). Read per call, like the live-search switch: off in
+    tests, and an operator keeping Jev's research budget for real appeals
+    turns it off. Research judging's own switch must be on too
+    (research_judging.enabled: the key and TYPESAFE_RESEARCH_JUDGING_ENABLED)."""
+    return (
+        bool(getattr(settings, "CHOOSER_JUDGE_EVIDENCE", True))
+        and research_judging.enabled()
+    )
 
 
 def _model_display_name(model) -> str:
@@ -593,6 +612,112 @@ def _evidence_summary(summary: Optional[str], abstract: Optional[str]) -> str:
     return truncate_at_boundary(text, _EVIDENCE_SUMMARY_CHARS)
 
 
+async def _judge_evidence(
+    procedure: str, diagnosis: str, articles: List[PubMedMiniArticle]
+) -> None:
+    """Have Jev judge a case's articles for its pair (is each about this
+    treatment for this condition, does it support it, does it argue against
+    it), storing what it says in PubMedArticleJudgment the way a real
+    appeal's research context does (pubmed_tools.judge_missing; a judgment
+    already stored for the pair is not asked for again). The voter's page
+    reads the stored judgments back (annotate_evidence_verdicts). Nothing is
+    kept on the case itself: the drafts are given the summaries and never
+    the verdicts, so the stored case stays exactly what they were shown, and
+    a draft that leans on a study Jev found against the treatment is doing
+    so on its own reading of the summary.
+
+    The pair is k-anonymous and the case synthetic, so there is no consent
+    to ask; what is sent is the article's public title and abstract and the
+    pair, as for a real appeal. Best effort, bounded by
+    CHOOSER_EVIDENCE_JUDGING_TIMEOUT: a case whose evidence could not be
+    judged is still worth a vote, without verdicts."""
+    if not articles or not _evidence_judging_allowed():
+        return
+    from fighthealthinsurance import pubmed_tools
+
+    key = research_judging.treatment_key(procedure, diagnosis)
+    pmids = [a.pmid for a in articles if a.pmid]
+    try:
+        known = {
+            row.pmid: pubmed_tools.judgment_of(row)
+            async for row in pubmed_tools.judgment_rows(pmids, key)
+        }
+        if all(pmid in known for pmid in pmids):
+            return
+        # Jev reads the abstract. An article stored without one (an older
+        # row, or a fetch that brought only the title) may have it on the
+        # row an appeal summarized.
+        without = [a.pmid for a in articles if not (a.abstract or "").strip()]
+        abstracts = {
+            pmid: abstract
+            async for pmid, abstract in PubMedArticleSummarized.objects.filter(
+                pmid__in=without
+            )
+            .exclude(abstract__isnull=True)
+            .exclude(abstract="")
+            .values_list("pmid", "abstract")
+        }
+        to_judge = [
+            SimpleNamespace(
+                pmid=a.pmid,
+                title=a.title,
+                abstract=(a.abstract or "").strip() or abstracts.get(a.pmid, ""),
+            )
+            for a in articles
+        ]
+        await asyncio.wait_for(
+            pubmed_tools.judge_missing(to_judge, procedure, diagnosis, known),
+            timeout=CHOOSER_EVIDENCE_JUDGING_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.info("Chooser: ran out of time judging a case's evidence")
+    except Exception as e:
+        logger.opt(exception=True).warning(
+            f"Chooser: could not judge a case's evidence: {e}"
+        )
+
+
+def annotate_evidence_verdicts(context: dict) -> dict:
+    """The case as the voter is shown it: ``context`` with Jev's stored
+    verdict on each article of its evidence, as ``judgment``
+    (research_judging.Judgment.as_dict: the verdict in a word and its three
+    probabilities), for every article judged for the case's treatment and
+    condition under the current rubric.
+
+    Read when the case is served rather than stored with it, so a case
+    built before an article was judged (by this module or by a real appeal
+    about the pair) shows the verdict too, and the stored case stays exactly
+    what the drafts were given: they are told the summaries, never the
+    verdicts. Reads only, sends nothing, and shows nothing while research
+    judging is switched off (pubmed_tools.stored_judgments_for, the kill
+    switch for stored judgments everywhere). Returns a new dict; ``context``
+    is left as it is."""
+    evidence = context.get("evidence") or []
+    pmids = [
+        str(item["pmid"])
+        for item in evidence
+        if isinstance(item, dict) and item.get("pmid")
+    ]
+    if not pmids:
+        return context
+    from fighthealthinsurance.pubmed_tools import stored_judgments_for
+
+    judgments = stored_judgments_for(
+        context.get("procedure"), context.get("diagnosis"), pmids
+    )
+    if not judgments:
+        return context
+    annotated = []
+    for item in evidence:
+        judgment = (
+            judgments.get(str(item.get("pmid"))) if isinstance(item, dict) else None
+        )
+        annotated.append(
+            {**item, "judgment": judgment.as_dict()} if judgment is not None else item
+        )
+    return {**context, "evidence": annotated}
+
+
 async def _evidence_for(procedure: str, diagnosis: str) -> List[dict]:
     """The evidence a scenario's drafts may cite: up to CHOOSER_EVIDENCE_LIMIT
     articles for the procedure and diagnosis, each a PMID, a title, a link
@@ -601,7 +726,9 @@ async def _evidence_for(procedure: str, diagnosis: str) -> List[dict]:
     CHOOSER_PUBMED_LIVE_SEARCH allows it. With live search allowed, articles
     with no stored title have it fetched; otherwise they are skipped: the
     list is for the voter to check citations against, so every row must be
-    readable."""
+    readable. The articles kept are then judged for the pair when judging
+    is on (_judge_evidence), which stores the verdicts but adds nothing
+    here."""
     query = f"{procedure} {diagnosis}".strip()
     if not query:
         return []
@@ -653,6 +780,11 @@ async def _evidence_for(procedure: str, diagnosis: str) -> List[dict]:
         evidence.append(item)
         if len(evidence) >= CHOOSER_EVIDENCE_LIMIT:
             break
+    # Jev's verdict on each article, stored for the voter's page; the
+    # drafts are not told it (see _judge_evidence).
+    await _judge_evidence(
+        procedure, diagnosis, [titles[item["pmid"]] for item in evidence]
+    )
     return evidence
 
 

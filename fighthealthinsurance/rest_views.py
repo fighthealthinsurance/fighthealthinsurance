@@ -2392,6 +2392,20 @@ class ChooserViewSet(viewsets.ViewSet):
         context = {}
         if task.context_json:
             context = task.context_json
+        if task.task_type == "appeal":
+            # Jev's verdict on each article of the evidence, read from the
+            # stored judgments as the case is served (so an older case gets
+            # them too) and never written back: the stored case stays what
+            # the drafts were given. A referee aid; a case it could not be
+            # read for is served without it.
+            from fighthealthinsurance.chooser_tasks import annotate_evidence_verdicts
+
+            try:
+                context = annotate_evidence_verdicts(context)
+            except Exception as e:
+                logger.warning(
+                    f"Chooser task {task.id}: could not attach evidence verdicts: {e}"
+                )
 
         # Serialize candidates. Blind: no model name, synthesized flag or
         # metadata leaves the server (see ChooserCandidateSerializer); the
