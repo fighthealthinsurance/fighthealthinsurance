@@ -10,7 +10,6 @@ import re
 import functools
 import secrets
 import time
-import io
 import typing
 from datetime import date, datetime, time as dt_time, timedelta
 from typing import TypedDict
@@ -24,7 +23,6 @@ from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 from django.http import (
-    FileResponse,
     HttpRequest,
     HttpResponse,
     HttpResponseBase,
@@ -3735,7 +3733,7 @@ class AppealFileView(View):
         # handle is closed once read rather than left to the collector.
         with appeal.document_enc.open() as file:
             content = Cryptographer.decrypted(file.read())
-        return FileResponse(io.BytesIO(content), content_type="application/pdf")
+        return HttpResponse(content, content_type="application/pdf")
 
 
 class StripeWebhookView(View):

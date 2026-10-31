@@ -118,6 +118,19 @@ class CombinedStorage(Storage):
         seconds = save_timeout_seconds(content)
         for backend in self.backends:
             stored: Optional[str] = None
+            target_name = name if l is None else l
+            # Whether this name is already taken on the backend BEFORE we
+            # write. A timed-out save never returns the name it chose, and
+            # FileSystemStorage picks an alternative when the name is taken,
+            # so this is the only way to tell a partial file we just created
+            # (name was free -> the write targets exactly this name) from a
+            # pre-existing document (name taken -> the write went to some
+            # other name we can't see, and this one must not be touched).
+            created_here = False
+            try:
+                created_here = not self._name_in_use(backend, target_name)
+            except Exception:
+                created_here = False  # Unsure: never delete.
             try:
                 with Timeout(seconds) as timeout_ctx:
                     # Only overwrite l if we have not yet saved but always try and save.
@@ -137,7 +150,9 @@ class CombinedStorage(Storage):
             # stopit swallows the timeout, so check the context instead. A
             # write cut off part way leaves a partial file under the name the
             # others will use, and open() returns the first copy it finds, so
-            # the partial copy is removed rather than kept.
+            # that partial copy is removed rather than kept -- but ONLY when
+            # the name was free before this write, since otherwise the bytes
+            # under it are a different, pre-existing document.
             if not timeout_ctx:
                 timed_out = TimeoutError(
                     f"Timed out after {seconds:g}s saving {file_tag(name or '')} to {backend}"
@@ -145,7 +160,14 @@ class CombinedStorage(Storage):
                 logger.warning(f"Error saving {error_text(timed_out)} to {backend}")
                 error_list.append(timed_out)
                 last_error = timed_out
-                self._remove_partial_copy(backend, l if l is not None else name)
+                if target_name and created_here:
+                    self._remove_partial_copy(backend, target_name)
+                else:
+                    logger.warning(
+                        f"{backend} may hold a partial copy from a timed-out save of "
+                        f"{file_tag(target_name or '')} under a name we cannot see; "
+                        "left in place so a pre-existing document is not deleted"
+                    )
                 continue
             if l is not None and stored is not None and stored != l:
                 self._remove_renamed_copy(backend, l, stored)
@@ -157,6 +179,18 @@ class CombinedStorage(Storage):
             raise Exception(f"Failed to save to any backend w/ errors {errors}")
         else:
             return l
+
+    def _name_in_use(self, backend: Storage, name: Optional[str]) -> bool:
+        """Whether ``name`` already names a file on ``backend``, under a short
+        timeout. A name we can't check is reported in use, so a save that
+        times out over it is never followed by a delete."""
+        if not name:
+            return True
+        with Timeout(2.0) as timeout_ctx:
+            in_use = backend.exists(name)
+        if not timeout_ctx:
+            raise TimeoutError(f"Timed out checking {file_tag(name)} on {backend}")
+        return bool(in_use)
 
     def _remove_partial_copy(self, backend: Storage, name: Optional[str]) -> None:
         """Best effort: a file the timed-out write left behind is removed, so a

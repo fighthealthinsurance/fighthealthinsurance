@@ -485,42 +485,70 @@ class TestCombinedStorageExists(TestCase):
 
 class TestCombinedStorageSaveTimeout(TestCase):
     """A write cut off at the timeout must not leave a partial file behind
-    under the name every reader will open."""
+    under the name every reader will open -- but it must never delete a
+    pre-existing document that merely shares the name."""
 
-    def test_a_timed_out_write_has_its_partial_copy_removed(self):
+    def _slow_save(self, name="foo.txt"):
         import time
-        from unittest.mock import patch
-
-        slow = _make_storage()
 
         def slow_save(**kwargs):
             time.sleep(0.5)
-            return "foo.txt"
+            return name
 
-        slow.save.side_effect = slow_save
-        slow.exists.return_value = True
+        return slow_save
+
+    def _short_timeout(self):
+        from unittest.mock import patch
+
+        return patch(
+            "fighthealthinsurance.combined_storage.SAVE_TIMEOUT_SECONDS", 0.1
+        ), patch(
+            "fighthealthinsurance.combined_storage.SAVE_SECONDS_PER_MEGABYTE", 0.0
+        )
+
+    def test_a_timed_out_write_to_a_free_name_removes_its_partial_copy(self):
+        slow = _make_storage()
+        slow.save.side_effect = self._slow_save()
+        # The name is free before the write (so the write targets exactly it),
+        # then the partial file exists when removal checks.
+        slow.exists.side_effect = [False, True]
         fast = _make_storage()
         fast.save.return_value = "foo.txt"
 
         storage = CombinedStorage(slow, fast)
-        with patch(
-            "fighthealthinsurance.combined_storage.SAVE_TIMEOUT_SECONDS", 0.1
-        ), patch(
-            "fighthealthinsurance.combined_storage.SAVE_SECONDS_PER_MEGABYTE", 0.0
-        ):
+        t1, t2 = self._short_timeout()
+        with t1, t2:
             result = storage.save("foo.txt", ContentFile(b"payload"))
 
-        # The slow backend timed out, so its partial copy is deleted and the
-        # fast backend's successful name is what callers get.
         self.assertEqual(result, "foo.txt")
         slow.delete.assert_called_once_with("foo.txt")
         fast.save.assert_called_once()
 
+    def test_a_timed_out_write_to_a_taken_name_keeps_the_existing_file(self):
+        """The name already holds a different document, so FileSystemStorage
+        would have written the partial under an alternative name we can't see;
+        the pre-existing file at the requested name must not be deleted."""
+        slow = _make_storage()
+        slow.save.side_effect = self._slow_save()
+        slow.exists.return_value = True  # the name is taken before the write
+        fast = _make_storage()
+        fast.save.return_value = "foo.txt"
+
+        storage = CombinedStorage(slow, fast)
+        t1, t2 = self._short_timeout()
+        with t1, t2:
+            result = storage.save("foo.txt", ContentFile(b"payload"))
+
+        self.assertEqual(result, "foo.txt")
+        slow.delete.assert_not_called()
+
     def test_a_write_within_the_window_keeps_no_partial_copy(self):
         first = _make_storage()
         first.save.return_value = "foo.txt"
+        first.exists.return_value = False
         second = _make_storage()
         second.save.return_value = "foo.txt"
+        second.exists.return_value = False
 
         storage = CombinedStorage(first, second)
         storage.save("foo.txt", ContentFile(b"payload"))
