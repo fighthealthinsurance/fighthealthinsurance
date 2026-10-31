@@ -98,6 +98,10 @@ class ChatOnlyModelsTest(SimpleTestCase):
             router.models_by_name
         )
         for name in ml_models.DeepInfra.CHAT_MODELS:
+            # DeepSeek Flash is deliberately promoted to a regular model: the
+            # free OpenCode endpoint uses DeepInfra as its provider fallback.
+            if name == ml_models.OpenCode.FLASH_NAME:
+                continue
             self.assertNotIn(name, general)
 
     def test_lunaroute_models_reach_no_general_pool(self):
