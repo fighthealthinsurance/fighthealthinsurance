@@ -102,8 +102,29 @@ fi
 
 if [ "$SKIP_JS_BUILD" = false ]; then
   pushd "${JS_PATH}"
-  npm ls >/dev/stderr 2>&1
+  # npm ls fails when node_modules has drifted from package.json (say a
+  # dependency was bumped since the last install), which the `npm i` below
+  # fixes. When it fails, npm prints an "npm error" line for every problem,
+  # extraneous packages included even though those alone never fail it, so
+  # a routine resync dumped hundreds of alarming lines. Print a count by
+  # kind instead; `npm ls` in ${JS_PATH} gives the full list.
+  npm_ls_errors=$(npm ls 2>&1 >/dev/null)
   npm_dep_check=$?
+  if [ ${npm_dep_check} != 0 ]; then
+    npm_ls_summary=""
+    for kind in missing invalid extraneous; do
+      count=$(grep -cE "^npm (error|ERR!) ${kind}:" <<<"${npm_ls_errors}")
+      if [ "${count}" -gt 0 ]; then
+        npm_ls_summary="${npm_ls_summary:+${npm_ls_summary}, }${count} ${kind}"
+      fi
+    done
+    if [ -n "${npm_ls_summary}" ]; then
+      echo "node_modules is out of sync with package.json (npm ls: ${npm_ls_summary}); running npm i to sync it." >/dev/stderr
+    else
+      # Not a drift we recognize: show npm's own output.
+      echo "${npm_ls_errors}" >/dev/stderr
+    fi
+  fi
 
   set -ex
 
