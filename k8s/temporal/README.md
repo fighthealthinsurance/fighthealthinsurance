@@ -150,30 +150,41 @@ Fax sending only routes through Temporal when `TEMPORAL_ENABLED=true`. Until
 then everything stays on the Ray fax actor, so this can be deployed dark and
 flipped on later.
 
-Set `TEMPORAL_ENABLED=true` in the **shared `fight-health-insurance-secret`**,
-which the web pods, the Ray cluster pods, and the worker all read via `envFrom`.
-Do **not** set it only on the web pods: the Ray `FaxPollingActor` sweep gates
-itself off by reading `TEMPORAL_ENABLED` *in its own process*, so if the Ray
-pods don't see the flag the sweep keeps running and races the Temporal delay
-timer on the same paid fax (both would try to send it). The atomic
-`vendor_send_completed` claim in `fax_send_core` prevents an actual double
-transmission, but the correct configuration is to flip the flag everywhere at
-once via the shared secret.
+Every Temporal switch lives in the **`fhi-feature-flags` ConfigMap**
+(`k8s/feature-flags.yaml`), which the web pods, the Ray cluster pods, the
+workers and the cronjobs all load via `envFrom`, after the Secrets, so the
+committed value wins over any copy a Secret still carries. Change it there and
+redeploy (`scripts/build.sh` applies it); every pod reads it at start-up.
+Do **not** flip `TEMPORAL_ENABLED` only on the web pods: the Ray
+`FaxPollingActor` sweep gates itself off by reading `TEMPORAL_ENABLED` *in its
+own process*, so if the Ray pods don't see the flag the sweep keeps running and
+races the Temporal delay timer on the same paid fax (both would try to send
+it). The atomic `vendor_send_completed` claim in `fax_send_core` prevents an
+actual double transmission, but the correct configuration is one shared flag.
+
+Only four Temporal values are read from the environment:
 
 | Env var | Value | Where |
 | --- | --- | --- |
-| `TEMPORAL_ENABLED` | `true` | shared `fight-health-insurance-secret` (web + Ray + worker) |
-| `TEMPORAL_HOST` | `temporal-frontend:7233` | web + worker |
-| `TEMPORAL_NAMESPACE` | `default` | web + worker |
-| `TEMPORAL_TASK_QUEUE` | `fhi-fax` | web + worker |
+| `TEMPORAL_HOSTNAME` | `temporal-frontend` (port 7233 implied; `host:port` also works) | `fhi-feature-flags` |
+| `TEMPORAL_TASK_QUEUE` | `fhi-fax` | `fhi-feature-flags` |
+| `TEMPORAL_PAYLOAD_KEY` | Fernet key(s) | `fight-health-insurance-secret` |
+| `TEMPORAL_RESEARCH_PAYLOAD_KEY` | Fernet key(s) | `fight-health-insurance-secret` |
 
-(The worker Deployment also sets `TEMPORAL_ENABLED=true` explicitly, so it is
-always on regardless of the shared secret.)
+Plus the switches (`TEMPORAL_ENABLED` and the `TEMPORAL_*_ENABLED` flows), all
+in `fhi-feature-flags`. The namespaces (`default`, `fhi-research`), the other
+task queues (`fhi-appeals`, `fhi-chat-policy`, `fhi-plan-documents`), the UI
+upstream, TLS and the activity pool size are fixed in `settings.py`; the
+old `TEMPORAL_HOST`, `TEMPORAL_NAMESPACE`, `TEMPORAL_*_TASK_QUEUE`,
+`TEMPORAL_RESEARCH_NAMESPACE`, `TEMPORAL_TLS` and
+`TEMPORAL_MAX_ACTIVITY_WORKERS` env vars are ignored. The
+`TEMPORAL_FRONTEND_*` / `TEMPORAL_WEB_*` variables in a pod's environment are
+Kubernetes service links; nothing reads them.
 
-`TEMPORAL_TLS=true` enables (server-side) TLS to the cluster. For **mTLS**,
-additionally set **both** `TEMPORAL_CLIENT_CERT_PATH` and
-`TEMPORAL_CLIENT_KEY_PATH` — if either is missing the client silently falls
-back to plain TLS.
+The in-cluster frontend is plaintext. To talk TLS (or mTLS) to a different
+cluster, set `TEMPORAL_TLS`, `TEMPORAL_CLIENT_CERT_PATH` and
+`TEMPORAL_CLIENT_KEY_PATH` in a configuration class in `settings.py` — with
+only one of the two paths set, the client silently falls back to plain TLS.
 
 ## Pre-flight checklist (verify before flipping the flag)
 
@@ -385,8 +396,8 @@ is never on the chat path, so chat behaves the same with all of this off.
 
 | Setting | Default | Where |
 | --- | --- | --- |
-| `TEMPORAL_CHAT_POLICY_ENABLED` | off | shared app secret, next to the journey flags |
-| `TEMPORAL_CHAT_POLICY_TASK_QUEUE` | `fhi-chat-policy` | `appeal-worker.yaml` |
+| `TEMPORAL_CHAT_POLICY_ENABLED` | on | `fhi-feature-flags`, next to the journey flags |
+| `TEMPORAL_CHAT_POLICY_TASK_QUEUE` | `fhi-chat-policy` | fixed in `settings.py` |
 
 - **Flag:** takes effect only with `TEMPORAL_ENABLED`, and does not need the
   journey flags.
@@ -441,9 +452,9 @@ the share page's 30-day reminders in place of the Ray email loop.
 
 | Setting | Default | Where |
 | --- | --- | --- |
-| `TEMPORAL_PLAN_DOCUMENTS_ENABLED` | off | shared app secret, next to the journey flags |
-| `TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE` | `fhi-plan-documents` | `appeal-worker.yaml` |
-| `TEMPORAL_RESEARCH_NAMESPACE` | `fhi-research` | `appeal-worker.yaml`; the web pods use the settings default |
+| `TEMPORAL_PLAN_DOCUMENTS_ENABLED` | on | `fhi-feature-flags`, next to the journey flags |
+| `TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE` | `fhi-plan-documents` | fixed in `settings.py` |
+| `TEMPORAL_RESEARCH_NAMESPACE` | `fhi-research` | fixed in `settings.py` |
 | `TEMPORAL_RESEARCH_PAYLOAD_KEY` | unset | shared app secret; required for this flag |
 
 - **A namespace of their own:** these runs, the sweep Schedule and the
@@ -488,11 +499,11 @@ the share page's 30-day reminders in place of the Ray email loop.
        --namespace fhi-research --retention 720h
      ```
 
-  3. Set `TEMPORAL_RESEARCH_PAYLOAD_KEY` (a new Fernet key) and
-     `TEMPORAL_PLAN_DOCUMENTS_ENABLED=true` in the shared
-     `fight-health-insurance-secret`, next to `TEMPORAL_ENABLED`.
-  4. Restart `fhi-appeal-worker`, the web pods and the Ray pods: each
-     reads the secret only when it starts. Until the namespace exists, the
+  3. Set `TEMPORAL_RESEARCH_PAYLOAD_KEY` (a new Fernet key) in the shared
+     `fight-health-insurance-secret`, and
+     `TEMPORAL_PLAN_DOCUMENTS_ENABLED: "true"` in `k8s/feature-flags.yaml`.
+  4. Redeploy, or restart `fhi-appeal-worker`, the web pods and the Ray
+     pods: each reads the Secret and the ConfigMap only when it starts. Until the namespace exists, the
      share page's reminders stop, so create it before setting the flag and
      restarting.
 

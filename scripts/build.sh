@@ -157,6 +157,8 @@ esac
 # k8s/db-config.yaml first, or this apply will revert the host back to -8.
 kubectl apply -f k8s/db-config.yaml
 echo "PDBHOST now set to: $(kubectl -n totallylegitco get configmap fhi-db-config -o jsonpath='{.data.PDBHOST}')"
+# Feature flags + Temporal address, loaded by every app pod via envFrom.
+kubectl apply -f k8s/feature-flags.yaml
 
 # Backup schedule for fhi-pg-main-9 -- re-asserted on every deploy (same
 # pattern as db-config above) so a deleted/suspended schedule self-heals and

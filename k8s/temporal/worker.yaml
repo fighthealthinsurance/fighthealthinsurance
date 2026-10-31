@@ -75,15 +75,9 @@ spec:
             # crash-loop cannot take fax sending down (external review).
             - name: TEMPORAL_WORKER_QUEUES
               value: "fax"
-            - name: TEMPORAL_ENABLED
-              value: "true"
-            # In-cluster Temporal frontend (Helm release "temporal" in this ns).
-            - name: TEMPORAL_HOST
-              value: "temporal-frontend:7233"
-            - name: TEMPORAL_NAMESPACE
-              value: "default"
-            - name: TEMPORAL_TASK_QUEUE
-              value: "fhi-fax"
+            # TEMPORAL_ENABLED, TEMPORAL_HOSTNAME and TEMPORAL_TASK_QUEUE come
+            # from the fhi-feature-flags ConfigMap (k8s/feature-flags.yaml);
+            # the namespace is fixed in settings.py.
             # DB host from the fhi-db-config ConfigMap (see k8s/db-config.yaml),
             # same as k8s/deploy.yaml: an explicit env entry overrides the STALE
             # PDBHOST still carried by the envFrom Secrets. Without this the
@@ -102,6 +96,9 @@ spec:
                 name: fight-health-insurance-secret
             - secretRef:
                 name: fight-health-insurance-primary-secret
+            # Last, so the repo's flags win over the Secrets (k8s/feature-flags.yaml).
+            - configMapRef:
+                name: fhi-feature-flags
           imagePullPolicy: Always
           # Partial hardening: no privilege escalation, all capabilities
           # dropped. runAsNonRoot / readOnlyRootFilesystem are deferred -- the

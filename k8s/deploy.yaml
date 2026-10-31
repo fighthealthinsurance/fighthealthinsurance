@@ -30,6 +30,9 @@ spec:
               name: fight-health-insurance-secret
           - secretRef:
               name: fight-health-insurance-primary-secret
+          # Last, so the repo's flags win over the Secrets (k8s/feature-flags.yaml).
+          - configMapRef:
+              name: fhi-feature-flags
           imagePullPolicy: Always
       restartPolicy: OnFailure
 ---
@@ -65,6 +68,9 @@ spec:
               name: fight-health-insurance-secret
           - secretRef:
               name: fight-health-insurance-primary-secret
+          # Last, so the repo's flags win over the Secrets (k8s/feature-flags.yaml).
+          - configMapRef:
+              name: fhi-feature-flags
           imagePullPolicy: Always
       restartPolicy: OnFailure
 ---
@@ -114,6 +120,9 @@ spec:
               name: fight-health-insurance-secret
           - secretRef:
               name: fight-health-insurance-primary-secret
+          # Last, so the repo's flags win over the Secrets (k8s/feature-flags.yaml).
+          - configMapRef:
+              name: fhi-feature-flags
           imagePullPolicy: Always
           volumeMounts:
             - name: tmp
@@ -192,6 +201,9 @@ spec:
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret
+          # Last, so the repo's flags win over the Secrets (k8s/feature-flags.yaml).
+          - configMapRef:
+              name: fhi-feature-flags
           imagePullPolicy: Always
           # Requests only (no limits): sized from observed worker RSS (~0.9GB)
           # so the scheduler places 6 pods with real headroom; limits omitted

@@ -18,10 +18,10 @@
 #      schedule-to-start as the MATCHING/HISTORY services measure them, which
 #      keep counting when every worker is gone.
 #
-# The Temporal NAMESPACES the workers use are `default` (TEMPORAL_NAMESPACE in
-# worker.yaml / appeal-worker.yaml) and `fhi-research`, where the appeal
-# worker hosts shared plan documents (TEMPORAL_RESEARCH_NAMESPACE in
-# appeal-worker.yaml); the Kubernetes namespace is `totallylegitco`. SDK
+# The Temporal NAMESPACES the workers use are `default` (TEMPORAL_NAMESPACE)
+# and `fhi-research`, where the appeal worker hosts shared plan documents
+# (TEMPORAL_RESEARCH_NAMESPACE), both fixed in settings.py; the Kubernetes
+# namespace is `totallylegitco`. SDK
 # series carry the Temporal namespace as `namespace`, so worker-side rules
 # match namespace=~"default|fhi-research" -- NOT the Kubernetes one
 # (external review found the previous rules filtered on totallylegitco and

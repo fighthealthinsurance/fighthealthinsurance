@@ -56,6 +56,23 @@ def _ucr_int(name: str, default: int, minimum: int) -> int:
     return max(value, minimum)
 
 
+def _temporal_host(hostname: str) -> str:
+    """host:port for the Temporal frontend from TEMPORAL_HOSTNAME.
+
+    Takes a bare hostname (the frontend's gRPC port 7233 is added) or an
+    explicit host:port. Empty means a local dev server.
+    """
+    hostname = hostname.strip()
+    if not hostname:
+        return "localhost:7233"
+    if hostname.startswith("["):
+        # Bracketed IPv6, with or without a port.
+        return hostname if "]:" in hostname else f"{hostname}:7233"
+    if ":" in hostname:
+        return hostname
+    return f"{hostname}:7233"
+
+
 def _env_flag(name: str, default: str = "0") -> bool:
     """Parse an env-backed boolean flag.
 
@@ -581,36 +598,35 @@ class Base(Configuration):
     # models' higher base score keeping the failed reply in front. It is
     # still delivered when nothing else usable arrives. On by default.
     FHI_CHAT_JEV_GATE_DEMOTE_FAILED = _env_flag("FHI_CHAT_JEV_GATE_DEMOTE_FAILED", "1")
-    TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
-    TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
+    # Temporal connection. Only four values come from the environment:
+    # TEMPORAL_HOSTNAME, TEMPORAL_TASK_QUEUE and the two payload keys. The
+    # feature flags (TEMPORAL_ENABLED and the TEMPORAL_*_ENABLED flows above)
+    # are set per deployment in k8s/feature-flags.yaml. Everything else here
+    # is fixed in code, so a pod can't end up on a different namespace or
+    # queue from its neighbours.
+    # TEMPORAL_HOSTNAME is a hostname ("temporal-frontend") or host:port;
+    # without a port the frontend's 7233 is used.
+    TEMPORAL_HOST = _temporal_host(os.getenv("TEMPORAL_HOSTNAME", ""))
+    TEMPORAL_NAMESPACE = "default"
     # Namespace for research runs (shared plan documents), apart from patient ones.
-    TEMPORAL_RESEARCH_NAMESPACE = os.getenv(
-        "TEMPORAL_RESEARCH_NAMESPACE", "fhi-research"
-    )
-    TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")
+    TEMPORAL_RESEARCH_NAMESPACE = "fhi-research"
+    TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE") or "fhi-fax"
     # Appeal generation runs on its own task queue so several slow
     # generations can never occupy the fax worker's activity slots
     # (separate failure domain; PR #963 review). Point a dedicated
     # worker deployment at it for full resource isolation.
-    TEMPORAL_APPEAL_TASK_QUEUE = os.getenv("TEMPORAL_APPEAL_TASK_QUEUE", "fhi-appeals")
+    TEMPORAL_APPEAL_TASK_QUEUE = "fhi-appeals"
     # The chat routing policy runs on its own queue too, hosted as its own
     # Worker in the appeal-worker process, so a slow generation holding the
     # appeal Worker's slots never delays it.
-    TEMPORAL_CHAT_POLICY_TASK_QUEUE = os.getenv(
-        "TEMPORAL_CHAT_POLICY_TASK_QUEUE", "fhi-chat-policy"
-    )
+    TEMPORAL_CHAT_POLICY_TASK_QUEUE = "fhi-chat-policy"
     # Shared plan documents have their own queue too, hosted as their own
     # Worker in the appeal-worker process, so reading files never takes an
     # appeal generation's slot.
-    TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE = os.getenv(
-        "TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE", "fhi-plan-documents"
-    )
+    TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE = "fhi-plan-documents"
     # In-cluster address of the Temporal Web UI, reached only through the
     # staff-only reverse proxy at /timbit/temporal/ (never exposed directly).
-    TEMPORAL_UI_UPSTREAM = os.getenv("TEMPORAL_UI_UPSTREAM", "http://temporal-web:8080")
-    # TLS for a self-hosted / Cloud cluster. When TEMPORAL_TLS is true and both
-    # the cert and key paths are set the client uses mTLS; otherwise it uses
-    # server-side TLS.
+    TEMPORAL_UI_UPSTREAM = "http://temporal-web:8080"
     # Fernet key(s) for client-side encryption of every Temporal payload
     # (see temporal_codec.py). Unset = plaintext payloads (ids-only by
     # design). Comma-separated for rotation: the FIRST key encrypts, all
@@ -621,18 +637,15 @@ class Base(Configuration):
     TEMPORAL_PAYLOAD_KEY = os.getenv("TEMPORAL_PAYLOAD_KEY", "")
     # Fernet key(s) for the research namespace alone, rotated the same way.
     TEMPORAL_RESEARCH_PAYLOAD_KEY = os.getenv("TEMPORAL_RESEARCH_PAYLOAD_KEY", "")
-    TEMPORAL_TLS = os.getenv("TEMPORAL_TLS", "false").lower() == "true"
-    TEMPORAL_CLIENT_CERT_PATH = os.getenv("TEMPORAL_CLIENT_CERT_PATH", "")
-    TEMPORAL_CLIENT_KEY_PATH = os.getenv("TEMPORAL_CLIENT_KEY_PATH", "")
-    try:
-        # Clamp to >=1: 0 or a negative value would crash the worker's
-        # ThreadPoolExecutor at startup.
-        TEMPORAL_MAX_ACTIVITY_WORKERS = max(
-            1, int(os.getenv("TEMPORAL_MAX_ACTIVITY_WORKERS") or 20)
-        )
-    except ValueError:
-        # A misconfigured env var should not block app startup.
-        TEMPORAL_MAX_ACTIVITY_WORKERS = 20
+    # TLS for a self-hosted / Cloud cluster. When TEMPORAL_TLS is true and both
+    # the cert and key paths are set the client uses mTLS; otherwise it uses
+    # server-side TLS. The in-cluster frontend is plaintext; set these in a
+    # configuration class if that changes.
+    TEMPORAL_TLS = False
+    TEMPORAL_CLIENT_CERT_PATH = ""
+    TEMPORAL_CLIENT_KEY_PATH = ""
+    # Activity thread pool per worker process.
+    TEMPORAL_MAX_ACTIVITY_WORKERS = 20
 
     LOGIN_URL = "login"
     LOGIN_REDIRECT_URL = "/"

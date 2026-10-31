@@ -33,6 +33,9 @@ spec:
             envFrom:
               - secretRef:
                   name: fight-health-insurance-secret
+              # Last, so the repo's flags win over the Secrets (k8s/feature-flags.yaml).
+              - configMapRef:
+                  name: fhi-feature-flags
             imagePullPolicy: IfNotPresent
             name: ray-head
             resources:
@@ -82,6 +85,9 @@ spec:
             envFrom:
               - secretRef:
                   name: fight-health-insurance-secret
+              # Last, so the repo's flags win over the Secrets (k8s/feature-flags.yaml).
+              - configMapRef:
+                  name: fhi-feature-flags
             imagePullPolicy: IfNotPresent
             name: ray-worker
             resources:
