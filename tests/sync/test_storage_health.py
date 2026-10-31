@@ -13,6 +13,8 @@ import tempfile
 from collections import namedtuple
 from unittest import mock
 
+import minio
+import minio.error
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
 from django.core.files.storage import FileSystemStorage
@@ -22,6 +24,7 @@ from django.urls import reverse
 from fighthealthinsurance import storage_health
 from fighthealthinsurance.log_tags import file_tag
 from fighthealthinsurance.models import Denial, PlanDocuments
+from minio_storage.storage import MinioStorage
 
 User = get_user_model()
 
@@ -199,6 +202,59 @@ class CheckReachableTest(TestCase):
         store.exists.side_effect = ConnectionError("refused")
         reach = storage_health.check_reachable(store)
         self.assertEqual(reach["error"], "refused")
+
+
+def _s3_error(code):
+    return minio.error.S3Error(mock.Mock(), code, code, "/docs", "req", "host")
+
+
+class ObjectStoreTest(TestCase):
+    """The real MinioStorage adapter over a stand-in client.
+
+    The adapter's own exists() answers False for every S3 error and for a
+    dropped connection, so these fail if the checks fall back to it.
+    """
+
+    def setUp(self):
+        self.client = mock.Mock(spec=minio.Minio)
+        self.store = MinioStorage(
+            self.client, bucket_name="docs", assume_bucket_exists=True
+        )
+
+    def test_answering_bucket_is_reachable(self):
+        self.client.bucket_exists.return_value = True
+        self.assertTrue(storage_health.check_reachable(self.store)["ok"])
+
+    def test_access_denied_is_unreachable(self):
+        self.client.bucket_exists.side_effect = _s3_error("AccessDenied")
+        self.assertFalse(storage_health.check_reachable(self.store)["ok"])
+
+    def test_dropped_connection_is_unreachable(self):
+        self.client.bucket_exists.side_effect = ConnectionError("reset")
+        self.assertFalse(storage_health.check_reachable(self.store)["ok"])
+
+    def test_missing_bucket_is_unreachable_and_named(self):
+        self.client.bucket_exists.return_value = False
+        reach = storage_health.check_reachable(self.store)
+        self.assertIn("bucket docs does not exist", reach["error"])
+
+    def test_stored_object_is_a_copy(self):
+        self.assertEqual(storage_health._copy(self.store, "a.pdf"), "yes")
+
+    def test_no_such_key_is_no_copy(self):
+        self.client.stat_object.side_effect = _s3_error("NoSuchKey")
+        self.assertEqual(storage_health._copy(self.store, "a.pdf"), "no")
+
+    def test_access_denied_on_an_object_is_an_error_not_a_missing_copy(self):
+        self.client.stat_object.side_effect = _s3_error("AccessDenied")
+        self.assertEqual(storage_health._copy(self.store, "a.pdf"), "error")
+
+    def test_dropped_connection_on_an_object_is_an_error(self):
+        self.client.stat_object.side_effect = ConnectionError("reset")
+        self.assertEqual(storage_health._copy(self.store, "a.pdf"), "error")
+
+    def test_object_store_counts_as_off_disk(self):
+        self.assertEqual(storage_health.placement(self.store), "object store")
 
 
 class BackendRowsTest(_StorageTestCase):

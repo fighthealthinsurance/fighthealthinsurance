@@ -156,15 +156,55 @@ def placement(backend: Storage) -> Optional[str]:
     return APP_DISK if here == app else OWN_MOUNT
 
 
+def _object_store(backend: Storage) -> Optional[Tuple[Any, str]]:
+    """The S3 client and bucket under an object-store backend (MinioStorage).
+
+    Its exists() answers False for every S3 error (access denied, a bad
+    signature, a missing bucket) and logs and swallows a dropped connection
+    too, so it cannot tell a missing file from a store that is down. The
+    checks here ask the client instead, which raises for all of those.
+    """
+    client = getattr(backend, "client", None)
+    bucket = getattr(backend, "bucket_name", None)
+    if bucket and hasattr(client, "stat_object") and hasattr(client, "bucket_exists"):
+        return client, str(bucket)
+    return None
+
+
 def _ping(backend: Storage) -> None:
+    store = _object_store(backend)
     if isinstance(backend, FileSystemStorage):
         # The first entry is enough, however many files the root holds; a
         # missing root raises FileNotFoundError naming it.
         with os.scandir(backend.location) as entries:
             next(entries, None)
+    elif store is not None:
+        client, bucket = store
+        # One HEAD on the bucket: raises when access or the network fails.
+        if not client.bucket_exists(bucket_name=bucket):
+            raise LookupError(f"bucket {bucket} does not exist")
     else:
         # One round trip: a name that is never stored, so the answer is "no".
         backend.exists(f"{PROBE_PREFIX}ping")
+
+
+def _has_copy(backend: Storage, name: str) -> bool:
+    """Whether the backend holds name; raises when it cannot tell."""
+    store = _object_store(backend)
+    if store is None:
+        return bool(backend.exists(name))
+    client, bucket = store
+    sanitize = getattr(backend, "_sanitize_path", None)
+    key = sanitize(name) if callable(sanitize) else name
+    try:
+        client.stat_object(bucket_name=bucket, object_name=key)
+    except Exception as e:
+        # The only answer that means "no such file"; the bucket itself was
+        # checked by the reachability probe before any file is.
+        if getattr(e, "code", None) == "NoSuchKey":
+            return False
+        raise
+    return True
 
 
 def check_reachable(
@@ -285,7 +325,7 @@ def _admin_url(model: type[models.Model], pk: Any) -> Optional[str]:
 
 def _copy(backend: Storage, name: str) -> str:
     try:
-        found, _ = _timed(EXISTS_TIMEOUT_S, functools.partial(backend.exists, name))
+        found, _ = _timed(EXISTS_TIMEOUT_S, functools.partial(_has_copy, backend, name))
     except Exception as e:
         # error_text: an OS error's message can hold the path, i.e. the name.
         logger.warning(f"Checking {file_tag(name)} on {backend}: {error_text(e)}")
