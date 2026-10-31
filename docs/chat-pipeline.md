@@ -85,7 +85,7 @@ base score derived from the model's self-reported quality():
 | NewRemoteInternal (fhi)      | 200     | 8000                   | 10000                  |
 | RemoteHealthInsurance legacy | 101     | 2040                   | 2550                   |
 | paid external, premium tier  | 98      | 1920                   | 2401                   |
-| DeepInfra DeepSeek-V4-Pro    | 92      | 1692                   | 2116                   |
+| DeepInfra DeepSeek-V4-Pro-0813 | 92      | 1692                   | 2116                   |
 
 The strongest healthy fhi backend (alpha, at 210) leads the fan-out and
 is listed twice; every other backend is listed once (section 4). The
@@ -233,7 +233,7 @@ went through the consent form silently lost fallback).
 
 Chat's outside models come from a roster, `FHI_CHAT_OUTSIDE_MODELS`, in
 order (GPT-5.5 on Azure, then DeepInfra's Mistral-Small 3.2, GLM-5.3 Flash,
-DeepSeek V4.1 Flash and Qwen3.8-2.4T). At most three are asked, skipping any
+DeepSeek V4.1 Flash 1017 and Qwen3.8 Max). At most three are asked, skipping any
 that is down or whose budget is spent (`ml/spend.py` counts spend as the
 calls happen). On `FHI_CHAT_EXPLORE_RATE` (20%) of turns the second place
 goes to a model further down, so every model keeps being asked often enough

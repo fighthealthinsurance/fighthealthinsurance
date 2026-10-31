@@ -63,7 +63,7 @@ NEW_SAME_PATH = {
 }
 
 GEMMA = "google/gemma-4-26B-A4B-it"
-DEEPSEEK = "deepseek-ai/DeepSeek-V4-Pro"
+DEEPSEEK = "deepseek-ai/DeepSeek-V4-Pro-0813"
 
 
 def _is_routing_setting(name: str) -> bool:
@@ -625,8 +625,8 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 DEEPSEEK,
                 # DeepInfra's chat-only models (quality 82, the default for
                 # a model it does not list), then by name.
-                "Qwen/Qwen3.8-2.4T-A95B",
-                "deepseek-ai/DeepSeek-V4.1-Flash",
+                "Qwen/Qwen3.8-Max",
+                "deepseek-ai/DeepSeek-V4.1-Flash-1017",
                 "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
                 "moonshotai/Kimi-K3",
                 "zai-org/GLM-5.3-Flash",

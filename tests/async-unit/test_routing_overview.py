@@ -408,7 +408,8 @@ class TestRowTraits(unittest.TestCase):
             (80, "", ro.KIND_EXTERNAL, False),
         )
         self.assertEqual(
-            self._shadow_traits(DeepInfra, "deepseek-ai/DeepSeek-V4-Pro").quality, 92
+            self._shadow_traits(DeepInfra, "deepseek-ai/DeepSeek-V4-Pro-0813").quality,
+            92,
         )
 
     def test_tiered_providers_report_their_tier(self):

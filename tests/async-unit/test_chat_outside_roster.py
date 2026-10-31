@@ -130,16 +130,20 @@ class ChatOnlyModelsTest(SimpleTestCase):
             for name in ml_models.DeepInfra.CHAT_MODELS:
                 extras = ml_models.DeepInfra(model=name)._request_extras(name)
                 self.assertIn("max_tokens", extras, name)
-                # DeepInfra answers 400 to a request that turns Qwen3.8's
+                # DeepInfra answers 400 to a request that turns a model's
                 # thinking off, so the flag is never sent.
                 self.assertNotIn("chat_template_kwargs", extras, name)
-            # The two that reason first get room to answer after it.
-            for name, floor in (
-                ("Qwen/Qwen3.8-2.4T-A95B", 1600),
-                ("moonshotai/Kimi-K3", 3000),
-            ):
-                extras = ml_models.DeepInfra(model=name)._request_extras(name)
-                self.assertGreaterEqual(extras["max_tokens"], floor, name)
+            # The one that reasons first gets room to answer after it.
+            extras = ml_models.DeepInfra(model="moonshotai/Kimi-K3")._request_extras(
+                "moonshotai/Kimi-K3"
+            )
+            self.assertGreaterEqual(extras["max_tokens"], 3000)
+
+    def test_every_chat_model_has_a_list_price(self):
+        """A chat model missing from the price table is charged at the high
+        fallback rate, which would burn the chat budget early."""
+        for name in ml_models.DeepInfra.CHAT_MODELS:
+            self.assertIn(name, spend.DEEPINFRA_USD_PER_MTOK, name)
 
 
 class ProviderSpendTest(SimpleTestCase):
