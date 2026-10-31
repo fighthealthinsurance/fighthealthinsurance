@@ -112,6 +112,9 @@ class TestRouterHermeticity(unittest.TestCase):
                 str(m) for m in router.context_only_models_by_cost
             ],
             "models_by_name": sorted(router.models_by_name),
+            # Chat-only providers (DeepInfra's chat roster, LunaRoute)
+            # register here and nowhere else.
+            "chat_outside_models_by_name": sorted(router.chat_outside_models_by_name),
         }
         self.assertEqual(
             leaked,
@@ -119,6 +122,7 @@ class TestRouterHermeticity(unittest.TestCase):
                 "all_models_by_cost": [],
                 "context_only_models_by_cost": [],
                 "models_by_name": [],
+                "chat_outside_models_by_name": [],
             },
             "MLRouter picked up backends from the environment inside the "
             "unit suite; extend _AMBIENT_BACKEND_ENV_VARS in "

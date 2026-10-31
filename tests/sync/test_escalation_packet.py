@@ -1,6 +1,7 @@
 """Unit tests for the regulator escalation packet feature."""
 
 import json
+import re
 from unittest.mock import AsyncMock, patch
 
 from asgiref.sync import async_to_sync
@@ -95,6 +96,22 @@ class _FakeDenial:
                 return [type("DT", (), {"name": name})() for name in denial_types]
 
         self.denial_type = _DenialTypeManager()
+
+
+def _fake_regulator(name, alt_name="", regex=None):
+    """A stand-in Regulator; its regex is its name unless given (empty for
+    one the model inferred), compiled as the RegexField would."""
+    pattern = name if regex is None else regex
+    return type(
+        "Reg",
+        (),
+        {
+            "alt_name": alt_name,
+            "name": name,
+            "regex": re.compile(pattern, re.IGNORECASE),
+            "negative_regex": re.compile(""),
+        },
+    )()
 
 
 def _make_ico(**overrides):
@@ -277,13 +294,62 @@ class RegulatorEscalationReasonsTest(TestCase):
         self.assertEqual(regulator_escalation_reasons(denial), [])
 
     def test_a_regulator_named_in_the_letter_is_named_back(self):
-        regulator = type(
-            "Reg", (), {"alt_name": "", "name": "Texas Department of Insurance"}
-        )()
-        denial = _FakeDenial(state="", regulator=regulator)
+        regulator = _fake_regulator("Texas Department of Insurance")
+        denial = _FakeDenial(
+            state="",
+            regulator=regulator,
+            denial_text="Contact the Texas Department of Insurance with questions.",
+        )
         reasons = regulator_escalation_reasons(denial)
         self.assertEqual(len(reasons), 1)
         self.assertIn("Texas Department of Insurance", reasons[0])
+
+    def test_a_regulator_the_model_inferred_is_not_said_to_be_named(self):
+        """The model links a regulator the letter never names (no regex
+        match): that is a guess about the plan, not a reason from the letter."""
+        regulator = _fake_regulator("Texas Department of Insurance", regex="")
+        denial = _FakeDenial(state="", regulator=regulator)
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_a_regulator_row_without_a_regex_is_named_when_its_name_is_in_the_letter(
+        self,
+    ):
+        """The state rows the model's answer creates carry no regex; the
+        letter naming one is still the letter naming it."""
+        regulator = _fake_regulator("Texas Department of Insurance", regex="")
+        denial = _FakeDenial(
+            state="",
+            regulator=regulator,
+            denial_text="You may contact the Texas  Department of\nInsurance.",
+        )
+        reasons = regulator_escalation_reasons(denial)
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("Texas Department of Insurance", reasons[0])
+
+    def test_first_denial_rights_notices_are_not_an_appeal_already_decided(self):
+        for text in (
+            "You have the right to appeal our initial determination within 180 days.",
+            "To appeal our initial decision, send a letter to the address below.",
+            "This notice explains your rights to appeal our original decision.",
+            "You can ask us to review our initial determination.",
+            "This is not a final decision.",
+            "We cannot affirm our original decision without more records.",
+            "We can\u2019t uphold the denial on this record.",
+        ):
+            with self.subTest(text=text):
+                denial = _FakeDenial(state="", denial_text=text)
+                self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_an_original_decision_that_stands_is_an_appeal_already_decided(self):
+        for text in (
+            "Upon review, our initial determination stands.",
+            "We are maintaining our original denial.",
+            "Our original decision to deny coverage has been upheld.",
+            "After review, our original decision is unchanged.",
+        ):
+            with self.subTest(text=text):
+                denial = _FakeDenial(state="", denial_text=text)
+                self.assertTrue(regulator_escalation_reasons(denial))
 
     def test_a_tpa_plan_brings_in_the_department_of_labor(self):
         denial = _FakeDenial(state="", is_tpa=True)
@@ -310,10 +376,10 @@ class RegulatorEscalationReasonsTest(TestCase):
         self.assertEqual(regulator_escalation_reasons(denial), [])
 
     def test_every_signal_present_gives_one_reason_each(self):
-        regulator = type("Reg", (), {"alt_name": "ERISA", "name": "DOL"})()
+        regulator = _fake_regulator("DOL", alt_name="ERISA", regex="ERISA")
         denial = _FakeDenial(
             state="",
-            denial_text="We uphold the denial.",
+            denial_text="We uphold the denial. See your ERISA rights.",
             regulator=regulator,
             urgent=True,
             denial_types=("Pre-Existing Condition",),

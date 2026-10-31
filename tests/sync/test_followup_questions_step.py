@@ -1,7 +1,7 @@
 """The follow-up round between the questions page and the appeal
 (ml/followup_questions.py), as the person goes through it.
 
-Our own model is stubbed at ml_router.best_internal_model (its yes/no and the
+Our own model is stubbed at ml_appeal_questions_helper._healthy_internal_model (its yes/no and the
 follow-ups it writes); the rest of the round runs for real.
 """
 
@@ -20,9 +20,9 @@ from fighthealthinsurance.models import DenialTypes
 from tests.back_links import back_link
 from tests.sync.test_questions_step import _Q1, QuestionsStepTestBase
 
-_BEST_INTERNAL = (
-    "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router.best_internal_model"
-)
+# Our own model as the follow-up round picks it: the strongest that looks
+# healthy (ml_appeal_questions_helper._healthy_internal_model).
+_BEST_INTERNAL = "fighthealthinsurance.ml.ml_appeal_questions_helper._healthy_internal_model"
 _FOR_DENIAL = (
     "fighthealthinsurance.ml.ml_appeal_questions_helper.MLAppealQuestionsHelper."
     "followup_questions_for_denial"

@@ -218,6 +218,28 @@ class ChooserRankedExportContentTest(StaffExportTestBase):
 
         self.assertEqual(by_task, {scored.id: 3, unscored.id: None})
 
+    def test_chooser_ranked_export_carries_the_case_version(self):
+        task = ChooserTask.objects.create(
+            task_type="appeal", status="READY", source="synthetic", case_version=2
+        )
+        candidate = ChooserCandidate.objects.create(
+            task=task,
+            candidate_index=0,
+            kind="appeal_letter",
+            model_name="model-a",
+            content="Appeal text",
+        )
+        ChooserVote.objects.create(
+            task=task,
+            chosen_candidate=candidate,
+            presented_candidate_ids=[candidate.id],
+            session_key="session-1",
+        )
+
+        record = self.get_export_lines("chooser_ranked_export")[0]
+
+        self.assertEqual(record["case_version"], 2)
+
     def test_chooser_ranked_export_splits_ties(self):
         task = ChooserTask.objects.create(
             task_type="appeal", status="READY", source="synthetic"

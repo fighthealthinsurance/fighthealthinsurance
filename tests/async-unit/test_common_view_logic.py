@@ -2716,6 +2716,32 @@ class RegulatorContactInfoTest(TestCase):
         denial.refresh_from_db()
         self.assertIsNone(denial.regulator)
 
+    def test_a_regex_match_on_a_replaced_letter_is_not_stored(self):
+        """The replacement sweep clears the regulator; a match on the old
+        letter that lands after it must not put the old one back."""
+        denial = self._make_denial(
+            "You may have the right to file a civil action under ERISA."
+        )
+        erisa = Regulator.objects.get(alt_name="ERISA")
+
+        async def swap_letter(text):
+            await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                denial_text="A different letter arrived meanwhile."
+            )
+            return [erisa]
+
+        with patch.object(
+            DenialCreatorHelper.regex_denial_processor,
+            "get_regulator",
+            new=AsyncMock(side_effect=swap_letter),
+        ):
+            outcome = async_to_sync(DenialCreatorHelper.extract_set_regulator)(
+                denial.denial_id, ask_model=False
+            )
+        self.assertEqual(outcome, "nothing_found")
+        denial.refresh_from_db()
+        self.assertIsNone(denial.regulator)
+
     def test_extract_set_regulator_multi_match_is_deterministic(self):
         """When denial text matches more than one regulator, the lowest-pk
         match wins deterministically (get_regulator orders by pk). ERISA is
@@ -2759,6 +2785,24 @@ class RegulatorContactInfoTest(TestCase):
         denial.regulator = erisa
         denial.save()
         self.assertIn("Federal Department of Labor", self._outside_help_text(denial))
+
+    def test_outside_help_says_the_letter_mentions_a_regulator_it_names(self):
+        erisa = Regulator.objects.get(alt_name="ERISA")
+        denial = self._make_denial(
+            "You may have the right to file a civil action under ERISA."
+        )
+        denial.regulator = erisa
+        denial.save()
+        self.assertIn("Your denial letter mentions", self._outside_help_text(denial))
+
+    def test_outside_help_does_not_say_the_letter_names_an_inferred_regulator(self):
+        """A regulator the model inferred is linked though the letter never
+        names it, so the row must not claim the letter does."""
+        erisa = Regulator.objects.get(alt_name="ERISA")
+        denial = self._make_denial("A letter that names no regulator.")
+        denial.regulator = erisa
+        denial.save()
+        self.assertNotIn("Your denial letter mentions", self._outside_help_text(denial))
 
     def test_outside_help_has_no_contact_row_without_matched_regulator(self):
         denial = self._make_denial()

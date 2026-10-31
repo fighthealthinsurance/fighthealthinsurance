@@ -1568,11 +1568,22 @@ class FindNextStepsHelper:
                     f"<a href='{html_escape(website)}' target='_blank' rel='noopener'>"
                     "file a complaint online</a>"
                 )
+            # A regulator the model inferred is linked without the letter
+            # naming it, so say what we know rather than what the letter says.
+            if regulator_routing.letter_names_regulator(denial):
+                source = (
+                    f"Your denial letter mentions <strong>{html_escape(regulator.name)}</strong>, "
+                    "a regulator that oversees this kind of plan."
+                )
+            else:
+                source = (
+                    f"Your plan looks to be overseen by <strong>{html_escape(regulator.name)}</strong>, "
+                    "a regulator."
+                )
             outside_help_details.append(
                 (
                     (
-                        f"Your denial letter mentions <strong>{html_escape(regulator.name)}</strong>, "
-                        "a regulator that oversees this kind of plan. They take consumer "
+                        source + " They take consumer "
                         "complaints about denials and can require the plan to respond."
                     ),
                     " or ".join(how_to_parts) + ".",
@@ -2945,6 +2956,9 @@ class DenialCreatorHelper:
             "candidate_generated_questions": None,
             # The follow-up rounds read the old letter too.
             "followup_questions": None,
+            # Matched on, or inferred from, the old letter; extraction for the
+            # new one skips the lookup while one is set.
+            "regulator": None,
             "candidate_ml_citation_context": None,
             # Handed back by both citation paths whenever it is set.
             "ml_citation_context": None,
@@ -4906,10 +4920,19 @@ class DenialCreatorHelper:
         regulators = await cls.regex_denial_processor.get_regulator(letter)
         if regulators:
             # First match wins; the seeded regexes are mutually specific.
-            await Denial.objects.filter(
-                denial_id=denial_id, regulator__isnull=True
+            # Conditional on the letter, as the model's write below is: a
+            # replacement clears the regulator, and this match was on the
+            # old letter.
+            updated = await Denial.objects.filter(
+                denial_id=denial_id,
+                regulator__isnull=True,
+                denial_text=denial.denial_text,
             ).aupdate(regulator=regulators[0])
-            return EXTRACTION_OUTCOME_FOUND
+            return (
+                EXTRACTION_OUTCOME_FOUND
+                if updated
+                else EXTRACTION_OUTCOME_NOTHING_FOUND
+            )
         if not ask_model or not letter.strip():
             return EXTRACTION_OUTCOME_NOTHING_FOUND
         try:

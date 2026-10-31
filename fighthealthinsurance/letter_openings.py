@@ -8,8 +8,9 @@ a chat: "Sure, I can help you draft a template for an appeal letter. Here's
 a simple one:" and then the letter. ``strip_letter_preamble`` removes that
 opening (and a markdown fence around the letter, when there is one). It runs
 on the appeal-generation path only (``RemoteOpenLike._checked_infer_outcome``
-in ml_models, for ``infer_type == "full"``), never on the chat path, where
-"Sure, I can help" is the assistant talking to the person and belongs there.
+in ml_models, for ``infer_type == "full"``, and the synthesis pass in
+generate_appeal), never on the chat path, where "Sure, I can help" is the
+assistant talking to the person and belongs there.
 
 **The salutation.** Every appeal letter and prior authorization request this
 app writes goes to the insurance company: a first-level (internal) appeal is

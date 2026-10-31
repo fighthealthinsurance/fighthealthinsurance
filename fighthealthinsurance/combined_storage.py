@@ -1,7 +1,9 @@
+import os
 from typing import IO, Any, List, Optional
 
 from django.core.files.base import File
 from django.core.files.storage import Storage
+from django.utils.crypto import get_random_string
 
 from loguru import logger
 from stopit import ThreadingTimeout as Timeout
@@ -14,6 +16,39 @@ from fighthealthinsurance.log_tags import error_text, file_tag
 #: statements, so a backend blocked in one system call is not stopped by it.
 SAVE_TIMEOUT_SECONDS = 6.0
 SAVE_SECONDS_PER_MEGABYTE = 1.0
+
+#: Length of the random part save() puts in every name it stores.
+NAME_TOKEN_LENGTH = 12
+#: A "suffix" longer than this is part of the name, not an extension.
+MAX_KEPT_EXTENSION = 16
+
+
+def unique_name(name: str, max_length: Optional[int] = None) -> str:
+    """``name`` with a random part before its extension, within ``max_length``.
+
+    The first backends are on each pod's own disk and start empty after a
+    restart, so the name the first one picks says nothing about what the
+    shared bucket already holds: two people's ``SBC.pdf`` would land on one
+    name there, and one row would open the other's document. A fresh random
+    part makes every save's name its own on every backend. The extension
+    stays last, since readers pick the file type from it.
+    """
+    name = str(name).replace("\\", "/")
+    dir_name, file_name = os.path.split(name)
+    root, ext = os.path.splitext(file_name)
+    if len(ext) > MAX_KEPT_EXTENSION:
+        root, ext = file_name, ""
+    token = get_random_string(NAME_TOKEN_LENGTH)
+
+    def joined(file_root: str) -> str:
+        stem = f"{file_root}_{token}" if file_root else token
+        return os.path.join(dir_name, f"{stem}{ext}")
+
+    candidate = joined(root)
+    if max_length is not None and len(candidate) > max_length:
+        excess = len(candidate) - max_length
+        candidate = joined(root[:-excess] if excess < len(root) else "")
+    return candidate
 
 
 def save_timeout_seconds(content: Any) -> float:
@@ -28,7 +63,11 @@ def save_timeout_seconds(content: Any) -> float:
 
 
 class CombinedStorage(Storage):
-    """A combined storage backend that uses timeouts."""
+    """A combined storage backend that uses timeouts.
+
+    save() writes every backend under one name it makes unique first
+    (``unique_name``), so no backend has to pick another name for it.
+    """
 
     backends: List[Storage]
 
@@ -116,6 +155,8 @@ class CombinedStorage(Storage):
         last_error: Optional[BaseException] = None
         error_list: List[BaseException] = []
         seconds = save_timeout_seconds(content)
+        if name:
+            name = unique_name(name, max_length)
         for backend in self.backends:
             stored: Optional[str] = None
             target_name = name if l is None else l
