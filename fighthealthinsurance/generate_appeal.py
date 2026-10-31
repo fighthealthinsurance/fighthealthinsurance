@@ -76,6 +76,7 @@ from fighthealthinsurance.context_utils import (
     truncate_at_boundary,
 )
 from fighthealthinsurance.denial_base import DenialBase
+from fighthealthinsurance.regulator_routing import RoutingAnswer
 
 from .exec import background_executor, executor
 from .ml.ml_models import (
@@ -1972,6 +1973,45 @@ class AppealGenerator(object):
                 best = None
 
         return best
+
+    @llm_usage.labelled_task("entity_extraction")
+    async def get_regulator_routing(
+        self, denial_text: Optional[str] = None, use_external: bool = False
+    ) -> Optional[RoutingAnswer]:
+        """Who regulates the plan behind this letter, and whether to go now.
+
+        Asks the entity-extraction backends in cost order and keeps the first
+        parsed answer; a backend that is down or answers in prose is skipped
+        for the next. ``use_external`` is the person's consent: without it only
+        our own models are asked. ``None`` when nobody could say.
+        """
+        if not denial_text or not denial_text.strip():
+            return None
+        models_to_try = [
+            m
+            for m in ml_router.entity_extract_backends(use_external)
+            if hasattr(m, "get_regulator_routing")
+        ]
+        if not models_to_try:
+            raise ExtractionUnavailable("no model configured for get_regulator_routing")
+        for model in models_to_try:
+            try:
+                answer: Optional[RoutingAnswer] = await model.get_regulator_routing(
+                    denial_text
+                )
+            except Exception as e:
+                if isinstance(e, (*MODEL_TRANSPORT_ERRORS, ProviderUnavailable)):
+                    logger.info(
+                        f"regulator routing: {backend_label(model)} unavailable -- {e}"
+                    )
+                else:
+                    logger.opt(exception=True).warning(
+                        f"regulator routing: {backend_label(model)} failed"
+                    )
+                continue
+            if answer is not None:
+                return answer
+        return None
 
     async def get_fax_number(
         self, denial_text=None, use_external=False

@@ -127,6 +127,11 @@ from fighthealthinsurance.ml.bad_output_utils import (
     strip_boilerplate_service,
 )
 from fighthealthinsurance.process_denial import DenialBase
+from fighthealthinsurance.regulator_routing import (
+    ROUTING_PROMPT,
+    RoutingAnswer,
+    parse_routing_answer,
+)
 from fighthealthinsurance.utils import all_concrete_subclasses
 
 # Regex to split text into sentences. Splits after sentence-ending punctuation
@@ -2359,6 +2364,11 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
         """Get the regulator from the text"""
         return None
 
+    async def get_regulator_routing(self, text) -> Optional["RoutingAnswer"]:
+        """Who regulates the plan and whether to go to them now; None when
+        this backend can't say (see ``regulator_routing``)."""
+        return None
+
     async def get_plan_type(self, text) -> Optional[str]:
         """Get the plan type from the text"""
         return None
@@ -3718,6 +3728,42 @@ class RemoteOpenLike(RemoteModel):
             prompt=f"When possible output in the same format as is found in the denial. Tell me the appeal fax number is within the provided denial. If the fax number is unknown write UNKNOWN. If known just output the fax number without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         return result
+
+    async def get_regulator_routing(self, text: str) -> Optional[RoutingAnswer]:
+        """Ask who regulates the plan behind this letter, and whether to go now.
+
+        The prompt is the one the fine-tuned model was trained on
+        (``regulator_routing.ROUTING_PROMPT``) and the answer is its four
+        lines; anything that doesn't parse reads as no answer. Low
+        temperature: this is a classification, not a letter.
+        """
+        if not text or not text.strip():
+            return None
+        result = await self._infer_no_context(
+            system_prompts=["You are a helpful assistant."],
+            timeout=ml_task_timeout("entity"),
+            raise_on_unavailable=True,
+            temperature=0.1,
+            prompt=f"{ROUTING_PROMPT} {text}",
+        )
+        answer = parse_routing_answer(result)
+        if answer is None and result:
+            logger.debug(
+                f"{self}: regulator routing answer did not parse: {result[:120]!r}"
+            )
+        return answer
+
+    async def get_regulator(self, text) -> Optional[str]:
+        """The regulator's name, or None when the letter doesn't say.
+
+        ``Unknown`` is a real answer from the model (an employer plan whose
+        funding the letter never states) and comes back as None here, as the
+        other entity readers return None for UNKNOWN.
+        """
+        answer = await self.get_regulator_routing(text)
+        if answer is None or not answer.regulator_known:
+            return None
+        return answer.regulator
 
     async def get_insurance_company(self, denial: str) -> Optional[str]:
         """
