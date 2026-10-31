@@ -28,7 +28,7 @@ import aiohttp
 # would close the connections this module's interleaved async ORM reuses.
 from asgiref.sync import async_to_sync, sync_to_async
 from django.core.cache import cache
-from django.db.models import QuerySet
+from django.db.models import Case, IntegerField, Q, QuerySet, Value, When
 from django.utils import timezone
 from loguru import logger
 from metapub import FindIt
@@ -69,16 +69,39 @@ JUDGING_BUDGET_SECONDS = 15.0
 _SUMMARY_RESERVE_SECONDS = 5.0
 
 
-def judgment_rows(pmids: list[str], key: str) -> "QuerySet[PubMedArticleJudgment]":
+def judgment_rows(
+    pmids: list[str], key: str, *, jev: bool = True, own_models: bool = False
+) -> "QuerySet[PubMedArticleJudgment]":
     """The stored judgments of these articles for one treatment and
-    condition, under the current research rubric, oldest first (so a newer
-    row wins when they are read into a dict)."""
+    condition, under the current research rubric: Jev's when ``jev``, our
+    own models' when ``own_models`` (only the Appeal Arena reads those).
+    Ours before Jev's, then oldest first (the primary key breaking a tie),
+    so when they are read into a dict Jev's wins over ours and a newer row
+    over an older one."""
+    prefixes = [
+        prefix
+        for prefix, wanted in (
+            (research_judging.JEV_SCORER_PREFIX, jev),
+            (research_judging.OWN_MODEL_SCORER_PREFIX, own_models),
+        )
+        if wanted
+    ]
+    if not prefixes:
+        return PubMedArticleJudgment.objects.none()
+    by_scorer = Q()
+    for prefix in prefixes:
+        by_scorer |= Q(scorer__startswith=prefix)
+    jev_last = Case(
+        When(scorer__startswith=research_judging.JEV_SCORER_PREFIX, then=Value(1)),
+        default=Value(0),
+        output_field=IntegerField(),
+    )
     return PubMedArticleJudgment.objects.filter(
+        by_scorer,
         pmid__in=pmids,
         treatment_key=key,
-        scorer__startswith="typesafe/",
         scorer__endswith=research_judging._RUBRIC_SUFFIX,
-    ).order_by("created_at")
+    ).order_by(jev_last.asc(), "created_at", "pk")
 
 
 def judgment_of(row: PubMedArticleJudgment) -> research_judging.Judgment:
@@ -91,19 +114,30 @@ def judgment_of(row: PubMedArticleJudgment) -> research_judging.Judgment:
 
 
 def stored_judgments_for(
-    procedure: Optional[str], diagnosis: Optional[str], pmids: list[str]
+    procedure: Optional[str],
+    diagnosis: Optional[str],
+    pmids: list[str],
+    *,
+    own_models: bool = False,
 ) -> dict[str, research_judging.Judgment]:
     """What is already known about these articles for one treatment and
-    condition. Reads only; sends nothing anywhere. Nothing while judging is
-    switched off: the switch is the kill switch for the judgments already
-    stored too. Also read for the Appeal Arena's synthetic cases
-    (chooser_tasks.annotate_evidence_verdicts), which have no denial."""
-    if not research_judging.enabled():
+    condition. Reads only; sends nothing anywhere. Jev's judgments only
+    while research judging is switched on: the switch is the kill switch for
+    the judgments already stored too. Also read for the Appeal Arena's
+    synthetic cases (chooser_tasks.annotate_evidence_verdicts), which have
+    no denial, and which alone pass ``own_models`` to read our own models'
+    judgments as well (its own switch is theirs); Jev's wins where both
+    judged an article."""
+    jev = research_judging.enabled()
+    if not (jev or own_models):
         return {}
     if not (procedure or "").strip() or not pmids:
         return {}
     key = research_judging.treatment_key(procedure, diagnosis)
-    return {row.pmid: judgment_of(row) for row in judgment_rows(pmids, key)}
+    return {
+        row.pmid: judgment_of(row)
+        for row in judgment_rows(pmids, key, jev=jev, own_models=own_models)
+    }
 
 
 def stored_judgments(
@@ -118,18 +152,22 @@ async def judge_missing(
     procedure: Optional[str],
     diagnosis: Optional[str],
     known: dict[str, research_judging.Judgment],
+    *,
+    own_model: Any = None,
 ) -> dict[str, research_judging.Judgment]:
-    """Ask Jev about up to research_judging.MAX_ARTICLES of ``articles``
-    (anything with ``pmid``, ``title`` and ``abstract``) that ``known`` has
-    no judgment for, for this treatment and condition, and return ``known``
-    with the new judgments added. Each is stored (PubMedArticleJudgment, so
-    the next case about the pair reads it) as it lands, so a caller that
-    stops waiting keeps what arrived. Jev's health is noted either way.
+    """Ask Jev, or our own ``own_model`` when one is given, about up to
+    research_judging.MAX_ARTICLES of ``articles`` (anything with ``pmid``,
+    ``title`` and ``abstract``) that ``known`` has no judgment for, for this
+    treatment and condition, and return ``known`` with the new judgments
+    added. Each is stored (PubMedArticleJudgment, so the next case about the
+    pair reads it) as it lands, so a caller that stops waiting keeps what
+    arrived. Jev's health is noted either way when Jev is asked.
 
     What it does not do: check the switch, consent or the spend channel.
     Those are the caller's (judge_articles for a denial; the Appeal Arena's
-    synthetic cases need no consent), and the treatment and condition are
-    the only thing about the case that is sent (ml/research_judging.py).
+    synthetic cases need no consent, and only the arena passes
+    ``own_model``), and the treatment and condition are the only thing
+    about the case that is sent (ml/research_judging.py).
     """
     key = research_judging.treatment_key(procedure, diagnosis)
     by_pmid = {a.pmid: a for a in articles if a.pmid}
@@ -138,25 +176,36 @@ async def judge_missing(
     ]
     if not missing:
         return known
-    gate = asyncio.Semaphore(research_judging.CONCURRENCY)
+    gate = asyncio.Semaphore(
+        research_judging.CONCURRENCY
+        if own_model is None
+        else research_judging.OWN_MODEL_CONCURRENCY
+    )
 
     async def note_failure(summary: str) -> None:
         await ExternalServiceHealth.anote_failure(research_judging.SERVICE, summary)
 
-    async def one(pmid: str) -> None:
-        article = by_pmid[pmid]
-        async with gate:
-            judgment = await research_judging.judge_article(
-                article.title,
-                article.abstract,
-                procedure,
-                diagnosis,
-                on_failure=note_failure,
+    async def ask(article: Any) -> Optional[research_judging.Judgment]:
+        if own_model is not None:
+            return await research_judging.judge_article_with(
+                own_model, article.title, article.abstract, procedure, diagnosis
             )
+        return await research_judging.judge_article(
+            article.title,
+            article.abstract,
+            procedure,
+            diagnosis,
+            on_failure=note_failure,
+        )
+
+    async def one(pmid: str) -> None:
+        async with gate:
+            judgment = await ask(by_pmid[pmid])
         if judgment is None:
             return
         known[pmid] = judgment
-        await ExternalServiceHealth.anote_success(research_judging.SERVICE)
+        if own_model is None:
+            await ExternalServiceHealth.anote_success(research_judging.SERVICE)
         try:
             await PubMedArticleJudgment.objects.aget_or_create(
                 pmid=pmid,

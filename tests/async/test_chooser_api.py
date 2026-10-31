@@ -1219,6 +1219,8 @@ class ChooserTaskContextTest(APITestCase):
 # Research judging on: its key and its switch. Stored judgments are shown
 # only while it is on (the switch is their kill switch too).
 RESEARCH_ON = dict(TYPESAFE_API_KEY="k", TYPESAFE_RESEARCH_JUDGING_ENABLED=True)
+# A judgment our own model made for the arena where Jev gave none.
+OWN_SCORER = f"fhi/model-local/research-rubric-{research_judging.RUBRIC_VERSION}"
 
 
 class ChooserEvidenceVerdictTest(APITestCase):
@@ -1304,6 +1306,26 @@ class ChooserEvidenceVerdictTest(APITestCase):
         with override_settings(**RESEARCH_ON):
             evidence = self._served_evidence()
         self.assertNotIn("judgment", evidence[2])
+
+    def test_our_own_models_verdict_is_shown_while_the_arena_judges(self):
+        """Where Jev gave none, our own model's verdict (made by the arena's
+        fallback, chooser_tasks._judge_evidence) is shown, with research
+        judging off; the arena's switch is its kill switch."""
+        self._judge("3", self.key, scorer=OWN_SCORER, on_topic=0.9, supports=0.9, undermines=0.0)
+        with override_settings(CHOOSER_JUDGE_EVIDENCE=True):
+            evidence = self._served_evidence()
+        self.assertEqual(evidence[2]["judgment"]["verdict"], "supports")
+        # Jev's stay hidden while research judging is off.
+        self.assertNotIn("judgment", evidence[0])
+        with override_settings(CHOOSER_JUDGE_EVIDENCE=False):
+            evidence = self._served_evidence()
+        self.assertNotIn("judgment", evidence[2])
+
+    def test_jevs_verdict_wins_over_our_own_models(self):
+        self._judge("1", self.key, scorer=OWN_SCORER, on_topic=0.05, supports=0.0, undermines=0.0)
+        with override_settings(CHOOSER_JUDGE_EVIDENCE=True, **RESEARCH_ON):
+            evidence = self._served_evidence()
+        self.assertEqual(evidence[0]["judgment"]["verdict"], "supports")
 
     def test_a_case_without_evidence_is_served_as_it_is(self):
         context = {"procedure": "MRI", "diagnosis": "Lower back pain", "evidence": []}

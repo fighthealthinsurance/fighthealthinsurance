@@ -106,12 +106,17 @@ CHOOSER_SEED_FROM_RANKINGS = getattr(settings, "CHOOSER_SEED_FROM_RANKINGS", Tru
 CHOOSER_EVIDENCE_LIMIT = getattr(settings, "CHOOSER_EVIDENCE_LIMIT", 5)
 # Seconds a live PubMed search for a scenario's evidence may take.
 CHOOSER_PUBMED_SEARCH_TIMEOUT = getattr(settings, "CHOOSER_PUBMED_SEARCH_TIMEOUT", 20.0)
-# Seconds a case waits for Jev's verdicts on its evidence (see
-# _judge_evidence) before going on without them; verdicts that landed in
-# time are stored either way.
+# Seconds a case waits for the verdicts on its evidence (see
+# _judge_evidence), Jev's and then our own model's, before going on without
+# them; verdicts that landed in time are stored either way.
 CHOOSER_EVIDENCE_JUDGING_TIMEOUT = getattr(
     settings, "CHOOSER_EVIDENCE_JUDGING_TIMEOUT", 60.0
 )
+# Of that, the most Jev is waited for when our own model could take over:
+# Jev normally answers within seconds, so one that has not answered by then
+# is unlikely to, and our own model, which writes its answers, needs the
+# rest.
+_JEV_SHARE_OF_JUDGING = 0.5
 # Case facts kept per scenario, and the longest one.
 CHOOSER_MAX_FACTS = 6
 _MAX_FACT_CHARS = 240
@@ -157,15 +162,13 @@ def _pubmed_live_search_allowed() -> bool:
 
 
 def _evidence_judging_allowed() -> bool:
-    """Whether a case's evidence is judged by Jev as the case is built (see
-    _judge_evidence). Read per call, like the live-search switch: off in
-    tests, and an operator keeping Jev's research budget for real appeals
-    turns it off. Research judging's own switch must be on too
-    (research_judging.enabled: the key and TYPESAFE_RESEARCH_JUDGING_ENABLED)."""
-    return (
-        bool(getattr(settings, "CHOOSER_JUDGE_EVIDENCE", True))
-        and research_judging.enabled()
-    )
+    """Whether a case's evidence is judged as the case is built (see
+    _judge_evidence), and our own model's verdicts shown to voters
+    (annotate_evidence_verdicts). Read per call, like the live-search
+    switch: off in tests. Jev judges only while research judging is on too
+    (research_judging.enabled: the key and TYPESAFE_RESEARCH_JUDGING_ENABLED);
+    our own model judges what Jev does not."""
+    return bool(getattr(settings, "CHOOSER_JUDGE_EVIDENCE", True))
 
 
 def _model_display_name(model) -> str:
@@ -615,16 +618,23 @@ def _evidence_summary(summary: Optional[str], abstract: Optional[str]) -> str:
 async def _judge_evidence(
     procedure: str, diagnosis: str, articles: List[PubMedMiniArticle]
 ) -> None:
-    """Have Jev judge a case's articles for its pair (is each about this
+    """Have a case's articles judged for its pair (is each about this
     treatment for this condition, does it support it, does it argue against
-    it), storing what it says in PubMedArticleJudgment the way a real
+    it), storing the answers in PubMedArticleJudgment the way a real
     appeal's research context does (pubmed_tools.judge_missing; a judgment
     already stored for the pair is not asked for again). The voter's page
     reads the stored judgments back (annotate_evidence_verdicts). Nothing is
     kept on the case itself: the drafts are given the summaries and never
     the verdicts, so the stored case stays exactly what they were shown, and
-    a draft that leans on a study Jev found against the treatment is doing
-    so on its own reading of the summary.
+    a draft that leans on a study judged against the treatment is doing so
+    on its own reading of the summary.
+
+    Jev judges first, while research judging is on. Whatever it does not
+    judge (it is off or not set up, a request failed, its budget is spent,
+    or it ran out of its share of the time) falls through to our own best
+    internal model, with a warning: the arena's verdicts are a referee aid,
+    worth having from a rougher reader than none. A judgment only our own
+    model made is asked of Jev again once Jev is back, and Jev's wins.
 
     The pair is k-anonymous and the case synthetic, so there is no consent
     to ask; what is sent is the article's public title and abstract and the
@@ -635,18 +645,28 @@ async def _judge_evidence(
         return
     from fighthealthinsurance import pubmed_tools
 
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + CHOOSER_EVIDENCE_JUDGING_TIMEOUT
+    jev_on = research_judging.enabled()
     key = research_judging.treatment_key(procedure, diagnosis)
     pmids = [a.pmid for a in articles if a.pmid]
     try:
-        known = {
-            row.pmid: pubmed_tools.judgment_of(row)
-            async for row in pubmed_tools.judgment_rows(pmids, key)
-        }
-        if all(pmid in known for pmid in pmids):
+        by_jev: dict = {}
+        by_ours: dict = {}
+        async for row in pubmed_tools.judgment_rows(
+            pmids, key, jev=jev_on, own_models=True
+        ):
+            judged = (
+                by_jev
+                if row.scorer.startswith(research_judging.JEV_SCORER_PREFIX)
+                else by_ours
+            )
+            judged[row.pmid] = pubmed_tools.judgment_of(row)
+        if all(pmid in (by_jev if jev_on else by_ours) for pmid in pmids):
             return
-        # Jev reads the abstract. An article stored without one (an older
-        # row, or a fetch that brought only the title) may have it on the
-        # row an appeal summarized.
+        # The article is what is read. One stored without an abstract (an
+        # older row, or a fetch that brought only the title) may have it on
+        # the row an appeal summarized.
         without = [a.pmid for a in articles if not (a.abstract or "").strip()]
         abstracts = {
             pmid: abstract
@@ -665,9 +685,65 @@ async def _judge_evidence(
             )
             for a in articles
         ]
+        ours = ml_router.best_internal_model()
+        jev_timed_out = False
+        if jev_on:
+            # Time is kept back for our own model only when one looks
+            # healthy: best_internal_model returns the strongest even when
+            # every one is marked down, and Jev should not be cut short for
+            # a fallback that is unlikely to answer.
+            reserve = bool(ml_router._healthy_general_internal())
+            jev_budget = CHOOSER_EVIDENCE_JUDGING_TIMEOUT * (
+                _JEV_SHARE_OF_JUDGING if reserve else 1.0
+            )
+            try:
+                # judge_missing adds to by_jev as each answer lands, so
+                # what Jev answered in time is kept past a timeout.
+                await asyncio.wait_for(
+                    pubmed_tools.judge_missing(to_judge, procedure, diagnosis, by_jev),
+                    timeout=jev_budget,
+                )
+            except asyncio.TimeoutError:
+                jev_timed_out = True
+                logger.info("Chooser: Jev ran out of time judging a case's evidence")
+        known = {**by_ours, **by_jev}
+        left = [
+            a.pmid for a in to_judge if a.pmid and a.pmid not in known and a.abstract
+        ][: research_judging.MAX_ARTICLES]
+        if not left:
+            return
+        if not jev_on:
+            why = (
+                "Jev is not set up for research judging (TYPESAFE_API_KEY "
+                "and TYPESAFE_RESEARCH_JUDGING_ENABLED)"
+            )
+        else:
+            cause = research_judging.skip_reason() or (
+                "it ran out of its share of the time"
+                if jev_timed_out
+                else "its requests failed or its answers could not be read "
+                "(each failure is logged on its own)"
+            )
+            why = f"Jev did not judge {len(left)} of a case's articles: {cause}"
+        if ours is None:
+            logger.warning(
+                f"Chooser: {why}, and there is no internal model to judge "
+                f"them instead; {len(left)} article(s) go without a verdict"
+            )
+            return
+        logger.warning(
+            f"Chooser: {why}; falling back to our own model "
+            f"{_model_display_name(ours)} for {len(left)} article(s)"
+        )
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            logger.info("Chooser: no time left to judge a case's evidence")
+            return
         await asyncio.wait_for(
-            pubmed_tools.judge_missing(to_judge, procedure, diagnosis, known),
-            timeout=CHOOSER_EVIDENCE_JUDGING_TIMEOUT,
+            pubmed_tools.judge_missing(
+                to_judge, procedure, diagnosis, known, own_model=ours
+            ),
+            timeout=remaining,
         )
     except asyncio.TimeoutError:
         logger.info("Chooser: ran out of time judging a case's evidence")
@@ -678,20 +754,22 @@ async def _judge_evidence(
 
 
 def annotate_evidence_verdicts(context: dict) -> dict:
-    """The case as the voter is shown it: ``context`` with Jev's stored
+    """The case as the voter is shown it: ``context`` with the stored
     verdict on each article of its evidence, as ``judgment``
     (research_judging.Judgment.as_dict: the verdict in a word and its three
     probabilities), for every article judged for the case's treatment and
-    condition under the current rubric.
+    condition under the current rubric: Jev's, else our own model's
+    (_judge_evidence).
 
     Read when the case is served rather than stored with it, so a case
     built before an article was judged (by this module or by a real appeal
     about the pair) shows the verdict too, and the stored case stays exactly
     what the drafts were given: they are told the summaries, never the
-    verdicts. Reads only, sends nothing, and shows nothing while research
-    judging is switched off (pubmed_tools.stored_judgments_for, the kill
-    switch for stored judgments everywhere). Returns a new dict; ``context``
-    is left as it is."""
+    verdicts. Reads only and sends nothing. Jev's verdicts are shown only
+    while research judging is switched on, and our own model's only while
+    CHOOSER_JUDGE_EVIDENCE is (pubmed_tools.stored_judgments_for: each
+    switch is the kill switch for its stored judgments). Returns a new dict;
+    ``context`` is left as it is."""
     evidence = context.get("evidence") or []
     pmids = [
         str(item["pmid"])
@@ -703,7 +781,10 @@ def annotate_evidence_verdicts(context: dict) -> dict:
     from fighthealthinsurance.pubmed_tools import stored_judgments_for
 
     judgments = stored_judgments_for(
-        context.get("procedure"), context.get("diagnosis"), pmids
+        context.get("procedure"),
+        context.get("diagnosis"),
+        pmids,
+        own_models=_evidence_judging_allowed(),
     )
     if not judgments:
         return context

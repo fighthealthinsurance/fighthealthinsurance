@@ -48,8 +48,10 @@ to the full page; without the JSON they show the link alone.
     treatment, mixed, argues against, off topic, unclear) from Jev's
     research judgment of the article for the case's treatment and condition
     (`ml/research_judging.py`, the same judgments that order a real appeal's
-    articles), with the three probabilities behind it under "What it
-    found". A study nobody has judged has no badge. The page says the drafts
+    articles), or, where Jev gave none, our own model's answer to the same
+    questions, with the three probabilities behind it under "What it
+    found". The page does not say which of the two judged a study. A study
+    nobody has judged has no badge. The page says the drafts
     saw the summaries, not the verdicts, and calls it a hint, not a ruling.
   - *The citation check* under each draft: every PMID the draft cites (as
     "PMID 12345678", "PubMed ID 12345678" or a PubMed link) is matched to
@@ -136,16 +138,29 @@ Models".
    summary is the one real appeals were given for the article
    (`PubMedArticleSummarized.basic_summary`) when there is one, else the
    start of its abstract; an article with neither has no summary. The
-   articles kept are then judged for the pair by Jev when
-   `CHOOSER_JUDGE_EVIDENCE` and research judging are both on
-   (`_judge_evidence`, through `pubmed_tools.judge_missing`): a judgment
-   already stored for the pair, by this or by a real appeal, is not asked
-   for again, and new ones are stored in `PubMedArticleJudgment`, where the
-   next case or appeal about the pair reads them. Nothing is kept on the
-   case: the drafts are told the summaries, never the verdicts. The pair is
+   articles kept are then judged for the pair when `CHOOSER_JUDGE_EVIDENCE`
+   is on (`_judge_evidence`, through `pubmed_tools.judge_missing`): a
+   judgment already stored for the pair, by this or by a real appeal, is
+   not asked for again, and new ones are stored in `PubMedArticleJudgment`,
+   where the next case or appeal about the pair reads them. Jev judges first
+   when research judging is on too. Whatever it does not judge (research
+   judging off or not set up, a failed request, a spent budget, or Jev still
+   unanswered at half of `CHOOSER_EVIDENCE_JUDGING_TIMEOUT`, or at all of it
+   when none of our own models looks healthy) falls through to our own best
+   internal model (`ml_router.best_internal_model`,
+   `research_judging.judge_article_with`), with a logged warning naming the
+   reason (Jev not set up, `research_judging.skip_reason`, out of time, or
+   failed requests, each of which is also logged on its own) and the model. Our own model is asked Jev's three questions, for a
+   likelihood of each out of 100, read strictly (a reply it cannot read
+   leaves the article unjudged), and its judgments are stored under a scorer
+   of their own (`fhi/<model>/research-rubric-N`). Only the arena reads
+   those: a real appeal's research and fax page stay on Jev's alone. Once
+   Jev is back, an article only our own model judged is asked of Jev again,
+   and Jev's judgment is the one shown. Nothing is kept on the case: the
+   drafts are told the summaries, never the verdicts. The pair is
    k-anonymous and the case synthetic, so no consent is involved, and what
    is sent is the article's public title and abstract and the pair. Best
-   effort, bounded by `CHOOSER_EVIDENCE_JUDGING_TIMEOUT`.
+   effort, bounded by `CHOOSER_EVIDENCE_JUDGING_TIMEOUT` for both together.
 4. **Interview.** `_interview` runs a simulated question-and-answer
    session: the app's own question generators
    (`MLAppealQuestionsHelper.generate_specific_questions`, given the case as
@@ -168,12 +183,13 @@ Models".
 The next-task endpoint serves an appeal case with each evidence row carrying
 `judgment` (`{verdict, on_topic, supports, undermines}`,
 `research_judging.Judgment.as_dict`) when a judgment under the current rubric
-is stored for the PMID and the case's treatment and condition. It is read as
-the case is served, not stored with it: a case built before its articles
-were judged shows the verdicts too, and `context_json` stays exactly what
-the drafts were given. It reads only (`pubmed_tools.stored_judgments_for`)
-and shows nothing while research judging is switched off, the kill switch
-for stored judgments everywhere. A case it cannot be read for is served
+is stored for the PMID and the case's treatment and condition: Jev's, else
+our own model's. It is read as the case is served, not stored with it: a
+case built before its articles were judged shows the verdicts too, and
+`context_json` stays exactly what the drafts were given. It reads only
+(`pubmed_tools.stored_judgments_for`). Jev's verdicts are shown only while
+research judging is switched on, the kill switch for Jev's stored judgments
+everywhere, and our own model's only while `CHOOSER_JUDGE_EVIDENCE` is. A case it cannot be read for is served
 without it. The citation check needs nothing from the server.
 
 ### Case versions and what voters see first
@@ -273,8 +289,8 @@ environment variables of the same name.
 | `CHOOSER_PUBMED_LIVE_SEARCH` | `True` (`False` in tests) | Search PubMed when nothing is cached for the pair |
 | `CHOOSER_PUBMED_SEARCH_TIMEOUT` | `20.0` | Seconds a live search may take |
 | `CHOOSER_SIMULATED_QA` | `True` (`False` in tests) | Give appeal cases a simulated interview |
-| `CHOOSER_JUDGE_EVIDENCE` | `True` (`False` in tests) | Have Jev judge a case's evidence as it is built (needs `TYPESAFE_RESEARCH_JUDGING_ENABLED`) |
-| `CHOOSER_EVIDENCE_JUDGING_TIMEOUT` | `60` | Seconds a case waits for those verdicts |
+| `CHOOSER_JUDGE_EVIDENCE` | `True` (`False` in tests) | Judge a case's evidence as it is built: Jev when `TYPESAFE_RESEARCH_JUDGING_ENABLED` is on, our own model for whatever Jev does not judge. Off also hides our own model's stored verdicts |
+| `CHOOSER_EVIDENCE_JUDGING_TIMEOUT` | `60` | Seconds a case waits for those verdicts, Jev's and our own model's together |
 | `CHOOSER_MAX_QUESTIONS` | `4` | Questions the simulated patient is asked |
 | `CHOOSER_QA_TIMEOUT` | `60` | Seconds each question generator may take |
 | `CHOOSER_FORCE_MODEL` | LunaRoute's two models, for now (`""` in tests) | Registered model names seated in every new arena task |
