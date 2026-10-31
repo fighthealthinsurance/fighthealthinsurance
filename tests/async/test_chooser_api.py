@@ -1,17 +1,23 @@
 """Test the Chooser (Best-Of Selection) API functionality"""
 
+import datetime
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from fhi_users.models import ExtraUserProperties, ProfessionalUser, UserDomain
-from fighthealthinsurance.chooser_tasks import annotate_evidence_verdicts
+from fighthealthinsurance.chooser_tasks import (
+    CHOOSER_GENERATION_CLAIM_SECONDS,
+    _generation_claim_key,
+    annotate_evidence_verdicts,
+)
 from fighthealthinsurance.chooser_tokens import candidate_token, resolve_candidate
 from fighthealthinsurance.ml import research_judging
 from fighthealthinsurance.models import (
@@ -20,6 +26,7 @@ from fighthealthinsurance.models import (
     ChooserTask,
     ChooserVote,
     Denial,
+    ModelHealthAlertState,
     PubMedArticleJudgment,
 )
 
@@ -268,11 +275,15 @@ class ChooserNextTaskAPITest(APITestCase):
         tokens cannot be compared across sessions or sorted into an order."""
         first = {
             resolve_candidate(c["id"]): c["id"]
-            for c in self.client.get(reverse("chooser-next-appeal")).json()["candidates"]
+            for c in self.client.get(reverse("chooser-next-appeal")).json()[
+                "candidates"
+            ]
         }
         second = {
             resolve_candidate(c["id"]): c["id"]
-            for c in self.client.get(reverse("chooser-next-appeal")).json()["candidates"]
+            for c in self.client.get(reverse("chooser-next-appeal")).json()[
+                "candidates"
+            ]
         }
         self.assertEqual(set(first), set(second))
         for cid in first:
@@ -324,15 +335,18 @@ class ChooserNextTaskAPITest(APITestCase):
             session_key=session_key,
         )
 
-        # Keep the background prefill from starting a real generation
+        # Keep the background prefill from starting a real generation; it
+        # reports one started, so the answer is "wait for it" (202).
         with patch(
-            "fighthealthinsurance.chooser_tasks.trigger_prefill_async"
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async",
+            return_value=True,
         ) as mock_prefill:
-            # Since we only have one task and already voted, should get 404
+            # Only one task, already voted on: nothing to serve yet.
             url = reverse("chooser-next-appeal")
             response = self.client.get(url)
 
-            self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+            self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+            self.assertTrue(response.json()["generating"])
         # The pool is not empty, so the prefill has to be told this session
         # used the appeals up or it would never make another.
         mock_prefill.assert_called_once_with(exhausted="appeal")
@@ -343,24 +357,85 @@ class ChooserNextTaskDoesNotGenerateInlineTest(APITestCase):
 
     The endpoint is anonymous and unthrottled; generating a task inside the
     request held a worker for minutes and drove paid provider calls on demand.
+
+    While a task is being written (the prefill it set off, or the process
+    holding the type's generation claim) the answer is 202 with when to ask
+    again, so the client waits for the task; it used to be 404, which the
+    client read as "come back in a few minutes" and gave up on at once. 404
+    now means nothing is underway.
     """
 
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
-    def test_empty_pool_triggers_prefill_and_returns_404(self):
+    def test_empty_pool_triggers_prefill_and_says_to_wait(self):
         ChooserTask.objects.all().delete()
 
         with patch(
-            "fighthealthinsurance.chooser_tasks.trigger_prefill_async"
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async",
+            return_value=True,
         ) as mock_prefill, patch(
             "fighthealthinsurance.chooser_tasks._generate_single_task"
         ) as mock_generate:
             response = self.client.get(reverse("chooser-next-appeal"))
 
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertIn("No tasks available", response.json()["message"])
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        body = response.json()
+        self.assertTrue(body["generating"])
+        self.assertEqual(body["task_type"], "appeal")
+        self.assertGreater(body["retry_after"], 0)
         mock_prefill.assert_called_once()
         mock_generate.assert_not_called()
+
+    def test_an_empty_pool_with_nothing_underway_is_404(self):
+        ChooserTask.objects.all().delete()
+
+        # The throttle held the prefill off (one ran within the window) and
+        # no process holds the claim: nothing is coming.
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async",
+            return_value=False,
+        ):
+            response = self.client.get(reverse("chooser-next-appeal"))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        body = response.json()
+        self.assertIn("No tasks available", body["message"])
+        self.assertFalse(body["generating"])
+
+    def test_a_claim_held_elsewhere_says_to_wait(self):
+        ChooserTask.objects.all().delete()
+        # Another process (the refill actor, an earlier prefill) holds the
+        # appeal generation claim.
+        ModelHealthAlertState.objects.create(
+            key=_generation_claim_key("appeal"), last_alert_sent=timezone.now()
+        )
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async",
+            return_value=False,
+        ):
+            appeal = self.client.get(reverse("chooser-next-appeal"))
+            chat = self.client.get(reverse("chooser-next-chat"))
+
+        self.assertEqual(appeal.status_code, status.HTTP_202_ACCEPTED)
+        # The claim is per type: nothing is writing a chat task.
+        self.assertEqual(chat.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_a_lapsed_claim_is_nothing_underway(self):
+        ChooserTask.objects.all().delete()
+        ModelHealthAlertState.objects.create(
+            key=_generation_claim_key("appeal"),
+            last_alert_sent=timezone.now()
+            - datetime.timedelta(seconds=CHOOSER_GENERATION_CLAIM_SECONDS + 1),
+        )
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async",
+            return_value=False,
+        ):
+            response = self.client.get(reverse("chooser-next-appeal"))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_a_failing_prefill_trigger_still_answers_404(self):
         ChooserTask.objects.all().delete()
@@ -489,7 +564,10 @@ class ChooserVoteAPITest(APITestCase):
         data = {
             "task_id": self.task.id,
             "chosen_candidate_id": candidate_token(self.candidate1.id),
-            "presented_candidate_ids": [candidate_token(self.candidate1.id), candidate_token(self.candidate2.id)],
+            "presented_candidate_ids": [
+                candidate_token(self.candidate1.id),
+                candidate_token(self.candidate2.id),
+            ],
         }
         response = self.client.post(
             url, json.dumps(data), content_type="application/json"
@@ -553,7 +631,9 @@ class ChooserVoteAPITest(APITestCase):
                 "presented_candidate_ids": [guess, candidate_token(self.candidate2.id)],
             }
             response = self.client.post(
-                reverse("chooser-vote"), json.dumps(data), content_type="application/json"
+                reverse("chooser-vote"),
+                json.dumps(data),
+                content_type="application/json",
             )
             self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
             self.assertIn("Invalid candidate", response.json()["error"])
@@ -582,8 +662,14 @@ class ChooserVoteAPITest(APITestCase):
         data = {
             "task_id": self.task.id,
             "chosen_candidate_id": candidate_token(self.candidate1.id),
-            "presented_candidate_ids": [candidate_token(self.candidate1.id), candidate_token(self.candidate2.id)],
-            "flagged_candidate_ids": [candidate_token(self.candidate2.id), candidate_token(self.candidate2.id)],
+            "presented_candidate_ids": [
+                candidate_token(self.candidate1.id),
+                candidate_token(self.candidate2.id),
+            ],
+            "flagged_candidate_ids": [
+                candidate_token(self.candidate2.id),
+                candidate_token(self.candidate2.id),
+            ],
         }
         response = self.client.post(
             url, json.dumps(data), content_type="application/json"
@@ -598,7 +684,10 @@ class ChooserVoteAPITest(APITestCase):
         data = {
             "task_id": self.task.id,
             "chosen_candidate_id": candidate_token(self.candidate1.id),
-            "presented_candidate_ids": [candidate_token(self.candidate1.id), candidate_token(self.candidate2.id)],
+            "presented_candidate_ids": [
+                candidate_token(self.candidate1.id),
+                candidate_token(self.candidate2.id),
+            ],
         }
         self.client.post(url, json.dumps(data), content_type="application/json")
 
@@ -612,7 +701,10 @@ class ChooserVoteAPITest(APITestCase):
         data = {
             "task_id": self.task.id,
             "chosen_candidate_id": candidate_token(self.candidate1.id),
-            "presented_candidate_ids": [candidate_token(self.candidate1.id), candidate_token(self.candidate2.id)],
+            "presented_candidate_ids": [
+                candidate_token(self.candidate1.id),
+                candidate_token(self.candidate2.id),
+            ],
             "flagged_candidate_ids": [candidate_token(self.candidate1.id)],
         }
         response = self.client.post(
@@ -639,7 +731,10 @@ class ChooserVoteAPITest(APITestCase):
         data = {
             "task_id": self.task.id,
             "chosen_candidate_id": candidate_token(self.candidate1.id),
-            "presented_candidate_ids": [candidate_token(self.candidate1.id), candidate_token(self.candidate2.id)],
+            "presented_candidate_ids": [
+                candidate_token(self.candidate1.id),
+                candidate_token(self.candidate2.id),
+            ],
             "flagged_candidate_ids": [candidate_token(elsewhere.id)],
         }
         response = self.client.post(
@@ -684,7 +779,10 @@ class ChooserVoteAPITest(APITestCase):
         data = {
             "task_id": self.task.id,
             "chosen_candidate_id": candidate_token(self.candidate1.id),
-            "presented_candidate_ids": [candidate_token(self.candidate1.id), candidate_token(self.candidate2.id)],
+            "presented_candidate_ids": [
+                candidate_token(self.candidate1.id),
+                candidate_token(self.candidate2.id),
+            ],
         }
 
         # First vote should succeed
@@ -706,7 +804,9 @@ class ChooserVoteAPITest(APITestCase):
         data = {
             "task_id": self.task.id,
             "chosen_candidate_id": candidate_token(self.candidate1.id),
-            "presented_candidate_ids": [candidate_token(self.candidate2.id)],  # candidate1 not included
+            "presented_candidate_ids": [
+                candidate_token(self.candidate2.id)
+            ],  # candidate1 not included
         }
         response = self.client.post(
             url, json.dumps(data), content_type="application/json"
@@ -731,7 +831,10 @@ class ChooserVoteAPITest(APITestCase):
         data = {
             "task_id": self.task.id,
             "chosen_candidate_id": candidate_token(self.candidate1.id),
-            "presented_candidate_ids": [candidate_token(self.candidate1.id), candidate_token(self.candidate2.id)],
+            "presented_candidate_ids": [
+                candidate_token(self.candidate1.id),
+                candidate_token(self.candidate2.id),
+            ],
         }
         response = self.client.post(
             url, json.dumps(data), content_type="application/json"
@@ -920,7 +1023,10 @@ class ChooserSessionFallbackTest(APITestCase):
         data = {
             "task_id": self.task.id,
             "chosen_candidate_id": candidate_token(self.candidate1.id),
-            "presented_candidate_ids": [candidate_token(self.candidate1.id), candidate_token(self.candidate2.id)],
+            "presented_candidate_ids": [
+                candidate_token(self.candidate1.id),
+                candidate_token(self.candidate2.id),
+            ],
         }
         response1 = self.client.post(
             url, json.dumps(data), content_type="application/json"

@@ -270,7 +270,8 @@ class MLCitationsHelper:
 
             if cached:
                 logger.debug(
-                    f"Found cached generic citations for {procedure}/{diagnosis} -- {cached.generated_context}"
+                    f"Found {len(cached.generated_context or [])} cached generic "
+                    f"citations for {procedure}/{diagnosis}"
                 )
                 # Create a new list to avoid modifying cached data
                 result = list(cached.generated_context)
@@ -332,7 +333,8 @@ class MLCitationsHelper:
             # Get the best result within the timeout
             try:
                 logger.debug(
-                    f"Generating best generic citations for {procedure}/{diagnosis} w/ {partial_awaitables}"
+                    f"Generating best generic citations for {procedure}/{diagnosis} "
+                    f"across {len(partial_awaitables)} model(s)"
                 )
                 result = []
                 try:

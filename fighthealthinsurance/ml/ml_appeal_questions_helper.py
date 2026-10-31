@@ -297,7 +297,8 @@ class MLAppealQuestionsHelper:
             model_quality_map[awaitable] = model.quality()
 
         logger.debug(
-            f"Using models {models_to_try} to create {raw_questions_awaitables}"
+            f"Asking {len(models_to_try)} model(s) for generic questions: "
+            f"{[str(m) for m in models_to_try]}"
         )
         questions = await best_within_timelimit(
             raw_questions_awaitables,
@@ -539,12 +540,7 @@ class MLAppealQuestionsHelper:
 
             # Bias for context
             def is_with_context(x):
-                logger.debug(f"{x} is my result")
-                if x == context_awaitable:
-                    logger.debug(f"{x} in context")
-                    return 2
-                logger.debug(f"{x} not in context")
-                return 1
+                return 2 if x == context_awaitable else 1
 
             result = await best_within_timelimit(
                 [no_context_awaitable, context_awaitable],

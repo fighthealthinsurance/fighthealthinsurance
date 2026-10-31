@@ -1351,6 +1351,10 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     can wait for outstanding background work via ``join_fire_and_forget_threads``.
     """
 
+    # The coroutine's name, not its repr: "<coroutine object _generate_under
+    # at 0x77c6...>" says less than "_generate_under".
+    label = getattr(task, "__qualname__", None) or repr(task)
+
     def run_async_task() -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -1358,7 +1362,7 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
             loop.run_until_complete(task)
         except Exception as e:
             logger.opt(exception=True).warning(
-                f"Exception in fire_and_forget task: {e}"
+                f"Exception in fire_and_forget task {label}: {e}"
             )
         finally:
             # Return this thread's DB checkouts before it dies (mirrors
@@ -1377,7 +1381,7 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
             loop.close()
             with _fire_and_forget_threads_lock:
                 _fire_and_forget_threads.discard(threading.current_thread())
-            logger.debug(f"fire_and_forget task {task} finished")
+            logger.debug(f"fire_and_forget task {label} finished")
 
     # Create and start a thread that will run the task in its own loop
     # The new thread keeps the caller's context: the ML purpose and the
@@ -1389,7 +1393,7 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     with _fire_and_forget_threads_lock:
         _fire_and_forget_threads.add(thread)
     thread.start()
-    logger.debug(f"fire_and_forget task {task} started")
+    logger.debug(f"fire_and_forget task {label} started")
     return
 
 

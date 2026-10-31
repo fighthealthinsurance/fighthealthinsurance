@@ -508,6 +508,32 @@ class TestMLRouterAppealOnlyBackends(unittest.TestCase):
 
         self.assertGreaterEqual(models.count(self.appeal_only), 2)
 
+    def test_the_narrow_fallback_is_logged_once_per_window(self):
+        """While the general-purpose model is down every QA and chat call
+        falls back to the fine-tune; one WARNING per call said nothing new."""
+        from loguru import logger
+
+        from fighthealthinsurance.ml import ml_router as router_module
+
+        seen = []
+        sink = logger.add(
+            lambda m: seen.append(m.record["level"].name),
+            level="DEBUG",
+            filter=lambda r: "no general-purpose backend" in r["message"],
+        )
+        router_module._narrow_fallback_logged_at.clear()
+        try:
+            for _ in range(3):
+                self.assertEqual(
+                    self.router._general_purpose_only([self.appeal_only], "chat"),
+                    [self.appeal_only],
+                )
+        finally:
+            logger.remove(sink)
+            router_module._narrow_fallback_logged_at.clear()
+
+        self.assertEqual(seen, ["WARNING", "DEBUG", "DEBUG"])
+
     def test_best_internal_model_skips_the_appeal_only_backend(self):
         # The appeal fine-tune is not the strongest here, but this also has
         # to hold when it is -- quality alone would pick it for chat

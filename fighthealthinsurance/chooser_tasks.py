@@ -20,6 +20,7 @@ import json
 import random
 import re
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, List, Optional, Tuple, cast
 
@@ -93,6 +94,10 @@ CHOOSER_PREFILL_THROTTLE_SECONDS = getattr(
 CHOOSER_GENERATION_CLAIM_SECONDS = getattr(
     settings, "CHOOSER_GENERATION_CLAIM_SECONDS", 15 * 60
 )
+# How often a held generation claim is renewed while its holder writes (see
+# _GenerationClaim.__aenter__): well inside its window, so a task slower
+# than the window does not lose the claim mid-task.
+_CLAIM_KEEPALIVE_SECONDS = CHOOSER_GENERATION_CLAIM_SECONDS / 3
 # The fewest candidates a task needs to go READY.
 _MIN_READY_CANDIDATES = 2
 # Whether an appeal scenario is built around a real (treatment, condition)
@@ -102,6 +107,14 @@ _MIN_READY_CANDIDATES = 2
 # PubMed searches already run for the pair are reused as the case's
 # evidence, so a seeded task usually costs no NCBI call at all.
 CHOOSER_SEED_FROM_RANKINGS = getattr(settings, "CHOOSER_SEED_FROM_RANKINGS", True)
+# The share of new appeal scenarios written as explicitly simple cases (see
+# _scenario_prompt): an everyday procedure, an everyday denial reason, two
+# or three facts that settle it. Left to itself the writer makes every case
+# an elaborate one (a transesophageal echocardiogram for cryptogenic stroke,
+# five facts, five articles), and a model that pads a plain denial out with
+# claims the facts do not support is never caught. Stamped on the case as
+# ``case_style`` ("simple" or "standard"), so votes can be split by it.
+CHOOSER_SIMPLE_CASE_SHARE = getattr(settings, "CHOOSER_SIMPLE_CASE_SHARE", 0.25)
 # Articles attached to a scenario as the evidence the drafts may cite.
 CHOOSER_EVIDENCE_LIMIT = getattr(settings, "CHOOSER_EVIDENCE_LIMIT", 5)
 # Seconds a live PubMed search for a scenario's evidence may take.
@@ -140,6 +153,36 @@ CASE_VERSIONS = {"appeal": 2, "chat": 1}
 CHOOSER_MAX_QUESTIONS = getattr(settings, "CHOOSER_MAX_QUESTIONS", 4)
 CHOOSER_QA_TIMEOUT = getattr(settings, "CHOOSER_QA_TIMEOUT", 60)
 _MAX_ANSWER_CHARS = 400
+# What the next-task endpoint tells a client to wait before asking again
+# while a task of the type it wants is being written (see
+# generation_underway): a task is a round of model calls, minutes rather
+# than seconds, so polling faster than this only finds the same claim.
+CHOOSER_PENDING_RETRY_SECONDS = getattr(settings, "CHOOSER_PENDING_RETRY_SECONDS", 15)
+# The launch backfill (see launch_backfill): how many tasks it writes, and
+# the votes every READY current-version task of the type must already have
+# for it to be due.
+CHOOSER_LAUNCH_BACKFILL_SIZE = getattr(settings, "CHOOSER_LAUNCH_BACKFILL_SIZE", 100)
+CHOOSER_LAUNCH_BACKFILL_MIN_VOTES = getattr(
+    settings, "CHOOSER_LAUNCH_BACKFILL_MIN_VOTES", 2
+)
+# Tasks in a row that came out unusable before a backfill stops: with every
+# backend failing, a hundred attempts would be a hundred rounds of failed
+# calls for nothing.
+CHOOSER_BACKFILL_STOP_AFTER_FAILURES = 3
+# How long a due launch backfill waits for its type's generation claim, and
+# how often it asks. The claim it finds at launch is usually one nobody
+# holds any more: the backfill is due when no case is unscored, which is
+# when the refill actor writes a batch under the claim, and the deploy
+# deletes the Ray cluster that refill ran on without it releasing. That
+# claim lapses within CHOOSER_GENERATION_CLAIM_SECONDS; the wait outlasts
+# that and a live refill batch after it (the refill gives the claim back
+# between its ticks).
+CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS = getattr(
+    settings,
+    "CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS",
+    4 * CHOOSER_GENERATION_CLAIM_SECONDS,
+)
+_BACKFILL_CLAIM_POLL_SECONDS = 30
 
 
 def _case_version(task_type: str) -> int:
@@ -813,7 +856,9 @@ async def _evidence_for(procedure: str, diagnosis: str) -> List[dict]:
     query = f"{procedure} {diagnosis}".strip()
     if not query:
         return []
+    started = time.monotonic()
     pmids = await _cached_pmids(query)
+    cached = bool(pmids)
     live = _pubmed_live_search_allowed()
     if not pmids and live:
         from fighthealthinsurance.pubmed_tools import PubMedTools
@@ -829,13 +874,17 @@ async def _evidence_for(procedure: str, diagnosis: str) -> List[dict]:
         except Exception as e:
             logger.warning(f"Chooser: live PubMed search failed for a scenario: {e}")
             pmids = []
+    if not pmids:
+        logger.info(
+            f"Chooser evidence for {query!r}: nothing cached"
+            + (" and the live search found nothing" if live else " (live search off)")
+        )
+        return []
     if live:
         # A search stores only the PMIDs; without their titles every one
         # would be skipped below. Titles a fetch missed (it timed out or
         # failed) are tried again the next time the pair is used.
         await _store_titles(pmids[: CHOOSER_EVIDENCE_LIMIT * 3])
-    if not pmids:
-        return []
     titles = {
         article.pmid: article
         async for article in PubMedMiniArticle.objects.filter(
@@ -866,13 +915,51 @@ async def _evidence_for(procedure: str, diagnosis: str) -> List[dict]:
     await _judge_evidence(
         procedure, diagnosis, [titles[item["pmid"]] for item in evidence]
     )
+    logger.info(
+        f"Chooser evidence for {query!r}: {len(evidence)} article(s) "
+        f"({sum(1 for e in evidence if e.get('summary'))} with a summary) from "
+        f"{len(pmids)} PMIDs {'cached' if cached else 'found live'}, in "
+        f"{time.monotonic() - started:.1f}s"
+    )
     return evidence
 
 
-def _scenario_prompt(seed: Optional[condition_rankings.SeedPair]) -> str:
+def _simple_case_due() -> bool:
+    """Whether the next appeal scenario is written as a simple case: a
+    CHOOSER_SIMPLE_CASE_SHARE draw, read per call."""
+    return random.random() < CHOOSER_SIMPLE_CASE_SHARE
+
+
+def _scenario_prompt(
+    seed: Optional[condition_rankings.SeedPair], simple: bool = False
+) -> str:
     """What the scenario writer is asked. With a seed, the procedure and
-    diagnosis are given and the writer fills in the rest of the case."""
-    if seed is None:
+    diagnosis are given and the writer fills in the rest of the case. A
+    ``simple`` case is asked for in so many words: an everyday procedure
+    and denial reason, and two or three facts that settle it (a seed is
+    never passed with it: the pair is the writer's to keep ordinary)."""
+    if simple:
+        pair_lines = (
+            "Procedure: [an everyday procedure, test or medication, e.g., physical therapy visits, MRI of the knee, a generic maintenance medication, a routine screening]\n"
+            "Diagnosis: [the common, specific diagnosis it is for]\n"
+        )
+        intro = (
+            "Please generate a realistic but completely fictional health insurance denial scenario "
+            "that is explicitly SIMPLE: an everyday procedure, test or medication; an everyday denial reason "
+            "(no prior authorization on file, a visit limit reached, step therapy not tried first, "
+            "'not medically necessary' for care that plainly is); and two or three short facts that settle it. "
+            "Nothing rare, nothing with competing considerations: the kind of denial a short, plain letter wins.\n\n"
+        )
+        facts_line = (
+            "Case Facts: [2 or 3 short facts about the fictional patient and case on this one line, separated by semicolons: "
+            "an age range, how long the symptoms have lasted or what was tried, and what the treating clinician documented. "
+            "No names, no dates, no member or claim numbers.]\n\n"
+        )
+        closing = (
+            "Keep it ordinary and concrete. "
+            "The case facts are the only facts an appeal may rely on, so make them plain."
+        )
+    elif seed is None:
         pair_lines = (
             "Procedure: [a specific real medical procedure name, e.g., MRI of lumbar spine, arthroscopic knee surgery]\n"
             "Diagnosis: [a specific real medical diagnosis, e.g., chronic lower back pain, torn ACL]\n"
@@ -884,6 +971,16 @@ def _scenario_prompt(seed: Optional[condition_rankings.SeedPair]) -> str:
             "Please generate a realistic but completely fictional health insurance denial scenario "
             f"about this exact procedure and diagnosis (copy them verbatim): {seed.treatment} for {seed.condition}.\n\n"
         )
+    if not simple:
+        facts_line = (
+            "Case Facts: [3 to 5 short facts about the fictional patient and case on this one line, separated by semicolons: "
+            "an age range, how long the symptoms have lasted, what was tried already and what happened, relevant history, "
+            "and what the treating clinician documented. No names, no dates, no member or claim numbers.]\n\n"
+        )
+        closing = (
+            "Be creative and varied. Use real medical terminology for procedures and diagnoses. "
+            "The case facts are the only facts an appeal may rely on, so make them concrete."
+        )
     return (
         "We are building a system to help patients appeal health insurance denials. "
         "To improve our model selection techniques, we need realistic synthetic denial scenarios. "
@@ -891,12 +988,15 @@ def _scenario_prompt(seed: Optional[condition_rankings.SeedPair]) -> str:
         + "Provide the following in EXACTLY this structured format (one field per line):\n"
         + pair_lines
         + "Insurance Company: [a fictional but realistic-sounding insurance company name]\n"
-        "Denial Reason: [a 1-2 sentence realistic denial reason, such as 'not medically necessary', 'experimental treatment', 'out of network', etc.]\n"
-        "Case Facts: [3 to 5 short facts about the fictional patient and case on this one line, separated by semicolons: "
-        "an age range, how long the symptoms have lasted, what was tried already and what happened, relevant history, "
-        "and what the treating clinician documented. No names, no dates, no member or claim numbers.]\n\n"
-        "Be creative and varied. Use real medical terminology for procedures and diagnoses. "
-        "The case facts are the only facts an appeal may rely on, so make them concrete."
+        + (
+            # A simple case's examples are everyday ones too: "experimental"
+            # or "out of network" would invite the complex case it is not.
+            "Denial Reason: [a 1-2 sentence everyday denial reason, such as 'no prior authorization on file', 'visit limit reached', 'step therapy not tried first']\n"
+            if simple
+            else "Denial Reason: [a 1-2 sentence realistic denial reason, such as 'not medically necessary', 'experimental treatment', 'out of network', etc.]\n"
+        )
+        + facts_line
+        + closing
     )
 
 
@@ -1071,6 +1171,7 @@ async def _interview(task: ChooserTask, context: dict, writers: List) -> List[di
     and the case goes on without one."""
     if not _simulated_qa_allowed():
         return []
+    started = time.monotonic()
     try:
         questions = await _case_questions(context)
     except Exception as e:
@@ -1079,7 +1180,10 @@ async def _interview(task: ChooserTask, context: dict, writers: List) -> List[di
         )
         return []
     if not questions:
-        logger.info(f"ChooserTask {task.id}: no questions for the interview")
+        logger.info(
+            f"ChooserTask {task.id}: no questions for the interview "
+            f"(after {time.monotonic() - started:.0f}s)"
+        )
         return []
     prompt = _interview_prompt(context, questions)
     for writer in writers:
@@ -1087,6 +1191,11 @@ async def _interview(task: ChooserTask, context: dict, writers: List) -> List[di
             await _ask_writer(writer, _PATIENT_SYSTEM_PROMPT, prompt) or "", questions
         )
         if pairs:
+            logger.info(
+                f"ChooserTask {task.id}: interview: {len(questions)} question(s) "
+                f"asked, {len(pairs)} answered by {_model_display_name(writer)}, "
+                f"in {time.monotonic() - started:.0f}s"
+            )
             return pairs
         logger.info(
             f"ChooserTask {task.id}: {_model_display_name(writer)} gave no "
@@ -1148,10 +1257,11 @@ async def _fill_candidates(
     so the bookkeeping that decides who is asked (and so which models the
     votes can measure) lives here once. ``ask(model, resample)`` returns the
     model's reply, or None; ``resample`` is set when the model already seated
-    a candidate in this task. Each selected backend is asked once, then the
-    open slots go to the backends _next_retry_model picks. A reply longer
-    than ``min_len`` is stored with ``base_metadata``, plus ``retry: True``
-    on a re-sample only: a spare backend's first draft is not a retry.
+    a candidate in this task. Each selected backend is asked once, all of
+    them at the same time, then the open slots go to the backends
+    _next_retry_model picks, one at a time. A reply longer than ``min_len``
+    is stored with ``base_metadata``, plus ``retry: True`` on a re-sample
+    only: a spare backend's first draft is not a retry.
     """
     # Drawn from the same list the coverage refill checks, so the two agree.
     comparable = _comparable_backends(task_type)
@@ -1166,45 +1276,59 @@ async def _fill_candidates(
         f"{[_model_display_name(m) for m in models]}"
     )
 
+    started = time.monotonic()
     candidate_index = 0
     # By id: the models that seated a candidate (in the order they did) and
     # the ones that gave nothing usable or raised; see _next_retry_model.
     produced: dict[int, Any] = {}
     failed: set[int] = set()
 
-    async def attempt(model, resample: bool) -> None:
-        nonlocal candidate_index
+    async def draft(model, resample: bool) -> Optional[str]:
+        """``model``'s draft, or None when it gave nothing usable or raised:
+        logged either way, and the model marked failed."""
         try:
             response = await ask(model, resample)
-            if response and len(response.strip()) > min_len:
-                metadata = dict(base_metadata)
-                if resample:
-                    metadata["retry"] = True
-                await ChooserCandidate.objects.acreate(
-                    task=task,
-                    candidate_index=candidate_index,
-                    kind=kind,
-                    # None only for a None model, which is never asked.
-                    model_name=canonical_model_name(model) or "",
-                    content=response.strip(),
-                    metadata=metadata,
-                )
-                produced[id(model)] = model
-                candidate_index += 1
-                task.num_candidates_generated = candidate_index
-            else:
-                _note_unusable_candidate(task, model, task_type, response)
-                failed.add(id(model))
         except Exception as e:
             retry = " (retry)" if resample else ""
             logger.warning(
                 f"Error generating {task_type} candidate{retry} with model {model}: {e}"
             )
             failed.add(id(model))
+            return None
+        if response and len(response.strip()) > min_len:
+            return response
+        _note_unusable_candidate(task, model, task_type, response)
+        failed.add(id(model))
+        return None
 
-    # First pass: try each model once
-    for model in models:
-        await attempt(model, resample=False)
+    async def seat(model, response: str, resample: bool) -> None:
+        nonlocal candidate_index
+        metadata = dict(base_metadata)
+        if resample:
+            metadata["retry"] = True
+        await ChooserCandidate.objects.acreate(
+            task=task,
+            candidate_index=candidate_index,
+            kind=kind,
+            # None only for a None model, which is never asked.
+            model_name=canonical_model_name(model) or "",
+            content=response.strip(),
+            metadata=metadata,
+        )
+        produced[id(model)] = model
+        candidate_index += 1
+        task.num_candidates_generated = candidate_index
+
+    # First pass: every selected backend at once. They used to be asked one
+    # after another, so a task took as long as all of its drafts added up
+    # (one slow hosted model held the next three back for minutes) where it
+    # need take only as long as the slowest. Seated in the models' order
+    # whatever order the drafts came back in, so the slots still read
+    # internal first, external next.
+    responses = await asyncio.gather(*(draft(model, False) for model in models))
+    for model, response in zip(models, responses):
+        if response is not None:
+            await seat(model, response, resample=False)
 
     # If we don't have enough candidates, give the open slots to backends
     # not asked yet, then (only to reach the READY minimum) re-sample one
@@ -1216,11 +1340,19 @@ async def _fill_candidates(
         model = _next_retry_model(spares, produced, failed, candidate_index)
         if model is None:
             break
-        await attempt(model, resample=id(model) in produced)
+        resample = id(model) in produced
+        response = await draft(model, resample)
+        if response is not None:
+            await seat(model, response, resample)
 
     # One save covers every candidate generated above; candidates are
-    # created durably as they complete, only the counter waits.
+    # created durably as they are seated, only the counter waits.
     await task.asave()
+    logger.info(
+        f"ChooserTask {task.id}: {candidate_index} {task_type} candidate(s) "
+        f"from {[_model_display_name(m) for m in produced.values()]} "
+        f"in {time.monotonic() - started:.0f}s"
+    )
 
     # Add a synthesized candidate combining the per-model drafts.
     await _maybe_add_synthesized_candidate(task, kind)
@@ -1237,8 +1369,8 @@ def _generation_claim_key(task_type: str) -> str:
 
 class _GenerationClaim:
     """One process's hold on generating ``task_type`` tasks (see
-    _claim_generation). Used as ``async with claim:``, which releases it
-    however the generation ends."""
+    _claim_generation). Used as ``async with claim:``, which keeps it
+    renewed while held and releases it however the generation ends."""
 
     def __init__(self, task_type: str, token: Optional[datetime.datetime]):
         self.task_type = task_type
@@ -1247,6 +1379,20 @@ class _GenerationClaim:
         # None for a refill generating without a claim (see
         # _claim_for_refill): there is nothing to renew or release.
         self.token = token
+        # Serialises renewals and the release: the keep-alive and a batch's
+        # own renewal between tasks would otherwise both match the same
+        # token, and the second would read the first's renewal as the claim
+        # taken by another process. Created on first use, in the loop that
+        # generates (a prefill takes the claim in one thread and writes in
+        # another).
+        self._lock: Optional[asyncio.Lock] = None
+        self._stop: Optional[asyncio.Event] = None
+        self._keeper: Optional["asyncio.Task[None]"] = None
+
+    def _guard(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     def _held(self, token: datetime.datetime) -> "QuerySet[ModelHealthAlertState]":
         return ModelHealthAlertState.objects.filter(
@@ -1256,46 +1402,87 @@ class _GenerationClaim:
     async def renew(self) -> bool:
         """Restart the claim's window. False when it lapsed and another
         process has taken it since, so this one must stop generating."""
-        if self.token is None:
-            return True
-        now = timezone.now()
-        try:
-            renewed = await self._held(self.token).aupdate(last_alert_sent=now)
-        except Exception as e:
-            # A database that can't answer is no sign another process took
-            # the claim, and the claim holds until its window ends anyway.
-            logger.warning(
-                f"Chooser: could not renew the {self.task_type} generation "
-                f"claim; carrying on: {e}"
-            )
-            return True
-        if renewed:
-            self.token = now
-        return bool(renewed)
+        async with self._guard():
+            if self.token is None:
+                return True
+            now = timezone.now()
+            try:
+                renewed = await self._held(self.token).aupdate(last_alert_sent=now)
+            except Exception as e:
+                # A database that can't answer is no sign another process took
+                # the claim, and the claim holds until its window ends anyway.
+                logger.warning(
+                    f"Chooser: could not renew the {self.task_type} generation "
+                    f"claim; carrying on: {e}"
+                )
+                return True
+            if renewed:
+                self.token = now
+            return bool(renewed)
 
     async def release(self) -> None:
         """Free the claim now rather than when it lapses. A claim that lapsed
         and was taken by another process is that process's: the row no
         longer holds our token, so this leaves it alone."""
-        if self.token is None:
-            return
-        try:
-            await self._held(self.token).aupdate(last_alert_sent=_RELEASED_CLAIM)
-        except Exception as e:
-            # Not raised: this runs on the way out of a generation, and the
-            # claim lapses on its own, so a failed release only holds the
-            # next generation of this type off until then.
-            logger.warning(
-                f"Chooser: could not release the {self.task_type} generation "
-                f"claim; it lapses within {CHOOSER_GENERATION_CLAIM_SECONDS}s: {e}"
-            )
-        self.token = None
+        async with self._guard():
+            if self.token is None:
+                return
+            try:
+                await self._held(self.token).aupdate(last_alert_sent=_RELEASED_CLAIM)
+            except Exception as e:
+                # Not raised: this runs on the way out of a generation, and the
+                # claim lapses on its own, so a failed release only holds the
+                # next generation of this type off until then.
+                logger.warning(
+                    f"Chooser: could not release the {self.task_type} generation "
+                    f"claim; it lapses within {CHOOSER_GENERATION_CLAIM_SECONDS}s: {e}"
+                )
+            self.token = None
+
+    async def _keep_alive(self, stop: asyncio.Event) -> None:
+        """Renew the claim every _CLAIM_KEEPALIVE_SECONDS until ``stop``.
+
+        Only the batch loop renewed, between tasks, so one task slower than
+        the window (a slow writer, then drafts, then synthesis) lost the
+        claim while it was still writing: generation_underway then read
+        nothing underway, the arena's waiting page got a 404 and stopped
+        polling for a case a minute away, and another process could start
+        the same type alongside. Stops by itself once the claim is lost."""
+        while True:
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=_CLAIM_KEEPALIVE_SECONDS)
+                return
+            except asyncio.TimeoutError:
+                pass
+            if not await self.renew():
+                logger.warning(
+                    f"Chooser: the {self.task_type} generation claim lapsed and "
+                    "another process took it while a task was being written"
+                )
+                return
 
     async def __aenter__(self) -> "_GenerationClaim":
+        if self.token is not None and self._keeper is None:
+            self._stop = asyncio.Event()
+            self._keeper = asyncio.create_task(self._keep_alive(self._stop))
         return self
 
     async def __aexit__(self, *exc_info: Any) -> None:
-        await self.release()
+        keeper, self._keeper = self._keeper, None
+        try:
+            if keeper is not None and self._stop is not None:
+                # Stopped, not cancelled: a renewal in flight finishes and
+                # records its token, or the release below would miss the row.
+                self._stop.set()
+                try:
+                    await keeper
+                except Exception as e:
+                    logger.debug(f"Chooser: claim keep-alive ended with {e}")
+        finally:
+            # Even when the exiting task is cancelled while waiting for the
+            # keep-alive: otherwise the claim held the type off for its
+            # whole window.
+            await self.release()
 
 
 async def _claim_generation(task_type: str) -> Optional[_GenerationClaim]:
@@ -1330,6 +1517,28 @@ async def _claim_generation(task_type: str) -> Optional[_GenerationClaim]:
         key=key, defaults={"last_alert_sent": now}
     )
     return _GenerationClaim(task_type, now) if created else None
+
+
+def generation_underway(task_type: str) -> bool:
+    """Whether some process holds the ``task_type`` generation claim now,
+    that is, a task of that type is being written (see _claim_generation).
+    A read, never a claim: the next-task endpoint asks so it can tell a
+    client to wait for the task instead of reporting an empty pool, which
+    the client used to read as "come back in a few minutes" even though the
+    prefill it had just set off was a minute or two from a READY task. A
+    released claim's timestamp (_RELEASED_CLAIM) is older than any window.
+    A database that can't answer reads as nothing underway: the client then
+    sees the empty pool, as before."""
+    cutoff = timezone.now() - datetime.timedelta(
+        seconds=CHOOSER_GENERATION_CLAIM_SECONDS
+    )
+    try:
+        return ModelHealthAlertState.objects.filter(
+            key=_generation_claim_key(task_type), last_alert_sent__gt=cutoff
+        ).exists()
+    except Exception as e:
+        logger.debug(f"Chooser: could not read the {task_type} generation claim: {e}")
+        return False
 
 
 async def _claim_for_refill(task_type: str) -> Optional[_GenerationClaim]:
@@ -1407,6 +1616,154 @@ async def check_and_refill_task_pool() -> bool:
                 f"Chooser {task_type} refill ({reason}) produced no usable task"
             )
     return needed == 0 or produced > 0
+
+
+async def backfill_reason(
+    task_type: str = "appeal", min_votes: Optional[int] = None
+) -> Optional[str]:
+    """Why a launch backfill of ``task_type`` is due, or None: it is due
+    once every READY synthetic task of the type at the current case version
+    (CASE_VERSIONS) has at least ``min_votes`` votes, that is, the voters
+    have got through everything the current case pipeline has made (a pool
+    with none of them yet counts). An older-version task does not hold it
+    off: it is served after the current ones and is not what is short."""
+    if min_votes is None:
+        min_votes = CHOOSER_LAUNCH_BACKFILL_MIN_VOTES
+    current = ChooserTask.objects.filter(
+        task_type=task_type,
+        status="READY",
+        source="synthetic",
+        case_version__gte=_case_version(task_type),
+    ).annotate(vote_count=Count("votes"))
+    under_voted = await current.filter(vote_count__lt=min_votes).acount()
+    if under_voted:
+        return None
+    judged = await current.acount()
+    return (
+        f"all {judged} current-version {task_type} task(s) have at least "
+        f"{min_votes} vote(s)"
+    )
+
+
+async def launch_backfill(
+    task_type: str = "appeal",
+    count: Optional[int] = None,
+    min_votes: Optional[int] = None,
+) -> dict:
+    """The launch-time backfill: ``count`` (CHOOSER_LAUNCH_BACKFILL_SIZE)
+    new ``task_type`` tasks, written one at a time, when the backfill is due
+    (see backfill_reason), else nothing. Run by the chooser backfill actor
+    the deploy's actor-launch job starts (chooser_backfill_actor.py), or by
+    ``manage.py launch_chooser_backfill --inline``.
+
+    The refill actor keeps the pool at its minimums ten tasks at a time;
+    this is the bigger, one-off batch for when the voters have judged every
+    case the current pipeline made, so that a deploy of a new case pipeline
+    gets it a pool of its own cases rather than ten. Under the type's
+    generation claim like every other generation path, renewed before each
+    task, so it never overlaps the refill's batches or a page prefill: those
+    skip the type while it runs. Whether it is due is decided once, at
+    launch; it then waits for the claim (see _wait_for_backfill_claim), and
+    what the refill or a prefill writes meanwhile counts toward ``count``
+    rather than calling the backfill off, as the first unvoted task would if
+    the gate were asked again. Returns what happened: ``{"skipped": why}``,
+    or ``{"requested": n, "ready": m}`` for the ``n`` it wrote itself.
+    """
+    if count is None:
+        count = CHOOSER_LAUNCH_BACKFILL_SIZE
+    if count <= 0:
+        return {"skipped": "nothing requested"}
+    reason = await backfill_reason(task_type, min_votes)
+    if reason is None:
+        logger.info(
+            f"Chooser {task_type} backfill not due: current-version tasks with "
+            f"fewer than {min_votes or CHOOSER_LAUNCH_BACKFILL_MIN_VOTES} votes remain"
+        )
+        return {"skipped": "not due"}
+    decided_at = timezone.now()
+    try:
+        claim = await _wait_for_backfill_claim(task_type, reason)
+    except Exception as e:
+        logger.warning(
+            f"Chooser {task_type} backfill skipped: could not check the "
+            f"generation claim: {e}"
+        )
+        return {"skipped": f"could not check the generation claim: {e}"}
+    if claim is None:
+        logger.warning(
+            f"Chooser {task_type} backfill due ({reason}), but another process "
+            f"held the generation claim for "
+            f"{CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS}s; not starting"
+        )
+        return {"skipped": "another process holds the generation claim"}
+    started = time.monotonic()
+    async with claim:
+        # Asked under the claim, so nothing that honours it can add one
+        # between this count and the batch.
+        written = await _tasks_written_since(task_type, decided_at)
+        if written >= count:
+            logger.info(
+                f"Chooser {task_type} backfill not needed: {written} task(s) "
+                "were written while it waited for the claim"
+            )
+            return {"skipped": f"{written} task(s) written while waiting"}
+        count -= written
+        logger.info(
+            f"Chooser {task_type} backfill: {reason}; writing {count} task(s) "
+            "one at a time"
+            + (f" ({written} written while it waited)" if written else "")
+        )
+        ready = await _generate_batch_tasks(
+            task_type,
+            count,
+            claim,
+            stop_after_failures=CHOOSER_BACKFILL_STOP_AFTER_FAILURES,
+        )
+    logger.info(
+        f"Chooser {task_type} backfill done: {ready} of {count} task(s) READY "
+        f"in {time.monotonic() - started:.0f}s"
+    )
+    return {"requested": count, "ready": ready}
+
+
+async def _wait_for_backfill_claim(
+    task_type: str, reason: str
+) -> Optional[_GenerationClaim]:
+    """The ``task_type`` generation claim for a due backfill, asked for
+    every _BACKFILL_CLAIM_POLL_SECONDS for up to
+    CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS while another process holds
+    it, or None when it never came free. Raises what _claim_generation
+    raises."""
+    deadline = time.monotonic() + CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS
+    waiting = False
+    while True:
+        claim = await _claim_generation(task_type)
+        if claim is not None:
+            return claim
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        if not waiting:
+            waiting = True
+            logger.info(
+                f"Chooser {task_type} backfill due ({reason}); another process "
+                f"holds the generation claim, waiting up to {left:.0f}s for it "
+                "(one left by a process the deploy stopped lapses within "
+                f"{CHOOSER_GENERATION_CLAIM_SECONDS}s)"
+            )
+        await asyncio.sleep(min(_BACKFILL_CLAIM_POLL_SECONDS, left))
+
+
+async def _tasks_written_since(task_type: str, since: datetime.datetime) -> int:
+    """READY synthetic ``task_type`` tasks at the current case version
+    created since ``since``: the ones a waiting backfill counts as its own."""
+    return await ChooserTask.objects.filter(
+        task_type=task_type,
+        status="READY",
+        source="synthetic",
+        case_version__gte=_case_version(task_type),
+        created_at__gte=since,
+    ).acount()
 
 
 async def _refill_reason(task_type: str) -> Optional[str]:
@@ -1543,7 +1900,10 @@ async def _count_unscored_tasks(task_type: str) -> int:
 
 
 async def _generate_batch_tasks(
-    task_type: str, batch_size: int, claim: Optional[_GenerationClaim] = None
+    task_type: str,
+    batch_size: int,
+    claim: Optional[_GenerationClaim] = None,
+    stop_after_failures: Optional[int] = None,
 ) -> int:
     """Generate a batch of chooser tasks with candidates; returns how many
     came out READY.
@@ -1552,9 +1912,12 @@ async def _generate_batch_tasks(
     of model calls per task and can outlast one window, and a claim that
     lapsed mid-batch would let another process generate this type alongside
     it. When another process has taken the claim anyway, the batch stops and
-    leaves the type to it.
+    leaves the type to it. With ``stop_after_failures``, so does a batch
+    whose last that many tasks in a row came out unusable or raised: the
+    backends are down, and the rest of the batch would fail the same way.
     """
     ready = 0
+    failures_in_a_row = 0
     for index in range(batch_size):
         if index and claim is not None and not await claim.renew():
             logger.warning(
@@ -1565,10 +1928,19 @@ async def _generate_batch_tasks(
         try:
             if await _generate_single_task(task_type):
                 ready += 1
+                failures_in_a_row = 0
+                continue
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error generating chooser task of type {task_type}: {e}"
             )
+        failures_in_a_row += 1
+        if stop_after_failures is not None and failures_in_a_row >= stop_after_failures:
+            logger.warning(
+                f"Chooser {task_type} batch stopped after {index + 1} task(s): "
+                f"the last {failures_in_a_row} came out unusable"
+            )
+            break
     return ready
 
 
@@ -1594,6 +1966,7 @@ async def _generate_single_task(task_type: str) -> bool:
         num_candidates_generated=0,
     )
 
+    started = time.monotonic()
     try:
         if task_type == "appeal":
             await _generate_appeal_candidates(task)
@@ -1607,7 +1980,9 @@ async def _generate_single_task(task_type: str) -> bool:
             task.status = "READY"
             await database_sync_to_async(task.save)()
             logger.info(
-                f"ChooserTask {task.id} is now READY with {task.num_candidates_generated} candidates"
+                f"ChooserTask {task.id} is now READY with "
+                f"{task.num_candidates_generated} candidates after "
+                f"{time.monotonic() - started:.0f}s"
             )
             return True
         else:
@@ -1650,10 +2025,14 @@ async def _generate_appeal_candidates(task: ChooserTask):
     # backend (fhi-legacy) does not. See _scenario_writers.
     writers = _scenario_writers(generation_models)
     try:
-        # A real pair from the rankings when there is one (see
+        started = time.monotonic()
+        # Some cases are kept simple on purpose (CHOOSER_SIMPLE_CASE_SHARE);
+        # the writer picks the everyday pair for those. The rest are built
+        # around a real pair from the rankings when there is one (see
         # _pick_seed_pair); the writer invents one otherwise.
-        seed = await _pick_seed_pair()
-        scenario_prompt = _scenario_prompt(seed)
+        simple = _simple_case_due()
+        seed = None if simple else await _pick_seed_pair()
+        scenario_prompt = _scenario_prompt(seed, simple=simple)
         scenario_system_prompt = (
             "You are a system that generates realistic but fictional health insurance scenarios. "
             "These are used to improve model selection for a health insurance appeal assistance service. "
@@ -1686,11 +2065,13 @@ async def _generate_appeal_candidates(task: ChooserTask):
                 facts = _facts_from_response(scenario_response or "")
                 if facts:
                     context["facts"] = facts
-                else:
-                    logger.info(
-                        f"ChooserTask {task.id}: scenario from "
-                        f"{_model_display_name(writer)} gave no case facts"
-                    )
+                logger.info(
+                    f"ChooserTask {task.id}: {'simple' if simple else 'standard'} "
+                    f"scenario by {_model_display_name(writer)}: "
+                    f"{written['procedure']!r} for {written['diagnosis']!r} "
+                    f"({'seeded' if seed else 'invented'} pair, {len(facts)} case "
+                    f"facts) in {time.monotonic() - started:.0f}s"
+                )
                 break
             preview = (scenario_response or "")[:200]
             logger.warning(
@@ -1711,6 +2092,12 @@ async def _generate_appeal_candidates(task: ChooserTask):
             return
 
         context["seeded"] = seed is not None
+        # Simple only when the writer gave the facts that settle it: the
+        # voter is told a short letter sticking to the facts is right, which
+        # cannot be checked against facts that were never written.
+        context["case_style"] = (
+            "simple" if simple and context.get("facts") else "standard"
+        )
         # The evidence the drafts may cite, and the voter checks them
         # against. Best effort: a scenario with none still measures the
         # models, and the voter is told the list is empty.
@@ -1817,6 +2204,7 @@ async def _generate_chat_candidates(task: ChooserTask):
         # question from one that could not write one.
         history: list = []
         final_user_prompt: Optional[str] = None
+        started = time.monotonic()
         for writer in writers:
             # A backend that did not answer returns None rather than raising.
             conversation_response = await _ask_writer(
@@ -1826,6 +2214,11 @@ async def _generate_chat_candidates(task: ChooserTask):
                 conversation_response or ""
             )
             if _usable_question(final_user_prompt):
+                logger.info(
+                    f"ChooserTask {task.id}: conversation by "
+                    f"{_model_display_name(writer)} ({len(history)} earlier "
+                    f"turns) in {time.monotonic() - started:.0f}s"
+                )
                 break
             logger.warning(
                 f"ChooserTask {task.id}: could not parse a conversation from "
@@ -2093,11 +2486,19 @@ async def _synthesize_appeal_candidate(
 async def _synthesize_chat_candidate(
     context: dict, contents: List[str]
 ) -> Optional[str]:
-    """Synthesize multiple chat responses into one using the best internal model."""
-    best_model = ml_router.best_internal_model()
-    if best_model is None:
-        logger.warning("No internal model available for chat synthesis")
+    """Synthesize multiple chat responses into one using the strongest
+    model that can merge them (ml_router.synthesis_backends): ours first,
+    else a hosted one, as for the appeal candidate, since the drafts came
+    from hosted models too. Never the appeal-only fine-tune, which cannot
+    follow "merge these responses" and answers with a stray number."""
+    ours, hosted = ml_router.synthesis_backends(use_external=True)
+    if not ours and not hosted:
+        logger.info(
+            "Chooser: no model that can merge drafts to synthesize a chat "
+            "candidate; skipping synthesis"
+        )
         return None
+    best_model = (ours + hosted)[0]
 
     history = context.get("history", []) or []
     user_prompt = context.get("prompt", "") or ""

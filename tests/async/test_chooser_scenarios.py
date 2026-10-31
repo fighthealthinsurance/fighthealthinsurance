@@ -83,13 +83,23 @@ class TestEvidenceFor:
             evidence = await _evidence_for("MRI", "Lower back pain")
 
         assert evidence == [
-            {"pmid": "3", "title": "A newer study", "url": "https://pubmed.ncbi.nlm.nih.gov/3/"},
-            {"pmid": "1", "title": "Imaging for low back pain", "url": "https://example.org/1"},
+            {
+                "pmid": "3",
+                "title": "A newer study",
+                "url": "https://pubmed.ncbi.nlm.nih.gov/3/",
+            },
+            {
+                "pmid": "1",
+                "title": "Imaging for low back pain",
+                "url": "https://example.org/1",
+            },
         ]
 
     async def test_an_article_is_summarized_by_its_abstract(self):
         await _cached_search("MRI Lower back pain", ["1"])
-        await _article("1", "Imaging for low back pain", abstract="  Imaging   helped. ")
+        await _article(
+            "1", "Imaging for low back pain", abstract="  Imaging   helped. "
+        )
 
         with _no_live_search():
             evidence = await _evidence_for("MRI", "Lower back pain")
@@ -157,7 +167,6 @@ class TestEvidenceFor:
         assert [e["pmid"] for e in evidence] == ["9"]
         assert search.await_args.args[0] == "MRI Lower back pain"
 
-
     @override_settings(CHOOSER_PUBMED_LIVE_SEARCH=True)
     async def test_live_search_results_get_titles_fetched(self):
         """A live search stores only PMIDs; the articles it finds still
@@ -180,7 +189,6 @@ class TestEvidenceFor:
             ("111", "Live study one"),
             ("222", "Live study two"),
         ]
-
 
     @override_settings(CHOOSER_PUBMED_LIVE_SEARCH=True)
     async def test_titles_a_fetch_missed_are_fetched_on_the_next_use(self):
@@ -519,7 +527,9 @@ class TestSeededScenario:
             "Case Facts: Patient in their 40s; eight months of symptoms; physical therapy failed.\n"
         )
 
-        task, model = await self._generate(scenario, SeedPair("MRI", "Lower back pain", 8))
+        task, model = await self._generate(
+            scenario, SeedPair("MRI", "Lower back pain", 8)
+        )
 
         assert task.status != "DISABLED"
         assert task.context_json["procedure"] == "MRI"
@@ -554,9 +564,64 @@ class TestSeededScenario:
         assert task.context_json["evidence"] == []
 
     async def test_a_seeded_scenario_still_needs_the_insurer_and_reason(self):
-        task, _ = await self._generate("Procedure: MRI\nDiagnosis: pain\n", SeedPair("MRI", "Lower back pain", 8))
+        task, _ = await self._generate(
+            "Procedure: MRI\nDiagnosis: pain\n", SeedPair("MRI", "Lower back pain", 8)
+        )
 
         assert task.status == "DISABLED"
+
+    async def test_a_standard_case_is_stamped_standard(self):
+        scenario = (
+            "Procedure: Knee arthroscopy\nDiagnosis: Torn meniscus\n"
+            "Insurance Company: Fictional Mutual\nDenial Reason: experimental.\n"
+        )
+
+        task, model = await self._generate(scenario, None)
+
+        assert task.context_json["case_style"] == "standard"
+        scenario_prompt = model._infer_no_context.await_args_list[0].kwargs["prompt"]
+        assert "SIMPLE" not in scenario_prompt
+
+    async def test_a_simple_case_is_asked_for_plainly_and_skips_the_seed(self):
+        """A simple case is the writer's everyday pair, not the rankings'
+        (a real pair can be anything but simple), and the case says so."""
+        scenario = (
+            "Procedure: Physical therapy visits\nDiagnosis: Knee osteoarthritis\n"
+            "Insurance Company: Fictional Mutual\nDenial Reason: visit limit reached.\n"
+            "Case Facts: Patient in their 60s; 12 visits since knee surgery; surgeon ordered 12 more.\n"
+        )
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks._simple_case_due", return_value=True
+        ):
+            task, model = await self._generate(
+                scenario, SeedPair("MRI", "Lower back pain", 8)
+            )
+
+        assert task.status != "DISABLED"
+        assert task.context_json["case_style"] == "simple"
+        assert task.context_json["seeded"] is False
+        assert task.context_json["procedure"] == "Physical therapy visits"
+        assert len(task.context_json["facts"]) == 3
+        scenario_prompt = model._infer_no_context.await_args_list[0].kwargs["prompt"]
+        assert "explicitly SIMPLE" in scenario_prompt
+        assert "MRI for Lower back pain" not in scenario_prompt
+
+    async def test_a_simple_case_without_facts_is_not_labelled_simple(self):
+        """The voter is told a simple case's letter should stick to its
+        facts; with none written there is nothing to check that against."""
+        scenario = (
+            "Procedure: Physical therapy visits\nDiagnosis: Knee osteoarthritis\n"
+            "Insurance Company: Fictional Mutual\nDenial Reason: visit limit reached.\n"
+        )
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks._simple_case_due", return_value=True
+        ):
+            task, _ = await self._generate(scenario, None)
+
+        assert task.status != "DISABLED"
+        assert task.context_json["case_style"] == "standard"
 
 
 _SCENARIO = (
@@ -593,7 +658,9 @@ class TestInterview:
             MLAppealQuestionsHelper, "generate_specific_questions", specific_mock
         ), patch.object(
             MLAppealQuestionsHelper, "generate_generic_questions", generic_mock
-        ), _no_live_search(), override_settings(CHOOSER_SIMULATED_QA=True):
+        ), _no_live_search(), override_settings(
+            CHOOSER_SIMULATED_QA=True
+        ):
             router.generate_text_backends.return_value = [model, *others]
             await _generate_appeal_candidates(task)
         await task.arefresh_from_db()
@@ -607,13 +674,21 @@ class TestInterview:
                 "question": "Has the patient tried physical therapy?",
                 "answer": "Yes, eight weeks, with no change.",
             },
-            {"question": "How long have the symptoms lasted?", "answer": "About eight months."},
+            {
+                "question": "How long have the symptoms lasted?",
+                "answer": "About eight months.",
+            },
         ]
         # The question generator saw the case as a denial and its facts as
         # the patient's history, and was allowed outside models.
         kwargs = specific.await_args.kwargs
-        assert kwargs["denial_text"].startswith("Fictional Mutual denied coverage of MRI")
-        assert kwargs["patient_context"] == "Patient in their 40s; eight months of symptoms"
+        assert kwargs["denial_text"].startswith(
+            "Fictional Mutual denied coverage of MRI"
+        )
+        assert (
+            kwargs["patient_context"]
+            == "Patient in their 40s; eight months of symptoms"
+        )
         assert kwargs["use_external"] is True
         interview_prompt = model._infer_no_context.await_args_list[1].kwargs["prompt"]
         assert "Q1: Has the patient tried physical therapy?" in interview_prompt
@@ -692,7 +767,9 @@ class TestInterview:
             MLAppealQuestionsHelper,
             "generate_specific_questions",
             AsyncMock(side_effect=RuntimeError("down")),
-        ), _no_live_search(), override_settings(CHOOSER_SIMULATED_QA=True):
+        ), _no_live_search(), override_settings(
+            CHOOSER_SIMULATED_QA=True
+        ):
             router.generate_text_backends.return_value = [model]
             await _generate_appeal_candidates(task)
         await task.arefresh_from_db()
@@ -706,7 +783,8 @@ class TestInterview:
 class TestCaseVersion:
     async def _generate(self, task_type):
         with patch(
-            "fighthealthinsurance.chooser_tasks._generate_appeal_candidates", AsyncMock()
+            "fighthealthinsurance.chooser_tasks._generate_appeal_candidates",
+            AsyncMock(),
         ), patch(
             "fighthealthinsurance.chooser_tasks._generate_chat_candidates", AsyncMock()
         ):

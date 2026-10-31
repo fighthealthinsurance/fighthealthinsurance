@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Alert,
@@ -81,6 +81,8 @@ interface ChooserTaskContext {
   evidence?: EvidenceItem[];
   qa_pairs?: QAPair[];
   seeded?: boolean;
+  // "simple": an everyday case kept simple on purpose; "standard" otherwise.
+  case_style?: string;
   prompt?: string;
   history?: Array<{ role: string; content: string }>;
 }
@@ -95,7 +97,9 @@ interface ChooserTask {
 type TaskType = "appeal" | "chat";
 
 interface ChooserState {
-  mode: "selection" | "loading" | "voting" | "confirmation" | "error";
+  // "pending": the server has no case for us yet but is writing one (it
+  // answered 202), and we are waiting for it.
+  mode: "selection" | "loading" | "pending" | "voting" | "confirmation" | "error";
   task: ChooserTask | null;
   selectedCandidate: ChooserCandidate | null;
   flaggedIds: string[];
@@ -142,6 +146,15 @@ declare global {
 }
 
 const SCOREBOARD_KEY = "fhi-arena-scoreboard";
+// Waiting for a case the server is writing: how long between polls when
+// the server does not say, and how long to wait in all before giving up.
+// A case is a round of model calls, so minutes, not seconds.
+const PENDING_RETRY_DEFAULT_SECONDS = 15;
+const PENDING_GIVE_UP_MS = 15 * 60 * 1000;
+// How long one next-case request may take. The endpoint only reads the
+// pool, so this is a hung connection, not a slow answer: without it a poll
+// that never returned left the page waiting past the give-up above.
+const NEXT_CASE_REQUEST_TIMEOUT_MS = 30 * 1000;
 const RANKINGS_URL = "/chooser/rankings/";
 const LABELS = ["A", "B", "C", "D", "E", "F"];
 
@@ -746,6 +759,13 @@ const AppealCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
         <CaseRow label="Insurer" value={context.insurance_company} />
         <CaseRow label="Their reason" value={context.denial_text_preview} />
       </Stack>
+      {context.case_style === "simple" && (
+        <Text size="sm" c="dimmed">
+          An everyday case, kept simple on purpose. A letter that stays short and sticks
+          to the facts is doing it right; one that pads it out with claims the facts do
+          not support is not.
+        </Text>
+      )}
       <Box>
         <Text size="sm" fw={600} mb={4}>
           What is known about the patient
@@ -1015,6 +1035,31 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
     taskType: null,
   });
   const [isSkipping, setIsSkipping] = useState(false);
+  // The poll for a case being written (see fetchNextTask): one timer, and
+  // when the wait started, so it can be given up. Cleared when the referee
+  // leaves the Arena or the page unmounts.
+  const pollTimer = useRef<number | null>(null);
+  const pendingSince = useRef<number | null>(null);
+  // Each next-task request takes a number, and leaving the Arena (or
+  // unmounting) takes one too: an answer to an older request (a double
+  // press, a skip racing a reload, a fetch from before the referee left) is
+  // dropped, so it neither seats a stale case nor flips the page back to
+  // waiting and starts the poll again.
+  const requestSeq = useRef(0);
+  // The poll asks through the latest fetchNextTask, not the one that set
+  // it: that one still holds the captcha token as it was before it was spent.
+  const fetchNextTaskRef = useRef<((taskType: TaskType) => Promise<void>) | null>(null);
+
+  const clearPoll = useCallback(() => {
+    requestSeq.current += 1;
+    if (pollTimer.current !== null) {
+      window.clearTimeout(pollTimer.current);
+      pollTimer.current = null;
+    }
+    pendingSince.current = null;
+  }, []);
+
+  useEffect(() => clearPoll, [clearPoll]);
   const [hasAcceptedTos, setHasAcceptedTos] = useState(false);
   // The captcha: the tick's token until it is spent, "passed" once the
   // server has taken one for this session, and a notice when it would not.
@@ -1078,16 +1123,24 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
     };
   }, []);
 
-  // Each next-task request takes a number; an answer to an older request
-  // (a double press, a skip racing a reload) is dropped, so it neither
-  // seats a stale case nor sends the referee back to the box.
-  const requestSeq = React.useRef(0);
-
   const fetchNextTask = useCallback(async (taskType: TaskType) => {
     const seq = ++requestSeq.current;
     const stale = () => seq !== requestSeq.current;
-    setState((prev) => ({ ...prev, mode: "loading", error: null, taskType }));
+    if (pollTimer.current !== null) {
+      window.clearTimeout(pollTimer.current);
+      pollTimer.current = null;
+    }
+    setState((prev) => ({
+      ...prev,
+      mode: pendingSince.current === null ? "loading" : "pending",
+      error: null,
+      taskType,
+    }));
 
+    // One deadline for the whole request, body included: a response whose
+    // body stalled after its headers would otherwise hang the page too.
+    const controller = new AbortController();
+    const deadline = window.setTimeout(() => controller.abort(), NEXT_CASE_REQUEST_TIMEOUT_MS);
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (captchaToken) {
@@ -1097,39 +1150,73 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
         method: "GET",
         headers,
         credentials: "include",
+        signal: controller.signal,
       });
+      if (stale()) return;
 
       const refusal = await captchaRefusal(response);
       if (stale()) {
         return;
       }
       if (refusal !== undefined) {
+        pendingSince.current = null;
         backToCaptcha(refusal);
         return;
       }
       if (captchaToken && (response.ok || response.status === 404)) {
-        // A tick is single use, and both of these answers come from past
-        // the gate (an empty arena is a 404), so the session now holds
-        // the mark. Any other failure may have come before the gate and
-        // spent nothing; the next try sends the tick again.
+        // A tick is single use, and these answers all come from past the
+        // gate (a case being written is a 202, an empty arena a 404), so
+        // the session now holds the mark. Any other failure may have come
+        // before the gate and spent nothing; the next try sends the tick
+        // again.
         setCaptchaToken(null);
         setCaptchaPassed(true);
         setCaptchaNotice(null);
       }
 
+      if (response.status === 202) {
+        // No case for us yet, but one is being written (the server set the
+        // generation off, or another process holds it): wait for it, asking
+        // again when the server says to, rather than sending the referee
+        // away for "a few minutes" from a case that is one or two away.
+        const started = pendingSince.current ?? Date.now();
+        pendingSince.current = started;
+        if (Date.now() - started > PENDING_GIVE_UP_MS) {
+          pendingSince.current = null;
+          throw new Error(
+            "A new case is still being written. Please come back in a few minutes.",
+          );
+        }
+        let retryAfter = PENDING_RETRY_DEFAULT_SECONDS;
+        try {
+          const body = (await response.json()) as { retry_after?: number };
+          if (typeof body.retry_after === "number" && body.retry_after > 0) {
+            retryAfter = body.retry_after;
+          }
+        } catch {
+          // The body is a courtesy; the default interval is fine.
+        }
+        if (stale()) return;
+        setState((prev) => ({ ...prev, mode: "pending", error: null, taskType }));
+        pollTimer.current = window.setTimeout(() => {
+          pollTimer.current = null;
+          void fetchNextTaskRef.current?.(taskType);
+        }, retryAfter * 1000);
+        return;
+      }
+      pendingSince.current = null;
+
       if (!response.ok) {
         if (response.status === 404) {
           throw new Error(
-            "The arena is empty right now: every case has been judged and new ones are being written. Please try again in a few minutes.",
+            "The arena is empty right now: every case has been judged and no new one is on its way yet. Please try again later.",
           );
         }
         throw new Error(`Failed to fetch a case: ${response.statusText}`);
       }
 
       const task: ChooserTask = await response.json();
-      if (stale()) {
-        return;
-      }
+      if (stale()) return;
       setState((prev) => ({
         ...prev,
         mode: "voting",
@@ -1140,16 +1227,28 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
         tiedIds: [],
       }));
     } catch (error) {
-      if (stale()) {
-        return;
-      }
+      // Checked first: a timed-out request from before the referee left
+      // must not reset the give-up clock of the wait they started since.
+      if (stale()) return;
+      const timedOut = controller.signal.aborted;
+      if (timedOut) pendingSince.current = null;
       setState((prev) => ({
         ...prev,
         mode: "error",
-        error: error instanceof Error ? error.message : "An error occurred",
+        error: timedOut
+          ? "The server did not answer in time. Please try again in a few minutes."
+          : error instanceof Error
+            ? error.message
+            : "An error occurred",
       }));
+    } finally {
+      window.clearTimeout(deadline);
     }
   }, [captchaToken, backToCaptcha]);
+
+  useEffect(() => {
+    fetchNextTaskRef.current = fetchNextTask;
+  }, [fetchNextTask]);
 
   const submitVote = useCallback(async () => {
     if (!state.task) return;
@@ -1273,6 +1372,9 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
   const skipTask = useCallback(async () => {
     if (!state.task) return;
 
+    // Leaving the Arena while the skip is in flight must not bring the page
+    // back to the next case when the skip completes.
+    const seq = requestSeq.current;
     setIsSkipping(true);
 
     try {
@@ -1296,10 +1398,11 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
         throw new Error(errorData.error || "Failed to skip task");
       }
 
-      if (state.taskType) {
+      if (state.taskType && seq === requestSeq.current) {
         fetchNextTask(state.taskType);
       }
     } catch (error) {
+      if (seq !== requestSeq.current) return;
       setState((prev) => ({
         ...prev,
         mode: "error",
@@ -1311,6 +1414,7 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
   }, [state.task, state.taskType, fetchNextTask, backToCaptcha]);
 
   const resetToSelection = useCallback(() => {
+    clearPoll();
     setState({
       mode: "selection",
       task: null,
@@ -1321,7 +1425,7 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
       error: null,
       taskType: null,
     });
-  }, []);
+  }, [clearPoll]);
 
   const doAnother = useCallback(() => {
     if (state.taskType) {
@@ -1486,6 +1590,28 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
         <Stack gap="xl" align="center">
           <Loader size="xl" />
           <Text size="lg">Calling the next case...</Text>
+        </Stack>
+      </Container>
+    );
+  }
+
+  // Render the wait for a case the server is writing
+  if (state.mode === "pending") {
+    return (
+      <Container size="md" py="xl">
+        <Stack gap="xl" align="center">
+          <Loader size="xl" />
+          <Title order={3} ta="center">
+            Writing a new case
+          </Title>
+          <Text size="lg" ta="center" c="dimmed" style={{ maxWidth: "560px" }}>
+            Every case here has been judged, so a few AI drafts are answering a fresh
+            denial right now. This usually takes a few minutes, and this page will update
+            by itself.
+          </Text>
+          <Button size="lg" radius="md" variant="outline" onClick={resetToSelection}>
+            Leave the Arena
+          </Button>
         </Stack>
       </Container>
     );

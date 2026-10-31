@@ -352,6 +352,11 @@ class Base(Configuration):
     CHOOSER_EVIDENCE_JUDGING_TIMEOUT = float(
         os.getenv("CHOOSER_EVIDENCE_JUDGING_TIMEOUT", "60")
     )
+    # The share of new appeal arena cases written as explicitly simple ones
+    # (an everyday denial, two or three facts); 0 for none, 1 for all.
+    CHOOSER_SIMPLE_CASE_SHARE = _env_float(
+        "CHOOSER_SIMPLE_CASE_SHARE", 0.25, minimum=0.0, maximum=1.0
+    )
     # Registered backend names (comma-separated) seated in every new arena
     # task, to try a model out against the rest; arena only, unlike FORCE_MODEL.
     # Temporarily LunaRoute's two models (ml_models.LunaRoute), to get them
@@ -362,6 +367,27 @@ class Base(Configuration):
     )
     CHOOSER_MAX_QUESTIONS = _env_int("CHOOSER_MAX_QUESTIONS", 4, minimum=1, maximum=10)
     CHOOSER_QA_TIMEOUT = _env_int("CHOOSER_QA_TIMEOUT", 60, minimum=5, maximum=600)
+    # Seconds the next-task endpoint tells the arena to wait before asking
+    # again while a case is being written for it.
+    CHOOSER_PENDING_RETRY_SECONDS = _env_int(
+        "CHOOSER_PENDING_RETRY_SECONDS", 15, minimum=2, maximum=300
+    )
+    # The launch-time backfill (chooser_tasks.launch_backfill, started by the
+    # actor-launch job): how many appeal tasks it writes, and the votes every
+    # current-version appeal task must already have for it to be due. 0 turns
+    # it off.
+    CHOOSER_LAUNCH_BACKFILL_SIZE = _env_int(
+        "CHOOSER_LAUNCH_BACKFILL_SIZE", 100, minimum=0, maximum=10000
+    )
+    CHOOSER_LAUNCH_BACKFILL_MIN_VOTES = _env_int(
+        "CHOOSER_LAUNCH_BACKFILL_MIN_VOTES", 2, minimum=1, maximum=1000
+    )
+    # Seconds a due launch backfill waits for the appeal generation claim
+    # (usually one the deploy's killed refill actor left behind, which lapses
+    # within the fifteen-minute claim window) before giving up.
+    CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS = _env_int(
+        "CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS", 3600, minimum=0, maximum=86400
+    )
     CONDITION_RANKING_MIN_PEOPLE = int(os.getenv("CONDITION_RANKING_MIN_PEOPLE", "5"))
     CONDITION_RANKING_LOOKUP_BUDGET = int(
         os.getenv("CONDITION_RANKING_LOOKUP_BUDGET", "30")
@@ -1202,6 +1228,12 @@ class _TestBase(Dev):
     # Nor may a case's evidence be sent to Jev or our own model; a test that
     # wants that turns it on (with research judging itself, for Jev).
     CHOOSER_JUDGE_EVIDENCE = False
+    # Every case a test builds is the standard, seeded kind unless the test
+    # asks for a simple one; a random draw would make the seeded tests flaky.
+    CHOOSER_SIMPLE_CASE_SHARE = 0.0
+    # A backfill that finds the claim held gives up at once; a test that
+    # wants it to wait patches the wait in.
+    CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS = 0
     # A model forced into the arena from the host environment would be asked
     # for real by every test that builds a task.
     CHOOSER_FORCE_MODEL = ""
