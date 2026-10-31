@@ -721,14 +721,23 @@ class TestOpenEnrollmentPopulation(TestCase):
 
 
 def _kind_colours() -> dict[str, tuple[str, str]]:
-    """Each kind's slice fill and legend swatch colour, by its class, from the style partial."""
+    """Each kind's slice fill and legend swatch colour, by its class, from the style partial; a striped kind's are "stripes"."""
+    # One pass in stylesheet order, so a later rule for a class wins as it does in CSS.
     found = {}
-    for selectors, fill, swatch in re.findall(
-        r"^  (\.dw-mix-[\w-]+(?:, \.dw-mix-[\w-]+)*) \{ fill: var\((--dw-[\w-]+)\); background-color: var\((--dw-[\w-]+)\);", STYLE, re.M
+    for rule in re.finditer(
+        r"^  (?P<sel>\.dw-mix-[\w-]+(?:, \.dw-mix-[\w-]+)*) \{ (?:fill: var\((?P<fill>--dw-[\w-]+)\); background-color: var\((?P<swatch>--dw-[\w-]+)\);"
+        r"|fill: url\(#dw-mix-stripes\); background: " + re.escape(STRIPES_SWATCH) + r"; \})",
+        STYLE,
+        re.M,
     ):
-        for selector in selectors.split(", "):
-            found[selector.removeprefix(".dw-mix-")] = (fill, swatch)
+        colours = (rule["fill"], rule["swatch"]) if rule["fill"] else ("stripes", "stripes")
+        for selector in rule["sel"].split(", "):
+            found[selector.removeprefix(".dw-mix-")] = colours
     return found
+
+
+# The legend swatch draws the same stripes as the slice's pattern: health-3 lines on health-1.
+STRIPES_SWATCH = "repeating-linear-gradient(135deg, var(--dw-health-3) 0 2px, var(--dw-health-1) 2px 5px)"
 
 
 class TestCoverageMixColours(TestCase):
@@ -737,7 +746,7 @@ class TestCoverageMixColours(TestCase):
     block = _between(STYLE, "  /* Where people get coverage", "  @media (max-width: 860px)")
 
     def test_slices_are_coverage_purples(self):
-        self.assertEqual(set(re.findall(r"var\((--dw-[\w-]+)\)", self.block)) - {"--dw-paper"}, {"--dw-health-1", "--dw-health-2", "--dw-health-3", "--dw-health-5"})
+        self.assertEqual(set(re.findall(r"var\((--dw-[\w-]+)\)", self.block)) - {"--dw-paper"}, {"--dw-health-1", "--dw-health-3", "--dw-health-5"})
         self.assertIsNone(re.search(r"#[0-9a-fA-F]{3,6}\b|rgba?\(", self.block))
 
     def test_each_kind_has_one_colour_for_its_slice_and_its_swatch(self):
@@ -748,15 +757,24 @@ class TestCoverageMixColours(TestCase):
             self.assertEqual(fill, swatch, kind)
         self.assertIn(".dw-mix-sw { width: 1rem; height: 0.75rem; border-radius: 2px; align-self: center; }", STYLE)
 
-    def test_marketplace_slice_is_the_darkest_and_medicare_and_medicaid_two_steps_apart(self):
+    def test_marketplace_slice_is_the_darkest_and_solid_kinds_two_steps_apart(self):
         # One step apart, two light purples can't be told apart even with full colour vision; two steps apart they can.
-        step = {kind: int(fill.rsplit("-", 1)[1]) for kind, (fill, _) in _kind_colours().items() if fill.startswith("--dw-health-")}
-        marketplace = step.pop("marketplace")
-        self.assertGreater(marketplace, max(step.values()))
-        self.assertGreaterEqual(abs(step["medicare"] - step["medicaid-chip"]), 2)
-        # The three smallest kinds take Medicaid's step and stay unnamed on the ring.
-        for kind in ("other-individual", "military-va", "more-than-one"):
-            self.assertEqual(step[kind], step["medicaid-chip"], kind)
+        colours = _kind_colours()
+        step = {kind: int(fill.rsplit("-", 1)[1]) for kind, (fill, _) in colours.items() if fill.startswith("--dw-health-")}
+        self.assertEqual(set(step), {"marketplace", "medicare", "job"})
+        self.assertGreater(step["marketplace"], max(v for k, v in step.items() if k != "marketplace"))
+        steps = sorted(step.values())
+        for lighter, darker in zip(steps, steps[1:]):
+            self.assertGreaterEqual(darker - lighter, 2)
+        # Medicaid and the three smallest kinds are striped, so they differ from every solid kind by more than shade.
+        for kind in ("medicaid-chip", "other-individual", "military-va", "more-than-one"):
+            self.assertEqual(colours[kind], ("stripes", "stripes"), kind)
+
+    def test_the_stripes_pattern_matches_the_swatch(self):
+        self.assertIn(".dw-mix-stripe-ground { fill: var(--dw-health-1); }", STYLE)
+        self.assertIn(".dw-mix-stripe { fill: var(--dw-health-3); }", STYLE)
+        partial = (REPO / "fighthealthinsurance" / "templates" / "partials" / "coverage_mix.html").read_text()
+        self.assertIn('<pattern id="dw-mix-stripes" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="dw-mix-stripe-ground" width="5" height="5"/><rect class="dw-mix-stripe" width="2" height="5"/></pattern>', partial)
 
     def test_ring_labels_are_ink_and_leave_on_a_phone(self):
         self.assertIn(".dw-mix-ring-label line { stroke: var(--fhi-ink-2); stroke-width: 1; }", STYLE)
@@ -782,6 +800,11 @@ class TestCoverageMixColours(TestCase):
     def test_no_coverage_is_an_empty_outlined_slice_not_grey(self):
         self.assertIn(".dw-mix-uninsured { fill: var(--dw-paper); background-color: var(--dw-paper); box-shadow: inset 0 0 0 2px var(--dw-health-3); }", STYLE)
         self.assertIn(".dw-mix-donut path.dw-mix-uninsured { stroke: var(--dw-health-3); }", STYLE)
+
+    def test_the_light_job_slice_is_outlined(self):
+        # health-1 is under 3:1 on white, so the slice's edge is drawn in health-3 (measured in test_contrast).
+        self.assertEqual(_kind_colours()["job"], ("--dw-health-1", "--dw-health-1"))
+        self.assertIn(".dw-mix-donut path.dw-mix-job { stroke: var(--dw-health-3); }", STYLE)
 
     def test_no_grey_red_green_or_denial_blue(self):
         for token in ("--dw-na", "--dw-bad", "--dw-good", "--dw-deny", "--dw-count"):

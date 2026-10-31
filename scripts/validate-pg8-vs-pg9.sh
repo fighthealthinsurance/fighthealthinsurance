@@ -46,7 +46,7 @@ mapfile -t DST_PODS < <(kubectl -n "$NAMESPACE" get pods \
   -l "cnpg.io/cluster=$DST_CLUSTER" -o name 2>/dev/null | sed 's|pod/||')
 [ "${#DST_PODS[@]}" -ge 1 ] || die "no pods found for $DST_CLUSTER"
 DST_POD="${DST_PODS[0]}"
-info "compare      : $SRC_POD (-8)  vs  $DST_POD (-9)"
+info "compare      : source=$SRC_POD  destination=$DST_POD (cluster=$DST_CLUSTER)"
 
 q_src() { kubectl -n "$NAMESPACE" exec -i "$SRC_POD" -c "$PG_CONTAINER" -- \
   psql -U postgres -d "${2:-postgres}" -At -v ON_ERROR_STOP=1 -c "$1"; }
@@ -58,7 +58,7 @@ compare() {
   if [ "$2" = "$3" ]; then
     pass "$1 match ($2)"
   else
-    fail "$1 MISMATCH: -8=[$2] -9=[$3]"; MISMATCH=1
+    fail "$1 MISMATCH: source ($SRC_POD)=[$2] destination ($DST_POD)=[$3]"; MISMATCH=1
   fi
 }
 
@@ -86,7 +86,7 @@ for t in $CRITICAL_TABLES; do
   # guard: table may not exist; skip with a warning rather than aborting
   EXISTS="$(q_src "SELECT to_regclass('public.$t') IS NOT NULL;" "$APP_DB")"
   if [ "$EXISTS" != "t" ]; then
-    warn "table $t not present in -8.$APP_DB -- skipping"
+    warn "table $t not present in source $SRC_POD.$APP_DB -- skipping"
     continue
   fi
   C_S="$(q_src "SELECT count(*) FROM \"$t\";" "$APP_DB")"
@@ -103,9 +103,9 @@ if [ "$S_S" = "$S_D" ]; then
 else
   # sequences can legitimately drift by cache on a live primary; report but
   # treat as WARN unless you have quiesced writes.
-  warn "sequence values differ (expected if -8 still taking writes):"
-  warn "  -8: $S_S"
-  warn "  -9: $S_D"
+  warn "sequence values differ (expected if source $SRC_POD still taking writes):"
+  warn "  source ($SRC_POD): $S_S"
+  warn "  destination ($DST_POD): $S_D"
 fi
 
 # --- migration history -----------------------------------------------------
@@ -127,7 +127,7 @@ compare "app role $APP_ROLE canlogin" "${L_S:-missing}" "${L_D:-missing}"
 
 echo
 if [ "$MISMATCH" -eq 0 ]; then
-  pass "DATA VALIDATION PASSED -- -9 matches -8 on all critical checks."
+  pass "DATA VALIDATION PASSED -- destination $DST_POD matches source $SRC_POD on all critical checks."
   exit 0
 else
   fail "DATA VALIDATION FOUND MISMATCHES -- investigate before promotion/cutover."
