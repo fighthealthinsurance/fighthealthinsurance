@@ -303,6 +303,9 @@ class Finding:
     codes: List[str] = field(default_factory=list)
     # code -> short human-readable evidence ("duplicate of #12", "name contains 'http'")
     details: Dict[str, str] = field(default_factory=dict)
+    # Why this row is held out of bulk deletion despite an auto-cleanable
+    # reason ("" when it isn't). See _add_duplicate_findings.
+    bulk_hold: str = ""
 
     def add(self, code: str, detail: str = "") -> None:
         if code not in self.codes:
@@ -312,7 +315,9 @@ class Finding:
 
     @property
     def auto_cleanable(self) -> bool:
-        """True when at least one reason is safe to bulk-delete on."""
+        """True when a reason is safe to bulk-delete on and nothing holds it."""
+        if self.bulk_hold:
+            return False
         return any(code in AUTO_CLEANABLE_CODES for code in self.codes)
 
     @property
@@ -492,6 +497,20 @@ def _add_duplicate_findings(
             if r.pk not in findings or not findings[r.pk].auto_cleanable
         ]
         keeper = (clean or ordered)[-1]
+        if clean:
+            # A bot reused a real person's address. Any copy may be the one
+            # whose unsubscribe link went out (earlier sends mailed every row;
+            # deduped sends use one per address), so deleting a junk copy while
+            # the person's row stays would leave them subscribed with a dead
+            # link. Hold junk copies for a human. When every copy is junk,
+            # deleting them all stops the mail, so a dead link harms no one.
+            for record in ordered:
+                if record not in clean:
+                    findings[record.pk].bulk_hold = (
+                        f"shares its address with #{keeper.pk}, which stays; "
+                        "deleting this copy could retire an unsubscribe link "
+                        "that person holds"
+                    )
         for record in ordered:
             if record.pk == keeper.pk:
                 continue

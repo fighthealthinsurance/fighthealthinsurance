@@ -53,7 +53,9 @@ class Command(BaseCommand):
             action="store_true",
             help=(
                 "Allow --apply with review-only reasons (spam TLDs, role "
-                "accounts, alias duplicates, ...). Use with care."
+                "accounts, alias duplicates, ...), and on junk copies held "
+                "back because the same address has a row that stays. Use "
+                "with care."
             ),
         )
         parser.add_argument(
@@ -111,10 +113,12 @@ class Command(BaseCommand):
             for other in hygiene.scan_other_contact_tables():
                 self._report(other, limit=limit)
 
+        # A held row (a junk copy of an address whose real row stays) is only
+        # deleted with --force: removing it could retire a live unsubscribe link.
         targets: List[int] = [
             finding.record.pk
             for finding in result.findings
-            if codes.intersection(finding.codes)
+            if codes.intersection(finding.codes) and (force or not finding.bulk_hold)
         ]
 
         if not targets:

@@ -173,6 +173,27 @@ class ScanSubscribersTest(TestCase):
             self.assertEqual(finding.codes, [hygiene.ALIAS_DUPLICATE])
             self.assertFalse(finding.auto_cleanable)
 
+    def test_junk_copy_of_a_kept_address_is_held_from_bulk_cleanup(self):
+        """The junk copy may be the one whose unsubscribe link went out, so
+        deleting it while the person's row stays would leave them subscribed
+        with a dead link."""
+        spam = make_subscriber("jane@hospital.org", name="http://spam.example")
+        make_subscriber("Jane@Hospital.org", name="Jane Doe")
+
+        flagged = {f.record.pk: f for f in hygiene.scan_subscribers().findings}
+
+        self.assertTrue(flagged[spam.id].bulk_hold)
+        self.assertFalse(flagged[spam.id].auto_cleanable)
+
+    def test_all_junk_copies_of_an_address_stay_bulk_cleanable(self):
+        """With no real row left, deleting every copy stops the mail."""
+        make_subscriber("bot@spam.org", name="http://spam.example")
+        make_subscriber("Bot@spam.org", name="www.spam.example")
+
+        result = hygiene.scan_subscribers()
+
+        self.assertEqual(len(result.auto_cleanable_findings), 2)
+
     def test_alias_detail_is_bounded_for_large_groups(self):
         """A bot minting many +tag variants must not make every row carry the
         id of every other row."""
@@ -320,6 +341,15 @@ class CleanupSubscribersCommandTest(TestCase):
         self.assertFalse(
             MailingListSubscriber.objects.filter(id=self.review_only.id).exists()
         )
+
+    def test_apply_spares_a_held_junk_copy_unless_forced(self):
+        held = make_subscriber("Jane@Hospital.org", name="http://spam.example")
+
+        self._run("--apply")
+        self.assertTrue(MailingListSubscriber.objects.filter(id=held.id).exists())
+
+        self._run("--apply", "--force")
+        self.assertFalse(MailingListSubscriber.objects.filter(id=held.id).exists())
 
     def test_negative_limit_is_rejected(self):
         with self.assertRaises(CommandError):

@@ -160,6 +160,7 @@
             {% for reason in row.reasons %}
               {% if reason.detail %}<div class="muted">{{ reason.detail }}</div>{% endif %}
             {% endfor %}
+            {% if row.bulk_hold %}<div class="muted"><strong>Held from bulk cleanup:</strong> {{ row.bulk_hold }}</div>{% endif %}
           </td>
         </tr>
         {% endfor %}

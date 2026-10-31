@@ -5777,6 +5777,7 @@ class SubscriberCleanupView(View):
                     "comments": f.record.comments,
                     "signup_date": f.record.created,
                     "auto_cleanable": f.auto_cleanable,
+                    "bulk_hold": f.bulk_hold,
                     "reasons": [
                         {
                             "code": code,
