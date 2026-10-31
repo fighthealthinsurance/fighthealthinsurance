@@ -1546,7 +1546,12 @@ class ChooserCaptchaGateTest(APITestCase):
         ) as submit, patch.object(ChooserViewSet, "CAPTCHA_MAX_CHECKS", 2):
             answers = [
                 self.client.get(
-                    self.next_url, **{self.CAPTCHA_HEADER: f"junk-{i}"}, REMOTE_ADDR="203.0.113.9"
+                    self.next_url,
+                    **{self.CAPTCHA_HEADER: f"junk-{i}"},
+                    # The address Cloudflare saw; a forged X-Forwarded-For
+                    # does not move the count.
+                    HTTP_CF_CONNECTING_IP="203.0.113.9",
+                    HTTP_X_FORWARDED_FOR=f"198.51.100.{i}",
                 )
                 for i in range(3)
             ]

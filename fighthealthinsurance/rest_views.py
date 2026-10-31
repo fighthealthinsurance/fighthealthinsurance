@@ -2322,11 +2322,15 @@ class ChooserViewSet(viewsets.ViewSet):
 
     @staticmethod
     def _client_address(request: Request) -> str:
-        """The address a captcha check is charged to: the first hop of
-        X-Forwarded-For behind the proxy, else the peer."""
-        forwarded = str(request.META.get("HTTP_X_FORWARDED_FOR", ""))
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+        """The address a captcha check is charged to: what Cloudflare saw
+        (CF-Connecting-IP, which it overwrites on every request, so the
+        requester cannot pick it; see client_network), else the peer, for
+        local runs and in-cluster calls that never passed Cloudflare."""
+        from fighthealthinsurance import client_network
+
+        address = client_network.cf_ip_from_meta(request.META)
+        if address and address != client_network.NO_ADDRESS:
+            return address
         return str(request.META.get("REMOTE_ADDR", ""))
 
     def _captcha_check_allowed(self, request: Request) -> bool:

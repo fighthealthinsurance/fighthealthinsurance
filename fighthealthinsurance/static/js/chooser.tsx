@@ -1078,7 +1078,14 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
     };
   }, []);
 
+  // Each next-task request takes a number; an answer to an older request
+  // (a double press, a skip racing a reload) is dropped, so it neither
+  // seats a stale case nor sends the referee back to the box.
+  const requestSeq = React.useRef(0);
+
   const fetchNextTask = useCallback(async (taskType: TaskType) => {
+    const seq = ++requestSeq.current;
+    const stale = () => seq !== requestSeq.current;
     setState((prev) => ({ ...prev, mode: "loading", error: null, taskType }));
 
     try {
@@ -1093,6 +1100,9 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
       });
 
       const refusal = await captchaRefusal(response);
+      if (stale()) {
+        return;
+      }
       if (refusal !== undefined) {
         backToCaptcha(refusal);
         return;
@@ -1117,6 +1127,9 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
       }
 
       const task: ChooserTask = await response.json();
+      if (stale()) {
+        return;
+      }
       setState((prev) => ({
         ...prev,
         mode: "voting",
@@ -1127,6 +1140,9 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
         tiedIds: [],
       }));
     } catch (error) {
+      if (stale()) {
+        return;
+      }
       setState((prev) => ({
         ...prev,
         mode: "error",
