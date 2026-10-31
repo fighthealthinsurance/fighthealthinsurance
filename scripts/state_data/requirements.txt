@@ -1,0 +1,13 @@
+# What scripts/state_data/extract_info.py imports, so it can run on its own
+# (locally, or in .github/workflows/update-state-resources.yml) without the
+# app's requirements. Keep the pins in step with requirements.txt and
+# requirements-dev.txt, where the same packages are listed for the tests.
+beautifulsoup4==4.12.3
+httpx>=0.27,<1
+requests
+urllib3>=2.0
+pydantic
+openai
+instructor
+ddgs
+python-dotenv

@@ -440,3 +440,90 @@ def test_extract_lsc_grantee_urls_initial_request_failure(mock_session: MagicMoc
 
     with pytest.raises(requests.exceptions.HTTPError):
         extract_lsc_grantee_urls("https://www.lsc.gov/invalid-page")
+
+# --- Backend configuration from the environment -----------------------------
+#
+# The URL and key are module constants read at import, so these tests reload the
+# module under a controlled environment and reload it again afterwards, leaving
+# the defaults in place for the rest of the suite. The HEALTH_BACKEND_* variables
+# are removed first, so a developer's shell cannot change the outcome.
+
+BACKEND_ENV_VARS = (
+    "HEALTH_BACKEND_URL",
+    "HEALTH_BACKEND_API_KEY",
+    "HEALTH_BACKEND_HOST",
+    "HEALTH_BACKEND_PORT",
+)
+
+
+def _backend_config_under_env(env: Dict[str, str]) -> Tuple[str, str]:
+    """Imports extract_info with exactly `env` of the backend variables set.
+
+    Returns the (LOCAL_SERVER_URL, HEALTH_BACKEND_API_KEY) it computed.
+    """
+    import importlib
+    import os
+    import scripts.state_data.extract_info as extract_info
+
+    try:
+        with patch.dict(os.environ, env):
+            for name in BACKEND_ENV_VARS:
+                if name not in env:
+                    os.environ.pop(name, None)
+            importlib.reload(extract_info)
+            return extract_info.LOCAL_SERVER_URL, extract_info.HEALTH_BACKEND_API_KEY
+    finally:
+        importlib.reload(extract_info)
+
+
+def test_backend_defaults_to_local_http_server_with_placeholder_key():
+    """
+    Given: None of the HEALTH_BACKEND_* variables are set.
+    When: The module is imported.
+    Then: It targets a local plain-HTTP server and sends the placeholder key.
+    """
+    url, key = _backend_config_under_env({})
+
+    assert url == "http://localhost:13305/v1"
+    assert key == "local_api_key"
+
+
+def test_backend_url_wins_over_host_and_port():
+    """
+    Given: HEALTH_BACKEND_URL names a hosted endpoint, and host/port are also set.
+    When: The module is imported.
+    Then: The full URL is used as-is, so the scheduled refresh can use a hosted model.
+    """
+    url, _ = _backend_config_under_env({
+        "HEALTH_BACKEND_URL": "https://api.deepinfra.com/v1/openai",
+        "HEALTH_BACKEND_HOST": "ignored.example",
+        "HEALTH_BACKEND_PORT": "9999",
+    })
+
+    assert url == "https://api.deepinfra.com/v1/openai"
+
+
+def test_backend_api_key_is_read_from_the_environment():
+    """
+    Given: HEALTH_BACKEND_API_KEY is set.
+    When: The module is imported.
+    Then: That key, not the placeholder, is what the client will send.
+    """
+    _, key = _backend_config_under_env({"HEALTH_BACKEND_API_KEY": "hosted-secret"})
+
+    assert key == "hosted-secret"
+
+
+def test_get_local_instructor_client_sends_configured_api_key(mock_instructor_deps: dict[str, MagicMock]):
+    """
+    Given: The module-level API key is configured for a hosted endpoint.
+    When: get_local_instructor_client() is called.
+    Then: AsyncOpenAI is created with that key rather than the placeholder.
+    """
+    with patch("scripts.state_data.extract_info.HEALTH_BACKEND_API_KEY", "hosted-secret"):
+        get_local_instructor_client()
+
+    mock_instructor_deps["openai_class"].assert_called_once_with(
+        base_url="http://localhost:8000",
+        api_key="hosted-secret"
+    )

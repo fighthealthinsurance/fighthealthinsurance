@@ -1,0 +1,129 @@
+name: Update State Resources
+
+# Refreshes the state-by-state Medicare and Medicaid help index that
+# scripts/state_data/extract_info.py builds (see scripts/state_data/README.md):
+#
+#   * data/state_medicaid_medicare_resources.json - for each state, the URL of
+#     every resource category (SHIP, Senior Medicare Patrol, fair hearing
+#     portal, ...) plus the LSC legal aid grantee profiles. Only entries that
+#     are still missing are searched for again.
+#   * data/extracted_state_resources.json - the agencies, phone numbers,
+#     deadlines and filing notes a model extracts from each of those pages.
+#
+# Agencies move, change their phone numbers and retire pages, so we refresh
+# the data on a schedule and open a pull request with the change for review.
+# The pages are public and nothing here is patient data, so a hosted model
+# does the extraction: the self-hosted backends the app uses are reachable
+# only inside the cluster.
+
+on:
+  schedule:
+    # 07:00 UTC on the 2nd day of every month (the browser data refresh takes
+    # the 1st). The extraction is about 430 model calls, well under a dollar.
+    - cron: "0 7 2 * *"
+  # Allow maintainers to trigger the refresh on demand from the Actions tab.
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-state-resources
+  cancel-in-progress: false
+
+env:
+  # The OpenAI-compatible endpoint and model the script extracts with.
+  # Repository variables override the defaults (DeepInfra, with the model the
+  # app's router uses there); the key is a repository secret. A dedicated
+  # STATE_RESOURCES_API_KEY wins, else the DEEPINFRA_API key is reused.
+  HEALTH_BACKEND_URL: ${{ vars.STATE_RESOURCES_BACKEND_URL || 'https://api.deepinfra.com/v1/openai' }}
+  HEALTH_BACKEND_MODEL: ${{ vars.STATE_RESOURCES_MODEL || 'google/gemma-4-26B-A4B-it' }}
+  HEALTH_BACKEND_API_KEY: ${{ secrets.STATE_RESOURCES_API_KEY || secrets.DEEPINFRA_API }}
+
+jobs:
+  update-state-resources:
+    runs-on: ubuntu-latest
+    # About 430 pages, each a fetch plus a model call: a healthy run should
+    # finish in around two hours. The script allows each page up to five
+    # minutes, so a run full of slow sites could take far longer; cap it well
+    # inside GitHub's six-hour limit. The script rewrites its output after
+    # every state, so a run cut off here fails the job and the steps below
+    # never open a pull request from the partial file.
+    timeout-minutes: 300
+    steps:
+      - name: Check that a model key is configured
+        if: env.HEALTH_BACKEND_API_KEY == ''
+        run: |
+          echo "::error::No model key: add the STATE_RESOURCES_API_KEY (or DEEPINFRA_API) repository secret, a key for the endpoint in STATE_RESOURCES_BACKEND_URL (DeepInfra by default)."
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          # Don't leave the job's write token in the local git config: the
+          # steps below run third-party Python packages, and
+          # create-pull-request authenticates its own push via its `token`
+          # input, so nothing here needs persisted checkout credentials.
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install the script's dependencies
+        run: pip install -r scripts/state_data/requirements.txt
+
+      - name: Refresh the state resource index and the extracted resources
+        run: python scripts/state_data/extract_info.py
+
+      - name: Refuse a run that lost most of the data
+        # The script logs a failed fetch or model call and moves on, so a dead
+        # endpoint or a rejected key "succeeds" with an almost empty file.
+        # Fail instead of opening a pull request that deletes the data.
+        run: |
+          set -euo pipefail
+          total() { jq '[.[].resource_count] | add // 0'; }
+          before=$(git show HEAD:data/extracted_state_resources.json | total)
+          after=$(total < data/extracted_state_resources.json)
+          echo "Extracted resources before: $before, after: $after"
+          if [ "$after" -eq 0 ] || [ "$after" -lt $(( before / 2 )) ]; then
+            echo "::error::The refresh kept $after of $before resources (fewer than half); not opening a pull request. Check the model endpoint and key in the step above."
+            exit 1
+          fi
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          # Prefer a PAT (the same BROWSERSLIST_UPDATE_TOKEN the browser data
+          # refresh uses) so the resulting PR triggers the CI workflows; fall
+          # back to the default GITHUB_TOKEN, which opens the PR but (by
+          # design) will not kick off other workflows.
+          token: ${{ secrets.BROWSERSLIST_UPDATE_TOKEN || github.token }}
+          add-paths: |
+            data/state_medicaid_medicare_resources.json
+            data/extracted_state_resources.json
+          branch: chore/update-state-resources
+          delete-branch: true
+          commit-message: "chore(data): refresh the state Medicare and Medicaid resources"
+          title: "chore(data): refresh the state Medicare and Medicaid resources"
+          body: |
+            Automated monthly refresh of the state-by-state Medicare and
+            Medicaid help data, made by `scripts/state_data/extract_info.py`
+            against a hosted model:
+
+            * `data/state_medicaid_medicare_resources.json`: resource URLs per
+              state. Only entries that were missing were searched for again.
+            * `data/extracted_state_resources.json`: the agencies, phone
+              numbers, deadlines and notes extracted from those pages.
+
+            Review notes:
+
+            * The extraction is a model reading each page, so some of the
+              diff is rephrased notes rather than changed facts. Look for
+              agencies that disappeared, new phone numbers and changed URLs.
+            * A state whose pages were unreachable this run can lose
+              resources. If a drop looks wrong, re-run the workflow from the
+              Actions tab; it updates this pull request in place.
+
+            Opened automatically by the `Update State Resources` workflow. If
+            nothing changed, this pull request is not created.
