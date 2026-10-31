@@ -1,6 +1,12 @@
 #!/bin/bash
 # Run local development server
 #
+# Usage: ./scripts/run_local.sh [--all-experiments] [--devserver] [server args...]
+#   --all-experiments  turn on every flag in EXPERIMENTAL_FLAGS below and print
+#                      them at startup. It can go anywhere in the arguments.
+#   --devserver        use runserver_plus instead of uvicorn (see
+#                      docs/local-development.md).
+#
 # Optimizations:
 # - Checksums requirements.txt and requirements-dev.txt to skip pip install when unchanged
 # - Checksums JS source files to skip webpack build when unchanged (via build_static.sh)
@@ -15,6 +21,71 @@
 
 SCRIPT_DIR="$(dirname "$0")"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Experimental feature flags: settings in fighthealthinsurance/settings.py
+# that are read from the environment, off by default, and gate an unfinished
+# feature. --all-experiments sets each one to "true", which both of
+# settings.py's parsers accept (_env_flag and the == "true" comparisons).
+# When you add an experimental flag, add it here too (see AGENTS.md);
+# tests/async-unit/test_run_local_experimental_flags.py checks that each name
+# is still a flag settings.py reads.
+#
+# Left out on purpose:
+# - TEMPORAL_ENABLED, the TEMPORAL_*_ENABLED flows and
+#   INTAKE_CLOSED_CASE_CLEARS_HEALTH_HISTORY: they need a Temporal server and
+#   `python manage.py run_temporal_worker`, so export them yourself to try
+#   them. Without them MCP_DRAFT_IN_CHAT_ENABLED is set but has no effect
+#   (assistant_drafts.draft_in_chat_enabled).
+# - MCP_DRAFT_IN_CHAT_PAUSED: a kill switch, not a feature.
+EXPERIMENTAL_FLAGS=(
+  FIGHT_PAPERWORK_ENABLED
+  PRO_VERSION_AVAILABLE
+  MEDICAID_ELIGIBILITY_PAGE_ENABLED
+  DENIAL_WATCH_PAGE_ENABLED
+  ARENA_RANKINGS_PAGE_ENABLED
+  ADVANCED_OCR_OFFERED
+  MCP_SERVER_ENABLED
+  MCP_PREPARE_APPEAL_ENABLED
+  MCP_HANDOFF_V2_ENABLED
+  MCP_DRAFT_IN_CHAT_ENABLED
+  FHI_CHAT_POLICY_APPLY
+  # These also need TYPESAFE_API_KEY; without it they do nothing.
+  FHI_CHAT_JEV_GATE_ENABLED
+  TYPESAFE_LETTER_RANKING_ENABLED
+  TYPESAFE_DENIAL_TRIAGE_ENABLED
+  TYPESAFE_DEADLINE_SHOW_ENABLED
+  TYPESAFE_RESEARCH_JUDGING_ENABLED
+  TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED
+  TYPESAFE_CHAT_SHADOW_ENABLED
+)
+
+# Pull --all-experiments out of the arguments wherever it is, so the rest
+# (including a leading --devserver) reach the server unchanged.
+ALL_EXPERIMENTS=false
+server_args=()
+for arg in "$@"; do
+  if [[ "$arg" == "--all-experiments" ]]; then
+    ALL_EXPERIMENTS=true
+  else
+    server_args+=("$arg")
+  fi
+done
+set -- "${server_args[@]}"
+
+# Export every experimental flag for the server and print what it gets.
+# Called just before the server starts, so the list is the last thing printed
+# before the server's own output.
+enable_all_experiments() {
+  echo "--all-experiments: experimental feature flags enabled:"
+  for flag in "${EXPERIMENTAL_FLAGS[@]}"; do
+    export "${flag}=true"
+    echo "  ${flag}=true"
+  done
+  if [ -z "${TYPESAFE_API_KEY}" ]; then
+    echo "  (TYPESAFE_API_KEY is unset, so the TYPESAFE_* and Jev gate flags have no effect.)"
+  fi
+  echo "Left off: TEMPORAL_ENABLED and the Temporal flows (they need a Temporal server and worker)."
+}
 
 if [ ! -f "cert.pem" ]; then
   "${SCRIPT_DIR}/install.sh"
@@ -208,6 +279,13 @@ for result_file in "$TMPDIR"/*; do
     source "$result_file"
   fi
 done
+
+if [ "$ALL_EXPERIMENTS" = true ]; then
+  # Without xtrace, or each export and echo would print twice.
+  { set +x; } 2>/dev/null
+  enable_all_experiments
+  set -x
+fi
 
 # If --devserver is passed, use Django's dev server for hot-reloading templates
 if [[ "$1" == "--devserver" ]]; then

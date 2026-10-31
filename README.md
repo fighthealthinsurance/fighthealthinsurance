@@ -113,6 +113,9 @@ Then open **https://localhost:8000**. What the script does to the machine:
   database (`db.sqlite3`), and loads fixtures and local test logins (listed in
   [`setup_local_db.py`](fighthealthinsurance/management/commands/setup_local_db.py)).
   `FAST=FAST ./scripts/run_local.sh` skips the build and the database setup.
+  `./scripts/run_local.sh --all-experiments` turns on every experimental
+  feature flag and lists them at startup
+  ([details](docs/local-development.md#--all-experiments)).
 - If `kubectl` can reach the team's cluster, it port-forwards the cluster's
   model backends. Otherwise that step is skipped.
 

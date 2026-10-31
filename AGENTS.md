@@ -34,3 +34,13 @@ repository map), see [README.md](README.md).
   `tox -e mypy` for types.
 - **Match the file you are editing** — naming, import style, comment
   density, and the async/ORM bridge conventions described in CLAUDE.md.
+- **Register new experimental feature flags with `run_local.sh`.** When you
+  add a setting that is read from the environment, off by default, and
+  gates an unfinished feature, add its name to `EXPERIMENTAL_FLAGS` in
+  `scripts/run_local.sh` as well, so `./scripts/run_local.sh
+  --all-experiments` turns it on and lists it at startup. If it should stay
+  out (it needs outside infrastructure, like the Temporal flags, or it is a
+  kill switch), add it to the "Left out on purpose" comment there instead.
+  Remove a flag's entry when you remove the flag:
+  `tests/async-unit/test_run_local_experimental_flags.py` fails on a name
+  `settings.py` no longer reads.
