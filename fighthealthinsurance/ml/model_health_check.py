@@ -48,7 +48,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone as dt_timezone
-from typing import List, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 import aiohttp
 from asgiref.sync import async_to_sync
@@ -286,6 +286,10 @@ class BackendCheckResult:
     # never produce a stored draft either. Not persisted.
     chat_only: bool = False
     started_at: Optional[datetime] = None
+    # Not persisted. The probability TypeSafe (Jev) answered its yes/no
+    # question with (0 to 1), set by check_typesafe when it passed: the
+    # staff test-decision button shows it.
+    probability: Optional[float] = None
     # Not persisted. The staff status page reads the model's routing traits
     # from these: the instance the router registered, or, when there is none,
     # the backend class, so it can still say what the model would be.
@@ -975,10 +979,18 @@ def _typesafe_category(e: BaseException) -> str:
 
 
 async def check_typesafe(
-    result: BackendCheckResult, timeout: float = DEFAULT_TIMEOUT_SECONDS
+    result: BackendCheckResult,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    *,
+    state: str = TYPESAFE_PROBE_STATE,
+    questions: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> BackendCheckResult:
     """Ask TypeSafe the canned question once and categorize the outcome, as
-    check_backend does for a model. When TypeSafe answered or could not be
+    check_backend does for a model. ``state`` and ``questions`` replace the
+    canned ones (the staff test-decision button asks its own); ``questions``
+    must hold one "noul" question under the key "probe", whose probability
+    a pass records as ``result.probability``.
+    When TypeSafe answered or could not be
     reached, the error is what every Jev feature records
     (letter_quality.failure_summary: an HTTP status, "timeout" or a class
     name); the staff pages say what it means. When nothing was sent (a spent
@@ -988,6 +1000,8 @@ async def check_typesafe(
     "other" TypeSafe use, and as a "probe" in the LLM usage metrics."""
     from fighthealthinsurance.ml import letter_quality, spend, typesafe
 
+    if questions is None:
+        questions = TYPESAFE_PROBE_QUESTIONS
     result.started_at = datetime.now(dt_timezone.utc)
     # The wait is an Event, not the database, so a plain thread is enough.
     try:
@@ -1007,8 +1021,8 @@ async def check_typesafe(
     start = time.monotonic()
     try:
         payload = await typesafe.ask(
-            TYPESAFE_PROBE_STATE,
-            TYPESAFE_PROBE_QUESTIONS,
+            state,
+            questions,
             timeout_seconds=timeout,
             use=spend.OTHER,
             task="probe",
@@ -1031,6 +1045,7 @@ async def check_typesafe(
         result.category = CATEGORY_MALFORMED_RESPONSE
         result.error = "no probability in the answer to the probe question"
         return result
+    result.probability = float(answer)
     result.ok = True
     result.category = CATEGORY_PASS
     return result

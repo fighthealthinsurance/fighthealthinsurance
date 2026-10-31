@@ -111,6 +111,73 @@
     {% endif %}
   </div>
 
+  {# ---------------- Jev (TypeSafe) ---------------- #}
+  <div class="status-section" id="jev">
+    <h2>&#127849; Jev (TypeSafe)</h2>
+    {% if jev.error %}
+      <p><span class="status-badge bad">ERROR</span> <span class="error-text">{{ jev.error }}</span></p>
+    {% else %}
+      <p class="summary-line">
+        {% if jev.level == "not_configured" %}<span class="status-badge unknown">NOT CONFIGURED</span>
+        {% elif jev.level == "skipped" %}<span class="status-badge warn">SKIPPED</span>
+        {% elif jev.level == "failing" %}<span class="status-badge bad">FAILING</span>
+        {% elif jev.level == "ok" %}<span class="status-badge ok">OK</span>
+        {% elif jev.level == "off" %}<span class="status-badge unknown">OFF</span>
+        {% else %}<span class="status-badge warn">IDLE</span>{% endif %}
+        <span class="pill">model: {{ jev.model }}</span>
+        <span class="pill">API key: {% if jev.key_present %}present{% else %}missing (TYPESAFE_API_KEY){% endif %}</span>
+        {% if jev.url %}<span class="pill endpoint">{{ jev.url }}</span>{% endif %}
+        {% if jev.level == "not_configured" %}<span class="error-text">TYPESAFE_API_KEY is not set: every use of Jev is skipped, and the test decision is not sent.</span>
+        {% elif jev.skip %}<span class="error-text">this pod sends Jev nothing right now: {{ jev.skip }}</span>
+        {% elif jev.level == "off" %}<span class="sweep-note">configured, but every use&rsquo;s switch is off.</span>{% endif %}
+      </p>
+      <form method="post" action="{% url 'admin_jev_test' %}" style="margin: 8px 0 12px 0">
+        {% csrf_token %}
+        <button type="submit" title="Asks Jev one yes/no question and shows the answer: a real, billable call"
+                style="padding: 6px 14px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+          Test decision: &ldquo;Is timbit a doughnut hole?&rdquo; Y/N
+        </button>
+        <span class="sweep-note">
+          sends {{ jev.model }} a fixed sentence about Timbits and that question
+          {% if not jev.key_present %}(not sent without an API key: the page says so){% endif %}
+        </span>
+      </form>
+      <table class="status">
+        <thead><tr><th>Use</th><th>Switch</th><th>State</th><th>Last answer</th><th>Last failure</th></tr></thead>
+        <tbody>
+        {% for row in jev.rows %}
+          <tr>
+            <td>{{ row.label }}</td>
+            <td><span class="pill">{{ row.flag }}: {% if row.on %}on{% else %}off{% endif %}</span></td>
+            <td>
+              {% if row.error %}<span class="status-badge bad">unreadable</span> <span class="error-text">{{ row.error }}</span>
+              {% elif row.level == "ok" %}<span class="status-badge ok">ok</span>
+              {% elif row.level == "failing" %}<span class="status-badge bad">failing</span>
+              {% elif row.level == "idle" %}<span class="status-badge warn">idle</span>
+              {% elif row.level == "skipped" %}<span class="status-badge warn">skipped</span>
+              {% else %}<span class="status-badge unknown">off</span>{% endif %}
+              {% if row.skip %}<div class="sweep-note">{{ row.skip }}</div>{% endif %}
+            </td>
+            <td>{% if row.last_success_at %}{{ row.last_success_at|timesince }} ago{% else %}never{% endif %}</td>
+            <td>{% if row.last_failure_at %}<span class="error-text">{{ row.last_failure }}</span>{% if row.last_failure_hint %} ({{ row.last_failure_hint }}){% endif %}, {{ row.last_failure_at|timesince }} ago{% else %}none recorded{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="meta" style="margin-top: 10px;">
+        Deploy-time probe:
+        {% if jev.probe_error %}could not be read ({{ jev.probe_error }}).
+        {% elif jev.probe %}
+          {% if jev.probe.ok %}<span class="status-badge ok">{{ jev.probe.category }}</span>{% elif jev.probe.category == "NOT_CONFIGURED" %}<span class="status-badge unknown">{{ jev.probe.category }}</span>{% else %}<span class="status-badge bad">{{ jev.probe.category }}</span>{% endif %}
+          {{ jev.probe.created_at|timesince }} ago, deploy {{ jev.probe.deployment_id|default:"unknown" }}{% if jev.probe.latency_ms is not None %}, {{ jev.probe.latency_ms }} ms{% endif %}{% if jev.probe.error %}: <span class="error-text">{{ jev.probe.error }}</span>{% endif %}.
+        {% else %}none recorded yet.{% endif %}
+        States are from each use&rsquo;s own last {{ jev.window_hours }} h of answers and failures; loading this page never calls TypeSafe.
+        More on the <a href="{% url 'model_usage_dashboard' %}#jev">model usage dashboard</a> and
+        <a href="{% url 'model_backend_status' %}">model backend status</a>.
+      </p>
+    {% endif %}
+  </div>
+
   {# ---------------- MCP server ---------------- #}
   <div class="status-section" id="mcp">
     <h2>&#128268; MCP server</h2>

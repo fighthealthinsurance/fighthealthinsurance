@@ -41,7 +41,13 @@ latest result also shows on the model usage dashboard's Jev panel, beside
 each Jev feature's own last success and failure. On the status page, the
 TypeSafe row's Live column says whether the pod serving it would skip Jev
 right now and why, and its Config column lists each use as on or skipped
-(no key, its switch off, or the same reasons).
+(no key, its switch off, or the same reasons). The system status page
+(`/timbit/help/status`) has a Jev panel of its own: one badge (NOT
+CONFIGURED without the key, SKIPPED and why, FAILING, OK, IDLE or OFF), each
+use's switch and last outcome, the newest deploy-time probe, and a
+test-decision button that asks Jev "Is timbit a doughnut hole?" and shows Y
+or N with the probability (`/timbit/help/status/jev_test`; a real call,
+made only on the button, through `check_typesafe` with that question).
 
 Results are categorized, persisted for the staff status page, and logged as a
 greppable summary block.

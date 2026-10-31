@@ -1584,6 +1584,32 @@ class TestTypeSafeProbe:
         assert questions == mhc.TYPESAFE_PROBE_QUESTIONS
         assert ask.await_args.kwargs["use"] == spend.OTHER
         assert ask.await_args.kwargs["task"] == "probe"
+        assert result.probability == 0.97
+
+    def test_a_pass_with_its_own_state_and_question(self):
+        """The staff test-decision button asks its own question; the answer
+        is read from the same "probe" key, and the probability is kept."""
+        from django.test import override_settings
+
+        from fighthealthinsurance.ml import spend, typesafe
+
+        ask = AsyncMock(
+            return_value={"model": "jev-1.13.0", "answers": {"probe": {"noul": 0.2}}}
+        )
+        questions = {"probe": {"type": "noul", "instructions": "Is it a hole?"}}
+        with override_settings(**self.KEY), patch.object(
+            typesafe, "ask", ask
+        ), patch.object(spend._ledger, "wait_until_loaded", return_value=True):
+            result = asyncio.run(
+                mhc.check_typesafe(
+                    mhc.typesafe_entry(),
+                    timeout=5,
+                    state="A hole.",
+                    questions=questions,
+                )
+            )
+        assert result.ok and result.probability == 0.2
+        assert ask.await_args.args == ("A hole.", questions)
 
     @pytest.mark.parametrize(
         "status,category",
