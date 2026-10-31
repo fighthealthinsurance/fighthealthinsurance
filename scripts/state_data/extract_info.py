@@ -34,7 +34,16 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.dirname(__file__)),
 # Adjust URL to match your local server port (Lemonade: 13305, Ollama: 11434, etc)
 HEALTH_BACKEND_HOST = os.environ.get("HEALTH_BACKEND_HOST", "localhost")
 HEALTH_BACKEND_PORT = os.environ.get("HEALTH_BACKEND_PORT", "13305")
-LOCAL_SERVER_URL = "http://" + HEALTH_BACKEND_HOST + ":" + HEALTH_BACKEND_PORT + "/v1"
+# HEALTH_BACKEND_URL names the whole OpenAI-compatible base URL (e.g.
+# https://api.deepinfra.com/v1/openai) and wins over host + port, so the
+# pipeline can run where no local model server exists -- the scheduled
+# GitHub Actions refresh (.github/workflows/update-state-resources.yml) points
+# it at a hosted model. HEALTH_BACKEND_API_KEY is the key such an endpoint
+# wants; a local server ignores the placeholder default.
+LOCAL_SERVER_URL = os.environ.get("HEALTH_BACKEND_URL") or (
+    "http://" + HEALTH_BACKEND_HOST + ":" + HEALTH_BACKEND_PORT + "/v1"
+)
+HEALTH_BACKEND_API_KEY = os.environ.get("HEALTH_BACKEND_API_KEY") or "local_api_key"
 HEALTH_BACKEND_MODEL = os.environ.get("HEALTH_BACKEND_MODEL", "totallylegitco/fighthealthinsurance_model_v0.5")
 
 STATES = [
@@ -360,10 +369,10 @@ async def fetch_and_clean_text(url: str) -> str:
 
 
 def get_local_instructor_client():
-    """Initializes Instructor connected to a local OpenAI-compatible server."""
+    """Initializes Instructor connected to an OpenAI-compatible server (local by default)."""
     openai_client = AsyncOpenAI(
         base_url=LOCAL_SERVER_URL,
-        api_key="local_api_key"  # A value is required here even if no key is needed
+        api_key=HEALTH_BACKEND_API_KEY  # A value is required here even if no key is needed
     )
 
     # Using MD_JSON mode for improved Gemma compatibility.  Other models may perform better with
