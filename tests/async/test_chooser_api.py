@@ -1503,3 +1503,21 @@ class ChooserCaptchaGateTest(APITestCase):
             status.HTTP_400_BAD_REQUEST,
             "a vote with a bad body is a bad request even once the mark is set",
         )
+
+    @override_settings(**CAPTCHA_ON)
+    def test_a_well_formed_vote_without_the_mark_is_refused_and_not_stored(self):
+        """The gate sits after the body check, so a vote that would count
+        is still turned away, and nothing is written."""
+        a, b = ChooserCandidate.objects.filter(task=self.task).order_by("candidate_index")
+        body = {
+            "task_id": self.task.id,
+            "chosen_candidate_id": candidate_token(a.id),
+            "presented_candidate_ids": [candidate_token(a.id), candidate_token(b.id)],
+        }
+        with patch("fighthealthinsurance.forms.recaptcha_client.submit") as submit:
+            response = self.client.post(reverse("chooser-vote"), body, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.json()["error"], "captcha_required")
+        self.assertEqual(ChooserVote.objects.filter(task=self.task).count(), 0)
+        submit.assert_not_called()

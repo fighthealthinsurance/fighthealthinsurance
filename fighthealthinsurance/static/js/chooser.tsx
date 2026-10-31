@@ -201,26 +201,25 @@ const STANDINGS_ROWS = 3;
 
 // "pending" until the first answer, so the link never flashes before a
 // 404; "hidden" when the rankings page answers 404 (it is behind
-// ARENA_RANKINGS_PAGE_ENABLED, and nothing here should link to it then);
-// null when the fetch merely failed, which shows the link alone.
-type RankingsState = Rankings | null | "hidden" | "pending";
+// ARENA_RANKINGS_PAGE_ENABLED, and nothing here should link to it then)
+// and when the fetch merely failed: without an answer the page may be
+// off, and the menu and footer link it whenever it is on, so the Arena
+// shows nothing rather than a link that may be a 404.
+type RankingsState = Rankings | "hidden" | "pending";
 
 const fetchRankings = async (): Promise<RankingsState> => {
   try {
     const response = await fetch(`${RANKINGS_URL}?format=json`, {
       headers: { Accept: "application/json" },
     });
-    if (response.status === 404) {
+    if (!response.ok) {
       return "hidden";
     }
-    if (!response.ok) {
-      return null;
-    }
     const data = (await response.json()) as Rankings;
-    return Array.isArray(data.windows) && data.windows.length > 0 ? data : null;
+    return Array.isArray(data.windows) && data.windows.length > 0 ? data : "hidden";
   } catch {
     // The standings are a nicety; the Arena works without them.
-    return null;
+    return "hidden";
   }
 };
 
@@ -228,18 +227,10 @@ const ratePercent = (rate: number | null): string =>
   rate === null ? "\u2014" : `${Math.round(rate)}%`;
 
 // Who is winning, in a glance: each table's all-time leader and its top few
-// rows, with the link to the full rankings. Without data it is just the link.
+// rows, with the link to the full rankings. Without data it is nothing.
 const Standings: React.FC<{ rankings: RankingsState }> = ({ rankings }) => {
   if (rankings === "hidden" || rankings === "pending") {
     return null;
-  }
-  if (!rankings) {
-    return (
-      <Text size="sm" c="dimmed" ta="center">
-        Curious who is winning?{" "}
-        <Anchor href={RANKINGS_URL}>See the rankings</Anchor>.
-      </Text>
-    );
   }
   const allTime = rankings.windows[0];
   return (
@@ -1031,6 +1022,41 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string }> = ({ captchaSiteKey
   const captchaNeeded = Boolean(captchaSiteKey) && !captchaPassed;
   const captchaReady = !captchaNeeded || captchaToken !== null;
   const canStart = hasAcceptedTos && captchaReady;
+
+  // The gate refused a request: the tick was missing, spent or refused, or
+  // the session lost its mark. Back to the landing with the box cleared and
+  // the server's reason. A page that loaded while the captcha was off has
+  // no site key to draw a box with, so it reloads to get one.
+  const backToCaptcha = useCallback(
+    (message: string | undefined) => {
+      if (!captchaSiteKey) {
+        window.location.reload();
+        return;
+      }
+      setCaptchaPassed(false);
+      setCaptchaToken(null);
+      setCaptchaResets((n) => n + 1);
+      setCaptchaNotice(message || "Please tick the \"I'm not a robot\" box, then try again.");
+      setState((prev) => ({ ...prev, mode: "selection", task: null, taskType: null }));
+    },
+    [captchaSiteKey],
+  );
+
+  // The gate's answer, when a response is its 403; undefined otherwise.
+  const captchaRefusal = async (response: Response): Promise<string | undefined> => {
+    if (response.status !== 403) {
+      return undefined;
+    }
+    try {
+      const body = (await response.clone().json()) as { error?: string; message?: string };
+      if (body.error === CAPTCHA_ERROR) {
+        return body.message || "";
+      }
+    } catch {
+      // Not the gate's JSON.
+    }
+    return undefined;
+  };
   const [scoreboard, setScoreboard] = useState<Scoreboard>({ rounds: 0, fouls: 0 });
   const [lastRoundFouls, setLastRoundFouls] = useState(0);
   const [lastRoundTie, setLastRoundTie] = useState(false);
@@ -1063,23 +1089,9 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string }> = ({ captchaSiteKey
         credentials: "include",
       });
 
-      if (response.status === 403) {
-        // The "I'm not a robot" check: the tick was missing, spent or
-        // refused. Back to the landing with the box cleared and the reason.
-        let message = "Please tick the \"I'm not a robot\" box, then try again.";
-        try {
-          const body = (await response.json()) as { error?: string; message?: string };
-          if (body.error === CAPTCHA_ERROR && body.message) {
-            message = body.message;
-          }
-        } catch {
-          // No JSON: the default message stands.
-        }
-        setCaptchaPassed(false);
-        setCaptchaToken(null);
-        setCaptchaResets((n) => n + 1);
-        setCaptchaNotice(message);
-        setState((prev) => ({ ...prev, mode: "selection", task: null, taskType: null }));
+      const refusal = await captchaRefusal(response);
+      if (refusal !== undefined) {
+        backToCaptcha(refusal);
         return;
       }
       if (captchaToken) {
@@ -1115,7 +1127,7 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string }> = ({ captchaSiteKey
         error: error instanceof Error ? error.message : "An error occurred",
       }));
     }
-  }, [captchaToken]);
+  }, [captchaToken, backToCaptcha]);
 
   const submitVote = useCallback(async () => {
     if (!state.task) return;
@@ -1147,6 +1159,11 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string }> = ({ captchaSiteKey
       });
 
       if (!response.ok) {
+        const refusal = await captchaRefusal(response);
+        if (refusal !== undefined) {
+          backToCaptcha(refusal);
+          return;
+        }
         const errorData = await response.json();
         throw new Error(errorData.error || "Failed to submit vote");
       }
@@ -1171,7 +1188,7 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string }> = ({ captchaSiteKey
     state.tieMode,
     state.tiedIds,
     scoreboard,
-  ]);
+  , backToCaptcha]);
 
   const handleSelectCandidate = useCallback((candidate: ChooserCandidate) => {
     // A flagged draft cannot be picked (or tied): the voter clears the flag
@@ -1248,6 +1265,11 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string }> = ({ captchaSiteKey
       });
 
       if (!response.ok) {
+        const refusal = await captchaRefusal(response);
+        if (refusal !== undefined) {
+          backToCaptcha(refusal);
+          return;
+        }
         const errorData = await response.json();
         throw new Error(errorData.error || "Failed to skip task");
       }
@@ -1264,7 +1286,7 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string }> = ({ captchaSiteKey
     } finally {
       setIsSkipping(false);
     }
-  }, [state.task, state.taskType, fetchNextTask]);
+  }, [state.task, state.taskType, fetchNextTask, backToCaptcha]);
 
   const resetToSelection = useCallback(() => {
     setState({
