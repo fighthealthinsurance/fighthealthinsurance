@@ -294,17 +294,23 @@ def _keyed_digest(label: bytes) -> "hmac.HMAC":
     return hmac.new(key, digestmod=hashlib.sha256)
 
 
-def fingerprint(file: UploadedFile) -> str:
-    """A keyed SHA-256 of the file's contents, the same for the same file.
+def file_fingerprint(file: UploadedFile, label: bytes) -> str:
+    """A keyed SHA-256 of the file's contents under the SECRET_KEY sub-key
+    named by ``label``, the same for the same file and label.
 
     Keyed, so someone holding a file can't check it against our table
     without our key. Reads in chunks and leaves the file rewound.
     """
-    digest = _keyed_digest(_FINGERPRINT_LABEL)
+    digest = _keyed_digest(label)
     for chunk in file.chunks():
         digest.update(chunk)
     file.seek(0)
     return digest.hexdigest()
+
+
+def fingerprint(file: UploadedFile) -> str:
+    """A shared file's fingerprint (file_fingerprint), for counting repeats."""
+    return file_fingerprint(file, _FINGERPRINT_LABEL)
 
 
 def link_fingerprint(link: str) -> str:

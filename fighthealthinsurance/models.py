@@ -1384,6 +1384,13 @@ class PlanDocuments(models.Model):
     """
     Stores uploaded insurance plan documents associated with denials.
     Supports both encrypted and unencrypted file storage.
+
+    One copy of each file per appeal: the appeal's plan documents step skips
+    a file whose fingerprint the appeal already holds
+    (DenialCreatorHelper._add_plan_documents), and the constraint holds that
+    against two saves at once. Rows stored before the fingerprint have none
+    and are never matched; the appeal's reader reads identical files once
+    (MLPlanDocHelper.load_plan_documents).
     """
 
     plan_document_id = models.AutoField(primary_key=True)
@@ -1392,6 +1399,19 @@ class PlanDocuments(models.Model):
     # If the denial is deleted it's either SPAM or a removal request in either case
     # we cascade the delete
     denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
+    # A keyed SHA-256 of the file as uploaded, under a key of its own, so it
+    # matches no shared copy's fingerprint and can't link the appeal to one.
+    # Blank on rows from before it, and on rows the last release saves.
+    fingerprint = models.CharField(max_length=64, blank=True, default="", db_default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["denial", "fingerprint"],
+                condition=~models.Q(fingerprint=""),
+                name="plan_documents_one_copy_per_appeal",
+            )
+        ]
 
 
 class FollowUpDocuments(models.Model):
