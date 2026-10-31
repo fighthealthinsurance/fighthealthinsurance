@@ -173,6 +173,21 @@ class PriorAuthTextSubstituterTest(TestCase):
         self.assertIn(f"INSURANCE: {self.prior_auth.insurance_company}", result)
         self.assertIn("URGENT", result)  # Since self.prior_auth.urgent is True
 
+    def test_review_board_salutation_is_readdressed_to_the_plan(self):
+        """A prior auth goes to the plan, not to a review board."""
+        template_text = (
+            "Dear Esteemed Members of the Health Plan Review Board,\n\n"
+            "I am requesting prior authorization for $treatment.\n"
+        )
+        result = PriorAuthTextSubstituter.substitute_patient_and_provider_info(
+            self.prior_auth, template_text
+        )
+        self.assertEqual(
+            result,
+            "Dear Blue Cross Blue Shield,\n\n"
+            "I am requesting prior authorization for Continuous Glucose Monitor.\n",
+        )
+
     def test_missing_fields_use_placeholders(self):
         """Test that missing fields use appropriate placeholders"""
         # Create a prior auth with minimal information

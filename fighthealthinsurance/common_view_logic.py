@@ -98,6 +98,9 @@ from fighthealthinsurance.denials.algorithmic_review_detector import (
     render_template_blocks,
 )
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
+from fighthealthinsurance.letter_openings import (
+    readdress_review_board_salutation,
+)
 from fighthealthinsurance.letter_dates import (
     date_the_letter,
     format_letter_date,
@@ -803,6 +806,12 @@ def substitute_appeal_fields(
     for k, v in subs.items():
         if v and v != "" and v != "UNKNOWN":
             content = content.replace(k, str(v))
+    # An appeal to the plan opening "Dear Esteemed Members of the Review
+    # Board," names a body a first-level appeal never reaches; readdress it
+    # to the plan, or to the placeholder when the plan is not known, as the
+    # "Dear Insurance Company" entry above does. Regulator letters do not
+    # pass through here (letter_openings).
+    content = readdress_review_board_salutation(content, insurance_company)
     # Second pass: regex-based fuzzy matching for model-generated
     # placeholder variants like [Claim # Placeholder]
     patient_name_value = subs.get("[Patient Name]", "{{Your Name}}")

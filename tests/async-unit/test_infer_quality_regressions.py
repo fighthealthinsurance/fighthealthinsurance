@@ -130,3 +130,65 @@ class TestProfPovPromptSelection:
         assert (
             m.get_system_prompts("full", prof_pov=False) == m.system_prompts_map["full"]
         )
+
+
+class TestCheckedInferStripsThePreamble:
+    """A chat-tuned model answers a letter request like a chat ("Sure, I can
+    help you draft... Here's a simple one:"). On the appeal path that opening
+    comes off before the draft is stored; on any other inference type the
+    text is left as the model wrote it (the chat path never comes through
+    here at all)."""
+
+    PREAMBLE = (
+        "Sure, I can help you draft a template for an appeal letter. "
+        "Here's a simple one:"
+    )
+    LETTER = (
+        "Dear Example Health,\n\n"
+        "I am writing to appeal the denial of coverage for the physical therapy "
+        "my physician ordered for my chronic lower back pain. The denial letter "
+        "says the treatment is not medically necessary, but my records show six "
+        "months of conservative care that did not relieve the pain, and my "
+        "physician's notes explain why supervised therapy is the appropriate "
+        "next step under the plan's own clinical criteria. I respectfully ask "
+        "that you overturn the denial and approve the course of treatment.\n\n"
+        "Sincerely,\nJane Doe\n"
+    )
+
+    @pytest.mark.asyncio
+    async def test_the_appeal_path_starts_the_draft_at_the_letter(self):
+        m = _model()
+        m._infer_no_context = AsyncMock(  # type: ignore[method-assign]
+            return_value=f"{self.PREAMBLE}\n\n{self.LETTER}"
+        )
+        result = await m._checked_infer(
+            prompt="denial text",
+            patient_context=None,
+            plan_context=None,
+            infer_type="full",
+            pubmed_context=None,
+            system_prompt="sys",
+            temperature=0.5,
+        )
+        assert result, "expected a (kind, text) result"
+        text = result[0][1]
+        assert text.startswith("Dear Example Health,")
+        assert "Sure, I can help" not in text
+
+    @pytest.mark.asyncio
+    async def test_other_inference_types_keep_the_text_as_written(self):
+        m = _model()
+        m._infer_no_context = AsyncMock(  # type: ignore[method-assign]
+            return_value=f"{self.PREAMBLE}\n\n{self.LETTER}"
+        )
+        result = await m._checked_infer(
+            prompt="denial text",
+            patient_context=None,
+            plan_context=None,
+            infer_type="medically_necessary",
+            pubmed_context=None,
+            system_prompt="sys",
+            temperature=0.5,
+        )
+        assert result, "expected a (kind, text) result"
+        assert result[0][1].startswith(self.PREAMBLE)
