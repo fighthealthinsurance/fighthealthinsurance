@@ -744,6 +744,7 @@
       {% endif %}
       {% if storage.location %}<span class="pill">{{ storage.location }}</span>{% endif %}
       {% if storage.error %}<span class="error-text">&nbsp;{{ storage.error }}</span>{% endif %}
+      <span class="pill">Every backend, disk use, a write test and recent documents' copies: <a href="{% url 'storage_health' %}">storage health</a>.</span>
     </p>
   </div>
 </body>

@@ -85,6 +85,12 @@
         </a>
       </li>
       <li>
+        <a href="{% url 'storage_health' %}">
+          <strong>Storage Health</strong>
+          <div class="link-description">Every backend uploads are written to: whether it answers, how full its disk is, whether its copies outlast the pod, a write test on request, and whether recent documents have a copy off the app's disk</div>
+        </a>
+      </li>
+      <li>
         <a href="{% url 'temporal_ui' path='' %}">
           <strong>Temporal Web UI (view-only)</strong>
           <div class="link-description">Workflow runs and full event histories, proxied behind this login; write actions are disabled</div>
