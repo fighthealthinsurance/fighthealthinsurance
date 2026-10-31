@@ -3970,6 +3970,7 @@ class AppealGenerator(object):
             return text_score + model_score * 0.3
 
         asked = f"{len(ours)} internal + {len(hosted)} hosted"
+        synthesis_started = time.monotonic()
         try:
             best = await best_within_timelimit(
                 tasks, score_fn=score_fn, timeout=self.SYNTHESIS_TIMEOUT_SECONDS
@@ -3982,11 +3983,12 @@ class AppealGenerator(object):
                     f"Synthesized {len(appeal_texts)} appeals into one "
                     f"({len(text)} chars) via {winner} "
                     f"({'hosted' if winner in hosted else 'internal'}); "
-                    f"{asked} asked"
+                    f"{asked} asked, in {time.monotonic() - synthesis_started:.0f}s"
                 )
                 return str(text)
             logger.warning(
-                f"Appeal synthesis produced nothing from {asked} models "
+                f"Appeal synthesis produced nothing from {asked} models in "
+                f"{time.monotonic() - synthesis_started:.0f}s "
                 f"(use_external={use_external}); the drafts stand as they are"
             )
         except Exception as e:

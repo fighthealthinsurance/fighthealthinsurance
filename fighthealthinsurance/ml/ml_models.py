@@ -30,6 +30,56 @@ def _is_verbose_logging() -> bool:
         return False
 
 
+# How much of a prompt or a reply a verbose DEBUG line shows. The whole text
+# is one level down, at TRACE: a chat turn's system prompt alone runs to
+# 20,000 characters, and dumping it on every call buried the rest of a dev
+# log (the chooser's seven-minute case build was unreadable for it).
+_LOG_PREVIEW_CHARS = 400
+
+
+def _log_preview(text: Optional[str], limit: int = _LOG_PREVIEW_CHARS) -> str:
+    """The start of ``text`` for a log line, with how much was cut."""
+    text = text or ""
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}... [{len(text) - limit} more chars]"
+
+
+# What the health sweep last reported wrong with each (endpoint, model) pair
+# it probes (see _endpoint_serves): unreachable, a non-200 /models, the model
+# not in the list. A problem is reported at its level once, then at DEBUG
+# while it is the same problem, since the down recheck probes again every
+# few minutes and the same line every few minutes said nothing new; a
+# different problem, and the model being back, are reported again.
+_PROBE_PROBLEM_LOGGED: dict[tuple[str, str], str] = {}
+
+
+def _log_probe_problem(
+    pair: tuple[str, str], kind: str, message: str, level: str = "warning"
+) -> None:
+    if _PROBE_PROBLEM_LOGGED.get(pair) == kind:
+        logger.debug(message)
+        return
+    _PROBE_PROBLEM_LOGGED[pair] = kind
+    getattr(logger, level)(message)
+
+
+def _log_probe_ok(pair: tuple[str, str]) -> None:
+    if _PROBE_PROBLEM_LOGGED.pop(pair, None) is not None:
+        logger.info(f"Model '{pair[1]}' is served at {pair[0]} again")
+
+
+def _served_sample(probe_model: str, served: set[str], limit: int = 8) -> list[str]:
+    """A few of the models an endpoint does serve, for the not-served line:
+    the ones sharing a word with the model asked for first (the name it was
+    deployed under is usually among them), then the rest, alphabetically."""
+    words = {w for w in re.split(r"[^a-z0-9]+", probe_model.lower()) if len(w) > 2}
+    # str(): a /models listing may carry numeric ids.
+    ordered = sorted(str(m) for m in served)
+    related = [m for m in ordered if any(w in m.lower() for w in words)]
+    return (related + [m for m in ordered if m not in related])[:limit]
+
+
 from fighthealthinsurance.env_utils import get_env_variable
 from fighthealthinsurance.ml import llm_usage, spend
 from fighthealthinsurance.ml.ml_metrics import (
@@ -2337,7 +2387,10 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
         )
         # Just get the text response.
         if _is_verbose_logging():
-            logger.debug(f"Entity ({entity_type}) result: {result}")
+            logger.debug(
+                f"Entity ({entity_type}) result: "
+                f"{_log_preview(str(result) if result else '')!r}"
+            )
         else:
             logger.debug(
                 f"Entity ({entity_type}) result: {len(str(result)) if result else 0} chars"
@@ -2969,10 +3022,16 @@ class RemoteOpenLike(RemoteModel):
         # (connect, read): see MODEL_PROBE_BUDGET_SECONDS.
         connect = min(self.MODEL_PROBE_CONNECT_SECONDS, share / 2)
         timeout = (connect, share - connect)
-        return any(
-            self._endpoint_serves(base, model, timeout, leg)
-            for leg, (base, model) in enumerate(endpoints)
-        )
+        for leg, (base, model) in enumerate(endpoints):
+            if self._endpoint_serves(base, model, timeout, leg):
+                # The legs after a serving one are not asked, so a problem
+                # logged for one of them would be taken for the same outage
+                # whenever it next fails, and go out at DEBUG. The model has
+                # been back since; that is reported again (_log_probe_problem).
+                for unasked in endpoints[leg + 1 :]:
+                    _PROBE_PROBLEM_LOGGED.pop(unasked, None)
+                return True
+        return False
 
     def _endpoint_serves(
         self,
@@ -2990,22 +3049,28 @@ class RemoteOpenLike(RemoteModel):
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
 
+        pair = (probe_base, probe_model)
         try:
             resp = requests.get(url, headers=headers, timeout=timeout)
         except requests.RequestException as exc:
-            logger.warning(
+            _log_probe_problem(
+                pair,
+                "unreachable",
                 f"Unable to contact model backend at {url} for {probe_model} "
-                f"({type(exc).__name__})"
+                f"({type(exc).__name__})",
             )
             return False
 
         # WARNING, not DEBUG: this is the health sweep taking the model out
         # of routing, and a revoked key (401/403) or an account out of credit
-        # (402) reads here first. Sweep cadence, so it cannot spam.
+        # (402) reads here first. Once per outage (see _log_probe_problem):
+        # the down recheck asks again every few minutes.
         if resp.status_code != 200:
-            logger.warning(
+            _log_probe_problem(
+                pair,
+                f"status {resp.status_code}",
                 f"Backend {probe_base} returned status {resp.status_code} "
-                f"for /models while checking {probe_model}."
+                f"for /models while checking {probe_model}.",
             )
             return False
 
@@ -3047,17 +3112,21 @@ class RemoteOpenLike(RemoteModel):
                     model_ids.add(mid)
 
         if probe_model not in model_ids:
-            available_sorted = sorted(model_ids)
-            preview = available_sorted[:15]
             # INFO, not DEBUG: this is the health sweep disabling the backend
             # (unless its other endpoint serves the model), and "why is this
             # model not being used" should be answerable without debug
-            # logging. Sweep-frequency only, so it can't spam.
-            logger.info(
+            # logging. Once per outage (see _log_probe_problem), and INFO
+            # again when the model is back.
+            _log_probe_problem(
+                pair,
+                "not served",
                 f"Model '{probe_model}' is not served at {probe_base}. "
-                f"Backend serves {len(available_sorted)} model(s), e.g. {preview}"
+                f"Backend serves {len(model_ids)} model(s), e.g. "
+                f"{_served_sample(probe_model, model_ids)}",
+                level="info",
             )
             return False
+        _log_probe_ok(pair)
 
         # Kept for the serving registry, which the health sweep feeds after
         # each round (ml/health_status.py). The card goes on the leg that
@@ -3151,8 +3220,8 @@ class RemoteOpenLike(RemoteModel):
                 "Vary your response style. Do not always use the same template.\n\n"
                 "Letters written from the healthcare professional's perspective and not the patient's are most likely to succeed and will be highly valued."
             )
-        if _is_verbose_logging():
-            logger.debug(f"get_system_prompts({prompt_type}): {prompt}")
+        # TRACE: the same text is in the messages the call logs.
+        logger.trace(f"get_system_prompts({prompt_type}): {prompt}")
         return self.system_prompts_map.get(
             key,
             [prompt],
@@ -3530,7 +3599,11 @@ class RemoteOpenLike(RemoteModel):
                 first_failure = e
             result = None
         if _is_verbose_logging():
-            logger.debug(f"Got result from {self}: {result}")
+            logger.debug(
+                f"Got result ({len(result) if result else 0} chars) from {self}: "
+                f"{_log_preview(result)!r}"
+            )
+            logger.trace(f"Got result from {self}: {result}")
         else:
             logger.debug(
                 f"Got result ({len(result) if result else 0} chars) from {self}"
@@ -3651,7 +3724,8 @@ class RemoteOpenLike(RemoteModel):
             )
             return "rejected_repetition", []
 
-        logger.debug(f"Cleaned {cleaned} on type {infer_type}")
+        logger.debug(f"Cleaned result ({len(cleaned)} chars) on type {infer_type}")
+        logger.trace(f"Cleaned {cleaned} on type {infer_type}")
 
         return "accepted", [(infer_type, cleaned)]
 
@@ -4792,20 +4866,28 @@ class RemoteOpenLike(RemoteModel):
                     for msg in messages
                 ]
 
-                summary_msg_log = [
-                    {
-                        "role": m.get("role"),
-                        "content_len": len(m.get("content") or ""),
-                    }
-                    for m in cleaned_messages
-                ]
-                if not _is_verbose_logging():
+                if _is_verbose_logging():
+                    # The start of each message (see _log_preview); the
+                    # whole of them at TRACE.
+                    logger.debug(
+                        f"Prepared {len(cleaned_messages)} messages for model {model}: "
+                        + "; ".join(
+                            f"{m.get('role')} ({len(m.get('content') or '')} chars): "
+                            f"{_log_preview(m.get('content'))!r}"
+                            for m in cleaned_messages
+                        )
+                    )
+                    logger.trace(f"Messages for model {model}: {cleaned_messages}")
+                else:
+                    summary_msg_log = [
+                        {
+                            "role": m.get("role"),
+                            "content_len": len(m.get("content") or ""),
+                        }
+                        for m in cleaned_messages
+                    ]
                     logger.debug(
                         f"Prepared {len(cleaned_messages)} messages for model {model}: {summary_msg_log}"
-                    )
-                else:
-                    logger.debug(
-                        f"Prepared {len(cleaned_messages)} messages for model {model}: {cleaned_messages}"
                     )
                 request_body: dict[str, Any] = {
                     "model": model,
@@ -5200,7 +5282,11 @@ class RemoteOpenLike(RemoteModel):
                 raise ValueError(error_msg)
 
             if _is_verbose_logging():
-                logger.debug(f"Got {r} from {model} w/ {api_base} {self}")
+                logger.debug(
+                    f"Got response ({len(r) if r else 0} chars) from {model} via "
+                    f"{api_base}: {_log_preview(r)!r}"
+                )
+                logger.trace(f"Got {r} from {model} w/ {api_base} {self}")
             else:
                 logger.debug(
                     f"Got response ({len(r) if r else 0} chars) from {model} via {api_base}"
@@ -5487,7 +5573,10 @@ class RemoteFullOpenLike(RemoteOpenLike):
         )
 
         if result is None:
-            logger.warning("Failed to generate appeal questions")
+            # One backend of a fan-out; the helper racing them reports when
+            # none answered. This was a WARNING with no model named, so a
+            # provider out of credit read as the questions failing.
+            logger.debug(f"{self.model}: no appeal questions came back")
             return None
 
         questions = parse_appeal_questions(result)
@@ -5671,7 +5760,8 @@ class RemoteFullOpenLike(RemoteOpenLike):
         )
 
         if result is None:
-            logger.warning("Failed to generate citations")
+            # One backend of a fan-out (see get_appeal_questions).
+            logger.debug(f"{self.model}: no citations came back")
             return []
 
         text_result, citations_list = result

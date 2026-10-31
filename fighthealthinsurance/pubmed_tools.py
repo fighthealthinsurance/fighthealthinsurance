@@ -802,18 +802,12 @@ class PubMedTools(object):
                     ),
                 )
                 return pmids
-        except asyncio.TimeoutError as e:
-            # We might timeout
-            logger.opt(exception=True).debug(
-                f"Error or timeout in find_pubmed_article_ids_for_query: {e}"
-            )
-            pass
+        except asyncio.TimeoutError:
+            # Expected now and then; one line, not a traceback at DEBUG.
+            logger.debug(f"PubMed search timed out after {timeout}s for {query!r}")
         except asyncio.exceptions.CancelledError:
-            # We might be cancelled
-            logger.opt(exception=True).debug(
-                f"Cancelled in find_pubmed_article_ids_for_query: {query}"
-            )
-            pass
+            # The caller's deadline passed; the search was optional to it.
+            logger.debug(f"PubMed search cancelled for {query!r}")
         return pmids
 
     @staticmethod

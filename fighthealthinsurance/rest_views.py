@@ -2453,14 +2453,44 @@ class ChooserViewSet(viewsets.ViewSet):
             # the client to come back; the refill actor tops the pool up too.
             # The pool may not be short at all, only used up by this session,
             # so say which type ran out.
-            from fighthealthinsurance.chooser_tasks import trigger_prefill_async
+            from fighthealthinsurance.chooser_tasks import (
+                CHOOSER_PENDING_RETRY_SECONDS,
+                generation_underway,
+                trigger_prefill_async,
+            )
 
+            started = False
             try:
-                trigger_prefill_async(exhausted=task_type)
+                started = bool(trigger_prefill_async(exhausted=task_type))
             except Exception as e:
                 logger.warning(f"Could not trigger chooser prefill: {e}")
+            # A task of this type is being written: by the prefill just set
+            # off, or by the process holding the type's generation claim (an
+            # earlier prefill, the refill actor, a backfill). That is not an
+            # empty pool but a task minutes away, so 202 with when to ask
+            # again, and the client waits for it. 404 only when nothing is
+            # underway: there the client has nothing to wait for. (A 4xx
+            # here was also a django.request WARNING on every poll.)
+            if started or generation_underway(task_type):
+                return Response(
+                    serializers.ChooserNoTaskSerializer(
+                        {
+                            "message": "A new case is being written",
+                            "task_type": task_type,
+                            "generating": True,
+                            "retry_after": CHOOSER_PENDING_RETRY_SECONDS,
+                        }
+                    ).data,
+                    status=status.HTTP_202_ACCEPTED,
+                )
             return Response(
-                {"message": "No tasks available", "task_type": task_type},
+                serializers.ChooserNoTaskSerializer(
+                    {
+                        "message": "No tasks available",
+                        "task_type": task_type,
+                        "generating": False,
+                    }
+                ).data,
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -2471,7 +2501,13 @@ class ChooserViewSet(viewsets.ViewSet):
 
         if not candidates.exists():
             return Response(
-                {"message": "Task has no candidates", "task_type": task_type},
+                serializers.ChooserNoTaskSerializer(
+                    {
+                        "message": "Task has no candidates",
+                        "task_type": task_type,
+                        "generating": False,
+                    }
+                ).data,
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -2527,13 +2563,21 @@ class ChooserViewSet(viewsets.ViewSet):
             status=status.HTTP_200_OK,
         )
 
-    @extend_schema(responses=serializers.ChooserTaskSerializer)
+    # 202: no task for this session yet, but one is being written; the body
+    # says when to ask again. 404: none, and nothing underway.
+    _NEXT_TASK_RESPONSES = {
+        200: serializers.ChooserTaskSerializer,
+        202: serializers.ChooserNoTaskSerializer,
+        404: serializers.ChooserNoTaskSerializer,
+    }
+
+    @extend_schema(responses=_NEXT_TASK_RESPONSES)
     @action(detail=False, methods=["get"], url_path="next/appeal")
     def next_appeal(self, request: Request) -> Response:
         """Get the next appeal letter chooser task."""
         return self._get_next_task(request, "appeal")
 
-    @extend_schema(responses=serializers.ChooserTaskSerializer)
+    @extend_schema(responses=_NEXT_TASK_RESPONSES)
     @action(detail=False, methods=["get"], url_path="next/chat")
     def next_chat(self, request: Request) -> Response:
         """Get the next chat response chooser task."""

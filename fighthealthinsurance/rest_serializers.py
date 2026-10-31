@@ -940,6 +940,18 @@ class ChooserTaskSerializer(serializers.Serializer):
     candidates = ChooserCandidateSerializer(many=True)
 
 
+class ChooserNoTaskSerializer(serializers.Serializer):
+    """What the next endpoints answer when they have no task for this
+    session: 202 while one is being written (``generating``, with
+    ``retry_after`` seconds to wait before asking again), 404 when nothing
+    is underway."""
+
+    message = serializers.CharField()
+    task_type = serializers.CharField()
+    generating = serializers.BooleanField()
+    retry_after = serializers.IntegerField(required=False)
+
+
 class ChooserVoteRequestSerializer(serializers.Serializer):
     """Serializer for voting on a chooser task."""
 

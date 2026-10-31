@@ -60,6 +60,25 @@ def _log_fail_open(context: str, names: list[str]) -> None:
     logger.error(message)
 
 
+# Likewise for the fall-back to an appeal-text fine-tune (see
+# _general_purpose_only): while the general-purpose internal model is down
+# every QA and chat call takes it, and a WARNING per call said so.
+_narrow_fallback_logged_at: dict[str, float] = {}
+
+
+def _log_narrow_fallback(context: str, names: list[str]) -> None:
+    now = time.monotonic()
+    last = _narrow_fallback_logged_at.get(context)
+    message = (
+        f"MLRouter: no general-purpose backend for {context}; falling back to {names}"
+    )
+    if last is not None and now - last < _FAIL_OPEN_ERROR_SECONDS:
+        logger.debug(message)
+        return
+    _narrow_fallback_logged_at[context] = now
+    logger.warning(message)
+
+
 class MLRouter(object):
     """
     Tool to route our requests most cheapily.
@@ -469,11 +488,9 @@ class MLRouter(object):
                 # WARNING, not DEBUG: falling back means an instruction-following
                 # path is about to be served by an appeal-text fine-tune, which
                 # is the failure this filter exists to prevent. It is still
-                # better than routing nowhere, but it should be visible.
-                logger.warning(
-                    f"MLRouter: no general-purpose backend for {context}; "
-                    f"falling back to {[str(m) for m in candidates]}"
-                )
+                # better than routing nowhere, but it should be visible: once
+                # per context every ten minutes, like the fail-open ERROR.
+                _log_narrow_fallback(context, [str(m) for m in candidates])
                 return candidates
             return []
         return general

@@ -12,15 +12,18 @@ Covers two behaviors added alongside synthesis tracking:
   both the refill's batches and page prefills take it.
 """
 
+import asyncio
 import contextlib
 import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from asgiref.sync import sync_to_async
 from django.utils import timezone
 
 from fighthealthinsurance.chooser_tasks import (
     CASE_VERSIONS,
+    CHOOSER_BACKFILL_STOP_AFTER_FAILURES,
     CHOOSER_GENERATION_CLAIM_SECONDS,
     _claim_generation,
     _count_unscored_tasks,
@@ -30,7 +33,10 @@ from fighthealthinsurance.chooser_tasks import (
     _refill_reason,
     _synthesize_appeal_candidate,
     _synthesize_chat_candidate,
+    backfill_reason,
     check_and_refill_task_pool,
+    generation_underway,
+    launch_backfill,
     prefill_if_needed,
 )
 from fighthealthinsurance.models import (
@@ -99,6 +105,72 @@ class TestGenerationClaim:
         await claim.release()
 
         assert await _claim_generation("appeal") is not None
+
+    async def test_a_held_claim_is_renewed_while_it_is_held(self):
+        """A task slower than the window used to lose the claim mid-task:
+        the arena then read nothing underway and stopped waiting."""
+        claim = await _claim_generation("appeal")
+        taken_at = claim.token
+        renewals = []
+        enough = asyncio.Event()
+        renew = claim.renew
+
+        async def counting_renew():
+            renewed = await renew()
+            renewals.append(renewed)
+            if len(renewals) >= 3:
+                enough.set()
+            return renewed
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks._CLAIM_KEEPALIVE_SECONDS", 0.02
+        ), patch.object(claim, "renew", counting_renew):
+            async with claim:
+                # Several renewals, not one: a keeper that renewed once and
+                # stopped would pass a single check. The timeout only bounds
+                # a failing run.
+                await asyncio.wait_for(enough.wait(), timeout=10)
+                assert all(renewals)
+                assert claim.token > taken_at
+                assert await _claim_generation("appeal") is None
+
+        # And given back on the way out.
+        assert await _claim_generation("appeal") is not None
+
+    async def test_the_claim_is_released_when_the_exit_is_cancelled(self):
+        """Cancelled while it waits for the keep-alive to stop, the exit
+        still gives the claim back, or it held the type off for its window."""
+        claim = await _claim_generation("appeal")
+        await claim.__aenter__()
+        started_keeper = claim._keeper
+        # A keep-alive that never finishes, so the exit is waiting on it
+        # when it is cancelled.
+        never = asyncio.create_task(asyncio.Event().wait())
+        claim._keeper = never
+
+        exiting = asyncio.create_task(claim.__aexit__(None, None, None))
+        await asyncio.sleep(0.05)
+        exiting.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await exiting
+        never.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await never
+        # The real keep-alive saw the stop and ended on its own.
+        await asyncio.wait_for(started_keeper, timeout=5)
+
+        assert await _claim_generation("appeal") is not None
+
+    async def test_the_keep_alive_and_a_batch_renewal_do_not_race(self):
+        """Both renew the same claim; unserialised, the second matched the
+        token the first had just replaced and read the claim as taken."""
+        claim = await _claim_generation("appeal")
+
+        async with claim:
+            assert await asyncio.gather(claim.renew(), claim.renew()) == [
+                True,
+                True,
+            ]
 
     async def test_a_stale_owner_cannot_release_a_newer_claim(self):
         stale = await _claim_generation("appeal")
@@ -801,6 +873,10 @@ class TestSynthesizedCandidate:
 class TestSynthesizeHelpers:
     """Direct tests for the synthesis helpers (these touch ML, not the DB)."""
 
+    SYNTHESIS_BACKENDS = (
+        "fighthealthinsurance.chooser_tasks.ml_router.synthesis_backends"
+    )
+
     async def test_chat_synthesis_builds_prompt_and_returns_result(self):
         model = MagicMock()
         model._infer_no_context = AsyncMock(
@@ -812,11 +888,13 @@ class TestSynthesizeHelpers:
         }
         responses = ["You need your denial letter.", "Bring your EOB and notes."]
         with patch(
-            "fighthealthinsurance.chooser_tasks.ml_router.best_internal_model",
-            return_value=model,
-        ):
+            self.SYNTHESIS_BACKENDS, return_value=([model, MagicMock()], [])
+        ) as backends:
             result = await _synthesize_chat_candidate(context, responses)
 
+        # The drafts came from hosted models too, so a hosted model may merge
+        # them, as for the appeal candidate.
+        assert backends.call_args.kwargs == {"use_external": True}
         assert (
             result == "A synthesized chat answer comfortably longer than fifty chars."
         )
@@ -829,11 +907,21 @@ class TestSynthesizeHelpers:
             assert r in kwargs["prompt"]
         assert kwargs["temperature"] == 0.3
 
-    async def test_chat_synthesis_returns_none_without_internal_model(self):
-        with patch(
-            "fighthealthinsurance.chooser_tasks.ml_router.best_internal_model",
-            return_value=None,
-        ):
+    async def test_chat_synthesis_uses_a_hosted_model_when_none_of_ours_can(self):
+        hosted = MagicMock()
+        hosted._infer_no_context = AsyncMock(
+            return_value="A hosted model's merged answer, comfortably over fifty chars."
+        )
+        with patch(self.SYNTHESIS_BACKENDS, return_value=([], [hosted])):
+            result = await _synthesize_chat_candidate(
+                {"prompt": "hi", "history": []}, ["a", "b"]
+            )
+
+        assert result.startswith("A hosted model's merged answer")
+        hosted._infer_no_context.assert_awaited_once()
+
+    async def test_chat_synthesis_returns_none_without_a_model_that_can_merge(self):
+        with patch(self.SYNTHESIS_BACKENDS, return_value=([], [])):
             result = await _synthesize_chat_candidate(
                 {"prompt": "hi", "history": []}, ["a", "b"]
             )
@@ -842,10 +930,7 @@ class TestSynthesizeHelpers:
     async def test_chat_synthesis_rejects_too_short_model_output(self):
         model = MagicMock()
         model._infer_no_context = AsyncMock(return_value="short")
-        with patch(
-            "fighthealthinsurance.chooser_tasks.ml_router.best_internal_model",
-            return_value=model,
-        ):
+        with patch(self.SYNTHESIS_BACKENDS, return_value=([model], [])):
             result = await _synthesize_chat_candidate(
                 {"prompt": "hi", "history": []}, ["a", "b"]
             )
@@ -941,3 +1026,235 @@ class TestRetryDoesNotAskAFailedModelAgain:
         _, names = await self._generate()
 
         assert names == ["model-a", "model-a"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestGenerationUnderway:
+    """generation_underway reads a type's claim without taking it: the
+    next-task endpoint asks so it can tell a client to wait for the task
+    being written rather than report an empty pool."""
+
+    async def test_a_held_claim_is_underway_for_its_type_only(self):
+        assert await _claim_generation("appeal") is not None
+
+        assert await sync_to_async(generation_underway)("appeal") is True
+        assert await sync_to_async(generation_underway)("chat") is False
+
+    async def test_a_released_claim_is_not(self):
+        claim = await _claim_generation("appeal")
+        assert claim is not None
+        await claim.release()
+
+        assert await sync_to_async(generation_underway)("appeal") is False
+
+    async def test_a_lapsed_claim_is_not(self):
+        assert await _claim_generation("appeal") is not None
+
+        with _after_the_window():
+            assert await sync_to_async(generation_underway)("appeal") is False
+
+    async def test_reading_takes_nothing(self):
+        assert await sync_to_async(generation_underway)("appeal") is False
+
+        assert await _claim_generation("appeal") is not None
+
+
+def _generating(ready=True):
+    """Every task the backfill writes comes out READY (or not)."""
+    return patch(
+        "fighthealthinsurance.chooser_tasks._generate_single_task",
+        new=AsyncMock(return_value=ready),
+    )
+
+
+@contextlib.contextmanager
+def _waiting_for_the_claim(seconds=5.0):
+    """A backfill that finds the claim held waits up to ``seconds`` for it,
+    asking again without sleeping (tests give up at once by default)."""
+    with patch(
+        "fighthealthinsurance.chooser_tasks.CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS",
+        seconds,
+    ), patch("fighthealthinsurance.chooser_tasks._BACKFILL_CLAIM_POLL_SECONDS", 0):
+        yield
+
+
+def _held_until_asked(held, written=0):
+    """A _claim_generation for a backfill to wait on: while ``held`` is
+    taken, the first ask that finds it so lets the other holder write
+    ``written`` tasks and give the claim back, as a refill batch does."""
+
+    async def claim(task_type):
+        taken = await _claim_generation(task_type)
+        if taken is None:
+            for _ in range(written):
+                await _make_task(task_type)
+            await held.release()
+        return taken
+
+    return patch("fighthealthinsurance.chooser_tasks._claim_generation", new=claim)
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestLaunchBackfill:
+    """launch_backfill writes a big batch of appeal tasks at launch, once the
+    voters have judged every appeal task the current case pipeline made at
+    least twice; the refill's ten-at-a-time keeps the pool at its minimums
+    the rest of the time."""
+
+    async def _judged(self, task, votes):
+        candidate = await _make_candidate(task, 0)
+        for i in range(votes):
+            await ChooserVote.objects.acreate(
+                task=task,
+                chosen_candidate=candidate,
+                presented_candidate_ids=[candidate.id],
+                session_key=f"session-{task.id}-{i}",
+            )
+        return task
+
+    async def test_due_once_every_current_task_has_two_votes(self):
+        await self._judged(await _make_task(), 2)
+        await self._judged(await _make_task(), 3)
+
+        assert await backfill_reason("appeal") is not None
+
+    async def test_not_due_while_a_current_task_has_fewer(self):
+        await self._judged(await _make_task(), 2)
+        await self._judged(await _make_task(), 1)
+
+        assert await backfill_reason("appeal") is None
+
+    async def test_an_older_version_task_does_not_hold_it_off(self):
+        await self._judged(await _make_task(), 2)
+        # Served after the current ones; not what the backfill is for.
+        await self._judged(await _make_task(case_version=1), 0)
+
+        assert await backfill_reason("appeal") is not None
+
+    async def test_due_with_no_current_task_at_all(self):
+        assert await backfill_reason("appeal") is not None
+
+    async def test_the_vote_bar_can_be_raised(self):
+        await self._judged(await _make_task(), 2)
+
+        assert await backfill_reason("appeal", min_votes=3) is None
+
+    async def test_writes_the_requested_tasks(self):
+        with _generating() as generate:
+            result = await launch_backfill(count=3)
+
+        assert result == {"requested": 3, "ready": 3}
+        assert generate.await_count == 3
+
+    async def test_writes_nothing_when_not_due(self):
+        await self._judged(await _make_task(), 1)
+
+        with _generating() as generate:
+            result = await launch_backfill(count=3)
+
+        assert result == {"skipped": "not due"}
+        generate.assert_not_awaited()
+
+    async def test_writes_nothing_when_nothing_is_requested(self):
+        with _generating() as generate:
+            result = await launch_backfill(count=0)
+
+        assert "skipped" in result
+        generate.assert_not_awaited()
+
+    async def test_gives_up_when_the_claim_stays_held(self):
+        assert await _claim_generation("appeal") is not None
+
+        with _generating() as generate:
+            result = await launch_backfill(count=3)
+
+        assert "claim" in result["skipped"]
+        generate.assert_not_awaited()
+
+    async def test_the_wait_for_a_held_claim_ends(self):
+        assert await _claim_generation("appeal") is not None
+
+        with _waiting_for_the_claim(seconds=0.05), _generating() as generate:
+            result = await launch_backfill(count=3)
+
+        assert "claim" in result["skipped"]
+        generate.assert_not_awaited()
+
+    async def test_writes_once_a_held_claim_comes_free(self):
+        """The deploy kills the refill actor that held the claim without it
+        releasing; the backfill waits that claim out rather than skipping."""
+        held = await _claim_generation("appeal")
+
+        with _waiting_for_the_claim(), _held_until_asked(
+            held
+        ), _generating() as generate:
+            result = await launch_backfill(count=3)
+
+        assert result == {"requested": 3, "ready": 3}
+        assert generate.await_count == 3
+
+    async def test_tasks_written_while_it_waited_count_toward_the_total(self):
+        """The gate is not asked again: the refill's batch that held the
+        claim writes unvoted tasks, which would call the backfill off."""
+        held = await _claim_generation("appeal")
+        # Judged before the launch; not the backfill's.
+        earlier = await self._judged(await _make_task(), 2)
+        await ChooserTask.objects.filter(id=earlier.id).aupdate(
+            created_at=timezone.now() - datetime.timedelta(hours=1)
+        )
+
+        with _waiting_for_the_claim(), _held_until_asked(
+            held, written=2
+        ), _generating() as generate:
+            result = await launch_backfill(count=5)
+
+        assert result == {"requested": 3, "ready": 3}
+        assert generate.await_count == 3
+
+    async def test_writes_nothing_once_the_count_was_written_while_it_waited(self):
+        held = await _claim_generation("appeal")
+
+        with _waiting_for_the_claim(), _held_until_asked(
+            held, written=2
+        ), _generating() as generate:
+            result = await launch_backfill(count=2)
+
+        assert "written while waiting" in result["skipped"]
+        generate.assert_not_awaited()
+        # And the claim was given back.
+        assert await _claim_generation("appeal") is not None
+
+    async def test_holds_the_claim_while_writing_and_releases_it_after(self):
+        held = []
+
+        async def generate(task_type):
+            held.append(await _claim_generation(task_type))
+            return True
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_single_task", new=generate
+        ):
+            await launch_backfill(count=2)
+
+        assert held == [None, None]
+        assert await _claim_generation("appeal") is not None
+
+    async def test_stops_after_tasks_fail_in_a_row(self):
+        with _generating(ready=False) as generate:
+            result = await launch_backfill(count=20)
+
+        assert result == {"requested": 20, "ready": 0}
+        assert generate.await_count == CHOOSER_BACKFILL_STOP_AFTER_FAILURES
+
+    async def test_a_task_that_comes_out_ready_resets_the_failure_count(self):
+        outcomes = [False, False, True, False, False, True]
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_single_task",
+            new=AsyncMock(side_effect=outcomes),
+        ) as generate:
+            result = await launch_backfill(count=len(outcomes))
+
+        assert result == {"requested": 6, "ready": 2}
+        assert generate.await_count == 6

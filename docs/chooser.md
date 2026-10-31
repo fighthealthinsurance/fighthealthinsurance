@@ -120,7 +120,15 @@ Models".
    `condition_rankings.seed_pairs()`: pairs entered by at least k different
    people, both terms vouched for by a medical vocabulary (see below). The pool
    being empty (no refresh has run yet) falls back to the old behaviour,
-   where the writer model invents the pair.
+   where the writer model invents the pair. A `CHOOSER_SIMPLE_CASE_SHARE`
+   share of cases (a quarter) are **simple cases**: the writer is asked, in
+   so many words, for an everyday procedure or medication, an everyday
+   denial reason and two or three facts that settle it, and picks the pair
+   itself. Left alone it makes every case elaborate, and a model that pads a
+   plain denial out with claims the facts do not support is never caught.
+   The case carries `context_json["case_style"]` (`"simple"` or
+   `"standard"`), the voter is told when a case is simple, and the export
+   carries it in `context`, so votes can be split by it.
 2. **Scenario.** A general-purpose backend writes the insurer, the denial
    reason and the case facts (`_scenario_prompt`). Facts are parsed from
    one semicolon-separated line or a bullet list (`_facts_from_response`)
@@ -161,7 +169,38 @@ Models".
    the only facts, and the evidence list is the only thing it may cite, for
    no more than its summary says (`_build_appeal_prompt`), so a draft that
    makes things up is doing so against instructions, and the voter can check
-   it against the same list.
+   it against the same list. The selected backends are asked at the same
+   time (`_fill_candidates`), so a task takes as long as its slowest draft,
+   not all of them added up; the slots are still seated in the models'
+   order. The retry pass that fills a slot a backend left empty runs one
+   backend at a time, as before.
+6. **Synthesis.** When `CHOOSER_INCLUDE_SYNTHESIS` is on, one more
+   candidate merges the drafts, so synthesis is measured against the single
+   models. It is written by a model that can merge drafts
+   (`ml_router.synthesis_backends`, with hosted models allowed since the
+   drafts came from them too): never the appeal-text fine-tune, which cannot
+   follow "merge these drafts" and answers with a stray number. An appeal
+   candidate races all of them (`AppealGenerator.synthesize_appeals`); a
+   chat candidate takes the strongest, ours before a hosted one. With none
+   available, the task skips synthesis.
+
+Each step logs one INFO line saying what it found and how long it took
+(the scenario and its writer, the evidence and whether it was cached or
+searched live, the questions asked and answered, the candidates seated,
+the synthesis), and the task's READY line carries the total.
+
+### Waiting for a case
+
+The next-task endpoints (`/ziggy/rest/chooser/next/appeal/`, `.../chat/`)
+answer `200` with a case, `202` when there is no case for this session yet
+but one is being written (the prefill the request set off, or another
+process holding the type's generation claim; the body carries
+`retry_after` seconds), and `404` only when nothing is underway. The page
+polls on `202`, showing that a case is being written, and gives up after
+fifteen minutes. A case is a round of model calls, so a few minutes is
+normal; before this the page read the empty pool as "try again in a few
+minutes" and sent the visitor away from a case that was one poll from
+READY.
 
 ### What the voter is served (`annotate_evidence_verdicts`)
 
@@ -207,6 +246,46 @@ synthetic cases without being offered any real traffic. For now the default is
 LunaRoute's two models, `lunaroute/deepseek-4.1-flash,lunaroute/glm-5.3`
 (see [ml-backends.md](ml-backends.md)); they are seated only where
 `LUNA_ROUTE_KEY` is set, and `CHOOSER_FORCE_MODEL=""` turns forcing off.
+
+## Keeping the pool stocked
+
+Three things write tasks, all under one generation claim per type
+(`_claim_generation`, a row in `ModelHealthAlertState`), so no two overlap:
+
+- **Page prefill.** Loading the arena, or asking for a case when none is
+  left for the session, sets off a prefill in a background thread
+  (`trigger_prefill_async`). It writes one task of each type whose READY
+  pool is empty, and of the type the session used up (`prefill_if_needed`).
+  Throttled per process to one per `CHOOSER_PREFILL_THROTTLE_SECONDS`, with
+  page loads and each used-up type throttled separately.
+- **Refill actor.** `ChooserRefillActor` (launched by the deploy's
+  actor-launch job, reconciled by a cron) checks every five minutes and
+  writes `CHOOSER_GENERATION_BATCH_SIZE` tasks of a type whose READY pool,
+  fresh (unvoted, current-version) pool, or coverage of a backend is short
+  (`check_and_refill_task_pool`).
+- **Launch backfill.** The actor-launch job first runs
+  `manage.py launch_chooser_backfill` (before the polling actors: the
+  backfill is due exactly when the refill's first tick would want a batch,
+  and whichever takes the claim first writes), which starts the one-shot
+  `ChooserBackfillActor`. It writes `CHOOSER_LAUNCH_BACKFILL_SIZE` appeal
+  tasks (a hundred), one at a time, when every READY appeal task at the
+  current case version has at least `CHOOSER_LAUNCH_BACKFILL_MIN_VOTES`
+  votes (two): the voters have got through everything the current pipeline
+  made, so a deploy of a new pipeline gets a pool of its own cases rather
+  than the refill's ten. With a task still short of the bar it does nothing;
+  the next deploy asks again. Due, it waits up to
+  `CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS` (an hour) for the claim: the
+  claim it finds is usually the one the old cluster's refill actor held
+  mid-batch when the deploy deleted it, which lapses within the fifteen-minute
+  claim window. Whether it is due is decided once, at launch, and tasks the
+  refill or a prefill write while it waits count toward the hundred instead
+  of calling it off. A finished actor from an earlier launch is
+  retired before a fresh one is created (a detached actor runs the code it
+  was created with), one still writing is left to finish and declines a
+  second backfill. It stops after three tasks in a row come out unusable.
+  `manage.py launch_chooser_backfill --inline` runs the same backfill in the
+  current process (a dev machine without Ray); `--count` and `--min-votes`
+  override the settings.
 
 ## Rankings and privacy (`condition_rankings.py`, `public_rankings.py`)
 
@@ -269,6 +348,7 @@ environment variables of the same name.
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `CHOOSER_SEED_FROM_RANKINGS` | `True` | Build appeal scenarios around a real, k-anonymous pair |
+| `CHOOSER_SIMPLE_CASE_SHARE` | `0.25` (`0` in tests) | Share of new appeal cases written as explicitly simple ones |
 | `CHOOSER_EVIDENCE_LIMIT` | `5` | Articles attached to a scenario |
 | `CHOOSER_PUBMED_LIVE_SEARCH` | `True` (`False` in tests) | Search PubMed when nothing is cached for the pair |
 | `CHOOSER_PUBMED_SEARCH_TIMEOUT` | `20.0` | Seconds a live search may take |
@@ -277,6 +357,10 @@ environment variables of the same name.
 | `CHOOSER_EVIDENCE_JUDGING_TIMEOUT` | `60` | Seconds a case waits for those verdicts |
 | `CHOOSER_MAX_QUESTIONS` | `4` | Questions the simulated patient is asked |
 | `CHOOSER_QA_TIMEOUT` | `60` | Seconds each question generator may take |
+| `CHOOSER_PENDING_RETRY_SECONDS` | `15` | What the next-task endpoint tells the page to wait while a case is being written |
+| `CHOOSER_LAUNCH_BACKFILL_SIZE` | `100` | Appeal tasks the launch backfill writes (`0` turns it off) |
+| `CHOOSER_LAUNCH_BACKFILL_MIN_VOTES` | `2` | Votes every current appeal task needs before the launch backfill is due |
+| `CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS` | `3600` | How long a due launch backfill waits for a generation claim another process holds |
 | `CHOOSER_FORCE_MODEL` | LunaRoute's two models, for now (`""` in tests) | Registered model names seated in every new arena task |
 | `CONDITION_RANKING_MIN_PEOPLE` | `5` | The k in k-anonymity: different people per term |
 | `CONDITION_RANKING_LOOKUP_BUDGET` | `30` | Outside lookups per refresh |
