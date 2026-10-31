@@ -4,10 +4,11 @@ The step checks each file before anything is stored, as every plan document
 upload does (upload_limits.validate_uploads with validate_policy_document;
 tests/sync/test_large_file_handling.py pins the limits themselves). A refused
 upload comes back to the page with nothing stored and each refused file
-named, under the box and in the list at the top, in the person's words
-rather than the field's name in the code. The picker offers only the types
-the check takes, and a file that passes is stored whole, its shared copy
-too.
+named, under the box (one to a line) and in the list at the top, in the
+person's words rather than the field's name in the code. The box is
+described by its limits and its error, so a screen reader reads them with
+it. The picker offers only the types the check takes, and a file that
+passes is stored whole, its shared copy too.
 """
 
 from bs4 import BeautifulSoup
@@ -135,6 +136,18 @@ class ARefusedUploadSaysWhyTest(_StepTestCase):
             "b.pdf:",
         )
 
+    def test_each_refused_file_has_a_line_of_its_own_under_the_box(self):
+        response = self.post([pdf("a.pdf", b"not a pdf"), pdf("b.pdf", b"nor this")])
+        note = self.soup(response).find(id="plan_documents_error")
+        self.assertEqual(
+            list(note.stripped_strings),
+            [
+                "a.pdf: The file does not appear to be a valid PDF.",
+                "b.pdf: The file does not appear to be a valid PDF.",
+            ],
+        )
+        self.assertEqual(len(note.find_all("br")), 1)
+
     def test_too_many_files(self):
         files = [
             txt(f"part-{n}.txt") for n in range(upload_limits.MAX_UPLOAD_FILES + 1)
@@ -175,6 +188,16 @@ class ThePickerOffersWhatTheCheckTakesTest(_StepTestCase):
         )
         self.assertIn("multiple", box.attrs)
         self.assertEqual(box["id"], "plan_documents")
+
+    def test_the_input_is_described_by_its_limits_and_its_error(self):
+        page = self.page()
+        box = page.find("input", attrs={"name": "plan_documents"})
+        described_by = box["aria-describedby"].split()
+        self.assertEqual(
+            described_by, ["plan_documents_limits", "plan_documents_error"]
+        )
+        for element_id in described_by:
+            self.assertIsNotNone(page.find(id=element_id), element_id)
 
     def test_the_form_field_carries_the_same_types(self):
         field = BeautifulSoup(
