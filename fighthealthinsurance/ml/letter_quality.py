@@ -226,7 +226,7 @@ def _count(outcome: str) -> None:
 
 
 def enabled() -> bool:
-    return bool(getattr(settings, "TYPESAFE_API_KEY", None)) and bool(
+    return typesafe.configured() and bool(
         getattr(settings, "TYPESAFE_LETTER_RANKING_ENABLED", False)
     )
 

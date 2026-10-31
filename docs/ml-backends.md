@@ -62,10 +62,13 @@ wins, including the ones `scripts/run_local.sh` sets.
 
 ## TypeSafe (Jev)
 
-TypeSafe's Jev is not a writer: it answers typed yes/no, multiple-choice and
-scale questions about a text, for a fraction of a cent, through one client
-(`ml/typesafe.py`, `TYPESAFE_API_KEY`). Every feature has its own switch,
-off by default, and sends text only with the person's external-models
+Jev is not a writer: it answers typed yes/no, multiple-choice and scale
+questions about a text through one client (`ml/typesafe.py`). With
+`OPENCODE_TOKEN`, the pinned base release uses OpenCode's free
+`jev-1.13-free` first; when `TYPESAFE_API_KEY` is also present, a failed or
+unsupported OpenCode request falls through to TypeSafe. A custom/FT
+`TYPESAFE_MODEL` always goes directly to TypeSafe. Every feature has its own
+switch, off by default, and sends text only with the person's external-models
 consent:
 
 | Switch | What Jev does |
@@ -183,6 +186,7 @@ such as `sonar` are not listed in that line.
 | Azure AI Foundry (Claude) | `RemoteAzureClaude` | `AZURE_ANTHROPIC_API_KEY`, `AZURE_ANTHROPIC_ENDPOINT` | `azure-anthropic/` |
 | Anthropic (direct) | `RemoteAnthropic` | `ANTHROPIC_API_KEY` | `anthropic/` |
 | DeepInfra | `DeepInfra` | `DEEPINFRA_API` | the model id |
+| OpenCode | `OpenCode` | `OPENCODE_TOKEN` | `deepseek-ai/DeepSeek-V4.1-Flash-1017` |
 | Perplexity (citations only) | `RemotePerplexity` | `PERPLEXITY_API` | `sonar` |
 | LunaRoute (Appeal Arena only) | `LunaRoute` | `LUNA_ROUTE_KEY` | `lunaroute/` |
 | OpenRouter | `OpenRouter` | `OPENROUTER_API_KEY` | `openrouter/` |
@@ -261,6 +265,10 @@ citations to an appeal ([`ml/web_search_context.py`](../fighthealthinsurance/ml/
   `OPENROUTER_WEB_SEARCH_MAX_RESULTS` (1-25, default 5) sets how many pages
   a search returns. Each search costs OpenRouter's search fee on top of the
   model's tokens (about a cent).
+
+OpenCode supplies the free `deepseek-v4.1-flash-free` endpoint under the same
+friendly name as DeepInfra's DeepSeek V4.1 Flash. The router orders the free
+OpenCode instance first and then uses DeepInfra as the provider fallback.
 
 **Fallback keys.** Every key above except LunaRoute's can be paired with a
 second key for the same provider, set as `SECONDARY_<name>` (`SECONDARY_ANTHROPIC_API_KEY`,

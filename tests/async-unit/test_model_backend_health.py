@@ -1568,7 +1568,9 @@ class TestTypeSafeProbe:
         entry = mhc.typesafe_entry()
         assert entry.category == mhc.CATEGORY_NOT_CONFIGURED
         assert not entry.enabled and not entry.failed
-        assert entry.error == "skipped: TYPESAFE_API_KEY is not set"
+        assert entry.error == (
+            "skipped: neither OPENCODE_TOKEN nor TYPESAFE_API_KEY is set"
+        )
         assert entry.provider == mhc.TYPESAFE_PROVIDER
 
     def test_a_probability_passes(self):
