@@ -73,7 +73,7 @@ consent:
 | `TYPESAFE_LETTER_RANKING_ENABLED` | Scores appeal drafts so the strongest shows first (`ml/letter_quality.py`). |
 | `TYPESAFE_DENIAL_TRIAGE_ENABLED` | Reads the denial letter: the denial reason, the kind of plan, pre-service, urgency, the internal appeal deadline (`ml/denial_triage.py`). The review and questions pages offer the matching denial types, plan source and urgent/pre-service boxes pre-ticked, marked as read from the letter; an assistant's case, which no one reviews, takes them at a higher confidence. |
 | `TYPESAFE_DEADLINE_SHOW_ENABLED` | Tells readers the deadline triage found, hedged. Off until staff labels in the Denial admin say it holds up. |
-| `TYPESAFE_RESEARCH_JUDGING_ENABLED` | Judges each PubMed article against the denial's treatment; articles off topic or against it are left out of the appeal's research and offered unticked on the fax page (`ml/research_judging.py`). |
+| `TYPESAFE_RESEARCH_JUDGING_ENABLED` | Judges each PubMed article against the denial's treatment; articles off topic or against it are left out of the appeal's research and offered unticked on the fax page (`ml/research_judging.py`). The Appeal Arena's evidence verdicts use it too, and fall through to our own model where Jev gives none ([chooser.md](chooser.md)); real appeals do not. |
 | `FHI_CHAT_JEV_GATE_ENABLED`, `TYPESAFE_CHAT_SHADOW_ENABLED` | Checks and scores chat replies ([chat-pipeline.md](chat-pipeline.md)). |
 | `TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED` | In the follow-up round below, answers "are the answers enough?" for people who allowed outside models; our own model answers it for everyone else (`ml/followup_questions.py`). |
 

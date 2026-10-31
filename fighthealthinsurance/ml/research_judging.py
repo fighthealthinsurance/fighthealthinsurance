@@ -25,6 +25,13 @@ judgment names no person and no case (PubMedArticleJudgment), so it is read
 for any case about the same treatment and condition. Inert until both
 ``TYPESAFE_API_KEY`` and ``TYPESAFE_RESEARCH_JUDGING_ENABLED`` are set;
 fails closed; never logs the text.
+
+Our own models can answer the same three questions (``judge_article_with``):
+asked for a likelihood of each, as a whole number out of 100, and read
+strictly. Only the Appeal Arena asks them, for the articles Jev did not
+judge (chooser_tasks._judge_evidence). Their judgments are stored under a
+scorer of their own (``fhi/<model>/research-rubric-N``), which a real
+appeal's research context and fax page never read: those stay Jev's alone.
 """
 
 import asyncio
@@ -34,14 +41,18 @@ import re
 import typing
 
 from django.conf import settings
+from loguru import logger
 
-from fighthealthinsurance.ml import letter_quality, spend, typesafe
+from fighthealthinsurance.ml import letter_quality, llm_usage, spend, typesafe
 
 # Bump when the questions change: a stored judgment from another rubric is
-# not reused. The model half is the versioned model TypeSafe reports.
+# not reused. The model half is the versioned model TypeSafe reports, or the
+# registered name of our own model that answered.
 RUBRIC_VERSION = 1
 _RUBRIC_SUFFIX = f"/research-rubric-{RUBRIC_VERSION}"
-SCORER = f"typesafe/{typesafe.DEFAULT_MODEL}{_RUBRIC_SUFFIX}"
+JEV_SCORER_PREFIX = "typesafe/"
+OWN_MODEL_SCORER_PREFIX = "fhi/"
+SCORER = f"{JEV_SCORER_PREFIX}{typesafe.DEFAULT_MODEL}{_RUBRIC_SUFFIX}"
 
 # Key of the cross-pod health record (models.ExternalServiceHealth).
 SERVICE = "typesafe-research"
@@ -80,13 +91,30 @@ CONCURRENCY = 4
 ABSTRACT_CHAR_CAP = 6_000
 # The treatment and condition as asked about; intake keeps both under 200.
 TERM_CHAR_CAP = 200
+# Our own model, asked in Jev's place: fewer at once, since the same
+# backends write real appeals, and longer each, since it writes its answer.
+OWN_MODEL_CONCURRENCY = 2
+OWN_MODEL_TIMEOUT_SECONDS = 30.0
 
 
 def scorer_for(payload: typing.Any) -> str:
-    return f"typesafe/{typesafe.reported_model(payload)}{_RUBRIC_SUFFIX}"
+    return f"{JEV_SCORER_PREFIX}{typesafe.reported_model(payload)}{_RUBRIC_SUFFIX}"
 
 
-_SCORER_RE = re.compile(r"^typesafe/[A-Za-z0-9._-]{1,48}/research-rubric-(\d{1,4})$")
+_MODEL_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def own_model_scorer(model: typing.Any) -> str:
+    """The scorer a judgment by our own ``model`` is stored under: its
+    registered name, in the characters a scorer allows."""
+    name = str(getattr(model, "name", None) or model)
+    safe = _MODEL_NAME_UNSAFE.sub("-", name).strip("-")[:48] or "internal"
+    return f"{OWN_MODEL_SCORER_PREFIX}{safe}{_RUBRIC_SUFFIX}"
+
+
+_SCORER_RE = re.compile(
+    r"^(?:typesafe|fhi)/[A-Za-z0-9._-]{1,48}/research-rubric-(\d{1,4})$"
+)
 
 
 def same_rubric(scorer: typing.Optional[str]) -> bool:
@@ -228,7 +256,81 @@ def parse(payload: typing.Any) -> Judgment:
         raise JudgingError(f"unexpected response shape: {type(e).__name__}") from e
 
 
-outcomes: dict[str, int] = {"judged": 0, "failed": 0, "skipped": 0}
+# --- Our own model, in Jev's place ----------------------------------------
+
+OWN_MODEL_SYSTEM_PROMPT = (
+    "You read the abstracts of medical research articles for a service that "
+    "helps patients appeal health insurance denials, and answer questions "
+    "about what an article studies and finds. Answer only from the article."
+)
+
+
+def build_own_model_prompt(
+    title: typing.Optional[str],
+    abstract: typing.Optional[str],
+    treatment: str,
+    condition: typing.Optional[str],
+) -> str:
+    """The article and Jev's three questions (build_state, build_questions:
+    one rubric, so RUBRIC_VERSION covers both), each answered with how
+    likely a yes is, out of 100."""
+    lines = []
+    for name, question in build_questions(treatment, condition).items():
+        criteria = question.get("criteria") or {}
+        explained = (
+            f" Yes: {criteria['true']}. No: {criteria['false']}." if criteria else ""
+        )
+        lines.append(f"{name}: {question['instructions']}{explained}")
+    names = list(build_questions(treatment, condition))
+    return (
+        f"{build_state(title, abstract)}\n\n"
+        "Answer each question below about THE ARTICLE with how likely the "
+        "answer is yes, as a whole number from 0 (certainly not) to 100 "
+        "(certainly yes).\n\n" + "\n".join(lines) + "\n\n"
+        "Reply with exactly these three lines and nothing else:\n"
+        + "\n".join(f"{name}: <number>" for name in names)
+    )
+
+
+_OWN_MODEL_ANSWER = re.compile(
+    r"^[\s*_`#>-]*(on[_ ]topic|supports|undermines)[\s*_`]*[:=][\s*_`]*"
+    r"(\d{1,3})\s*%?[\s*_`.]*$",
+    re.IGNORECASE,
+)
+
+
+def parse_own_model(reply: typing.Optional[str], *, scorer: str) -> Judgment:
+    """Strict, as ``parse`` is: each of the three answered (a repeat must
+    agree) with a whole number from 0 to 100, after any reasoning the model
+    left in (up to its last </think>). A decimal is refused rather than
+    guessed at: is "0.8" a probability or 0.8 out of 100? A wrong judgment
+    would hide an article."""
+    if reply is None:
+        raise JudgingError("no reply")
+    answers: dict[str, list[int]] = {}
+    for line in reply.rsplit("</think>", 1)[-1].splitlines():
+        match = _OWN_MODEL_ANSWER.match(line)
+        if match:
+            name = match.group(1).lower().replace(" ", "_")
+            answers.setdefault(name, []).append(int(match.group(2)))
+    values: dict[str, float] = {}
+    for name in ("on_topic", "supports", "undermines"):
+        given = answers.get(name) or []
+        if len(set(given)) != 1:
+            raise JudgingError(f"{name} answered {len(given)} times")
+        if given[0] > 100:
+            raise JudgingError(f"{name} out of range")
+        values[name] = given[0] / 100
+    return Judgment(scorer=scorer, **values)
+
+
+outcomes: dict[str, int] = {
+    "judged": 0,
+    "failed": 0,
+    "skipped": 0,
+    "own_model_judged": 0,
+    "own_model_failed": 0,
+}
 
 
 def _count(outcome: str) -> None:
@@ -290,6 +392,44 @@ async def judge_article(
         )
         return None
     _count("judged")
+    return judgment
+
+
+async def judge_article_with(
+    model: typing.Any,
+    title: typing.Optional[str],
+    abstract: typing.Optional[str],
+    treatment: typing.Optional[str],
+    condition: typing.Optional[str],
+    *,
+    timeout_seconds: float = OWN_MODEL_TIMEOUT_SECONDS,
+) -> typing.Optional[Judgment]:
+    """Our own ``model``'s judgment of one article, or None. Never raises,
+    never logs the text or the reply. Not gated on Jev's switch: the
+    caller decides when our own model is asked (the Appeal Arena, for what
+    Jev did not judge), and sends only what Jev would be sent."""
+    if not _term(treatment) or not (abstract or "").strip():
+        _count("skipped")
+        return None
+    scorer = own_model_scorer(model)
+    try:
+        with llm_usage.llm_task("research_judging"):
+            reply = await model._infer_no_context(
+                system_prompts=[OWN_MODEL_SYSTEM_PROMPT],
+                prompt=build_own_model_prompt(
+                    title, abstract, treatment or "", condition
+                ),
+                temperature=0.1,
+                timeout=timeout_seconds,
+            )
+        judgment = parse_own_model(reply, scorer=scorer)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.debug(f"research judging by {scorer} failed: {type(e).__name__}")
+        _count("own_model_failed")
+        return None
+    _count("own_model_judged")
     return judgment
 
 

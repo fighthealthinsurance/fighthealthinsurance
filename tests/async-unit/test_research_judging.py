@@ -8,7 +8,7 @@ article nobody judged keeps its place.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from asgiref.sync import async_to_sync
@@ -22,7 +22,12 @@ from fighthealthinsurance.models import (
     PubMedArticleJudgment,
     PubMedArticleSummarized,
 )
-from fighthealthinsurance.pubmed_tools import PubMedTools
+from fighthealthinsurance.pubmed_tools import (
+    PubMedTools,
+    judge_missing,
+    stored_judgments,
+    stored_judgments_for,
+)
 
 ENABLED = dict(TYPESAFE_API_KEY="test-key", TYPESAFE_RESEARCH_JUDGING_ENABLED=True)
 TITLE = "Lumbar MRI for chronic low back pain: a randomized trial"
@@ -90,6 +95,95 @@ class TestParse:
     def test_another_rubric_is_not_the_same(self):
         assert not rj.same_rubric("typesafe/jev-1.13.0/research-rubric-0")
         assert not rj.same_rubric("typesafe/jev-1.13.0/rubric-1")
+        assert not rj.same_rubric("fhi/fhi-2025/research-rubric-0")
+
+
+# What our own model is asked to reply (research_judging.build_own_model_prompt).
+OWN_REPLY = "on_topic: 90\nsupports: 80\nundermines: 10"
+
+
+def _own_model(reply=OWN_REPLY, name="fhi-2026-general"):
+    model = MagicMock()
+    model.name = name
+    model._infer_no_context = AsyncMock(return_value=reply)
+    return model
+
+
+class TestOwnModel:
+    """Our own model answering Jev's questions, for the Appeal Arena's
+    articles Jev did not judge (chooser_tasks._judge_evidence)."""
+
+    def test_the_prompt_is_the_article_and_jevs_three_questions(self):
+        prompt = rj.build_own_model_prompt(TITLE, ABSTRACT, "MRI", "low back pain")
+        assert prompt.startswith(rj.build_state(TITLE, ABSTRACT))
+        for question in rj.build_questions("MRI", "low back pain").values():
+            assert question["instructions"] in prompt
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            OWN_REPLY,
+            "<think>on_topic: 3, surely?</think>\non_topic: 90\nsupports: 80\nundermines: 10",
+            "**on_topic**: 90%\n**supports**: 80%\n**undermines**: 10%",
+            "- On topic: 90\n- Supports: 80\n- Undermines: 10.",
+        ],
+    )
+    def test_parse_reads_the_three_likelihoods(self, reply):
+        judgment = rj.parse_own_model(reply, scorer="fhi/m/research-rubric-1")
+        assert (judgment.on_topic, judgment.supports, judgment.undermines) == (
+            pytest.approx(0.9),
+            pytest.approx(0.8),
+            pytest.approx(0.1),
+        )
+        assert judgment.scorer == "fhi/m/research-rubric-1"
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            None,
+            "",
+            "on_topic: 90\nsupports: 80",
+            "on_topic: 0.9\nsupports: 0.8\nundermines: 0.1",
+            "on_topic: 190\nsupports: 80\nundermines: 10",
+            "on_topic: 90\non_topic: 20\nsupports: 80\nundermines: 10",
+            "I cannot judge medical research.",
+        ],
+    )
+    def test_parse_rejects_anything_odd(self, reply):
+        with pytest.raises(rj.JudgingError):
+            rj.parse_own_model(reply, scorer="fhi/m/research-rubric-1")
+
+    def test_the_scorer_names_the_model_in_safe_characters(self):
+        model = _own_model(name="totallylegitco/fhi model v0.5")
+        scorer = rj.own_model_scorer(model)
+        assert scorer == "fhi/totallylegitco-fhi-model-v0.5/research-rubric-1"
+        assert rj.same_rubric(scorer)
+
+    def test_happy_path_needs_no_jev_switch_and_sends_only_the_article(self):
+        model = _own_model()
+        judgment = asyncio.run(
+            rj.judge_article_with(model, TITLE, ABSTRACT, "MRI", "low back pain")
+        )
+        assert judgment is not None and judgment.verdict == rj.VERDICT_SUPPORTS
+        assert judgment.scorer == "fhi/fhi-2026-general/research-rubric-1"
+        prompt = model._infer_no_context.await_args.kwargs["prompt"]
+        assert prompt == rj.build_own_model_prompt(TITLE, ABSTRACT, "MRI", "low back pain")
+
+    def test_nothing_to_read_or_ask_about_is_not_asked(self):
+        model = _own_model()
+        assert asyncio.run(rj.judge_article_with(model, TITLE, "", "MRI", "pain")) is None
+        assert asyncio.run(rj.judge_article_with(model, TITLE, ABSTRACT, "", "pain")) is None
+        model._infer_no_context.assert_not_awaited()
+
+    @pytest.mark.parametrize("failure", [RuntimeError("backend down"), asyncio.TimeoutError()])
+    def test_a_failing_model_is_none(self, failure):
+        model = _own_model()
+        model._infer_no_context = AsyncMock(side_effect=failure)
+        assert asyncio.run(rj.judge_article_with(model, TITLE, ABSTRACT, "MRI", "pain")) is None
+
+    def test_an_unreadable_reply_is_none(self):
+        model = _own_model(reply="Looks supportive to me.")
+        assert asyncio.run(rj.judge_article_with(model, TITLE, ABSTRACT, "MRI", "pain")) is None
 
 
 class TestJudgeArticle:
@@ -274,6 +368,27 @@ class TestJudgeArticlesForADenial:
         post.assert_not_called()
         assert judgments == {}
 
+    def test_our_own_models_judgment_is_not_used_for_a_real_appeal(self):
+        """Only the arena reads our own model's judgments: a real appeal
+        still asks Jev, and its fax page shows nothing from them."""
+        denial = _denial()
+        article = _article("666")
+        PubMedArticleJudgment.objects.create(
+            pmid="666",
+            treatment_key=rj.treatment_key(denial.procedure, denial.diagnosis),
+            on_topic=0.05,
+            supports=0.0,
+            undermines=0.0,
+            scorer="fhi/fhi-2026-general/research-rubric-1",
+        )
+        post = AsyncMock(return_value=_payload(supports=0.9))
+        with override_settings(**ENABLED), patch.object(rj, "_post", post):
+            judgments = async_to_sync(PubMedTools().judge_articles)(denial, [article])
+            stored = stored_judgments(denial, ["666"])
+        post.assert_awaited_once()
+        assert judgments["666"].supports == pytest.approx(0.9)
+        assert stored["666"].scorer == rj.SCORER
+
     def test_a_new_judgment_is_stored_and_noted_healthy(self):
         denial = _denial()
         article = _article("333")
@@ -409,3 +524,52 @@ class TestJudgingWithinTheCallersBudget:
         ):
             context = async_to_sync(build)()
         assert "Title 2" in context
+
+
+OWN_SCORER = "fhi/fhi-2026-general/research-rubric-1"
+
+
+@pytest.mark.django_db
+class TestOwnModelJudgmentsStored:
+    """Where our own model's judgments go, and who reads them back."""
+
+    def _store(self, pmid, scorer, supports):
+        PubMedArticleJudgment.objects.create(
+            pmid=pmid,
+            treatment_key=rj.treatment_key("MRI", "low back pain"),
+            on_topic=0.9,
+            supports=supports,
+            undermines=0.1,
+            scorer=scorer,
+        )
+
+    def test_they_are_read_only_when_asked_for(self):
+        self._store("1", OWN_SCORER, supports=0.8)
+        assert stored_judgments_for("MRI", "low back pain", ["1"]) == {}
+        read = stored_judgments_for("MRI", "low back pain", ["1"], own_models=True)
+        assert read["1"].scorer == OWN_SCORER
+
+    def test_jevs_wins_over_ours_whichever_is_newer(self):
+        self._store("1", rj.SCORER, supports=0.3)
+        self._store("1", OWN_SCORER, supports=0.9)
+        with override_settings(**ENABLED):
+            read = stored_judgments_for("MRI", "low back pain", ["1"], own_models=True)
+        assert read["1"].scorer == rj.SCORER
+
+    def test_jevs_switch_off_hides_jevs_but_not_ours(self):
+        self._store("1", rj.SCORER, supports=0.3)
+        self._store("2", OWN_SCORER, supports=0.9)
+        read = stored_judgments_for("MRI", "low back pain", ["1", "2"], own_models=True)
+        assert list(read) == ["2"]
+
+    def test_judge_missing_with_our_model_stores_it_and_leaves_jevs_health_alone(self):
+        model = _own_model()
+        article = _article("7")
+        judgments = async_to_sync(judge_missing)(
+            [article], "MRI", "low back pain", {}, own_model=model
+        )
+        assert judgments["7"].scorer == OWN_SCORER
+        stored = PubMedArticleJudgment.objects.get(pmid="7")
+        assert stored.scorer == OWN_SCORER
+        assert stored.supports == pytest.approx(0.8)
+        assert not ExternalServiceHealth.objects.filter(service=rj.SERVICE).exists()

@@ -1433,7 +1433,9 @@ class PubMedArticleSummarized(models.Model):
 class PubMedArticleJudgment(models.Model):
     """What Jev (ml/research_judging.py) answered about one article for one
     treatment and condition: is it on topic, does it support the treatment,
-    does it argue against it. Each is a probability.
+    does it argue against it. Each is a probability. A row whose scorer
+    starts ``fhi/`` is our own model's answer to the same questions, made
+    for the Appeal Arena where Jev gave none, and read only there.
 
     Keyed by the PMID and a hash of the normalized treatment and condition,
     with no link to a denial and nothing about a person, so one judgment
