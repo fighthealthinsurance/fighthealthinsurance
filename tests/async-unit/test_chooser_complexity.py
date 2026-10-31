@@ -121,9 +121,10 @@ class TestBreakdown:
         with_evidence = cc.breakdown(_EVIDENCE, [_draft(100)])
         with_citations = cc.breakdown({}, [_draft(100) + " (PMID 12345678) et al."])
         # The list's titles and summaries are words to read, nothing more.
-        assert with_evidence.minutes == plain.minutes + 10 / 230
+        assert with_evidence.minutes == pytest.approx(plain.minutes + 10 / 230)
+        # A citation is its words read, plus the check against the list.
         assert with_citations.citations == 2
-        assert with_citations.minutes == plain.minutes + 2 * 0.2
+        assert with_citations.minutes == pytest.approx(104 / 230 + 2 * 0.2)
 
 
 class TestCitations:
