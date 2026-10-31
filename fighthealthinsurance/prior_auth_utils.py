@@ -4,6 +4,9 @@ from typing import Any, Dict, Optional
 
 from loguru import logger
 
+from fighthealthinsurance.letter_openings import (
+    readdress_review_board_salutation,
+)
 from fighthealthinsurance.models import PriorAuthRequest, ProposedPriorAuth, UserDomain
 
 
@@ -121,6 +124,13 @@ class PriorAuthTextSubstituter:
                     proposal_text = re.sub(
                         pattern, escaped, proposal_text, flags=re.IGNORECASE
                     )
+            # A prior authorization request goes to the plan, not to a
+            # review board; readdress a salutation that says otherwise to
+            # the plan, or to its placeholder when the plan is not known.
+            recipient = context.get("insurance_company") or ""
+            if recipient.strip().upper() == "UNKNOWN":
+                recipient = "{{INSURANCE_COMPANY}}"
+            proposal_text = readdress_review_board_salutation(proposal_text, recipient)
             return proposal_text
         except Exception as e:
             logger.error(f"Error substituting values in prior auth text: {e}")
@@ -173,9 +183,6 @@ class PriorAuthTextSubstituter:
             context["insurance_company"] = insurance_company
             context["insurance company"] = insurance_company
             context["health plan name"] = insurance_company
-            context["Esteemed Members of the Health Plan Review Board"] = (
-                insurance_company
-            )
 
             # Insurance information
             insurance_information = f"Plan ID: {plan_id}, Member ID: {member_id}, Insurance Company: {insurance_company}"

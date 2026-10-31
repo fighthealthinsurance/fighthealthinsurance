@@ -176,6 +176,10 @@ from fighthealthinsurance.ml.bad_output_utils import (
     is_bad_output,
     strip_boilerplate_service,
 )
+from fighthealthinsurance.letter_openings import (
+    APPEAL_SALUTATION_INSTRUCTION,
+    strip_letter_preamble,
+)
 from fighthealthinsurance.process_denial import DenialBase
 from fighthealthinsurance.regulator_routing import (
     ROUTING_PROMPT,
@@ -3219,6 +3223,7 @@ class RemoteOpenLike(RemoteModel):
                 "Emphasize medical necessity, clinical evidence, and patient benefit using precise, evidence-based language.\n"
                 "Do not express frustration or personal opinions about insurance companies.\n"
                 "Use appropriate professional sign-offs and titles (e.g., 'Sincerely, Dr. {{Your Name}}, MD').\n"
+                f"{APPEAL_SALUTATION_INSTRUCTION}\n"
                 "CRITICAL: Only cite medical literature, studies, PMIDs, journal names, or author names that are EXPLICITLY provided in the input (e.g., ml_citations_context or pubmed_context). NEVER fabricate or hallucinate citations. If no citations are provided in the input, do not include any specific study references - general medical knowledge statements are fine without citations.\n"
                 "Do NOT use phrases such as 'as a patient', 'my condition', 'I am deeply concerned', or discuss the impact on 'my health' or 'my pain'. Do NOT write from the patient's perspective under any circumstances.\n"
                 "You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.\n\n"
@@ -3554,6 +3559,18 @@ class RemoteOpenLike(RemoteModel):
         if _no_time_for_a_letter():
             return "skipped_deadline", []
 
+        def _as_letter(text: Optional[str]) -> Optional[str]:
+            """A letter starts at the letter: a chat-tuned model's "Sure, I
+            can help you draft... Here's a simple one:" comes off the top of a
+            full appeal as it arrives, so the checks below (and the retry they
+            trigger) judge the letter itself, and the stored draft, the
+            quality score and synthesis never see the preamble. Only this
+            path: in a chat that opening is the assistant talking to the
+            person (letter_openings)."""
+            if infer_type == "full" and text:
+                return strip_letter_preamble(text)
+            return text
+
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
         if prompt and isinstance(prompt, str):
@@ -3577,19 +3594,21 @@ class RemoteOpenLike(RemoteModel):
         # on every try it got is "unavailable".
         first_failure: Optional[ProviderUnavailable] = None
         try:
-            result = await self._infer_no_context(
-                prompt=prompt,
-                patient_context=patient_context,
-                plan_context=plan_context,
-                system_prompts=[system_prompt],
-                pubmed_context=pubmed_context,
-                temperature=temperature,
-                ml_citations_context=ml_citations_context,
-                # What is left of the attempt's and the requester's budget,
-                # re-read per call: these calls once ran on the instance
-                # default, outside the clamp.
-                timeout=_call_timeout(),
-                raise_on_unavailable=True,
+            result = _as_letter(
+                await self._infer_no_context(
+                    prompt=prompt,
+                    patient_context=patient_context,
+                    plan_context=plan_context,
+                    system_prompts=[system_prompt],
+                    pubmed_context=pubmed_context,
+                    temperature=temperature,
+                    ml_citations_context=ml_citations_context,
+                    # What is left of the attempt's and the requester's
+                    # budget, re-read per call: these calls once ran on the
+                    # instance default, outside the clamp.
+                    timeout=_call_timeout(),
+                    raise_on_unavailable=True,
+                )
             )
         except ProviderUnavailable as e:
             # A provider now known to be unusable (gone, refused, out of
@@ -3634,16 +3653,18 @@ class RemoteOpenLike(RemoteModel):
             # one when the retry gives nothing.
             first_result = result
             try:
-                result = await self._infer_no_context(
-                    prompt=prompt,
-                    patient_context=patient_context,
-                    plan_context=plan_context,
-                    system_prompts=[system_prompt],
-                    pubmed_context=pubmed_context,
-                    temperature=temperature,
-                    ml_citations_context=ml_citations_context,
-                    timeout=_call_timeout(),
-                    raise_on_unavailable=True,
+                result = _as_letter(
+                    await self._infer_no_context(
+                        prompt=prompt,
+                        patient_context=patient_context,
+                        plan_context=plan_context,
+                        system_prompts=[system_prompt],
+                        pubmed_context=pubmed_context,
+                        temperature=temperature,
+                        ml_citations_context=ml_citations_context,
+                        timeout=_call_timeout(),
+                        raise_on_unavailable=True,
+                    )
                 )
             except NoAnswerText:
                 # Reached, and it answered with no text: no_completion.
@@ -3685,15 +3706,17 @@ class RemoteOpenLike(RemoteModel):
                 and not _no_time_for_a_letter()
             ):
                 c = c + 1
-                result = await self._infer_no_context(
-                    prompt=prompt,
-                    patient_context=patient_context,
-                    plan_context=plan_context,
-                    system_prompts=[system_prompt],
-                    pubmed_context=pubmed_context,
-                    temperature=temperature,
-                    ml_citations_context=ml_citations_context,
-                    timeout=_call_timeout(),
+                result = _as_letter(
+                    await self._infer_no_context(
+                        prompt=prompt,
+                        patient_context=patient_context,
+                        plan_context=plan_context,
+                        system_prompts=[system_prompt],
+                        pubmed_context=pubmed_context,
+                        temperature=temperature,
+                        ml_citations_context=ml_citations_context,
+                        timeout=_call_timeout(),
+                    )
                 )
                 if self.bad_result(result, infer_type):
                     result = last_okish
@@ -5436,6 +5459,9 @@ class RemoteFullOpenLike(RemoteOpenLike):
         # "full" and "full_patient" are the same prompt: the patient-voice
         # appeal. Professional-voice appeals use "full_not_patient".
         patient_full_prompt = """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "{{FIRST_NAME}} {{LAST_NAME}}" as your name, "{{SCSID}}" for the subscriber ID, and "{{GPID}}" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person in the letter when referring to yourself, the patient; instead use the first person (I, my, etc.). You are not a reviewer and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent)."""
+        # The recipient, said once here for every backend: see
+        # letter_openings for why models need telling.
+        patient_full_prompt = f"{patient_full_prompt} {APPEAL_SALUTATION_INSTRUCTION}"
         systems = {
             "full_patient": [patient_full_prompt],
             "full": [patient_full_prompt],
@@ -5467,6 +5493,9 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 Emphasize medical necessity, clinical evidence, and patient benefit using precise, evidence-based language.
                 Do not express frustration or personal opinions about insurance companies.
                 Use appropriate professional sign-offs and titles (e.g., "Sincerely, Dr. {{Your Name}}, MD").
+                """
+                + APPEAL_SALUTATION_INSTRUCTION
+                + """
                 Only include references that are verifiable and provided in the input or from reliable sources.
                 Do NOT use phrases such as "as a patient", "my condition", "I am deeply concerned", or discuss the impact on "my health" or "my pain". Do NOT write from the patient's perspective under any circumstances.
                 You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.

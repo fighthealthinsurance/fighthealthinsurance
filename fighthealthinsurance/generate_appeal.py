@@ -64,6 +64,7 @@ from fighthealthinsurance.ml.appeal_prompt_versions import (
     current_letter_prompt_mode,
     uses_sectioned_prompt,
 )
+from fighthealthinsurance.letter_openings import APPEAL_SALUTATION_INSTRUCTION
 from fighthealthinsurance.ml import llm_usage
 from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
 from fighthealthinsurance.ml.model_identity import TEMPLATE_MODEL_NAME
@@ -1771,6 +1772,8 @@ class AppealGenerator(object):
         "arguments, citations, and language from all drafts. "
         "Rules:\n"
         "- Keep the formal appeal letter format (address, date, salutation, body, closing).\n"
+        f"- {APPEAL_SALUTATION_INSTRUCTION} Keep a draft's salutation when it already "
+        "names the plan or its appeals department.\n"
         "- Include ALL valid citations and references from any draft — do NOT invent new ones.\n"
         "- Choose the most persuasive and specific arguments from each draft.\n"
         "- Eliminate redundancy while preserving completeness.\n"
