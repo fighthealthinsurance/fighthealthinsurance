@@ -805,7 +805,7 @@ class TestComplexityStamp:
     """A task is scored for judging complexity as it goes READY, once every
     draft is on file; the score never holds a task back."""
 
-    async def _generate(self, drafts=2):
+    async def _generate(self, drafts=2, letter=_LETTER):
         async def seat_candidates(task):
             for index in range(drafts):
                 await ChooserCandidate.objects.acreate(
@@ -813,7 +813,7 @@ class TestComplexityStamp:
                     candidate_index=index,
                     kind="appeal_letter",
                     model_name=f"model-{index}",
-                    content=_LETTER,
+                    content=letter,
                 )
             task.num_candidates_generated = drafts
             await task.asave()
@@ -830,6 +830,14 @@ class TestComplexityStamp:
 
         assert task.status == "READY"
         assert task.complexity == score_task(task.context_json, [_LETTER, _LETTER])
+
+    async def test_a_long_case_is_stamped_with_its_own_band(self):
+        # Two drafts of about 2,000 words each: some 18 minutes of reading,
+        # which a stamp that always wrote the same score would not give.
+        task = await self._generate(letter=_LETTER * 40)
+
+        assert task.status == "READY"
+        assert task.complexity == 3
 
     async def test_a_task_that_is_not_ready_is_not_scored(self):
         task = await self._generate(drafts=1)

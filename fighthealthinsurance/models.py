@@ -4399,7 +4399,11 @@ class ChooserTask(ExportModelOperationsMixin("ChooserTask"), models.Model):  # t
     # from before the score existed, or whose scoring failed). The next-task
     # ordering treats NULL as the hardest without writing that down, so a
     # real score can be filled in later (manage.py score_chooser_complexity).
-    complexity = models.PositiveSmallIntegerField(null=True, blank=True)
+    complexity = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

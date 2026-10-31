@@ -89,17 +89,26 @@ def _words(text: Optional[str]) -> int:
     return len((text or "").split())
 
 
+def _as_case(context: object) -> dict:
+    """A stored ``context_json`` as a mapping: anything else (NULL, or a
+    malformed row's list or string) reads as an empty case, so one bad task
+    neither stops a scoring run nor holds a new task back."""
+    return context if isinstance(context, dict) else {}
+
+
 def evidence_shown(context: Optional[dict]) -> List[dict]:
     """The evidence rows the voter is shown: those with a title (the page and
     the drafts' prompt both skip the rest)."""
-    rows = (context or {}).get("evidence") or []
+    rows = _as_case(context).get("evidence") or []
+    if not isinstance(rows, list):
+        return []
     return [e for e in rows if isinstance(e, dict) and e.get("title")]
 
 
 def _case_text(context: Optional[dict]) -> List[str]:
     """The case as the voter reads it: every piece of text the page shows
     above the drafts (and the drafts were given), for an appeal or a chat."""
-    context = context or {}
+    context = _as_case(context)
     pieces: List[str] = []
     for key in (
         "procedure",

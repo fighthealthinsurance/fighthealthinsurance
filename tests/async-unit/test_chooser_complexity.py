@@ -5,6 +5,7 @@ votes earn. No backends; the scoring command's tests use the database."""
 from io import StringIO
 
 import pytest
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.test import override_settings
 
@@ -112,6 +113,14 @@ class TestBreakdown:
         assert cc.breakdown(_EVIDENCE, []).articles == 2
         assert cc.breakdown({"evidence": None}, []).articles == 0
         assert cc.breakdown(None, []).articles == 0
+
+    @pytest.mark.parametrize("context", [["not", "a", "case"], "a string", 7])
+    def test_a_context_that_is_not_a_mapping_reads_as_an_empty_case(self, context):
+        detail = cc.breakdown(context, ["a short letter"])
+        assert (detail.words, detail.articles) == (3, 0)
+
+    def test_evidence_that_is_not_a_list_shows_no_articles(self):
+        assert cc.breakdown({"evidence": "PMID 1"}, []).articles == 0
 
     def test_empty_drafts_are_not_drafts(self):
         assert cc.breakdown({}, ["a letter", "", None]).drafts == 1
@@ -269,7 +278,32 @@ class TestScoreCommand:
         assert appeal.complexity is None
         assert chat.complexity == 1
 
+    def test_a_malformed_task_does_not_stop_the_run(self):
+        malformed = _task()
+        ChooserTask.objects.filter(pk=malformed.pk).update(context_json=["a", "list"])
+        later = _task()
+        _score()
+        malformed.refresh_from_db()
+        later.refresh_from_db()
+        assert (malformed.complexity, later.complexity) == (1, 1)
+
     def test_verbose_output_shows_the_breakdown(self):
         task = _task()
         out = _score("-v", "2")
         assert f"task {task.id} (appeal): 1 (40 words in 2 drafts and the case" in out
+
+
+class TestComplexityField:
+    """The stored score is 1 to 5, or empty for a task not scored yet; the
+    admin form, where staff can fill one in, refuses anything else."""
+
+    @pytest.mark.parametrize("value", [0, 6])
+    def test_a_score_outside_one_to_five_is_refused(self, value):
+        task = ChooserTask(task_type="appeal", status="READY", complexity=value)
+        with pytest.raises(ValidationError) as refused:
+            task.clean_fields()
+        assert "complexity" in refused.value.message_dict
+
+    @pytest.mark.parametrize("value", [None, 1, 5])
+    def test_an_empty_or_in_range_score_is_accepted(self, value):
+        ChooserTask(task_type="appeal", status="READY", complexity=value).clean_fields()

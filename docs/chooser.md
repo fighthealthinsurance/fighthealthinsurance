@@ -271,9 +271,13 @@ score can be filled in later. `python manage.py score_chooser_complexity
 scores the READY tasks without a score; `--rescore` redoes every READY task
 (after a change to the rubric); `--dry-run` reports without storing;
 `-v 2` prints each task's breakdown. Nothing runs it on deploy, so until it
-has run every older case is served after the scored ones to a judge who is
-warming up or asked for straightforward cases, at any round, and before
-them to a judge who asked for complex ones.
+has run an older case counts as a 5. The keys that come before complexity
+still decide first (evidence attached, then cases judged fewer than
+`CHOOSER_WARMUP_SATURATION_VOTES` times, then the newest case version);
+within them, an unscored case is served after every scored case below 5 to
+a judge who is warming up or asked for straightforward cases, at any round,
+and before them to a judge who asked for complex ones. It ties with the
+scored 5s, so fewest votes and then age decide between those.
 
 The score is used to **start a judge on the simplest cases**
 (`chooser_complexity.ordered_for_judge`). A session's level is 1 for its
