@@ -7,6 +7,8 @@ Sets up environment variables needed for tests to match tox configuration.
 import os
 import shutil
 import ssl
+import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 
@@ -82,6 +84,76 @@ def _stripe_e2e_skip_reason_lazy() -> str | None:
     return _stripe_e2e_skip_reason
 
 
+# Tests that render a real PDF through pandoc (fax assembly) need more than the
+# pandoc binary: they need one of the PDF engines _try_pandoc_engines tries,
+# plus the LaTeX packages pandoc's template loads. A machine with pandoc but no
+# TeX (or TeX without lmodern) used to run these tests and fail with only a
+# "Failed ... with all engines" warning to go on. The probe renders a one-line
+# file with the production command and engine list, lazily and once per
+# process, and the skip reason carries pandoc's own error. Under CI the probe
+# never skips: CI installs TeX, so a broken install there must fail the tests
+# rather than quietly drop them.
+PANDOC_PDF_MARKER = "pandoc_pdf"
+skip_if_pandoc_cannot_make_pdf = pytest.mark.pandoc_pdf
+
+_pandoc_pdf_decided = False
+_pandoc_pdf_skip_reason: str | None = None
+
+
+def _run_pandoc(command: list[str]) -> subprocess.CompletedProcess | None:
+    """Run a pandoc render, or return None if it could not finish."""
+    try:
+        return subprocess.run(command, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _pandoc_pdf_failure(probe_path: str) -> str | None:
+    """None if pandoc renders probe_path to a PDF with any engine production
+    tries, else pandoc's error for its default engine, trimmed to the line
+    that names the cause (LaTeX errors start with "!")."""
+    from fighthealthinsurance.utils import PANDOC_PDF_ENGINES, pandoc_convert_command
+
+    command = pandoc_convert_command(probe_path)
+    for engine in PANDOC_PDF_ENGINES:
+        engine_args = [f"--pdf-engine={engine}"] if engine else []
+        result = _run_pandoc(command + engine_args)
+        if result is not None and result.returncode == 0:
+            return None
+    result = _run_pandoc(command)
+    if result is None:
+        return "pandoc did not finish"
+    lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
+    for line in lines:
+        if line.startswith("!"):
+            return line
+    return lines[-1] if lines else f"pandoc exited {result.returncode}"
+
+
+def _pandoc_pdf_skip_reason_lazy() -> str | None:
+    """Why a test that renders a PDF with pandoc should be skipped, or None to
+    run it. Decided once per process."""
+    global _pandoc_pdf_decided, _pandoc_pdf_skip_reason
+    if not _pandoc_pdf_decided:
+        if shutil.which("pandoc") is None:
+            _pandoc_pdf_skip_reason = "pandoc is not installed"
+        else:
+            with tempfile.TemporaryDirectory() as probe_dir:
+                probe_path = os.path.join(probe_dir, "probe.txt")
+                with open(probe_path, "w") as f:
+                    f.write("Probe\n")
+                failure = _pandoc_pdf_failure(probe_path)
+            if failure is not None:
+                _pandoc_pdf_skip_reason = (
+                    f"pandoc cannot render a PDF with any engine ({failure}); "
+                    "install texlive and lmodern (see docs/local-development.md)"
+                )
+        _pandoc_pdf_decided = True
+    if os.environ.get("CI"):
+        return None
+    return _pandoc_pdf_skip_reason
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
@@ -89,14 +161,23 @@ def pytest_configure(config):
         "skipped unless STRIPE_TEST_SECRET_KEY is set and api.stripe.com is "
         "reachable, decided lazily the first time such a test is about to run",
     )
+    config.addinivalue_line(
+        "markers",
+        f"{PANDOC_PDF_MARKER}: renders a real PDF with pandoc; skipped (outside "
+        "CI) when no PDF engine on this machine can, decided lazily the first "
+        "time such a test is about to run",
+    )
 
 
 def pytest_runtest_setup(item):
-    if item.get_closest_marker(STRIPE_E2E_MARKER) is None:
-        return
-    reason = _stripe_e2e_skip_reason_lazy()
-    if reason:
-        pytest.skip(reason)
+    if item.get_closest_marker(STRIPE_E2E_MARKER) is not None:
+        reason = _stripe_e2e_skip_reason_lazy()
+        if reason:
+            pytest.skip(reason)
+    if item.get_closest_marker(PANDOC_PDF_MARKER) is not None:
+        reason = _pandoc_pdf_skip_reason_lazy()
+        if reason:
+            pytest.skip(reason)
 
 
 skip_if_no_pandoc = pytest.mark.skipif(

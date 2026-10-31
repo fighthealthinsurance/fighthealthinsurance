@@ -148,11 +148,20 @@ Fixtures live in `fighthealthinsurance/fixtures/` (initial, followup, plan_sourc
 
 Remote (web) sessions run `.claude/hooks/session-start.sh` before the session
 starts. It pre-builds the tox envs for the sync, async, async-unit, black, and
-mypy suites in parallel, installs the JS deps, and warms the webpack +
-collectstatic build. What to know:
+mypy suites in parallel, installs the JS deps, apt-installs the system
+packages CI uses (texlive + lmodern, pandoc, tesseract-ocr, shellcheck), and
+warms the webpack + collectstatic build. What to know:
 
 - `tox` is on PATH (installed to `~/.local/bin`); `tox -e ...` for the
   pre-built envs starts immediately.
+- The fax tests in `tests/async/test_faxes.py` render real PDFs through pandoc
+  and LaTeX, so they need the TeX install above. If it failed (the hook warns
+  and logs to `.tox/fhi-apt-install.log`; usually the network policy blocking
+  archive.ubuntu.com), those tests skip with pandoc's error as the reason
+  (`skip_if_pandoc_cannot_make_pdf` in `tests/conftest.py`). Under `CI` they
+  never skip, so a broken CI install still fails. Mark new tests that render a
+  real PDF with that guard, not `skip_if_no_pandoc`, which only checks for the
+  pandoc binary.
 - The selenium, sync-actor, and temporal tox envs are **not** pre-built: the
   first `tox -e py313-django52-sync-actor` (etc.) pays a one-time env install
   of a couple of minutes. That is expected — let it run.
