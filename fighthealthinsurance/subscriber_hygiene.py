@@ -17,9 +17,12 @@ Every finding carries a reason code (see :data:`REASONS`). Reasons are split
 into two buckets:
 
   * ``auto_cleanable`` -- unambiguous junk (unmailable, malformed, URL-in-name
-    spam, header-injection attempts). None of these rows ever received mail a
-    person could act on, so deleting them breaks no unsubscribe link. Bulk
-    deletion targets only these.
+    spam, header-injection attempts). Bulk deletion targets only these. The
+    classification says nothing about whether a row was ever mailed: a bot can
+    submit a real person's address, and that copy's unsubscribe link may be in
+    their inbox. So a junk copy of an address that also has a row staying is
+    held out of bulk deletion (``Finding.bulk_hold``); when every copy is junk,
+    deleting them all stops the mail.
   * review-only -- a *signal*, not a verdict (duplicate and alias-duplicate,
     spam-associated TLD, internal test address, role account, link or mail
     header in comments, suspicious unicode). A human decides; nothing bulk-deletes these.
