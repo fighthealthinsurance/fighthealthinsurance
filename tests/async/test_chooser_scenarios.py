@@ -14,6 +14,7 @@ from django.test import override_settings
 from django.utils import timezone
 from loguru import logger
 
+from fighthealthinsurance.chooser_complexity import score_task
 from fighthealthinsurance.chooser_tasks import (
     _cached_pmids,
     _evidence_for,
@@ -796,3 +797,69 @@ class TestCaseVersion:
 
     async def test_a_new_chat_task_keeps_the_first_version(self):
         assert (await self._generate("chat")).case_version == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestComplexityStamp:
+    """A task is scored for judging complexity as it goes READY, once every
+    draft is on file; the score never holds a task back."""
+
+    async def _generate(self, drafts=2, letter=_LETTER, context=None):
+        async def seat_candidates(task):
+            task.context_json = context
+            for index in range(drafts):
+                await ChooserCandidate.objects.acreate(
+                    task=task,
+                    candidate_index=index,
+                    kind="appeal_letter",
+                    model_name=f"model-{index}",
+                    content=letter,
+                )
+            task.num_candidates_generated = drafts
+            await task.asave()
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_appeal_candidates",
+            AsyncMock(side_effect=seat_candidates),
+        ):
+            await _generate_single_task("appeal")
+        return await ChooserTask.objects.alatest("id")
+
+    async def test_a_ready_task_is_scored(self):
+        task = await self._generate()
+
+        assert task.status == "READY"
+        assert task.complexity == score_task(task.context_json, [_LETTER, _LETTER])
+
+    async def test_a_long_case_is_stamped_with_its_own_band(self):
+        # Two drafts of about 2,000 words each: some 18 minutes of reading,
+        # which a stamp that always wrote the same score would not give.
+        task = await self._generate(letter=_LETTER * 40)
+
+        assert task.status == "READY"
+        assert task.complexity == 3
+
+    async def test_the_stamp_reads_the_stored_case(self):
+        # Two short drafts alone are a 1; a 2,000-word denial on file makes
+        # the case a 2, so a stamp that left the case out would score it 1.
+        task = await self._generate(context={"denial_text_preview": "word " * 2000})
+
+        assert task.status == "READY"
+        assert task.complexity == 2
+
+    async def test_a_task_that_is_not_ready_is_not_scored(self):
+        task = await self._generate(drafts=1)
+
+        assert task.status == "DISABLED"
+        assert task.complexity is None
+
+    async def test_a_scoring_error_leaves_the_task_ready_and_unscored(self):
+        with patch(
+            "fighthealthinsurance.chooser_complexity.ascore",
+            AsyncMock(side_effect=RuntimeError("no score today")),
+        ):
+            task = await self._generate()
+
+        assert task.status == "READY"
+        assert task.complexity is None

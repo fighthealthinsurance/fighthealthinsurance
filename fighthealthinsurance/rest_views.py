@@ -52,6 +52,7 @@ from fighthealthinsurance.ml.ml_models import (
     describe_model_error,
 )
 from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance import chooser_complexity
 from fighthealthinsurance.chooser_tokens import candidate_token, resolve_candidate
 from fighthealthinsurance.upload_limits import stored_size_limit
 from fighthealthinsurance.models import (
@@ -2412,34 +2413,47 @@ class ChooserViewSet(viewsets.ViewSet):
         """
         Get the next available chooser task for the given type.
 
-        Selection logic:
-        1. Prefer tasks built by the newest case pipeline
+        Selection logic (chooser_complexity.ordered_for_judge):
+        1. Exclude tasks where this session key has already voted or skipped
+        2. While the session is warming up (its first votes on this type),
+           or when it asks for straightforward or complex cases (the
+           ``difficulty`` query parameter), prefer appeal cases with
+           evidence attached, then the cases whose complexity is nearest to
+           what it is ready for or asked for; an unscored task counts as
+           the hardest
+        3. Prefer tasks built by the newest case pipeline
            (ChooserTask.case_version: the appeal cases with article
            summaries and a simulated interview), so their votes come first
-        2. Among those, prefer tasks with zero votes
-        3. If none, select tasks with the fewest total votes
-        4. Exclude tasks where this session key has already voted or skipped
+        4. Among those, prefer tasks with zero votes
+        5. If none, select tasks with the fewest total votes
         """
         denied = self._captcha_gate(request)
         if denied is not None:
             return denied
         session_key = self._get_session_key(request)
 
-        # Get tasks that this session has already voted on or skipped
-        voted_task_ids = ChooserVote.objects.filter(
-            session_key=session_key
-        ).values_list("task_id", flat=True)
+        # Get tasks that this session has already voted on or skipped. The
+        # votes on this type are the rounds the session has judged, which
+        # set how complex a case it is ready for; skips are not rounds.
+        voted = list(
+            ChooserVote.objects.filter(session_key=session_key).values_list(
+                "task_id", "task__task_type"
+            )
+        )
+        rounds = sum(1 for _, voted_type in voted if voted_type == task_type)
         skipped_task_ids = ChooserSkip.objects.filter(
             session_key=session_key
         ).values_list("task_id", flat=True)
-        excluded_task_ids = set(voted_task_ids) | set(skipped_task_ids)
+        excluded_task_ids = {task_id for task_id, _ in voted} | set(skipped_task_ids)
 
         # Find READY tasks of the requested type that haven't been voted on or skipped
-        available_tasks = (
+        available_tasks = chooser_complexity.ordered_for_judge(
             ChooserTask.objects.filter(task_type=task_type, status="READY")
             .exclude(id__in=excluded_task_ids)
-            .annotate(vote_count=Count("votes"))
-            .order_by("-case_version", "vote_count", "created_at")
+            .annotate(vote_count=Count("votes")),
+            task_type,
+            rounds,
+            chooser_complexity.preference_from(request.query_params.get("difficulty")),
         )
 
         task = available_tasks.first()
@@ -2570,14 +2584,27 @@ class ChooserViewSet(viewsets.ViewSet):
         202: serializers.ChooserNoTaskSerializer,
         404: serializers.ChooserNoTaskSerializer,
     }
+    # The kind of case the judge asked for after their first round; without
+    # it (or with a value not listed) the warm-up decides.
+    _DIFFICULTY_PARAMETER = OpenApiParameter(
+        name="difficulty",
+        type=OpenApiTypes.STR,
+        location=OpenApiParameter.QUERY,
+        required=False,
+        enum=list(chooser_complexity.PREFERENCES),
+        description=(
+            "Serve the simplest cases first (straightforward) or the most "
+            "complex first (complex). Omit it for the usual warm-up."
+        ),
+    )
 
-    @extend_schema(responses=_NEXT_TASK_RESPONSES)
+    @extend_schema(responses=_NEXT_TASK_RESPONSES, parameters=[_DIFFICULTY_PARAMETER])
     @action(detail=False, methods=["get"], url_path="next/appeal")
     def next_appeal(self, request: Request) -> Response:
         """Get the next appeal letter chooser task."""
         return self._get_next_task(request, "appeal")
 
-    @extend_schema(responses=_NEXT_TASK_RESPONSES)
+    @extend_schema(responses=_NEXT_TASK_RESPONSES, parameters=[_DIFFICULTY_PARAMETER])
     @action(detail=False, methods=["get"], url_path="next/chat")
     def next_chat(self, request: Request) -> Response:
         """Get the next chat response chooser task."""

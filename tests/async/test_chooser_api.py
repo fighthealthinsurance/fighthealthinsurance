@@ -1708,3 +1708,274 @@ class ChooserCaptchaGateTest(APITestCase):
         self.assertEqual(response.json()["error"], "captcha_required")
         self.assertEqual(ChooserVote.objects.filter(task=self.task).count(), 0)
         submit.assert_not_called()
+
+
+class _ArenaOrderingBase(APITestCase):
+    """Arena tasks of a given complexity, evidence and case version, votes
+    by this client's session and by others, and the next task served."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    _EVIDENCE = [{"pmid": "1", "title": "A study", "url": "https://example.org/1"}]
+
+    def _task(
+        self, complexity, evidence=True, case_version=2, task_type="appeal", context=...
+    ):
+        if context is ...:
+            context = {"procedure": "MRI", "diagnosis": "Low back pain"}
+            if evidence:
+                context["evidence"] = list(self._EVIDENCE)
+            if task_type == "chat":
+                context = {"prompt": "What now?", "history": []}
+        task = ChooserTask.objects.create(
+            task_type=task_type,
+            status="READY",
+            context_json=context,
+            case_version=case_version,
+            complexity=complexity,
+        )
+        for index in range(2):
+            ChooserCandidate.objects.create(
+                task=task,
+                candidate_index=index,
+                kind="appeal_letter" if task_type == "appeal" else "chat_response",
+                model_name=f"model-{index}",
+                content=f"Draft {index}",
+            )
+        return task
+
+    def _session_key(self):
+        """The client's session key, the one the endpoint will see; reading
+        the session creates and stores one when the client has none yet."""
+        return self.client.session.session_key
+
+    def _vote(self, task, session_key):
+        candidate = task.candidates.first()
+        ChooserVote.objects.create(
+            task=task,
+            chosen_candidate=candidate,
+            presented_candidate_ids=[c.id for c in task.candidates.all()],
+            session_key=session_key,
+        )
+
+    def _vote_as_this_session(self, task):
+        """A vote by the client's own session on ``task``: one round judged."""
+        self._vote(task, self._session_key())
+
+    def _votes_by_others(self, task, count):
+        for index in range(count):
+            self._vote(task, f"other-session-{index}")
+
+    def _next(self, task_type="appeal", difficulty=None):
+        url = reverse(f"chooser-next-{task_type}")
+        params = {"difficulty": difficulty} if difficulty is not None else {}
+        response = self.client.get(url, params)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        return response.json()["task_id"]
+
+class ChooserWarmupOrderingTest(_ArenaOrderingBase):
+    """A new judge is started on the simplest cases that have evidence, and
+    the complexity of what they are served rises with their votes
+    (chooser_complexity.ordered_for_judge). An unscored task is served as
+    the hardest and stays unscored."""
+
+    def test_a_new_judge_gets_the_simplest_case_that_has_evidence(self):
+        self._task(complexity=1, evidence=False)
+        self._task(complexity=3)
+        simplest_with_evidence = self._task(complexity=2)
+
+        self.assertEqual(self._next(), simplest_with_evidence.id)
+
+    def test_every_stored_shape_of_no_evidence_waits(self):
+        # What production writes when a case has no evidence: an empty list
+        # (_evidence_for found nothing), a null context (a task that never
+        # got a scenario), a null list, and no key at all.
+        for context in ({"evidence": []}, None, {"evidence": None}, {}):
+            self._task(complexity=1, context=context)
+        with_evidence = self._task(complexity=5)
+
+        self.assertEqual(self._next(), with_evidence.id)
+
+    def test_an_unscored_case_is_served_as_the_hardest_and_stays_unscored(self):
+        unscored = self._task(complexity=None)
+        scored = self._task(complexity=4)
+
+        self.assertEqual(self._next(), scored.id)
+        unscored.refresh_from_db()
+        self.assertIsNone(unscored.complexity)
+
+    def test_the_newest_pipeline_still_comes_first_while_warming_up(self):
+        # The ramp runs within the newest case version; an older version's
+        # simpler case stays behind it, as the usual order has it.
+        newest = self._task(complexity=4, case_version=2)
+        self._task(complexity=2, case_version=1)
+
+        self.assertEqual(self._next(), newest.id)
+
+    def test_a_much_judged_simple_case_yields_to_a_less_judged_harder_one(self):
+        judged_enough = self._task(complexity=1)
+        self._votes_by_others(judged_enough, 5)
+        harder = self._task(complexity=3)
+
+        self.assertEqual(self._next(), harder.id)
+
+    @override_settings(CHOOSER_WARMUP_SATURATION_VOTES=6)
+    def test_the_saturation_point_is_a_setting(self):
+        judged_some = self._task(complexity=1)
+        self._votes_by_others(judged_some, 5)
+        self._task(complexity=3)
+
+        self.assertEqual(self._next(), judged_some.id)
+
+    @override_settings(CHOOSER_WARMUP_ROUNDS_PER_LEVEL=1)
+    def test_the_level_rises_with_the_judges_votes(self):
+        # The judged case is hard and evidence-less, so it never competes.
+        judged = self._task(complexity=5, evidence=False)
+        level_two = self._task(complexity=2)
+        level_one = self._task(complexity=1)
+
+        # Nothing judged yet: the level is 1, and only level_one is at it.
+        self.assertEqual(self._next(), level_one.id)
+
+        # One round judged: level 2, where both are within reach and the
+        # usual order (both version 2, no votes) serves the older one.
+        self._vote_as_this_session(judged)
+        self.assertEqual(self._next(), level_two.id)
+
+    @override_settings(CHOOSER_WARMUP_ROUNDS_PER_LEVEL=1)
+    def test_skips_are_not_rounds(self):
+        skipped = self._task(complexity=1)
+        self._task(complexity=2)
+        level_one = self._task(complexity=1)
+        ChooserSkip.objects.create(task=skipped, session_key=self._session_key())
+
+        self.assertEqual(self._next(), level_one.id)
+
+    @override_settings(CHOOSER_WARMUP_ROUNDS_PER_LEVEL=1)
+    def test_votes_on_the_other_type_are_not_rounds(self):
+        chat = self._task(complexity=1, task_type="chat")
+        self._task(complexity=2)
+        level_one = self._task(complexity=1)
+        self._vote_as_this_session(chat)
+
+        self.assertEqual(self._next(), level_one.id)
+
+    @override_settings(CHOOSER_WARMUP_ROUNDS_PER_LEVEL=1)
+    def test_a_warmed_up_judge_gets_the_usual_order(self):
+        judged = [self._task(complexity=1) for _ in range(4)]
+        self._task(complexity=1, evidence=True, case_version=1)
+        newest_hardest = self._task(complexity=5, evidence=False, case_version=2)
+        # Judged often, which only the warm-up holds against a case.
+        self._votes_by_others(newest_hardest, 5)
+        for task in judged:
+            self._vote_as_this_session(task)
+
+        # No evidence, much judged and the hardest: the warm-up would serve
+        # the older simple case first; the usual order serves the newest.
+        self.assertEqual(self._next(), newest_hardest.id)
+
+    @override_settings(CHOOSER_WARMUP_ROUNDS_PER_LEVEL=0)
+    def test_the_warm_up_can_be_turned_off(self):
+        self._task(complexity=1, case_version=1)
+        newest = self._task(complexity=5, evidence=False, case_version=2)
+
+        self.assertEqual(self._next(), newest.id)
+
+    def test_chat_cases_are_served_simplest_first_too(self):
+        self._task(complexity=3, task_type="chat")
+        simplest = self._task(complexity=1, task_type="chat")
+
+        self.assertEqual(self._next("chat"), simplest.id)
+
+    def test_a_case_without_evidence_is_still_served_when_nothing_else_is_left(self):
+        only = self._task(complexity=5, evidence=False)
+
+        self.assertEqual(self._next(), only.id)
+
+
+class ChooserCasePreferenceTest(_ArenaOrderingBase):
+    """After their first round a judge is asked whether they want complex or
+    straightforward cases; the page sends the answer as the ``difficulty``
+    parameter (chooser_complexity.ordered_for_judge)."""
+
+    def test_complex_serves_the_most_complex_case_first(self):
+        self._task(complexity=1)
+        hardest = self._task(complexity=4)
+        self._task(complexity=3)
+
+        self.assertEqual(self._next(difficulty="complex"), hardest.id)
+
+    def test_complex_counts_an_unscored_case_as_the_most_complex(self):
+        self._task(complexity=4)
+        unscored = self._task(complexity=None)
+
+        self.assertEqual(self._next(difficulty="complex"), unscored.id)
+
+    def test_complex_leaves_an_unscored_case_unscored(self):
+        unscored = self._task(complexity=None)
+
+        self._next(difficulty="complex")
+
+        unscored.refresh_from_db()
+        self.assertIsNone(unscored.complexity)
+
+    def test_complex_cases_still_come_with_evidence_first(self):
+        self._task(complexity=5, evidence=False)
+        with_evidence = self._task(complexity=2)
+
+        self.assertEqual(self._next(difficulty="complex"), with_evidence.id)
+
+    def test_complex_still_serves_the_newest_pipeline_first(self):
+        self._task(complexity=5, case_version=1)
+        newest = self._task(complexity=2, case_version=2)
+
+        self.assertEqual(self._next(difficulty="complex"), newest.id)
+
+    def test_complex_spreads_votes_past_a_much_judged_case(self):
+        judged_enough = self._task(complexity=5)
+        self._votes_by_others(judged_enough, 5)
+        less_judged = self._task(complexity=3)
+
+        self.assertEqual(self._next(difficulty="complex"), less_judged.id)
+
+    @override_settings(CHOOSER_WARMUP_ROUNDS_PER_LEVEL=1)
+    def test_straightforward_holds_after_the_warm_up(self):
+        # Four rounds judged: warmed up, so the usual order would serve the
+        # older, harder case.
+        for _ in range(4):
+            self._vote_as_this_session(self._task(complexity=5, evidence=False))
+        self._task(complexity=3)
+        simplest = self._task(complexity=1)
+
+        self.assertEqual(self._next(difficulty="straightforward"), simplest.id)
+
+    @override_settings(CHOOSER_WARMUP_ROUNDS_PER_LEVEL=0)
+    def test_straightforward_applies_with_the_warm_up_off(self):
+        self._task(complexity=3)
+        simplest = self._task(complexity=1)
+
+        self.assertEqual(self._next(difficulty="straightforward"), simplest.id)
+
+    def test_straightforward_serves_the_simplest_left_when_none_is_a_one(self):
+        self._task(complexity=4)
+        simplest_left = self._task(complexity=2)
+
+        self.assertEqual(self._next(difficulty="straightforward"), simplest_left.id)
+
+    @override_settings(CHOOSER_WARMUP_ROUNDS_PER_LEVEL=1)
+    def test_an_unknown_difficulty_keeps_the_usual_order(self):
+        # Warmed up, so with no preference the usual order serves the
+        # oldest; straightforward would serve the 1, complex the 5.
+        for _ in range(4):
+            self._vote_as_this_session(self._task(complexity=5, evidence=False))
+        oldest = self._task(complexity=3)
+        self._task(complexity=1)
+        self._task(complexity=5)
+
+        self.assertEqual(self._next(difficulty="brutal"), oldest.id)
+
+    def test_chat_cases_follow_the_preference_too(self):
+        self._task(complexity=1, task_type="chat")
+        hardest = self._task(complexity=4, task_type="chat")
+
+        self.assertEqual(self._next("chat", difficulty="complex"), hardest.id)

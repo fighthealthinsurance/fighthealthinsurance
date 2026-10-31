@@ -15,6 +15,7 @@ import {
   MantineProvider,
   Paper,
   ScrollArea,
+  SegmentedControl,
   SimpleGrid,
   Stack,
   Text,
@@ -180,6 +181,45 @@ const writeScoreboard = (board: Scoreboard): void => {
   } catch {
     // Not worth an error: the record is a nicety.
   }
+};
+
+// The kind of case the referee asked for after their first round, kept in
+// this browser only. "either" keeps the server's usual warm-up; the other
+// two go to the next-task endpoint as its difficulty parameter.
+type CasePreference = "straightforward" | "either" | "complex";
+
+const PREFERENCE_KEY = "fhi-arena-case-preference";
+const PREFERENCE_OPTIONS: { value: CasePreference; label: string }[] = [
+  { value: "straightforward", label: "Straightforward" },
+  { value: "either", label: "Either" },
+  { value: "complex", label: "Complex" },
+];
+
+const isCasePreference = (value: unknown): value is CasePreference =>
+  PREFERENCE_OPTIONS.some((option) => option.value === value);
+
+const readPreference = (): CasePreference | null => {
+  try {
+    const raw = window.localStorage.getItem(PREFERENCE_KEY);
+    if (isCasePreference(raw)) return raw;
+  } catch {
+    // Blocked storage: the referee is asked again on the next visit.
+  }
+  return null;
+};
+
+const writePreference = (preference: CasePreference): void => {
+  try {
+    window.localStorage.setItem(PREFERENCE_KEY, preference);
+  } catch {
+    // The choice still holds for this visit.
+  }
+};
+
+// The next-task URL, asking for the kind of case the referee chose.
+const nextTaskUrl = (taskType: TaskType, preference: CasePreference | null): string => {
+  const base = `/ziggy/rest/chooser/next/${taskType}/`;
+  return preference && preference !== "either" ? `${base}?difficulty=${preference}` : base;
 };
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -1017,6 +1057,58 @@ const CandidateCard: React.FC<{
   );
 };
 
+// Asked once, after the referee's first round: each answer also starts the
+// next round.
+const PreferenceQuestion: React.FC<{
+  onChoose: (preference: CasePreference) => void;
+  buttonStyle: React.CSSProperties;
+}> = ({ onChoose, buttonStyle }) => (
+  <Paper shadow="sm" p="lg" radius="md" withBorder style={{ width: "100%", maxWidth: "640px" }}>
+    <Stack gap="sm" align="center">
+      <Title order={3} ta="center">
+        What kind of case next?
+      </Title>
+      <Text size="sm" ta="center" c="dimmed">
+        Straightforward cases are quicker reads, with shorter drafts and fewer studies to
+        check. Complex ones take longer, with more to read and more citations to check.
+        You can change this after any round.
+      </Text>
+      <Group justify="center" gap="sm" mt="xs">
+        <Button radius="md" onClick={() => onChoose("straightforward")} style={buttonStyle}>
+          Keep them straightforward
+        </Button>
+        <Button radius="md" onClick={() => onChoose("complex")} style={buttonStyle}>
+          Bring on complex ones
+        </Button>
+        <Button radius="md" variant="subtle" onClick={() => onChoose("either")}>
+          Either is fine
+        </Button>
+      </Group>
+    </Stack>
+  </Paper>
+);
+
+// Once answered, the choice can be changed between rounds.
+const PreferencePicker: React.FC<{
+  value: CasePreference;
+  onChange: (preference: CasePreference) => void;
+}> = ({ value, onChange }) => (
+  <Stack gap={4} align="center">
+    <Text size="sm" c="dimmed" id="arena-case-preference-label">
+      Next cases
+    </Text>
+    <SegmentedControl
+      radius="md"
+      value={value}
+      onChange={(next) => {
+        if (isCasePreference(next)) onChange(next);
+      }}
+      data={PREFERENCE_OPTIONS}
+      aria-labelledby="arena-case-preference-label"
+    />
+  </Stack>
+);
+
 // ---------------------------------------------------------------------------
 // The arena
 
@@ -1109,9 +1201,16 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
   const [lastRoundFouls, setLastRoundFouls] = useState(0);
   const [lastRoundTie, setLastRoundTie] = useState(false);
   const [rankings, setRankings] = useState<RankingsState>("pending");
+  // Null until the referee answers the question after their first round.
+  // The ref is what fetches read, so a choice applies to the very next case.
+  const [preference, setPreference] = useState<CasePreference | null>(null);
+  const preferenceRef = useRef<CasePreference | null>(null);
 
   useEffect(() => {
     setScoreboard(readScoreboard());
+    const stored = readPreference();
+    preferenceRef.current = stored;
+    setPreference(stored);
     let cancelled = false;
     fetchRankings().then((data) => {
       if (!cancelled) {
@@ -1146,7 +1245,7 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
       if (captchaToken) {
         headers[CAPTCHA_HEADER] = captchaToken;
       }
-      const response = await fetch(`/ziggy/rest/chooser/next/${taskType}/`, {
+      const response = await fetch(nextTaskUrl(taskType, preferenceRef.current), {
         method: "GET",
         headers,
         credentials: "include",
@@ -1435,6 +1534,21 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
     }
   }, [state.taskType, fetchNextTask, resetToSelection]);
 
+  const choosePreference = useCallback((next: CasePreference) => {
+    preferenceRef.current = next;
+    setPreference(next);
+    writePreference(next);
+  }, []);
+
+  // The answer to the question after the first round, and on to that round.
+  const answerPreference = useCallback(
+    (next: CasePreference) => {
+      choosePreference(next);
+      doAnother();
+    },
+    [choosePreference, doAnother],
+  );
+
   // The vote can be cast: one pick, or a tie of two or more.
   const canVote = state.tieMode ? state.tiedIds.length >= 2 : Boolean(state.selectedCandidate);
 
@@ -1489,6 +1603,7 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
               {plural(scoreboard.fouls, "foul")} called
             </Text>
           )}
+          {preference && <PreferencePicker value={preference} onChange={choosePreference} />}
           <Paper
             shadow="sm"
             p="md"
@@ -1650,14 +1765,29 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
             Your record: {plural(scoreboard.rounds, "round")} judged &middot;{" "}
             {plural(scoreboard.fouls, "foul")} called
           </Text>
-          <Group gap="lg" mt="md">
-            <Button size="lg" radius="md" onClick={doAnother} style={primaryButton(true)}>
-              Next round
-            </Button>
-            <Button size="lg" radius="md" variant="outline" onClick={resetToSelection}>
-              Switch arena
-            </Button>
-          </Group>
+          {preference ? (
+            <>
+              <PreferencePicker value={preference} onChange={choosePreference} />
+              <Group gap="lg" mt="md">
+                <Button size="lg" radius="md" onClick={doAnother} style={primaryButton(true)}>
+                  Next round
+                </Button>
+                <Button size="lg" radius="md" variant="outline" onClick={resetToSelection}>
+                  Switch arena
+                </Button>
+              </Group>
+            </>
+          ) : (
+            <>
+              <PreferenceQuestion
+                onChoose={answerPreference}
+                buttonStyle={primaryButton(true)}
+              />
+              <Button size="md" radius="md" variant="outline" onClick={resetToSelection}>
+                Switch arena
+              </Button>
+            </>
+          )}
           <Standings rankings={rankings} />
           <Text size="sm" c="dimmed" ta="center">
             Thanks for helping us choose better responses and fight bad insurance decisions 💪
@@ -1727,6 +1857,11 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
             <Badge size="lg" variant="filled" color="lime">
               Round {scoreboard.rounds + 1}
             </Badge>
+            {preference === "straightforward" || preference === "complex" ? (
+              <Badge size="lg" variant="light" color="gray">
+                {preference === "complex" ? "Complex cases" : "Straightforward cases"}
+              </Badge>
+            ) : null}
             <Title order={2} ta="center">
               {isAppeal ? "Which appeal letter wins?" : "Which chat reply wins?"}
             </Title>

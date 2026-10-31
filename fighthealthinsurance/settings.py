@@ -388,6 +388,19 @@ class Base(Configuration):
     CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS = _env_int(
         "CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS", 3600, minimum=0, maximum=86400
     )
+    # Votes a judge casts before the complexity of the cases served to them
+    # may rise a level (chooser_complexity.warmup_level): a new judge starts
+    # on the simplest cases that have evidence attached. 0 turns the warm-up
+    # off, so every judge gets the usual order from the first round.
+    CHOOSER_WARMUP_ROUNDS_PER_LEVEL = _env_int(
+        "CHOOSER_WARMUP_ROUNDS_PER_LEVEL", 1, minimum=0, maximum=1000
+    )
+    # Votes after which a case yields its place in the warm-up to a
+    # less-judged one, so the simplest cases don't take every new judge's
+    # first votes (chooser_complexity.ordered_for_judge).
+    CHOOSER_WARMUP_SATURATION_VOTES = _env_int(
+        "CHOOSER_WARMUP_SATURATION_VOTES", 5, minimum=1, maximum=100000
+    )
     CONDITION_RANKING_MIN_PEOPLE = int(os.getenv("CONDITION_RANKING_MIN_PEOPLE", "5"))
     CONDITION_RANKING_LOOKUP_BUDGET = int(
         os.getenv("CONDITION_RANKING_LOOKUP_BUDGET", "30")
@@ -1237,6 +1250,11 @@ class _TestBase(Dev):
     # A model forced into the arena from the host environment would be asked
     # for real by every test that builds a task.
     CHOOSER_FORCE_MODEL = ""
+    # The arena's serving order is pinned at its defaults: a value exported
+    # in the shell (tox passes the environment through) would reorder what
+    # the ordering tests are served.
+    CHOOSER_WARMUP_ROUNDS_PER_LEVEL = 1
+    CHOOSER_WARMUP_SATURATION_VOTES = 5
 
     @classmethod
     def pre_setup(cls):

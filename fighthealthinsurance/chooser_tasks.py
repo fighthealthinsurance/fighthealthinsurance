@@ -44,7 +44,7 @@ from fighthealthinsurance.ml.question_parsing import (
     MAX_QUESTION_CHARS,
     is_junk_question,
 )
-from fighthealthinsurance import condition_rankings
+from fighthealthinsurance import chooser_complexity, condition_rankings
 from fighthealthinsurance.models import (
     ChooserCandidate,
     ChooserTask,
@@ -1975,9 +1975,12 @@ async def _generate_single_task(task_type: str) -> bool:
 
         # Mark task as READY if we generated enough candidates. The counter
         # was persisted by the generator's end-of-run save (not once per
-        # candidate); this save records the final status.
+        # candidate); this save records the final status, and the case's
+        # complexity now that every draft (the synthesized one included) is
+        # on file.
         if task.num_candidates_generated >= _MIN_READY_CANDIDATES:
             task.status = "READY"
+            task.complexity = await _complexity_for(task)
             await database_sync_to_async(task.save)()
             logger.info(
                 f"ChooserTask {task.id} is now READY with "
@@ -1999,6 +2002,20 @@ async def _generate_single_task(task_type: str) -> bool:
         task.status = "DISABLED"
         await database_sync_to_async(task.save)()
     return False
+
+
+async def _complexity_for(task: ChooserTask) -> Optional[int]:
+    """The task's complexity score (chooser_complexity.ascore), or None when
+    scoring raised: the score is wanted, not required, so no task is held
+    back from READY by it, and an unscored task is served as the hardest
+    until ``manage.py score_chooser_complexity`` fills it in."""
+    try:
+        return await chooser_complexity.ascore(task)
+    except Exception as e:
+        logger.opt(exception=True).warning(
+            f"ChooserTask {task.id}: could not score its complexity: {e}"
+        )
+        return None
 
 
 async def _generate_appeal_candidates(task: ChooserTask):

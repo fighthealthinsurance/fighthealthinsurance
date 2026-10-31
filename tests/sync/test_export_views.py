@@ -189,6 +189,35 @@ class ChooserRankedExportContentTest(StaffExportTestBase):
         )
 
 
+    def test_chooser_ranked_export_carries_the_complexity(self):
+        scored = ChooserTask.objects.create(
+            task_type="appeal", status="READY", source="synthetic", complexity=3
+        )
+        unscored = ChooserTask.objects.create(
+            task_type="appeal", status="READY", source="synthetic"
+        )
+        for task in (scored, unscored):
+            candidate = ChooserCandidate.objects.create(
+                task=task,
+                candidate_index=0,
+                kind="appeal_letter",
+                model_name="model-a",
+                content="Appeal text",
+            )
+            ChooserVote.objects.create(
+                task=task,
+                chosen_candidate=candidate,
+                presented_candidate_ids=[candidate.id],
+                session_key="session-1",
+            )
+
+        by_task = {
+            record["task_id"]: record["complexity"]
+            for record in self.get_export_lines("chooser_ranked_export")
+        }
+
+        self.assertEqual(by_task, {scored.id: 3, unscored.id: None})
+
     def test_chooser_ranked_export_splits_ties(self):
         task = ChooserTask.objects.create(
             task_type="appeal", status="READY", source="synthetic"

@@ -238,9 +238,80 @@ without it. The citation check needs nothing from the server.
 interview are version 2; older appeal tasks and every chat task are 1. The
 version marks the pipeline, not what each step found. The next-task endpoint
 serves the newest version first (then fewest votes, then oldest), so new
-cases collect votes before old ones, which stay votable. Only tasks at the
+cases collect votes before old ones, which stay votable; a judge who is
+warming up (see below) is ramped through the newest version's cases by
+complexity, with the older versions still behind them. Only tasks at the
 current version count as fresh for the refill (`_fresh_tasks`), so unvoted
 old tasks never hold off generating new ones.
+
+### Complexity, and starting a judge on the simplest cases
+
+`ChooserTask.complexity` scores how much work a case is to judge, from 1
+(the simplest) to 5 (`chooser_complexity.py`). It is the reading and
+cross-checking load, not how clinically hard the case is: the words in
+every draft and in the case shown above them (facts, answers, the evidence's
+titles and summaries, or the chat so far), read at a careful 230 words a
+minute, plus a little per citation in the drafts (PMIDs, PubMed links, DOIs,
+"et al.", author-year parentheses, bracketed numbers, and an article on
+file named by its title), added up as estimated minutes and banded: at most
+8 minutes is a 1, 14 a 2, 21 a 3, 30 a 4, and more a 5. The band edges are
+provisional, set from what tasks look like rather than measured; the score
+is computed from the stored task alone, so it is deterministic and cheap to
+recompute, and `score_chooser_complexity --dry-run -v 2` (below) prints
+every task's minutes to tune them against the real pool. A task is scored
+as it goes READY, once every draft (the synthesized one included) is on
+file; a scoring error leaves the score empty rather than holding the task
+back.
+
+A task with no score (one from before the score existed, or whose scoring
+failed) is **served as a 5 but stored as NULL**: the ordering below
+coalesces the empty score to the maximum and never writes it, so a real
+score can be filled in later. `python manage.py score_chooser_complexity
+[--task-type appeal|chat] [--rescore] [--dry-run]` does that: by default it
+scores the READY tasks without a score; `--rescore` redoes every READY task
+(after a change to the rubric); `--dry-run` reports without storing;
+`-v 2` prints each task's breakdown. Nothing runs it on deploy, so until it
+has run an older case counts as a 5. The keys that come before complexity
+still decide first (evidence attached, then cases judged fewer than
+`CHOOSER_WARMUP_SATURATION_VOTES` times, then the newest case version);
+within them, an unscored case is served after every scored case below 5 to
+a judge who is warming up or asked for straightforward cases, at any round,
+and before them to a judge who asked for complex ones. It ties with the
+scored 5s, so fewest votes and then age decide between those.
+
+The score is used to **start a judge on the simplest cases**
+(`chooser_complexity.ordered_for_judge`). A session's level is 1 for its
+first `CHOOSER_WARMUP_ROUNDS_PER_LEVEL` votes on a task type (skips are not
+rounds, and votes on the other type don't count), one more for the next as
+many, and so on; at the default of one vote a level a judge is warmed up
+after four votes. While the level is below 5 the next-task endpoint serves,
+in order: appeal cases with evidence attached before those without (so the
+first rounds still practise checking citations); cases judged fewer than
+`CHOOSER_WARMUP_SATURATION_VOTES` times before those judged that often (so
+the simplest cases don't take every new judge's first votes while the rest,
+the unvoted hard ones that hold the refill off included, wait); the newest
+case version first, as always; then the cases by how far their complexity
+is above the level, so every case within reach ties and the usual keys
+decide, and when nothing is within reach the nearest is served; then fewest
+votes, then oldest. From level 5 on, and with the rounds setting at 0, the
+usual order alone. The staff export (below) carries each task's
+`complexity`, so a vote's difficulty can be read alongside it.
+
+**After their first round, the judge is asked what kind of case they want
+next**: "Keep them straightforward", "Bring on complex ones" or "Either is
+fine". The "Vote counted" screen asks until it is answered, and each answer
+also starts the next round; once answered it shows a switcher instead, on
+that screen and on the start page, so the choice can change between rounds.
+The answer is kept in the browser (`localStorage`), like the scoreboard, and
+goes to the next-task endpoints as `?difficulty=straightforward` or
+`?difficulty=complex` ("Either" sends nothing, which keeps the warm-up). The
+server keeps the warm-up's first keys (evidence first, then cases judged
+fewer than `CHOOSER_WARMUP_SATURATION_VOTES` times, then the newest case
+version) and then orders by complexity: `straightforward` holds the level
+at 1 however many rounds are judged, so the simplest case left comes first;
+`complex` serves the most complex case left first, an unscored case
+counting as a 5. Both apply with the warm-up off too, since the judge asked;
+an unknown value is ignored. The choice is not stored with the vote.
 
 ### Trying out a model (`CHOOSER_FORCE_MODEL`)
 
@@ -378,6 +449,8 @@ environment variables of the same name.
 | `CHOOSER_LAUNCH_BACKFILL_MIN_VOTES` | `2` | Votes every current appeal task needs before the launch backfill is due |
 | `CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS` | `3600` | How long a due launch backfill waits for a generation claim another process holds |
 | `CHOOSER_FORCE_MODEL` | LunaRoute's two models, for now (`""` in tests) | Registered model names seated in every new arena task |
+| `CHOOSER_WARMUP_ROUNDS_PER_LEVEL` | `1` | Votes a judge casts before the complexity of the cases served to them may rise a level; `0` turns the warm-up off |
+| `CHOOSER_WARMUP_SATURATION_VOTES` | `5` | Votes after which a case yields its place, in the warm-up or in the order a judge chose, to a less-judged one |
 | `CONDITION_RANKING_MIN_PEOPLE` | `5` | The k in k-anonymity: different people per term |
 | `CONDITION_RANKING_LOOKUP_BUDGET` | `30` | Outside lookups per refresh |
 | `CONDITION_RANKING_RECHECK_DAYS` | `365` | When a stored verdict is asked again |
@@ -396,4 +469,5 @@ environment variables of the same name.
 `votes` (ties split), `tie_count` and `flag_count`, so the preference data,
 the ties and the fabrication flags travel together. `vote_count` is the
 winning candidate's `votes` and `total_votes` the number of votes cast; the
-case (summaries and `qa_pairs` included) rides along in `context`.
+case (summaries and `qa_pairs` included) rides along in `context`, and its
+`complexity` (1 to 5, or null when unscored) beside it.
