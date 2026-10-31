@@ -215,6 +215,25 @@ class TheFingerprintIsKeyedTest(_OneCopyTestCase):
         )
 
 
+    def test_the_copy_that_passes_the_closer_look_is_the_one_shared(self):
+        from django.core.exceptions import ValidationError
+
+        second = pdf(name="second.pdf", content=PDF + b" second")
+        expected = shared_plan_documents.fingerprint(second)
+        with patch(
+            "fighthealthinsurance.chat_forms.validate_shared_document",
+            side_effect=[ValidationError("not this one"), None],
+        ):
+            self.post(
+                [pdf(name="first.pdf", content=PDF + b" first"), second],
+                share_for_research="on",
+            )
+        shared = PolicyDocument.objects.get(
+            source=PolicyDocument.SOURCE_SHARED_APPEAL
+        )
+        self.assertEqual(shared.fingerprint, expected)
+
+
 class TwoSavesAtOnceTest(_OneCopyTestCase):
     """The second of two saves that both missed the other's row."""
 

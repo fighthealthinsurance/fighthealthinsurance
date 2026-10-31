@@ -265,8 +265,12 @@ _CONDITIONAL_CLAUSE_RE = re.compile(
     re.IGNORECASE,
 )
 _CLAUSE_BREAK_RE = re.compile(r"[.;:!?\n]")
-# A negation just before the match: "this is not a final decision".
-_NEGATED_RE = re.compile(r"\b(not|never|no)\s+(a|an|the|our|yet)?\s*$", re.IGNORECASE)
+# A negation just before the match: "this is not a final decision", "we
+# cannot affirm our original decision", "we can't uphold the denial".
+_NEGATED_RE = re.compile(
+    r"\b(not|never|no|cannot|\w+n['\u2019]t)\s+(a|an|the|our|yet)?\s*$",
+    re.IGNORECASE,
+)
 # How far back a clause is read for a conditional. Longer than any clause
 # a letter is likely to hold, short enough that the sentence before cannot
 # lend its "if" to this one when the break between them is unpunctuated.

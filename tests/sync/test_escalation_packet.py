@@ -333,6 +333,8 @@ class RegulatorEscalationReasonsTest(TestCase):
             "This notice explains your rights to appeal our original decision.",
             "You can ask us to review our initial determination.",
             "This is not a final decision.",
+            "We cannot affirm our original decision without more records.",
+            "We can\u2019t uphold the denial on this record.",
         ):
             with self.subTest(text=text):
                 denial = _FakeDenial(state="", denial_text=text)

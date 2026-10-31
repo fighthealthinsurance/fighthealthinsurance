@@ -446,9 +446,10 @@ class TestEvidenceJudging:
         ours = _own_model()
 
         with override_settings(CHOOSER_JUDGE_EVIDENCE=True):
-            await self._evidence(AsyncMock(), ours, ours_healthy=False)
+            evidence = await self._evidence(AsyncMock(), ours, ours_healthy=False)
 
         ours._infer_no_context.assert_not_awaited()
+        assert [e["pmid"] for e in evidence] == ["1"]
 
     async def test_what_jev_judges_is_not_asked_of_our_own_model(self):
         await _cached_search("MRI Lower back pain", ["1"])
