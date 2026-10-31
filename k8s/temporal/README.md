@@ -342,15 +342,16 @@ namespace's pages through.
 
 ## Seeing one case at a time
 
-Each case has its own task queue, so the UI's list can show one at a time. These
-links open the filtered list:
+Each kind of work has its own task queue, so the UI's list can show one kind at a
+time. These links list every run on that queue:
 
 | Case | Queues | Link |
 | --- | --- | --- |
 | Create the appeal letter: intake | `fhi-intake` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-intake%22` |
 | Create the appeal letter: generation | `fhi-appeals` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-appeals%22` |
 | Submit the letter by fax | `fhi-fax` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-fax%22` |
-| Evals | `fhi-eval`, `fhi-eval-writer` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-eval%22` |
+| Evals | `fhi-eval` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-eval%22` |
+| Evals: served writes | `fhi-eval-writer` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-eval-writer%22` |
 
 To follow one denial, open `intake-<denial uuid>` and `generate-appeal-<denial uuid>`
 by workflow id; a child's page links to its parent. Fax ids are `send-fax-<fax uuid>`.

@@ -532,11 +532,12 @@ class Command(BaseCommand):
                 runs.append(appeal_worker.run())
                 workers.append(appeal_worker)
                 queues.append(appeal_queue)
-                if intake_enabled:
-                    # Its own Worker, so a nudge or a journey's next step never
-                    # waits behind a generation for a slot. --task-queue never
-                    # changes this queue.
-                    intake_queue = settings.TEMPORAL_INTAKE_TASK_QUEUE
+                # Its own Worker, so a nudge or a journey's next step never waits
+                # behind a generation for a slot. --task-queue never changes this
+                # queue. Pointed at the appeal queue (the undo path), the appeal
+                # Worker already hosts the journey.
+                intake_queue = settings.TEMPORAL_INTAKE_TASK_QUEUE
+                if intake_enabled and intake_queue != appeal_queue:
                     intake_worker = Worker(
                         client,
                         task_queue=intake_queue,

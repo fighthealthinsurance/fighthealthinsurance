@@ -952,6 +952,14 @@ def test_intake_queue_stays_off_with_its_flag_and_in_the_fax_role():
     assert _run_with("fax", TEMPORAL_INTAKE_JOURNEY_ENABLED=True) == ["q-fax"]
 
 
+def test_intake_queue_pointed_at_the_appeal_queue_adds_no_second_worker():
+    assert _run_with(
+        "appeal",
+        TEMPORAL_INTAKE_JOURNEY_ENABLED=True,
+        TEMPORAL_INTAKE_TASK_QUEUE="q-appeal",
+    ) == ["q-appeal"]
+
+
 def test_policy_off_changes_nothing():
     assert _run_with("appeal", TEMPORAL_CHAT_POLICY_ENABLED=False) == ["q-appeal"]
     assert _run_with("all", TEMPORAL_CHAT_POLICY_ENABLED=False) == [
