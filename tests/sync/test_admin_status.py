@@ -2614,14 +2614,12 @@ def _fake_phoenix_get(url, params=None, headers=None, timeout=None, **kw):
             "input": _PHOENIX_SECRET,
             "output": _PHOENIX_SECRET,
         }
-        since = (params or {}).get("start_time")
-        rows = [trace] if (params or {}).get("limit") == 1 else [trace, trace]
-        # The 7 day window has more than one page behind it.
-        week = since and since < (
-            timezone.now() - datetime.timedelta(days=2)
-        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        older = dict(
+            trace,
+            start_time=(timezone.now() - datetime.timedelta(days=3)).isoformat(),
+        )
         return _FakePhoenixResponse(
-            {"data": rows, "next_cursor": "abc" if week else None}
+            {"data": [trace, trace, older], "next_cursor": None}
         )
     if url.endswith("/v1/datasets"):
         return _FakePhoenixResponse(
@@ -2721,7 +2719,7 @@ class AdminStatusPhoenixTest(TestCase):
         project = p["projects"][0]
         self.assertEqual(project["name"], "letter-evals")
         self.assertEqual(project["traces_24h"], "2")
-        self.assertEqual(project["traces_7d"], "2+")
+        self.assertEqual(project["traces_7d"], "3")
         self.assertIsNotNone(project["last_trace"])
         self.assertEqual(p["experiments"][0]["name"], "judge-run-a")
         self.assertEqual(p["experiments"][0]["failed"], 1)
@@ -2904,3 +2902,120 @@ class AdminStatusPhoenixTest(TestCase):
             response = self._get()
         self.assertIn("8s budget", response.context["phoenix"]["error"])
         self.assertLess(clock["now"], 20)
+
+
+def _body_response(body, status_code=200):
+    """A ``requests.get`` stand-in answering every call with *body*."""
+
+    def fake(url, params=None, headers=None, timeout=None, **kw):
+        _PHOENIX_CALLS.append((url, dict(params or {}), dict(headers or {}), timeout))
+        return _FakePhoenixResponse(body, status_code=status_code, url=url)
+
+    return fake
+
+
+class _RawResponse(_FakePhoenixResponse):
+    def __init__(self, raw):
+        super().__init__({})
+        self._raw = raw
+
+    def iter_content(self, chunk_size=1):
+        if self._raw:
+            yield self._raw
+
+
+def _read_timeout_error():
+    from urllib3.exceptions import ReadTimeoutError
+
+    return requests.exceptions.ConnectionError(
+        ReadTimeoutError(None, "/v1/projects", "Read timed out.")
+    )
+
+
+class AdminStatusPhoenixResponseTest(AdminStatusPhoenixTest):
+    """Shapes and failures of individual Phoenix responses."""
+
+    def test_body_without_a_data_list_is_a_bad_response(self):
+        with mock.patch(_PHOENIX_GET, new=_body_response({"projects": []})):
+            response = self._get()
+        p = response.context["phoenix"]
+        self.assertFalse(p["ok"])
+        self.assertIn("unexpected response", p["error"])
+        self.assertNotContains(response, "No Phoenix projects yet")
+
+    def test_empty_body_is_a_bad_response(self):
+        def empty(url, params=None, headers=None, timeout=None, **kw):
+            return _RawResponse(b"")
+
+        with mock.patch(_PHOENIX_GET, new=empty):
+            response = self._get()
+        p = response.context["phoenix"]
+        self.assertFalse(p["ok"])
+        self.assertIn("unexpected response", p["error"])
+
+    def test_server_error_reads_as_an_outage(self):
+        with mock.patch(_PHOENIX_GET, new=_body_response({}, status_code=503)):
+            response = self._get()
+        error = response.context["phoenix"]["error"]
+        self.assertIn("Phoenix server error (HTTP 503)", error)
+        self.assertNotIn("bug in this page", error)
+
+    def test_other_client_error_keeps_the_api_change_hint(self):
+        with mock.patch(_PHOENIX_GET, new=_body_response({}, status_code=404)):
+            response = self._get()
+        self.assertIn("bug in this page", response.context["phoenix"]["error"])
+
+    def test_read_timeout_mid_body_reads_as_a_timeout(self):
+        class Stalls(_FakePhoenixResponse):
+            def iter_content(self, chunk_size=1):
+                yield b'{"data": ['
+                raise _read_timeout_error()
+
+        def stalls(url, params=None, headers=None, timeout=None, **kw):
+            return Stalls({})
+
+        with mock.patch(_PHOENIX_GET, new=stalls):
+            response = self._get()
+        self.assertIn("8s budget", response.context["phoenix"]["error"])
+
+    def test_read_blocked_before_the_first_chunk_reads_as_a_timeout(self):
+        # Nothing arrives at all: the per-request socket timeout ends the read.
+        class Silent(_FakePhoenixResponse):
+            def iter_content(self, chunk_size=1):
+                raise _read_timeout_error()
+                yield b""  # pragma: no cover - makes this a generator
+
+        def silent(url, params=None, headers=None, timeout=None, **kw):
+            return Silent({})
+
+        with mock.patch(_PHOENIX_GET, new=silent):
+            response = self._get()
+        self.assertIn("8s budget", response.context["phoenix"]["error"])
+
+    def test_more_projects_and_experiments_are_marked_truncated(self):
+        def paged(url, params=None, headers=None, timeout=None, **kw):
+            resp = _fake_phoenix_get(url, params, headers, timeout, **kw)
+            if url.endswith(("/v1/projects", "/experiments")):
+                resp._body["next_cursor"] = "more"
+            return resp
+
+        with mock.patch(_PHOENIX_GET, new=paged):
+            response = self._get()
+        p = response.context["phoenix"]
+        self.assertTrue(p["projects_truncated"])
+        self.assertTrue(p["experiments_truncated"])
+        self.assertContains(response, "Phoenix has more")
+
+    def test_worst_case_request_count_at_the_limits(self):
+        # Ten projects and ten datasets: 1 + 10 + 1 + 10 requests, no more.
+        def full(url, params=None, headers=None, timeout=None, **kw):
+            resp = _fake_phoenix_get(url, params, headers, timeout, **kw)
+            if url.endswith(("/v1/projects", "/v1/datasets")):
+                row = resp._body["data"][0]
+                resp._body["data"] = [dict(row, id=f"id{i}") for i in range(10)]
+            return resp
+
+        with mock.patch(_PHOENIX_GET, new=full):
+            response = self._get()
+        self.assertTrue(response.context["phoenix"]["ok"])
+        self.assertEqual(len(_PHOENIX_CALLS), 22)

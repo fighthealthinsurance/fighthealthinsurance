@@ -672,13 +672,14 @@
             <td><code>{{ p.name }}</code></td>
             <td>{{ p.traces_24h }}</td>
             <td>{{ p.traces_7d }}</td>
-            <td>{% if p.last_trace %}{{ p.last_trace|date:"Y-m-d H:i" }}{% else %}&mdash;{% endif %}</td>
+            <td>{% if p.last_trace %}{{ p.last_trace|date:"Y-m-d H:i" }}{% else %}none in 7 days{% endif %}</td>
           </tr>
         {% empty %}
           <tr><td colspan="4">No Phoenix projects yet.</td></tr>
         {% endfor %}
         </tbody>
       </table>
+      {% if phoenix.projects_truncated %}<p class="summary-line"><span class="pill">Showing the first {{ phoenix.projects|length }} projects; Phoenix has more.</span></p>{% endif %}
       {% if phoenix.experiments_error %}
       <p class="summary-line">
         <span class="status-badge bad">EXPERIMENTS UNAVAILABLE</span>
@@ -703,6 +704,7 @@
         {% endfor %}
         </tbody>
       </table>
+      {% if phoenix.experiments_truncated %}<p class="summary-line"><span class="pill">Experiments read from the first datasets and newest runs only; Phoenix has more.</span></p>{% endif %}
       {% endif %}
       <p class="summary-line">
         <span class="pill">Counts stop at {{ phoenix.count_cap }} per window. Traces and eval detail: the Phoenix UI is cluster-internal by design.</span>

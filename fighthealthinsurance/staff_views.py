@@ -58,6 +58,7 @@ import ray
 import requests
 from dateutil.relativedelta import relativedelta
 from loguru import logger
+from urllib3.exceptions import ReadTimeoutError
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
 from fighthealthinsurance import letter_review, letter_review_highlight
@@ -198,6 +199,10 @@ class _PhoenixDeadline(Exception):
 
 class _PhoenixRedirect(Exception):
     """Phoenix answered 3xx; the panel never follows one."""
+
+
+class _PhoenixBadResponse(Exception):
+    """A Phoenix response was empty or not the expected shape."""
 
 
 class _PhoenixBodyTooLarge(Exception):
@@ -582,7 +587,8 @@ class AdminStatusView(generic.TemplateView):
     _RECENT_WORKFLOW_SCAN = 100
     # Phoenix panel bounds. Every request shares one 8s budget, so these keep
     # the number of requests small: projects listed, datasets whose
-    # experiments are read, and experiments shown.
+    # experiments are read, and experiments shown. Worst case is
+    # 1 + projects + 1 + datasets requests, 22 at these limits.
     _PHOENIX_PROJECT_LIMIT = 10
     _PHOENIX_DATASET_LIMIT = 10
     _PHOENIX_EXPERIMENT_LIMIT = 10
@@ -1410,15 +1416,22 @@ class AdminStatusView(generic.TemplateView):
                     "PHOENIX_API_KEY is missing, revoked, or lacks read "
                     "access. A config problem, not a Phoenix outage."
                 )
+            if code >= 500:
+                return (
+                    f"Phoenix server error (HTTP {code}): the phoenix pod in "
+                    "fhi-eval or its database is failing. Letter evals may "
+                    "not be recording; appeals are unaffected."
+                )
             return (
                 f"Phoenix answered HTTP {code}. A 404 or 422 usually means "
                 "the REST API changed under a Phoenix upgrade -- a bug in "
                 "this page, not an outage."
             )
-        if isinstance(exc, ValueError):
+        if isinstance(exc, (_PhoenixBadResponse, ValueError)):
             return (
-                "Phoenix sent a response this page could not read as JSON: "
-                "check PHOENIX_BASE_URL points at the phoenix service."
+                "Phoenix sent an empty or unexpected response: check "
+                "PHOENIX_BASE_URL points at the phoenix service, or the REST "
+                "API changed under a Phoenix upgrade."
             )
         if isinstance(exc, requests.RequestException):
             return (
@@ -1459,6 +1472,8 @@ class AdminStatusView(generic.TemplateView):
             "projects": [],
             "experiments": [],
             "experiments_error": None,
+            "projects_truncated": False,
+            "experiments_truncated": False,
             "count_cap": AdminStatusView._PHOENIX_TRACE_COUNT_CAP,
         }
         if not enabled:
@@ -1503,98 +1518,112 @@ class AdminStatusView(generic.TemplateView):
                     resp.raise_for_status()
                     # The socket timeout only bounds silence between bytes,
                     # so the read itself checks the deadline and a byte cap.
+                    # Small chunks keep the check close; a read blocked
+                    # inside one chunk is still bounded by that timeout.
                     chunks: List[bytes] = []
                     size = 0
-                    for chunk in resp.iter_content(chunk_size=65536):
-                        size += len(chunk)
-                        if size > _PHOENIX_MAX_BODY_BYTES:
-                            raise _PhoenixBodyTooLarge()
-                        if time.monotonic() > deadline:
-                            raise _PhoenixDeadline()
-                        chunks.append(chunk)
+                    try:
+                        for chunk in resp.iter_content(chunk_size=8192):
+                            size += len(chunk)
+                            if size > _PHOENIX_MAX_BODY_BYTES:
+                                raise _PhoenixBodyTooLarge()
+                            if time.monotonic() > deadline:
+                                raise _PhoenixDeadline()
+                            chunks.append(chunk)
+                    except requests.RequestException as e:
+                        # requests reports a read timeout mid-body as a
+                        # connection error wrapping urllib3's timeout.
+                        if any(isinstance(a, ReadTimeoutError) for a in e.args):
+                            raise _PhoenixDeadline() from None
+                        raise
                 finally:
                     resp.close()
-                body = json.loads(b"".join(chunks) or b"{}")
-                return body if isinstance(body, dict) else {}
+                raw = b"".join(chunks)
+                if not raw.strip():
+                    raise _PhoenixBadResponse()
+                body = json.loads(raw)
+                # Every list endpoint used here answers {"data": [...], ...}.
+                if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+                    raise _PhoenixBadResponse()
+                return body
 
             def iso(when: datetime.datetime) -> str:
                 return when.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-            def trace_count(project_id: str, since: datetime.datetime) -> str:
-                # No count endpoint exists, so take one page of trace rows
-                # (start and end times, ids, token totals; never spans) and
-                # count it. A full page with more behind it shows as "N+".
-                cap = AdminStatusView._PHOENIX_TRACE_COUNT_CAP
-                body = get(
-                    f"/v1/projects/{project_id}/traces",
-                    {
-                        "start_time": iso(since),
-                        "limit": cap,
-                        "include_spans": "false",
-                    },
-                )
-                rows = body.get("data") or []
-                if body.get("next_cursor"):
-                    return f"{len(rows)}+"
-                return str(len(rows))
-
             def gather() -> Dict[str, Any]:
                 now = timezone.now()
+                day_ago = now - datetime.timedelta(days=1)
+                cap = AdminStatusView._PHOENIX_TRACE_COUNT_CAP
                 projects: List[Dict[str, Any]] = []
+                # Cursors are not followed: the budget would not cover a
+                # second page of everything. A list that has more behind it
+                # is marked truncated on the page instead.
                 body = get(
                     "/v1/projects",
                     {"limit": AdminStatusView._PHOENIX_PROJECT_LIMIT},
                 )
-                for p in body.get("data") or []:
+                projects_truncated = bool(body.get("next_cursor"))
+                for p in body["data"]:
+                    if not isinstance(p, dict):
+                        continue
                     project_id = str(p.get("id") or "")
                     if not project_id:
                         continue
-                    # The newest trace, by the endpoint's default order
-                    # (start_time desc). Only its start time is kept.
-                    latest = (
-                        get(
-                            f"/v1/projects/{project_id}/traces",
-                            {"limit": 1, "include_spans": "false"},
-                        ).get("data")
-                        or []
+                    # One query per project: a page of the last seven days of
+                    # trace rows (never spans), newest first by the endpoint's
+                    # default order. The 24h count and last trace time are
+                    # read off the same rows. A full page with more behind it
+                    # shows as "N+", and so does the 24h count when even the
+                    # oldest row on the page is inside the day.
+                    week = get(
+                        f"/v1/projects/{project_id}/traces",
+                        {
+                            "start_time": iso(now - datetime.timedelta(days=7)),
+                            "limit": cap,
+                            "include_spans": "false",
+                        },
                     )
-                    last_trace = None
-                    if latest:
-                        last_trace = _parse_iso(latest[0].get("start_time"))
+                    starts = [
+                        _parse_iso(row.get("start_time"))
+                        for row in week["data"]
+                        if isinstance(row, dict)
+                    ]
+                    more = bool(week.get("next_cursor"))
+                    in_day = [t for t in starts if t and t >= day_ago]
+                    day_more = more and len(in_day) == len(starts)
+                    dated = [t for t in starts if t]
                     projects.append(
                         {
                             "name": str(p.get("name") or project_id),
-                            "traces_24h": trace_count(
-                                project_id, now - datetime.timedelta(days=1)
-                            ),
-                            "traces_7d": trace_count(
-                                project_id, now - datetime.timedelta(days=7)
-                            ),
-                            "last_trace": last_trace,
+                            "traces_24h": f"{len(in_day)}{'+' if day_more else ''}",
+                            "traces_7d": f"{len(starts)}{'+' if more else ''}",
+                            "last_trace": max(dated) if dated else None,
                         }
                     )
                 experiments: List[Dict[str, Any]] = []
                 experiments_error: Optional[str] = None
+                experiments_truncated = False
                 try:
-                    datasets = (
-                        get(
-                            "/v1/datasets",
-                            {"limit": AdminStatusView._PHOENIX_DATASET_LIMIT},
-                        ).get("data")
-                        or []
+                    listing = get(
+                        "/v1/datasets",
+                        {"limit": AdminStatusView._PHOENIX_DATASET_LIMIT},
                     )
-                    for ds in datasets:
+                    experiments_truncated = bool(listing.get("next_cursor"))
+                    for ds in listing["data"]:
+                        if not isinstance(ds, dict):
+                            continue
                         dataset_id = str(ds.get("id") or "")
                         if not dataset_id:
                             continue
-                        rows = (
-                            get(
-                                f"/v1/datasets/{dataset_id}/experiments",
-                                {"limit": AdminStatusView._PHOENIX_EXPERIMENT_LIMIT},
-                            ).get("data")
-                            or []
+                        page = get(
+                            f"/v1/datasets/{dataset_id}/experiments",
+                            {"limit": AdminStatusView._PHOENIX_EXPERIMENT_LIMIT},
                         )
-                        for ex in rows:
+                        if page.get("next_cursor"):
+                            experiments_truncated = True
+                        for ex in page["data"]:
+                            if not isinstance(ex, dict):
+                                continue
                             experiments.append(
                                 {
                                     "name": str(ex.get("name") or ex.get("id")),
@@ -1616,15 +1645,19 @@ class AdminStatusView(generic.TemplateView):
                 )
                 return {
                     "projects": projects,
+                    "projects_truncated": projects_truncated,
                     "experiments": experiments[
                         : AdminStatusView._PHOENIX_EXPERIMENT_LIMIT
                     ],
+                    "experiments_truncated": experiments_truncated,
                     "experiments_error": experiments_error,
                 }
 
             data = gather()
             out["projects"] = data["projects"]
+            out["projects_truncated"] = data["projects_truncated"]
             out["experiments"] = data["experiments"]
+            out["experiments_truncated"] = data["experiments_truncated"]
             out["experiments_error"] = data["experiments_error"]
         except Exception as e:
             _log_phoenix_failure("status check", e)
