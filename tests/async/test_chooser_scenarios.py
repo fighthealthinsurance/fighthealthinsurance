@@ -478,6 +478,13 @@ class TestInterview:
         assert generic.await_args.kwargs["procedure"] == "MRI"
         assert len(task.context_json["qa_pairs"]) == 2
 
+    async def test_the_generic_stand_in_is_allowed_outside_models(self):
+        """Synthetic case, like the specific questions: without outside
+        models the generic set had only the appeal fine-tune to ask."""
+        _, _, _, generic = await self._generate(None, _ANSWERS, generic=_QUESTIONS)
+
+        assert generic.await_args.kwargs["use_external"] is True
+
     async def test_junk_and_repeated_questions_are_not_asked(self):
         questions = _QUESTIONS + [
             ("Has the patient tried physical therapy?", ""),

@@ -55,7 +55,10 @@ wins, including the ones `scripts/run_local.sh` sets.
   router falls back to it there, with a logged warning, only when no
   general-purpose backend is left among the candidates for that call, for
   example when the ones registered are unavailable
-  (`MLRouter._general_purpose_only`).
+  (`MLRouter._general_purpose_only`). Question generation doesn't fall back
+  to it when an outside model is in the same fan-out: with `use_external`,
+  that is the external generalist or Perplexity, so both the generic and the
+  case-specific questions get a model that can answer.
 
 ## TypeSafe (Jev)
 
