@@ -7,10 +7,11 @@
     h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
     h2 { color: #555; margin-top: 0; border-left: 4px solid #007bff; padding-left: 10px; }
     .status-section { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-    .nav-back { display: inline-block; margin-bottom: 14px; color: #007bff; text-decoration: none; }
+    /* Every text colour here clears 4.5:1 on what it sits on (tests/sync/test_contrast.py). */
+    .nav-back { display: inline-block; margin-bottom: 14px; color: #0056b3; text-decoration: none; }
     .nav-back:hover { text-decoration: underline; }
     .meta { color: #666; font-size: 0.9em; margin-bottom: 18px; }
-    .meta a { color: #007bff; }
+    .meta a { color: #0056b3; }
     .summary-line { font-size: 1.05em; margin: 6px 0 12px 0; }
     .scroll-x { overflow-x: auto; }
     table.status { width: 100%; border-collapse: collapse; margin-top: 8px; }
@@ -19,31 +20,31 @@
     table.status th { background: #f0f4f8; }
     table.status th.backend-col { overflow-wrap: anywhere; }
     table.status td.num, table.status th.num { text-align: right; }
-    .status-badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.82em; font-weight: bold; color: white; }
-    .status-badge.ok { background: #28a745; }
-    .status-badge.fail { background: #dc3545; }
-    .status-badge.warn { background: #f0ad4e; color: #333; }
-    .status-badge.off { background: #adb5bd; }
-    .error-text { color: #dc3545; font-size: 0.85em; word-break: break-word; }
+    .status-badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.82em; font-weight: bold; color: white; background: #6c757d; }
+    .status-badge.ok { color: white; background: #1e7e34; }
+    .status-badge.fail { color: white; background: #c82333; }
+    .status-badge.warn { color: #333; background: #f0ad4e; }
+    .status-badge.off { color: white; background: #6c757d; }
+    .error-text { color: #c82333; font-size: 0.85em; word-break: break-word; }
     .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.78em; background: #e9ecef; color: #555; }
     .stat-grid { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; }
     .stat-card { flex: 1 1 120px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 12px 14px; }
     .stat-card .value { font-size: 1.8em; font-weight: bold; color: #333; }
     .stat-card .label { font-size: 0.85em; color: #666; margin-top: 2px; }
-    .stat-card.stat-alert .value { color: #dc3545; }
+    .stat-card.stat-alert .value { color: #c82333; }
     .endpoint { font-family: monospace, monospace; font-size: 0.85em; word-break: break-all; }
     .sub { font-size: 0.85em; color: #666; margin-top: 2px; }
     .bar { background: #e9ecef; border-radius: 4px; height: 8px; width: 120px; margin-top: 4px; overflow: hidden; }
-    .bar span { display: block; height: 100%; background: #28a745; }
+    .bar span { display: block; height: 100%; background: #1e7e34; }
     .bar span.warn { background: #f0ad4e; }
-    .bar span.fail { background: #dc3545; }
+    .bar span.fail { background: #c82333; }
     ul.problems { margin: 6px 0 0 0; padding-left: 0; list-style: none; }
     ul.problems li { margin-bottom: 6px; }
     .copy-yes { color: #155724; }
-    .copy-no, .copy-error { color: #dc3545; font-weight: bold; }
-    .copy-skipped { color: #888; }
-    button.run { padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95em; }
-    button.run:hover { background: #0056b3; }
+    .copy-no, .copy-error { color: #c82333; font-weight: bold; }
+    .copy-skipped { color: #6c757d; }
+    button.run { padding: 8px 16px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95em; }
+    button.run:hover { background: #004085; }
   </style>
 </head>
 <body>
