@@ -283,11 +283,16 @@ class DeleteSubscribersTest(TestCase):
     def test_keep_does_not_overwrite_an_existing_review(self):
         subscriber = make_subscriber("someone@example.com")
         hygiene.mark_subscribers_reviewed([subscriber.id], actor="first")
+        subscriber.refresh_from_db()
+        first_reviewed_at = subscriber.cleanup_reviewed_at
 
         hygiene.mark_subscribers_reviewed([subscriber.id], actor="second")
 
         subscriber.refresh_from_db()
-        self.assertEqual(subscriber.cleanup_reviewed_by, "first")
+        self.assertEqual(
+            (subscriber.cleanup_reviewed_by, subscriber.cleanup_reviewed_at),
+            ("first", first_reviewed_at),
+        )
 
     def test_delete_with_no_ids_is_a_no_op(self):
         make_subscriber("jane@hospital.org")

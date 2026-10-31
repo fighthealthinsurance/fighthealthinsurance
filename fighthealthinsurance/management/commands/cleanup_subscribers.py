@@ -168,6 +168,6 @@ class Command(BaseCommand):
 
         auto = len(result.auto_cleanable_findings)
         self.stdout.write(
-            f"\n  {auto} row(s) carry at least one auto-cleanable reason; "
+            f"\n  {auto} row(s) eligible for bulk cleanup; "
             f"{result.flagged_count - auto} need human review."
         )

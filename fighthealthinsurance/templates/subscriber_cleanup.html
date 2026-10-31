@@ -101,7 +101,7 @@
     <p>
       Scanned <strong>{{ scanned }}</strong> unreviewed subscriber(s):
       <strong>{{ flagged_count }}</strong> flagged,
-      <strong>{{ auto_cleanable_count }}</strong> carrying an auto-cleanable reason.
+      <strong>{{ auto_cleanable_count }}</strong> eligible for bulk cleanup.
     </p>
     {% if summary %}
     <table>
@@ -185,8 +185,9 @@
     <div class="panel">
       <h2>Bulk cleanup</h2>
       <p>
-        Delete <strong>every</strong> row carrying an auto-cleanable reason
-        ({{ auto_cleanable_count }} row(s) across all pages). Review-only rows are
+        Delete <strong>every</strong> row eligible for bulk cleanup
+        ({{ auto_cleanable_count }} row(s) across all pages). Review-only rows, and
+        junk copies held back because the same address has a row that stays, are
         never touched by this button.
       </p>
       <label>
