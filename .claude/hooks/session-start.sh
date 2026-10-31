@@ -6,6 +6,9 @@
 #   - installs the Python test/lint toolchain (tox),
 #   - pre-builds the tox environments for the most-used suites in parallel,
 #   - installs the JS deps concurrently with the tox builds,
+#   - apt-installs the system packages CI uses (texlive + lmodern, pandoc,
+#     tesseract-ocr, shellcheck) concurrently too, so the fax tests can
+#     render real PDFs and the shell lint runs,
 #   - warms the webpack + collectstatic build so the first test run (and
 #     manual server runs) skip it.
 # Runs synchronously so the session only starts once deps are ready. Re-runs
@@ -39,6 +42,60 @@ current_stamp() {
     "${BASH_SOURCE[0]}" 2>/dev/null | md5sum | cut -d ' ' -f 1
 }
 
+# System packages mirroring the ones CI installs (.github/workflows/ci.yml):
+# texlive for pandoc's default pdflatex engine, tesseract-ocr, and pandoc
+# itself (CI gets it from pandoc/actions/setup) for the test jobs, plus the
+# lint job's shellcheck (scripts/check_shell_style.sh). lmodern is named
+# explicitly because CI only gets it as a Recommends of texlive-base, which
+# --no-install-recommends (used here to keep the install to ~45s) drops;
+# without it pandoc's LaTeX template stops at "File `lmodern.sty' not found"
+# and every fax-assembly test fails.
+SYSTEM_PACKAGES="pandoc texlive lmodern tesseract-ocr shellcheck"
+APT_LOG=".tox/fhi-apt-install.log"
+
+system_deps_present() {
+  command -v pandoc >/dev/null 2>&1 \
+    && command -v pdflatex >/dev/null 2>&1 \
+    && command -v tesseract >/dev/null 2>&1 \
+    && command -v shellcheck >/dev/null 2>&1 \
+    && [ -n "$(kpsewhich lmodern.sty 2>/dev/null)" ]
+}
+
+# Installs SYSTEM_PACKAGES with apt when any is missing. Best-effort: the
+# caller only warns on failure, since the tests that need these skip with a
+# reason (tests/conftest.py, skip_if_pandoc_cannot_make_pdf) rather than fail.
+install_system_deps() {
+  if system_deps_present; then
+    return 0
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "apt-get not found; install $SYSTEM_PACKAGES by hand." >&2
+    return 1
+  fi
+  local as_root=()
+  if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+      as_root=(sudo -n)
+    else
+      echo "Not root and no passwordless sudo; install $SYSTEM_PACKAGES by hand." >&2
+      return 1
+    fi
+  fi
+  # The base image ships without apt package lists, so update first.
+  # shellcheck disable=SC2086  # SYSTEM_PACKAGES is a word list on purpose
+  "${as_root[@]}" apt-get update -qq \
+    && "${as_root[@]}" env DEBIAN_FRONTEND=noninteractive \
+      apt-get install -y -qq --no-install-recommends $SYSTEM_PACKAGES
+}
+
+warn_system_deps_failed() {
+  tail -n 20 "$APT_LOG" >&2 || true
+  echo "WARNING: installing $SYSTEM_PACKAGES failed (see $APT_LOG)." >&2
+  echo "The fax tests that render real PDFs will skip until it is installed;" >&2
+  echo "if apt could not reach archive.ubuntu.com, the environment's network" >&2
+  echo "policy is blocking it." >&2
+}
+
 persist_path() {
   # Persist tox on PATH for the session (guard against duplicate appends on
   # resume/clear/compact re-runs of the hook).
@@ -56,6 +113,11 @@ if [ -f "$STAMP_FILE" ] \
     && [ -x "$HOME/.local/bin/tox" ] \
     && [ -d fighthealthinsurance/static/js/node_modules ]; then
   persist_path
+  # The stamp covers the Python/JS installs only; the system packages live
+  # outside the checkout, so check them separately (a no-op when present).
+  if ! system_deps_present; then
+    install_system_deps > "$APT_LOG" 2>&1 || warn_system_deps_failed
+  fi
   echo "FHI deps already prepared (stamp match); skipping session-start install."
   exit 0
 fi
@@ -89,6 +151,14 @@ if command -v npm >/dev/null 2>&1; then
   npm_pid=$!
 fi
 
+# 2b. Install SYSTEM_PACKAGES in the background too; at ~45s it finishes well
+#     inside a cold tox build below.
+apt_pid=""
+if ! system_deps_present; then
+  install_system_deps > "$APT_LOG" 2>&1 &
+  apt_pid=$!
+fi
+
 # 3. Pre-build the tox environments the tests/linters use, in parallel.
 #    `--notest` installs every dependency into .tox/<env> but skips running
 #    the suites, so the session's `tox -e ...` reuses the env and starts
@@ -110,6 +180,15 @@ if [ -n "$npm_pid" ] && ! wait "$npm_pid"; then
   echo "ERROR: npm install failed:" >&2
   cat "$NPM_LOG" >&2
   exit 1
+fi
+
+# Reap the system-package install started in step 2b (non-fatal).
+if [ -n "$apt_pid" ]; then
+  if wait "$apt_pid"; then
+    echo "System packages ready ($SYSTEM_PACKAGES)."
+  else
+    warn_system_deps_failed
+  fi
 fi
 
 # 4. Warm the webpack + collectstatic/compress build using one of the tox

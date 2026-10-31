@@ -33,6 +33,11 @@ NodeSource's `setup_22.x` (`k8s/Dockerfile`), and nvm also works.
 
 - CI also installs `pkg-config python3-dev`. Add them if pip fails to build a
   package.
+- If you install with `--no-install-recommends`, add `lmodern`: texlive only
+  recommends it, and pandoc's LaTeX template stops at
+  ``File `lmodern.sty' not found`` without it. Without a working PDF engine,
+  the fax tests that render real PDFs skip (outside CI) with pandoc's error as
+  the reason.
 - `libpango1.0-dev` and `libgdk-pixbuf2.0-dev`, listed here before, are not
   needed by the app. They only matter for weasyprint, one of the optional PDF
   engines pandoc may try (`_try_pandoc_engines` in

@@ -2354,8 +2354,21 @@ def pandoc_convert_command(input_path: str) -> list[str]:
     ]
 
 
+# The PDF engines _try_pandoc_engines tries, in order. None is pandoc's own
+# default (pdflatex). tests/conftest.py probes the same list to decide whether
+# the tests that render real PDFs can run on this machine.
+PANDOC_PDF_ENGINES: list[str | None] = [
+    None,
+    "xelatex",
+    "lualatex",
+    "wkhtmltopdf",
+    "weasyprint",
+    "pdflatex",
+]
+
+
 async def _try_pandoc_engines(command: list[str]):
-    engines = [None, "xelatex", "lualatex", "wkhtmltopdf", "weasyprint", "pdflatex"]
+    engines = PANDOC_PDF_ENGINES
     for engine in engines:
         command_with_engine = command
         if engine is not None:

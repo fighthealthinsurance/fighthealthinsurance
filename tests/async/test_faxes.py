@@ -6,7 +6,7 @@ import pytest
 from pypdf import PdfReader
 import asyncio
 
-from tests.conftest import skip_if_no_pandoc
+from tests.conftest import skip_if_pandoc_cannot_make_pdf
 
 
 class FaxSendBaseTest(unittest.TestCase):
@@ -41,7 +41,7 @@ class FaxSendBaseTest(unittest.TestCase):
         for number in ok_numbers:
             f.parse_phone_number(number)
 
-    @skip_if_no_pandoc
+    @skip_if_pandoc_cannot_make_pdf
     def test_assemble_basic_input(self):
         m = FlexibleFaxMagic([])
         with tempfile.NamedTemporaryFile(
@@ -63,7 +63,7 @@ class FaxSendBaseTest(unittest.TestCase):
             text = reader.pages[1].extract_text()
             self.assertIn("Test", text)
 
-    @skip_if_no_pandoc
+    @skip_if_pandoc_cannot_make_pdf
     def test_assemble_longer_input(self):
         m = FlexibleFaxMagic([])
         with tempfile.NamedTemporaryFile(
@@ -90,7 +90,7 @@ class FaxSendBaseTest(unittest.TestCase):
             self.assertIn("MyHeader", header_text)
             self.assertIn("2 of 2", header_text)
 
-    @skip_if_no_pandoc
+    @skip_if_pandoc_cannot_make_pdf
     def test_assemble_multi_input(self):
         m = FlexibleFaxMagic([])
         with tempfile.NamedTemporaryFile(
@@ -134,7 +134,7 @@ class FaxSendBaseTest(unittest.TestCase):
         self.assertEqual(len(pro_backends), 1)
         self.assertTrue(pro_backends[0].professional)
 
-    @skip_if_no_pandoc
+    @skip_if_pandoc_cannot_make_pdf
     def test_send_fax_uses_professional_backends(self):
         """Test that send_fax uses professional backends when professional flag is True"""
 
