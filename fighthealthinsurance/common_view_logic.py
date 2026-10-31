@@ -5020,15 +5020,9 @@ class DenialCreatorHelper:
 
         with _transaction.atomic():
             if plan_documents is not None:
-                # Additive and not idempotent: a second click or a replayed
-                # POST adds another row. PlanDocuments carries no filename or
-                # content hash to dedupe on, so plan_documents.html only shows
-                # a count to discourage it. 2026-09-14: left as is, a dedupe
-                # key is a migration this branch is not making.
-                for plan_document in plan_documents:
-                    PlanDocuments.objects.create(
-                        plan_document_enc=plan_document, denial=denial
-                    )
+                # Additive, and one copy of each file: a second click, a
+                # replayed POST or the same file picked again adds nothing.
+                cls._add_plan_documents(denial, plan_documents)
             # The contract for all three optional columns below: None means
             # the caller said nothing and the stored value stands. For
             # health_history an empty string is a decision, not silence -- it
@@ -5081,6 +5075,63 @@ class DenialCreatorHelper:
             intake_outbox.deliver(intent)
         # Return the current the state
         return cls.format_denial_response_info(denial)
+
+    # The appeal's own sub-key for PlanDocuments.fingerprint: not the shared
+    # files', so the two can't be joined on it.
+    PLAN_DOCUMENT_FINGERPRINT_LABEL = b"fhi.appeal-plan-document-fingerprint.v1"
+
+    @staticmethod
+    def _held_plan_document_fingerprints(denial: Denial) -> set[str]:
+        """The fingerprints of the files the appeal already holds."""
+        return set(
+            PlanDocuments.objects.filter(denial=denial)
+            .exclude(fingerprint="")
+            .values_list("fingerprint", flat=True)
+        )
+
+    @classmethod
+    def _add_plan_documents(cls, denial: Denial, files: typing.Iterable) -> int:
+        """Store each of ``files`` on the appeal once, and return how many
+        were stored. A file the appeal already holds, or one picked twice in
+        the same upload, is skipped. Two saves of the same file at once meet
+        PlanDocuments' constraint: the second is skipped and its stored file
+        deleted, since the row it was written for never was."""
+        from fighthealthinsurance.shared_plan_documents import file_fingerprint
+
+        held = cls._held_plan_document_fingerprints(denial)
+        added = skipped = 0
+        for upload in files:
+            if not upload:
+                continue
+            digest = file_fingerprint(upload, cls.PLAN_DOCUMENT_FINGERPRINT_LABEL)
+            if digest in held:
+                skipped += 1
+                continue
+            held.add(digest)
+            row = PlanDocuments(
+                denial=denial, fingerprint=digest, plan_document_enc=upload
+            )
+            try:
+                with transaction.atomic():
+                    row.save()
+            except IntegrityError:
+                skipped += 1
+                try:
+                    if row.plan_document_enc:
+                        row.plan_document_enc.delete(save=False)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Failed to delete a repeated plan document's file for "
+                        f"denial {denial.denial_id}"
+                    )
+                continue
+            added += 1
+        if skipped:
+            logger.info(
+                f"Denial {denial.denial_id}: kept {added} plan document(s), "
+                f"skipped {skipped} it already had"
+            )
+        return added
 
     @classmethod
     def _history_submit_is_stale(

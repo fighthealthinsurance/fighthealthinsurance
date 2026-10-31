@@ -18,6 +18,7 @@ internal model, whose window holds MAX_CONTEXT_LENGTH characters of them:
 
 import asyncio
 import bisect
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Set
@@ -317,9 +318,14 @@ Write only the search strings: no numbering, bullets, quotes or explanations."""
 
         Decrypted and parsed page by page; each page is opened by a
         "[Page N]" line so passages and summaries can cite it. Documents
-        that can't be read (too large, damaged, scanned) are left out.
+        that can't be read (too large, damaged, scanned) are left out, and
+        so is a document identical to an earlier one: rows stored before
+        PlanDocuments.fingerprint could hold the same file twice, which
+        would fill the window with it twice.
         """
         documents: List[PlanDocumentText] = []
+        # What was read, by content; held only while reading.
+        seen: Set[str] = set()
         try:
             plan_docs = PlanDocuments.objects.filter(denial_id=denial_id).order_by(
                 "plan_document_id"
@@ -344,6 +350,10 @@ Write only the search strings: no numbering, bullets, quotes or explanations."""
                     )
                     if not decrypted_bytes:
                         continue
+                    content_hash = hashlib.sha256(decrypted_bytes).hexdigest()
+                    if content_hash in seen:
+                        continue
+                    seen.add(content_hash)
                     pages = await cls._read_pages(
                         decrypted_bytes, file_field.name or ""
                     )

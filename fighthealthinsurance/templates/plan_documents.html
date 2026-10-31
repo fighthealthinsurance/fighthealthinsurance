@@ -25,7 +25,7 @@ here with nothing stored and each refused file named under the box.
   {% if plan_document_count %}
   <p id="plan_documents_already_added" class="fhi-note fhi-hint">
     {{ plan_document_count }} plan document{{ plan_document_count|pluralize }} already added to this appeal.
-    Anything you pick here is added to {{ plan_document_count|pluralize:"it,them" }}, so there is no need to upload the same file again.
+    Anything you pick here is added to {{ plan_document_count|pluralize:"it,them" }}. A file that's already here isn't added again.
   </p>
   {% endif %}
   {% include "partials/file_drop_box.html" with name="plan_documents" multiple=True accept=form.ACCEPT describedby="plan_documents_limits plan_documents_error" %}

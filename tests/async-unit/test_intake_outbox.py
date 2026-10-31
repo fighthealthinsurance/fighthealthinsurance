@@ -5,11 +5,15 @@ handoff boundaries that every external review asked for, plus the
 review-7/8 regressions."""
 
 import asyncio
+import contextlib
 import datetime
+import tempfile
 import uuid
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from django.core.files.base import ContentFile
+from django.core.files.storage import FileSystemStorage
 from django.db import transaction
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
@@ -36,6 +40,22 @@ def _make_denial(denial_id, raw_email=_EMAIL):
         raw_email=raw_email,
         gen_attempts=3,
     )
+
+
+def _plan_document():
+    """A plan document as the step gets one: a file, whose contents it
+    fingerprints so each appeal keeps one copy."""
+    return ContentFile(b"Summary Plan Description for the plan", name="plan.txt")
+
+
+@contextlib.contextmanager
+def _stored_in_a_temporary_directory():
+    """Plan documents stored here are written to a directory that goes with
+    the test, rolled-back rows' files included."""
+    storage = PlanDocuments._meta.get_field("plan_document_enc").storage
+    with tempfile.TemporaryDirectory() as directory:
+        with patch.object(storage, "backends", [FileSystemStorage(location=directory)]):
+            yield
 
 
 def _client(start_side_effect=None, describe_side_effect=None, describe_status=None):
@@ -94,24 +114,26 @@ class TestIntent(TransactionTestCase):
         ONE transaction -- an intent failure rolls the documents back."""
         denial = _make_denial(8102)
         owner = _update_denial_owner()
-        with patch(_CLIENT, AsyncMock(return_value=_client())):
-            with patch.object(
-                intake_outbox,
-                "record_intent",
-                side_effect=RuntimeError("insert failed"),
-            ):
-                with pytest.raises(RuntimeError):
-                    owner._update_denial(denial, plan_documents=["plan text"])
+        with _stored_in_a_temporary_directory():
+            with patch(_CLIENT, AsyncMock(return_value=_client())):
+                with patch.object(
+                    intake_outbox,
+                    "record_intent",
+                    side_effect=RuntimeError("insert failed"),
+                ):
+                    with pytest.raises(RuntimeError):
+                        owner._update_denial(denial, plan_documents=[_plan_document()])
         assert PlanDocuments.objects.filter(denial=denial).count() == 0
         assert not IntakeJourneyEvent.objects.filter(denial=denial).exists()
 
     def test_update_denial_commits_documents_denial_and_intent_together(self):
         denial = _make_denial(8103)
         owner = _update_denial_owner()
-        with patch(_CLIENT, AsyncMock(return_value=_client())):
-            owner._update_denial(
-                denial, plan_documents=["plan text"], health_history="history"
-            )
+        with _stored_in_a_temporary_directory():
+            with patch(_CLIENT, AsyncMock(return_value=_client())):
+                owner._update_denial(
+                    denial, plan_documents=[_plan_document()], health_history="history"
+                )
         assert PlanDocuments.objects.filter(denial=denial).count() == 1
         denial.refresh_from_db()
         assert denial.health_history == "history"
@@ -590,7 +612,7 @@ class TestNudge(TransactionTestCase):
         assert sent is True
         message = send.call_args.args[0]
         body = message.body
-        (html, _), = message.alternatives
+        ((html, _),) = message.alternatives
         point = IntakeResumePoint.objects.get(denial=denial)
         prefix = reverse("intake_resume_link", args=["TOKEN"]).replace("TOKEN", "")
         token = body.split(prefix, 1)[1].split()[0]
@@ -615,13 +637,16 @@ class TestNudge(TransactionTestCase):
         from asgiref.sync import async_to_sync
 
         denial = _make_denial(8160)
-        with patch.object(
-            intake_journey_core,
-            "build_fallback_email",
-            side_effect=RuntimeError("template"),
-        ), patch.object(
-            intake_journey_core, "_asend_message", new_callable=AsyncMock
-        ) as send:
+        with (
+            patch.object(
+                intake_journey_core,
+                "build_fallback_email",
+                side_effect=RuntimeError("template"),
+            ),
+            patch.object(
+                intake_journey_core, "_asend_message", new_callable=AsyncMock
+            ) as send,
+        ):
             with pytest.raises(RuntimeError):
                 async_to_sync(intake_journey_core.send_abandonment_nudge)(
                     denial.hashed_email, str(denial.uuid)
