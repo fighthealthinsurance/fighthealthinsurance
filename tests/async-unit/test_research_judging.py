@@ -549,9 +549,16 @@ class TestOwnModelJudgmentsStored:
         read = stored_judgments_for("MRI", "low back pain", ["1"], own_models=True)
         assert read["1"].scorer == OWN_SCORER
 
-    def test_jevs_wins_over_ours_whichever_is_newer(self):
+    def test_jevs_wins_over_ours_when_ours_is_newer(self):
         self._store("1", rj.SCORER, supports=0.3)
         self._store("1", OWN_SCORER, supports=0.9)
+        with override_settings(**ENABLED):
+            read = stored_judgments_for("MRI", "low back pain", ["1"], own_models=True)
+        assert read["1"].scorer == rj.SCORER
+
+    def test_jevs_wins_over_ours_when_jevs_is_newer(self):
+        self._store("1", OWN_SCORER, supports=0.9)
+        self._store("1", rj.SCORER, supports=0.3)
         with override_settings(**ENABLED):
             read = stored_judgments_for("MRI", "low back pain", ["1"], own_models=True)
         assert read["1"].scorer == rj.SCORER

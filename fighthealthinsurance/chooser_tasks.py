@@ -686,9 +686,15 @@ async def _judge_evidence(
             for a in articles
         ]
         ours = ml_router.best_internal_model()
+        jev_timed_out = False
         if jev_on:
+            # Time is kept back for our own model only when one looks
+            # healthy: best_internal_model returns the strongest even when
+            # every one is marked down, and Jev should not be cut short for
+            # a fallback that is unlikely to answer.
+            reserve = bool(ml_router._healthy_general_internal())
             jev_budget = CHOOSER_EVIDENCE_JUDGING_TIMEOUT * (
-                _JEV_SHARE_OF_JUDGING if ours is not None else 1.0
+                _JEV_SHARE_OF_JUDGING if reserve else 1.0
             )
             try:
                 # judge_missing adds to by_jev as each answer lands, so
@@ -698,6 +704,7 @@ async def _judge_evidence(
                     timeout=jev_budget,
                 )
             except asyncio.TimeoutError:
+                jev_timed_out = True
                 logger.info("Chooser: Jev ran out of time judging a case's evidence")
         known = {**by_ours, **by_jev}
         left = [
@@ -705,12 +712,19 @@ async def _judge_evidence(
         ][: research_judging.MAX_ARTICLES]
         if not left:
             return
-        why = (
-            f"Jev did not judge {len(left)} of a case's articles"
-            if jev_on
-            else "Jev is not set up for research judging (TYPESAFE_API_KEY "
-            "and TYPESAFE_RESEARCH_JUDGING_ENABLED)"
-        )
+        if not jev_on:
+            why = (
+                "Jev is not set up for research judging (TYPESAFE_API_KEY "
+                "and TYPESAFE_RESEARCH_JUDGING_ENABLED)"
+            )
+        else:
+            cause = research_judging.skip_reason() or (
+                "it ran out of its share of the time"
+                if jev_timed_out
+                else "its requests failed or its answers could not be read "
+                "(each failure is logged on its own)"
+            )
+            why = f"Jev did not judge {len(left)} of a case's articles: {cause}"
         if ours is None:
             logger.warning(
                 f"Chooser: {why}, and there is no internal model to judge "

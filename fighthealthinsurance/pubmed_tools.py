@@ -75,8 +75,9 @@ def judgment_rows(
     """The stored judgments of these articles for one treatment and
     condition, under the current research rubric: Jev's when ``jev``, our
     own models' when ``own_models`` (only the Appeal Arena reads those).
-    Ours before Jev's, then oldest first, so when they are read into a dict
-    Jev's wins over ours and a newer row over an older one."""
+    Ours before Jev's, then oldest first (the primary key breaking a tie),
+    so when they are read into a dict Jev's wins over ours and a newer row
+    over an older one."""
     prefixes = [
         prefix
         for prefix, wanted in (
@@ -100,7 +101,7 @@ def judgment_rows(
         pmid__in=pmids,
         treatment_key=key,
         scorer__endswith=research_judging._RUBRIC_SUFFIX,
-    ).order_by(jev_last.asc(), "created_at")
+    ).order_by(jev_last.asc(), "created_at", "pk")
 
 
 def judgment_of(row: PubMedArticleJudgment) -> research_judging.Judgment:

@@ -96,10 +96,12 @@ appeal flow, and rank the model backends against each other.
    where the next case or appeal about the pair reads them. Jev judges first
    when research judging is on too. Whatever it does not judge (research
    judging off or not set up, a failed request, a spent budget, or Jev still
-   unanswered at half of `CHOOSER_EVIDENCE_JUDGING_TIMEOUT`) falls through to
-   our own best internal model (`ml_router.best_internal_model`,
+   unanswered at half of `CHOOSER_EVIDENCE_JUDGING_TIMEOUT`, or at all of it
+   when none of our own models looks healthy) falls through to our own best
+   internal model (`ml_router.best_internal_model`,
    `research_judging.judge_article_with`), with a logged warning naming the
-   reason and the model. Our own model is asked Jev's three questions, for a
+   reason (Jev not set up, `research_judging.skip_reason`, out of time, or
+   failed requests, each of which is also logged on its own) and the model. Our own model is asked Jev's three questions, for a
    likelihood of each out of 100, read strictly (a reply it cannot read
    leaves the article unjudged), and its judgments are stored under a scorer
    of their own (`fhi/<model>/research-rubric-N`). Only the arena reads

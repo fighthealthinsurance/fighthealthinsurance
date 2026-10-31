@@ -3,6 +3,7 @@ with case facts and the evidence already on file. Every model and every
 outside service is a mock; a live PubMed search is off in tests
 (CHOOSER_PUBMED_LIVE_SEARCH) and asserted never to run."""
 
+import asyncio
 import datetime
 import json
 from types import SimpleNamespace
@@ -249,12 +250,16 @@ class TestEvidenceJudging:
     a case gives one; the switches are off in tests and each case turns
     them on."""
 
-    async def _evidence(self, post, ours=None):
+    async def _evidence(self, post, ours=None, ours_healthy=True):
+        healthy = [ours] if ours is not None and ours_healthy else []
         with _no_live_search(), patch.object(
             research_judging, "_post", post
         ), patch(
             "fighthealthinsurance.chooser_tasks.ml_router.best_internal_model",
             return_value=ours,
+        ), patch(
+            "fighthealthinsurance.chooser_tasks.ml_router._healthy_general_internal",
+            return_value=healthy,
         ):
             return await _evidence_for("MRI", "Lower back pain")
 
@@ -361,13 +366,67 @@ class TestEvidenceJudging:
         await _article("1", "Imaging for low back pain", abstract="Imaging helped.")
         post = AsyncMock(side_effect=RuntimeError("TypeSafe is down"))
         ours = _own_model()
+        warnings = []
+        sink = logger.add(lambda m: warnings.append(str(m)), level="WARNING")
 
-        with override_settings(**JUDGING_ON):
-            await self._evidence(post, ours)
+        try:
+            with override_settings(**JUDGING_ON), patch.object(
+                research_judging, "skip_reason", return_value=None
+            ):
+                await self._evidence(post, ours)
+        finally:
+            logger.remove(sink)
 
         post.assert_awaited_once()
         stored = await PubMedArticleJudgment.objects.aget(pmid="1")
         assert stored.scorer.startswith("fhi/model-local/")
+        assert any(
+            "Jev did not judge 1" in w and "requests failed" in w for w in warnings
+        )
+
+    async def test_the_fallback_warning_names_why_jev_would_not_send(self):
+        await _cached_search("MRI Lower back pain", ["1"])
+        await _article("1", "Imaging for low back pain", abstract="Imaging helped.")
+        warnings = []
+        sink = logger.add(lambda m: warnings.append(str(m)), level="WARNING")
+
+        try:
+            with override_settings(**JUDGING_ON), patch.object(
+                research_judging, "skip_reason", return_value="TypeSafe's budget is spent"
+            ):
+                await self._evidence(
+                    AsyncMock(side_effect=RuntimeError("refused")), _own_model()
+                )
+        finally:
+            logger.remove(sink)
+
+        assert any("TypeSafe's budget is spent" in w for w in warnings)
+
+    async def _slow_jev_case(self, ours_healthy):
+        """Jev answering in 1.4s of a 2s budget: past its half share."""
+        await _cached_search("MRI Lower back pain", ["1"])
+        await _article("1", "Imaging for low back pain", abstract="Imaging helped.")
+
+        async def slow_post(state, questions, timeout):
+            await asyncio.sleep(1.4)
+            return _jev_answer()
+
+        ours = _own_model()
+        with override_settings(**JUDGING_ON), patch(
+            "fighthealthinsurance.chooser_tasks.CHOOSER_EVIDENCE_JUDGING_TIMEOUT", 2.0
+        ):
+            await self._evidence(slow_post, ours, ours_healthy=ours_healthy)
+        return ours, await PubMedArticleJudgment.objects.aget(pmid="1")
+
+    async def test_a_slow_jev_gives_way_to_a_healthy_own_model(self):
+        ours, stored = await self._slow_jev_case(ours_healthy=True)
+        ours._infer_no_context.assert_awaited_once()
+        assert stored.scorer.startswith("fhi/model-local/")
+
+    async def test_a_slow_jev_keeps_the_whole_budget_when_ours_is_marked_down(self):
+        ours, stored = await self._slow_jev_case(ours_healthy=False)
+        ours._infer_no_context.assert_not_awaited()
+        assert stored.scorer == research_judging.SCORER
 
     async def test_what_jev_judges_is_not_asked_of_our_own_model(self):
         await _cached_search("MRI Lower back pain", ["1"])

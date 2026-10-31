@@ -128,6 +128,13 @@ def enabled() -> bool:
     )
 
 
+def skip_reason() -> typing.Optional[str]:
+    """Why a research-judging request would not be sent from this process
+    right now (a spent budget, a pause, a cooldown...), or None: what
+    typesafe.skip_reason says for this use. Never sends."""
+    return typesafe.skip_reason(spend.RESEARCH)
+
+
 def _term(value: typing.Optional[str]) -> str:
     return " ".join(str(value or "").split())[:TERM_CHAR_CAP]
 
