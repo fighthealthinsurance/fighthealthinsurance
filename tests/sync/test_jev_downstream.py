@@ -501,7 +501,9 @@ class ModelBackendStatusTypeSafeRowTest(TestCase):
             string="skipped"
         )
         self.assertIsNotNone(cell)
-        self.assertContains(response, "TYPESAFE_API_KEY is not set")
+        self.assertContains(
+            response, "neither OPENCODE_TOKEN nor TYPESAFE_API_KEY is set"
+        )
         # The row's own reason covers every use; no list repeating it.
         self.assertNotContains(response, "Each use's last answer and failure")
 

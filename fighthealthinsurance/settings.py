@@ -286,6 +286,9 @@ class Base(Configuration):
     # BOTH the key and the flag are set: the key alone must not start sending
     # denial text to a new processor before the privacy policy names it.
     TYPESAFE_API_KEY = os.getenv("TYPESAFE_API_KEY")
+    # OpenCode serves the base Jev release for free.  ml/typesafe.py prefers
+    # it when present and falls through to TypeSafe for the paid/custom model.
+    OPENCODE_TOKEN = os.getenv("OPENCODE_TOKEN")
     TYPESAFE_API_URL = os.getenv(
         "TYPESAFE_API_URL", "https://api.typesafe.ai/v1/systemone"
     )
@@ -1325,6 +1328,7 @@ class Test(_TestBase):
     # override_settings and stub the transport. The model is pinned too, so a
     # developer's TYPESAFE_MODEL cannot change the provenance tests expect.
     TYPESAFE_API_KEY = None
+    OPENCODE_TOKEN = None
     TYPESAFE_API_URL = "https://typesafe.invalid/v1/systemone"
     TYPESAFE_MODEL = "jev-1.13.0"
     TYPESAFE_LETTER_RANKING_ENABLED = False
@@ -1411,6 +1415,7 @@ class TestSync(_TestBase):
     # override_settings and stub the transport. The model is pinned too, so a
     # developer's TYPESAFE_MODEL cannot change the provenance tests expect.
     TYPESAFE_API_KEY = None
+    OPENCODE_TOKEN = None
     TYPESAFE_API_URL = "https://typesafe.invalid/v1/systemone"
     TYPESAFE_MODEL = "jev-1.13.0"
     TYPESAFE_LETTER_RANKING_ENABLED = False
@@ -1480,6 +1485,7 @@ class TestActor(_TestBase):
     # override_settings and stub the transport. The model is pinned too, so a
     # developer's TYPESAFE_MODEL cannot change the provenance tests expect.
     TYPESAFE_API_KEY = None
+    OPENCODE_TOKEN = None
     TYPESAFE_API_URL = "https://typesafe.invalid/v1/systemone"
     TYPESAFE_MODEL = "jev-1.13.0"
     TYPESAFE_LETTER_RANKING_ENABLED = False

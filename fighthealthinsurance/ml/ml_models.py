@@ -6338,6 +6338,13 @@ class DeepInfra(RemoteFullOpenLike):
     @classmethod
     def models(cls) -> List[ModelDescription]:
         return [
+            # Same friendly name as OpenCode's free copy.  models_by_name
+            # therefore tries OpenCode first and this paid endpoint next.
+            ModelDescription(
+                cost=15,
+                name="deepseek-ai/DeepSeek-V4.1-Flash-1017",
+                internal_name="deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            ),
             # The official V4-Pro release (DeepInfra: "superseding the
             # preview version"), same price as the preview it replaced
             # on 2026-10-31.
@@ -6408,6 +6415,48 @@ def max_parallel_from_env(var_name: str, default: Optional[int]) -> Optional[int
         logger.warning(f"{var_name}={raw!r} is not a whole number; using {default}")
         return default
     return value if value >= 1 else None
+
+
+class OpenCode(RemoteFullOpenLike):
+    """OpenCode's OpenAI-compatible inference endpoint."""
+
+    PROVIDER_LABEL: ClassVar[str] = "OpenCode"
+    API_BASE: ClassVar[str] = "https://opencode.ai/inference/openai/v1"
+    FLASH_NAME: ClassVar[str] = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+    FLASH_MODEL: ClassVar[str] = "deepseek-v4.1-flash-free"
+
+    @classmethod
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        return cls._classify_env_keys("OPENCODE_TOKEN")
+
+    def __init__(self, model: str, dual_mode: bool = False):
+        token = get_env_variable("OPENCODE_TOKEN")
+        if token is None or len(token) < 1:
+            raise Exception("No token found for OpenCode")
+        super().__init__(
+            self.API_BASE,
+            token,
+            model=model,
+            dual_mode=dual_mode,
+            max_len=384000,
+        )
+
+    @property
+    def supports_system(self):
+        return True
+
+    def quality(self) -> int:
+        return 86
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(
+                cost=0,
+                name=cls.FLASH_NAME,
+                internal_name=cls.FLASH_MODEL,
+            )
+        ]
 
 
 class LunaRoute(RemoteFullOpenLike):
