@@ -28,7 +28,8 @@ class TestInternalModelNames:
         assert desc.name == "fhi-2025-may-0.3-float16-q8-vllm-compressed"
         with patch.dict(os.environ, {"ALPHA_HEALTH_BACKEND_MODEL": ""}):
             [desc] = AlphaRemoteInternal.models()
-        assert desc.name == "fhi-2025-nov-q8-vllm-compressed"
+        assert desc.name == "fhi-local"
+        assert desc.internal_name == "fhi-local"
         with patch.dict(os.environ, {"HEALTH_BACKEND_MODEL": ""}):
             [desc] = RemoteHealthInsurance.models()
         assert desc.internal_name == "totallylegitco/fighthealthinsurance_model_v0.5"
