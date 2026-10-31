@@ -2572,6 +2572,150 @@ class RegulatorContactInfoTest(TestCase):
         denial.refresh_from_db()
         self.assertEqual(denial.regulator.alt_name, "CMS")
 
+    def _routing(self, regulator, escalate=True, plan_kind="employer_private"):
+        from fighthealthinsurance.regulator_routing import RoutingAnswer
+
+        return RoutingAnswer(escalate, regulator, plan_kind, "File the appeal.")
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_extract_set_regulator_asks_the_model_when_no_regex_matches(
+        self, mock_generator
+    ):
+        """A letter the fixture regexes miss is read by the model; a state
+        department it names is created from state_help.json and linked."""
+        mock_generator.get_regulator_routing = AsyncMock(
+            return_value=self._routing("Texas Department of Insurance")
+        )
+        denial = self._make_denial(
+            "Your Qualified Health Plan was purchased on the Texas exchange."
+        )
+        denial.use_external = True
+        denial.save()
+        outcome = async_to_sync(DenialCreatorHelper.extract_set_regulator)(
+            denial.denial_id
+        )
+        self.assertEqual(outcome, "found")
+        denial.refresh_from_db()
+        self.assertEqual(denial.regulator.name, "Texas Department of Insurance")
+        self.assertEqual(denial.regulator.alt_name, "TX insurance department")
+        self.assertTrue(denial.regulator.phone)
+        self.assertTrue(denial.regulator.website.startswith("http"))
+        mock_generator.get_regulator_routing.assert_awaited_once()
+        self.assertTrue(
+            mock_generator.get_regulator_routing.call_args.kwargs["use_external"]
+        )
+        # The outside-help page has something to show for it.
+        self.assertIn("Texas Department of Insurance", self._outside_help_text(denial))
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_model_answer_naming_a_fixture_regulator_links_that_row(
+        self, mock_generator
+    ):
+        mock_generator.get_regulator_routing = AsyncMock(
+            return_value=self._routing(
+                "U.S. Department of Labor, Employee Benefits Security Administration (EBSA)"
+            )
+        )
+        denial = self._make_denial("The Acme Health Plan is self-funded.")
+        async_to_sync(DenialCreatorHelper.extract_set_regulator)(denial.denial_id)
+        denial.refresh_from_db()
+        self.assertEqual(denial.regulator, Regulator.objects.get(alt_name="ERISA"))
+        self.assertEqual(Regulator.objects.filter(alt_name="ERISA").count(), 1)
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_same_state_department_is_created_once(self, mock_generator):
+        mock_generator.get_regulator_routing = AsyncMock(
+            return_value=self._routing("Texas Department of Insurance")
+        )
+        first = self._make_denial("A Texas marketplace letter.")
+        second = self._make_denial("Another Texas marketplace letter.")
+        async_to_sync(DenialCreatorHelper.extract_set_regulator)(first.denial_id)
+        async_to_sync(DenialCreatorHelper.extract_set_regulator)(second.denial_id)
+        self.assertEqual(
+            Regulator.objects.filter(name="Texas Department of Insurance").count(), 1
+        )
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_regex_match_wins_without_asking_the_model(self, mock_generator):
+        mock_generator.get_regulator_routing = AsyncMock(
+            return_value=self._routing("Texas Department of Insurance")
+        )
+        denial = self._make_denial(
+            "You may have the right to file a civil action under ERISA."
+        )
+        async_to_sync(DenialCreatorHelper.extract_set_regulator)(denial.denial_id)
+        denial.refresh_from_db()
+        self.assertEqual(denial.regulator.alt_name, "ERISA")
+        mock_generator.get_regulator_routing.assert_not_awaited()
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_unknown_and_unrecognised_answers_store_nothing(self, mock_generator):
+        for name in ("Unknown", "The Galactic Senate"):
+            mock_generator.get_regulator_routing = AsyncMock(
+                return_value=self._routing(name, escalate=False)
+            )
+            denial = self._make_denial(f"Group: Acme. {name}")
+            outcome = async_to_sync(DenialCreatorHelper.extract_set_regulator)(
+                denial.denial_id
+            )
+            self.assertEqual(outcome, "nothing_found")
+            denial.refresh_from_db()
+            self.assertIsNone(denial.regulator)
+        self.assertFalse(Regulator.objects.filter(name="The Galactic Senate").exists())
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_no_model_answer_or_no_model_is_nothing_found(self, mock_generator):
+        from fighthealthinsurance.generate_appeal import ExtractionUnavailable
+
+        denial = self._make_denial("Nothing relevant in this text.")
+        mock_generator.get_regulator_routing = AsyncMock(return_value=None)
+        self.assertEqual(
+            async_to_sync(DenialCreatorHelper.extract_set_regulator)(denial.denial_id),
+            "nothing_found",
+        )
+        mock_generator.get_regulator_routing = AsyncMock(
+            side_effect=ExtractionUnavailable("no model")
+        )
+        self.assertEqual(
+            async_to_sync(DenialCreatorHelper.extract_set_regulator)(denial.denial_id),
+            "nothing_found",
+        )
+        denial.refresh_from_db()
+        self.assertIsNone(denial.regulator)
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_ask_model_false_is_regex_only(self, mock_generator):
+        mock_generator.get_regulator_routing = AsyncMock(
+            return_value=self._routing("Texas Department of Insurance")
+        )
+        denial = self._make_denial("A Texas marketplace letter.")
+        async_to_sync(DenialCreatorHelper.extract_set_regulator)(
+            denial.denial_id, ask_model=False
+        )
+        denial.refresh_from_db()
+        self.assertIsNone(denial.regulator)
+        mock_generator.get_regulator_routing.assert_not_awaited()
+
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_replaced_letter_does_not_take_the_old_letters_regulator(
+        self, mock_generator
+    ):
+        denial = self._make_denial("A Texas marketplace letter.")
+
+        async def swap_letter(*args, **kwargs):
+            await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                denial_text="A different letter arrived meanwhile."
+            )
+            return self._routing("Texas Department of Insurance")
+
+        mock_generator.get_regulator_routing = AsyncMock(side_effect=swap_letter)
+        outcome = async_to_sync(DenialCreatorHelper.extract_set_regulator)(
+            denial.denial_id
+        )
+        self.assertEqual(outcome, "nothing_found")
+        denial.refresh_from_db()
+        self.assertIsNone(denial.regulator)
+
     def test_extract_set_regulator_multi_match_is_deterministic(self):
         """When denial text matches more than one regulator, the lowest-pk
         match wins deterministically (get_regulator orders by pk). ERISA is

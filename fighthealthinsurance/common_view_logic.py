@@ -73,6 +73,7 @@ from stopit.utils import TimeoutException
 from fhi_users import emails as fhi_emails
 from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
+from fighthealthinsurance import regulator_routing
 from fighthealthinsurance import stripe_utils
 from fighthealthinsurance.context_barrier import warm_then_fetch
 from fighthealthinsurance.exec import bridge_executor
@@ -3717,13 +3718,15 @@ class DenialCreatorHelper:
             )
         ):
             logger.debug(f"extract_entity({denial_id}): skipping, already done")
-            # Regulator matching is cheap (a handful of regexes), idempotent,
-            # and independent of the procedure/diagnosis extraction this gate
+            # Regulator matching by regex is cheap, idempotent, and
+            # independent of the procedure/diagnosis extraction this gate
             # protects: run it even when the denial was manually populated or
             # extraction already finished, so those denials still get
-            # regulator contact info.
+            # regulator contact info. Regexes only: this branch runs on every
+            # reconnect, and the model read happens on the first pass.
             yield await cls._run_extraction_step(
-                cls.extract_set_regulator(denial_id), EXTRACTION_TASK_REGULATOR
+                cls.extract_set_regulator(denial_id, ask_model=False),
+                EXTRACTION_TASK_REGULATOR,
             )
             # Triage is idempotent on the text hash, so retrying it here is
             # free when it already ran, and it is the only retry a timed-out
@@ -3753,10 +3756,11 @@ class DenialCreatorHelper:
                 f"extract_attempts={attempts} exhausted"
             )
             # The counter measures the procedure/diagnosis extraction only;
-            # regulator matching is a handful of regexes with no LLM in the
-            # loop, so run it anyway, as in the already-done exit above.
+            # the regex half of regulator matching has no LLM in the loop,
+            # so run that anyway, as in the already-done exit above.
             yield await cls._run_extraction_step(
-                cls.extract_set_regulator(denial_id), EXTRACTION_TASK_REGULATOR
+                cls.extract_set_regulator(denial_id, ask_model=False),
+                EXTRACTION_TASK_REGULATOR,
             )
             # Same for triage: no LLM of ours in the loop, idempotent on the
             # text hash, and this branch is the only retry it would get.
@@ -4865,29 +4869,93 @@ class DenialCreatorHelper:
         return len(type_pks) + len(source_pks)
 
     @classmethod
-    async def extract_set_regulator(cls, denial_id) -> str:
-        """Match the denial text against known regulators and store the match.
+    async def extract_set_regulator(cls, denial_id, ask_model: bool = True) -> str:
+        """Work out who regulates the plan behind the letter and store it.
 
         Populates ``Denial.regulator`` so downstream flows (outside help,
         the escalation packet's ERISA detection) can surface the right
         regulator along with its complaint phone number.
 
+        The regexes on the fixture's regulator rows go first (ERISA, CMS);
+        they are cheap and exact. When they match nothing and ``ask_model``
+        is set, the model reads the letter (``regulator_routing``: who
+        regulates the plan, and whether to go to them now) and its answer is
+        stored when it names a regulator we have contact details for: a
+        fixture row, or a state insurance department or Medicaid agency from
+        ``state_help.json``, created on first use. ``Unknown`` is a real
+        answer (an employer plan whose funding the letter never states) and
+        stores nothing. A model that could not be asked is the same as one
+        with nothing to say here: the regulator is best effort.
+
         Returns an extraction outcome: the row already had a regulator, we
-        matched one, or the letter matched nothing.
+        found one, or the letter said nothing.
         """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         if denial.regulator_id is not None:
             return EXTRACTION_OUTCOME_CACHED
-        regulators = await cls.regex_denial_processor.get_regulator(
-            denial.denial_text or ""
-        )
+        letter = denial.denial_text or ""
+        regulators = await cls.regex_denial_processor.get_regulator(letter)
         if regulators:
             # First match wins; the seeded regexes are mutually specific.
             await Denial.objects.filter(
                 denial_id=denial_id, regulator__isnull=True
             ).aupdate(regulator=regulators[0])
             return EXTRACTION_OUTCOME_FOUND
-        return EXTRACTION_OUTCOME_NOTHING_FOUND
+        if not ask_model or not letter.strip():
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
+        try:
+            answer = await appealGenerator.get_regulator_routing(
+                letter, use_external=bool(denial.use_external)
+            )
+        except ExtractionUnavailable as e:
+            logger.info(f"extract_set_regulator({denial_id}): {e}")
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
+        if answer is None:
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
+        logger.info(
+            f"extract_set_regulator({denial_id}): model says regulator "
+            f"{answer.regulator!r}, plan kind {answer.plan_kind}, "
+            f"escalate now {answer.escalate}"
+        )
+        regulator = await cls._regulator_row_for(answer.regulator)
+        if regulator is None:
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
+        # Conditional on the letter: one replaced while the model read the
+        # old one must not carry the old one's regulator.
+        updated = await Denial.objects.filter(
+            denial_id=denial_id, regulator__isnull=True, denial_text=denial.denial_text
+        ).aupdate(regulator=regulator)
+        return EXTRACTION_OUTCOME_FOUND if updated else EXTRACTION_OUTCOME_NOTHING_FOUND
+
+    @classmethod
+    async def _regulator_row_for(cls, name: str) -> Optional[Regulator]:
+        """The ``Regulator`` row for a name the model gave, or None.
+
+        A fixture row (ERISA, CMS, the DMHC) is linked as it is; a state
+        department or Medicaid agency is created from ``state_help.json`` the
+        first time it comes up, with its complaint line and site, so the
+        outside-help page has something to show.
+        """
+        defaults = regulator_routing.regulator_defaults(name)
+        if defaults is None:
+            return None
+        if defaults.fixture_alt_name:
+            row = await Regulator.objects.filter(
+                alt_name=defaults.fixture_alt_name
+            ).afirst()
+            if row is not None:
+                return row
+        row, _created = await Regulator.objects.aget_or_create(
+            name=defaults.name,
+            defaults={
+                "alt_name": defaults.alt_name,
+                "website": defaults.website,
+                "phone": defaults.phone,
+                "regex": "",
+                "negative_regex": "",
+            },
+        )
+        return row
 
     @classmethod
     async def extract_set_denialtype(cls, denial_id) -> str:
