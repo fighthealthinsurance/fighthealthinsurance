@@ -422,6 +422,29 @@ class StaffDashboardView(generic.TemplateView):
     template_name = "staff_dashboard.html"
 
 
+class PlanDocumentsDashboardView(generic.TemplateView):
+    """Staff dashboard for plan document uploads: how close the share page
+    is to its goal of employer plans and at what pace
+    (shared_plan_documents.goal_pace), the shares each week and where they
+    came from, how far the shared files' reading is, today's budgets, the
+    reminders waiting to go, and the uploads that weren't shared, the
+    appeal step's and Explain Policy's. Reads only
+    (shared_plan_documents.dashboard_counts); it opens no file."""
+
+    template_name = "plan_documents_dashboard.html"
+
+    def get_context_data(self, **kwargs):
+        from fighthealthinsurance.shared_plan_documents import dashboard_counts
+
+        ctx = super().get_context_data(**kwargs)
+        today = timezone.localdate()
+        ctx["title"] = "Plan Documents Dashboard"
+        ctx["today"] = today
+        ctx["generated_at"] = timezone.now()
+        ctx["counts"] = dashboard_counts(today)
+        return ctx
+
+
 def _lifetime_counters() -> Dict[str, Any]:
     """The lifetime numbers: counters that only go up (lifetime_counters.py)
     plus the running deletion count. Raises on failure; the caller renders

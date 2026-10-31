@@ -10,6 +10,12 @@ Optional: Add Plan Documents
 {% endblock page_heading %}
 
 {% block formelm %}
+{% comment %}
+The limits in the hint are upload_limits' (the view passes them), and the
+box takes the form's file types (PlanDocumentsForm.ACCEPT), so the words
+here, the picker and the server's check agree. A refused upload comes back
+here with nothing stored and each refused file named under the box.
+{% endcomment %}
 <div class="fhi-field-group">
   <label class="fhi-label" for="plan_documents">
     <b>Optional</b>: Plan Documents
@@ -22,7 +28,8 @@ Optional: Add Plan Documents
     Anything you pick here is added to {{ plan_document_count|pluralize:"it,them" }}, so there is no need to upload the same file again.
   </p>
   {% endif %}
-  {% include "partials/file_drop_box.html" with name="plan_documents" multiple=True %}
+  {% include "partials/file_drop_box.html" with name="plan_documents" multiple=True accept=form.ACCEPT %}
+  {% include "partials/field_error.html" with id="plan_documents_error" errors=form.plan_documents.errors filled=True %}
 </div>
 {% include "partials/share_for_research.html" with field=form.share_for_research heading_level=2 %}
 {% endblock formelm %}

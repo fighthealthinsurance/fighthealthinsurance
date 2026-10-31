@@ -1,0 +1,165 @@
+{% comment %}
+The staff plan documents dashboard (staff_views.PlanDocumentsDashboardView),
+behind the staff login like the rest of timbit/help. Everything on it comes
+from shared_plan_documents.dashboard_counts; nothing here opens a file. The
+goal and its rule are the share page's (shared_plan_documents.GOAL_PLANS,
+GOAL_DATE, employer_plan_count). Text colours here all read at 4.5:1 or
+better on their grounds (tests/sync/test_contrast.py measures template
+style blocks); the bar's fill carries no text.
+{% endcomment %}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; background: #f5f5f5; color: #222; }
+    h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+    h2 { color: #555; margin-top: 0; border-left: 4px solid #007bff; padding-left: 10px; }
+    h3 { color: #444; margin: 18px 0 6px 0; font-size: 1.05rem; }
+    a { color: #0056b3; }
+    .section { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .nav-back { display: inline-block; margin-bottom: 14px; color: #0056b3; text-decoration: none; }
+    .nav-back:hover { text-decoration: underline; }
+    .meta { color: #555; font-size: 0.9em; margin-bottom: 18px; }
+    .note { color: #555; font-size: 0.9em; margin: 6px 0 12px 0; }
+    .goal-line { font-size: 1.6em; margin: 0 0 10px 0; }
+    .goal-line b { font-size: 1.4em; }
+    .meter { height: 14px; border-radius: 7px; overflow: hidden; background: #e9ecef; margin: 6px 0 14px 0; }
+    .meter i { display: block; height: 100%; background: #00785a; }
+    .stat-grid { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; }
+    .stat-card { flex: 1 1 150px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 12px 14px; }
+    .stat-card .value { font-size: 1.8em; font-weight: bold; color: #333; font-variant-numeric: tabular-nums; }
+    .stat-card .label { font-size: 0.85em; color: #555; margin-top: 2px; }
+    .pace { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.85em; font-weight: bold; }
+    .pace-on { background: #d4edda; color: #155724; }
+    .pace-behind { background: #f8d7da; color: #721c24; }
+    .pace-done { background: #cce5ff; color: #004085; }
+    table.counts { width: 100%; border-collapse: collapse; margin-top: 8px; margin-bottom: 18px; }
+    table.counts th, table.counts td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; }
+    table.counts th { background: #f0f4f8; }
+    table.counts td.num, table.counts th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    table.counts caption { text-align: left; font-weight: bold; color: #444; padding: 6px 0; }
+  </style>
+</head>
+<body>
+  <a class="nav-back" href="{% url 'staff_dashboard' %}">&laquo; Back to Staff Dashboard</a>
+  <h1>{{ title }}</h1>
+  <p class="meta">
+    Counted {{ generated_at|date:"F j, Y, H:i" }} ({{ today|date:"l" }}) &middot;
+    <a href="{% url 'plan_documents_dashboard' %}">Refresh</a> &middot;
+    <a href="{% url 'admin:fighthealthinsurance_policydocument_changelist' %}">The shared documents in the admin</a> &middot;
+    <a href="{% url 'share_plan_documents' %}">The public share page</a>
+  </p>
+
+  {% with goal=counts.goal_pace %}
+  <div class="section" id="goal">
+    <h2>The goal</h2>
+    <p class="goal-line" id="goal-line"><b>{{ goal.count }}</b> of {{ goal.plans }} employer plans by {{ goal.by|date:"F j, Y" }}
+      {% if goal.reached %}<span class="pace pace-done" id="goal-pace">Reached</span>{% elif goal.past %}<span class="pace pace-behind" id="goal-pace">Past the date</span>{% elif goal.on_track %}<span class="pace pace-on" id="goal-pace">On track</span>{% else %}<span class="pace pace-behind" id="goal-pace">Behind</span>{% endif %}
+    </p>
+    <div class="meter" aria-hidden="true"><i style="width: {{ goal.percent }}%"></i></div>
+    <div class="stat-grid">
+      <div class="stat-card" id="goal-days-left"><div class="value">{{ goal.days_left }}</div><div class="label">day{{ goal.days_left|pluralize }} left</div></div>
+      <div class="stat-card" id="goal-remaining"><div class="value">{{ goal.remaining }}</div><div class="label">still needed</div></div>
+      <div class="stat-card" id="goal-needed-per-week"><div class="value">{{ goal.needed_per_week }}</div><div class="label">a week from here to reach it</div></div>
+      <div class="stat-card" id="goal-recent-per-week"><div class="value">{{ goal.recent_per_week }}</div><div class="label">a week over the last {{ goal.recent_days }} days ({{ goal.recent }} new employer plan{{ goal.recent|pluralize }})</div></div>
+      <div class="stat-card" id="goal-projected"><div class="value">{{ goal.projected }}</div><div class="label">by {{ goal.by|date:"M j" }} at that pace</div></div>
+    </div>
+    <p class="note">An employer plan is a plan of either employer kind, or a plan whose kind wasn't given with an employer named. Each share is one plan unless every file and link in it came in an earlier share; removed rows count for nothing. The share page shows this count only from 20, so nobody lands on "2 of 100".</p>
+  </div>
+  {% endwith %}
+
+  <div class="section" id="shares">
+    <h2>Shares</h2>
+    <div class="stat-grid">
+      <div class="stat-card" id="shares-total"><div class="value">{{ counts.shares }}</div><div class="label">share{{ counts.shares|pluralize }}</div></div>
+      <div class="stat-card" id="plans-total"><div class="value">{{ counts.plans }}</div><div class="label">different plan{{ counts.plans|pluralize }}, of every kind</div></div>
+      <div class="stat-card" id="employer-plans-total"><div class="value">{{ counts.employer_plans }}</div><div class="label">employer plan{{ counts.employer_plans|pluralize }}</div></div>
+      <div class="stat-card" id="premium-answered"><div class="value">{{ counts.premium_answered }}</div><div class="label">plan{{ counts.premium_answered|pluralize }} with the premium question answered</div></div>
+    </div>
+    <table class="counts" id="weeks">
+      <caption>Each week, newest first (the last 12)</caption>
+      <thead><tr><th scope="col">Week of</th><th scope="col" class="num">Shares</th><th scope="col" class="num">New plans</th><th scope="col" class="num">New employer plans</th><th scope="col" class="num">Files</th><th scope="col" class="num">Links</th></tr></thead>
+      <tbody>
+        {% for row in counts.weeks %}<tr><th scope="row">{{ row.week|date:"M j, Y" }}</th><td class="num">{{ row.shares }}</td><td class="num">{{ row.plans }}</td><td class="num">{{ row.employer_plans }}</td><td class="num">{{ row.files }}</td><td class="num">{{ row.links }}</td></tr>
+        {% empty %}<tr><td colspan="6">No shares yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    <table class="counts" id="sources">
+      <caption>Where the shares came from</caption>
+      <thead><tr><th scope="col">Way in</th><th scope="col" class="num">Shares</th><th scope="col" class="num">Files or links</th></tr></thead>
+      <tbody>
+        {% for row in counts.sources %}<tr><th scope="row">{{ row.label }}</th><td class="num">{{ row.shares }}</td><td class="num">{{ row.rows }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <table class="counts" id="kinds">
+      <caption>Plans by kind</caption>
+      <thead><tr><th scope="col">Kind of plan</th><th scope="col" class="num">Plans</th></tr></thead>
+      <tbody>
+        {% for row in counts.kinds %}<tr><th scope="row">{{ row.kind }}</th><td class="num">{{ row.plans }}</td></tr>
+        {% empty %}<tr><td colspan="2">No plans yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    <table class="counts" id="years">
+      <caption>Plans by plan year (one year per share; people sharing more than one year may leave it blank)</caption>
+      <thead><tr><th scope="col">Plan year</th><th scope="col" class="num">Plans</th></tr></thead>
+      <tbody>
+        {% for row in counts.years %}<tr><th scope="row">{{ row.year }}</th><td class="num">{{ row.plans }}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section" id="reading">
+    <h2>Reading the shared files</h2>
+    <p class="note">Each shared file is read once, away from the request that stored it, and its text with personal details taken out is kept for review. Files still waiting after an hour are picked up by the hourly sweep.</p>
+    <table class="counts" id="reading-status">
+      <thead><tr><th scope="col">Where the reading is</th><th scope="col" class="num">Files</th></tr></thead>
+      <tbody>
+        {% for row in counts.reading %}<tr><th scope="row">{{ row.label }}</th><td class="num">{{ row.files }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section" id="today">
+    <h2>Today</h2>
+    <table class="counts" id="budgets">
+      <caption>Today's budgets for everyone (UTC day)</caption>
+      <thead><tr><th scope="col">Budget</th><th scope="col" class="num">Used</th><th scope="col" class="num">Limit</th></tr></thead>
+      <tbody>
+        {% for row in counts.budgets %}<tr><th scope="row">{{ row.label }}</th><td class="num">{{ row.used }}</td><td class="num">{{ row.limit }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p id="reminders-waiting"><strong>{{ counts.reminders_waiting }}</strong> reminder{{ counts.reminders_waiting|pluralize }} waiting to go: people who asked the share page to email them once, 30 days on, to share what their plan has sent by then.</p>
+  </div>
+
+  <div class="section" id="other-uploads">
+    <h2>Uploads that weren't shared</h2>
+    <p class="note">Plan documents people upload for their own appeal or question. They are read for that person alone; ticking the box on either page makes a shared copy, counted above. The appeal step's files are placed by the week the case was opened.</p>
+    <div class="stat-grid">
+      <div class="stat-card" id="appeal-files"><div class="value">{{ counts.appeal_uploads.files }}</div><div class="label">file{{ counts.appeal_uploads.files|pluralize }} on the appeal's plan documents step</div></div>
+      <div class="stat-card" id="appeal-cases"><div class="value">{{ counts.appeal_uploads.cases }}</div><div class="label">appeal{{ counts.appeal_uploads.cases|pluralize }} with plan documents</div></div>
+      <div class="stat-card" id="explain-files"><div class="value">{{ counts.explain_uploads.files }}</div><div class="label">file{{ counts.explain_uploads.files|pluralize }} on Explain Policy</div></div>
+    </div>
+    <table class="counts" id="appeal-weeks">
+      <caption>Appeal step files each week, newest first (the last 12)</caption>
+      <thead><tr><th scope="col">Week of</th><th scope="col" class="num">Files</th></tr></thead>
+      <tbody>
+        {% for row in counts.appeal_uploads.weeks %}<tr><th scope="row">{{ row.week|date:"M j, Y" }}</th><td class="num">{{ row.count }}</td></tr>
+        {% empty %}<tr><td colspan="2">No files yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    <table class="counts" id="explain-weeks">
+      <caption>Explain Policy files each week, newest first (the last 12)</caption>
+      <thead><tr><th scope="col">Week of</th><th scope="col" class="num">Files</th></tr></thead>
+      <tbody>
+        {% for row in counts.explain_uploads.weeks %}<tr><th scope="row">{{ row.week|date:"M j, Y" }}</th><td class="num">{{ row.count }}</td></tr>
+        {% empty %}<tr><td colspan="2">No files yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
