@@ -272,7 +272,8 @@ scores the READY tasks without a score; `--rescore` redoes every READY task
 (after a change to the rubric); `--dry-run` reports without storing;
 `-v 2` prints each task's breakdown. Nothing runs it on deploy, so until it
 has run every older case is served after the scored ones to a judge who is
-warming up.
+warming up or asked for straightforward cases, at any round, and before
+them to a judge who asked for complex ones.
 
 The score is used to **start a judge on the simplest cases**
 (`chooser_complexity.ordered_for_judge`). A session's level is 1 for its
@@ -445,7 +446,7 @@ environment variables of the same name.
 | `CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS` | `3600` | How long a due launch backfill waits for a generation claim another process holds |
 | `CHOOSER_FORCE_MODEL` | LunaRoute's two models, for now (`""` in tests) | Registered model names seated in every new arena task |
 | `CHOOSER_WARMUP_ROUNDS_PER_LEVEL` | `1` | Votes a judge casts before the complexity of the cases served to them may rise a level; `0` turns the warm-up off |
-| `CHOOSER_WARMUP_SATURATION_VOTES` | `5` | Votes after which a case yields its place in the warm-up to a less-judged one |
+| `CHOOSER_WARMUP_SATURATION_VOTES` | `5` | Votes after which a case yields its place, in the warm-up or in the order a judge chose, to a less-judged one |
 | `CONDITION_RANKING_MIN_PEOPLE` | `5` | The k in k-anonymity: different people per term |
 | `CONDITION_RANKING_LOOKUP_BUDGET` | `30` | Outside lookups per refresh |
 | `CONDITION_RANKING_RECHECK_DAYS` | `365` | When a stored verdict is asked again |

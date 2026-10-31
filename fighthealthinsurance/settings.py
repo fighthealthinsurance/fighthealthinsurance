@@ -1250,6 +1250,11 @@ class _TestBase(Dev):
     # A model forced into the arena from the host environment would be asked
     # for real by every test that builds a task.
     CHOOSER_FORCE_MODEL = ""
+    # The arena's serving order is pinned at its defaults: a value exported
+    # in the shell (tox passes the environment through) would reorder what
+    # the ordering tests are served.
+    CHOOSER_WARMUP_ROUNDS_PER_LEVEL = 1
+    CHOOSER_WARMUP_SATURATION_VOTES = 5
 
     @classmethod
     def pre_setup(cls):

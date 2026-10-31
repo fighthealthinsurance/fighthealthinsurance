@@ -1962,11 +1962,17 @@ class ChooserCasePreferenceTest(_ArenaOrderingBase):
 
         self.assertEqual(self._next(difficulty="straightforward"), simplest_left.id)
 
-    def test_an_unknown_difficulty_keeps_the_warm_up(self):
-        self._task(complexity=3)
-        simplest = self._task(complexity=1)
+    @override_settings(CHOOSER_WARMUP_ROUNDS_PER_LEVEL=1)
+    def test_an_unknown_difficulty_keeps_the_usual_order(self):
+        # Warmed up, so with no preference the usual order serves the
+        # oldest; straightforward would serve the 1, complex the 5.
+        for _ in range(4):
+            self._vote_as_this_session(self._task(complexity=5, evidence=False))
+        oldest = self._task(complexity=3)
+        self._task(complexity=1)
+        self._task(complexity=5)
 
-        self.assertEqual(self._next(difficulty="brutal"), simplest.id)
+        self.assertEqual(self._next(difficulty="brutal"), oldest.id)
 
     def test_chat_cases_follow_the_preference_too(self):
         self._task(complexity=1, task_type="chat")
