@@ -176,6 +176,27 @@ class TestCheckedInferStripsThePreamble:
         assert "Sure, I can help" not in text
 
     @pytest.mark.asyncio
+    async def test_a_letter_too_short_without_its_preamble_is_retried(self):
+        # The preamble alone is long enough to pass the length check, the
+        # letter under it is not: the retry must judge the stripped letter.
+        m = _model()
+        m._infer_no_context = AsyncMock(  # type: ignore[method-assign]
+            side_effect=[f"{self.PREAMBLE}\n\nDear Aetna,", self.LETTER]
+        )
+        result = await m._checked_infer(
+            prompt="denial text",
+            patient_context=None,
+            plan_context=None,
+            infer_type="full",
+            pubmed_context=None,
+            system_prompt="sys",
+            temperature=0.5,
+        )
+        assert m._infer_no_context.await_count == 2
+        assert result, "expected a (kind, text) result"
+        assert result[0][1].startswith("Dear Example Health,")
+
+    @pytest.mark.asyncio
     async def test_other_inference_types_keep_the_text_as_written(self):
         m = _model()
         m._infer_no_context = AsyncMock(  # type: ignore[method-assign]

@@ -126,10 +126,11 @@ class PriorAuthTextSubstituter:
                     )
             # A prior authorization request goes to the plan, not to a
             # review board; readdress a salutation that says otherwise to
-            # the plan (or to its placeholder, like the first pass above).
-            proposal_text = readdress_review_board_salutation(
-                proposal_text, context.get("insurance_company") or ""
-            )
+            # the plan, or to its placeholder when the plan is not known.
+            recipient = context.get("insurance_company") or ""
+            if recipient.strip().upper() == "UNKNOWN":
+                recipient = "{{INSURANCE_COMPANY}}"
+            proposal_text = readdress_review_board_salutation(proposal_text, recipient)
             return proposal_text
         except Exception as e:
             logger.error(f"Error substituting values in prior auth text: {e}")

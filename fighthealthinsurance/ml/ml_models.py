@@ -3480,6 +3480,18 @@ class RemoteOpenLike(RemoteModel):
         if _no_time_for_a_letter():
             return "skipped_deadline", []
 
+        def _as_letter(text: Optional[str]) -> Optional[str]:
+            """A letter starts at the letter: a chat-tuned model's "Sure, I
+            can help you draft... Here's a simple one:" comes off the top of a
+            full appeal as it arrives, so the checks below (and the retry they
+            trigger) judge the letter itself, and the stored draft, the
+            quality score and synthesis never see the preamble. Only this
+            path: in a chat that opening is the assistant talking to the
+            person (letter_openings)."""
+            if infer_type == "full" and text:
+                return strip_letter_preamble(text)
+            return text
+
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
         if prompt and isinstance(prompt, str):
@@ -3503,19 +3515,21 @@ class RemoteOpenLike(RemoteModel):
         # on every try it got is "unavailable".
         first_failure: Optional[ProviderUnavailable] = None
         try:
-            result = await self._infer_no_context(
-                prompt=prompt,
-                patient_context=patient_context,
-                plan_context=plan_context,
-                system_prompts=[system_prompt],
-                pubmed_context=pubmed_context,
-                temperature=temperature,
-                ml_citations_context=ml_citations_context,
-                # What is left of the attempt's and the requester's budget,
-                # re-read per call: these calls once ran on the instance
-                # default, outside the clamp.
-                timeout=_call_timeout(),
-                raise_on_unavailable=True,
+            result = _as_letter(
+                await self._infer_no_context(
+                    prompt=prompt,
+                    patient_context=patient_context,
+                    plan_context=plan_context,
+                    system_prompts=[system_prompt],
+                    pubmed_context=pubmed_context,
+                    temperature=temperature,
+                    ml_citations_context=ml_citations_context,
+                    # What is left of the attempt's and the requester's
+                    # budget, re-read per call: these calls once ran on the
+                    # instance default, outside the clamp.
+                    timeout=_call_timeout(),
+                    raise_on_unavailable=True,
+                )
             )
         except ProviderUnavailable as e:
             # A provider now known to be unusable (gone, refused, out of
@@ -3556,16 +3570,18 @@ class RemoteOpenLike(RemoteModel):
             # one when the retry gives nothing.
             first_result = result
             try:
-                result = await self._infer_no_context(
-                    prompt=prompt,
-                    patient_context=patient_context,
-                    plan_context=plan_context,
-                    system_prompts=[system_prompt],
-                    pubmed_context=pubmed_context,
-                    temperature=temperature,
-                    ml_citations_context=ml_citations_context,
-                    timeout=_call_timeout(),
-                    raise_on_unavailable=True,
+                result = _as_letter(
+                    await self._infer_no_context(
+                        prompt=prompt,
+                        patient_context=patient_context,
+                        plan_context=plan_context,
+                        system_prompts=[system_prompt],
+                        pubmed_context=pubmed_context,
+                        temperature=temperature,
+                        ml_citations_context=ml_citations_context,
+                        timeout=_call_timeout(),
+                        raise_on_unavailable=True,
+                    )
                 )
             except NoAnswerText:
                 # Reached, and it answered with no text: no_completion.
@@ -3607,15 +3623,17 @@ class RemoteOpenLike(RemoteModel):
                 and not _no_time_for_a_letter()
             ):
                 c = c + 1
-                result = await self._infer_no_context(
-                    prompt=prompt,
-                    patient_context=patient_context,
-                    plan_context=plan_context,
-                    system_prompts=[system_prompt],
-                    pubmed_context=pubmed_context,
-                    temperature=temperature,
-                    ml_citations_context=ml_citations_context,
-                    timeout=_call_timeout(),
+                result = _as_letter(
+                    await self._infer_no_context(
+                        prompt=prompt,
+                        patient_context=patient_context,
+                        plan_context=plan_context,
+                        system_prompts=[system_prompt],
+                        pubmed_context=pubmed_context,
+                        temperature=temperature,
+                        ml_citations_context=ml_citations_context,
+                        timeout=_call_timeout(),
+                    )
                 )
                 if self.bad_result(result, infer_type):
                     result = last_okish
@@ -3624,14 +3642,6 @@ class RemoteOpenLike(RemoteModel):
                     f"Professional/PA check: {c} retries, "
                     f"{'succeeded' if c < 2 else 'gave up'}"
                 )
-
-        if infer_type == "full" and result:
-            # A letter, so it starts at the letter: a chat-tuned model's
-            # "Sure, I can help you draft... Here's a simple one:" comes off
-            # the top here, before the stored draft, the quality score and
-            # synthesis see it. Only this path: in a chat that opening is
-            # the assistant talking to the person (letter_openings).
-            result = strip_letter_preamble(result)
 
         # Off the event loop: url_fixer network-validates every URL the model
         # emitted that wasn't in the input (bounded 5s each, see

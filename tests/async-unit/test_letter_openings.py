@@ -131,6 +131,65 @@ class ReaddressReviewBoardSalutationTest(SimpleTestCase):
             "Dear Blue Cross (BCBS) \\1 Plan $2,\n",
         )
 
+    def test_only_the_letters_own_salutation_is_rewritten(self):
+        # The plan's earlier letter, quoted in the body, keeps its salutation.
+        letter = (
+            "Dear Esteemed Members of the Review Board,\n\n"
+            "Your reviewer's note to the panel read:\n\n"
+            "Dear Review Board,\nThe request does not meet criteria.\n"
+        )
+        self.assertEqual(
+            readdress_review_board_salutation(letter, "Example Health"),
+            "Dear Example Health,\n\n"
+            "Your reviewer's note to the panel read:\n\n"
+            "Dear Review Board,\nThe request does not meet criteria.\n",
+        )
+
+    def test_a_salutation_quoted_after_the_letters_own_is_left_alone(self):
+        letter = (
+            "Dear Example Health,\n\n"
+            "The denial I received was addressed as follows:\n\n"
+            "Dear Review Board,\nThe request does not meet criteria.\n"
+        )
+        self.assertFalse(addressed_to_review_board(letter))
+        self.assertEqual(
+            readdress_review_board_salutation(letter, "Example Health"), letter
+        )
+
+    def test_a_blockquoted_salutation_is_not_the_letters(self):
+        letter = (
+            "> Dear Review Board,\n> The request does not meet criteria.\n\n"
+            "Dear Example Health,\n\nPlease reverse the denial.\n"
+        )
+        self.assertFalse(addressed_to_review_board(letter))
+        self.assertEqual(
+            readdress_review_board_salutation(letter, "Example Health"), letter
+        )
+
+    def test_the_header_before_the_salutation_is_kept(self):
+        header = "Jane Doe\n123 Main Street\nOctober 31, 2026\n\nRe: Claim 123\n\n"
+        self.assertEqual(
+            readdress_review_board_salutation(
+                header + "Dear Esteemed Members of the Review Board," + BODY,
+                "Example Health",
+            ),
+            header + "Dear Example Health," + BODY,
+        )
+
+    def test_a_board_in_placeholder_brackets_is_readdressed(self):
+        for salutation in (
+            "Dear [Esteemed Members of the Health Plan Review Board],",
+            "Dear {{Review Board}},",
+            "[Esteemed Members of the Review Board],",
+        ):
+            with self.subTest(salutation=salutation):
+                self.assertEqual(
+                    readdress_review_board_salutation(
+                        salutation + BODY, "Example Health"
+                    ),
+                    "Dear Example Health," + BODY,
+                )
+
     def test_empty_text_stays_empty(self):
         self.assertEqual(readdress_review_board_salutation("", "Example Health"), "")
         self.assertFalse(addressed_to_review_board(""))
@@ -187,6 +246,9 @@ PREAMBLES = (
     "Let me draft an appeal letter for you:",
     "**Here is your appeal letter:**",
     "Absolutely, here is a sample appeal letter.",
+    # First person, but an offer of help to the reader, not the letter.
+    "Certainly, I am happy to help you draft your appeal letter:",
+    "Sure, I'm glad to help. Here is a letter you can adapt:",
 )
 
 LETTER_LINES = (
@@ -235,6 +297,12 @@ class StripLetterPreambleTest(SimpleTestCase):
                 self.assertFalse(is_letter_preamble(line))
                 text = f"{line}\n\nThe rest of the letter.\n"
                 self.assertEqual(strip_letter_preamble(text), text)
+
+    def test_a_fence_with_a_spaced_info_string_comes_off_too(self):
+        self.assertEqual(
+            strip_letter_preamble(f"Here is the letter:\n``` markdown\n{LETTER}```"),
+            LETTER.rstrip("\n"),
+        )
 
     def test_a_fence_without_a_preamble_is_left_alone(self):
         text = f"```\n{LETTER}```\n"

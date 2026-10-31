@@ -50,29 +50,45 @@ APPEAL_SALUTATION_INSTRUCTION = (
     "reviewers."
 )
 
-# A salutation line to a review board, panel or committee. It must start the
-# line (after any markdown or indentation) and end in a salutation's
-# punctuation, and it must open like a salutation -- "Dear ...", "To the ...",
-# or "Esteemed Members of the ..." -- so a body sentence that mentions a
-# review board ("I will request an external review by an independent review
-# board.") is left alone. The words between the opener and "Review Board"
-# ("Health Plan", "Independent Medical", "Appeals") must be capitalised, as a
-# body's name is, which keeps "To the extent the review board, ..." out.
+# What a salutation line may start with: indentation, and markdown emphasis
+# or a heading marker. Not ">": a blockquoted line is a quotation, and its
+# "Dear ..." is someone else's salutation.
+_LINE_LEAD = r"[ \t*_#]*"
+
+# The letter's own salutation, when it is to a review board, panel or
+# committee. The letter's salutation is the first line that opens one ("Dear
+# ...", "To Whom ..."), so a salutation quoted later in the body ("Dear Review
+# Board," from the plan's earlier correspondence) is never matched; the lines
+# before it (sender, date, address, a "Re:" line) are skipped. The match must
+# open like a salutation -- "Dear ...", "To the ...", or "Esteemed Members of
+# the ..." -- and end in a salutation's punctuation, so a body sentence that
+# mentions a review board ("I will request an external review by an
+# independent review board.") is left alone. The words between the opener and
+# "Review Board" ("Health Plan", "Independent Medical", "Appeals") must be
+# capitalised, as a body's name is, which keeps "To the extent the review
+# board, ..." out. The name may sit in a template's placeholder brackets
+# ("Dear [Esteemed Members of the Health Plan Review Board],").
 #
-# Written in the syntax Python's re and Java's regex (Spark's rlike, in the
-# training pipeline) share: inline flags, scoped (?-i:...), no named groups.
+# Group 1 is the salutation line's lead, group 2 its punctuation; the match
+# starts at the top of the text. Written in the syntax Python's re and Java's
+# regex (Spark's rlike, in the training pipeline) share: inline flags, \A,
+# scoped (?-i:...), no named groups.
 REVIEW_BOARD_SALUTATION_PATTERN = (
-    r"(?im)^([ \t*_#>]*)"
+    r"(?i)\A"
+    r"(?:(?!" + _LINE_LEAD + r"(?:Dear|To\s+Whom)\b)[^\n]*\n)*?"
+    r"(" + _LINE_LEAD + r")"
     r"(?:"
-    r"(?:Dear|To)\s+(?:the\s+)?"
+    r"(?:Dear|To)\s+(?:the\s+)?(?:\[|\{\{)?"
     r"(?:(?:Esteemed|Honou?rable|Distinguished|Respected)\s+)?"
     r"(?:Members\s+of\s+the\s+)?"
     r"|"
+    r"(?:\[|\{\{)?"
     r"(?:Esteemed|Honou?rable|Distinguished|Respected)\s+Members\s+of\s+the\s+"
     r")"
     r"(?-i:(?:[A-Z][A-Za-z'’/-]*\s+){0,4}?)"
     r"Review\s+(?:Board|Panel|Committee)"
     r"(?:\s+Members)?"
+    r"(?:\]|\}\})?"
     r"\s*([,:;])"
 )
 
@@ -80,26 +96,27 @@ REVIEW_BOARD_SALUTATION_RE = re.compile(REVIEW_BOARD_SALUTATION_PATTERN)
 
 
 def addressed_to_review_board(text: str) -> bool:
-    """Whether ``text`` opens a salutation to a review board, panel or
-    committee (see ``REVIEW_BOARD_SALUTATION_PATTERN``)."""
-    return bool(text) and REVIEW_BOARD_SALUTATION_RE.search(text) is not None
+    """Whether the salutation of the letter in ``text`` is to a review board,
+    panel or committee (see ``REVIEW_BOARD_SALUTATION_PATTERN``)."""
+    return bool(text) and REVIEW_BOARD_SALUTATION_RE.match(text) is not None
 
 
 def readdress_review_board_salutation(text: str, recipient: str) -> str:
-    """``text`` with any salutation to a review board rewritten as
-    "Dear <recipient>", keeping the line's own punctuation and any markdown
-    around it. ``recipient`` is the plan's name, or the caller's placeholder
-    for it when the plan is not known; a blank one leaves the text as it is,
-    since "Dear ," would be worse than the salutation it replaces."""
+    """``text`` with the letter's salutation rewritten as "Dear <recipient>"
+    when it is to a review board, keeping the line's own punctuation and any
+    markdown around it. Only the letter's own salutation is rewritten: one
+    quoted later in the body stays as written. ``recipient`` is the plan's
+    name, or the caller's placeholder for it when the plan is not known; a
+    blank one leaves the text as it is, since "Dear ," would be worse than
+    the salutation it replaces."""
     if not text or not recipient or not recipient.strip():
         return text
-    name = recipient.strip()
-
-    def readdress(match: "re.Match[str]") -> str:
-        lead, punctuation = match.group(1), match.group(2)
-        return f"{lead}Dear {name}{punctuation}"
-
-    return REVIEW_BOARD_SALUTATION_RE.sub(readdress, text)
+    match = REVIEW_BOARD_SALUTATION_RE.match(text)
+    if match is None:
+        return text
+    lead, punctuation = match.group(1), match.group(2)
+    salutation = f"{lead}Dear {recipient.strip()}{punctuation}"
+    return text[: match.start(1)] + salutation + text[match.end() :]
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +144,17 @@ _PREAMBLE_INTERJECTION_RE = re.compile(
 # A letter's own first line speaks for the writer ("Here is my formal appeal
 # of ..."); the assistant's preamble speaks of "your appeal" or "a draft".
 _LETTER_VOICE_RE = re.compile(r"\b(?:my|our|I am|I'm|we are|we're)\b", re.IGNORECASE)
-_FENCE_RE = re.compile(r"^\s*```[\w-]*\s*$")
+# ... except that an offer of help to the reader is the assistant talking,
+# first person or not ("Certainly, I am happy to help you draft your appeal
+# letter:"). A letter's line says "your denial", never "help you" or "for you".
+_ASSISTANT_OFFER_RE = re.compile(
+    r"\b(?:help(?:ing)?\s+you|for\s+you|(?:happy|glad|pleased)\s+to\s+"
+    r"(?:help|assist)|you\s+can\s+(?:use|adapt|edit|customi[sz]e|send))\b",
+    re.IGNORECASE,
+)
+# An opening fence, with an optional info string ("```", "```markdown",
+# "``` markdown"), or the closing one.
+_FENCE_RE = re.compile(r"^\s*```\s*[\w-]*\s*$")
 # At most this many opening lines are a preamble ("Certainly!", then "Here is
 # the letter:"); anything longer is the letter.
 _MAX_PREAMBLE_LINES = 3
@@ -139,6 +166,8 @@ def is_letter_preamble(line: str) -> bool:
     if _PREAMBLE_OPENER_RE.match(line) is None:
         return False
     if _PREAMBLE_INTERJECTION_RE.match(line):
+        return True
+    if _ASSISTANT_OFFER_RE.search(line):
         return True
     if _LETTER_VOICE_RE.search(line):
         return False
