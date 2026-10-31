@@ -122,6 +122,11 @@ class TestBreakdown:
     def test_evidence_that_is_not_a_list_shows_no_articles(self):
         assert cc.breakdown({"evidence": "PMID 1"}, []).articles == 0
 
+    @pytest.mark.parametrize("key", ["facts", "qa_pairs", "history"])
+    @pytest.mark.parametrize("value", [7, "two words", {"a": "dict"}])
+    def test_a_case_field_that_is_not_a_list_is_left_out(self, key, value):
+        assert cc.breakdown({key: value}, ["a short letter"]).words == 3
+
     def test_empty_drafts_are_not_drafts(self):
         assert cc.breakdown({}, ["a letter", "", None]).drafts == 1
 

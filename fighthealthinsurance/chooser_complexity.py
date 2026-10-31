@@ -96,12 +96,18 @@ def _as_case(context: object) -> dict:
     return context if isinstance(context, dict) else {}
 
 
+def _listed(context: dict, key: str) -> list:
+    """``context[key]`` when it is a list, else nothing: a malformed value
+    (a number, or a string that would be read a character at a time) is
+    left out rather than raising or miscounting."""
+    value = context.get(key)
+    return value if isinstance(value, list) else []
+
+
 def evidence_shown(context: Optional[dict]) -> List[dict]:
     """The evidence rows the voter is shown: those with a title (the page and
     the drafts' prompt both skip the rest)."""
-    rows = _as_case(context).get("evidence") or []
-    if not isinstance(rows, list):
-        return []
+    rows = _listed(_as_case(context), "evidence")
     return [e for e in rows if isinstance(e, dict) and e.get("title")]
 
 
@@ -120,15 +126,15 @@ def _case_text(context: Optional[dict]) -> List[str]:
         value = context.get(key)
         if isinstance(value, str):
             pieces.append(value)
-    pieces.extend(str(fact) for fact in context.get("facts") or [] if fact)
-    for pair in context.get("qa_pairs") or []:
+    pieces.extend(str(fact) for fact in _listed(context, "facts") if fact)
+    for pair in _listed(context, "qa_pairs"):
         if isinstance(pair, dict):
             pieces.append(str(pair.get("question") or ""))
             pieces.append(str(pair.get("answer") or ""))
     for item in evidence_shown(context):
         pieces.append(str(item.get("title") or ""))
         pieces.append(str(item.get("summary") or ""))
-    for turn in context.get("history") or []:
+    for turn in _listed(context, "history"):
         if isinstance(turn, dict):
             pieces.append(str(turn.get("content") or ""))
         elif isinstance(turn, str):

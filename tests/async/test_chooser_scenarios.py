@@ -805,8 +805,9 @@ class TestComplexityStamp:
     """A task is scored for judging complexity as it goes READY, once every
     draft is on file; the score never holds a task back."""
 
-    async def _generate(self, drafts=2, letter=_LETTER):
+    async def _generate(self, drafts=2, letter=_LETTER, context=None):
         async def seat_candidates(task):
+            task.context_json = context
             for index in range(drafts):
                 await ChooserCandidate.objects.acreate(
                     task=task,
@@ -838,6 +839,14 @@ class TestComplexityStamp:
 
         assert task.status == "READY"
         assert task.complexity == 3
+
+    async def test_the_stamp_reads_the_stored_case(self):
+        # Two short drafts alone are a 1; a 2,000-word denial on file makes
+        # the case a 2, so a stamp that left the case out would score it 1.
+        task = await self._generate(context={"denial_text_preview": "word " * 2000})
+
+        assert task.status == "READY"
+        assert task.complexity == 2
 
     async def test_a_task_that_is_not_ready_is_not_scored(self):
         task = await self._generate(drafts=1)
