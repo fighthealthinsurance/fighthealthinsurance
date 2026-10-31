@@ -869,19 +869,32 @@ def share_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
 
     shares = plan_shares()
     plans = [share for share in shares if share.new_plan]
+    # Each week: shares, new plans, new employer plans, files and links.
     by_week: dict[datetime.date, list[int]] = {}
     for share in shares:
         week = week_start(timezone.localdate(share.shared_at))
-        counts = by_week.setdefault(week, [0, 0])
+        counts = by_week.setdefault(week, [0, 0, 0, 0, 0])
         counts[0] += 1
         counts[1] += int(share.new_plan)
+        counts[2] += int(share.new_plan and share.employer)
+        counts[3] += share.files
+        counts[4] += share.links
     week_rows: list[dict[str, Any]] = []
     if shares:
         first = min(by_week)
         week = week_start(today)
         while week >= first and len(week_rows) < weeks:
-            got = by_week.get(week, [0, 0])
-            week_rows.append({"week": week, "shares": got[0], "plans": got[1]})
+            got = by_week.get(week, [0, 0, 0, 0, 0])
+            week_rows.append(
+                {
+                    "week": week,
+                    "shares": got[0],
+                    "plans": got[1],
+                    "employer_plans": got[2],
+                    "files": got[3],
+                    "links": got[4],
+                }
+            )
             week -= datetime.timedelta(days=7)
     labels = dict(PolicyDocument.PLAN_CATEGORY_CHOICES)
     kinds = Counter(share.plan_category for share in plans)
@@ -913,3 +926,169 @@ def share_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
         ],
         "premium_answered": sum(1 for share in plans if share.premium_answered),
     }
+
+
+# ---- The staff dashboard ----------------------------------------------------
+
+#: The pace is read off this many days of shares.
+PACE_DAYS = 28
+
+
+def goal_pace(
+    today: datetime.date, employer_plans: int, shares: Sequence[Share]
+) -> dict[str, Any]:
+    """How the goal (GOAL_PLANS employer plans by GOAL_DATE) is going, for the
+    staff dashboard: what is left and how long, the employer plans a week it
+    takes from here, the pace of the last PACE_DAYS days, and where that
+    pace lands by the day. The share page itself shows the count alone."""
+    days_left = max((GOAL_DATE - today).days, 0)
+    remaining = max(GOAL_PLANS - employer_plans, 0)
+    since = datetime.datetime.combine(
+        today - datetime.timedelta(days=PACE_DAYS),
+        datetime.time.min,
+        tzinfo=timezone.get_current_timezone(),
+    )
+    recent = sum(
+        1
+        for share in shares
+        if share.new_plan and share.employer and share.shared_at >= since
+    )
+    recent_per_week = recent * 7 / PACE_DAYS
+    weeks_left = days_left / 7
+    needed_per_week = remaining / weeks_left if weeks_left and remaining else 0.0
+    projected = (
+        employer_plans + recent_per_week * weeks_left if days_left else employer_plans
+    )
+    return {
+        "plans": GOAL_PLANS,
+        "by": GOAL_DATE,
+        "count": employer_plans,
+        "percent": min(employer_plans, GOAL_PLANS) * 100 // GOAL_PLANS,
+        "reached": employer_plans >= GOAL_PLANS,
+        "past": today > GOAL_DATE,
+        "days_left": days_left,
+        "remaining": remaining,
+        "recent_days": PACE_DAYS,
+        "recent": recent,
+        "recent_per_week": round(recent_per_week, 1),
+        "needed_per_week": round(needed_per_week, 1),
+        "projected": int(projected),
+        # On track when the recent pace carries the count to the goal in time.
+        "on_track": projected >= GOAL_PLANS,
+    }
+
+
+def _by_week(
+    days: Sequence[datetime.date], today: datetime.date, weeks: int
+) -> list[dict[str, Any]]:
+    """How many of ``days`` fall in each of the last ``weeks`` weeks, newest
+    first, back to the week of the earliest day."""
+    from fighthealthinsurance.client_network import week_start
+
+    counts = Counter(week_start(day) for day in days if day)
+    rows: list[dict[str, Any]] = []
+    if counts:
+        first = min(counts)
+        week = week_start(today)
+        while week >= first and len(rows) < weeks:
+            rows.append({"week": week, "count": counts.get(week, 0)})
+            week -= datetime.timedelta(days=7)
+    return rows
+
+
+def dashboard_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
+    """Everything the staff plan documents dashboard shows
+    (staff_views.PlanDocumentsDashboardView): the share counts
+    (share_counts) with the goal's pace (goal_pace), where the shares came
+    from, how far the shared files' reading is, today's budgets, the
+    reminders waiting to go, and the uploads that weren't shared, the
+    appeal step's (PlanDocuments) and Explain Policy's, each by week. Reads
+    only; nothing here opens a file."""
+    from django.db.models import Count
+
+    from fighthealthinsurance.models import PlanDocuments, PlanDocumentsReminder
+
+    shares = plan_shares()
+    counts = share_counts(today, weeks=weeks)
+    counts["goal_pace"] = goal_pace(today, counts["employer_plans"], shares)
+
+    source_labels = dict(PolicyDocument.SOURCE_CHOICES)
+    kept = PolicyDocument.objects.filter(
+        source__in=PolicyDocument.SHARED_SOURCES
+    ).exclude(processing_status=PolicyDocument.PROCESSING_REMOVED)
+    by_source: dict[str, tuple[int, int]] = {
+        row["source"]: (row["shares"], row["rows"])
+        for row in kept.values("source").annotate(
+            rows=Count("id"), shares=Count("share_batch", distinct=True)
+        )
+    }
+    counts["sources"] = [
+        {
+            "source": source,
+            "label": source_labels[source],
+            "shares": by_source.get(source, (0, 0))[0],
+            "rows": by_source.get(source, (0, 0))[1],
+        }
+        for source in PolicyDocument.SHARED_SOURCES
+    ]
+
+    status_labels = dict(PolicyDocument.PROCESSING_STATUS_CHOICES)
+    by_status = {
+        row["processing_status"]: row["rows"]
+        for row in PolicyDocument.objects.filter(
+            source__in=PolicyDocument.SHARED_FILE_SOURCES
+        )
+        .values("processing_status")
+        .annotate(rows=Count("id"))
+    }
+    counts["reading"] = [
+        {
+            "status": status,
+            "label": status_labels[status],
+            "files": by_status.get(status, 0),
+        }
+        for status in (
+            PolicyDocument.PROCESSING_RECEIVED,
+            PolicyDocument.PROCESSING_READY,
+            PolicyDocument.PROCESSING_UNREADABLE,
+            PolicyDocument.PROCESSING_REMOVED,
+        )
+    ]
+
+    counts["budgets"] = [
+        {
+            "label": "Files shared on the share page",
+            "used": _taken_today(SharedPlanDocumentsDay.FILES),
+            "limit": _files_per_day(),
+        },
+        {
+            "label": "Copies shared by ticking the box on another page",
+            "used": _taken_today(SharedPlanDocumentsDay.OPT_IN_FILES),
+            "limit": _opt_in_files_per_day(),
+        },
+        {
+            "label": "Links shared",
+            "used": _taken_today(SharedPlanDocumentsDay.LINKS),
+            "limit": _links_per_day(),
+        },
+    ]
+    counts["reminders_waiting"] = PlanDocumentsReminder.objects.count()
+
+    appeal_rows = list(PlanDocuments.objects.values_list("denial_id", "denial__date"))
+    counts["appeal_uploads"] = {
+        "files": len(appeal_rows),
+        "cases": len({denial_id for denial_id, _ in appeal_rows}),
+        "weeks": _by_week([day for _, day in appeal_rows], today, weeks),
+    }
+    explain_days = [
+        timezone.localdate(created)
+        for created in PolicyDocument.objects.filter(
+            source=PolicyDocument.SOURCE_EXPLAIN_POLICY
+        ).values_list("created_at", flat=True)
+        if created
+    ]
+    counts["explain_uploads"] = {
+        "files": len(explain_days),
+        "weeks": _by_week(explain_days, today, weeks),
+    }
+    return counts

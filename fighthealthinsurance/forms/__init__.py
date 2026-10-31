@@ -422,7 +422,13 @@ class HealthHistory(DenialRefForm):
 
 
 class PlanDocumentsForm(DenialRefForm):
-    plan_documents = MultipleFileField(required=False)
+    # The file types the appeal's reader parses, for the input's accept, so
+    # the picker offers what the check below takes.
+    ACCEPT = ",".join(sorted(upload_limits.SUPPORTED_POLICY_EXTENSIONS))
+
+    plan_documents = MultipleFileField(
+        required=False, widget=MultipleFileInput(attrs={"accept": ACCEPT})
+    )
     # Not the appeal's: DenialCollectedView takes it out before update_denial.
     share_for_research = share_for_research_field()
 

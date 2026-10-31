@@ -180,6 +180,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="model_usage_dashboard",
     ),
     path(
+        "timbit/help/plan_documents",
+        staff_member_required(staff_views.PlanDocumentsDashboardView.as_view()),
+        name="plan_documents_dashboard",
+    ),
+    path(
         "timbit/help/model_backends",
         staff_member_required(staff_views.ModelBackendStatusView.as_view()),
         name="model_backend_status",

@@ -8,10 +8,19 @@
 
 	{% block page_heading %}{% endblock page_heading %}
 
+	{% comment %}
+	  Each error in the person's words, not form.errors, which would show a
+	  field's name in the code ("plan_documents"). A hidden field's error is
+	  named after its label, since the page draws it nowhere.
+	{% endcomment %}
 	{% if form.errors %}
-	<div class="fhi-notice fhi-notice-danger" role="alert">
+	<div class="fhi-notice fhi-notice-danger" role="alert" id="step-errors">
 	    <strong>Please fix the following:</strong>
-	    {{ form.errors }}
+	    <ul>
+	    {% for error in form.non_field_errors %}<li>{{ error }}</li>
+	    {% endfor %}{% for field in form %}{% for error in field.errors %}<li>{% if field.is_hidden %}{{ field.label }}: {% endif %}{{ error }}</li>
+	    {% endfor %}{% endfor %}
+	    </ul>
 	</div>
 	{% endif %}
 	<div class="main-form">
