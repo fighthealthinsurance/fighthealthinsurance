@@ -298,7 +298,7 @@ class RankResult:
 def enabled() -> bool:
     """The switch and the key. The chat adds the person's consent, and
     whether the turn has outside models to hold back."""
-    return bool(getattr(settings, "TYPESAFE_API_KEY", None)) and bool(
+    return typesafe.configured() and bool(
         getattr(settings, "FHI_CHAT_JEV_GATE_ENABLED", False)
     )
 

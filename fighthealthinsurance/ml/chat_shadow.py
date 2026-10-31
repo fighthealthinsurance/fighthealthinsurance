@@ -188,7 +188,7 @@ class ShadowResult:
 
 
 def enabled() -> bool:
-    return bool(getattr(settings, "TYPESAFE_API_KEY", None)) and bool(
+    return typesafe.configured() and bool(
         getattr(settings, "TYPESAFE_CHAT_SHADOW_ENABLED", False)
     )
 
