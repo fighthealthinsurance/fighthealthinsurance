@@ -215,6 +215,18 @@ The app needs a model backend to generate appeals; see
 [ml-backends.md](ml-backends.md). The Ray background actors are not started
 locally; see [ray-actors.md](ray-actors.md).
 
+### `--all-experiments`
+
+`./scripts/run_local.sh --all-experiments` turns on every experimental
+feature flag listed in `EXPERIMENTAL_FLAGS` at the top of the script (the
+unlaunched pages, Fight Paperwork, the MCP appeal tools, the chat policy and
+the TypeSafe/Jev checks) and prints them just before the server starts. It
+overrides values you have exported, and it works anywhere in the arguments,
+with `--devserver` too. The TypeSafe and Jev flags do nothing without
+`TYPESAFE_API_KEY`; with it set, they send your local test letters and chats
+to TypeSafe. The Temporal flags stay off because they need a Temporal server
+and `python manage.py run_temporal_worker`; export them yourself to try them.
+
 ### `--devserver` and WebSockets
 
 `./scripts/run_local.sh --devserver` runs django-extensions' `runserver_plus`
