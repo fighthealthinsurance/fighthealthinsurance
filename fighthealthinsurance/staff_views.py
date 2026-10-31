@@ -3,6 +3,7 @@ import datetime
 import io
 import json
 import statistics
+import types
 from urllib.parse import urlencode
 from collections import Counter, defaultdict
 from typing import (
@@ -120,6 +121,7 @@ from fighthealthinsurance.ml import (
     denial_triage,
     letter_quality,
     model_query,
+    followup_questions,
     research_judging,
     spend,
     typesafe,
@@ -3000,6 +3002,16 @@ def _jev_uses() -> List[Dict[str, Any]]:
             research_judging,
             "TYPESAFE_RESEARCH_JUDGING_ENABLED",
             spend.RESEARCH,
+        ),
+        (
+            "Follow-up questions",
+            # The round runs without Jev; this row is about its Jev half.
+            types.SimpleNamespace(
+                enabled=followup_questions.jev_enabled,
+                SERVICE=followup_questions.SERVICE,
+            ),
+            "TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED",
+            spend.TRIAGE,
         ),
     )
     rows: List[Dict[str, Any]] = []

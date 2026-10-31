@@ -22,6 +22,7 @@ from typing import (
     List,
     Mapping,
     Optional,
+    Sequence,
     Tuple,
     AsyncGenerator,
     Callable,
@@ -109,7 +110,7 @@ from fighthealthinsurance.medical_code_extractor import (
     extract_procedure_codes,
 )
 from fighthealthinsurance.ml import denial_triage, letter_quality, research_judging
-from fighthealthinsurance.ml import llm_usage, spend
+from fighthealthinsurance.ml import followup_questions, llm_usage, spend
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.ml.serving_registry import aserving_id_for
 from fighthealthinsurance.reliability_events import capture_reliability_event
@@ -230,6 +231,11 @@ class NextStepInfo:
     # (ml/denial_triage.deadline_sentence_if_enabled); empty unless
     # TYPESAFE_DEADLINE_SHOW_ENABLED is on. Server-rendered only.
     appeal_deadline_note: str = ""
+    # The URL name the questions page posts its answers to: the loading
+    # page in front of generate_appeal while a follow-up round could still
+    # be asked (ml/followup_questions.py), else generate_appeal itself.
+    # Server-rendered only.
+    answers_action: str = "generate_appeal"
 
     def convert_to_serializable(self) -> "NextStepInfoSerializable":
         return NextStepInfoSerializable(
@@ -1720,42 +1726,101 @@ class FindNextStepsHelper:
             None,
             questions_fingerprint(denial.procedure, denial.diagnosis),
         ):
-            question_fields = generated_question_fields(denial.generated_questions)
+            question_forms.append(
+                cls.generated_questions_form(denial.generated_questions, answers)
+            )
 
-            class AppealQuestionsForm(forms.Form):
-                def __init__(self, *args, **kwargs):
-                    super().__init__(*args, **kwargs)
-                    for field_name, (
-                        question,
-                        suggested_answer,
-                    ) in question_fields.items():
-                        stored = stored_answer_for_question(question, answers)
-                        # The model's suggestion goes beside the box, not in
-                        # it. The letter is written in this person's voice and
-                        # sent over their name, and the box is posted on every
-                        # Next whether or not it was touched, so a prefilled
-                        # suggestion nobody read became their own account of
-                        # their own medical history. Offered as a hint it
-                        # still helps with questions like "reason for elevated
-                        # risk requiring this screening", which few people can
-                        # answer cold. Product owner's call of 2026-09-14.
-                        hint = (suggested_answer or "").strip()
-                        self.fields[field_name] = forms.CharField(
-                            label=question,
-                            required=False,
-                            initial=stored if stored is not None else "",
-                            # Escaped: the form's table template marks
-                            # help_text safe, and this text is model output.
-                            help_text=(
-                                format_html("One way to answer: {}", hint)
-                                if hint
-                                else ""
-                            ),
-                        )
-
-            question_forms.append(AppealQuestionsForm())
+        # The follow-ups asked after this page, so Back shows them with
+        # their answers; only those asked for the inputs the row holds now.
+        followups = cls.followup_rows(denial)
+        if followups:
+            question_forms.append(cls.generated_questions_form(followups, answers))
 
         return question_forms
+
+    @staticmethod
+    def generated_questions_form(
+        rows: Sequence[Any], answers: Mapping[str, str]
+    ) -> Form:
+        """One text box per generated question in ``rows``
+        (generated_questions rows), holding its stored answer. Also the
+        follow-up page's form (ml/followup_questions.py)."""
+        from django import forms
+
+        question_fields = generated_question_fields(rows)
+
+        class AppealQuestionsForm(forms.Form):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                for field_name, (
+                    question,
+                    suggested_answer,
+                ) in question_fields.items():
+                    stored = stored_answer_for_question(question, answers)
+                    # The model's suggestion goes beside the box, not in
+                    # it. The letter is written in this person's voice and
+                    # sent over their name, and the box is posted on every
+                    # Next whether or not it was touched, so a prefilled
+                    # suggestion nobody read became their own account of
+                    # their own medical history. Offered as a hint it
+                    # still helps with questions like "reason for elevated
+                    # risk requiring this screening", which few people can
+                    # answer cold. Product owner's call of 2026-09-14.
+                    hint = (suggested_answer or "").strip()
+                    self.fields[field_name] = forms.CharField(
+                        label=question,
+                        required=False,
+                        initial=stored if stored is not None else "",
+                        # Escaped: the form's table template marks
+                        # help_text safe, and this text is model output.
+                        help_text=(
+                            format_html("One way to answer: {}", hint) if hint else ""
+                        ),
+                    )
+
+        return AppealQuestionsForm()
+
+    @staticmethod
+    def followup_rows(denial: "Denial") -> list[list[str]]:
+        """The follow-up questions asked for the inputs the row holds now,
+        as generated_questions rows (ml/followup_questions.py)."""
+        return followup_questions.rows(
+            denial.followup_questions,
+            questions_fingerprint(denial.procedure, denial.diagnosis),
+        )
+
+    @staticmethod
+    def followups_after_answers(
+        denial: "Denial", posted: Iterable[str]
+    ) -> list[Tuple[str, str]]:
+        """The follow-up questions to ask before the appeal, once the
+        questions page's answers are saved on ``denial``, or [] to go on to
+        the appeal (ml/followup_questions.py). Any failure is [] too: the
+        person's appeal never waits on this optional step breaking."""
+        if not followup_questions.enabled():
+            return []
+        try:
+            return async_to_sync(MLAppealQuestionsHelper.followup_questions_for_denial)(
+                denial, posted=frozenset(posted)
+            )
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Follow-up check failed for denial {denial.denial_id}; going "
+                f"on to the appeal: {type(e).__name__}"
+            )
+            return []
+
+    @staticmethod
+    def answers_action(denial: "Denial") -> str:
+        """Where the questions page posts its answers: through the loading
+        page while a follow-up round could still be asked, since that round
+        waits on models; straight to the appeal otherwise."""
+        if followup_questions.may_ask(
+            denial.followup_questions,
+            questions_fingerprint(denial.procedure, denial.diagnosis),
+        ):
+            return "generate_appeal_loading"
+        return "generate_appeal"
 
     @staticmethod
     def _questions_outcome(combined_form: Form, generation_finished: bool) -> str:
@@ -2097,6 +2162,7 @@ class FindNextStepsHelper:
                 pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
                 financial_assistance=financial_assistance,
                 appeal_deadline_note=appeal_deadline_note,
+                answers_action=cls.answers_action(denial),
             )
         except Exception as e:
             # Anything landing here rebuilds the page without the answers
@@ -2115,6 +2181,7 @@ class FindNextStepsHelper:
                 pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
                 financial_assistance=financial_assistance,
                 appeal_deadline_note=appeal_deadline_note,
+                answers_action=cls.answers_action(denial),
             )
 
     @staticmethod
@@ -2254,6 +2321,7 @@ class FindNextStepsHelper:
             appeal_deadline_note=denial_triage.deadline_sentence_if_enabled(
                 denial, timezone.localdate()
             ),
+            answers_action=cls.answers_action(denial),
         )
 
 
@@ -2815,10 +2883,11 @@ class DenialCreatorHelper:
           keeps its source and is read again from the new letter.
         * which review-page fields the person emptied (``review_cleared``):
           that was about the old letter, and the new one is read afresh.
-        * the question set (``generated_questions``, its stamp, and the
-          speculative ``candidate_generated_questions``), so the questions are
-          asked again about the new letter even when the procedure and
-          diagnosis they were stamped for are unchanged.
+        * the question set (``generated_questions``, its stamp, the
+          speculative ``candidate_generated_questions`` and the follow-up
+          rounds in ``followup_questions``), so the questions are asked again
+          about the new letter even when the procedure and diagnosis they
+          were stamped for are unchanged.
         * the speculative citations (``candidate_ml_citation_context``). The
           citation step reuses them whenever the candidate procedure and
           diagnosis match the live ones, as they do again once the new letter
@@ -2864,6 +2933,8 @@ class DenialCreatorHelper:
             "generated_questions": None,
             "generated_questions_for": None,
             "candidate_generated_questions": None,
+            # The follow-up rounds read the old letter too.
+            "followup_questions": None,
             "candidate_ml_citation_context": None,
             # Handed back by both citation paths whenever it is set.
             "ml_citation_context": None,

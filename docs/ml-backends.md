@@ -72,12 +72,31 @@ consent:
 | `TYPESAFE_DEADLINE_SHOW_ENABLED` | Tells readers the deadline triage found, hedged. Off until staff labels in the Denial admin say it holds up. |
 | `TYPESAFE_RESEARCH_JUDGING_ENABLED` | Judges each PubMed article against the denial's treatment; articles off topic or against it are left out of the appeal's research and offered unticked on the fax page (`ml/research_judging.py`). |
 | `FHI_CHAT_JEV_GATE_ENABLED`, `TYPESAFE_CHAT_SHADOW_ENABLED` | Checks and scores chat replies ([chat-pipeline.md](chat-pipeline.md)). |
+| `TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED` | In the follow-up round below, answers "are the answers enough?" for people who allowed outside models; our own model answers it for everyone else (`ml/followup_questions.py`). |
 
 Spend is capped by `FHI_SPEND_TYPESAFE_*` (`ml/spend.py`). The model usage
 dashboard's Jev panel shows whether each feature is on and working (its last
 answer and last failure) and the deploy-time probe
 ([model-backend-health.md](model-backend-health.md)); the spend rows in its
 chat routing policy panel show the month's TypeSafe spend per use.
+
+### Follow-up questions
+
+An extra round between the questions page and the appeal, on by default
+(set `FHI_FOLLOWUP_QUESTIONS_ENABLED=false` to turn it off; the test
+configurations pin it off). Once the person has answered the questions page,
+a yes/no comes first: do those answers give the appeal enough? Jev answers
+it for people who allowed outside models (with
+`TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED`, off by default); otherwise, or when
+Jev is off or fails, one of our own models does (`answers_are_enough`). On a
+no, our own model writes at most two follow-up questions
+(`get_followup_questions`, which can still say nothing is missing), and the
+appeal is written from both rounds' answers.
+
+It runs once per procedure and diagnosis (recorded in
+`Denial.followup_questions`), never for someone who answered nothing, and
+within 18 seconds: running out of time or any failure goes straight on to
+the appeal.
 
 ## Options
 

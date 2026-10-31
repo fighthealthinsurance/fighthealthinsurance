@@ -120,6 +120,7 @@ from fighthealthinsurance.ml.retired_models import retirement
 from fighthealthinsurance.ml.question_parsing import (
     NO_QUESTIONS,
     parse_appeal_questions,
+    parse_yes_no,
 )
 from fighthealthinsurance.ml.bad_output_utils import (
     is_bad_output,
@@ -2391,6 +2392,31 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
             there is no answer (a backend without questions returns None,
             so it never reads as "nothing to ask").
         """
+        return None
+
+    async def get_followup_questions(
+        self,
+        denial_text: Optional[str],
+        procedure: Optional[str],
+        diagnosis: Optional[str],
+        answered: List[Tuple[str, str]],
+        patient_context: Optional[str] = None,
+        max_questions: int = 2,
+    ) -> Optional[List[Tuple[str, str]]]:
+        """Follow-ups for what ``answered`` leaves missing
+        (ml/followup_questions.py): [] for NO_QUESTIONS, None for no answer."""
+        return None
+
+    async def answers_are_enough(
+        self,
+        denial_text: Optional[str],
+        procedure: Optional[str],
+        diagnosis: Optional[str],
+        answered: List[Tuple[str, str]],
+        patient_context: Optional[str] = None,
+    ) -> Optional[bool]:
+        """The follow-up round's yes/no without Jev (ml/followup_questions.py):
+        are ``answered`` enough for the appeal? None for no answer."""
         return None
 
     async def get_fax_number(self, prompt) -> Optional[str]:
@@ -5468,6 +5494,112 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 f"No usable questions in a {len(result)}-character reply from {self.model}"
             )
         return questions
+
+    @staticmethod
+    def _followup_context(
+        denial_text: Optional[str],
+        procedure: Optional[str],
+        diagnosis: Optional[str],
+        answered: List[Tuple[str, str]],
+        patient_context: Optional[str],
+    ) -> str:
+        """The case both follow-up prompts start from (ml/followup_questions.py)."""
+        procedure_opt = f"The procedure denied was {procedure}." if procedure else ""
+        diagnosis_opt = f"The primary diagnosis was {diagnosis}." if diagnosis else ""
+        denial_text_opt = (
+            f"The denial text is: {denial_text}"
+            if denial_text
+            else "No denial text provided."
+        )
+        patient_context_opt = (
+            f"Optional patient context: {patient_context}" if patient_context else ""
+        )
+        answered_lines = "\n".join(
+            f"- {question.strip()} {answer.strip()}"
+            for question, answer in answered
+            if question.strip() and answer.strip()
+        )
+        return f"""
+        Some context which can help you in your task:
+        {denial_text_opt} \n
+        {procedure_opt} \n
+        {diagnosis_opt} \n
+        {patient_context_opt} \n
+        The person working on the appeal has already been asked these questions and gave these answers:
+        {answered_lines or "(no answers yet)"}"""
+
+    async def get_followup_questions(
+        self,
+        denial_text: Optional[str],
+        procedure: Optional[str],
+        diagnosis: Optional[str],
+        answered: List[Tuple[str, str]],
+        patient_context: Optional[str] = None,
+        max_questions: int = 2,
+    ) -> Optional[List[Tuple[str, str]]]:
+        """At most ``max_questions`` (question, "") pairs, with no suggested
+        answer: a guessed answer beside a follow-up is the model filling in
+        what we are asking the person for. [] for NO_QUESTIONS; None when the
+        call failed or the reply held no usable question."""
+        prompt = (
+            self._followup_context(
+                denial_text, procedure, diagnosis, answered, patient_context
+            )
+            + f"""
+        Your task is to decide whether those answers give enough about the patient's medical history to write a strong appeal of this denial.
+        If they do, reply with exactly {NO_QUESTIONS} and nothing else.
+        If something important for the appeal is still missing, or an answer raises something worth following up (for example it names a treatment that was tried but not how it went), write at most {max_questions} concise, patient-friendly follow-up questions, one per line, each ending with a question mark. The questions should be in the 3rd person regarding the patient.
+        Do not ask again for anything already answered above, do not ask about the denial itself, and do not ask for names, addresses, member or claim numbers.
+        While your reasoning (that inside of the <think></think> component at the start) can and should discuss the rationale, you _must not_ include it in the answer.
+        For example:
+        1. How long did the patient take the medication before stopping it?
+        Never reply with an explanation, a template or placeholders such as [Question].
+        """
+        )
+        result = await self._infer_no_context(
+            system_prompts=self.get_system_prompts("questions"),
+            prompt=prompt,
+            patient_context=patient_context,
+            temperature=0.4,
+            timeout=ml_task_timeout("context"),
+        )
+        # Never the reply itself in a log: it can carry the patient's history.
+        questions = parse_appeal_questions(result) if result is not None else None
+        if questions is None:
+            logger.debug(f"No usable follow-up questions from {self.model}")
+            return None
+        return [(question, "") for question, _ in questions][:max_questions]
+
+    async def answers_are_enough(
+        self,
+        denial_text: Optional[str],
+        procedure: Optional[str],
+        diagnosis: Optional[str],
+        answered: List[Tuple[str, str]],
+        patient_context: Optional[str] = None,
+    ) -> Optional[bool]:
+        """True for YES, False for NO, None when the call failed or the
+        reply said neither (question_parsing.parse_yes_no)."""
+        prompt = (
+            self._followup_context(
+                denial_text, procedure, diagnosis, answered, patient_context
+            )
+            + """
+        Do those answers, with the patient context, give enough specific facts about the patient (their condition, the treatments already tried and how they went, and why the treatment is needed now) to argue against the reason the denial gives?
+        Reply with exactly YES or NO and nothing else.
+        """
+        )
+        result = await self._infer_no_context(
+            system_prompts=self.get_system_prompts("questions"),
+            prompt=prompt,
+            patient_context=patient_context,
+            temperature=0.1,
+            timeout=ml_task_timeout("context"),
+        )
+        verdict = parse_yes_no(result)
+        if verdict is None:
+            logger.debug(f"No YES or NO from {self.model}")
+        return verdict
 
     async def get_citations(
         self,
