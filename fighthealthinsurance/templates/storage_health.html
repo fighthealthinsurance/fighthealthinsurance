@@ -53,7 +53,7 @@
   <p class="meta">
     Generated {{ generated_at }} &middot;
     <a href="{% url 'storage_health' %}">Refresh</a> &middot;
-    Checked live from the process serving this page; every check has a timeout, so a dead backend slows the page rather than hanging it.
+    Checked live from the process serving this page. Every check has a timeout, so a dead backend slows the page rather than hanging it, except one stuck inside a single system call (a hung network mount), which holds the page until that call returns.
     Another pod can see different results for its own disk.
   </p>
 
@@ -115,7 +115,9 @@
             {% endif %}
           </td>
           <td>
-            {% if b.disk %}
+            {% if b.disk.error %}
+              <span class="error-text">could not read: {{ b.disk.error }}</span>
+            {% elif b.disk %}
               {{ b.disk.percent }}% used
               <div class="bar"><span class="{% if b.disk.level != 'ok' %}{{ b.disk.level }}{% endif %}" style="width: {{ b.disk.percent|floatformat:0 }}%"></span></div>
               <div class="sub">{{ b.disk.free|filesizeformat }} free of {{ b.disk.total|filesizeformat }}</div>
@@ -205,7 +207,7 @@
         <strong>safe</strong>: a copy off the app's disk &middot;
         <strong>local only</strong>: copies only on the app's disk &middot;
         <strong>missing</strong>: no backend this process reaches has it &middot;
-        <strong>unknown</strong>: no copy found, but a backend errored or did not answer &middot;
+        <strong>unknown</strong>: no copy found, but a backend errored, did not answer, or was reached after the time limit &middot;
         <strong>not checked</strong>: the check's time limit came first.
       </p>
 

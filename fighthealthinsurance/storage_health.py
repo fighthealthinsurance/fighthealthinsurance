@@ -166,7 +166,7 @@ def _object_store(backend: Storage) -> Optional[Tuple[Any, str]]:
     """
     client = getattr(backend, "client", None)
     bucket = getattr(backend, "bucket_name", None)
-    if bucket and hasattr(client, "stat_object") and hasattr(client, "bucket_exists"):
+    if bucket and hasattr(client, "stat_object") and hasattr(client, "list_objects"):
         return client, str(bucket)
     return None
 
@@ -180,9 +180,12 @@ def _ping(backend: Storage) -> None:
             next(entries, None)
     elif store is not None:
         client, bucket = store
-        # One HEAD on the bucket: raises when access or the network fails.
-        if not client.bucket_exists(bucket_name=bucket):
-            raise LookupError(f"bucket {bucket} does not exist")
+        # The listing settings.py makes before it lets the store into the
+        # write path, so it needs no permission the app does not already
+        # rely on (a bucket HEAD can be denied to a key that lists fine). A
+        # prefix no document uses keeps it to one short page; it raises on a
+        # missing bucket, refused access or a dropped connection.
+        next(iter(client.list_objects(bucket, prefix=PROBE_PREFIX)), None)
     else:
         # One round trip: a name that is never stored, so the answer is "no".
         backend.exists(f"{PROBE_PREFIX}ping")
@@ -200,7 +203,8 @@ def _has_copy(backend: Storage, name: str) -> bool:
         client.stat_object(bucket_name=bucket, object_name=key)
     except Exception as e:
         # The only answer that means "no such file"; the bucket itself was
-        # checked by the reachability probe before any file is.
+        # listed by the reachability probe before any file is checked, so
+        # the key has the list permission S3 needs to say 404, not 403.
         if getattr(e, "code", None) == "NoSuchKey":
             return False
         raise
@@ -232,13 +236,17 @@ def check_reachable(
 
 
 def _disk(backend: Storage) -> Optional[Dict[str, Any]]:
-    """How full a filesystem backend's disk is; None for anything else."""
+    """How full a filesystem backend's disk is; None for anything else.
+
+    A disk that answered the reachability probe but cannot be measured is
+    a warning with the reason, not a silent OK.
+    """
     if not isinstance(backend, FileSystemStorage):
         return None
     try:
         usage = shutil.disk_usage(backend.location)
-    except OSError:
-        return None
+    except OSError as e:
+        return {"error": e.strerror or str(e), "level": WARN}
     percent = round(100.0 * usage.used / usage.total, 1) if usage.total else 0.0
     if percent >= DISK_FAIL_PERCENT:
         level = FAIL
@@ -381,7 +389,6 @@ def sample_recent_files(
                 "pk", field_name
             )[:per_field]
             for pk, name in newest:
-                entry["sampled"] += 1
                 doc: Dict[str, Any] = {
                     "field": entry["label"],
                     "pk": pk,
@@ -392,10 +399,13 @@ def sample_recent_files(
                 if time.monotonic() > deadline:
                     doc["state"] = NOT_CHECKED
                 else:
+                    entry["sampled"] += 1
                     for r in rows:
+                        # A backend that did not answer, or one reached after
+                        # the deadline, is skipped rather than waited on.
                         found = (
                             _copy(r["backend"], name)
-                            if r["label"] in reachable
+                            if r["label"] in reachable and time.monotonic() <= deadline
                             else "skipped"
                         )
                         doc["copies"][r["label"]] = found
@@ -443,7 +453,9 @@ def problems(
                 "uploads get no copy there.",
             )
         disk = r["disk"]
-        if disk and disk["level"] != OK:
+        if disk and disk.get("error"):
+            add(WARN, f"{r['label']}'s disk usage could not be read: {disk['error']}.")
+        elif disk and disk["level"] != OK:
             add(disk["level"], f"{r['label']}'s disk is {disk['percent']}% full.")
     for slot in unconfigured:
         if slot["level"] == FAIL:
@@ -463,12 +475,24 @@ def problems(
                 f"{states[MISSING] + states[UNKNOWN]} of {sample['checked']} recent "
                 "documents checked have no copy this process can find.",
             )
-        if states[LOCAL_ONLY] and any(r["off_disk"] for r in reachable):
+        # Copies on the app's disk come and go with pods, so only an
+        # off-disk backend that answers is expected to hold every document.
+        # A document safe on another off-disk backend still counts here:
+        # it has lost a copy it should have.
+        for r in reachable:
+            lacking = sample["per_backend"][r["label"]]["no"]
+            if r["off_disk"] and lacking:
+                add(
+                    WARN,
+                    f"{r['label']} answers but has no copy of {lacking} of the "
+                    "recent documents checked: its write failed or was skipped.",
+                )
+        if states[NOT_CHECKED]:
             add(
                 WARN,
-                f"{states[LOCAL_ONLY]} recent documents have copies only on the "
-                "app's disk, though an off-disk backend answers now: their "
-                "off-disk write failed or was skipped.",
+                f"{states[NOT_CHECKED]} recent documents were not checked: the "
+                f"{SAMPLE_DEADLINE_S:g}s limit came first, so a backend is slow "
+                "to answer.",
             )
     if write_results:
         failed = [w for w in write_results if not w["ok"]]

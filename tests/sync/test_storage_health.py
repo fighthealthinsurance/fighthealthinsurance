@@ -222,21 +222,27 @@ class ObjectStoreTest(TestCase):
         )
 
     def test_answering_bucket_is_reachable(self):
-        self.client.bucket_exists.return_value = True
+        self.client.list_objects.return_value = iter([])
+        self.assertTrue(storage_health.check_reachable(self.store)["ok"])
+
+    def test_denied_bucket_head_does_not_matter_when_listing_works(self):
+        """The probe is the startup check's listing, not a bucket HEAD."""
+        self.client.bucket_exists.side_effect = _s3_error("AccessDenied")
+        self.client.list_objects.return_value = iter([])
         self.assertTrue(storage_health.check_reachable(self.store)["ok"])
 
     def test_access_denied_is_unreachable(self):
-        self.client.bucket_exists.side_effect = _s3_error("AccessDenied")
+        self.client.list_objects.side_effect = _s3_error("AccessDenied")
         self.assertFalse(storage_health.check_reachable(self.store)["ok"])
 
     def test_dropped_connection_is_unreachable(self):
-        self.client.bucket_exists.side_effect = ConnectionError("reset")
+        self.client.list_objects.side_effect = ConnectionError("reset")
         self.assertFalse(storage_health.check_reachable(self.store)["ok"])
 
     def test_missing_bucket_is_unreachable_and_named(self):
-        self.client.bucket_exists.return_value = False
+        self.client.list_objects.side_effect = _s3_error("NoSuchBucket")
         reach = storage_health.check_reachable(self.store)
-        self.assertIn("bucket docs does not exist", reach["error"])
+        self.assertIn("NoSuchBucket", reach["error"])
 
     def test_stored_object_is_a_copy(self):
         self.assertEqual(storage_health._copy(self.store, "a.pdf"), "yes")
@@ -268,6 +274,12 @@ class BackendRowsTest(_StorageTestCase):
     def test_disk_past_the_warning_line_warns(self):
         with mock.patch.object(
             storage_health.shutil, "disk_usage", return_value=_Usage(100, 90, 10)
+        ):
+            self.assertEqual(self.rows()[0]["level"], storage_health.WARN)
+
+    def test_unreadable_disk_warns(self):
+        with mock.patch.object(
+            storage_health.shutil, "disk_usage", side_effect=OSError(5, "EIO")
         ):
             self.assertEqual(self.rows()[0]["level"], storage_health.WARN)
 
@@ -343,16 +355,41 @@ class SampleRecentFilesTest(_StorageTestCase):
         sample = self.sample(deadline_s=-1)
         self.assertEqual(sample["states"][storage_health.NOT_CHECKED], 1)
 
+    def test_unchecked_documents_are_not_counted_as_checked(self):
+        self.plan_document()
+        fields = {f["label"]: f for f in self.sample(deadline_s=-1)["fields"]}
+        self.assertEqual(fields["PlanDocuments.plan_document_enc"]["sampled"], 0)
+
+    def test_backends_reached_after_the_deadline_are_skipped(self):
+        """The deadline is checked before each backend, not once per document."""
+        self.plan_document()
+        clock = [0.0]
+
+        def slow_copy(backend, name):
+            clock[0] += 5.0
+            return "yes"
+
+        fake_time = mock.Mock(monotonic=lambda: clock[0])
+        with mock.patch.object(storage_health, "time", fake_time), mock.patch.object(
+            storage_health, "_copy", side_effect=slow_copy
+        ):
+            sample = self.sample(deadline_s=1)
+        self.assertEqual(
+            list(sample["flagged"][0]["copies"].values()), ["yes", "skipped", "skipped"]
+        )
+
     def test_rows_with_files_are_counted_per_field(self):
         self.plan_document()
         fields = {f["label"]: f for f in self.sample()["fields"]}
         self.assertEqual(fields["PlanDocuments.plan_document_enc"]["files"], 1)
 
     def test_only_the_newest_documents_are_sampled(self):
-        for _ in range(3):
+        oldest = self.plan_document()
+        for _ in range(2):
             self.plan_document()
-        fields = {f["label"]: f for f in self.sample(per_field=2)["fields"]}
-        self.assertEqual(fields["PlanDocuments.plan_document_enc"]["sampled"], 2)
+        self.remove_copy(oldest, 2)
+        sample = self.sample(per_field=2)
+        self.assertNotIn(oldest.pk, {doc["pk"] for doc in sample["flagged"]})
 
 
 class ProblemsTest(_StorageTestCase):
@@ -376,10 +413,42 @@ class ProblemsTest(_StorageTestCase):
         slot = {"label": "EXTERNAL_STORAGE_B", "level": "fail", "note": "down"}
         self.assertEqual(self.levels(unconfigured=[slot])[0], storage_health.FAIL)
 
+    def write_results(self, *oks):
+        return [
+            {"label": f"backend {i + 1}", "ok": ok, "error": None if ok else "EROFS"}
+            for i, ok in enumerate(oks)
+        ]
+
     def test_every_backend_failing_the_write_test_fails(self):
-        results = [{"label": "backend 1", "ok": False, "error": "EROFS"}]
+        results = self.write_results(False, False, False)
         found = storage_health.problems(self.rows(), [], None, results)
         self.assertEqual(found[0]["level"], storage_health.FAIL)
+
+    def test_one_backend_failing_the_write_test_only_warns(self):
+        results = self.write_results(False, True, True)
+        found = storage_health.problems(self.rows(), [], None, results)
+        self.assertEqual([p["level"] for p in found], [storage_health.WARN])
+
+    def test_unreadable_disk_is_a_problem(self):
+        with mock.patch.object(
+            storage_health.shutil, "disk_usage", side_effect=OSError(5, "EIO")
+        ):
+            found = storage_health.problems(self.rows(), [], None)
+        self.assertIn("could not be read", found[0]["text"])
+
+    def test_unchecked_documents_warn(self):
+        self.plan_document()
+        sample = storage_health.sample_recent_files(self.rows(), deadline_s=-1)
+        self.assertEqual(self.levels(sample=sample), [storage_health.WARN])
+
+    def test_off_disk_backend_missing_a_safe_documents_copy_warns(self):
+        """Safe on one off-disk backend still means another lost its copy."""
+        self.set_off_disk(self.backends[1], self.backends[2])
+        row = self.plan_document()
+        os.remove(os.path.join(self.dirs[1], row.plan_document_enc.name))
+        sample = storage_health.sample_recent_files(self.rows())
+        found = storage_health.problems(self.rows(), [], sample)
+        self.assertIn("backend 2 answers but has no copy of 1", found[0]["text"])
 
     def test_local_only_documents_warn_when_an_off_disk_backend_answers(self):
         row = self.plan_document()

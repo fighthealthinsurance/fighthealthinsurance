@@ -1505,8 +1505,11 @@ class StorageHealthView(View):
     Whether each backend answers, how full its disk is, whether its copies
     leave the app's disk, whether recent documents have their copies, and
     (on POST, since it writes) whether a test file round-trips through each.
-    The checks themselves live in storage_health.py; every one is bounded by
-    a timeout so a dead backend slows the page rather than hanging it.
+    The checks themselves live in storage_health.py, each under a timeout so
+    a dead backend slows the page rather than hanging it. A timeout cannot
+    cut off a call stuck inside one system call, though: a filesystem
+    backend on a hung network mount holds the request until os.scandir or
+    disk_usage returns.
     """
 
     template_name = "storage_health.html"
