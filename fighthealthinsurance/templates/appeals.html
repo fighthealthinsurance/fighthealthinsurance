@@ -24,6 +24,10 @@ Fight Your Health Insurance Denial: Choose an Appeal
 <div id="loading-spinner">
 </div>
 
+{% comment %}Here, under the spinner, so it is on screen during the wait: the letters
+   come from the denial, not the drafts, so there is nothing to wait for.{% endcomment %}
+{% include 'partials/regulator_letters_callout.html' with heading_level=2 %}
+
   <!-- Main Content -->
   <div id="loading-more">
     <!-- Pinned because main.css writes `h3 {margin-bottom: 0}` and this
@@ -84,29 +88,7 @@ Fight Your Health Insurance Denial: Choose an Appeal
 <div id="output-container">
 </div>
 
-<div class="alert-box alert-box-info" style="margin:2rem 0; border-left:4px solid #ADD100;">
-  <h2 class="fhi-callout-title" style="margin-bottom:0.75rem;">📣 Want to let the regulator know what's going on?</h2>
-  <p style="margin:0.5rem 0;">
-    Alongside your internal appeal, you can cc the people who hold the plan
-    accountable: your <strong>state Department of Insurance</strong>, the plan's
-    <strong>medical director</strong>, and (for ERISA self-funded plans) the
-    <strong>U.S. Department of Labor's EBSA</strong>. We'll draft
-    regulator-friendly letters you can edit and send.
-  </p>
-  <form class="fhi-stack" action="{% url 'escalation_packet' %}" method="post" target="_blank" style="margin:0.75rem 0;">
-    {% csrf_token %}
-    <input type="hidden" name="email" value="{{ user_email }}">
-    <input type="hidden" name="denial_id" value="{{ denial_id }}">
-    {% if semi_sekret %}<input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">{% endif %}
-    <button type="submit" id="generate_escalation_packet" class="fhi-button fhi-button-secondary">
-      📨 Click here to draft regulator letters (opens in a new window)
-    </button>
-  </form>
-  <p style="margin:0.5rem 0; font-size:0.9rem; color:#555;">
-    This is especially useful for <em>secondary</em> appeals — once an internal
-    appeal has been denied, regulator escalation often unsticks things.
-  </p>
-</div>
+{% include 'partials/regulator_letters_callout.html' with heading_level=2 button_id='generate_escalation_packet_below' %}
 
 {% if not use_external %}
 <div id="external-models-prompt" class="alert-box alert-box-warning" style="display:none; margin-top: 1.5rem;">

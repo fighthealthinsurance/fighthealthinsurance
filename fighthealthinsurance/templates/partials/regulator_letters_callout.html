@@ -1,0 +1,59 @@
+{% comment %}
+The callout that leads to the regulator letters (escalation_packet), shared
+by the choose-an-appeal page and the send-your-appeal page so the two say
+the same thing. The letters are drafted from the denial alone, never from
+the chosen appeal, so the button works before any draft has arrived.
+
+The caller says:
+- heading_level: how deep the callout sits. appeals.html passes 2 (under
+  the step title); appeal.html keeps the 4 it has always had, under the
+  "Option 3" h4.
+- button_id: the submit button's id. appeals.html shows this callout twice,
+  so its lower copy passes its own id and the page keeps every id unique.
+- regulator_reasons: sentences from escalation_addresses
+  .regulator_escalation_reasons. Any at all and the callout grows
+  (.fhi-regulator-callout-likely), names them, and makes the button the
+  page's primary shape, because then this is the thing to do.
+user_email, denial_id and semi_sekret come from the page's own context.
+{% endcomment %}
+{% with heading=heading_level|default:4 button=button_id|default:"generate_escalation_packet" %}
+<div class="alert-box alert-box-info fhi-regulator-callout{% if regulator_reasons %} fhi-regulator-callout-likely{% endif %}">
+  {% if regulator_reasons %}
+  <h{{ heading }} class="fhi-callout-title">📣 Your denial looks like one a regulator should hear about</h{{ heading }}>
+  <p><strong>Why we say so:</strong></p>
+  <ul class="fhi-regulator-reasons">
+    {% for reason in regulator_reasons %}
+    <li>{{ reason }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <h{{ heading }} class="fhi-callout-title">📣 Send a copy to the people who regulate your plan</h{{ heading }}>
+  {% endif %}
+  <p>
+    Alongside your appeal to the insurer, you can write to the people who hold
+    the plan accountable. We draft those letters for you. Here is how it works:
+  </p>
+  <ol class="fhi-regulator-steps">
+    <li><strong>Click the button below.</strong> The letters open in a new tab, and this page stays where it is.</li>
+    <li><strong>We draft one letter per recipient:</strong> your <strong>state Department of Insurance</strong> (when you told us your state), the plan's <strong>medical director</strong>, and, for ERISA self-funded plans, the <strong>U.S. Department of Labor's EBSA</strong>. Each takes about 1 to 2 minutes.</li>
+    <li><strong>Edit each letter, save it, then print or fax it</strong> alongside your appeal.</li>
+  </ol>
+  <p>
+    You don't have to wait for your appeal drafts or pick one first. The letters
+    are written from your denial.
+  </p>
+  <form class="fhi-stack" action="{% url 'escalation_packet' %}" method="post" target="_blank">
+    {% csrf_token %}
+    <input type="hidden" name="email" value="{{ user_email }}">
+    <input type="hidden" name="denial_id" value="{{ denial_id }}">
+    {% if semi_sekret %}<input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">{% endif %}
+    <button type="submit" id="{{ button }}" class="fhi-button {% if regulator_reasons %}fhi-button-primary{% else %}fhi-button-secondary{% endif %}">
+      📨 Draft my regulator letters (opens in a new tab)
+    </button>
+  </form>
+  <p class="fhi-regulator-note">
+    Most useful once an internal appeal has already been denied, but a letter
+    can go out with a first appeal too.
+  </p>
+</div>
+{% endwith %}
