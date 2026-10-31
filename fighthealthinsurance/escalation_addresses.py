@@ -247,7 +247,7 @@ _APPEAL_ALREADY_DECIDED_RE = re.compile(
     r"|\bour (original|initial|previous|prior|earlier) "
     r"(decision|determination|denial)\b[^.;:!?\n]{0,60}?"
     r"\b(stands|remains|(is|was|has\s+been|have\s+been)\s+"
-    r"(upheld|maintained|affirmed|reaffirmed))\b"
+    r"(upheld|maintained|affirmed|reaffirmed|unchanged))\b"
     r"|\bfinal (adverse|internal)? ?(benefit )?(determination|decision)\b"
     r"|\bexhausted\b.{0,40}\bappeal"
     r"|\b(second|2nd|level[- ](2|two|ii))[- ]level\b"

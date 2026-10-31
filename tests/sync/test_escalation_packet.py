@@ -343,6 +343,7 @@ class RegulatorEscalationReasonsTest(TestCase):
             "Upon review, our initial determination stands.",
             "We are maintaining our original denial.",
             "Our original decision to deny coverage has been upheld.",
+            "After review, our original decision is unchanged.",
         ):
             with self.subTest(text=text):
                 denial = _FakeDenial(state="", denial_text=text)

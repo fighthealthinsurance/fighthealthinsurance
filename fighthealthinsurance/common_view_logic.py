@@ -4920,10 +4920,19 @@ class DenialCreatorHelper:
         regulators = await cls.regex_denial_processor.get_regulator(letter)
         if regulators:
             # First match wins; the seeded regexes are mutually specific.
-            await Denial.objects.filter(
-                denial_id=denial_id, regulator__isnull=True
+            # Conditional on the letter, as the model's write below is: a
+            # replacement clears the regulator, and this match was on the
+            # old letter.
+            updated = await Denial.objects.filter(
+                denial_id=denial_id,
+                regulator__isnull=True,
+                denial_text=denial.denial_text,
             ).aupdate(regulator=regulators[0])
-            return EXTRACTION_OUTCOME_FOUND
+            return (
+                EXTRACTION_OUTCOME_FOUND
+                if updated
+                else EXTRACTION_OUTCOME_NOTHING_FOUND
+            )
         if not ask_model or not letter.strip():
             return EXTRACTION_OUTCOME_NOTHING_FOUND
         try:
