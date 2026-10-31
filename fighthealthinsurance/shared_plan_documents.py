@@ -483,10 +483,18 @@ def share_opt_in_copies(
     from fighthealthinsurance.chat_forms import validate_shared_document
 
     try:
+        candidates = [uploaded for uploaded in files if uploaded]
+        if not candidates:
+            return []
+        # Before the closer look, which opens each PDF in a child process: a
+        # visitor with no room left today for even the smallest file pays for
+        # none of that. The check after it stays the one that counts.
+        smallest = min(candidates, key=lambda f: f.size or 0)
+        if daily_limit_problem(request, [smallest], source=source):
+            logger.info(f"Left opted-in files from {source} unshared: over budget")
+            return []
         passing: list[UploadedFile] = []
-        for uploaded in files:
-            if not uploaded:
-                continue
+        for uploaded in candidates:
             try:
                 validate_shared_document(uploaded)
             except ValidationError:
@@ -537,6 +545,31 @@ def share_explain_policy_copy(
     )
 
 
+def _not_yet_shared_from_appeal(
+    files: Sequence[UploadedFile], hashed_email: Optional[str]
+) -> list[UploadedFile]:
+    """``files`` less any this address already shared from an appeal, and
+    less a second pick of one file in the same upload."""
+    held: set[str] = set()
+    if hashed_email:
+        held = set(
+            PolicyDocument.objects.filter(
+                source=PolicyDocument.SOURCE_SHARED_APPEAL,
+                hashed_email=hashed_email,
+            )
+            .exclude(fingerprint="")
+            .values_list("fingerprint", flat=True)
+        )
+    fresh: list[UploadedFile] = []
+    for uploaded in files:
+        digest = fingerprint(uploaded)
+        if digest in held:
+            continue
+        held.add(digest)
+        fresh.append(uploaded)
+    return fresh
+
+
 def share_appeal_plan_documents(
     request: HttpRequest, data: Mapping[str, Any]
 ) -> list[PolicyDocument]:
@@ -556,10 +589,15 @@ def share_appeal_plan_documents(
             semi_sekret=data["semi_sekret"],
         )
         details = details_from_denial(denial)
+        # The appeal keeps one copy of each file (a replayed post, or the
+        # same file picked again), so research gets one too.
+        files = _not_yet_shared_from_appeal(files, denial.hashed_email)
     except Exception:
         logger.opt(exception=True).warning(
             "Could not read the appeal for an opted-in share"
         )
+        return []
+    if not files:
         return []
     return share_opt_in_copies(
         request,

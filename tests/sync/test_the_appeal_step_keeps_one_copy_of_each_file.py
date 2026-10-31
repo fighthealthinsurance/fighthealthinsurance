@@ -163,6 +163,19 @@ class TheFingerprintIsKeyedTest(_OneCopyTestCase):
         )
 
 
+    def test_a_replayed_upload_with_the_box_ticked_is_shared_once(self):
+        """A replay adds nothing to the appeal, so it must not store a second
+        research copy or spend the share budgets again."""
+        self.post([pdf()], share_for_research="on")
+        self.post([pdf()], share_for_research="on")
+        self.assertEqual(
+            PolicyDocument.objects.filter(
+                source=PolicyDocument.SOURCE_SHARED_APPEAL
+            ).count(),
+            1,
+        )
+
+
 class TwoSavesAtOnceTest(_OneCopyTestCase):
     """The second of two saves that both missed the other's row."""
 

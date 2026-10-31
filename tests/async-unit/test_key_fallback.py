@@ -11,7 +11,7 @@ in test_external_model_failures.py.
 
 import asyncio
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import aiohttp
 import pytest
@@ -475,3 +475,73 @@ class TestAzureClaudeTransport:
         assert result is not None and result[0] == LONG_REPLY
         assert posts.api_keys == ["first-key", "second-key"]
         assert not spend.paused(RemoteAzureClaude.SPEND_PROVIDER, "*")
+
+
+def _probe_response(status, json_data=None, text=""):
+    """A requests.Response stand-in for the health probes."""
+    resp = MagicMock(status_code=status, text=text, headers={})
+    resp.json.return_value = json_data or {}
+    return resp
+
+
+class TestHealthProbesTryTheFallbackKey:
+    """The health sweep's probes send the key inference would send, and a
+    refused key moves the ring on as inference does: a revoked primary must
+    not keep the provider out of routing while the fallback works."""
+
+    def test_anthropic_checks_again_with_the_fallback_when_the_primary_is_refused(
+        self,
+    ):
+        with patch.dict(os.environ, TWO_ANTHROPIC_KEYS):
+            backend = RemoteAnthropic(model="claude-sonnet-4-6")
+            with patch("fighthealthinsurance.ml.ml_models.requests.get") as get:
+                get.side_effect = [
+                    _probe_response(401, text=INVALID_KEY_BODY),
+                    _probe_response(200),
+                ]
+                ok = backend.model_is_ok()
+        sent = [c.kwargs["headers"]["x-api-key"] for c in get.call_args_list]
+        assert (ok, sent) == (True, ["first-key", "second-key"])
+
+    def test_the_refused_primary_is_passed_over_by_inference_too(self):
+        with patch.dict(os.environ, TWO_ANTHROPIC_KEYS):
+            backend = RemoteAnthropic(model="claude-sonnet-4-6")
+            with patch("fighthealthinsurance.ml.ml_models.requests.get") as get:
+                get.side_effect = [
+                    _probe_response(401, text=INVALID_KEY_BODY),
+                    _probe_response(200),
+                ]
+                backend.model_is_ok()
+        assert backend.token == "second-key"
+
+    def test_a_retired_model_is_not_asked_about_with_the_other_key(self):
+        with patch.dict(os.environ, TWO_ANTHROPIC_KEYS):
+            backend = RemoteAnthropic(model="claude-sonnet-4-6")
+            with patch("fighthealthinsurance.ml.ml_models.requests.get") as get:
+                get.return_value = _probe_response(404)
+                ok = backend.model_is_ok()
+        assert (ok, get.call_count) == (False, 1)
+
+    def test_both_keys_refused_reads_as_down(self):
+        with patch.dict(os.environ, TWO_ANTHROPIC_KEYS):
+            backend = RemoteAnthropic(model="claude-sonnet-4-6")
+            with patch("fighthealthinsurance.ml.ml_models.requests.get") as get:
+                get.return_value = _probe_response(401, text=INVALID_KEY_BODY)
+                ok = backend.model_is_ok()
+        assert (ok, get.call_count) == (False, 2)
+
+    def test_a_models_list_probe_checks_again_with_the_fallback(self):
+        model = "google/gemma-4-26B-A4B-it"
+        env = {"DEEPINFRA_API": "k1", "SECONDARY_DEEPINFRA_API": "k2"}
+        with patch.dict(os.environ, env, clear=True):
+            backend = DeepInfra(model=model)
+            with patch("fighthealthinsurance.ml.ml_models.requests.get") as get:
+                get.side_effect = [
+                    _probe_response(402, text="Payment required"),
+                    _probe_response(200, json_data={"data": [{"id": model}]}),
+                ]
+                ok = backend._endpoint_serves(
+                    "https://api.deepinfra.com/v1/openai", model, (1.0, 1.0)
+                )
+        sent = [c.kwargs["headers"]["Authorization"] for c in get.call_args_list]
+        assert (ok, sent) == (True, ["Bearer k1", "Bearer k2"])

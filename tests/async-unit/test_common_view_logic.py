@@ -2760,6 +2760,24 @@ class RegulatorContactInfoTest(TestCase):
         denial.save()
         self.assertIn("Federal Department of Labor", self._outside_help_text(denial))
 
+    def test_outside_help_says_the_letter_mentions_a_regulator_it_names(self):
+        erisa = Regulator.objects.get(alt_name="ERISA")
+        denial = self._make_denial(
+            "You may have the right to file a civil action under ERISA."
+        )
+        denial.regulator = erisa
+        denial.save()
+        self.assertIn("Your denial letter mentions", self._outside_help_text(denial))
+
+    def test_outside_help_does_not_say_the_letter_names_an_inferred_regulator(self):
+        """A regulator the model inferred is linked though the letter never
+        names it, so the row must not claim the letter does."""
+        erisa = Regulator.objects.get(alt_name="ERISA")
+        denial = self._make_denial("A letter that names no regulator.")
+        denial.regulator = erisa
+        denial.save()
+        self.assertNotIn("Your denial letter mentions", self._outside_help_text(denial))
+
     def test_outside_help_has_no_contact_row_without_matched_regulator(self):
         denial = self._make_denial()
         self.assertNotIn("file a complaint online", self._outside_help_text(denial))

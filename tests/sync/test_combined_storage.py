@@ -14,7 +14,11 @@ from django.core.files.base import ContentFile, File
 from django.core.files.storage import FileSystemStorage, Storage
 from stopit import ThreadingTimeout
 
-from fighthealthinsurance.combined_storage import CombinedStorage
+from fighthealthinsurance.combined_storage import (
+    NAME_TOKEN_LENGTH,
+    CombinedStorage,
+    unique_name,
+)
 from fighthealthinsurance.log_tags import file_tag
 
 
@@ -121,12 +125,19 @@ class TestCombinedStorageSave(TestCase):
         result = storage.save("foo.txt", content)
 
         self.assertEqual(result, "stored/foo.txt")
-        first.save.assert_called_once_with(
-            name="foo.txt", content=content, max_length=None
-        )
+        first.save.assert_called_once()
         second.save.assert_called_once_with(
             name="stored/foo.txt", content=content, max_length=None
         )
+
+    def test_save_asks_the_first_backend_for_a_name_of_its_own(self):
+        first = _make_storage()
+        first.save.return_value = "stored/foo.txt"
+
+        CombinedStorage(first).save("foo.txt", ContentFile(b"payload"))
+
+        asked = first.save.call_args.kwargs["name"]
+        self.assertRegex(asked, rf"^foo_[A-Za-z0-9]{{{NAME_TOKEN_LENGTH}}}\.txt$")
 
     def test_save_uses_the_next_backends_name_when_the_first_fails(self):
         first = _make_storage()
@@ -381,7 +392,8 @@ class TestCombinedStorageDeleteOnDisk(TestCase):
 
 
 class TestCombinedStorageSaveWhereALaterBackendHoldsTheName(TestCase):
-    """Backend 1 already holds SBC.pdf, so it stores a new upload under another name."""
+    """Backend 1 (the shared bucket, in prod) already holds SBC.pdf from
+    another person, and backend 0 (this pod's own disk) has never seen it."""
 
     def setUp(self):
         dirs = [tempfile.TemporaryDirectory() for _ in range(3)]
@@ -392,22 +404,50 @@ class TestCombinedStorageSaveWhereALaterBackendHoldsTheName(TestCase):
         self.storage = CombinedStorage(*self.backends)
         self.name = self.storage.save("SBC.pdf", ContentFile(b"new plan"))
 
-    def test_the_first_backends_name_is_returned(self):
-        self.assertEqual(self.name, "SBC.pdf")
+    def test_the_new_upload_does_not_take_the_existing_name(self):
+        self.assertNotEqual(self.name, "SBC.pdf")
 
-    def test_that_backend_keeps_no_extra_copy(self):
-        self.assertEqual(self.backends[1].listdir("")[1], ["SBC.pdf"])
+    def test_that_backend_keeps_the_existing_file_and_the_new_one(self):
+        self.assertEqual(
+            sorted(self.backends[1].listdir("")[1]), sorted(["SBC.pdf", self.name])
+        )
 
     def test_that_backends_existing_file_is_untouched(self):
         with self.backends[1].open("SBC.pdf") as f:
             self.assertEqual(f.read(), b"older plan")
 
-    def test_the_other_backends_hold_the_new_file(self):
+    def test_every_backend_holds_the_new_file_under_the_returned_name(self):
         contents = []
-        for backend in (self.backends[0], self.backends[2]):
-            with backend.open("SBC.pdf") as f:
+        for backend in self.backends:
+            with backend.open(self.name) as f:
                 contents.append(f.read())
-        self.assertEqual(contents, [b"new plan", b"new plan"])
+        self.assertEqual(contents, [b"new plan"] * 3)
+
+
+class TestUniqueName(TestCase):
+    def test_keeps_the_extension_last(self):
+        self.assertTrue(unique_name("SBC.pdf").endswith(".pdf"))
+
+    def test_keeps_the_start_of_the_name(self):
+        self.assertTrue(unique_name("SBC.pdf").startswith("SBC_"))
+
+    def test_two_calls_give_two_names(self):
+        self.assertNotEqual(unique_name("SBC.pdf"), unique_name("SBC.pdf"))
+
+    def test_keeps_the_directory(self):
+        self.assertTrue(unique_name("extralink_docs/a.pdf").startswith("extralink_docs/a_"))
+
+    def test_fits_max_length(self):
+        name = unique_name("x" * 200 + ".pdf", max_length=100)
+        self.assertEqual((len(name), name[-4:]), (100, ".pdf"))
+
+    def test_fits_max_length_when_the_name_part_is_used_up(self):
+        name = unique_name("abc.pdf", max_length=NAME_TOKEN_LENGTH + 4)
+        self.assertEqual(len(name), NAME_TOKEN_LENGTH + 4)
+
+    def test_a_long_dotted_tail_is_not_taken_as_the_extension(self):
+        tail = ".a-very-long-thing-after-a-dot"
+        self.assertTrue(unique_name("report" + tail).startswith("report" + tail + "_"))
 
 
 class TestCombinedStorageUrl(TestCase):
@@ -521,7 +561,8 @@ class TestCombinedStorageSaveTimeout(TestCase):
             result = storage.save("foo.txt", ContentFile(b"payload"))
 
         self.assertEqual(result, "foo.txt")
-        slow.delete.assert_called_once_with("foo.txt")
+        # The partial copy is under the name the slow backend was asked to write.
+        slow.delete.assert_called_once_with(slow.save.call_args.kwargs["name"])
         fast.save.assert_called_once()
 
     def test_a_timed_out_write_to_a_taken_name_keeps_the_existing_file(self):

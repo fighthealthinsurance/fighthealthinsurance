@@ -25,7 +25,7 @@ the outside-help page shows. ``Plan kind`` uses the denial-triage vocabulary
 """
 
 import re
-from typing import NamedTuple, Optional
+from typing import Any, NamedTuple, Optional
 
 from fighthealthinsurance.state_help import load_state_help
 
@@ -59,6 +59,32 @@ PLAN_KINDS = frozenset(
         "unknown",
     }
 )
+
+
+def letter_names_regulator(denial: Any) -> bool:
+    """Whether the denial letter itself names the regulator linked to it.
+
+    A regex match (``ProcessDenialRegex.get_regulator``) means the letter
+    names the regulator; a regulator the model inferred from the letter is
+    linked with no match, so it is only who likely oversees the plan. Text
+    that says "your letter names X", and signals documented as "the letter
+    named ERISA", must check this rather than the bare link.
+    """
+    regulator = getattr(denial, "regulator", None)
+    if regulator is None:
+        return False
+    text = getattr(denial, "denial_text", "") or ""
+    positive: Any = getattr(regulator, "regex", None)
+    negative: Any = getattr(regulator, "negative_regex", None)
+    try:
+        # An empty pattern compiles to match-everything, so it names nothing.
+        if not getattr(positive, "pattern", "") or positive.search(text) is None:
+            return False
+        if getattr(negative, "pattern", "") and negative.search(text) is not None:
+            return False
+    except Exception:
+        return False
+    return True
 
 
 class RoutingAnswer(NamedTuple):
