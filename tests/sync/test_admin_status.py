@@ -2347,12 +2347,44 @@ class AdminStatusJevPanelTest(TestCase):
             spend, "allows", side_effect=lambda provider, use: use != spend.CHAT
         ):
             response = self._get()
-        self.assertEqual(response.context["jev"]["level"], "skipped")
+        jev = response.context["jev"]
+        self.assertEqual(jev["level"], "skipped")
         self.assertContains(response, "SKIPPED")
+        self.assertContains(response, "every use that is on is refused right now")
         self.assertContains(response, "budget is spent for chat")
         self.assertEqual(
-            response.context["jev"]["skip"],
+            jev["uses_skip"],
             "TypeSafe's budget is spent for chat (FHI_SPEND_TYPESAFE_* in ml/spend.py)",
+        )
+        # The general budget, which the test decision spends, still allows:
+        # the headline must not say this pod sends nothing.
+        self.assertIsNone(jev["skip"])
+        self.assertNotContains(response, "sends Jev nothing right now")
+        self.assertContains(response, "may still send")
+
+    @override_settings(
+        TYPESAFE_API_KEY="k",
+        TYPESAFE_LETTER_RANKING_ENABLED=False,
+        TYPESAFE_DENIAL_TRIAGE_ENABLED=False,
+        FHI_CHAT_JEV_GATE_ENABLED=True,
+        TYPESAFE_CHAT_SHADOW_ENABLED=True,
+        TYPESAFE_RESEARCH_JUDGING_ENABLED=True,
+    )
+    def test_uses_refused_for_different_reasons_are_each_named_once(self):
+        """Two chat uses and research judging, each out of its own budget:
+        the chat reason once, then the research one."""
+        with mock.patch.object(spend, "loaded", return_value=True), mock.patch.object(
+            spend,
+            "allows",
+            side_effect=lambda provider, use: use not in (spend.CHAT, spend.RESEARCH),
+        ):
+            response = self._get()
+        jev = response.context["jev"]
+        self.assertEqual(jev["level"], "skipped")
+        self.assertEqual(
+            jev["uses_skip"],
+            "TypeSafe's budget is spent for chat (FHI_SPEND_TYPESAFE_* in ml/spend.py); "
+            "TypeSafe's budget is spent for research (FHI_SPEND_TYPESAFE_* in ml/spend.py)",
         )
 
     @override_settings(TYPESAFE_API_KEY="k")

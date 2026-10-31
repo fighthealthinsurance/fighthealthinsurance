@@ -129,6 +129,7 @@
         {% if jev.url %}<span class="pill endpoint">{{ jev.url }}</span>{% endif %}
         {% if jev.level == "not_configured" %}<span class="error-text">TYPESAFE_API_KEY is not set: every use of Jev is skipped, and the test decision is not sent.</span>
         {% elif jev.skip %}<span class="error-text">this pod sends Jev nothing right now: {{ jev.skip }}</span>
+        {% elif jev.uses_skip %}<span class="error-text">every use that is on is refused right now: {{ jev.uses_skip }}</span> <span class="sweep-note">(the test decision below spends the general budget, so it may still send)</span>
         {% elif jev.level == "off" %}<span class="sweep-note">configured, but every use&rsquo;s switch is off.</span>{% endif %}
       </p>
       <form method="post" action="{% url 'admin_jev_test' %}" style="margin: 8px 0 12px 0">
