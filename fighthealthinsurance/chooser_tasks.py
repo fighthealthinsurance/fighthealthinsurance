@@ -770,7 +770,10 @@ async def _case_questions(context: dict) -> List[str]:
         )
         if not found:
             found = await MLAppealQuestionsHelper.generate_generic_questions(
-                procedure=procedure, diagnosis=diagnosis, timeout=CHOOSER_QA_TIMEOUT
+                procedure=procedure,
+                diagnosis=diagnosis,
+                timeout=CHOOSER_QA_TIMEOUT,
+                use_external=True,
             )
     questions: List[str] = []
     for row in found or []:

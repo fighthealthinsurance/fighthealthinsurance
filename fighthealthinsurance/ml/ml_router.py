@@ -442,7 +442,11 @@ class MLRouter(object):
         return available
 
     def _general_purpose_only(
-        self, models: Sequence[RemoteModelLike], context: str
+        self,
+        models: Sequence[RemoteModelLike],
+        context: str,
+        *,
+        fail_open: bool = True,
     ) -> list[RemoteModelLike]:
         """Drop backends that only produce their fine-tuned artifact.
 
@@ -454,11 +458,14 @@ class MLRouter(object):
 
         Fails open like ``_filter_available``: if every candidate is narrow,
         keep them rather than returning nothing to route to.
+        ``fail_open=False`` is for a pool that is not the only answerer (an
+        outside model is in the same request): the result may then be empty,
+        with nothing logged, since the outside model answers.
         """
         candidates = list(models)
         general = [m for m in candidates if m.supports_general_instructions()]
         if not general:
-            if candidates:
+            if candidates and fail_open:
                 # WARNING, not DEBUG: falling back means an instruction-following
                 # path is about to be served by an appeal-text fine-tune, which
                 # is the failure this filter exists to prevent. It is still
@@ -467,7 +474,8 @@ class MLRouter(object):
                     f"MLRouter: no general-purpose backend for {context}; "
                     f"falling back to {[str(m) for m in candidates]}"
                 )
-            return candidates
+                return candidates
+            return []
         return general
 
     def _healthy_general_internal(self) -> list[RemoteModelLike]:
@@ -716,11 +724,12 @@ class MLRouter(object):
     def full_qa_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
         Return models for handling question-answer pairs for appeal generation.
-        Always includes up to three internal FHI models, strongest first.
+        Includes up to three internal FHI models, strongest first.
         When use_external is True, also includes Perplexity for web-informed
         questions when it looks healthy, plus the cheap external generalist
         (google/gemma-4-26B-A4B-it) when none of the chosen internals is a
-        healthy general-purpose model.
+        healthy general-purpose model. Beside a healthy outside model, the
+        internals marked down and the appeal-only fine-tune are left out.
 
         Args:
             use_external: Whether to use external models
@@ -758,16 +767,19 @@ class MLRouter(object):
         # three internals keeps its best three, not its cheapest three. The
         # sort is stable over the cost order, so ties stay cheapest-first.
         # They fail open only when no outside model is asked: beside one that
-        # can answer, internals marked down would only hold the fan-out open.
+        # can answer, internals marked down, or the appeal-only fine-tune
+        # (blank lines and digit soup for a question), would only hold the
+        # fan-out open.
         internal = self._general_purpose_only(
             self._filter_available(
                 self.internal_models_by_cost, "full-qa", fail_open=not outside
             ),
             "full-qa",
+            fail_open=not outside,
         )
         return sorted(internal, key=lambda m: -m.quality())[:3] + outside
 
-    def partial_qa_backends(self) -> list[RemoteModelLike]:
+    def partial_qa_backends(self, fail_open: bool = True) -> list[RemoteModelLike]:
         """
         Return models for handling partial question-answer pairs (when we have less context).
         Internal FHI models only: this method has no ``use_external`` gate, so
@@ -775,14 +787,23 @@ class MLRouter(object):
         Llama-4-Scout unconditionally; that branch went dead when the model was
         dropped from the catalog and is deliberately not re-pointed.)
 
+        Args:
+            fail_open: With no healthy general-purpose internal, list the
+                marked-down or appeal-only ones anyway. False is for a caller
+                with an outside model in the same fan-out, which answers
+                instead; the list may then be empty.
+
         Returns:
             List of RemoteModelLike models suitable for partial QA tasks
         """
         models: list[RemoteModelLike] = []
         # Always include internal FHI models
         models += self._general_purpose_only(
-            self._filter_available(self.internal_models_by_cost, "partial-qa"),
+            self._filter_available(
+                self.internal_models_by_cost, "partial-qa", fail_open=fail_open
+            ),
             "partial-qa",
+            fail_open=fail_open,
         )
         return models
 

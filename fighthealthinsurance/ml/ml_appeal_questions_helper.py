@@ -212,7 +212,10 @@ async def _note_followup_jev_failure(summary: str) -> None:
 class MLAppealQuestionsHelper:
     @staticmethod
     async def generate_generic_questions(
-        procedure: Optional[str], diagnosis: Optional[str], timeout: int = 90
+        procedure: Optional[str],
+        diagnosis: Optional[str],
+        timeout: int = 90,
+        use_external: bool = False,
     ) -> Optional[List[Tuple[str, str]]]:
         """
         Generate generic appeal questions based only on procedure and diagnosis.
@@ -222,15 +225,18 @@ class MLAppealQuestionsHelper:
             procedure: The medical procedure
             diagnosis: The medical diagnosis
             timeout: Timeout for the ML model call in seconds
+            use_external: Whether to use external models
 
         Returns:
             A list of (question, answer) tuples.
         """
-        models_to_try = list(
-            dict.fromkeys(
-                ml_router.partial_qa_backends() + ml_router.full_qa_backends()
-            )
+        full = ml_router.full_qa_backends(use_external)
+        # Beside an outside model that can answer, the internal pool doesn't
+        # fall back to backends marked down or to the appeal-only fine-tune.
+        partial = ml_router.partial_qa_backends(
+            fail_open=not any(m.external for m in full)
         )
+        models_to_try = list(dict.fromkeys(partial + full))
 
         # Normalize inputs - trim whitespace and convert to lowercase
         procedure = procedure.strip().lower() if procedure else ""
@@ -505,6 +511,9 @@ class MLAppealQuestionsHelper:
                     procedure=denial.procedure,
                     diagnosis=denial.diagnosis,
                     timeout=model_timeout,
+                    # The same consent as the specific questions below, which
+                    # send these two and the denial itself.
+                    use_external=denial.use_external,
                 ),
             )
             may_use_history = await ahistory_may_be_used(denial)

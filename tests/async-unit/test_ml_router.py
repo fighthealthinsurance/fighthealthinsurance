@@ -1309,13 +1309,46 @@ class TestMLRouterFullQABackends(unittest.TestCase):
             self.router.full_qa_backends(use_external=True), [self.alpha, self.new]
         )
 
-    def test_gemma_stands_in_beside_an_appeal_only_internal(self):
+    def test_gemma_replaces_an_appeal_only_internal(self):
+        """The appeal fine-tune answers a question with digit soup: beside
+        outside models that can answer, it would only hold the fan-out
+        open (and log that it was falling back to it)."""
         install_models(self.router, [self.legacy], self.externals)
 
         self.assertEqual(
             self.router.full_qa_backends(use_external=True),
-            [self.legacy, self.gemma, self.sonar],
+            [self.gemma, self.sonar],
         )
+
+    def test_an_appeal_only_internal_is_left_out_beside_sonar_alone(self):
+        """Gemma down: Perplexity is still an outside model that answers."""
+        self.gemma.is_available.return_value = False
+        install_models(self.router, [self.legacy], self.externals)
+
+        self.assertEqual(
+            self.router.full_qa_backends(use_external=True), [self.sonar]
+        )
+
+    def test_an_appeal_only_internal_is_the_last_resort_without_outside_models(
+        self,
+    ):
+        install_models(self.router, [self.legacy], self.externals)
+
+        self.assertEqual(
+            self.router.full_qa_backends(use_external=False), [self.legacy]
+        )
+
+    def test_partial_qa_leaves_out_an_appeal_only_internal_when_not_failing_open(
+        self,
+    ):
+        install_models(self.router, [self.legacy], self.externals)
+
+        self.assertEqual(self.router.partial_qa_backends(fail_open=False), [])
+
+    def test_partial_qa_falls_back_to_an_appeal_only_internal_by_default(self):
+        install_models(self.router, [self.legacy], self.externals)
+
+        self.assertEqual(self.router.partial_qa_backends(), [self.legacy])
 
     def test_four_internals_keep_the_strongest_three(self):
         # Cost order; slicing before sorting would keep 150, 200 and 120.

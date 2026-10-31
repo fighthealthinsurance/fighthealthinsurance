@@ -10,12 +10,14 @@ provider it could not ask as "unavailable" instead of retrying it.
 """
 
 import os
+import uuid
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from django.test import override_settings
 
 from fighthealthinsurance.ml import ml_models, ml_router, spend
+from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.ml.ml_models import (
     ProviderUnavailable,
     RemoteFullOpenLike,
@@ -472,6 +474,106 @@ class TestSummariesAndQuestionsBesideAnOutsideModel(_WithRouter):
     def test_questions_leave_down_internals_out_beside_perplexity_alone(self):
         self.router.models_by_name["sonar"] = [self.sonar]
         assert self.router.full_qa_backends(use_external=True) == [self.sonar]
+
+    def test_questions_log_no_appeal_only_fallback_beside_the_generalist(
+        self, log_capture
+    ):
+        """The appeal fine-tune the only internal up: the generalist answers,
+        so the fan-out neither falls back to the fine-tune nor says it did."""
+        self._with_generalist()
+        self.ours.is_available.return_value = True
+        self.ours.supports_general_instructions.return_value = False
+        with log_capture() as cap:
+            self.router.full_qa_backends(use_external=True)
+        assert [
+            m for m in cap.messages("WARNING") if "no general-purpose backend" in m
+        ] == []
+
+
+_QUESTIONS = [
+    ("Has the patient tried physical therapy?", ""),
+    ("How long has the pain lasted?", ""),
+]
+
+
+@pytest.mark.django_db
+@pytest.mark.asyncio
+class TestGenericQuestionsBesideAnOutsideModel(_WithRouter):
+    """The generic questions (the chooser's fallback, and the procedure and
+    diagnosis set of every appeal) route like the case-specific ones: with
+    use_external, an outside model answers in place of the appeal fine-tune
+    that used to be all they were given."""
+
+    def setup_method(self):
+        super().setup_method()
+        self.fine_tune = _ours()
+        self.fine_tune.supports_general_instructions.return_value = False
+        self.generalist = _outside("generalist")
+        for model in (self.fine_tune, self.generalist):
+            model.get_appeal_questions = AsyncMock(return_value=_QUESTIONS)
+        self.router.internal_models_by_cost = [self.fine_tune]
+        self.router.models_by_name[ml_router._EXTERNAL_GENERALIST] = [self.generalist]
+
+    async def _ask(self, use_external):
+        # Rows written from async tests leak across tests, so each call keys
+        # its own pair (see test_generic_model_caching.unique_pair).
+        suffix = uuid.uuid4().hex[:8]
+        with patch(
+            "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router", self.router
+        ):
+            await MLAppealQuestionsHelper.generate_generic_questions(
+                procedure=f"knee mri {suffix}",
+                diagnosis=f"knee pain {suffix}",
+                use_external=use_external,
+            )
+
+    async def test_with_use_external_the_generalist_is_asked(self):
+        await self._ask(use_external=True)
+        self.generalist.get_appeal_questions.assert_called()
+
+    async def test_with_use_external_the_appeal_fine_tune_is_not_asked(self):
+        await self._ask(use_external=True)
+        self.fine_tune.get_appeal_questions.assert_not_called()
+
+    async def test_without_use_external_no_outside_model_is_asked(self):
+        await self._ask(use_external=False)
+        self.generalist.get_appeal_questions.assert_not_called()
+
+
+@pytest.mark.django_db
+@pytest.mark.asyncio
+class TestAppealGenericQuestionsFollowTheConsent:
+    """An appeal's generic questions get the use_external its specific ones
+    do: the consent on the denial, never more."""
+
+    async def _generic_use_external(self, consent):
+        from fighthealthinsurance.models import Denial
+
+        suffix = uuid.uuid4().hex[:8]
+        denial = await Denial.objects.acreate(
+            denial_text="Denied an MRI.",
+            procedure=f"mri {suffix}",
+            diagnosis=f"back pain {suffix}",
+            use_external=consent,
+        )
+        generic = AsyncMock(return_value=[])
+        with patch.object(
+            MLAppealQuestionsHelper, "generate_generic_questions", generic
+        ), patch.object(
+            MLAppealQuestionsHelper,
+            "generate_specific_questions",
+            AsyncMock(return_value=[]),
+        ):
+            await MLAppealQuestionsHelper.generate_questions_for_denial(
+                denial, speculative=False
+            )
+        return generic.await_args.kwargs["use_external"]
+
+    async def test_a_denial_that_allows_outside_models_lets_them_ask(self):
+        assert await self._generic_use_external(True) is True
+
+    async def test_a_denial_that_refuses_outside_models_keeps_them_out(self):
+        assert await self._generic_use_external(False) is False
 
 
 _CHECKED_INFER_KWARGS = dict(
