@@ -360,6 +360,10 @@ Email isn't a Temporal workflow.
 Journeys that started before `fhi-intake` existed finish on `fhi-appeals`, so
 both queues stay hosted while any are open.
 
+To move new journeys back to `fhi-appeals`, set `TEMPORAL_INTAKE_TASK_QUEUE` on the
+web pods only. Change the worker's only once no journey is open on `fhi-intake`: a
+worker that stops polling it strands them.
+
 ## Rollback
 
 Set `TEMPORAL_ENABLED=false` (or scale the worker to 0). Fax dispatch falls
