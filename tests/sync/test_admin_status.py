@@ -2546,3 +2546,239 @@ class AdminJevTestViewTest(TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["category"], "FAIL_BILLING")
         self.assertContains(response, "skipped: TypeSafe&#x27;s budget is spent")
+
+
+_PHOENIX_GET = "fighthealthinsurance.staff_views.requests.get"
+
+# Planted in every field the panel must never copy out of a Phoenix response.
+# Should any of them reach the page, the leak test below fails.
+_PHOENIX_SECRET = "PATIENT-LETTER-TEXT-do-not-render"
+
+
+class _FakePhoenixResponse:
+    def __init__(self, body, status_code=200, url="http://phoenix.test/v1/x"):
+        self._body = body
+        self.status_code = status_code
+        self.url = url
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} error", response=self)
+
+
+def _fake_phoenix_get(url, params=None, headers=None, timeout=None):
+    """Stands in for Phoenix's REST API, returning every field its schema
+    allows, sensitive ones included, so the tests can check the panel drops
+    them."""
+    _PHOENIX_CALLS.append((url, dict(params or {}), dict(headers or {}), timeout))
+    started = (timezone.now() - datetime.timedelta(minutes=5)).isoformat()
+    if url.endswith("/v1/projects"):
+        return _FakePhoenixResponse(
+            {
+                "data": [
+                    {
+                        "id": "UHJvamVjdDox",
+                        "name": "letter-evals",
+                        "description": _PHOENIX_SECRET,
+                    }
+                ],
+                "next_cursor": None,
+            }
+        )
+    if url.endswith("/traces"):
+        span = {
+            "id": "s1",
+            "span_id": "s1",
+            "parent_id": None,
+            "name": _PHOENIX_SECRET,
+            "span_kind": "LLM",
+            "status_code": "OK",
+            "start_time": started,
+            "end_time": started,
+        }
+        trace = {
+            "id": "t1",
+            "trace_id": "t1",
+            "project_id": "UHJvamVjdDox",
+            "start_time": started,
+            "end_time": started,
+            "token_count_total": 12,
+            "spans": [span],
+            "input": _PHOENIX_SECRET,
+            "output": _PHOENIX_SECRET,
+        }
+        since = (params or {}).get("start_time")
+        rows = [trace] if (params or {}).get("limit") == 1 else [trace, trace]
+        # The 7 day window has more than one page behind it.
+        week = since and since < (
+            timezone.now() - datetime.timedelta(days=2)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return _FakePhoenixResponse(
+            {"data": rows, "next_cursor": "abc" if week else None}
+        )
+    if url.endswith("/v1/datasets"):
+        return _FakePhoenixResponse(
+            {
+                "data": [
+                    {
+                        "id": "RGF0YXNldDox",
+                        "name": "golden-letters",
+                        "description": _PHOENIX_SECRET,
+                        "metadata": {"answer_key": _PHOENIX_SECRET},
+                        "example_count": 3,
+                    }
+                ],
+                "next_cursor": None,
+            }
+        )
+    if url.endswith("/experiments"):
+        return _FakePhoenixResponse(
+            {
+                "data": [
+                    {
+                        "id": "RXhwOjE=",
+                        "name": "judge-run-a",
+                        "description": _PHOENIX_SECRET,
+                        "metadata": {"prompt": _PHOENIX_SECRET},
+                        "created_at": started,
+                        "example_count": 3,
+                        "successful_run_count": 2,
+                        "failed_run_count": 1,
+                        "missing_run_count": 0,
+                    }
+                ],
+                "next_cursor": None,
+            }
+        )
+    return _FakePhoenixResponse({}, status_code=404, url=url)
+
+
+def _experiments_refused(url, params=None, headers=None, timeout=None):
+    if "/datasets" in url:
+        return _FakePhoenixResponse({}, status_code=500, url=url)
+    return _fake_phoenix_get(url, params, headers, timeout)
+
+
+def _unauthorized(url, params=None, headers=None, timeout=None):
+    return _FakePhoenixResponse({}, status_code=401, url=url)
+
+
+def _timed_out(url, params=None, headers=None, timeout=None):
+    raise requests.Timeout("read timed out")
+
+
+def _refused(url, params=None, headers=None, timeout=None):
+    raise requests.ConnectionError("connection refused")
+
+
+_PHOENIX_CALLS: list = []
+
+
+@override_settings(
+    PHOENIX_STATUS_ENABLED=True,
+    PHOENIX_BASE_URL="http://phoenix.test",
+    PHOENIX_API_KEY="test-key",
+)
+class AdminStatusPhoenixTest(TestCase):
+    """The Phoenix section must reflect the flag, show aggregates only,
+    degrade on errors, and never raise."""
+
+    def setUp(self):
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+        _PHOENIX_CALLS.clear()
+
+    def _get(self):
+        with mock.patch(_MODELS, return_value=[]), mock.patch(
+            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
+        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+            return self.client.get(reverse("admin_status"))
+
+    @override_settings(PHOENIX_STATUS_ENABLED=False)
+    @mock.patch(_PHOENIX_GET)
+    def test_disabled_makes_no_request(self, mock_get):
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["phoenix"]["enabled"])
+        self.assertContains(response, "PHOENIX_STATUS_ENABLED is off")
+        mock_get.assert_not_called()
+
+    @mock.patch(_PHOENIX_GET, new=_fake_phoenix_get)
+    def test_healthy_api_renders_counts_and_experiments(self):
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        p = response.context["phoenix"]
+        self.assertTrue(p["ok"])
+        self.assertEqual(len(p["projects"]), 1)
+        project = p["projects"][0]
+        self.assertEqual(project["name"], "letter-evals")
+        self.assertEqual(project["traces_24h"], "2")
+        self.assertEqual(project["traces_7d"], "2+")
+        self.assertIsNotNone(project["last_trace"])
+        self.assertEqual(p["experiments"][0]["name"], "judge-run-a")
+        self.assertEqual(p["experiments"][0]["failed"], 1)
+        self.assertContains(response, "CONNECTED")
+        self.assertContains(response, "golden-letters")
+
+    @mock.patch(_PHOENIX_GET, new=_fake_phoenix_get)
+    def test_forbidden_fields_never_reach_the_page(self):
+        # The fake API puts the same marker in descriptions, metadata, span
+        # names and trace inputs/outputs. None of it may render.
+        response = self._get()
+        self.assertNotContains(response, _PHOENIX_SECRET)
+        self.assertNotIn(_PHOENIX_SECRET, repr(response.context["phoenix"]))
+
+    @mock.patch(_PHOENIX_GET, new=_fake_phoenix_get)
+    def test_requests_ask_for_no_spans_and_carry_the_key(self):
+        self._get()
+        traces = [c for c in _PHOENIX_CALLS if c[0].endswith("/traces")]
+        self.assertTrue(traces)
+        self.assertTrue(all(c[1]["include_spans"] == "false" for c in traces))
+        self.assertTrue(
+            all(c[2].get("Authorization") == "Bearer test-key" for c in _PHOENIX_CALLS)
+        )
+        # Every request is bounded by what is left of the 8s budget.
+        self.assertTrue(all(0 < c[3] <= 8.0 for c in _PHOENIX_CALLS))
+
+    @mock.patch(_PHOENIX_GET, new=_experiments_refused)
+    def test_failed_experiment_listing_keeps_the_trace_counts(self):
+        response = self._get()
+        p = response.context["phoenix"]
+        self.assertTrue(p["ok"])
+        self.assertEqual(p["projects"][0]["traces_24h"], "2")
+        self.assertIn("HTTP 500", p["experiments_error"])
+        self.assertContains(response, "EXPERIMENTS UNAVAILABLE")
+
+    @mock.patch(_PHOENIX_GET, new=_unauthorized)
+    def test_rejected_key_says_it_is_a_config_problem(self):
+        response = self._get()
+        p = response.context["phoenix"]
+        self.assertFalse(p["ok"])
+        self.assertIn("PHOENIX_API_KEY", p["error"])
+        self.assertContains(response, "ERROR")
+
+    @mock.patch(_PHOENIX_GET, new=_timed_out)
+    def test_timeout_names_the_budget(self):
+        response = self._get()
+        p = response.context["phoenix"]
+        self.assertFalse(p["ok"])
+        self.assertIn("8s budget", p["error"])
+
+    @mock.patch(_PHOENIX_GET, new=_refused)
+    def test_unreachable_phoenix_is_an_error_row(self):
+        response = self._get()
+        p = response.context["phoenix"]
+        self.assertFalse(p["ok"])
+        self.assertIn("Could not connect to Phoenix", p["error"])
+        self.assertContains(response, "ERROR")
+
+    def test_outer_timeout_message_is_operator_readable(self):
+        # The budget itself expiring surfaces as a bare TimeoutError.
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        message = AdminStatusView._phoenix_error_message(TimeoutError())
+        self.assertIn("8s budget", message)
+        self.assertIn("appeals are unaffected", message)

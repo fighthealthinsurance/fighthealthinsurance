@@ -581,6 +581,16 @@ class Base(Configuration):
     # models' higher base score keeping the failed reply in front. It is
     # still delivered when nothing else usable arrives. On by default.
     FHI_CHAT_JEV_GATE_DEMOTE_FAILED = _env_flag("FHI_CHAT_JEV_GATE_DEMOTE_FAILED", "1")
+    # --- Phoenix (letter eval traces) ---
+    # The staff status page's Phoenix panel. Off by default: with it on, the
+    # page asks Phoenix's REST API for counts and run names server-side (the
+    # UI itself stays cluster-internal, see k8s/phoenix/). The key is a
+    # Phoenix API key, read from the app secret.
+    PHOENIX_STATUS_ENABLED = _env_flag("PHOENIX_STATUS_ENABLED")
+    PHOENIX_BASE_URL = os.getenv(
+        "PHOENIX_BASE_URL", "http://phoenix.fhi-eval.svc:6006"
+    ).rstrip("/")
+    PHOENIX_API_KEY = os.getenv("PHOENIX_API_KEY", "")
     TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
     # Namespace for research runs (shared plan documents), apart from patient ones.

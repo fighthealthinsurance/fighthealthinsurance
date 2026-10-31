@@ -649,6 +649,68 @@
     {% endif %}
   </div>
 
+  {# ---------------- Phoenix ---------------- #}
+  {# Aggregates only: names, counts, times. Never span contents or examples. #}
+  <div class="status-section">
+    <h2>🔭 Phoenix (letter eval traces)</h2>
+    {% if not phoenix.enabled %}
+      <p class="summary-line"><span class="status-badge unknown">DISABLED</span> <span class="pill">PHOENIX_STATUS_ENABLED is off</span></p>
+    {% elif phoenix.error %}
+      <p class="summary-line"><span class="status-badge bad">ERROR</span> <span class="error-text">{{ phoenix.error }}</span></p>
+    {% else %}
+      <p class="summary-line">
+        <span class="status-badge ok">CONNECTED</span>
+        {% if phoenix.base_url %}<span class="pill">{{ phoenix.base_url }}</span>{% endif %}
+      </p>
+      <table class="status">
+        <thead>
+          <tr><th>Project</th><th>Traces (24h)</th><th>Traces (7 days)</th><th>Last trace</th></tr>
+        </thead>
+        <tbody>
+        {% for p in phoenix.projects %}
+          <tr>
+            <td><code>{{ p.name }}</code></td>
+            <td>{{ p.traces_24h }}</td>
+            <td>{{ p.traces_7d }}</td>
+            <td>{% if p.last_trace %}{{ p.last_trace|date:"Y-m-d H:i" }}{% else %}&mdash;{% endif %}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4">No Phoenix projects yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if phoenix.experiments_error %}
+      <p class="summary-line">
+        <span class="status-badge bad">EXPERIMENTS UNAVAILABLE</span>
+        <span class="error-text">{{ phoenix.experiments_error }}</span>
+      </p>
+      {% else %}
+      <table class="status">
+        <thead>
+          <tr><th>Experiment</th><th>Dataset</th><th>Created</th><th>Examples</th><th>Runs ok / failed / missing</th></tr>
+        </thead>
+        <tbody>
+        {% for ex in phoenix.experiments %}
+          <tr>
+            <td><code>{{ ex.name }}</code></td>
+            <td>{{ ex.dataset }}</td>
+            <td>{% if ex.created %}{{ ex.created|date:"Y-m-d H:i" }}{% else %}&mdash;{% endif %}</td>
+            <td>{% if ex.examples is not None %}{{ ex.examples }}{% else %}&mdash;{% endif %}</td>
+            <td>{{ ex.succeeded|default_if_none:"?" }} / {% if ex.failed %}<span class="status-badge bad">{{ ex.failed }}</span>{% else %}{{ ex.failed|default_if_none:"?" }}{% endif %} / {{ ex.missing|default_if_none:"?" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5">No experiments recorded yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      <p class="summary-line">
+        <span class="pill">Counts stop at {{ phoenix.count_cap }} per window. Traces and eval detail: the Phoenix UI is cluster-internal by design.</span>
+        <code>kubectl -n fhi-eval port-forward svc/phoenix 6006:6006</code> then <code>http://localhost:6006</code>
+      </p>
+    {% endif %}
+  </div>
+
   {# ---------------- LLM usage ---------------- #}
   <div class="status-section" id="llm-usage">
     <h2>&#128202; LLM usage</h2>

@@ -182,6 +182,23 @@ from fighthealthinsurance.utils import mask_email_for_logging
 _UNDATED = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
 
 
+def _parse_iso(value: Any) -> Optional[datetime.datetime]:
+    """An ISO 8601 timestamp from a JSON API as an aware datetime, or None.
+
+    Phoenix writes a trailing "Z", which fromisoformat accepts from 3.11; a
+    naive value is taken as UTC so it sorts against _UNDATED.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed
+
+
 class AdminDeleteDataView(generic.FormView):
     """Staff view to delete all data for a user by email address.
 
@@ -530,6 +547,15 @@ class AdminStatusView(generic.TemplateView):
     # started recently may sit well down the store's own ordering. Bounded so a
     # busy namespace cannot turn a status page into a full scan.
     _RECENT_WORKFLOW_SCAN = 100
+    # Phoenix panel bounds. Every request shares one 8s budget, so these keep
+    # the number of requests small: projects listed, datasets whose
+    # experiments are read, and experiments shown.
+    _PHOENIX_PROJECT_LIMIT = 10
+    _PHOENIX_DATASET_LIMIT = 10
+    _PHOENIX_EXPERIMENT_LIMIT = 10
+    # Traces counted per window before the panel shows "N+" instead. One page
+    # of the traces endpoint (its maximum), so a count is one request.
+    _PHOENIX_TRACE_COUNT_CAP = 1000
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -543,6 +569,7 @@ class AdminStatusView(generic.TemplateView):
         ctx["fax"] = self._fax_backend_status()
         ctx["fax_queue"] = self._fax_queue_status()
         ctx["temporal"] = self._temporal_status()
+        ctx["phoenix"] = self._phoenix_status()
         # The lifetime counters are read once and feed both panels.
         counters = self._lifetime()
         ctx["fax_outcomes"] = self._fax_outcome_status(counters)
@@ -1309,6 +1336,231 @@ class AdminStatusView(generic.TemplateView):
             logger.opt(exception=True).warning("Temporal status check failed")
             out["ok"] = False
             out["error"] = AdminStatusView._temporal_error_message(e)
+        return out
+
+    @staticmethod
+    def _phoenix_error_message(exc: Exception) -> str:
+        """One operator-readable sentence for a Phoenix failure.
+
+        Same idea as ``_temporal_error_message``: a bare "401" or a connection
+        traceback says nothing about whose problem it is, so the failures we
+        can explain get a hint, and anything else falls back to the exception
+        type plus its text so it never renders blank. Phoenix holds the letter
+        eval traces only; nothing user-facing depends on it, and the messages
+        say so.
+        """
+        detail = str(exc).strip()
+        if isinstance(exc, TimeoutError) or isinstance(exc, requests.Timeout):
+            return (
+                "Phoenix did not answer within the status page's 8s budget: "
+                "the phoenix pod in fhi-eval is unreachable or overloaded. "
+                "Letter evals may not be recording; appeals are unaffected."
+            )
+        if isinstance(exc, requests.ConnectionError):
+            return (
+                "Could not connect to Phoenix: check the phoenix pod in "
+                "fhi-eval and PHOENIX_BASE_URL. Appeals are unaffected. "
+                f"Detail: {type(exc).__name__}"
+            )
+        if isinstance(exc, requests.HTTPError) and exc.response is not None:
+            code = exc.response.status_code
+            if code in (401, 403):
+                return (
+                    f"Phoenix refused the status page's API key (HTTP {code}): "
+                    "PHOENIX_API_KEY is missing, revoked, or lacks read "
+                    "access. A config problem, not a Phoenix outage."
+                )
+            return (
+                f"Phoenix answered HTTP {code} to {exc.response.url}. "
+                "A 404 or 422 usually means the REST API changed under a "
+                "Phoenix upgrade -- a bug in this page, not an outage."
+            )
+        if not detail:
+            return f"{type(exc).__name__} (no detail)"
+        return f"{type(exc).__name__}: {detail}"
+
+    @staticmethod
+    def _phoenix_status() -> Dict[str, Any]:
+        """Phoenix letter eval store: per-project trace counts, recent experiments.
+
+        Answers "are letter evals still landing in Phoenix?" from Phoenix's
+        documented REST API (``/v1/projects``, ``/v1/projects/{id}/traces``,
+        ``/v1/datasets``, ``/v1/datasets/{id}/experiments``). Phoenix stays
+        cluster-internal and is never linked or proxied from here.
+
+        Aggregates only, by construction. Traces are requested without spans
+        and only their start times are read; of a project, its name; of an
+        experiment, its name, dataset name, creation time and run counts.
+        Descriptions, metadata, span contents, annotations and dataset
+        examples are never copied out of a response, because they can carry
+        letter text or eval answer keys.
+
+        Bounded: a fixed, small number of requests under a single 8s budget,
+        so a wedged Phoenix degrades to an error row.
+        """
+        from django.conf import settings
+
+        enabled = bool(getattr(settings, "PHOENIX_STATUS_ENABLED", False))
+        base_url = getattr(settings, "PHOENIX_BASE_URL", "") or ""
+        out: Dict[str, Any] = {
+            "ok": True,
+            "error": None,
+            "enabled": enabled,
+            "base_url": base_url,
+            "projects": [],
+            "experiments": [],
+            "experiments_error": None,
+            "count_cap": AdminStatusView._PHOENIX_TRACE_COUNT_CAP,
+        }
+        if not enabled:
+            return out
+        try:
+            import concurrent.futures
+            import time
+
+            budget = 8.0
+            deadline = time.monotonic() + budget
+            headers = {"Accept": "application/json"}
+            api_key = getattr(settings, "PHOENIX_API_KEY", "") or ""
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            def get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+                # Each request gets what is left of the budget as its socket
+                # timeout, so a thread abandoned by the outer timeout below
+                # does not linger past it.
+                remaining = max(0.5, deadline - time.monotonic())
+                resp = requests.get(
+                    f"{base_url}{path}",
+                    params=params,
+                    headers=headers,
+                    timeout=remaining,
+                )
+                resp.raise_for_status()
+                body = resp.json()
+                return body if isinstance(body, dict) else {}
+
+            def iso(when: datetime.datetime) -> str:
+                return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            def trace_count(project_id: str, since: datetime.datetime) -> str:
+                # No count endpoint exists, so take one page of trace rows
+                # (start and end times, ids, token totals; never spans) and
+                # count it. A full page with more behind it shows as "N+".
+                cap = AdminStatusView._PHOENIX_TRACE_COUNT_CAP
+                body = get(
+                    f"/v1/projects/{project_id}/traces",
+                    {
+                        "start_time": iso(since),
+                        "limit": cap,
+                        "include_spans": "false",
+                    },
+                )
+                rows = body.get("data") or []
+                if body.get("next_cursor"):
+                    return f"{len(rows)}+"
+                return str(len(rows))
+
+            def gather() -> Dict[str, Any]:
+                now = timezone.now()
+                projects: List[Dict[str, Any]] = []
+                body = get(
+                    "/v1/projects",
+                    {"limit": AdminStatusView._PHOENIX_PROJECT_LIMIT},
+                )
+                for p in body.get("data") or []:
+                    project_id = str(p.get("id") or "")
+                    if not project_id:
+                        continue
+                    # The newest trace, by the endpoint's default order
+                    # (start_time desc). Only its start time is kept.
+                    latest = (
+                        get(
+                            f"/v1/projects/{project_id}/traces",
+                            {"limit": 1, "include_spans": "false"},
+                        ).get("data")
+                        or []
+                    )
+                    last_trace = None
+                    if latest:
+                        last_trace = _parse_iso(latest[0].get("start_time"))
+                    projects.append(
+                        {
+                            "name": str(p.get("name") or project_id),
+                            "traces_24h": trace_count(
+                                project_id, now - datetime.timedelta(days=1)
+                            ),
+                            "traces_7d": trace_count(
+                                project_id, now - datetime.timedelta(days=7)
+                            ),
+                            "last_trace": last_trace,
+                        }
+                    )
+                experiments: List[Dict[str, Any]] = []
+                experiments_error: Optional[str] = None
+                try:
+                    datasets = (
+                        get(
+                            "/v1/datasets",
+                            {"limit": AdminStatusView._PHOENIX_DATASET_LIMIT},
+                        ).get("data")
+                        or []
+                    )
+                    for ds in datasets:
+                        dataset_id = str(ds.get("id") or "")
+                        if not dataset_id:
+                            continue
+                        rows = (
+                            get(
+                                f"/v1/datasets/{dataset_id}/experiments",
+                                {"limit": AdminStatusView._PHOENIX_EXPERIMENT_LIMIT},
+                            ).get("data")
+                            or []
+                        )
+                        for ex in rows:
+                            experiments.append(
+                                {
+                                    "name": str(ex.get("name") or ex.get("id")),
+                                    "dataset": str(ds.get("name") or dataset_id),
+                                    "created": _parse_iso(ex.get("created_at")),
+                                    "examples": ex.get("example_count"),
+                                    "succeeded": ex.get("successful_run_count"),
+                                    "failed": ex.get("failed_run_count"),
+                                    "missing": ex.get("missing_run_count"),
+                                }
+                            )
+                except Exception as e:
+                    # The trace counts say whether evals are landing at all,
+                    # so a failed experiment listing costs the table only.
+                    logger.opt(exception=True).warning(
+                        "Phoenix experiment listing failed"
+                    )
+                    experiments_error = AdminStatusView._phoenix_error_message(e)
+                experiments.sort(
+                    key=lambda row: row["created"] or _UNDATED, reverse=True
+                )
+                return {
+                    "projects": projects,
+                    "experiments": experiments[
+                        : AdminStatusView._PHOENIX_EXPERIMENT_LIMIT
+                    ],
+                    "experiments_error": experiments_error,
+                }
+
+            # Not a `with` block: its exit would wait on a wedged request and
+            # defeat the budget.
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            try:
+                data = pool.submit(gather).result(timeout=budget)
+            finally:
+                pool.shutdown(wait=False)
+            out["projects"] = data["projects"]
+            out["experiments"] = data["experiments"]
+            out["experiments_error"] = data["experiments_error"]
+        except Exception as e:
+            logger.opt(exception=True).warning("Phoenix status check failed")
+            out["ok"] = False
+            out["error"] = AdminStatusView._phoenix_error_message(e)
         return out
 
     @staticmethod
