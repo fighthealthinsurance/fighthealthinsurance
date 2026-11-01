@@ -142,18 +142,18 @@ class TestHomeHighlights(TestCase):
         self.assertTrue(tile.endswith(num.removesuffix("M marketplace plans") + " million"), (tile, num))
 
     def test_costs_number_is_the_coverage_costs_pages_marketplace_tile(self):
-        # No new number: the card repeats the page's first tile, the median rise insurers proposed.
+        # No new number: the card repeats the page's first tile, the average rise in benchmark prices.
         tile = BeautifulSoup(_get("coverage-costs", IN_SEASON), "html.parser").find(id="stat-marketplace")
         stat = self._card("coverage-costs-home").select_one(".home-highlight-stat")
         self.assertEqual(
             stat.select_one(".home-highlight-num").get_text(strip=True),
-            f"{tile.find('b').get_text(strip=True)} median rise",
+            f"{tile.find('b').get_text(strip=True)} average rise",
         )
         self.assertEqual(
             stat.find("span").get_text(strip=True),
-            "insurers asked for on 2027 marketplace plans, before premium help",
+            "in benchmark marketplace plan prices for 2027, before premium help",
         )
-        self.assertIn("insurers asked for", tile.find("strong").get_text())
+        self.assertIn("benchmark plan prices", tile.find("strong").get_text())
         self.assertIn("before premium help", tile.get_text())
 
     def test_costs_card_takes_its_pages_title(self):

@@ -180,7 +180,7 @@ class CoverageCostsFiguresTest(TestCase):
         self.assertEqual(
             tiles,
             [
-                ("Marketplace", "15%", "rise insurers asked for", "Median for 2027 plans, before premium help.", "Proposed, KFF, August 3, 2026"),
+                ("Marketplace", "13%", "rise in benchmark plan prices", "Average for 2027, before premium help.", "Final, KFF, October 30, 2026"),
                 ("Job-based", "8.2%", "rise in employer health costs", "Expected per employee for 2027.", "Projected, Marsh, September 2, 2026"),
                 ("Federal employees", "10.9%", "more paid by FEHB enrollees", "On average, for 2027.", "Official, OPM, September 2026"),
                 ("Medicare", "$209.50", "a month for Part B", "The standard premium expected for 2027.", "Projected, Medicare Trustees, June 2026"),
@@ -210,6 +210,7 @@ class CoverageCostsFiguresTest(TestCase):
         self.assertEqual(
             _rows(self._section("marketplace-table")),
             [
+                ("Average change in the benchmark plan's price", "26% Final, KFF, October 30, 2026", "13% Final, KFF, October 30, 2026"),
                 ("Median price change", "20% Final, KFF, August 3, 2026", "15% Proposed, KFF, August 3, 2026"),
                 (
                     "Average price change, weighted by enrollment",
@@ -263,6 +264,19 @@ class CoverageCostsFiguresTest(TestCase):
                 "job-worker-share": "What workers paid, 2026: $1,672 for one person and $7,471 for a family. The family share rose 9% from 2025. (Survey, KFF, October 22, 2026)",
                 "job-2027": "Expected for 2027: employers expect their health benefit cost per employee to rise 8.2% on average, even after changes such as higher deductibles. (Projected, Marsh, September 2, 2026)",
             },
+        )
+
+    def test_benchmark_prices_differ_by_platform(self):
+        self.assertEqual(
+            _text(self._section("by-platform")),
+            "It differs by state. Benchmark prices rise 11% in states that use HealthCare.gov and 16% in states that run their own platforms. (Final, KFF, October 30, 2026)",
+        )
+
+    def test_the_50_dollar_premium_claim_is_cms_and_warns_about_deductibles(self):
+        self.assertEqual(
+            _text(self._section("low-premiums")),
+            "Check more than the premium. CMS says more than 75% of people buying through HealthCare.gov can get premiums at or below $50 in 2027. "
+            "A low premium can come with a high deductible. (Official, CMS, October 30, 2026)",
         )
 
     def test_most_marketplace_enrollees_get_help_so_list_prices_arent_what_they_pay(self):
@@ -320,6 +334,8 @@ class CoverageCostsSourcesTest(TestCase):
     def test_sources_are_linked(self):
         for href in (
             "https://www.kff.org/affordable-care-act/how-much-and-why-aca-marketplace-premiums-are-going-up-in-2027/",
+            "https://www.kff.org/affordable-care-act/9-things-to-watch-for-the-2027-aca-open-enrollment-period/",
+            "https://www.cms.gov/newsroom/fact-sheets/plan-year-2027-marketplace-plans-prices-fact-sheet-0",
             "https://www.familiesusa.org/resources/aca-marketplace-premium-rate-tracker-insurers-likely-to-propose-premium-increases-for-2027/",
             "https://www.irs.gov/pub/irs-drop/rp-25-25.pdf",
             "https://www.irs.gov/pub/irs-drop/rp-26-26.pdf",
@@ -354,7 +370,7 @@ class CoverageCostsSourcesTest(TestCase):
 
     def test_says_when_the_numbers_were_checked(self):
         top = _text(self.soup.find(id="costs-top"))
-        self.assertTrue(top.endswith("Numbers and links checked October 28, 2026."), top[-80:])
+        self.assertTrue(top.endswith("Numbers and links checked November 1, 2026."), top[-80:])
 
     def test_says_the_one_figure_that_is_our_math(self):
         self.assertIn("except the 87%, which is our math from CMS's counts", self.sources)
@@ -382,8 +398,7 @@ class CoverageCostsActPendingAndMoreDataTest(TestCase):
         self.assertEqual(
             cards,
             {
-                "pending-final-rates": "Final marketplace rates By November 1, when open enrollment starts. Federal rules require it.",
-                "pending-cms-files": "CMS's 2027 marketplace files Early to mid November, like last year's.",
+                "pending-final-rates": "The final median and weighted price changes When KFF and Families USA publish them.",
                 "pending-part-b": "The official Part B premium Mid November. Last year's came out November 14.",
                 "pending-paid": "What enrollees pay after help Around March 2027, from CMS's open enrollment files.",
             },
@@ -427,7 +442,7 @@ class CoverageCostsActPendingAndMoreDataTest(TestCase):
             ],
         )
         self.assertIn(f'href="{reverse("contact")}"', str(section.find(id="join-forces-costs")))
-        self.assertIn("Checked October 28, 2026.", _text(section))
+        self.assertIn("Checked November 1, 2026.", _text(section))
 
 
 class CoverageCostsIsLinkedTest(TestCase):
