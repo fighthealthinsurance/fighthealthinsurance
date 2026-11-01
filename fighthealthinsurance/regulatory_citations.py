@@ -183,10 +183,10 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
             + _EXTERNAL_REVIEW_SCOPE
             + "; "
             + _GRANDFATHERED_REVIEW
-            + ", and a denial for failing eligibility requirements is not "
-            "covered. Claim it for such a denial; if the plan gave a different "
-            "reason, argue that the denial is really one of these only where "
-            "the record supports it."
+            + ". For a denial in one of these categories, claim the right to "
+            "external review; if the plan gave a different reason, argue that "
+            "the denial is really one of these only where the record supports "
+            "it. A denial for failing eligibility requirements is not eligible."
         ),
         jurisdiction="US",
         effective="in force",

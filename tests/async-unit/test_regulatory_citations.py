@@ -199,7 +199,7 @@ class TestPublicProgramFiltering(unittest.TestCase):
         self.assertIn("involves medical judgment (including medical necessity", block)
         self.assertIn("a rescission", block)
         self.assertIn("surprise-billing and cost-sharing protections", block)
-        self.assertIn("failing eligibility requirements is not covered", block)
+        self.assertIn("failing eligibility requirements is not eligible", block)
         self.assertIn("grandfathered plan owes it only for the surprise-billing", block)
 
     def test_aca_hook_allows_a_supported_challenge_to_the_plans_label(self):
@@ -210,6 +210,12 @@ class TestPublicProgramFiltering(unittest.TestCase):
             "record supports it",
             block,
         )
+        self.assertIn(
+            "For a denial in one of these categories, claim the right to "
+            "external review",
+            block,
+        )
+        self.assertNotIn("Claim it for such a denial", block)
 
     def test_regulatory_block_keeps_the_plans_reason_accurate(self):
         """Misattributing the plan's reason is not allowed; a supported
