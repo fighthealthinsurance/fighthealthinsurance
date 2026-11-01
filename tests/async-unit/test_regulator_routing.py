@@ -182,6 +182,14 @@ class TestRegulatorNameVariants:
         assert found is not None, said
         assert found.alt_name == alt_name
 
+    def test_an_aside_two_bodies_share_names_neither(self):
+        # Minnesota's and Pennsylvania's Medicaid agencies both say it.
+        assert rr.regulator_defaults("Medical Assistance") is None
+        found = rr.regulator_defaults(
+            "Pennsylvania Department of Human Services (Medical Assistance)"
+        )
+        assert found.alt_name == "PA Medicaid"
+
     def test_a_bare_generic_word_is_not_a_body(self):
         assert rr.regulator_defaults("Medicaid") is None
         assert rr.regulator_defaults("Department of Insurance") is None

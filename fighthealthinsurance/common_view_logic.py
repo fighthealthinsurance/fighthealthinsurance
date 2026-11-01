@@ -1909,6 +1909,7 @@ class FindNextStepsHelper:
         prior_plan_sources = sorted(denial.plan_source.values_list("name", flat=True))
         prior_state = denial.your_state or denial.state
         prior_employer = denial.employer_name
+        prior_insurer = denial.insurance_company
 
         # Track exactly which fields THIS request assigns so the save below
         # can write only those columns. The old full-row ``denial.save()``
@@ -2130,7 +2131,7 @@ class FindNextStepsHelper:
         # person just told us about it (where the coverage comes from, their
         # state, their employer) often does. Look again when that changed.
         cls._maybe_refresh_regulator_from_plan(
-            denial, prior_plan_sources, prior_state, prior_employer
+            denial, prior_plan_sources, prior_state, prior_employer, prior_insurer
         )
 
         # Get outside help details using shared helper; after the state above,
@@ -2227,11 +2228,14 @@ class FindNextStepsHelper:
         prior_plan_sources: list[str],
         prior_state: Optional[str],
         prior_employer: Optional[str],
+        prior_insurer: Optional[str] = None,
     ) -> None:
         """Re-run regulator detection when the plan answers changed.
 
         Runs ``DenialCreatorHelper.extract_set_regulator_from_plan`` and
-        reloads ``denial.regulator``. An unchanged re-POST does nothing, so
+        reloads ``denial.regulator``. Any answer the re-run reads counts:
+        plan sources, state, employer and insurer. An unchanged re-POST does
+        nothing, so
         the model is not asked again for the same answers. Never raises:
         the page is still useful without a regulator.
         """
@@ -2241,6 +2245,7 @@ class FindNextStepsHelper:
             plan_sources == prior_plan_sources
             and (state or "") == (prior_state or "")
             and (denial.employer_name or "") == (prior_employer or "")
+            and (denial.insurance_company or "") == (prior_insurer or "")
         ):
             return
         try:
@@ -5025,7 +5030,8 @@ class DenialCreatorHelper:
         says what kind of plan it is and the person's answers do:
 
         - A regulator the letter itself names (``letter_names_regulator``)
-          stays; it is the best evidence there is.
+          stays, and one the fixture regexes find in the letter is linked;
+          it is the best evidence there is.
         - Answers that settle it on their own (Medicare, Medicaid or a
           marketplace plan in a known state, a federal employee plan, the
           VA: ``regulator_routing.plan_source_regulator``) are stored,
@@ -5053,8 +5059,14 @@ class DenialCreatorHelper:
             name async for name in denial.plan_source.values_list("name", flat=True)
         ]
         found: Optional[Regulator] = None
+        # A regulator the letter names (the fixture regexes) beats anything
+        # the answers suggest; extract_set_regulator may not have linked it
+        # yet, and once this links another it would never look again.
+        named = await cls.regex_denial_processor.get_regulator(letter)
         settled = regulator_routing.plan_source_regulator(sources, state)
-        if settled is not None:
+        if named:
+            found = named[0]
+        elif settled is not None:
             found = await cls._regulator_row_from_defaults(settled)
         else:
             facts = regulator_routing.plan_facts(
@@ -5091,8 +5103,23 @@ class DenialCreatorHelper:
         if found is not None and previous is not None and found.pk == previous.pk:
             return EXTRACTION_OUTCOME_CACHED
         # Conditional on the row still holding what we decided from: a
-        # replaced letter, or a regulator another step linked meanwhile, wins.
-        row = Denial.objects.filter(denial_id=denial_id, denial_text=letter)
+        # replaced letter, a corrected answer submitted while the model read
+        # this one, or a regulator another step linked meanwhile, wins. The
+        # plan sources are a many-to-many, outside the update's predicate, so
+        # they are read again just before it; that narrows the window to the
+        # two statements rather than the model call.
+        if sorted(
+            [name async for name in denial.plan_source.values_list("name", flat=True)]
+        ) != sorted(sources):
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
+        row = Denial.objects.filter(
+            denial_id=denial_id,
+            denial_text=letter,
+            your_state=denial.your_state,
+            state=denial.state,
+            employer_name=denial.employer_name,
+            insurance_company=denial.insurance_company,
+        )
         if previous is None:
             row = row.filter(regulator__isnull=True)
         else:

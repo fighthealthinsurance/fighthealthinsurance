@@ -157,6 +157,33 @@ class ExtractSetRegulatorFromPlanTest(RegulatorFromPlanTestBase):
         self.assertIsNone(denial.regulator)
 
 
+    @patch(_GENERATOR)
+    def test_a_letter_naming_erisa_beats_a_medicare_answer(self, generator):
+        # The letter-only pass has not linked the ERISA match yet.
+        generator.get_regulator_routing = AsyncMock()
+        denial = self._make_denial(ERISA_LETTER, your_state="TX")
+        denial.plan_source.set([_source("Medicare Advantage")])
+        self._rerun(denial)
+        denial.refresh_from_db()
+        self.assertEqual(denial.regulator.alt_name, "ERISA")
+
+    @patch(_GENERATOR)
+    def test_an_answer_corrected_while_the_model_reads_wins(self, generator):
+        denial = self._make_denial(your_state="TX")
+        denial.plan_source.set([_source("Union")])
+
+        async def corrected_meanwhile(*args, **kwargs):
+            await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                your_state="NY", state="NY"
+            )
+            return _routing("Texas Department of Insurance")
+
+        generator.get_regulator_routing = AsyncMock(side_effect=corrected_meanwhile)
+        self.assertEqual(self._rerun(denial), "nothing_found")
+        denial.refresh_from_db()
+        self.assertIsNone(denial.regulator)
+
+
 class FindNextStepsRerunsRegulatorTest(RegulatorFromPlanTestBase):
     def _find_next_steps(self, denial, **overrides):
         kwargs = dict(
@@ -195,6 +222,19 @@ class FindNextStepsRerunsRegulatorTest(RegulatorFromPlanTestBase):
         self._find_next_steps(denial, **answers)
         self._find_next_steps(denial, **answers)
         self.assertEqual(generator.get_regulator_routing.await_count, 1)
+
+    @patch(_GENERATOR)
+    def test_an_insurer_only_correction_asks_again(self, generator):
+        generator.get_regulator_routing = AsyncMock(return_value=_routing("Unknown"))
+        denial = self._make_denial()
+        answers = dict(plan_source=[_source("Union")], your_state="TX")
+        self._find_next_steps(denial, **answers)
+        self._find_next_steps(denial, insurance_company="Aetna", **answers)
+        self.assertEqual(generator.get_regulator_routing.await_count, 2)
+        self.assertIn(
+            "Insurance company: Aetna.",
+            generator.get_regulator_routing.call_args.args[0],
+        )
 
     @patch(_GENERATOR)
     def test_a_failed_rerun_does_not_break_the_page(self, generator):

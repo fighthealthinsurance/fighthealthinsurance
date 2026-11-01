@@ -347,15 +347,12 @@ def _state_regulators() -> dict[str, RegulatorDefaults]:
     from fighthealthinsurance.external_review import STATE_CONFIG
 
     states = list(load_state_help().values())
-    table: dict[str, RegulatorDefaults] = {}
-    # The names as written first, so an alias never shadows a real name.
+    # (name, body, is_the_bodys_own_name), the names as written first.
+    names: list[tuple[str, RegulatorDefaults, bool]] = []
     for state in states:
-        department = _department_defaults(state)
-        if department is not None:
-            _register(table, department.name, department)
-        medicaid = _medicaid_defaults(state)
-        if medicaid is not None:
-            _register(table, medicaid.name, medicaid)
+        for body in (_department_defaults(state), _medicaid_defaults(state)):
+            if body is not None:
+                names.append((body.name, body, True))
     for state in states:
         department = _department_defaults(state)
         if department is not None:
@@ -363,13 +360,32 @@ def _state_regulators() -> dict[str, RegulatorDefaults]:
             # California's external-review body is the DMHC, a fixture row
             # the federal table already resolves.
             if state.abbreviation != "CA" and config.get("regulator_name"):
-                _register(table, config["regulator_name"], department)
-            _register(table, f"{state.name} Department of Insurance", department)
-            _register(table, f"{state.name} Insurance Department", department)
-            _register(table, f"{state.name} Division of Insurance", department)
+                names.append((config["regulator_name"], department, False))
+            for pattern in (
+                "{} Department of Insurance",
+                "{} Insurance Department",
+                "{} Division of Insurance",
+            ):
+                names.append((pattern.format(state.name), department, False))
         medicaid = _medicaid_defaults(state)
         if medicaid is not None:
-            _register(table, f"{state.name} Medicaid", medicaid)
+            names.append((f"{state.name} Medicaid", medicaid, False))
+    # A key two bodies answer to says neither: "(Medical Assistance)" is in
+    # both Minnesota's and Pennsylvania's Medicaid agency names. Such a key
+    # is dropped, unless it is one body's own full name.
+    claimants: dict[str, set[str]] = {}
+    own_names: dict[str, RegulatorDefaults] = {}
+    for name, body, own in names:
+        keys = _name_keys(name)
+        if own and keys:
+            own_names.setdefault(keys[0], body)
+        for key in keys:
+            claimants.setdefault(key, set()).add(body.alt_name)
+    table: dict[str, RegulatorDefaults] = dict(own_names)
+    for name, body, _own in names:
+        for key in _name_keys(name):
+            if len(claimants[key]) == 1:
+                table.setdefault(key, body)
     return table
 
 
