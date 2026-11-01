@@ -344,7 +344,8 @@ class TestFillInsAreCaughtBeforeALetterLeaves(unittest.TestCase):
         (
             PostSurgicalRehabAppeal,
             "[Specify the surgery and its date if this care follows surgery, "
-            "or delete this sentence]",
+            "as recovery from surgery often makes skilled rehabilitation "
+            "necessary, or delete this sentence]",
         ),
     )
 
@@ -407,6 +408,12 @@ class TestOlderTemplatesAskRatherThanAssert(unittest.TestCase):
         self.assertNotIn("following surgery for", letter)
         self.assertNotIn("post-operative status", letter)
 
+    def test_rehab_letter_names_no_surgery_once_the_fill_in_is_deleted(self):
+        letter = re.sub(
+            r"\[Specify[^\]]*\] ?", "", PostSurgicalRehabAppeal.static_appeal()
+        )
+        self.assertNotIn("surgery", letter.lower())
+
 
 class TestImagingClosingIsConditional(unittest.TestCase):
     def test_missed_diagnosis_risk_applies_only_before_the_study(self):
@@ -424,14 +431,23 @@ class TestSynthesisKeepsFillIns(unittest.TestCase):
         )
         self.assertIn("never turn them into statements of fact", prompt)
 
-    def test_synthesis_may_fill_ordinary_fields(self):
+    def test_synthesis_may_fill_only_a_name_from_another_draft(self):
         prompt = AppealGenerator.SYNTHESIS_SYSTEM_PROMPT
         self.assertIn(
-            "Ordinary fields such as [Name] may be filled from values another "
+            "A name field such as [Name] may be filled from a name another "
             "draft supplies",
             prompt,
         )
+        self.assertNotIn("Ordinary fields", prompt)
         self.assertNotIn("Keep bracketed fill-ins", prompt)
+
+    def test_synthesis_keeps_identifier_fields_as_they_are(self):
+        prompt = AppealGenerator.SYNTHESIS_SYSTEM_PROMPT
+        self.assertIn(
+            "such as a claim, member, policy or group number, a date or an "
+            "amount, exactly as it is; never copy one in from another draft",
+            prompt,
+        )
 
 
 class TestGLP1ApprovalIsThePatientsToState(unittest.TestCase):

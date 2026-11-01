@@ -364,6 +364,12 @@ class TestLetterTextAndCitingLimits(unittest.TestCase):
         self.assertIn("covers air ambulance services at all", self.rule("149.130").cite_when)
         self.assertIn("ground ambulances", self.rule("149.130").cite_when)
 
+    def test_emergency_rule_is_tied_to_an_emergency_department(self):
+        cite_when = self.rule("149.110").cite_when
+        self.assertIn("hospital emergency department", cite_when)
+        self.assertIn("independent freestanding emergency department", cite_when)
+        self.assertIn("ground ambulance transport is not emergency services", cite_when)
+
     def test_emergency_definition_includes_post_stabilization_care(self):
         cite_when = self.rule("149.110").cite_when
         self.assertIn("after stabilization during the same visit", cite_when)

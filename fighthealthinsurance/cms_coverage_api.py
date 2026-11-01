@@ -118,7 +118,11 @@ _IRREGULAR_SINGULARS = {
     "diagnoses": "diagnosis",
     "lens": "lens",
     "lenses": "lens",
+    "metastases": "metastasis",
+    "prognoses": "prognosis",
     "prostheses": "prosthesis",
+    "stenoses": "stenosis",
+    "thromboses": "thrombosis",
     "viruses": "virus",
 }
 
@@ -224,7 +228,10 @@ def _extract_records(payload: dict) -> List[dict]:
     return data if isinstance(data, list) else []
 
 
-def _parse_ncd_record(record: dict) -> Optional[NCDDocument]:
+def _parse_ncd_record(record: object) -> Optional[NCDDocument]:
+    # Anything but a dict isn't a record; it counts as one that was dropped.
+    if not isinstance(record, dict):
+        return None
     try:
         document_id = record.get("document_id")
         title = record.get("title")

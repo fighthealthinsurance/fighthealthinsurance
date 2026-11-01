@@ -289,6 +289,9 @@ class TestSingular:
         assert _singular("axes") == "axis"
         assert _singular("process") == "process"
         assert _singular("processes") == "process"
+        assert _singular("metastases") == "metastasis"
+        assert _singular("prognoses") == "prognosis"
+        assert _singular("stenoses") == "stenosis"
 
     def test_lens_and_lenses_match(self):
         docs = [
@@ -477,6 +480,26 @@ class TestPartlyParsedReport:
         for result in (fresh, from_cache):
             assert result == []
             assert not result.complete
+
+
+class TestNonDictRecords:
+    def test_a_non_dict_record_is_not_a_record(self):
+        from fighthealthinsurance.cms_coverage_api import _parse_ncd_record
+
+        for record in ("Acupuncture", 11, None, ["title"]):
+            assert _parse_ncd_record(record) is None
+
+    @pytest.mark.asyncio
+    async def test_a_report_with_a_non_dict_record_is_searched_but_incomplete(self):
+        payload = {"data": [_ncd_record(document_id=11, title="Acupuncture"), "junk"]}
+        client = CMSCoverageClient(base_url="http://test.invalid")
+        mock_http = MagicMock()
+        mock_http.is_closed = False
+        mock_http.get = AsyncMock(return_value=_make_response(200, payload))
+        client._client = mock_http
+        records, complete = await client.load_report()
+        assert [r.title for r in records] == ["Acupuncture"]
+        assert complete is False
 
 
 class TestGetCMSCoverageCitations:
