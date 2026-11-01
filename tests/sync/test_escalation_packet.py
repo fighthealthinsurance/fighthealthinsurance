@@ -286,6 +286,7 @@ class RegulatorEscalationReasonsTest(TestCase):
             "You have the right to a second level appeal of this decision.",
             "We have received your third-level appeal and it is under review.",
             "Your second level appeal is pending; a decision will follow.",
+            "Your second-level appeal concerns our original denial decision and is being processed.",
             "This responds to your third-level appeal.",
         ):
             with self.subTest(text=text):

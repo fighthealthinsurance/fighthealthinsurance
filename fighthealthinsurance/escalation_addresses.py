@@ -285,7 +285,8 @@ _DECISION_RE = re.compile(
 )
 _PENDING_OR_RIGHTS_RE = re.compile(
     r"\b(right to|you can|to request|request (a|an)|to file|to submit"
-    r"|under review|being reviewed|pending|in progress|will"
+    r"|under review|being reviewed|being processed|processing|pending"
+    r"|in progress|will"
     r"|are reviewing|is reviewing)\b",
     re.IGNORECASE,
 )
