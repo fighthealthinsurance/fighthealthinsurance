@@ -528,7 +528,10 @@ FHI_TRACE_PROPAGATION_TARGETS = [
 # The part before any "?" or "#" is matched separately: everything from "?" or
 # "#" up to the next whitespace is dropped, so a quote or apostrophe inside a
 # query ("term=Crohn's+disease") can't end the match early.
-_URL_IN_TEXT = re.compile(r"(https?://[^\s?#'\"<>()\[\]]+)([?#]\S*)?")
+_URL_IN_TEXT = re.compile(
+    r"(https?://(?:\[[0-9A-Fa-f:.]+\](?::\d+)?|[^\s?#'\"<>()\[\]/]+)"
+    r"(?:/[^\s?#\"<>()\[\]]*)?)([?#]\S*)?"
+)
 # A relative URL with a query, as requests and urllib3 put in their errors
 # ("Max retries exceeded with url: /search?term=..."). Only the query goes.
 _RELATIVE_QUERY_IN_TEXT = re.compile(r"(?<![\w:/.])(/[^\s?#'\"<>]*)[?#]\S*")
@@ -565,7 +568,8 @@ def clean_outbound_url(url: Any) -> Any:
         host = parts.hostname or ""
         if not parts.scheme or not host:
             return FILTERED if url else url
-        netloc = host if parts.port is None else f"{host}:{parts.port}"
+        shown_host = f"[{host}]" if ":" in host else host
+        netloc = shown_host if parts.port is None else f"{shown_host}:{parts.port}"
         path = parts.path
         if path not in ("", "/"):
             path = _kept_path(host, path)
@@ -577,7 +581,7 @@ def clean_outbound_url(url: Any) -> Any:
 def _clean_url_match(match: "re.Match[str]") -> str:
     base = match.group(1)
     # Trailing sentence punctuation isn't part of the URL.
-    stripped = base.rstrip(".,;:!")
+    stripped = base.rstrip(".,;:!'")
     trailer = base[len(stripped) :]
     try:
         host = urlsplit(stripped).hostname or ""

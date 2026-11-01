@@ -100,6 +100,12 @@ class TestCleanOutboundUrl:
             PATH_REMOVED
         )
 
+    def test_ipv6_host_keeps_its_brackets(self):
+        assert (
+            clean_outbound_url("http://[::1]:8000/x?y=1")
+            == "http://[::1]:8000" + PATH_REMOVED
+        )
+
     def test_port_is_kept(self):
         assert (
             clean_outbound_url("http://localhost:8001/search?q=x")
@@ -134,6 +140,16 @@ class TestUrlsInText:
         out = clean_urls_in_text(text)
         assert "test-key" not in out
         assert "disease" not in out and "lupus" not in out
+
+    def test_apostrophe_in_the_path_does_not_end_the_url(self):
+        out = clean_urls_in_text("GET https://example.org/o'brien?patient=alice done")
+        assert "alice" not in out and "brien" not in out
+        assert out == "GET https://example.org" + PATH_REMOVED + " done"
+
+    def test_bracketed_ipv6_host_is_matched(self):
+        out = clean_urls_in_text("GET http://[2001:db8::1]:8000/x?patient=alice")
+        assert "alice" not in out
+        assert out == "GET http://[2001:db8::1]:8000" + PATH_REMOVED
 
     def test_trailing_sentence_punctuation_survives(self):
         assert (
@@ -478,3 +494,31 @@ def test_logged_url_parameter_is_cleaned(sentry_capture_with_defaults):
     blob = repr(sentry_capture_with_defaults.events)
     assert "Fetch failed" in blob
     assert "lupus" not in blob and "test-key" not in blob
+
+
+def test_asgi_wires_the_breadcrumb_hook_and_propagation_targets():
+    # asgi.py's Sentry block only runs in a deployment, so check its source:
+    # sentry_sdk.init must pass both settings, or the scrub is bypassed.
+    import ast
+    from pathlib import Path
+
+    import fighthealthinsurance
+
+    source = (Path(fighthealthinsurance.__file__).parent / "asgi.py").read_text()
+    calls = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "init"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "sentry_sdk"
+    ]
+    assert len(calls) == 1
+    keywords = {
+        kw.arg: kw.value.id for kw in calls[0].keywords if isinstance(kw.value, ast.Name)
+    }
+    assert keywords.get("before_breadcrumb") == "before_breadcrumb_filter"
+    assert keywords.get("trace_propagation_targets") == "FHI_TRACE_PROPAGATION_TARGETS"
+    assert keywords.get("before_send") == "before_send_filter"
+    assert keywords.get("before_send_transaction") == "before_send_transaction_filter"
