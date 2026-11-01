@@ -939,14 +939,9 @@ AIR_AMBULANCE_CODES = frozenset({"A0430", "A0431", "A0435", "A0436"})
 # CPT emergency department visit codes.
 EMERGENCY_DEPARTMENT_CODES = frozenset({"99281", "99282", "99283", "99284", "99285"})
 
-# Phrases that say the care was NOT an emergency, removed before looking for
-# emergency wording so "non-emergency transport" never reads as an emergency.
-_NOT_EMERGENCY_RE = re.compile(
-    r"\bnon[- ]?emergen\w*|\bnot (?:an? )?emergen\w*|\bno emergen\w*", re.I
-)
 _EMERGENCY_RE = re.compile(
     r"\bemergency (?:room|department|services?|care|treatment|visit|admission|"
-    r"surgery|medical condition)\b|\b(?:ER|ED) visit\b",
+    r"surgery)\b|\b(?:ER|ED) (?:visit|services?|admission)\b",
     re.I,
 )
 _AIR_AMBULANCE_RE = re.compile(
@@ -956,14 +951,72 @@ _AIR_AMBULANCE_RE = re.compile(
     re.I,
 )
 _OUT_OF_NETWORK_RE = re.compile(
-    r"\bout[- ]of[- ]network\b|\bnon[- ]?participating\b|\bnon[- ]?network\b",
+    r"\bout[- ]of[- ]network\b|\bnon[- ]?participating\b|\bnon[- ]?network\b|"
+    r"\bnon[- ]?contracted\b",
     re.I,
 )
+# Never matches inside "non-participating" or "non-contracted"; "in-network"
+# cannot occur inside "out-of-network".
 _IN_NETWORK_FACILITY_RE = re.compile(
-    r"\b(?:in[- ]network|participating|contracted) "
-    r"(?:hospital|facility|surgery center|surgical center|ambulatory surgical center)\b",
+    r"\b(?:in[- ]network|(?<![-\w])(?<!non )participating|"
+    r"(?<![-\w])(?<!non )contracted) "
+    r"(?:hospital|facility|surgery center|surgical center|"
+    r"ambulatory surgical center)\b",
     re.I,
 )
+# A negating word shortly before a term ("no ER visit", "was not an air
+# ambulance", "without emergency care"), or "non-" fixed to it ("non-emergency
+# services"), checked on the text just before it. "Non-" on a different word
+# does not count: a non-emergency air ambulance is still an air ambulance.
+_NEGATED_BEFORE_RE = re.compile(
+    r"(?:\b(?:no|not|never|without)\b(?:\W+\w+){0,3}\W*|\bnon[- ]?)$", re.I
+)
+# Sentences that state general policy rather than what happened to this
+# person: "Emergency services do not require prior authorization", "If you
+# have an emergency, call 911".
+_POLICY_SENTENCE_RE = re.compile(
+    r"\bdo(?:es)? not require\b|\bif you\b|\bin an emergency\b|\bcall 911\b|"
+    r"\b(?:is|are) covered\b|\bwill be covered\b|\byour plan covers\b|"
+    r"\bgenerally\b",
+    re.I,
+)
+# What ties a sentence to this person's own claim.
+_CLAIM_MARKER_RE = re.compile(
+    r"\byour\b|\bclaim\b|\bdenied\b|\bdenial\b|\bbilled?\b|\bon \d|"
+    r"\d{1,2}/\d{1,2}|\bdated\b|\breceived\b|\bprovided\b|\bfurnished\b",
+    re.I,
+)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+")
+
+
+def _normalize(text: str) -> str:
+    """Collapse runs of whitespace, newlines included, so a term broken
+    across a line still matches."""
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _affirmed(pattern: re.Pattern[str], text: str) -> bool:
+    """Whether ``pattern`` occurs in ``text`` without a negating word just
+    before it."""
+    # Only the few words before the term matter, so look back a short way.
+    return any(
+        not _NEGATED_BEFORE_RE.search(text[max(0, m.start() - 60) : m.start()])
+        for m in pattern.finditer(text)
+    )
+
+
+def _about_this_claim(pattern: re.Pattern[str], text: str) -> bool:
+    """Whether a sentence of the denial says this person's claim involved
+    the care ``pattern`` names: affirmed, tied to the claim, and not a
+    general statement of policy."""
+    for sentence in _SENTENCE_SPLIT_RE.split(text):
+        if (
+            _affirmed(pattern, sentence)
+            and _CLAIM_MARKER_RE.search(sentence)
+            and not _POLICY_SENTENCE_RE.search(sentence)
+        ):
+            return True
+    return False
 
 
 def surprise_billing_facts(
@@ -972,24 +1025,35 @@ def surprise_billing_facts(
     diagnosis: Optional[str] = None,
     codes: Iterable[str] = (),
 ) -> frozenset[str]:
-    """Which of the emergency and surprise-billing situations the denial
-    shows: EMERGENCY_CARE, AIR_AMBULANCE, OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY.
+    """Which of the emergency and surprise-billing situations the denial is
+    about: EMERGENCY_CARE, AIR_AMBULANCE, OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY.
 
-    Read from the denial text, procedure and diagnosis and from any billing
-    codes found in them. Conservative on purpose: wording that says the care
-    was not an emergency is ignored, and the out-of-network-clinician case
-    needs both an out-of-network phrase and an in-network facility phrase.
+    Conservative on purpose. A situation counts when a billing code shows
+    it, when the procedure (the service denied) names it, or when a sentence
+    of the denial text ties it to this person's claim. Negated mentions ("no
+    ER visit occurred") and general policy sentences ("emergency services do
+    not require prior authorization") never count. The diagnosis is not
+    read: a diagnosis does not say where care was given.
     """
-    text = " ".join(t for t in (denial_text, procedure, diagnosis) if t)
+    del diagnosis  # accepted for a uniform call shape; see the docstring
+    service = _normalize(procedure or "")
+    letter = _normalize(denial_text or "")
     code_set = {c.strip().upper() for c in codes if c}
     facts: set[str] = set()
-    if code_set & AIR_AMBULANCE_CODES or _AIR_AMBULANCE_RE.search(text):
+    if (
+        code_set & AIR_AMBULANCE_CODES
+        or _affirmed(_AIR_AMBULANCE_RE, service)
+        or _about_this_claim(_AIR_AMBULANCE_RE, letter)
+    ):
         facts.add(AIR_AMBULANCE)
-    if code_set & EMERGENCY_DEPARTMENT_CODES or _EMERGENCY_RE.search(
-        _NOT_EMERGENCY_RE.sub(" ", text)
+    if (
+        code_set & EMERGENCY_DEPARTMENT_CODES
+        or _affirmed(_EMERGENCY_RE, service)
+        or _about_this_claim(_EMERGENCY_RE, letter)
     ):
         facts.add(EMERGENCY_CARE)
-    if _OUT_OF_NETWORK_RE.search(text) and _IN_NETWORK_FACILITY_RE.search(text):
+    both = f"{service} {letter}"
+    if _affirmed(_OUT_OF_NETWORK_RE, both) and _affirmed(_IN_NETWORK_FACILITY_RE, both):
         facts.add(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY)
     return frozenset(facts)
 
@@ -1002,14 +1066,25 @@ class SurpriseBillingRule:
     name: str
     summary: str
     effective: str
+    # Which coverage the rule reaches, in words, rendered with the rule so
+    # the letter (and the person) can see whether it fits their plan.
+    reaches: str
     source_url: str  # documentation only; not rendered into the prompt
-    # Private coverage (employer, marketplace, individual), including
-    # self-funded ERISA plans. The No Surprises Act reaches those, and FEHB
-    # plans through 5 U.S.C. 8902(p); it does not reach Medicare or Medicaid,
-    # which have their own emergency rules below.
+    # Private coverage (employer, marketplace, individual, non-federal
+    # government), including self-funded ERISA plans. The No Surprises Act
+    # reaches those, and FEHB plans through 5 U.S.C. 8902(p), which applies
+    # PHS Act 2799A-1, 2799A-2 and 2799A-7 and the provider rules in 2799B to
+    # FEHB enrollees. It does not reach Medicare, Medicaid or VA care, which
+    # have their own emergency rules below where they exist.
     private: bool
     public_programs: frozenset[str] = frozenset()
 
+
+_NSA_REACHES = (
+    "employer plans (including self-funded ones), marketplace and other "
+    "individual plans, state and local government plans, and FEHB plans; not "
+    "Original Medicare, Medicare Advantage, Medicaid or VA care"
+)
 
 SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
     SurpriseBillingRule(
@@ -1019,46 +1094,53 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
             "Act § 2799A-1(a); 45 C.F.R. § 149.110)"
         ),
         summary=(
-            "Emergency services must be covered without prior authorization, "
-            "whether or not the hospital or clinician is in network, at "
-            "in-network cost sharing. Whether the person had an emergency "
-            "medical condition is judged by the prudent layperson standard "
-            "(acute symptoms, including severe pain, a mental health condition "
-            "or a substance use disorder, that a layperson could reasonably "
-            "expect to need immediate care), and the plan may not decide it "
-            "solely from diagnosis codes."
+            "A plan that covers any emergency department services must cover "
+            "emergency services without prior authorization, whether or not "
+            "the hospital or clinician is in network, at in-network cost "
+            "sharing. An emergency medical condition, including a mental "
+            "health condition or substance use disorder, is one with acute "
+            "symptoms severe enough (including severe pain) that a prudent "
+            "layperson with an average knowledge of health and medicine could "
+            "reasonably expect the absence of immediate medical attention to "
+            "place the person's health (or a pregnant woman's or her unborn "
+            "child's) in serious jeopardy, seriously impair bodily functions, "
+            "or cause serious dysfunction of a bodily organ or part. The plan "
+            "may not decide that solely from diagnosis codes."
         ),
         effective="plan years beginning on or after January 1, 2022",
+        reaches=_NSA_REACHES,
         source_url="https://www.ecfr.gov/current/title-45/section-149.110",
         private=True,
         public_programs=frozenset({FEHB}),
     ),
     SurpriseBillingRule(
         fact=EMERGENCY_CARE,
-        name=("Medicare Advantage emergency services rule (42 C.F.R. § 422.113(b))"),
+        name="Medicare Advantage emergency services rule (42 C.F.R. § 422.113(b))",
         summary=(
-            "Medicare Advantage plans are financially responsible for "
-            "emergency and urgently needed services whether they were obtained "
-            "inside or outside the plan's network and whether or not there was "
-            "prior authorization, judged by the prudent layperson definition of "
-            "an emergency medical condition regardless of the final diagnosis."
+            "A Medicare Advantage plan is financially responsible for "
+            "emergency services whether they were obtained inside or outside "
+            "the plan's network and whether or not there was prior "
+            "authorization, judged by the prudent layperson definition of an "
+            "emergency medical condition regardless of the final diagnosis."
         ),
         effective="in force",
+        reaches="Medicare Advantage plans only",
         source_url="https://www.ecfr.gov/current/title-42/section-422.113",
         private=False,
         public_programs=frozenset({MEDICARE_ADVANTAGE}),
     ),
     SurpriseBillingRule(
         fact=EMERGENCY_CARE,
-        name=("Medicaid managed care emergency services rule (42 C.F.R. § 438.114)"),
+        name="Medicaid managed care emergency services rule (42 C.F.R. § 438.114)",
         summary=(
-            "Medicaid managed care plans must cover and pay for emergency "
+            "A Medicaid managed care plan must cover and pay for emergency "
             "services whether or not the provider has a contract with the plan, "
             "may not deny payment when the enrollee had an emergency medical "
             "condition under the prudent layperson definition, and may not limit "
             "what counts as an emergency by lists of diagnoses or symptoms."
         ),
         effective="in force",
+        reaches="Medicaid managed care plans only",
         source_url="https://www.ecfr.gov/current/title-42/section-438.114",
         private=False,
         public_programs=frozenset({MEDICAID}),
@@ -1077,6 +1159,7 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
             "not medically necessary, and it does not reach ground ambulances."
         ),
         effective="plan years beginning on or after January 1, 2022",
+        reaches=_NSA_REACHES,
         source_url="https://www.ecfr.gov/current/title-45/section-149.130",
         private=True,
         public_programs=frozenset({FEHB}),
@@ -1089,14 +1172,16 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
             "§§ 149.120 and 149.420)"
         ),
         summary=(
-            "Non-emergency care from an out-of-network clinician at an "
-            "in-network hospital or surgery center must be covered at in-network "
-            "cost sharing, unless the person signed a valid notice-and-consent "
-            "waiver beforehand, and that waiver is not allowed for certain "
-            "services such as anesthesiology, radiology, pathology and "
-            "emergency medicine."
+            "When a plan covers a service, non-emergency care for it from an "
+            "out-of-network clinician at an in-network hospital or surgery "
+            "center must be covered at in-network cost sharing, unless the "
+            "person signed a valid notice-and-consent waiver beforehand, and "
+            "that waiver is not allowed for certain services such as "
+            "anesthesiology, radiology, pathology and emergency medicine. It "
+            "does not make a plan cover a service it excludes."
         ),
         effective="plan years beginning on or after January 1, 2022",
+        reaches=_NSA_REACHES,
         source_url="https://www.ecfr.gov/current/title-45/section-149.120",
         private=True,
         public_programs=frozenset({FEHB}),
@@ -1105,20 +1190,32 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
 
 SURPRISE_BILLING_HEADER = "EMERGENCY AND SURPRISE BILLING RULES"
 
+# Signals that the plan is private coverage: a private plan source, a TPA
+# carrier, or a denial letter that named ERISA rights.
+_PRIVATE_EVIDENCE = PRIVATE_COVERAGE | {TPA, ERISA_LETTER}
+
+_UNKNOWN_PLAN_CAVEAT = (
+    "Note: the plan type is not known. The No Surprises Act rules above reach "
+    "most private and employer plans and FEHB plans, not Original Medicare, "
+    "Medicare Advantage, Medicaid or VA care, so cite one only if the plan is "
+    "one it reaches."
+)
+
 
 def applicable_surprise_billing_rules(
     facts: Iterable[str], programs: Iterable[str] = ()
 ) -> list[SurpriseBillingRule]:
     """The rules for the denial's facts that reach the plan.
 
-    ``programs`` is classify_plan()'s result. With no plan information the
-    private-coverage rules are kept, the common case; with only public
-    coverage, only the rules written for that program.
+    ``programs`` is classify_plan()'s result. With only public coverage, only
+    the rules written for that program, so Original Medicare and VA get none.
+    With no plan information, the private-coverage rules, which the context
+    block then renders with an unknown-plan caveat.
     """
     fact_set = set(facts)
     keys = set(programs)
     public = keys & PUBLIC_PROGRAMS
-    public_only = bool(public) and not keys & PRIVATE_COVERAGE
+    public_only = bool(public) and not keys & _PRIVATE_EVIDENCE
     rules: list[SurpriseBillingRule] = []
     for rule in SURPRISE_BILLING_RULES:
         if rule.fact not in fact_set:
@@ -1139,20 +1236,27 @@ def get_surprise_billing_citation_context(
     programs: Iterable[str] = (),
 ) -> Optional[str]:
     """The emergency and surprise-billing block for the appeal prompt, or
-    None when the denial shows none of those situations or no rule reaches
-    the plan."""
+    None when the denial is about none of those situations or no rule
+    reaches the plan. Each rule names the coverage it reaches; with no plan
+    information, a caveat says so."""
     facts = surprise_billing_facts(denial_text, procedure, diagnosis, codes)
     if not facts:
         return None
-    rules = applicable_surprise_billing_rules(facts, programs)
+    keys = set(programs)
+    rules = applicable_surprise_billing_rules(facts, keys)
     if not rules:
         return None
-    lines = "\n".join(f"- {r.name} ({r.effective}): {r.summary}" for r in rules)
-    return (
+    lines = "\n".join(
+        f"- {r.name} ({r.effective}; reaches {r.reaches}): {r.summary}" for r in rules
+    )
+    block = (
         f"{SURPRISE_BILLING_HEADER}: The denial appears to involve emergency "
         "care, an air ambulance, or an out-of-network clinician at an "
         "in-network facility. These federal rules MAY apply; cite one by name "
-        "only if the facts of this denial fit it, and do not invent section "
-        "numbers, dates, or quotations beyond what is provided here.\n"
-        f"{lines}"
+        "only if the facts of this denial and the plan fit it, and do not "
+        "invent section numbers, dates, or quotations beyond what is provided "
+        f"here.\n{lines}"
     )
+    if not keys & (_PRIVATE_EVIDENCE | PUBLIC_PROGRAMS):
+        block = f"{block}\n{_UNKNOWN_PLAN_CAVEAT}"
+    return block

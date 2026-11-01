@@ -3008,7 +3008,9 @@ class AppealGenerator(object):
                 denial_text=getattr(denial, "denial_text", None),
                 procedure=getattr(denial, "procedure", None),
                 diagnosis=getattr(denial, "diagnosis", None),
-                codes=extract_procedure_codes(text),
+                # The extractor's HCPCS pattern is uppercase only, so a code
+                # typed as "a0431" would be missed without this.
+                codes=extract_procedure_codes(text.upper()),
                 programs=programs,
             )
         except Exception as e:

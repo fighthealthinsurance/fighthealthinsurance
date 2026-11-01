@@ -65,6 +65,61 @@ class TestSurpriseBillingFacts(unittest.TestCase):
         )
         self.assertNotIn(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY, facts)
 
+    def test_policy_boilerplate_on_another_denial_is_not_emergency_care(self):
+        facts = surprise_billing_facts(
+            denial_text=(
+                "Your MRI is not medically necessary. Emergency services do not "
+                "require prior authorization."
+            ),
+            procedure="MRI lumbar spine",
+        )
+        self.assertNotIn(EMERGENCY_CARE, facts)
+
+    def test_negated_mentions_do_not_count(self):
+        for text in (
+            "No ER visit occurred on your claim.",
+            "No air ambulance was used for your claim.",
+            "Your claim was never an emergency room visit.",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(surprise_billing_facts(denial_text=text), frozenset())
+
+    def test_non_emergency_air_ambulance_is_still_air_ambulance(self):
+        facts = surprise_billing_facts(procedure="Non-emergency air ambulance transport")
+        self.assertIn(AIR_AMBULANCE, facts)
+        self.assertNotIn(EMERGENCY_CARE, facts)
+
+    def test_emergency_service_as_the_procedure_counts(self):
+        self.assertEqual(
+            surprise_billing_facts(procedure="Emergency department visit"),
+            {EMERGENCY_CARE},
+        )
+
+    def test_prior_authorization_wording_on_an_er_claim_still_counts(self):
+        facts = surprise_billing_facts(
+            denial_text=(
+                "Your emergency room visit on 3/2 was denied because prior "
+                "authorization was required and not obtained."
+            )
+        )
+        self.assertIn(EMERGENCY_CARE, facts)
+
+    def test_terms_broken_across_lines_still_match(self):
+        self.assertIn(
+            EMERGENCY_CARE,
+            surprise_billing_facts(denial_text="Your emergency\nroom visit was denied."),
+        )
+        self.assertIn(
+            AIR_AMBULANCE,
+            surprise_billing_facts(denial_text="Your claim for the air\nambulance was denied."),
+        )
+
+    def test_non_participating_hospital_alone_is_not_the_facility_case(self):
+        facts = surprise_billing_facts(
+            denial_text="Care at a non-participating hospital is not covered."
+        )
+        self.assertNotIn(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY, facts)
+
     def test_unrelated_denial_has_no_facts(self):
         facts = surprise_billing_facts(
             denial_text="Physical therapy beyond 20 visits is not medically necessary.",
@@ -139,6 +194,37 @@ class TestApplicableSurpriseBillingRules(unittest.TestCase):
                 self.assertNotIn("147.138", rule.summary)
 
 
+class TestSummariesKeepTheBenefitLimits(unittest.TestCase):
+    def rule(self, section):
+        return next(r for r in SURPRISE_BILLING_RULES if section in r.name)
+
+    def test_emergency_rule_is_conditioned_on_emergency_benefits(self):
+        self.assertIn(
+            "A plan that covers any emergency department services",
+            self.rule("149.110").summary,
+        )
+
+    def test_facility_rule_is_conditioned_on_a_covered_service(self):
+        summary = self.rule("149.120").summary
+        self.assertIn("When a plan covers a service", summary)
+        self.assertIn("does not make a plan cover a service it excludes", summary)
+
+    def test_emergency_rule_gives_the_full_prudent_layperson_standard(self):
+        summary = self.rule("149.110").summary
+        for phrase in (
+            "average knowledge of health and medicine",
+            "serious jeopardy",
+            "seriously impair bodily functions",
+            "serious dysfunction of a bodily organ or part",
+            "unborn child",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, summary)
+
+    def test_medicare_advantage_rule_leaves_out_urgently_needed_services(self):
+        self.assertNotIn("urgently needed", self.rule("422.113").summary)
+
+
 class TestSurpriseBillingContext(unittest.TestCase):
     def test_air_ambulance_block_says_what_the_rule_does_not_do(self):
         block = get_surprise_billing_citation_context(codes=["A0430"])
@@ -161,6 +247,28 @@ class TestSurpriseBillingContext(unittest.TestCase):
                 denial_text="Emergency room visit denied.", programs=("va",)
             )
         )
+
+    def test_unknown_plan_gets_the_plan_limits_and_a_caveat(self):
+        block = get_surprise_billing_citation_context(codes=["99285"])
+        assert block is not None
+        self.assertIn("reaches employer plans", block)
+        self.assertIn("the plan type is not known", block)
+
+    def test_known_private_plan_gets_no_unknown_plan_caveat(self):
+        block = get_surprise_billing_citation_context(
+            codes=["99285"], programs=("erisa",)
+        )
+        assert block is not None
+        self.assertNotIn("the plan type is not known", block)
+
+    def test_known_original_medicare_or_va_gets_no_emergency_rule(self):
+        for program in ("medicare", "va"):
+            with self.subTest(program=program):
+                self.assertIsNone(
+                    get_surprise_billing_citation_context(
+                        codes=["99285"], programs=(program,)
+                    )
+                )
 
     def test_the_source_url_is_not_rendered(self):
         block = get_surprise_billing_citation_context(codes=["99285"])
@@ -202,6 +310,13 @@ class TestCollectorWiring(unittest.TestCase):
         self.assertIn("Massachusetts", result)
         self.assertIn(SURPRISE_BILLING_HEADER, result)
         self.assertLess(result.index("Massachusetts"), result.index(SURPRISE_BILLING_HEADER))
+
+    def test_lowercase_air_ambulance_code_triggers_it(self):
+        result = AppealGenerator._collect_regulatory_context(
+            self.denial(procedure="a0431")
+        )
+        assert result is not None
+        self.assertIn("149.130", result)
 
     def test_unrelated_stateless_denial_still_gets_nothing(self):
         self.assertIsNone(

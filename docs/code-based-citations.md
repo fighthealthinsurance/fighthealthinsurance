@@ -17,13 +17,18 @@ regulatory block the appeal prompt already carries.
 
 | Trigger | Rule | Plans it reaches |
 |---|---|---|
-| Emergency room, emergency department or emergency services wording, or CPT 99281-99285 | No Surprises Act emergency services, PHS Act 2799A-1(a), 45 CFR 149.110: no prior authorization, any network, in-network cost sharing, prudent layperson standard, not decided from diagnosis codes alone | Employer (including self-funded), marketplace, individual, non-federal government, FEHB |
+| CPT 99281-99285, an emergency service as the procedure, or a sentence tying emergency care to the person's claim | No Surprises Act emergency services, PHS Act 2799A-1(a), 45 CFR 149.110: for a plan that covers any emergency department services, emergency services without prior authorization, in any network, at in-network cost sharing, judged by the prudent layperson standard and not from diagnosis codes alone | Employer (including self-funded), marketplace, individual, non-federal government, FEHB |
 | Same | 42 CFR 422.113(b) | Medicare Advantage |
 | Same | 42 CFR 438.114 | Medicaid managed care |
-| Air ambulance wording, or HCPCS A0430, A0431, A0435, A0436 | No Surprises Act air ambulance, PHS Act 2799A-2, 45 CFR 149.130: in-network cost sharing when the plan covers air ambulance; not ground ambulance, and not a coverage mandate | Employer, marketplace, individual, non-federal government, FEHB |
-| An out-of-network phrase together with an in-network hospital or facility phrase | PHS Act 2799A-1(b), 45 CFR 149.120 and 149.420: in-network cost sharing unless valid notice and consent, which is not allowed for ancillary services | Same |
+| HCPCS A0430, A0431, A0435, A0436, an air ambulance as the procedure, or a sentence tying one to the claim | No Surprises Act air ambulance, PHS Act 2799A-2, 45 CFR 149.130: in-network cost sharing when the plan covers air ambulance; not ground ambulance, and not a coverage mandate | Employer, marketplace, individual, non-federal government, FEHB |
+| An out-of-network phrase together with an in-network hospital or facility phrase | PHS Act 2799A-1(b), 45 CFR 149.120 and 149.420: for a service the plan covers, in-network cost sharing unless valid notice and consent, which is not allowed for ancillary services; not a coverage mandate | Same |
 
-Wording that says the care was not an emergency is ignored. The pre-2022
+Negated mentions ("no ER visit occurred") and general policy sentences
+("emergency services do not require prior authorization") are ignored, and
+line breaks inside a term still match. Each rule is rendered with the coverage
+it reaches; when the plan type is unknown, a caveat says which plans the No
+Surprises Act reaches, and a known Original Medicare or VA patient gets none
+of these. The pre-2022
 emergency rule (45 CFR 147.138(b)) only governs plan years that began before
 January 1, 2022 and is not cited. Original Medicare and VA get none of these.
 
