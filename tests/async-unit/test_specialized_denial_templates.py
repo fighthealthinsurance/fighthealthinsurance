@@ -280,7 +280,7 @@ class TestImagingClaimsAreConditional(unittest.TestCase):
     def test_letter_asks_which_criterion_was_applied(self):
         text = AdvancedImagingAppeal.static_appeal()
         self.assertIn("identify the criterion you applied", text)
-        self.assertIn("[If it applies:", text)
+        self.assertIn("[Specify the ACR Appropriateness Criteria scenario", text)
 
     def test_ncd_chapter_is_scoped_to_medicare_plans(self):
         text = AdvancedImagingAppeal.static_appeal()
@@ -298,12 +298,120 @@ class TestPatientSpecificClaimsAreFillIns(unittest.TestCase):
     def test_step_therapy_override_asks_which_ground_applies(self):
         text = SpecialtyMedicationAppeal.static_appeal()
         self.assertNotIn("the patient qualifies for an override", text)
-        self.assertIn("[Say which applies", text)
+        self.assertIn("[Specify which applies", text)
 
     def test_glp1_indication_asks_for_the_patients_details(self):
         text = GLP1WeightLossAppeal.static_appeal()
         self.assertNotIn("FDA-approved for the patient's condition", text)
-        self.assertIn("[state the patient's BMI and comorbidity]", text)
+        self.assertIn("[Specify the patient's BMI and weight-related comorbidity]", text)
+
+
+class TestFillInsAreCaughtBeforeALetterLeaves(unittest.TestCase):
+    """Every fill-in a template adds must be one the print and fax blank
+    check and the assistant's placeholder list both find, or a letter could
+    go out with the instruction still in it."""
+
+    FILL_INS = (
+        (
+            AdvancedImagingAppeal,
+            "[Specify the ACR Appropriateness Criteria scenario that rates this "
+            "study usually appropriate, and why a lower-cost study was not "
+            "enough, or delete this sentence]",
+        ),
+        (
+            AdvancedImagingAppeal,
+            "[Specify the NCD and the covered indication that matches this "
+            "order, or delete this sentence]",
+        ),
+        (
+            SpecialtyMedicationAppeal,
+            "[Specify which applies and list the agents tried, with dates]",
+        ),
+        (
+            GLP1WeightLossAppeal,
+            "[Specify the patient's BMI and weight-related comorbidity]",
+        ),
+        (
+            PostSurgicalRehabAppeal,
+            "[Specify the surgery and its date if this care follows surgery, "
+            "or delete this sentence]",
+        ),
+    )
+
+    def test_each_fill_in_is_in_its_letter(self):
+        for template, fill_in in self.FILL_INS:
+            with self.subTest(fill_in=fill_in):
+                self.assertIn(fill_in, template.static_appeal())
+
+    def test_the_blank_check_finds_each_fill_in(self):
+        from fighthealthinsurance.letter_placeholders import (
+            find_placeholder_spans,
+            find_unfilled_placeholders,
+        )
+
+        for template, fill_in in self.FILL_INS:
+            with self.subTest(fill_in=fill_in):
+                letter = template.static_appeal()
+                found = [letter[a:b] for a, b in find_placeholder_spans(letter)]
+                self.assertIn(fill_in, found)
+                self.assertIn(fill_in, find_unfilled_placeholders(letter))
+
+    def test_the_assistant_lists_each_fill_in(self):
+        from fighthealthinsurance.assistant_drafts import placeholders_in
+
+        for template, fill_in in self.FILL_INS:
+            with self.subTest(fill_in=fill_in):
+                self.assertIn(fill_in, placeholders_in(template.static_appeal()))
+
+    def test_no_bracket_the_checks_miss(self):
+        from fighthealthinsurance.letter_placeholders import find_placeholder_spans
+
+        for template in SPECIALIZED_DENIAL_TEMPLATES:
+            letter = template.static_appeal()
+            found = {letter[a:b] for a, b in find_placeholder_spans(letter)}
+            for bracket in re.findall(r"\[[^\[\]\n]+\]", letter):
+                with self.subTest(template=template.__name__, bracket=bracket):
+                    self.assertIn(bracket, found)
+
+
+class TestOlderTemplatesAskRatherThanAssert(unittest.TestCase):
+    def test_no_claim_that_the_denial_skipped_its_analysis(self):
+        for template in SPECIALIZED_DENIAL_TEMPLATES:
+            with self.subTest(template=template.__name__):
+                letter = template.static_appeal()
+                self.assertNotIn("does not engage with", letter)
+
+    def test_glp1_does_not_declare_the_drug_medically_necessary(self):
+        self.assertNotIn(
+            "covered medical condition and is medically necessary",
+            GLP1WeightLossAppeal.static_appeal(),
+        )
+
+    def test_therapy_letter_does_not_assume_a_cap(self):
+        letter = PhysicalTherapyContinuationAppeal.static_appeal()
+        self.assertNotIn("The denial appears to rest on", letter)
+        self.assertIn("If the denial rests on a visit cap", letter)
+
+    def test_rehab_letter_does_not_assume_surgery(self):
+        letter = PostSurgicalRehabAppeal.static_appeal()
+        self.assertNotIn("following surgery for", letter)
+        self.assertNotIn("post-operative status", letter)
+
+
+class TestSynthesisKeepsFillIns(unittest.TestCase):
+    def test_synthesis_prompt_keeps_bracketed_fill_ins(self):
+        prompt = AppealGenerator.SYNTHESIS_SYSTEM_PROMPT
+        self.assertIn("Keep bracketed fill-ins", prompt)
+        self.assertIn("never turn them into statements of fact", prompt)
+
+
+class TestRealImagingHintBlock(unittest.TestCase):
+    def test_hint_block_carries_the_imaging_guardrails(self):
+        block = AppealGenerator._build_specialized_hint_block([AdvancedImagingAppeal])
+        self.assertIn("Medicare plans only", block)
+        self.assertIn("cite a specific NCD only if one fits", block)
+        self.assertIn("Do not state that the study meets ACR criteria", block)
+        self.assertNotIn("satisfies the relevant NCD", block)
 
 
 class TestSpecialtyMedicationAppealMatches(unittest.TestCase):
