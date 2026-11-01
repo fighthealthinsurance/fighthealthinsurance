@@ -50,7 +50,9 @@ class TestMLCitationsHelperCMSIntegration:
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
     @patch("fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_citations")
-    async def test_uses_fresh_cache_when_available(self, mock_fetch, mock_cache_cls):
+    async def test_uses_fresh_cache_when_available(
+        self, mock_fetch, mock_cache_cls, log_capture
+    ):
         # Simulate a fresh DB cache hit on the variant-specific timestamp
         cache_entry = MagicMock()
         cached = [
@@ -67,13 +69,19 @@ class TestMLCitationsHelperCMSIntegration:
         mock_cache_cls.objects.filter.return_value = mock_qs
         mock_cache_cls.objects.aupdate_or_create = AsyncMock()
 
-        result = await MLCitationsHelper.generate_cms_coverage_citations(
-            denial=self.mock_denial
-        )
+        with log_capture() as cap:
+            result = await MLCitationsHelper.generate_cms_coverage_citations(
+                denial=self.mock_denial
+            )
 
         assert result == cached
         mock_fetch.assert_not_called()
         mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
+        # The procedure and diagnosis are the patient's medical details and
+        # stay out of the logs.
+        logged = " ".join(r["message"] for r in cap.records).lower()
+        assert "mri" not in logged
+        assert "headache" not in logged
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
@@ -111,6 +119,7 @@ class TestMLCitationsHelperCMSIntegration:
         # doesn't look it up again.
         kwargs = mock_cache_cls.objects.aupdate_or_create.await_args.kwargs
         assert kwargs["defaults"]["generic_citations"] == []
+        assert kwargs["defaults"]["generic_updated_at"] is not None
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
@@ -134,6 +143,27 @@ class TestMLCitationsHelperCMSIntegration:
 
         assert result == []
         mock_fetch.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
+    @patch("fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_citations")
+    async def test_failed_lookup_is_not_stored(self, mock_fetch, mock_cache_cls):
+        mock_qs = MagicMock()
+        mock_qs.afirst = AsyncMock(return_value=None)
+        mock_cache_cls.objects.filter.return_value = mock_qs
+        mock_cache_cls.objects.aupdate_or_create = AsyncMock()
+        mock_fetch.side_effect = RuntimeError("lookup broke")
+
+        with patch(
+            "fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_client"
+        ) as mock_client:
+            mock_client.return_value.has_report.return_value = True
+            result = await MLCitationsHelper.generate_cms_coverage_citations(
+                denial=self.mock_denial
+            )
+
+        assert result == []
+        mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
 
     def test_previous_read_path_only_sees_citations_or_a_miss(self):
         # During a rolling deploy, pods still on the previous code read rows

@@ -4,6 +4,7 @@ These tests mock httpx so they exercise the full parsing/matching/framing
 logic without hitting the real CMS API.
 """
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -282,6 +283,20 @@ class TestSingular:
         for word in ("analysis", "diabetes", "lupus", "bypass", "pancreas"):
             assert _singular(word) == word
 
+    def test_irregular_words(self):
+        assert _singular("lens") == "lens"
+        assert _singular("lenses") == "lens"
+        assert _singular("axes") == "axis"
+        assert _singular("process") == "process"
+        assert _singular("processes") == "process"
+
+    def test_lens_and_lenses_match(self):
+        docs = [
+            NCDDocument(document_id=1, document_display_id="1", title="Intraocular Lenses")
+        ]
+        results = _filter_by_keyword(docs, "intraocular lens", max_results=5)
+        assert [d.title for d in results] == ["Intraocular Lenses"]
+
     def test_generic_words_are_dropped_in_either_form(self):
         assert _meaningful_tokens("therapies and treatments") == []
 
@@ -394,6 +409,39 @@ class TestCMSCoverageClientSearch:
         second = await client.search_ncds("MRI brain")
 
         assert {d.document_id for d in second} == {d.document_id for d in first}
+
+
+class TestHasReport:
+    def _client(self, payload):
+        client = CMSCoverageClient(base_url="http://test.invalid")
+        mock_http = MagicMock()
+        mock_http.is_closed = False
+        mock_http.get = AsyncMock(return_value=_make_response(200, payload))
+        client._client = mock_http
+        return client
+
+    @pytest.mark.asyncio
+    async def test_fresh_empty_report_counts(self):
+        client = self._client(_ncd_payload([]))
+        assert await client.search_ncds("MRI brain") == []
+        assert client.has_report()
+
+    @pytest.mark.asyncio
+    async def test_expired_report_does_not_count(self):
+        client = self._client(_ncd_payload([_ncd_record(title="MRI Brain")]))
+        await client.search_ncds("MRI brain")
+        assert client.has_report()
+        # Past its TTL, as when a refresh failed and the old report is served.
+        client._ncd_report_cached_at = time.monotonic() - client._NCD_REPORT_TTL - 1
+        client._client.get = AsyncMock(side_effect=httpx.RequestError("outage"))
+        await client.search_ncds("MRI brain")
+        assert not client.has_report()
+
+    @pytest.mark.asyncio
+    async def test_malformed_response_is_not_a_report(self):
+        client = self._client({"meta": {}})
+        assert await client.search_ncds("MRI brain") == []
+        assert not client.has_report()
 
 
 class TestGetCMSCoverageCitations:
