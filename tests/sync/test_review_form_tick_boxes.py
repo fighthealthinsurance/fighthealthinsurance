@@ -57,7 +57,9 @@ class TheReviewFormPicksWithTickBoxesTest(TestCase):
         for name, (_, label) in PICKERS.items():
             with self.subTest(field=name):
                 group = page.find(id=f"id_{name}")
-                self.assertEqual(group["class"], ["fhi-check-list"])
+                # Denial types fold the uncommon ones away
+                # (test_denial_type_core_first.py), so their group wraps two lists.
+                self.assertIn(group["class"], (["fhi-check-list"], ["fhi-check-group"]))
                 self.assertEqual(group["role"], "group")
                 self.assertEqual(group["aria-label"], label)
                 help_id = group["aria-describedby"]

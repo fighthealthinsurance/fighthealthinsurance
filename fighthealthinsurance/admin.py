@@ -885,9 +885,9 @@ class ProceduresAdmin(admin.ModelAdmin):
 class DenialTypesAdmin(admin.ModelAdmin):
     """Admin configuration for DenialTypes model."""
 
-    list_display = ("id", "name", "parent")
+    list_display = ("id", "name", "parent", "core")
     search_fields = ("name",)
-    list_filter = ("parent",)
+    list_filter = ("parent", "core")
     ordering = ("name",)
 
 

@@ -675,7 +675,7 @@ class BasePostInferedForm(DenialRefForm):
         required=False,
         label="Type of denial",
         help_text="Select all that apply. If unsure, leave blank.",
-        widget=CheckboxList,
+        widget=CoreFirstCheckboxList(more_label="More denial types"),
     )
     denial_type_text = forms.CharField(
         required=False,
