@@ -143,6 +143,7 @@ from fighthealthinsurance.models import *
 from fighthealthinsurance.process_denial import ProcessDenialCodes
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
 from fighthealthinsurance.utils import (
+    aget_related,
     interleave_iterator_for_keep_alive,
     is_real_appeal,
     keepalive_frames,
@@ -1568,11 +1569,22 @@ class FindNextStepsHelper:
                     f"<a href='{html_escape(website)}' target='_blank' rel='noopener'>"
                     "file a complaint online</a>"
                 )
+            # A regulator the model inferred is linked without the letter
+            # naming it, so say what we know rather than what the letter says.
+            if regulator_routing.letter_names_regulator(denial):
+                source = (
+                    f"Your denial letter mentions <strong>{html_escape(regulator.name)}</strong>, "
+                    "a regulator that oversees this kind of plan."
+                )
+            else:
+                source = (
+                    f"Your plan looks to be overseen by <strong>{html_escape(regulator.name)}</strong>, "
+                    "a regulator."
+                )
             outside_help_details.append(
                 (
                     (
-                        f"Your denial letter mentions <strong>{html_escape(regulator.name)}</strong>, "
-                        "a regulator that oversees this kind of plan. They take consumer "
+                        source + " They take consumer "
                         "complaints about denials and can require the plan to respond."
                     ),
                     " or ".join(how_to_parts) + ".",
@@ -1892,6 +1904,12 @@ class FindNextStepsHelper:
         # would keep stale rows written during the read.
         request_started = timezone.now()
         prior_diagnosis = denial.diagnosis
+        # And for the regulator re-run below, which fires when the person's
+        # answers about their plan changed.
+        prior_plan_sources = sorted(denial.plan_source.values_list("name", flat=True))
+        prior_state = denial.your_state or denial.state
+        prior_employer = denial.employer_name
+        prior_insurer = denial.insurance_company
 
         # Track exactly which fields THIS request assigns so the save below
         # can write only those columns. The old full-row ``denial.save()``
@@ -2024,9 +2042,6 @@ class FindNextStepsHelper:
             changed_fields.add("your_state")
             changed_fields.add("state")
 
-        # Get outside help details using shared helper; after the state above,
-        # so a state the person cleared is not used.
-        outside_help_details = cls._get_outside_help_details(denial, your_state)
         if denial_date is not None:
             denial.denial_date = denial_date
             if "denial date" not in existing_answers:
@@ -2112,6 +2127,18 @@ class FindNextStepsHelper:
         # interaction, and the full-row save this replaced always touched it.
         denial.save(update_fields=sorted(changed_fields | {"last_interaction"}))
 
+        # The letter alone often doesn't say who regulates the plan; what the
+        # person just told us about it (where the coverage comes from, their
+        # state, their employer) often does. Look again when that changed.
+        cls._maybe_refresh_regulator_from_plan(
+            denial, prior_plan_sources, prior_state, prior_employer, prior_insurer
+        )
+
+        # Get outside help details using shared helper; after the state above,
+        # so a state the person cleared is not used, and after the regulator
+        # re-run, so the regulator shown is the one their answers point to.
+        outside_help_details = cls._get_outside_help_details(denial, your_state)
+
         # Round-2 speculative precompute: the user has now CONFIRMED (and
         # possibly corrected) procedure/diagnosis, which the create-time
         # reserve was generated without -- extraction hadn't run yet, let
@@ -2192,6 +2219,46 @@ class FindNextStepsHelper:
                 financial_assistance=financial_assistance,
                 appeal_deadline_note=appeal_deadline_note,
                 answers_action=cls.answers_action(denial),
+            )
+
+    @classmethod
+    def _maybe_refresh_regulator_from_plan(
+        cls,
+        denial: "Denial",
+        prior_plan_sources: list[str],
+        prior_state: Optional[str],
+        prior_employer: Optional[str],
+        prior_insurer: Optional[str] = None,
+    ) -> None:
+        """Re-run regulator detection when the plan answers changed.
+
+        Runs ``DenialCreatorHelper.extract_set_regulator_from_plan`` and
+        reloads ``denial.regulator``. Any answer the re-run reads counts:
+        plan sources, state, employer and insurer. An unchanged re-POST does
+        nothing, so
+        the model is not asked again for the same answers. Never raises:
+        the page is still useful without a regulator.
+        """
+        plan_sources = sorted(denial.plan_source.values_list("name", flat=True))
+        state = denial.your_state or denial.state
+        if (
+            plan_sources == prior_plan_sources
+            and (state or "") == (prior_state or "")
+            and (denial.employer_name or "") == (prior_employer or "")
+            and (denial.insurance_company or "") == (prior_insurer or "")
+        ):
+            return
+        try:
+            async_to_sync(DenialCreatorHelper.extract_set_regulator_from_plan)(
+                denial.denial_id,
+                prior_plan_sources=prior_plan_sources,
+                prior_state=prior_state,
+            )
+            denial.refresh_from_db(fields=["regulator"])
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"find_next_steps({denial.denial_id}): regulator re-run from "
+                "the plan answers failed"
             )
 
     @staticmethod
@@ -2945,6 +3012,9 @@ class DenialCreatorHelper:
             "candidate_generated_questions": None,
             # The follow-up rounds read the old letter too.
             "followup_questions": None,
+            # Matched on, or inferred from, the old letter; extraction for the
+            # new one skips the lookup while one is set.
+            "regulator": None,
             "candidate_ml_citation_context": None,
             # Handed back by both citation paths whenever it is set.
             "ml_citation_context": None,
@@ -4906,10 +4976,19 @@ class DenialCreatorHelper:
         regulators = await cls.regex_denial_processor.get_regulator(letter)
         if regulators:
             # First match wins; the seeded regexes are mutually specific.
-            await Denial.objects.filter(
-                denial_id=denial_id, regulator__isnull=True
+            # Conditional on the letter, as the model's write below is: a
+            # replacement clears the regulator, and this match was on the
+            # old letter.
+            updated = await Denial.objects.filter(
+                denial_id=denial_id,
+                regulator__isnull=True,
+                denial_text=denial.denial_text,
             ).aupdate(regulator=regulators[0])
-            return EXTRACTION_OUTCOME_FOUND
+            return (
+                EXTRACTION_OUTCOME_FOUND
+                if updated
+                else EXTRACTION_OUTCOME_NOTHING_FOUND
+            )
         if not ask_model or not letter.strip():
             return EXTRACTION_OUTCOME_NOTHING_FOUND
         try:
@@ -4937,6 +5016,120 @@ class DenialCreatorHelper:
         return EXTRACTION_OUTCOME_FOUND if updated else EXTRACTION_OUTCOME_NOTHING_FOUND
 
     @classmethod
+    async def extract_set_regulator_from_plan(
+        cls,
+        denial_id: int,
+        prior_plan_sources: typing.Iterable[str] = (),
+        prior_state: Optional[str] = None,
+    ) -> str:
+        """Look for the regulator again with what the person told us about
+        their plan.
+
+        Run after the person answers the review page's plan questions
+        (``FindNextStepsHelper.find_next_steps``), since a letter often never
+        says what kind of plan it is and the person's answers do:
+
+        - A regulator the letter itself names (``letter_names_regulator``)
+          stays, and one the fixture regexes find in the letter is linked;
+          it is the best evidence there is.
+        - Answers that settle it on their own (Medicare, Medicaid or a
+          marketplace plan in a known state, a federal employee plan, the
+          VA: ``regulator_routing.plan_source_regulator``) are stored,
+          replacing an earlier inference from the letter alone.
+        - Otherwise the model reads the letter again with the answers
+          appended (``regulator_routing.plan_facts``), and a regulator it
+          names replaces an inference. An inference the earlier answers
+          (``prior_plan_sources``, ``prior_state``) settled is dropped when
+          the new ones no longer do, so a corrected answer doesn't leave
+          the old one's regulator behind; any other is kept when the model
+          has nothing better.
+
+        Best effort, like ``extract_set_regulator``; returns an extraction
+        outcome.
+        """
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        # Not select_related: the join's NULL regex columns don't load on a
+        # denial with no regulator.
+        previous: Optional[Regulator] = await aget_related(denial, "regulator")
+        if previous is not None and regulator_routing.letter_names_regulator(denial):
+            return EXTRACTION_OUTCOME_CACHED
+        letter = denial.denial_text or ""
+        state = denial.your_state or denial.state
+        sources = [
+            name async for name in denial.plan_source.values_list("name", flat=True)
+        ]
+        found: Optional[Regulator] = None
+        # A regulator the letter names (the fixture regexes) beats anything
+        # the answers suggest; extract_set_regulator may not have linked it
+        # yet, and once this links another it would never look again.
+        named = await cls.regex_denial_processor.get_regulator(letter)
+        settled = regulator_routing.plan_source_regulator(sources, state)
+        if named:
+            found = named[0]
+        elif settled is not None:
+            found = await cls._regulator_row_from_defaults(settled)
+        else:
+            facts = regulator_routing.plan_facts(
+                sources, state, denial.employer_name, denial.insurance_company
+            )
+            if facts and letter.strip():
+                try:
+                    answer = await appealGenerator.get_regulator_routing(
+                        f"{letter}\n\n{facts}",
+                        use_external=bool(denial.use_external),
+                    )
+                except ExtractionUnavailable as e:
+                    logger.info(f"extract_set_regulator_from_plan({denial_id}): {e}")
+                    answer = None
+                if answer is not None:
+                    logger.info(
+                        f"extract_set_regulator_from_plan({denial_id}): model "
+                        f"says regulator {answer.regulator!r}, plan kind "
+                        f"{answer.plan_kind}"
+                    )
+                    found = await cls._regulator_row_for(answer.regulator)
+        if found is None and previous is not None:
+            prior = regulator_routing.plan_source_regulator(
+                prior_plan_sources, prior_state
+            )
+            came_from_prior_answers = (
+                prior is not None
+                and (await cls._regulator_row_from_defaults(prior)).pk == previous.pk
+            )
+            if not came_from_prior_answers:
+                return EXTRACTION_OUTCOME_CACHED
+        if found is None and previous is None:
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
+        if found is not None and previous is not None and found.pk == previous.pk:
+            return EXTRACTION_OUTCOME_CACHED
+        # Conditional on the row still holding what we decided from: a
+        # replaced letter, a corrected answer submitted while the model read
+        # this one, or a regulator another step linked meanwhile, wins. The
+        # plan sources are a many-to-many, outside the update's predicate, so
+        # they are read again just before it; that narrows the window to the
+        # two statements rather than the model call.
+        if sorted(
+            [name async for name in denial.plan_source.values_list("name", flat=True)]
+        ) != sorted(sources):
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
+        row = Denial.objects.filter(
+            denial_id=denial_id,
+            denial_text=letter,
+            your_state=denial.your_state,
+            state=denial.state,
+            employer_name=denial.employer_name,
+            insurance_company=denial.insurance_company,
+        )
+        if previous is None:
+            row = row.filter(regulator__isnull=True)
+        else:
+            row = row.filter(regulator=previous)
+        updated = await row.aupdate(regulator=found)
+        if not updated or found is None:
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
+        return EXTRACTION_OUTCOME_FOUND
+
+    @classmethod
     async def _regulator_row_for(cls, name: str) -> Optional[Regulator]:
         """The ``Regulator`` row for a name the model gave, or None.
 
@@ -4948,6 +5141,13 @@ class DenialCreatorHelper:
         defaults = regulator_routing.regulator_defaults(name)
         if defaults is None:
             return None
+        return await cls._regulator_row_from_defaults(defaults)
+
+    @classmethod
+    async def _regulator_row_from_defaults(
+        cls, defaults: regulator_routing.RegulatorDefaults
+    ) -> Regulator:
+        """The ``Regulator`` row ``defaults`` stands for, created if need be."""
         if defaults.fixture_alt_name:
             row = await Regulator.objects.filter(
                 alt_name=defaults.fixture_alt_name

@@ -209,6 +209,15 @@ async def _note_followup_jev_failure(summary: str) -> None:
     await ExternalServiceHealth.anote_failure(followup_questions.SERVICE, summary)
 
 
+def _healthy_internal_model():
+    """Our strongest own model for the follow-up round, or None when none
+    looks healthy: best_internal_model falls back to one marked down, and
+    the person waits on the loading page for whatever it is asked."""
+    if not ml_router._healthy_general_internal():
+        return None
+    return ml_router.best_internal_model()
+
+
 class MLAppealQuestionsHelper:
     @staticmethod
     async def generate_generic_questions(
@@ -665,7 +674,7 @@ class MLAppealQuestionsHelper:
                         followup_questions.SERVICE
                     )
                     return enough >= followup_questions.ENOUGH_AT
-        model = ml_router.best_internal_model()
+        model = _healthy_internal_model()
         if model is None:
             return None
         try:
@@ -694,7 +703,7 @@ class MLAppealQuestionsHelper:
         [] when the answers are enough, None when no model answered."""
         if await MLAppealQuestionsHelper._answers_enough(denial, answered, history):
             return []
-        model = ml_router.best_internal_model()
+        model = _healthy_internal_model()
         if model is None:
             return None
         candidates = await model.get_followup_questions(

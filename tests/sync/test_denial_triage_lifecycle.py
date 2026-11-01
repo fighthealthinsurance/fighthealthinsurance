@@ -106,6 +106,7 @@ class TriageLifecycleTest(TestCase):
                     "regulation": {"choice": "unknown", "confidence": 0.4},
                     "pre_service": {"noul": 0.1},
                     "urgent": {"noul": 0.02},
+                    "regulator": {"noul": 0.03},
                     "deadline": {"choice": "180 days from notice", "confidence": 0.95},
                 }
             },
@@ -163,6 +164,7 @@ class TriageLifecycleTest(TestCase):
                     "regulation": {"choice": "unknown", "confidence": 0.4},
                     "pre_service": {"noul": 0.1},
                     "urgent": {"noul": 0.02},
+                    "regulator": {"noul": 0.03},
                     "deadline": {"choice": "180 days from notice", "confidence": 0.95},
                 }
             },

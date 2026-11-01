@@ -929,6 +929,13 @@ class ChooserCandidateSerializer(serializers.Serializer):
     id = serializers.CharField(read_only=True)
     kind = serializers.CharField()
     content = serializers.CharField()
+    # A chat draft's lookups (chooser_chat_tools.ToolCallRecord.as_dict):
+    # the tool, what it was asked and what it found, so the voter can check
+    # the reply against it. Nothing about the author: which tool a draft
+    # reached for is part of the answer being judged.
+    tool_calls = serializers.ListField(
+        child=serializers.DictField(), required=False, default=list
+    )
 
 
 class ChooserTaskSerializer(serializers.Serializer):

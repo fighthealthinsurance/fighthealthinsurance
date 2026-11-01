@@ -239,8 +239,10 @@ interview are version 2; older appeal tasks and every chat task are 1. The
 version marks the pipeline, not what each step found. The next-task endpoint
 serves the newest version first (then fewest votes, then oldest), so new
 cases collect votes before old ones, which stay votable; a judge who is
-warming up (see below) is ramped through the newest version's cases by
-complexity, with the older versions still behind them. Only tasks at the
+warming up (see below) is served appeal cases with evidence first, then
+cases judged fewer than `CHOOSER_WARMUP_SATURATION_VOTES` times, then the
+newest version, then by complexity (so an older case still short of that
+many votes comes before a newer one that has them). Only tasks at the
 current version count as fresh for the refill (`_fresh_tasks`), so unvoted
 old tasks never hold off generating new ones.
 
@@ -384,7 +386,10 @@ The public page shows two things, both safe to publish:
   else. Win rate is votes won over votes shown in;
   "caught making things up" is flags over votes shown in. A tie gives each
   tied draft an even share of the vote. Models with fewer
-  than `PUBLIC_RANKINGS_MIN_SHOWN` votes are listed as warming up. Each
+  than `PUBLIC_RANKINGS_MIN_SHOWN` votes are listed as warming up. Models
+  are named without their provider (`public_model_label`): every
+  `provider/model` label serving one model counts as a single row, on the
+  broad assumption that providers of the same model are equivalent. Each
   table names its **leader**, the first ranked model (best win rate, ties to
   the one flagged less), or none while every model is warming up; the page
   opens with the all-time leaders (`Who is winning`), marks the leading row
@@ -457,7 +462,7 @@ environment variables of the same name.
 | `CONDITION_RANKING_MIN_PUBMED_HITS` | `20` | Hits a quoted phrase needs in PubMed |
 | `CONDITION_RANKING_REFRESH_SECONDS` | `3600` | How often `refresh_if_due` refreshes |
 | `CONDITION_RANKING_REFRESH_TIMEOUT` | `180` | Seconds the refill actor waits on one refresh |
-| `CONDITION_RANKING_LIMIT` | `25` | Rows per list on the public page |
+| `CONDITION_RANKING_LIMIT` | `5` | Rows per list on the public page (kept short as defense in depth against PII typed into a field) |
 | `ARENA_RANKINGS_PAGE_ENABLED` | `False` (`True` in Dev and tests) | Serve the public rankings page and link to it |
 | `PUBLIC_RANKINGS_CACHE_SECONDS` | `900` | How long the page's numbers are cached |
 | `PUBLIC_RANKINGS_MIN_SHOWN` | `10` | Votes before a model is ranked rather than warming up |

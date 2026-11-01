@@ -2,7 +2,7 @@
 the follow-up round after the questions page.
 
 Nothing here reaches a model or TypeSafe: our own model is stubbed at
-ml_router.best_internal_model and Jev at followup_questions._post. What
+ml_appeal_questions_helper._healthy_internal_model and Jev at followup_questions._post. What
 matters most: Jev answers "enough?" only with consent to outside models and
 sees the case redacted, our own model answers it otherwise, a "yes" spares the
 follow-ups, the check runs once, and anything going wrong means no follow-ups.
@@ -36,9 +36,9 @@ FIRST_ROUND_QUESTION = "Has the patient tried physical therapy?"
 FOLLOW_UP = "How many weeks of physical therapy did the patient complete?"
 SECOND_FOLLOW_UP = "Did the pain limit the patient's ability to work?"
 
-_BEST_INTERNAL = (
-    "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router.best_internal_model"
-)
+# Our own model as the follow-up round picks it: the strongest that looks
+# healthy (ml_appeal_questions_helper._healthy_internal_model).
+_BEST_INTERNAL = "fighthealthinsurance.ml.ml_appeal_questions_helper._healthy_internal_model"
 
 
 def _payload(enough):
@@ -265,3 +265,26 @@ class TestFollowUpsForADenial:
         with override_settings(**ROUND_ON):
             assert _run(denial, model) == []
         assert _stored(denial) is None
+
+
+class TestTheRoundAsksOnlyAHealthyModel:
+    """best_internal_model falls back to a model marked down; the person
+    waits on the loading page for the round, so it must not ask one."""
+
+    def test_no_healthy_model_means_no_model(self):
+        from fighthealthinsurance.ml import ml_appeal_questions_helper as helper
+
+        with patch.object(
+            helper.ml_router, "_healthy_general_internal", return_value=[]
+        ), patch.object(helper.ml_router, "best_internal_model") as best:
+            assert helper._healthy_internal_model() is None
+        best.assert_not_called()
+
+    def test_a_healthy_model_is_the_strongest(self):
+        from fighthealthinsurance.ml import ml_appeal_questions_helper as helper
+
+        model = _model()
+        with patch.object(
+            helper.ml_router, "_healthy_general_internal", return_value=[model]
+        ), patch.object(helper.ml_router, "best_internal_model", return_value=model):
+            assert helper._healthy_internal_model() is model

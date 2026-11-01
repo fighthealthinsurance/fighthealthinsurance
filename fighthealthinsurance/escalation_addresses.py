@@ -17,11 +17,13 @@ text; this module is the complementary "where do we send a letter"
 address book that combines per-state DOI data and national resources.
 """
 
+import bisect
 import re
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
 from fighthealthinsurance.models import RegulatorEscalation
+from fighthealthinsurance.regulator_routing import letter_names_regulator
 from fighthealthinsurance.state_help import (
     StateHelp,
     get_state_help_by_abbreviation,
@@ -228,23 +230,76 @@ def get_recipients_for_denial(denial: Any) -> List[EscalationRecipient]:
     return recipients
 
 
-# Wording in a denial letter that says an appeal has already been decided:
-# the insurer upheld itself, calls this its final word, or names a second
-# level. Deliberately not "external review" or "independent review": a
-# first-level denial carries those as a required notice of rights, so they
-# say nothing about where this person is in the process.
-_APPEAL_ALREADY_DECIDED_RE = re.compile(
+# Wording in a denial letter that says the insurer has upheld itself once:
+# an appeal was decided against the person. Most plans have more than one
+# internal level, so on its own this is still a job for the next appeal,
+# not a regulator; it is only named back as a supporting reason.
+_APPEAL_UPHELD_RE = re.compile(
     r"("
     r"\b(we|has|have|is|are|was|were|been)\s+(also\s+)?uph[eo]ld\b"
     r"|\buph[eo]ld\s+(our|the|its|this|that)\b"
-    r"|\bour (original|initial|previous|prior|earlier) "
+    # "Our original decision" alone is in every first denial's rights notice
+    # ("you have the right to appeal our initial determination"), so it
+    # counts only with a verb saying it was kept.
+    r"|\b(maintain|affirm|reaffirm|uph[eo]ld|stand\s+by)(s|ed|ing)?\s+"
+    r"(our|the|its)\s+(original|initial|previous|prior|earlier)\s+"
     r"(decision|determination|denial)\b"
-    r"|\bfinal (adverse|internal)? ?(benefit )?(determination|decision)\b"
-    r"|\bexhausted\b.{0,40}\bappeal"
-    r"|\b(second|2nd|level[- ](2|two|ii))[- ]level\b"
-    r"|\blevel[- ](2|two|ii)\b.{0,20}\bappeal"
+    r"|\bour (original|initial|previous|prior|earlier) "
+    r"(decision|determination|denial)\b[^.;:!?\n]{0,60}?"
+    r"\b(stands|remains|(is|was|has\s+been|have\s+been)\s+"
+    r"(upheld|maintained|affirmed|reaffirmed|unchanged))\b"
     r")",
     re.IGNORECASE | re.UNICODE | re.DOTALL,
+)
+# Wording that says the internal appeals are done: the insurer's final
+# word or appeals exhausted. This is the point where the regulator (and
+# external review) is the next step. Deliberately not "external review" or
+# "independent review": a first-level denial carries those as a required
+# notice of rights, so they say nothing about where this person is in the
+# process.
+_INTERNAL_APPEALS_DONE_RE = re.compile(
+    r"("
+    # "Our final decision at this level" is the last word of one level
+    # while the letter offers the next, so it does not count.
+    r"\bfinal (adverse|internal)? ?(benefit )?(determination|decision)\b"
+    r"(?!\s+(at|for|on|of)\s+(this|the\s+first|the\s+current)\s+level\b)"
+    r"|\bexhausted\b.{0,40}\bappeal"
+    # Appeals before "exhausted", with no negation between them ("your
+    # appeals have not been exhausted").
+    r"|\bappeals?\b(?:(?!\b(?:not|never|yet)\b|n['\u2019]t\b)[^.;:!?\n]){0,40}"
+    r"\bexhausted\b"
+    r")",
+    re.IGNORECASE | re.UNICODE | re.DOTALL,
+)
+# A second- or third-level appeal named. On its own that is only a level: a
+# rights notice ("you have the right to request a third-level appeal") and
+# an acknowledgement ("we received your second level appeal and it is under
+# review") name one too, while appeals remain or are pending. So it counts
+# only in a sentence that also states a decision on it and says nothing of
+# filing, rights or a review still under way (_later_level_decided).
+_LATER_LEVEL_RE = re.compile(
+    r"\b(second|2nd|third|3rd|level[- ](2|two|ii|3|three|iii))[- ]level\b"
+    r"|\blevel[- ](2|two|ii|3|three|iii)\b.{0,20}\bappeal",
+    re.IGNORECASE | re.UNICODE | re.DOTALL,
+)
+# A clause about some other appeal: its decision is not the later level's.
+_OTHER_APPEAL_RE = re.compile(
+    r"\b(first|1st|initial|level[- ](1|one|i))[- ](level\b|appeal)",
+    re.IGNORECASE,
+)
+_DECISION_RE = re.compile(
+    r"\b(uph[eo]ld|denied|decided|decision|determination|stands|unchanged"
+    r"|affirmed|reaffirmed|maintained|overturn(ed)?)\b",
+    re.IGNORECASE,
+)
+_PENDING_OR_RIGHTS_RE = re.compile(
+    r"\b(right to|you can|to request|request (a|an)|to file|to submit"
+    r"|under review|being reviewed|being processed|processing|pending"
+    r"|in progress|are reviewing|is reviewing"
+    # A decision still to come, not "we will mail you the decision".
+    r"|will (be )?(review|decid|consider|issue|make|notify|respond)\w*"
+    r"|decision will)\b",
+    re.IGNORECASE,
 )
 # The same words in a clause about what could happen, not what did: the
 # rights notice on a first denial says "If our decision is upheld you may
@@ -252,41 +307,112 @@ _APPEAL_ALREADY_DECIDED_RE = re.compile(
 # appeals". Any of these in the clause before the match disqualifies it.
 _CONDITIONAL_CLAUSE_RE = re.compile(
     r"\b(if|should|unless|in the event|may|might|would|will|could"
-    r"|once you|when you|after you|until you)\b",
+    r"|once(?!\s+again\b)|(when|after|until)\s+(you|your|all|the))\b",
     re.IGNORECASE,
 )
 _CLAUSE_BREAK_RE = re.compile(r"[.;:!?\n]")
+# A whole sentence, for reading a later-level appeal with its decision:
+# "Your second-level appeal has concluded; the decision is upheld."
+_SENTENCE_BREAK_RE = re.compile(r"[.!?\n]")
+# A negation just before the match: "this is not a final decision", "we
+# cannot affirm our original decision", "we can't uphold the denial".
+# A few small words may sit between: "this is not yet a final decision",
+# "this is not considered a final decision".
+_NEGATED_RE = re.compile(
+    r"\b(not|never|no|cannot|\w+n['\u2019]t)\s+"
+    r"(?:(?:a|an|the|our|its|this|that|yet|be|been|considered|deemed)\s+){0,3}$",
+    re.IGNORECASE,
+)
 # How far back a clause is read for a conditional. Longer than any clause
 # a letter is likely to hold, short enough that the sentence before cannot
 # lend its "if" to this one when the break between them is unpunctuated.
 _CLAUSE_LOOKBACK_CHARS = 200
 
 
-def _appeal_already_decided(denial_text: str) -> bool:
-    """Whether the letter says an appeal on this denial has been decided."""
-    for match in _APPEAL_ALREADY_DECIDED_RE.finditer(denial_text):
+def _own_voice_matches(pattern: re.Pattern, denial_text: str):
+    """Each match of *pattern* the letter states as so, not in a
+    conditional or negated clause."""
+    for match in pattern.finditer(denial_text):
         before = denial_text[
             max(0, match.start() - _CLAUSE_LOOKBACK_CHARS) : match.start()
         ]
         clause = _CLAUSE_BREAK_RE.split(before)[-1]
-        if not _CONDITIONAL_CLAUSE_RE.search(clause):
+        if _CONDITIONAL_CLAUSE_RE.search(clause) or _NEGATED_RE.search(clause):
+            continue
+        yield match
+
+
+def _says_in_own_voice(pattern: re.Pattern, denial_text: str) -> bool:
+    """Whether *pattern* matches somewhere the letter states it as done."""
+    return next(_own_voice_matches(pattern, denial_text), None) is not None
+
+
+def _later_level_decided(denial_text: str) -> bool:
+    """Whether the letter states a decision on a second- or third-level
+    appeal (see _LATER_LEVEL_RE).
+
+    The decision counts in the clause naming the appeal, or in a later
+    clause of the same sentence that names no other appeal ("has
+    concluded; the decision is upheld"), never in an earlier one ("we
+    denied your first-level appeal; we received your second-level
+    appeal"). Only the appeal's own clause can say it is pending or still
+    open, so a rights notice in a later clause ("…; you can request an
+    external review") does not cancel the decision.
+    """
+    sentence_breaks = [m.start() for m in _SENTENCE_BREAK_RE.finditer(denial_text)]
+    clause_breaks = [m.start() for m in _CLAUSE_BREAK_RE.finditer(denial_text)]
+
+    def bounds(breaks: List[int], start: int, end: int) -> tuple[int, int]:
+        before = bisect.bisect_left(breaks, start)
+        after = bisect.bisect_left(breaks, end)
+        return (
+            breaks[before - 1] + 1 if before else 0,
+            breaks[after] if after < len(breaks) else len(denial_text),
+        )
+
+    for match in _own_voice_matches(_LATER_LEVEL_RE, denial_text):
+        _, s_end = bounds(sentence_breaks, match.start(), match.end())
+        c_start, c_end = bounds(clause_breaks, match.start(), match.end())
+        if _PENDING_OR_RIGHTS_RE.search(denial_text[c_start:c_end]):
+            continue
+        if _DECISION_RE.search(denial_text[c_start:c_end]):
             return True
+        later = denial_text[c_end:s_end]
+        for clause in _CLAUSE_BREAK_RE.split(later):
+            if _OTHER_APPEAL_RE.search(clause) or _LATER_LEVEL_RE.search(clause):
+                break
+            if _DECISION_RE.search(clause):
+                return True
     return False
+
+
+def _appeal_already_decided(denial_text: str) -> bool:
+    """Whether the letter says an appeal on this denial was upheld once."""
+    return _says_in_own_voice(_APPEAL_UPHELD_RE, denial_text)
+
+
+def _internal_appeals_done(denial_text: str) -> bool:
+    """Whether the letter says the internal appeals are finished (a final
+    determination, appeals exhausted, a second- or third-level decision)."""
+    return _says_in_own_voice(
+        _INTERNAL_APPEALS_DONE_RE, denial_text
+    ) or _later_level_decided(denial_text)
 
 
 # Denial types where the denial itself is the kind of thing a regulator
 # looks into, by name (fixture rows are matched by name, never by pk, as
 # ml/denial_triage.py does). "Limit for filing expired" is left out: that
 # is usually the provider's timely-filing problem, not the insurer's.
+# "Preventive Care" is left out too: its fixture regex tags the kind of care
+# ("prep", "screening", "STD", "vaccine"...), not anything the plan did wrong,
+# so a plain first-level medical-necessity denial of PrEP carried it. The
+# ACA preventive-care argument belongs in the appeal (the type's appeal_text
+# already puts it there).
 _REGULATOR_POLICED_DENIAL_TYPES: dict[str, str] = {
     "Pre-Existing Condition": (
         "Your denial cites a pre-existing condition. Health plans generally "
         "may not deny coverage on that basis, and regulators look into "
         "denials that do."
-    ),
-    "Preventive Care": (
-        "Your denial is for preventive care, which most plans are required "
-        "to cover. Regulators look into denials of required benefits."
     ),
     "In-Network Treated as Out of Network": (
         "An in-network provider was billed as out of network. Network "
@@ -300,25 +426,66 @@ _REGULATOR_POLICED_DENIAL_TYPES: dict[str, str] = {
 
 
 def regulator_escalation_reasons(denial: Any) -> List[str]:
-    """Plain-English reasons a regulator should hear about this denial.
+    """Plain-English reasons a regulator should hear about this denial now.
 
-    Empty when nothing in the denial points that way; the appeal pages then
-    show the regulator-letter callout at its normal size. Each reason is a
-    sentence for the person, in the same restrained voice as the recipient
-    rationales above. Rule-based and read from the row as it is: no model
-    call, no extra lookups beyond the denial's own relations.
+    A regulator is brought in at two points only: once the internal appeals
+    are done (the insurer's final word, a second- or third-level appeal
+    decided), or when the care is time-critical and a regulator complaint
+    should go out in parallel with the appeal. Each is read from the letter
+    and form by the rules here, or from Jev's stored triage answers when
+    triage is on, consented to, current and confident. Without one of those this is
+    empty, whatever else the letter says, and the appeal pages show the
+    regulator-letter callout at its normal size. With one, the other signals
+    (a regulator the letter names, an ERISA plan, a denial type regulators
+    police, an appeal already upheld once) are added as supporting reasons.
+
+    Each reason is a sentence for the person, in the same restrained voice
+    as the recipient rationales above. Read from the row as it is: no model
+    call here (the triage was stored earlier), no extra lookups beyond the
+    denial's own relations.
     """
+    denial_text = getattr(denial, "denial_text", "") or ""
     reasons: List[str] = []
 
-    if _appeal_already_decided(getattr(denial, "denial_text", "") or ""):
+    # Two ways to see each trigger: the rules here, read from the letter and
+    # the form, and Jev's triage answers (ml/denial_triage.regulator_signals)
+    # when a usable, confident triage is stored. Either one is enough.
+    from fighthealthinsurance.ml.denial_triage import regulator_signals
+
+    jev = regulator_signals(denial)
+
+    internal_done = _internal_appeals_done(denial_text) or jev.appeals_done
+    if internal_done:
         reasons.append(
-            "Your letter reads like an appeal that has already been denied "
-            "once. That is when a regulator complaint helps most."
+            "Your letter reads like the insurer's final decision on your "
+            "internal appeals. That is when a regulator complaint helps most."
+        )
+
+    if getattr(denial, "urgent", False):
+        reasons.append(
+            "You marked this care as urgent. A regulator complaint can go out "
+            "in parallel with your appeal instead of waiting on it."
+        )
+    elif jev.urgent:
+        reasons.append(
+            "Your letter reads like this care is time-critical. A regulator "
+            "complaint can go out in parallel with your appeal instead of "
+            "waiting on it."
+        )
+
+    if not reasons:
+        return []
+
+    if not internal_done and _appeal_already_decided(denial_text):
+        reasons.append(
+            "Your letter reads like an appeal that has already been denied once."
         )
 
     regulator = getattr(denial, "regulator", None)
     regulator_name = (getattr(regulator, "name", "") or "").strip()
-    if regulator_name:
+    # Only a regulator the letter names: one the model inferred (no regex
+    # match) is a guess about the plan, not a sign from the letter.
+    if regulator_name and letter_names_regulator(denial):
         reasons.append(
             f"Your denial letter names {regulator_name}, a regulator that "
             "oversees this kind of plan and takes consumer complaints."
@@ -328,12 +495,6 @@ def regulator_escalation_reasons(denial: Any) -> List[str]:
         reasons.append(
             "This looks like an employer self-funded (ERISA) plan, so the U.S. "
             "Department of Labor also oversees how the appeal is handled."
-        )
-
-    if getattr(denial, "urgent", False):
-        reasons.append(
-            "You marked this care as urgent. A regulator complaint can go out "
-            "with your appeal instead of waiting on it."
         )
 
     denial_type_manager = getattr(denial, "denial_type", None)

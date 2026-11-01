@@ -1,10 +1,12 @@
 """Unit tests for the regulator escalation packet feature."""
 
 import json
+import re
 from unittest.mock import AsyncMock, patch
 
 from asgiref.sync import async_to_sync
-from django.test import TestCase, Client
+from django.test import TestCase, Client, override_settings
+from django.utils import timezone
 from django.urls import reverse
 
 from fighthealthinsurance.common_view_logic import (
@@ -23,6 +25,7 @@ from fighthealthinsurance.escalation_addresses import (
 from fighthealthinsurance.generate_regulator_letter import (
     make_regulator_letter_prompt,
 )
+from fighthealthinsurance.ml import denial_triage
 from fighthealthinsurance.models import Denial, RegulatorEscalation
 from fighthealthinsurance.state_help import StateHelp
 from tests.back_links import back_link
@@ -95,6 +98,22 @@ class _FakeDenial:
                 return [type("DT", (), {"name": name})() for name in denial_types]
 
         self.denial_type = _DenialTypeManager()
+
+
+def _fake_regulator(name, alt_name="", regex=None):
+    """A stand-in Regulator; its regex is its name unless given (empty for
+    one the model inferred), compiled as the RegexField would."""
+    pattern = name if regex is None else regex
+    return type(
+        "Reg",
+        (),
+        {
+            "alt_name": alt_name,
+            "name": name,
+            "regex": re.compile(pattern, re.IGNORECASE),
+            "negative_regex": re.compile(""),
+        },
+    )()
 
 
 def _make_ico(**overrides):
@@ -209,7 +228,8 @@ class EscalationAddressesTest(TestCase):
 
 
 class RegulatorEscalationReasonsTest(TestCase):
-    """What makes the appeal pages say a regulator should hear about a denial."""
+    """What makes the appeal pages say a regulator should hear about a denial:
+    internal appeals done, or urgent care that needs a parallel complaint."""
 
     def test_a_plain_first_denial_gives_no_reason(self):
         denial = _FakeDenial(
@@ -217,52 +237,137 @@ class RegulatorEscalationReasonsTest(TestCase):
         )
         self.assertEqual(regulator_escalation_reasons(denial), [])
 
-    def test_an_upheld_decision_reads_as_an_appeal_already_denied(self):
+    def test_a_first_medical_necessity_denial_of_prep_gives_no_reason(self):
+        """The reported case: PrEP is tagged Preventive Care from the kind of
+        care alone; a first-level medical-necessity denial is an appeal, not
+        yet a regulator case."""
+        denial = _FakeDenial(
+            state="",
+            procedure="PrEP",
+            denial_text=(
+                "Your request for prep has been denied as not medically "
+                "necessary."
+            ),
+            denial_types=("Preventive Care",),
+        )
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_an_appeal_upheld_once_is_not_yet_a_reason(self):
+        """Most plans have a second internal level, so one upheld appeal is
+        still a job for the next appeal."""
         denial = _FakeDenial(
             state="",
             denial_text="After review we have upheld our original decision.",
         )
-        reasons = regulator_escalation_reasons(denial)
-        self.assertEqual(len(reasons), 1)
-        self.assertIn("already been denied once", reasons[0])
+        self.assertEqual(regulator_escalation_reasons(denial), [])
 
-    def test_a_final_adverse_benefit_determination_counts_too(self):
+    def test_a_final_adverse_benefit_determination_is_a_reason(self):
         denial = _FakeDenial(
             state="", denial_text="This is our final adverse benefit determination."
         )
-        self.assertTrue(regulator_escalation_reasons(denial))
+        reasons = regulator_escalation_reasons(denial)
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("final decision on your internal appeals", reasons[0])
 
-    def test_a_rights_notice_about_a_possible_upholding_is_not_a_reason(self):
+    def test_later_level_appeals_decided_are_a_reason(self):
+        for text in (
+            "Your second level appeal has been reviewed and the denial stands.",
+            "We reviewed your level 2 appeal and the denial is upheld.",
+            "We decided your third-level appeal and the denial stands.",
+            "You have exhausted all internal appeals.",
+        ):
+            with self.subTest(text=text):
+                denial = _FakeDenial(state="", denial_text=text)
+                self.assertTrue(regulator_escalation_reasons(denial))
+
+    def test_a_later_level_named_without_a_decision_is_not_a_reason(self):
+        for text in (
+            "You have the right to request a third-level appeal within 60 days.",
+            "You have the right to a second level appeal of this decision.",
+            "We have received your third-level appeal and it is under review.",
+            "Your second level appeal is pending; a decision will follow.",
+            "We will review your second-level appeal and make a decision within 30 days.",
+            "Your internal appeals have not been exhausted.",
+            "After all internal appeals have been exhausted, you may request an external review.",
+            "We denied your first-level appeal; we received your second-level appeal.",
+            "Your second-level appeal concerns our original denial decision and is being processed.",
+            "This responds to your third-level appeal.",
+        ):
+            with self.subTest(text=text):
+                denial = _FakeDenial(state="", denial_text=text)
+                self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_more_ways_to_say_the_internal_appeals_are_done(self):
+        for text in (
+            "All available internal appeals have been exhausted.",
+            "Your second-level appeal has concluded; the decision is upheld.",
+            "We received and denied your second-level appeal.",
+            "Your second-level appeal was denied and we will mail you the written decision.",
+            "We denied your second-level appeal; you can request an external review.",
+            "After review of your second level appeal we have once again upheld the denial; this is our final decision.",
+            "We have once again reached our final adverse determination.",
+        ):
+            with self.subTest(text=text):
+                denial = _FakeDenial(state="", denial_text=text)
+                self.assertTrue(regulator_escalation_reasons(denial))
+
+    def test_a_final_decision_at_this_level_is_not_the_end(self):
+        denial = _FakeDenial(
+            state="",
+            denial_text=(
+                "This is our final decision at this level. You may request a "
+                "second level appeal within 60 days."
+            ),
+        )
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_appeals_exhausted_in_a_rights_notice_is_not_a_reason(self):
+        denial = _FakeDenial(
+            state="",
+            denial_text="Once your internal appeals are exhausted, you may ask for an external review.",
+        )
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_not_considered_a_final_decision_is_negated(self):
+        denial = _FakeDenial(
+            state="", denial_text="This is not considered a final decision."
+        )
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_not_yet_a_final_decision_is_negated(self):
+        denial = _FakeDenial(
+            state="", denial_text="This is not yet a final decision."
+        )
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_a_rights_notice_about_later_levels_is_not_a_reason(self):
         """A first denial's rights notice uses the same words about what
-        could happen next (the triage fixture's letter is one): that is
-        not an appeal already decided."""
+        could happen next (the triage fixture's letter is one)."""
         denial = _FakeDenial(
             state="",
             denial_text=(
                 "The MRI was denied as not medically necessary. You have the "
                 "right to appeal. If our decision is upheld you may request "
-                "an external review by 10/15/2026. Once you have exhausted "
-                "your internal appeals, you will receive a final adverse "
-                "determination letter."
+                "a second level appeal or an external review by 10/15/2026. "
+                "Once you have exhausted your internal appeals, you will "
+                "receive a final adverse determination letter."
             ),
         )
         self.assertEqual(regulator_escalation_reasons(denial), [])
-
-    def test_a_decision_upheld_in_the_letters_own_voice_is_a_reason(self):
-        denial = _FakeDenial(
-            state="", denial_text="We reviewed your appeal. Our decision is upheld."
-        )
-        self.assertTrue(regulator_escalation_reasons(denial))
 
     def test_a_conditional_sentence_does_not_shield_the_next_one(self):
         denial = _FakeDenial(
             state="",
             denial_text=(
-                "If you disagree you may appeal. We have upheld our original "
-                "decision."
+                "If you disagree you may contact us. This is our final "
+                "adverse determination."
             ),
         )
         self.assertTrue(regulator_escalation_reasons(denial))
+
+    def test_a_negated_final_decision_is_not_a_reason(self):
+        denial = _FakeDenial(state="", denial_text="This is not a final decision.")
+        self.assertEqual(regulator_escalation_reasons(denial), [])
 
     def test_the_external_review_rights_notice_alone_is_not_a_reason(self):
         """Every first-level denial carries this notice, so it says nothing
@@ -276,49 +381,197 @@ class RegulatorEscalationReasonsTest(TestCase):
         )
         self.assertEqual(regulator_escalation_reasons(denial), [])
 
-    def test_a_regulator_named_in_the_letter_is_named_back(self):
-        regulator = type(
-            "Reg", (), {"alt_name": "", "name": "Texas Department of Insurance"}
-        )()
-        denial = _FakeDenial(state="", regulator=regulator)
-        reasons = regulator_escalation_reasons(denial)
-        self.assertEqual(len(reasons), 1)
-        self.assertIn("Texas Department of Insurance", reasons[0])
-
-    def test_a_tpa_plan_brings_in_the_department_of_labor(self):
-        denial = _FakeDenial(state="", is_tpa=True)
-        reasons = regulator_escalation_reasons(denial)
-        self.assertEqual(len(reasons), 1)
-        self.assertIn("Department of Labor", reasons[0])
-
     def test_urgent_care_is_a_reason(self):
         denial = _FakeDenial(state="", urgent=True)
         reasons = regulator_escalation_reasons(denial)
         self.assertEqual(len(reasons), 1)
-        self.assertIn("urgent", reasons[0])
+        self.assertIn("in parallel with your appeal", reasons[0])
 
-    def test_a_denial_type_regulators_police_is_a_reason(self):
-        denial = _FakeDenial(state="", denial_types=("Preventive Care",))
-        reasons = regulator_escalation_reasons(denial)
-        self.assertEqual(len(reasons), 1)
-        self.assertIn("preventive care", reasons[0])
-
-    def test_a_denial_type_regulators_do_not_police_is_not(self):
+    def test_supporting_signals_alone_are_not_a_reason(self):
+        """A named regulator, an ERISA plan and a policed denial type say who
+        to write to, not that it is time to."""
         denial = _FakeDenial(
-            state="", denial_types=("Medically Necessary", "Limit for filing expired")
+            state="",
+            regulator=_fake_regulator("Texas Department of Insurance"),
+            denial_text="Contact the Texas Department of Insurance with questions.",
+            is_tpa=True,
+            denial_types=("Pre-Existing Condition",),
         )
         self.assertEqual(regulator_escalation_reasons(denial), [])
 
-    def test_every_signal_present_gives_one_reason_each(self):
-        regulator = type("Reg", (), {"alt_name": "ERISA", "name": "DOL"})()
+    def test_a_regulator_named_in_the_letter_supports_an_urgent_denial(self):
         denial = _FakeDenial(
             state="",
-            denial_text="We uphold the denial.",
+            urgent=True,
+            regulator=_fake_regulator("Texas Department of Insurance"),
+            denial_text="Contact the Texas Department of Insurance with questions.",
+        )
+        reasons = regulator_escalation_reasons(denial)
+        self.assertTrue(
+            any("Texas Department of Insurance" in r for r in reasons), reasons
+        )
+
+    def test_a_regulator_the_model_inferred_is_not_said_to_be_named(self):
+        """The model links a regulator the letter never names (no regex
+        match): that is a guess about the plan, not a reason from the letter."""
+        regulator = _fake_regulator("Texas Department of Insurance", regex="")
+        denial = _FakeDenial(state="", urgent=True, regulator=regulator)
+        self.assertEqual(len(regulator_escalation_reasons(denial)), 1)
+
+    def test_a_regulator_row_without_a_regex_is_named_when_its_name_is_in_the_letter(
+        self,
+    ):
+        """The state rows the model's answer creates carry no regex; the
+        letter naming one is still the letter naming it."""
+        regulator = _fake_regulator("Texas Department of Insurance", regex="")
+        denial = _FakeDenial(
+            state="",
+            urgent=True,
+            regulator=regulator,
+            denial_text="You may contact the Texas  Department of\nInsurance.",
+        )
+        reasons = regulator_escalation_reasons(denial)
+        self.assertTrue(
+            any("Texas Department of Insurance" in r for r in reasons), reasons
+        )
+
+    def test_first_denial_rights_notices_do_not_count_as_upheld(self):
+        for text in (
+            "You have the right to appeal our initial determination within 180 days.",
+            "To appeal our initial decision, send a letter to the address below.",
+            "This notice explains your rights to appeal our original decision.",
+            "You can ask us to review our initial determination.",
+            "We cannot affirm our original decision without more records.",
+            "We can\u2019t uphold the denial on this record.",
+        ):
+            with self.subTest(text=text):
+                denial = _FakeDenial(state="", urgent=True, denial_text=text)
+                self.assertEqual(len(regulator_escalation_reasons(denial)), 1)
+
+    def test_an_upheld_appeal_supports_an_urgent_denial(self):
+        for text in (
+            "Upon review, our initial determination stands.",
+            "We are maintaining our original denial.",
+            "Our original decision to deny coverage has been upheld.",
+            "After review, our original decision is unchanged.",
+            "We reviewed your appeal. Our decision is upheld.",
+        ):
+            with self.subTest(text=text):
+                denial = _FakeDenial(state="", urgent=True, denial_text=text)
+                reasons = regulator_escalation_reasons(denial)
+                self.assertTrue(
+                    any("denied once" in r for r in reasons), reasons
+                )
+
+    def test_a_tpa_plan_brings_in_the_department_of_labor_when_urgent(self):
+        denial = _FakeDenial(state="", urgent=True, is_tpa=True)
+        reasons = regulator_escalation_reasons(denial)
+        self.assertTrue(any("Department of Labor" in r for r in reasons), reasons)
+
+    def test_a_denial_type_regulators_police_supports_a_final_denial(self):
+        denial = _FakeDenial(
+            state="",
+            denial_text="This is our final adverse determination.",
+            denial_types=("Pre-Existing Condition",),
+        )
+        reasons = regulator_escalation_reasons(denial)
+        self.assertTrue(any("pre-existing condition" in r for r in reasons), reasons)
+
+    def test_preventive_care_is_never_a_supporting_reason(self):
+        denial = _FakeDenial(
+            state="", urgent=True, denial_types=("Preventive Care",)
+        )
+        self.assertEqual(len(regulator_escalation_reasons(denial)), 1)
+
+    def test_every_signal_present_gives_one_reason_each(self):
+        regulator = _fake_regulator("DOL", alt_name="ERISA", regex="ERISA")
+        denial = _FakeDenial(
+            state="",
+            denial_text="This is our final adverse determination. See your ERISA rights.",
             regulator=regulator,
             urgent=True,
             denial_types=("Pre-Existing Condition",),
         )
+        # final, urgent, named regulator, ERISA, pre-existing condition.
         self.assertEqual(len(regulator_escalation_reasons(denial)), 5)
+
+
+TRIAGE_ON = dict(TYPESAFE_API_KEY="k", TYPESAFE_DENIAL_TRIAGE_ENABLED=True)
+
+
+class JevRegulatorReasonsTest(TestCase):
+    """Jev's stored triage answers are a second way to see each trigger."""
+
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            denial_text="Your request for prep has been denied as not medically necessary.",
+            hashed_email=Denial.get_hashed_email("jev@example.com"),
+            use_external=True,
+        )
+
+    def _triage(self, **overrides):
+        values = dict(
+            triage_category="medical_necessity",
+            triage_category_confidence=0.9,
+            triage_regulation="unknown",
+            triage_regulation_confidence=0.9,
+            triage_pre_service=0.84,
+            triage_urgent=0.03,
+            triage_regulator=0.02,
+            triage_source=denial_triage.SOURCE,
+            triage_text_hash=denial_triage.text_hash(self.denial.denial_text),
+            triaged_at=timezone.now(),
+        )
+        values.update(overrides)
+        Denial.objects.filter(pk=self.denial.pk).update(**values)
+        self.denial.refresh_from_db()
+        return self.denial
+
+    @override_settings(**TRIAGE_ON)
+    def test_a_plain_first_denial_jev_calls_routine_gives_no_reason(self):
+        self.assertEqual(regulator_escalation_reasons(self._triage()), [])
+
+    @override_settings(**TRIAGE_ON)
+    def test_jev_saying_internal_appeals_are_done_is_a_reason(self):
+        reasons = regulator_escalation_reasons(self._triage(triage_regulator=0.9))
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("final decision on your internal appeals", reasons[0])
+
+    @override_settings(**TRIAGE_ON)
+    def test_jev_saying_the_care_is_time_critical_is_a_reason(self):
+        reasons = regulator_escalation_reasons(self._triage(triage_urgent=0.9))
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("time-critical", reasons[0])
+
+    @override_settings(**TRIAGE_ON)
+    def test_urgent_marked_by_the_person_is_said_once(self):
+        self._triage(triage_urgent=0.9)
+        self.denial.urgent = True
+        reasons = regulator_escalation_reasons(self.denial)
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("You marked this care as urgent", reasons[0])
+
+    @override_settings(**TRIAGE_ON)
+    def test_unsure_jev_answers_are_not_a_reason(self):
+        denial = self._triage(triage_urgent=0.5, triage_regulator=0.5)
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_jev_answers_are_ignored_while_triage_is_off(self):
+        denial = self._triage(triage_urgent=0.9, triage_regulator=0.9)
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    @override_settings(**TRIAGE_ON)
+    def test_jev_answers_are_ignored_without_external_model_consent(self):
+        self._triage(triage_regulator=0.9)
+        Denial.objects.filter(pk=self.denial.pk).update(use_external=False)
+        self.denial.refresh_from_db()
+        self.assertEqual(regulator_escalation_reasons(self.denial), [])
+
+    @override_settings(**TRIAGE_ON)
+    def test_a_triage_of_a_replaced_letter_is_ignored(self):
+        self._triage(triage_regulator=0.9)
+        self.denial.denial_text = "A different letter."
+        self.assertEqual(regulator_escalation_reasons(self.denial), [])
 
 
 class RegulatorLetterPromptTest(TestCase):
@@ -472,6 +725,73 @@ class EscalationPacketViewTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "800-927-4357")
 
+    def _post_packet(self, **extra):
+        return self.client.post(
+            reverse("escalation_packet"),
+            {
+                "denial_id": self.denial.denial_id,
+                "email": self.email,
+                "semi_sekret": self.denial.semi_sekret,
+                **extra,
+            },
+        )
+
+    def test_escalation_packet_offers_a_state_when_none_is_known(self):
+        self.denial.your_state = ""
+        self.denial.save()
+        response = self._post_packet()
+        self.assertContains(response, 'id="escalation-state-picker"')
+        self.assertContains(response, '<option value="CA">California</option>')
+
+    def test_escalation_packet_does_not_offer_a_state_when_one_is_known(self):
+        response = self._post_packet()
+        self.assertNotContains(response, 'id="escalation-state-picker"')
+
+    def test_escalation_packet_saves_a_picked_state(self):
+        self.denial.your_state = ""
+        self.denial.save()
+        self._post_packet(your_state="ny")
+        self.denial.refresh_from_db()
+        self.assertEqual(self.denial.your_state, "NY")
+
+    def test_escalation_packet_adds_the_doi_for_a_picked_state(self):
+        self.denial.your_state = ""
+        self.denial.save()
+        response = self._post_packet(your_state="NY")
+        self.assertNotContains(response, 'id="escalation-state-picker"')
+        self.assertContains(response, "letters for:")
+        self.assertEqual(response.context["recipients_count"], 2)
+
+    def test_escalation_packet_saves_the_state_mirror_too(self):
+        self.denial.your_state = ""
+        self.denial.save()
+        self._post_packet(your_state="NY")
+        self.denial.refresh_from_db()
+        self.assertEqual(self.denial.state, "NY")
+
+    @patch("fighthealthinsurance.escalation_addresses.get_state_help_by_abbreviation")
+    def test_a_stale_picker_never_overwrites_a_usable_state(self, mock_state):
+        mock_state.return_value = StateHelp(CALIFORNIA_DATA)
+        self._post_packet(your_state="NY")
+        self.denial.refresh_from_db()
+        self.assertEqual(self.denial.your_state, "CA")
+
+    def test_the_state_picker_holds_drafting_until_skipped(self):
+        """No letter is drafted under the picker, so none can be edited and
+        then lost when picking a state reloads the page."""
+        self.denial.your_state = ""
+        self.denial.save()
+        response = self._post_packet()
+        self.assertContains(response, 'id="escalation-skip-state"')
+        self.assertContains(response, "display:none;")
+
+    def test_escalation_packet_ignores_an_unknown_state(self):
+        self.denial.your_state = ""
+        self.denial.save()
+        self._post_packet(your_state="ZZ")
+        self.denial.refresh_from_db()
+        self.assertEqual(self.denial.your_state, "")
+
     def test_appeals_generation_page_exposes_escalation_button(self):
         """The appeals.html page (where users choose between drafts) must
         link to the regulator escalation flow. Without this, the only entry
@@ -505,8 +825,18 @@ class EscalationPacketViewTest(TestCase):
         self.assertNotContains(response, "fhi-regulator-callout-likely")
         self.assertContains(response, "Send a copy to the people who regulate your plan")
 
-    def test_appeals_generation_page_callout_grows_when_an_appeal_was_upheld(self):
+    def test_appeals_generation_page_callout_stays_normal_after_one_upheld_appeal(
+        self,
+    ):
         self.denial.denial_text = "We have upheld our original decision."
+        self.denial.save()
+        response = self.client.get(
+            back_link(self.client, "generate_appeal", self.denial, self.email)
+        )
+        self.assertNotContains(response, "fhi-regulator-callout-likely")
+
+    def test_appeals_generation_page_callout_grows_after_the_final_decision(self):
+        self.denial.denial_text = "This is our final adverse benefit determination."
         self.denial.save()
         response = self.client.get(
             back_link(self.client, "generate_appeal", self.denial, self.email)
@@ -515,7 +845,7 @@ class EscalationPacketViewTest(TestCase):
         self.assertContains(
             response, "Your denial looks like one a regulator should hear about"
         )
-        self.assertContains(response, "already been denied once")
+        self.assertContains(response, "final decision on your internal appeals")
 
     def _send_page(self):
         response = self.client.post(

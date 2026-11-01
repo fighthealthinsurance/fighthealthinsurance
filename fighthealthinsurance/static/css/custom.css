@@ -4171,6 +4171,18 @@ summary.fhi-nav-link::after {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
+/* form_utils.CoreFirstCheckboxList: the common rows, then the rest under a disclosure. */
+.fhi-check-group {
+    min-width: 0;
+}
+.fhi-check-more {
+    margin-top: var(--fhi-space-3);
+}
+.fhi-check-more > summary {
+    cursor: pointer;
+    font-weight: 700;
+    margin-bottom: var(--fhi-space-2);
+}
 /* Beside a tick-box list, the label sits level with its first row, not halfway down. */
 .fhi-form-table tr:has(.fhi-check-list) > th {
     vertical-align: top;

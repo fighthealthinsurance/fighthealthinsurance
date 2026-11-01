@@ -106,6 +106,61 @@ class CheckboxList(forms.CheckboxSelectMultiple):
         return context
 
 
+class CoreFirstCheckboxList(CheckboxList):
+    """A CheckboxList over a long model list that shows the common choices
+    first and folds the rest under a "More ..." disclosure.
+
+    Shown up front: every choice whose instance has ``core`` set, every
+    ticked choice (so nothing pre-ticked from the letter is ever out of
+    sight), and the children of a ticked choice (through ``parent``), which
+    narrow it. The rest go in a <details>, so it needs no script and the
+    folded boxes still submit. When either part would be empty the list
+    renders flat, as a plain CheckboxList.
+    """
+
+    template_name = "widgets/check_list_core_first.html"
+
+    def __init__(self, *args, more_label: str = "More choices", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.more_label = more_label
+
+    @staticmethod
+    def _instance(option):
+        # ModelChoiceIteratorValue carries the row; plain choices have none.
+        return getattr(option["value"], "instance", None)
+
+    def get_context(self, name, value, attrs):
+        context = super().get_context(name, value, attrs)
+        options = [
+            option
+            for _group, group_options, _index in context["widget"]["optgroups"]
+            for option in group_options
+        ]
+        ticked = {
+            instance.pk
+            for option in options
+            if option["selected"] and (instance := self._instance(option))
+        }
+        shown: list[dict] = []
+        more: list[dict] = []
+        for option in options:
+            instance = self._instance(option)
+            up_front = option["selected"] or (
+                instance is not None
+                and (
+                    getattr(instance, "core", False)
+                    or getattr(instance, "parent_id", None) in ticked
+                )
+            )
+            (shown if up_front else more).append(option)
+        if not shown or not more:
+            shown, more = options, []
+        context["widget"]["shown_options"] = shown
+        context["widget"]["more_options"] = more
+        context["widget"]["more_label"] = self.more_label
+        return context
+
+
 #: Widget types that are not text boxes and take the tick-box class.
 _TICKABLE = (forms.CheckboxInput, forms.RadioSelect, forms.CheckboxSelectMultiple)
 #: Widget types that get no class at all.

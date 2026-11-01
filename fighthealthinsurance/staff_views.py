@@ -59,7 +59,9 @@ from dateutil.relativedelta import relativedelta
 from loguru import logger
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
+from fighthealthinsurance import experiments
 from fighthealthinsurance import letter_review, letter_review_highlight
+from fighthealthinsurance import storage_health
 from fighthealthinsurance.common_view_logic import schedule_follow_ups
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.followup_emails import (
@@ -420,6 +422,26 @@ class StaffDashboardView(generic.TemplateView):
     """Staff dashboard with links to all staff views."""
 
     template_name = "staff_dashboard.html"
+
+
+class ExperimentsView(generic.TemplateView):
+    """Staff page listing every experimental feature flag (experiments.py)
+    and whether it is on, off, or set but missing something it needs, as the
+    pod serving the page loaded its settings. Settings only: no database
+    and no network, and only the names of the keys it checks, never their
+    values."""
+
+    template_name = "experiments.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        rows = experiments.experiment_states()
+        ctx["title"] = "Experiments"
+        ctx["generated_at"] = timezone.now()
+        ctx["deployment"] = AdminStatusView._deployment_status()
+        ctx["groups"] = experiments.grouped(rows)
+        ctx["counts"] = experiments.summary(rows)
+        return ctx
 
 
 class PlanDocumentsDashboardView(generic.TemplateView):
@@ -1483,30 +1505,69 @@ class AdminStatusView(generic.TemplateView):
 
     @staticmethod
     def _storage_status() -> Dict[str, Any]:
-        """Whether the external (encrypted) storage backend is reachable."""
-        out: Dict[str, Any] = {"ok": False, "error": None, "location": None}
-        try:
-            from django.conf import settings
-            from stopit import ThreadingTimeout as Timeout
+        """Whether the external (encrypted) storage backend is reachable.
 
-            es = settings.EXTERNAL_STORAGE
-            out["location"] = getattr(es, "location", None)
-            with Timeout(3.0):
-                es.listdir("./")
-                out["ok"] = True
-                return out
-            out["error"] = "timeout"
-        except FileNotFoundError as e:
-            # The storage root itself is missing: in prod that means the shared
-            # volume isn't mounted, locally it usually means the directory was
-            # never created. A full traceback adds nothing over the path, so
-            # log a one-liner instead of dumping a stack on every page load.
-            logger.warning(f"External storage location missing: {e}")
-            out["error"] = f"storage location does not exist: {e.filename}"
-        except Exception as e:
-            logger.opt(exception=True).warning("External storage health check failed")
-            out["error"] = str(e)
-        return out
+        Every backend, its disk and recent documents' copies are on the
+        Storage Health page (StorageHealthView)."""
+        from django.conf import settings
+
+        es = getattr(settings, "EXTERNAL_STORAGE", None)
+        reach = storage_health.check_reachable(es)
+        return {
+            "ok": reach["ok"],
+            "error": reach["error"],
+            "location": getattr(es, "location", None),
+        }
+
+
+class StorageHealthView(View):
+    """Staff storage health: every backend uploads are written to.
+
+    Whether each backend answers, how full its disk is, whether its copies
+    leave the app's disk, whether recent documents have their copies, and
+    (on POST, since it writes) whether a test file round-trips through each.
+    The checks themselves live in storage_health.py. Every read-only check
+    runs on a worker thread the page stops waiting for at its time limit,
+    so a dead backend slows the page rather than hanging it, even when the
+    call underneath is stuck. The write test is the exception: a write
+    stuck inside one system call holds the request until it returns.
+    """
+
+    template_name = "storage_health.html"
+
+    def get(self, request) -> HttpResponse:
+        return self._render(request, self._sample_size(request.GET.get("sample")))
+
+    def post(self, request) -> HttpResponse:
+        return self._render(
+            request,
+            self._sample_size(request.POST.get("sample")),
+            run_write_test=True,
+        )
+
+    @staticmethod
+    def _sample_size(raw: Optional[str]) -> int:
+        if not raw:
+            return storage_health.DEFAULT_SAMPLE
+        try:
+            size = int(raw)
+        except ValueError:
+            return storage_health.DEFAULT_SAMPLE
+        return max(0, min(size, storage_health.MAX_SAMPLE))
+
+    def _render(
+        self, request, sample: int, run_write_test: bool = False
+    ) -> HttpResponse:
+        ctx = storage_health.report(sample, run_write_test=run_write_test)
+        ctx.update(
+            title="Storage Health",
+            generated_at=timezone.now(),
+            sample_size=sample,
+            more_sample=min(max(sample * 3, 10), storage_health.MAX_SAMPLE),
+            disk_warn=storage_health.DISK_WARN_PERCENT,
+            disk_fail=storage_health.DISK_FAIL_PERCENT,
+        )
+        return render(request, self.template_name, ctx)
 
 
 class AdminModelQueryView(View):
@@ -4263,7 +4324,11 @@ class ModelUsageDashboardView(generic.TemplateView):
         since: Optional[datetime.datetime],
         until: Optional[datetime.datetime] = None,
         source: Optional[str] = None,
+        label_for: Callable[[Optional[str]], Optional[str]] = normalize_model_label,
     ) -> List[Dict[str, Any]]:
+        # ``label_for`` maps a stored model name to the row it counts under;
+        # the public rankings pass one that folds "provider/model" into
+        # "model", so equivalent providers of one model share a row.
         # Both chosen and presented derive from the same vote set (filtered
         # by ChooserVote.created_at), so a window's win rates compare like
         # with like: every vote event contributes its chosen candidate once
@@ -4318,7 +4383,7 @@ class ModelUsageDashboardView(generic.TemplateView):
         )
         chosen_by_label: Counter = Counter()
         for cid, credit in chosen_credit.items():
-            label = normalize_model_label(cand_to_model.get(cid)) or UNKNOWN_MODEL_LABEL
+            label = label_for(cand_to_model.get(cid)) or UNKNOWN_MODEL_LABEL
             chosen_by_label[label] += credit
         chosen = {
             label: ChooserVote.rounded_credit(credit)
@@ -4326,12 +4391,12 @@ class ModelUsageDashboardView(generic.TemplateView):
         }
         presented: Counter = Counter()
         for cid, n in counter.items():
-            presented_label = normalize_model_label(cand_to_model.get(cid))
+            presented_label = label_for(cand_to_model.get(cid))
             if presented_label is not None:
                 presented[presented_label] += n
         flagged: Counter = Counter()
         for cid, n in flag_counter.items():
-            flagged_label = normalize_model_label(cand_to_model.get(cid))
+            flagged_label = label_for(cand_to_model.get(cid))
             if flagged_label is not None:
                 flagged[flagged_label] += n
         return _merge_stats(chosen, dict(presented), flagged=dict(flagged))
