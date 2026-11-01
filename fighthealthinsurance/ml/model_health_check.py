@@ -1008,13 +1008,12 @@ async def check_typesafe(
         questions = TYPESAFE_PROBE_QUESTIONS
     result.started_at = datetime.now(dt_timezone.utc)
     # The wait is an Event, not the database, so a plain thread is enough.
-    # The free OpenCode route never reads the ledger, so with only that key
-    # there is nothing to wait for; a probe skipped here reads as a failure
-    # in the deploy alert.
-    from django.conf import settings
-
+    # ask() omits the premium fallback while the ledger is unloaded, so the
+    # probe needs it loaded only when the primary route is premium; with the
+    # free route primary there is nothing to wait for, and a probe skipped
+    # here reads as a failure in the deploy alert.
     loaded = True
-    if getattr(settings, "TYPESAFE_API_KEY", None):
+    if not typesafe.opencode_route():
         try:
             loaded = await asyncio.wait_for(
                 asyncio.to_thread(

@@ -116,6 +116,18 @@ def test_regular_flash_model_orders_free_opencode_before_deepinfra():
     ]
 
 
+def test_the_flash_roster_name_is_not_shadowed_by_a_chat_only_registration():
+    """Chat resolves the name through the ordered general pool: the free
+    OpenCode instance first, DeepInfra as the failure fallback. A chat-only
+    registration would bill DeepInfra while the free endpoint is healthy."""
+    env = {"OPENCODE_TOKEN": "open-test-token", "DEEPINFRA_API": "deep-test-token"}
+    with patch.dict(os.environ, env, clear=False):
+        router = MLRouter()
+    assert OpenCode.FLASH_NAME not in router.chat_outside_models_by_name
+    candidates = [m for m in router.models_by_name[OpenCode.FLASH_NAME] if m.external]
+    assert [type(backend) for backend in candidates] == [OpenCode, DeepInfra]
+
+
 def test_a_whitespace_only_token_is_rejected_like_a_missing_one():
     """config_status reports it as missing_credentials; the constructor must
     not accept what the status page calls missing."""
