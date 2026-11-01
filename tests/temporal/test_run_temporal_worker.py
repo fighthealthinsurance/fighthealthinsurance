@@ -1010,6 +1010,17 @@ def test_intake_queue_pointed_at_the_appeal_queue_adds_no_second_worker():
     ) == ["q-appeal"]
 
 
+@pytest.mark.parametrize("taken", ["TEMPORAL_TASK_QUEUE", "TEMPORAL_CHAT_POLICY_TASK_QUEUE", "TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE"])
+def test_intake_queue_cannot_share_another_workers_queue(taken):
+    with pytest.raises(CommandError, match="TEMPORAL_INTAKE_TASK_QUEUE"):
+        _run_with(
+            "appeal",
+            TEMPORAL_INTAKE_JOURNEY_ENABLED=True,
+            TEMPORAL_INTAKE_TASK_QUEUE="shared",
+            **{taken: "shared"},
+        )
+
+
 def test_policy_off_changes_nothing():
     assert _run_with("appeal", TEMPORAL_CHAT_POLICY_ENABLED=False) == ["q-appeal"]
     assert _run_with("all", TEMPORAL_CHAT_POLICY_ENABLED=False) == [

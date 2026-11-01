@@ -538,6 +538,12 @@ class Command(BaseCommand):
                 # alone, so do that only once no journey is open on the old queue.
                 intake_queue = settings.TEMPORAL_INTAKE_TASK_QUEUE
                 if intake_enabled and intake_queue != appeal_queue:
+                    # Workers on one queue get each other's tasks and fail them.
+                    if intake_queue in (task_queue, policy_queue, plan_documents_queue):
+                        raise CommandError(
+                            f"TEMPORAL_INTAKE_TASK_QUEUE={intake_queue!r} is another "
+                            "worker's queue; choose a distinct one"
+                        )
                     intake_worker = Worker(
                         client,
                         task_queue=intake_queue,
