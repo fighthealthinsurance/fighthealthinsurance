@@ -1417,6 +1417,15 @@ class TestDenialWatchGreyStateInsurersPage(TestCase):
         self.assertNotIn(("FL", "Capital Health Plan"), {(i["s"], i["n"]) for i in DATA["issuers"]})
         self.assertIn("Capital Health Plan in Florida isn't listed: it reported denying 448,953 of 466,619 in-network claims in 2025 (96%)", _text(_between(self.page, 'id="method-insurers"', "</li>")))
 
+    def test_the_change_view_names_the_year_it_compares_with(self):
+        self.assertIn('data-m="chg">Change from 2024<', self.page)
+        self.assertNotIn("since 2023", JS)
+
+    def test_capital_health_plans_reasons_are_left_out_too(self):
+        # Its rows would add 96,042 reasons and 71,065 plan-level denials.
+        self.assertEqual(DATA["reason_meta"], {"entries": 86565373.0, "plan_denied_in": 63085209.0})
+        self.assertEqual(_load_builder().DOUBTFUL_DENIED_IN[2027], {("FL", 66966)})
+
     def test_every_state_note_says_why_california_isnt_a_clean_comparison(self):
         note = _text(_between(self.page, 'id="method-every-state"', "</li>"))
         self.assertIn("Health Net (22.5% of 4.2 million claims in 2024) has no readable 2025 report", note)

@@ -225,7 +225,7 @@
                             <div class="fhi-cluster dw-toggles" id="dmode" role="group" aria-label="What the map shows">
                                 <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="true" data-m="in">In-network</button>
                                 <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="all">All claims</button>
-                                <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="chg">Change from 2023</button>
+                                <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="chg">Change from 2024</button>
                                 <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="won">Appeals won</button>
                             </div>
                             <svg class="dw-map" id="dmap" viewBox="0 0 620 410" role="group" aria-label="Tile map of US states. Select a state for details."></svg>
@@ -270,7 +270,7 @@
                         <summary>Show these figures as a table</summary>
                         <div class="dw-table-wrap">
                             <table class="dw-table" id="every-table">
-                                <caption class="fhi-visually-hidden">In-network denial rates by state: the HealthCare.gov states highest first, then five grey states from other sources or years, with whose data FHI calculated each rate from and the claims year</caption>
+                                <caption class="fhi-visually-hidden">In-network denial rates by state: the HealthCare.gov states highest first, then six grey states from other sources or years, with whose data FHI calculated each rate from and the claims year</caption>
                                 <thead><tr><th scope="col">State</th><th scope="col" class="dw-r">Denied</th><th scope="col">FHI's calculation from</th></tr></thead>
                                 <tbody>
                                     {% for r in every_state.rows %}<tr data-s="{{ r.code }}"><th scope="row">{{ r.name }}</th><td class="dw-r dw-num">{{ r.pct }}</td><td>{{ r.source }}, {{ r.year }} claims</td></tr>
@@ -363,7 +363,7 @@
 
             <section class="fhi-stack" id="why" aria-labelledby="why-title">
                 <h3 id="why-title">Reasons given for denials</h3>
-                <p>"Not medically necessary" is a small share of the reasons given. Reasons insurers reported for denied in-network claims in 2025, as a share of all reasons reported. A claim can be counted under more than one reason, so these are shares of reasons, not of claims. "Other" is the largest group, which means many denials aren't explained in this data. "Not medically necessary" is 6.5% of all reasons (5.7 million of 86.7 million).</p>
+                <p>"Not medically necessary" is a small share of the reasons given. Reasons insurers reported for denied in-network claims in 2025, as a share of all reasons reported. A claim can be counted under more than one reason, so these are shares of reasons, not of claims. "Other" is the largest group, which means many denials aren't explained in this data. "Not medically necessary" is 6.5% of all reasons (5.7 million of 86.6 million).</p>
                 <div class="fhi-card">
                     <p class="dw-key" id="reasonskey"><span><i class="dw-sw"></i>Share of all reasons given for denials</span> <span><i class="dw-sw dw-sw-deep"></i>Darker, in bold: the reasons about medical judgment</span></p>
                     <div class="dw-bars" id="reasons"></div>
@@ -381,7 +381,7 @@
                     <div>
                         <div class="fhi-cluster dw-toggles dw-toggles-health" id="cmode" role="group" aria-label="What the map shows">
                             <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="true" data-m="unins">Uninsured</button>
-                            <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="uchg">Change from 2023</button>
+                            <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="uchg">Change from 2024</button>
                             <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="fair_poor_health">Fair/poor health</button>
                             <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="diabetes">Diabetes</button>
                             <button type="button" class="fhi-button fhi-button-small fhi-button-neutral" aria-pressed="false" data-m="depression">Depression</button>

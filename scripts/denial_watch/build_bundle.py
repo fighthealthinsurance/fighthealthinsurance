@@ -127,6 +127,8 @@ def read_puf(py):
         if kind and kind != "QHP":
             continue
         add_plan_row(issuers, r)
+        if (r["state"], r["issuer_id"]) in DOUBTFUL_DENIED_IN.get(py, ()):
+            continue  # its plan-level reasons stay out with its issuer-level denials
         for col in REASONS:
             v = num(r.get(col if col in r else REASON_COLUMNS_2027[col]))
             if v:
