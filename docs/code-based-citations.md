@@ -17,24 +17,43 @@ regulatory block the appeal prompt already carries.
 
 | Trigger | Rule | Plans it reaches |
 |---|---|---|
-| CPT 99281-99285, an emergency service as the procedure, or a sentence tying emergency care to the person's claim | No Surprises Act emergency services, PHS Act 2799A-1(a), 45 CFR 149.110: for a plan that covers any emergency department services, emergency services without prior authorization, in any network, at in-network cost sharing, judged by the prudent layperson standard and not from diagnosis codes alone | Employer (including self-funded), marketplace, individual, non-federal government, FEHB |
+| CPT 99281-99285, an emergency service as the procedure, or a sentence tying emergency care to the person's claim | No Surprises Act emergency services, PHS Act 2799A-1(a), 45 CFR 149.110 (for employer plans also 29 CFR 2590.716-4 and 26 CFR 54.9816-4T): emergency services without prior authorization, in any network, with cost sharing no higher than in network, judged by the prudent layperson standard and not from diagnosis codes alone | Employer (including self-funded), individual including marketplace, non-federal government, FEHB; not short-term limited-duration insurance, excepted benefits or account-based plans such as HRAs |
 | Same | 42 CFR 422.113(b) | Medicare Advantage |
 | Same | 42 CFR 438.114 | Medicaid managed care |
-| HCPCS A0430, A0431, A0435, A0436, an air ambulance as the procedure, or a sentence tying one to the claim | No Surprises Act air ambulance, PHS Act 2799A-2, 45 CFR 149.130: in-network cost sharing when the plan covers air ambulance; not ground ambulance, and not a coverage mandate | Employer, marketplace, individual, non-federal government, FEHB |
-| An out-of-network phrase together with an in-network hospital or facility phrase | PHS Act 2799A-1(b), 45 CFR 149.120 and 149.420: for a service the plan covers, in-network cost sharing unless valid notice and consent, which is not allowed for ancillary services; not a coverage mandate | Same |
+| HCPCS A0430, A0431, A0435, A0436, an air ambulance as the procedure, or a sentence tying one to the claim | No Surprises Act air ambulance, PHS Act 2799A-2, 45 CFR 149.130 (also 29 CFR 2590.717-1 and 26 CFR 54.9817-1T): the same cost sharing as an in-network air ambulance | Same as the emergency row |
+| An out-of-network phrase and a participating facility phrase, each in a sentence about the claim | PHS Act 2799A-1(b), 45 CFR 149.120 (also 29 CFR 2590.716-5 and 26 CFR 54.9816-5T): cost sharing no higher than in network at a participating hospital, hospital outpatient department, critical access hospital or ambulatory surgical center, unless the clinician met the notice-and-consent criteria of 45 CFR 149.420(c)-(i), which never apply to ancillary services, care no participating provider could furnish, or unforeseen urgent needs (149.420(b)) | Same as the emergency row |
 
-Negated mentions ("no ER visit occurred") and general policy sentences
-("emergency services do not require prior authorization") are ignored, and
-line breaks inside a term still match. Each rule is rendered with the coverage
-it reaches; when the plan type is unknown, a caveat says which plans the No
-Surprises Act reaches, and a known Original Medicare or VA patient gets none
-of these. The pre-2022
-emergency rule (45 CFR 147.138(b)) only governs plan years that began before
-January 1, 2022 and is not cited. Original Medicare and VA get none of these.
+**What a letter can use, and what is for the model only.** Each rule has a
+summary, written so a letter can quote it without handing the plan an exit
+(the No Surprises Act summaries say a lack of out-of-network benefits is not
+an exclusion), and a "Cite only if" line the model reads to decide whether the
+rule fits: the plan covers emergency department services, air ambulance or the
+service itself at all; ground ambulances are out; 149.110(b)(5) keeps only
+exclusions or coordination of benefits not inconsistent with emergency
+coverage, waiting periods and normal cost sharing; and 149.420 binds the
+clinician, so a letter uses it only for what makes consent valid, never as a
+rule the plan broke.
+
+**Which plans see which rules.** Each rule is rendered with the coverage it
+reaches. The Labor and Treasury copies are added for an employer, TPA or
+unknown plan. With known public coverage and no private plan source, only the
+program's own rule appears (a TPA flag beside Medicaid is not enough); with
+public and private sources together, a caveat says the No Surprises Act rules
+apply only if the private plan denied it; with no plan information, a caveat
+names the plans the act reaches. A known Original Medicare or VA patient gets
+none of these.
+
+**Triggers.** Negated mentions ("no ER visit occurred") and general policy
+sentences ("emergency services do not require prior authorization", "to find
+a participating hospital, visit our website") are ignored, and line breaks
+inside a term still match. The pre-2022 emergency rule (45 CFR 147.138(b))
+only governs plan years that began before January 1, 2022 and is not cited.
 
 **Verification:** each rule's section was checked against eCFR's current
-text, including its applicability date. Recheck when eCFR shows an amendment
-to parts 149, 422 or 438.
+text, including its applicability date. The Treasury sections are temporary
+regulations (the -T suffix); eCFR lists them as current with no expiration
+date in the text, so recheck their status along with any amendment to 45 CFR
+part 149, 29 CFR part 2590, 26 CFR part 54, or 42 CFR parts 422 and 438.
 
 ## Not built yet
 

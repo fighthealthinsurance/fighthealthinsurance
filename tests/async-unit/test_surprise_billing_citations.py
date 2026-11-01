@@ -53,8 +53,9 @@ class TestSurpriseBillingFacts(unittest.TestCase):
     def test_out_of_network_clinician_at_in_network_hospital(self):
         facts = surprise_billing_facts(
             denial_text=(
-                "The anesthesiologist was out-of-network although the surgery "
-                "was at an in-network hospital."
+                "Your claim from the anesthesiologist was denied because the "
+                "anesthesiologist was out-of-network, although the surgery was "
+                "at an in-network hospital."
             )
         )
         self.assertEqual(facts, {OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY})
@@ -117,6 +118,17 @@ class TestSurpriseBillingFacts(unittest.TestCase):
     def test_non_participating_hospital_alone_is_not_the_facility_case(self):
         facts = surprise_billing_facts(
             denial_text="Care at a non-participating hospital is not covered."
+        )
+        self.assertNotIn(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY, facts)
+
+    def test_out_of_network_boilerplate_on_a_drug_denial_does_not_fire(self):
+        facts = surprise_billing_facts(
+            denial_text=(
+                "Your prescription for the drug is denied. Out-of-network "
+                "benefits are not available under your plan. To find a "
+                "participating hospital, visit our website."
+            ),
+            procedure="Adalimumab",
         )
         self.assertNotIn(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY, facts)
 
@@ -194,20 +206,92 @@ class TestApplicableSurpriseBillingRules(unittest.TestCase):
                 self.assertNotIn("147.138", rule.summary)
 
 
-class TestSummariesKeepTheBenefitLimits(unittest.TestCase):
+class TestLetterTextAndCitingLimits(unittest.TestCase):
+    """The summary is what a letter may use, so it never offers the plan a
+    way out; the limits live in the model-only "Cite only if" line."""
+
     def rule(self, section):
         return next(r for r in SURPRISE_BILLING_RULES if section in r.name)
 
-    def test_emergency_rule_is_conditioned_on_emergency_benefits(self):
-        self.assertIn(
-            "A plan that covers any emergency department services",
-            self.rule("149.110").summary,
-        )
+    def test_no_summary_offers_an_exit(self):
+        for rule in SURPRISE_BILLING_RULES:
+            with self.subTest(rule=rule.name):
+                for phrase in (
+                    "excludes",
+                    "does not make a plan cover",
+                    "medically necessary",
+                    "When a plan covers",
+                    "A plan that covers",
+                ):
+                    self.assertNotIn(phrase, rule.summary)
 
-    def test_facility_rule_is_conditioned_on_a_covered_service(self):
+    def test_no_surprises_act_summaries_say_no_out_of_network_benefits_is_not_an_exclusion(
+        self,
+    ):
+        for section in ("149.110", "149.120", "149.130"):
+            with self.subTest(section=section):
+                self.assertIn(
+                    "lack of out-of-network benefits is not an exclusion",
+                    self.rule(section).summary,
+                )
+
+    def test_benefit_conditions_are_in_the_citing_limits(self):
+        self.assertIn(
+            "covers any emergency department services", self.rule("149.110").cite_when
+        )
+        self.assertIn("covers the service itself", self.rule("149.120").cite_when)
+        self.assertIn("covers air ambulance services at all", self.rule("149.130").cite_when)
+        self.assertIn("ground ambulances", self.rule("149.130").cite_when)
+
+    def test_emergency_limits_name_the_terms_the_rule_keeps(self):
+        cite_when = self.rule("149.110").cite_when
+        for phrase in ("coordination of benefits", "waiting period", "cost sharing"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, cite_when)
+        self.assertIn("defined term", cite_when)
+
+    def test_cost_sharing_is_a_ceiling_except_for_air_ambulance(self):
+        self.assertIn("no higher than in network", self.rule("149.110").summary)
+        self.assertIn("no higher than in network", self.rule("149.120").summary)
+        self.assertIn("the same cost sharing", self.rule("149.130").summary)
+
+    def test_facility_rule_names_the_participating_facility_types(self):
         summary = self.rule("149.120").summary
-        self.assertIn("When a plan covers a service", summary)
-        self.assertIn("does not make a plan cover a service it excludes", summary)
+        for phrase in (
+            "hospital outpatient department",
+            "critical access hospital",
+            "ambulatory surgical center",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, summary)
+
+    def test_149_420_appears_only_as_the_consent_criteria(self):
+        rule = self.rule("149.120")
+        self.assertNotIn("149.420", rule.name)
+        self.assertIn("notice-and-consent criteria in 45 C.F.R. § 149.420(c)", rule.summary)
+        self.assertIn("never as a rule the plan broke", rule.cite_when)
+        for other in SURPRISE_BILLING_RULES:
+            if other is not rule:
+                self.assertNotIn("149.420", other.summary + other.name)
+
+    def test_consent_exceptions_cover_the_regulation_list(self):
+        summary = self.rule("149.120").summary
+        for phrase in (
+            "emergency medicine",
+            "anesthesiology",
+            "pathology",
+            "radiology",
+            "neonatology",
+            "assistant surgeons",
+            "hospitalists",
+            "intensivists",
+            "laboratory",
+            "no participating provider",
+            "unforeseen, urgent",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, summary)
+        self.assertNotIn("signed", summary)
 
     def test_emergency_rule_gives_the_full_prudent_layperson_standard(self):
         summary = self.rule("149.110").summary
@@ -224,15 +308,97 @@ class TestSummariesKeepTheBenefitLimits(unittest.TestCase):
     def test_medicare_advantage_rule_leaves_out_urgently_needed_services(self):
         self.assertNotIn("urgently needed", self.rule("422.113").summary)
 
+    def test_reach_names_plans_the_act_does_not_reach(self):
+        reaches = self.rule("149.110").reaches
+        self.assertIn("not short-term limited-duration insurance", reaches)
+        self.assertIn("excepted benefits", reaches)
+        self.assertIn("HRAs", reaches)
+        self.assertNotIn("TRICARE", reaches)
+
+
+class TestEmployerPlanSections(unittest.TestCase):
+    PARALLELS = (
+        "29 C.F.R. § 2590.716-4",
+        "26 C.F.R. § 54.9816-4T",
+    )
+
+    def test_erisa_tpa_and_unknown_plans_get_the_labor_and_treasury_sections(self):
+        for programs in (("erisa",), ("tpa",), ("erisa_letter",), ()):
+            with self.subTest(programs=programs):
+                block = get_surprise_billing_citation_context(
+                    codes=["99285"], programs=programs
+                )
+                assert block is not None
+                for section in self.PARALLELS:
+                    self.assertIn(section, block)
+
+    def test_every_no_surprises_act_rule_carries_its_parallels(self):
+        block = get_surprise_billing_citation_context(
+            denial_text=(
+                "Your claim for the air ambulance was denied. Your claim from the "
+                "out-of-network anesthesiologist at the in-network hospital was "
+                "denied."
+            ),
+            codes=["99285"],
+            programs=("erisa",),
+        )
+        assert block is not None
+        for section in (
+            "2590.716-4",
+            "54.9816-4T",
+            "2590.716-5",
+            "54.9816-5T",
+            "2590.717-1",
+            "54.9817-1T",
+        ):
+            with self.subTest(section=section):
+                self.assertIn(section, block)
+
+    def test_marketplace_plan_gets_only_the_hhs_section(self):
+        block = get_surprise_billing_citation_context(
+            codes=["99285"], programs=("marketplace",)
+        )
+        assert block is not None
+        self.assertIn("149.110", block)
+        self.assertNotIn("2590.716-4", block)
+
 
 class TestSurpriseBillingContext(unittest.TestCase):
-    def test_air_ambulance_block_says_what_the_rule_does_not_do(self):
+    def test_air_ambulance_block_keeps_the_limits_out_of_the_letter_text(self):
         block = get_surprise_billing_citation_context(codes=["A0430"])
         assert block is not None
         self.assertTrue(block.startswith(SURPRISE_BILLING_HEADER))
         self.assertIn("149.130", block)
-        self.assertIn("does not reach ground ambulances", block)
-        self.assertIn("not medically necessary", block)
+        self.assertIn("Cite only if the plan covers air ambulance services", block)
+        self.assertIn("is for you, not for the letter", block)
+        self.assertNotIn("medically necessary", block)
+
+    def test_medicaid_with_a_tpa_flag_gets_only_the_medicaid_rule(self):
+        block = get_surprise_billing_citation_context(
+            codes=["99285"], programs=("medicaid", "tpa")
+        )
+        assert block is not None
+        self.assertIn("438.114", block)
+        self.assertNotIn("149.110", block)
+        self.assertNotIn("No Surprises Act", block)
+
+    def test_public_and_private_sources_render_the_also_private_caveat(self):
+        block = get_surprise_billing_citation_context(
+            codes=["99285"], programs=("medicaid", "erisa")
+        )
+        assert block is not None
+        self.assertIn("149.110", block)
+        self.assertIn("438.114", block)
+        self.assertIn("if you also have private coverage", block)
+
+    def test_fehb_alone_gets_no_also_private_caveat(self):
+        block = get_surprise_billing_citation_context(
+            codes=["99285"], programs=("fehb",)
+        )
+        assert block is not None
+        self.assertIn("149.110", block)
+        self.assertNotIn("if you also have private coverage", block)
+        self.assertNotIn("the plan type is not known", block)
 
     def test_no_block_for_an_unrelated_denial(self):
         self.assertIsNone(

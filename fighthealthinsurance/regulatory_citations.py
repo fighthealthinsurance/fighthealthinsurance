@@ -977,7 +977,7 @@ _NEGATED_BEFORE_RE = re.compile(
 _POLICY_SENTENCE_RE = re.compile(
     r"\bdo(?:es)? not require\b|\bif you\b|\bin an emergency\b|\bcall 911\b|"
     r"\b(?:is|are) covered\b|\bwill be covered\b|\byour plan covers\b|"
-    r"\bgenerally\b",
+    r"\bgenerally\b|\bto find\b|\bvisit our\b|\bwebsite\b",
     re.I,
 )
 # What ties a sentence to this person's own claim.
@@ -1052,38 +1052,64 @@ def surprise_billing_facts(
         or _about_this_claim(_EMERGENCY_RE, letter)
     ):
         facts.add(EMERGENCY_CARE)
-    both = f"{service} {letter}"
-    if _affirmed(_OUT_OF_NETWORK_RE, both) and _affirmed(_IN_NETWORK_FACILITY_RE, both):
+    # Both halves of the facility case have to be about this claim too, so
+    # a drug denial's "out-of-network benefits are not available" beside a
+    # "to find a participating hospital, visit our website" line never fires.
+    if (
+        _affirmed(_OUT_OF_NETWORK_RE, service)
+        or _about_this_claim(_OUT_OF_NETWORK_RE, letter)
+    ) and (
+        _affirmed(_IN_NETWORK_FACILITY_RE, service)
+        or _about_this_claim(_IN_NETWORK_FACILITY_RE, letter)
+    ):
         facts.add(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY)
     return frozenset(facts)
 
 
 @dataclass(frozen=True)
 class SurpriseBillingRule:
-    """One federal rule for a kind of care, with the plans it reaches."""
+    """One federal rule for a kind of care, with the plans it reaches.
+
+    ``summary`` is what the rule requires, worded so a letter can use it: it
+    never offers the plan a way out. ``cite_when`` is for the model only:
+    when the rule fits and when it does not, so its limits are applied
+    rather than written into the letter.
+    """
 
     fact: str  # the surprise_billing_facts() value that triggers it
     name: str
     summary: str
+    cite_when: str
     effective: str
     # Which coverage the rule reaches, in words, rendered with the rule so
     # the letter (and the person) can see whether it fits their plan.
     reaches: str
     source_url: str  # documentation only; not rendered into the prompt
-    # Private coverage (employer, marketplace, individual, non-federal
-    # government), including self-funded ERISA plans. The No Surprises Act
-    # reaches those, and FEHB plans through 5 U.S.C. 8902(p), which applies
-    # PHS Act 2799A-1, 2799A-2 and 2799A-7 and the provider rules in 2799B to
-    # FEHB enrollees. It does not reach Medicare, Medicaid or VA care, which
-    # have their own emergency rules below where they exist.
+    # Private coverage (employer, individual, non-federal government),
+    # including self-funded ERISA plans. The No Surprises Act reaches those,
+    # and FEHB plans through 5 U.S.C. 8902(p), which applies PHS Act 2799A-1,
+    # 2799A-2 and 2799A-7 and the provider rules in 2799B to FEHB enrollees.
+    # It does not reach Medicare, Medicaid or VA care, which have their own
+    # emergency rules below where they exist.
     private: bool
     public_programs: frozenset[str] = frozenset()
+    # The Labor and Treasury copies of the rule, which are the ones an
+    # employer plan answers to under ERISA and the tax code. Rendered for an
+    # employer, TPA or unknown plan, since the model may not add sections of
+    # its own.
+    employer_plan_sections: str = ""
 
 
 _NSA_REACHES = (
-    "employer plans (including self-funded ones), marketplace and other "
-    "individual plans, state and local government plans, and FEHB plans; not "
-    "Original Medicare, Medicare Advantage, Medicaid or VA care"
+    "employer plans (including self-funded ones), individual plans including "
+    "marketplace plans, state and local government plans, and FEHB plans; not "
+    "short-term limited-duration insurance, excepted benefits, or account-based "
+    "plans such as HRAs, and not Original Medicare, Medicare Advantage, "
+    "Medicaid or VA care"
+)
+
+_NO_OUT_OF_NETWORK_BENEFITS = (
+    "A plan's lack of out-of-network benefits is not an exclusion of these " "services."
 )
 
 SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
@@ -1094,24 +1120,36 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
             "Act § 2799A-1(a); 45 C.F.R. § 149.110)"
         ),
         summary=(
-            "A plan that covers any emergency department services must cover "
-            "emergency services without prior authorization, whether or not "
-            "the hospital or clinician is in network, at in-network cost "
-            "sharing. An emergency medical condition, including a mental "
-            "health condition or substance use disorder, is one with acute "
-            "symptoms severe enough (including severe pain) that a prudent "
-            "layperson with an average knowledge of health and medicine could "
-            "reasonably expect the absence of immediate medical attention to "
-            "place the person's health (or a pregnant woman's or her unborn "
-            "child's) in serious jeopardy, seriously impair bodily functions, "
-            "or cause serious dysfunction of a bodily organ or part. The plan "
-            "may not decide that solely from diagnosis codes."
+            "Emergency services must be covered without prior authorization, "
+            "whether or not the hospital or clinician is in network, with cost "
+            "sharing no higher than in network and no administrative "
+            "requirement stricter than for in-network emergency care. "
+            f"{_NO_OUT_OF_NETWORK_BENEFITS} An emergency medical condition, "
+            "including a mental health condition or substance use disorder, is "
+            "one with acute symptoms severe enough (including severe pain) that "
+            "a prudent layperson with an average knowledge of health and "
+            "medicine could reasonably expect the absence of immediate medical "
+            "attention to place the person's health (or a pregnant woman's or "
+            "her unborn child's) in serious jeopardy, seriously impair bodily "
+            "functions, or cause serious dysfunction of a bodily organ or part. "
+            "The plan may not decide that solely from diagnosis codes."
+        ),
+        cite_when=(
+            "the plan covers any emergency department services, as nearly all "
+            "plans do. Emergency services is a defined term: the screening exam "
+            "and the treatment needed to stabilize the person. The rule leaves "
+            "only these other plan terms in place: an exclusion or coordination "
+            "of benefits that is not inconsistent with emergency coverage, an "
+            "affiliation or waiting period, and normal cost sharing. A missing "
+            "prior authorization or a lack of out-of-network benefits is never a "
+            "reason not to cite it."
         ),
         effective="plan years beginning on or after January 1, 2022",
         reaches=_NSA_REACHES,
         source_url="https://www.ecfr.gov/current/title-45/section-149.110",
         private=True,
         public_programs=frozenset({FEHB}),
+        employer_plan_sections="29 C.F.R. § 2590.716-4 and 26 C.F.R. § 54.9816-4T",
     ),
     SurpriseBillingRule(
         fact=EMERGENCY_CARE,
@@ -1123,6 +1161,7 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
             "authorization, judged by the prudent layperson definition of an "
             "emergency medical condition regardless of the final diagnosis."
         ),
+        cite_when="the denial is from a Medicare Advantage plan.",
         effective="in force",
         reaches="Medicare Advantage plans only",
         source_url="https://www.ecfr.gov/current/title-42/section-422.113",
@@ -1139,6 +1178,7 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
             "condition under the prudent layperson definition, and may not limit "
             "what counts as an emergency by lists of diagnoses or symptoms."
         ),
+        cite_when="the denial is from a Medicaid managed care plan.",
         effective="in force",
         reaches="Medicaid managed care plans only",
         source_url="https://www.ecfr.gov/current/title-42/section-438.114",
@@ -1152,53 +1192,75 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
             "§ 2799A-2; 45 C.F.R. § 149.130)"
         ),
         summary=(
-            "When a plan covers air ambulance services, an out-of-network air "
-            "ambulance must be covered at in-network cost sharing, counted "
-            "toward the in-network deductible and out-of-pocket maximum. It "
-            "does not make a plan cover air transport it excludes or finds "
-            "not medically necessary, and it does not reach ground ambulances."
+            "An out-of-network air ambulance must be covered with the same cost "
+            "sharing as an in-network one, counted toward the in-network "
+            f"deductible and out-of-pocket maximum. {_NO_OUT_OF_NETWORK_BENEFITS}"
+        ),
+        cite_when=(
+            "the plan covers air ambulance services at all, in network or out. "
+            "It does not apply to ground ambulances."
         ),
         effective="plan years beginning on or after January 1, 2022",
         reaches=_NSA_REACHES,
         source_url="https://www.ecfr.gov/current/title-45/section-149.130",
         private=True,
         public_programs=frozenset({FEHB}),
+        employer_plan_sections="29 C.F.R. § 2590.717-1 and 26 C.F.R. § 54.9817-1T",
     ),
     SurpriseBillingRule(
         fact=OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY,
         name=(
-            "No Surprises Act rule for out-of-network clinicians at in-network "
+            "No Surprises Act rule for out-of-network clinicians at participating "
             "facilities (Public Health Service Act § 2799A-1(b); 45 C.F.R. "
-            "§§ 149.120 and 149.420)"
+            "§ 149.120)"
         ),
         summary=(
-            "When a plan covers a service, non-emergency care for it from an "
-            "out-of-network clinician at an in-network hospital or surgery "
-            "center must be covered at in-network cost sharing, unless the "
-            "person signed a valid notice-and-consent waiver beforehand, and "
-            "that waiver is not allowed for certain services such as "
-            "anesthesiology, radiology, pathology and emergency medicine. It "
-            "does not make a plan cover a service it excludes."
+            "Non-emergency care from an out-of-network clinician at a "
+            "participating health care facility (a hospital, hospital outpatient "
+            "department, critical access hospital or ambulatory surgical center) "
+            "must be covered with cost sharing no higher than in network, unless "
+            "the clinician satisfied the federal notice-and-consent criteria in "
+            "45 C.F.R. § 149.420(c) through (i). Those criteria can never apply "
+            "to ancillary services (emergency medicine, anesthesiology, "
+            "pathology, radiology and neonatology; assistant surgeons, "
+            "hospitalists and intensivists; and diagnostic services including "
+            "radiology and laboratory services), to care no participating "
+            "provider at the facility could furnish, or to unforeseen, urgent "
+            "needs that arise during the visit (45 C.F.R. § 149.420(b)). "
+            f"{_NO_OUT_OF_NETWORK_BENEFITS}"
+        ),
+        cite_when=(
+            "the plan covers the service itself. Section 149.420 binds the "
+            "clinician, not the plan: use it only for what makes consent valid, "
+            "never as a rule the plan broke."
         ),
         effective="plan years beginning on or after January 1, 2022",
         reaches=_NSA_REACHES,
         source_url="https://www.ecfr.gov/current/title-45/section-149.120",
         private=True,
         public_programs=frozenset({FEHB}),
+        employer_plan_sections="29 C.F.R. § 2590.716-5 and 26 C.F.R. § 54.9816-5T",
     ),
 )
 
 SURPRISE_BILLING_HEADER = "EMERGENCY AND SURPRISE BILLING RULES"
 
-# Signals that the plan is private coverage: a private plan source, a TPA
-# carrier, or a denial letter that named ERISA rights.
-_PRIVATE_EVIDENCE = PRIVATE_COVERAGE | {TPA, ERISA_LETTER}
+# Plan sources that are private coverage. A TPA carrier or an ERISA mention
+# in the letter also points to an employer plan, but next to a known public
+# program neither is enough to say the denial came from a private plan.
+_PRIVATE_SOURCES = PRIVATE_COVERAGE
+_EMPLOYER_SIGNALS = frozenset({ERISA, TPA, ERISA_LETTER})
 
 _UNKNOWN_PLAN_CAVEAT = (
     "Note: the plan type is not known. The No Surprises Act rules above reach "
-    "most private and employer plans and FEHB plans, not Original Medicare, "
-    "Medicare Advantage, Medicaid or VA care, so cite one only if the plan is "
-    "one it reaches."
+    "most employer and individual plans and FEHB plans, not short-term "
+    "limited-duration plans, Original Medicare, Medicare Advantage, Medicaid "
+    "or VA care, so cite one only if the plan is one it reaches."
+)
+_ALSO_PRIVATE_CAVEAT = (
+    "Note: both public and private coverage were given. The No Surprises Act "
+    "rules apply only if you also have private coverage and it is the plan "
+    "that denied this; the program's own rule applies to the public coverage."
 )
 
 
@@ -1207,15 +1269,16 @@ def applicable_surprise_billing_rules(
 ) -> list[SurpriseBillingRule]:
     """The rules for the denial's facts that reach the plan.
 
-    ``programs`` is classify_plan()'s result. With only public coverage, only
-    the rules written for that program, so Original Medicare and VA get none.
-    With no plan information, the private-coverage rules, which the context
-    block then renders with an unknown-plan caveat.
+    ``programs`` is classify_plan()'s result. With known public coverage and
+    no private plan source, only the rules written for that program, so
+    Original Medicare and VA get none and a TPA flag beside Medicaid does
+    not bring in the private rules. With no plan information, the private
+    rules, which the context block renders with an unknown-plan caveat.
     """
     fact_set = set(facts)
     keys = set(programs)
     public = keys & PUBLIC_PROGRAMS
-    public_only = bool(public) and not keys & _PRIVATE_EVIDENCE
+    public_only = bool(public) and not keys & _PRIVATE_SOURCES
     rules: list[SurpriseBillingRule] = []
     for rule in SURPRISE_BILLING_RULES:
         if rule.fact not in fact_set:
@@ -1228,6 +1291,16 @@ def applicable_surprise_billing_rules(
     return rules
 
 
+def _render_rule(rule: SurpriseBillingRule, employer_plan: bool) -> str:
+    line = f"- {rule.name} ({rule.effective}; reaches {rule.reaches}): {rule.summary}"
+    if employer_plan and rule.employer_plan_sections:
+        line += (
+            " For an employer plan, the same rule is also at "
+            f"{rule.employer_plan_sections}."
+        )
+    return f"{line}\n  Cite only if {rule.cite_when}"
+
+
 def get_surprise_billing_citation_context(
     denial_text: Optional[str] = None,
     procedure: Optional[str] = None,
@@ -1237,8 +1310,9 @@ def get_surprise_billing_citation_context(
 ) -> Optional[str]:
     """The emergency and surprise-billing block for the appeal prompt, or
     None when the denial is about none of those situations or no rule
-    reaches the plan. Each rule names the coverage it reaches; with no plan
-    information, a caveat says so."""
+    reaches the plan. Each rule names the coverage it reaches and when to
+    cite it; with no plan information, or public and private coverage
+    together, a caveat says so."""
     facts = surprise_billing_facts(denial_text, procedure, diagnosis, codes)
     if not facts:
         return None
@@ -1246,17 +1320,23 @@ def get_surprise_billing_citation_context(
     rules = applicable_surprise_billing_rules(facts, keys)
     if not rules:
         return None
-    lines = "\n".join(
-        f"- {r.name} ({r.effective}; reaches {r.reaches}): {r.summary}" for r in rules
-    )
+    # FEHB is a public program the No Surprises Act does reach, so it never
+    # calls for the also-private caveat.
+    public = keys & PUBLIC_PROGRAMS - {FEHB}
+    unknown = not keys & (_PRIVATE_SOURCES | _EMPLOYER_SIGNALS | PUBLIC_PROGRAMS)
+    employer_plan = unknown or bool(keys & _EMPLOYER_SIGNALS)
+    lines = "\n".join(_render_rule(r, employer_plan) for r in rules)
     block = (
         f"{SURPRISE_BILLING_HEADER}: The denial appears to involve emergency "
-        "care, an air ambulance, or an out-of-network clinician at an "
-        "in-network facility. These federal rules MAY apply; cite one by name "
-        "only if the facts of this denial and the plan fit it, and do not "
-        "invent section numbers, dates, or quotations beyond what is provided "
-        f"here.\n{lines}"
+        "care, an air ambulance, or an out-of-network clinician at a "
+        "participating facility. These federal rules MAY apply. Each rule's "
+        '"Cite only if" line is for you, not for the letter: cite a rule by '
+        "name only when the facts of this denial and the plan fit it, and do "
+        "not invent section numbers, dates, or quotations beyond what is "
+        f"provided here.\n{lines}"
     )
-    if not keys & (_PRIVATE_EVIDENCE | PUBLIC_PROGRAMS):
+    if unknown:
         block = f"{block}\n{_UNKNOWN_PLAN_CAVEAT}"
+    elif public and keys & _PRIVATE_SOURCES and any(r.private for r in rules):
+        block = f"{block}\n{_ALSO_PRIVATE_CAVEAT}"
     return block
