@@ -8,6 +8,7 @@ import asyncio
 from typing import Optional
 
 from fighthealthinsurance import env_utils
+from fighthealthinsurance.ml import ml_models, spend
 from fighthealthinsurance.ml.ml_router import (
     MLRouter,
     _EXTERNAL_GENERALIST,
@@ -1914,3 +1915,69 @@ class TestMLRouterSummarizeChatHistory(unittest.TestCase):
         asyncio.run(
             self.async_test_summarize_chat_history_consecutive_same_role_merged()
         )
+
+
+NEMOTRON = "nvidia/NVIDIA-Nemotron-3.5-Super-VL"
+
+
+class TestNemotronLeadsOutsideWriters(unittest.TestCase):
+    """Nemotron 3.5 Super, chosen from the October letter eval, is the first
+    outside model asked, with cost still deciding between equals."""
+
+    def _router(self, env: dict[str, str]) -> MLRouter:
+        with patch.object(ml_models, "get_env_variable", side_effect=env.get):
+            return MLRouter()
+
+    def _best(self, router: MLRouter, limit: int = 3) -> list[str]:
+        # DeepInfra has no live signal, so the sweep cache is read: say up.
+        with patch(
+            "fighthealthinsurance.ml.health_status.health_status.model_ok",
+            return_value=True,
+        ):
+            return [m.model for m in router.best_external_models(limit=limit)]
+
+    def test_deepinfra_registers_prices_and_caps_it(self):
+        self.assertIn(NEMOTRON, {d.name for d in DeepInfra.models()})
+        # Unpriced, it would be charged at the high fallback rate.
+        self.assertIn(NEMOTRON, spend.DEEPINFRA_USD_PER_MTOK)
+        with patch.object(ml_models, "get_env_variable", return_value="test-key"):
+            backend = DeepInfra(model=NEMOTRON)
+        extras = backend._request_extras(NEMOTRON)
+        # It reasons first and the cap counts the reasoning, so a short cap
+        # brings a letter back empty.
+        self.assertGreaterEqual(extras["max_tokens"], 8192)
+        # DeepInfra refuses a request that turns thinking off.
+        self.assertNotIn("chat_template_kwargs", extras)
+        self.assertEqual(backend.max_len, 260000)
+
+    def test_other_deepinfra_models_keep_their_request_extras(self):
+        with patch.object(ml_models, "get_env_variable", return_value="test-key"):
+            gemma = DeepInfra(model=GEMMA)
+            kimi = DeepInfra(model="moonshotai/Kimi-K3")
+        self.assertEqual(gemma._request_extras(GEMMA), {})
+        self.assertEqual(
+            kimi._request_extras("moonshotai/Kimi-K3"), {"max_tokens": 3000}
+        )
+
+    def test_it_leads_the_deepinfra_writers(self):
+        router = self._router({"DEEPINFRA_API": "test-key"})
+        self.assertEqual(
+            self._best(router),
+            [NEMOTRON, "deepseek-ai/DeepSeek-V4-Pro-0813", GEMMA],
+        )
+
+    def test_it_ties_the_frontier_tier_and_cost_breaks_the_tie(self):
+        router = self._router({"DEEPINFRA_API": "test-key"})
+        nemotron = router.models_by_name[NEMOTRON][0]
+        # Hosted models at the frontier and premium tiers' qualities, in the
+        # cost order the router keeps (Nemotron is the cheapest of the three).
+        premium = make_external_mock(quality=98)
+        frontier = make_external_mock(quality=100)
+        router.external_models_by_cost = [nemotron, premium, frontier]
+        with patch(
+            "fighthealthinsurance.ml.health_status.health_status.model_ok",
+            return_value=True,
+        ):
+            best = router.best_external_models(limit=3)
+        # Equal to the frontier tier, so the cheaper one goes first.
+        self.assertEqual(best, [nemotron, frontier, premium])

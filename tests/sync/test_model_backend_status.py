@@ -64,6 +64,7 @@ NEW_SAME_PATH = {
 
 GEMMA = "google/gemma-4-26B-A4B-it"
 DEEPSEEK = "deepseek-ai/DeepSeek-V4-Pro-0813"
+NEMOTRON = "nvidia/NVIDIA-Nemotron-3.5-Super-VL"
 
 
 def _is_routing_setting(name: str) -> bool:
@@ -406,7 +407,8 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         response = self.get_page()
         routing = response.context["routing"]
         self.assertEqual(
-            [name for name, _quality in routing.top_external], [DEEPSEEK, GEMMA]
+            [name for name, _quality in routing.top_external],
+            [NEMOTRON, DEEPSEEK, GEMMA],
         )
         gemma = self.row(response, GEMMA)
         self.assertEqual((gemma["quality"], gemma["kind"]), (80, "external"))
@@ -616,11 +618,13 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 # Registered internal, strongest first.
                 "fhi-local",
                 "fhi-legacy",
-                # The top 3 external, by rank.
+                # The top 3 external, by rank. Nemotron ties Fable's quality
+                # and wins on cost.
+                NEMOTRON,
                 "azure-anthropic/claude-fable-5",
                 "anthropic/claude-opus-4-8",
-                "azure-anthropic/claude-opus-4-8",
                 # Other registered externals: quality, then provider.
+                "azure-anthropic/claude-opus-4-8",
                 "anthropic/claude-sonnet-4-6",
                 DEEPSEEK,
                 # DeepInfra's chat-only models (quality 82, the default for

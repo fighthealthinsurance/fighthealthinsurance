@@ -29,6 +29,19 @@
    "retired_reason": "This was the preview. DeepInfra published the finished DeepSeek V4-Pro (0813 release), at the same price, so we moved to it."
   },
   {
+   "id": "nemotron-3.5-super",
+   "name": "Nemotron 3.5 Super",
+   "maker": "NVIDIA, through DeepInfra",
+   "role": "Writes a backup draft. One of the first outside models we ask.",
+   "runs_on": "Outside service, only if you allow outside models",
+   "setup": "",
+   "ours": false,
+   "routed_as": "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+   "tested_in": null,
+   "retired": null,
+   "retired_reason": ""
+  },
+  {
    "id": "deepseek-v4-pro-0813",
    "name": "DeepSeek V4-Pro (0813 release)",
    "maker": "DeepSeek, through DeepInfra",
@@ -181,6 +194,11 @@
   {
    "date": "2026-10-31",
    "what": "Moved to DeepInfra's newer releases of DeepSeek V4-Pro and DeepSeek V4.1 Flash, and replaced Qwen3.8, which DeepInfra stopped serving, with the cheaper Qwen3.8 Max.",
+   "detail": false
+  },
+  {
+   "date": "2026-11-01",
+   "what": "Added NVIDIA's Nemotron 3.5 Super to the outside models we ask for a backup draft, near the top of the list.",
    "detail": false
   }
  ],
