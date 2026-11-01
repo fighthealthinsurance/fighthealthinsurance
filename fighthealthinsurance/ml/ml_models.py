@@ -176,6 +176,10 @@ from fighthealthinsurance.ml.bad_output_utils import (
     is_bad_output,
     strip_boilerplate_service,
 )
+from fighthealthinsurance.ml.appeal_prompt_versions import (
+    TIGHT_SYSTEM_PROMPT,
+    uses_tight_system_prompt,
+)
 from fighthealthinsurance.letter_openings import (
     APPEAL_SALUTATION_INSTRUCTION,
     strip_letter_preamble,
@@ -3221,17 +3225,30 @@ class RemoteOpenLike(RemoteModel):
             legs.append(("backup", self.backup_api_base, self.backup_model))
         return legs
 
-    def get_system_prompts(self, prompt_type: str, prof_pov=False) -> list[str]:
+    def get_system_prompts(
+        self, prompt_type: str, prof_pov=False, prompt_version: Optional[str] = None
+    ) -> list[str]:
         """
         Get the appropriate system prompt based on type and audience.
 
         Args:
             prompt_type: The type of prompt to get (e.g., 'full', 'questions', etc.)
             prof_pov: Generating the appeal from the patient (False) or professional (True) point of view
+            prompt_version: The appeal prompt version a full letter is written
+                with (ml/appeal_prompt_versions). v4 takes the evaluation's
+                tight system prompt in place of every backend's own.
 
         Returns:
             The system prompt as a string, or the first prompt if multiple are available
         """
+        if prompt_type == "full" and uses_tight_system_prompt(prompt_version):
+            return [
+                (
+                    TIGHT_PROFESSIONAL_LETTER_PROMPT
+                    if prof_pov
+                    else TIGHT_PATIENT_LETTER_PROMPT
+                )
+            ]
         key = prompt_type
         prompt = "You are a helpful assistant with extensive medical knowledge who loves helping patients. CRITICAL: Only cite medical literature, studies, PMIDs, journal names, or author names that are EXPLICITLY provided in the input. NEVER fabricate or hallucinate citations. If no citations are provided, do not include any specific study references."
         # Professional POV: switch to the *_not_patient variant only when the
@@ -3419,6 +3436,7 @@ class RemoteOpenLike(RemoteModel):
         prof_pov: bool = False,
         submit_executor: Optional[ThreadPoolExecutor] = None,
         deadline: Optional[float] = None,
+        prompt_version: Optional[str] = None,
     ) -> List[Future[Tuple[str, Optional[str]]]]:
         """Fan this inference out over the thread pool.
 
@@ -3443,7 +3461,7 @@ class RemoteOpenLike(RemoteModel):
                 # bodies: a second paid call per system prompt buying no
                 # diversity. Keep one leg rather than pay twice for it.
                 temperatures = [0.6]
-        system_prompts = self.get_system_prompts(infer_type, prof_pov)
+        system_prompts = self.get_system_prompts(infer_type, prof_pov, prompt_version)
         calls = itertools.chain.from_iterable(
             map(
                 lambda temperature: map(
@@ -5491,6 +5509,27 @@ class RemoteOpenLike(RemoteModel):
         if len(context_extra) > 0:
             context_extra = f"System context: {context_extra}\n\n"
         return context_extra
+
+
+# v4's appeal letter system prompt (ml/appeal_prompt_versions): the
+# evaluation's tight prompt, then only what the app depends on. The
+# placeholders are filled in later (the name where the app knows it, the
+# subscriber and group IDs on the person's own screen, so those never reach
+# the server), and the recipient line is the one every letter prompt carries:
+# see letter_openings for why models need telling. Citation rules travel in
+# the user turn, which says in every build what may be cited.
+TIGHT_PATIENT_LETTER_PROMPT = (
+    TIGHT_SYSTEM_PROMPT + " Write as the patient, in the first person (I, my), using"
+    ' "{{FIRST_NAME}} {{LAST_NAME}}" as your name, "{{SCSID}}" for the'
+    ' subscriber ID and "{{GPID}}" for the group ID. ' + APPEAL_SALUTATION_INSTRUCTION
+)
+TIGHT_PROFESSIONAL_LETTER_PROMPT = (
+    TIGHT_SYSTEM_PROMPT
+    + " Write as the patient's healthcare professional, not the patient: use"
+    ' "I" only for yourself and refer to the patient in the third person'
+    ' ("the patient", "they"). Sign as "{{Your Name}}" unless you are given'
+    " a name. " + APPEAL_SALUTATION_INSTRUCTION
+)
 
 
 class RemoteFullOpenLike(RemoteOpenLike):

@@ -15,11 +15,22 @@ same output contract at the end, so v3 against v2 compares the two layouts.
 AppealGenerator.make_sectioned_open_prompt builds it; v1 and v2 are built by
 make_open_prompt.
 
+v4 is the evaluation's tight arm: the user turn is v1's open prompt, and the
+system prompt is the evaluation's own (TIGHT_SYSTEM_PROMPT) in place of the
+app's persona prompt, followed only by what the app depends on: the voice,
+the placeholders filled in after the letter is written, and the recipient
+(ml_models.TIGHT_PATIENT_LETTER_PROMPT and TIGHT_PROFESSIONAL_LETTER_PROMPT).
+v1 to v3 keep the persona prompt. The system prompt is chosen per call from
+the version (RemoteOpenLike.get_system_prompts), so v4 needs no user-turn
+change.
+
 Which version a letter gets is a staff setting (LetterPromptMode rows,
 changed on the Model Usage dashboard): original (v1 for every letter), new
 (v2 for every letter), split (each full-letter call draws v1 or v2 at
-random, half and half), sectioned (v3 for every letter) or thirds (each
-full-letter call draws v1, v2 or v3 at random, a third each). Every draft
+random, half and half), sectioned (v3 for every letter), thirds (each
+full-letter call draws v1, v2 or v3 at random, a third each) or tight (v4
+for every letter). With no row, or when the row cannot be read, letters use
+original. Every draft
 records the version that wrote it, so the staff page can compare how often
 people pick each version's letters.
 """
@@ -36,11 +47,13 @@ from loguru import logger
 PROMPT_V1 = "v1"
 PROMPT_V2 = "v2"
 PROMPT_V3 = "v3"
+PROMPT_V4 = "v4"
 
 PROMPT_VERSION_CHOICES = (
     (PROMPT_V1, "v1: original prompt"),
     (PROMPT_V2, "v2: original prompt plus the output contract"),
     (PROMPT_V3, "v3: sectioned prompt plus the output contract"),
+    (PROMPT_V4, "v4: original prompt under the evaluation's tight system prompt"),
 )
 
 # The versions whose prompt ends with OUTPUT_CONTRACT.
@@ -55,11 +68,16 @@ OUTPUT_CONTRACT = (
     "immediately after the signature block."
 )
 
+# The evaluation's whole system prompt, word for word: the one every tight
+# arm was written with. v4's system prompt starts with it.
+TIGHT_SYSTEM_PROMPT = f"You write health insurance appeal letters. {OUTPUT_CONTRACT}"
+
 MODE_ORIGINAL = "original"
 MODE_NEW = "new"
 MODE_SPLIT = "split"
 MODE_SECTIONED = "sectioned"
 MODE_THIRDS = "thirds"
+MODE_TIGHT = "tight"
 
 # Stored on LetterPromptMode rows, so a value keeps its meaning for good: add
 # modes, never repurpose one.
@@ -69,6 +87,7 @@ MODE_CHOICES = (
     (MODE_SPLIT, "Half and half: each draft is written with v1 or v2 at random"),
     (MODE_SECTIONED, "Sectioned prompt (v3) for every letter"),
     (MODE_THIRDS, "Thirds: each draft is written with v1, v2 or v3 at random"),
+    (MODE_TIGHT, "Tight prompt (v4) for every letter"),
 )
 
 _MODES = frozenset(m for m, _label in MODE_CHOICES)
@@ -80,6 +99,7 @@ MODE_VERSIONS = {
     MODE_SPLIT: (PROMPT_V1, PROMPT_V2),
     MODE_SECTIONED: (PROMPT_V3,),
     MODE_THIRDS: (PROMPT_V1, PROMPT_V2, PROMPT_V3),
+    MODE_TIGHT: (PROMPT_V4,),
 }
 
 # The modes that draw a version at random for each call: the runs the staff
@@ -107,6 +127,12 @@ def apply_prompt_version(prompt: str, version: Optional[str]) -> str:
     return prompt
 
 
+def uses_tight_system_prompt(version: Optional[str]) -> bool:
+    """Whether ``version`` is written under the evaluation's tight system
+    prompt rather than the app's persona prompt."""
+    return version == PROMPT_V4
+
+
 def uses_sectioned_prompt(version: Optional[str]) -> bool:
     """Whether ``version`` is built with the sectioned layout
     (make_sectioned_open_prompt) rather than make_open_prompt."""
@@ -125,6 +151,8 @@ def choose_prompt_version(mode: str) -> str:
         return PROMPT_V2
     if mode == MODE_SECTIONED:
         return PROMPT_V3
+    if mode == MODE_TIGHT:
+        return PROMPT_V4
     if mode == MODE_SPLIT:
         return PROMPT_V2 if _split_draw() < 0.5 else PROMPT_V1
     if mode == MODE_THIRDS:
