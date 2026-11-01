@@ -5,7 +5,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0252_mailinglistsubscriber_cleanup_review"),
+        ("fighthealthinsurance", "0254_letterpromptmode_thirds_v2_v4_v5"),
     ]
 
     operations = [

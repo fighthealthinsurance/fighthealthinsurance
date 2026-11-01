@@ -1,3 +1,4 @@
+import datetime
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -5,11 +6,13 @@ from django.contrib.auth.models import Group
 from django.db import IntegrityError
 from django.test import Client, TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from fighthealthinsurance.evaluator_accounts import (
     EVALUATOR_GROUP_NAME,
     EVALUATOR_LOGIN_ACCOUNT_LIMIT,
 )
+from fighthealthinsurance.models import EvaluatorLoginThrottle
 
 User = get_user_model()
 
@@ -163,6 +166,41 @@ class EvaluatorAccountTest(TestCase):
 
         self.assertRedirects(response, reverse("chooser"))
         self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
+
+    def test_successful_login_clears_failed_attempts(self):
+        user = self._evaluator()
+        for _ in range(EVALUATOR_LOGIN_ACCOUNT_LIMIT - 1):
+            response = self.client.post(
+                self.login_url,
+                {"username": user.email, "password": "wrong-password"},
+            )
+            self.assertEqual(response.status_code, 200)
+
+        response = self.client.post(
+            self.login_url, {"username": user.email, "password": self.password}
+        )
+
+        self.assertRedirects(response, reverse("chooser"))
+        self.assertFalse(EvaluatorLoginThrottle.objects.exists())
+        self.client.logout()
+        response = self.client.post(
+            self.login_url, {"username": user.email, "password": self.password}
+        )
+        self.assertRedirects(response, reverse("chooser"))
+
+    def test_unknown_usernames_create_no_rows_and_login_prunes_stale_rows(self):
+        EvaluatorLoginThrottle.objects.create(
+            digest="stale",
+            window_started_at=timezone.now() - datetime.timedelta(days=1),
+        )
+
+        response = self.client.post(
+            self.login_url,
+            {"username": "nobody@example.com", "password": "wrong-password"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(EvaluatorLoginThrottle.objects.exists())
 
     def test_failed_logins_are_throttled_across_clients(self):
         user = self._evaluator()

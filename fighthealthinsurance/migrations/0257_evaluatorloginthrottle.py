@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0254_choosertask_scoring_json"),
+        ("fighthealthinsurance", "0256_choosertask_scoring_json"),
     ]
 
     operations = [

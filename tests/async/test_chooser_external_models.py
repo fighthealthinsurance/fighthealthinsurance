@@ -740,6 +740,8 @@ class TestAReplyThatCantBeUsedGoesToTheNextWriter:
 def test_womens_health_matching_handles_ob_gyn_but_not_cervical_spine():
     assert practice_area_text_matches("womens-health", "OB-GYN visit")
     assert practice_area_text_matches("womens-health", "Cervical cancer screening")
+    assert practice_area_text_matches("womens-health", "Cervical biopsy")
+    assert practice_area_text_matches("womens-health", "HPV infection")
     assert not practice_area_text_matches(
         "womens-health", "MRI for cervical spine radiculopathy"
     )

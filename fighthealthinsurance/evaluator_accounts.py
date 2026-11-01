@@ -46,6 +46,8 @@ def _normalize_evaluator_username(username: str) -> str:
 
 def _login_throttle_buckets(username: str):
     normalized = _normalize_evaluator_username(username)
+    if not User.objects.filter(username=normalized).exists():
+        return ()
     account_key = salted_hmac("evaluator-login-account", normalized).hexdigest()
     return ((account_key, EVALUATOR_LOGIN_ACCOUNT_LIMIT),)
 
@@ -55,14 +57,14 @@ def _reserve_login_attempt(buckets) -> bool:
 
     now = timezone.now()
     cutoff = now - EVALUATOR_LOGIN_WINDOW
+    EvaluatorLoginThrottle.objects.filter(window_started_at__lt=cutoff).delete()
     allowed = True
     for digest, limit in buckets:
         with transaction.atomic():
-            row, _ = EvaluatorLoginThrottle.objects.get_or_create(
+            row, _ = EvaluatorLoginThrottle.objects.select_for_update().get_or_create(
                 digest=digest,
                 defaults={"window_started_at": now, "last_failure_at": now},
             )
-            row = EvaluatorLoginThrottle.objects.select_for_update().get(pk=row.pk)
             if row.window_started_at < cutoff:
                 row.failures = 0
                 row.window_started_at = now
@@ -73,6 +75,12 @@ def _reserve_login_attempt(buckets) -> bool:
             row.last_failure_at = now
             row.save(update_fields=["failures", "window_started_at", "last_failure_at"])
     return allowed
+
+
+def _clear_account_login_failures(buckets) -> None:
+    from fighthealthinsurance.models import EvaluatorLoginThrottle
+
+    EvaluatorLoginThrottle.objects.filter(digest=buckets[0][0]).delete()
 
 
 class EvaluatorAccountForm(forms.Form):
@@ -185,10 +193,11 @@ class EvaluatorLoginView(generic.FormView):
         return kwargs
 
     def post(self, request, *args, **kwargs):
+        self._throttle_buckets = ()
         username = request.POST.get("username", "")
         if username and request.POST.get("password"):
-            buckets = _login_throttle_buckets(username)
-            if not _reserve_login_attempt(buckets):
+            self._throttle_buckets = _login_throttle_buckets(username)
+            if not _reserve_login_attempt(self._throttle_buckets):
                 return self._throttled_response()
         return super().post(request, *args, **kwargs)
 
@@ -204,5 +213,7 @@ class EvaluatorLoginView(generic.FormView):
         )
 
     def form_valid(self, form):
+        if self._throttle_buckets:
+            _clear_account_login_failures(self._throttle_buckets)
         login(self.request, form.get_user())
         return redirect("chooser")
