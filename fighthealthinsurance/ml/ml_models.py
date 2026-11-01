@@ -6249,6 +6249,7 @@ class DeepInfra(RemoteFullOpenLike):
     MODEL_CONTEXT_LENGTHS: ClassVar[dict[str, int]] = {
         "google/gemma-4-26B-A4B-it": 260000,
         "deepseek-ai/DeepSeek-V4-Pro-0813": 1048000,
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL": 260000,
     }
 
     # Routing quality per model, kept below the internal models' range (>=101)
@@ -6256,7 +6257,16 @@ class DeepInfra(RemoteFullOpenLike):
     # models for fan-out (MLRouter.best_external_models). Unknown models fall
     # back to a mid value.
     _MODEL_QUALITY: ClassVar[dict[str, int]] = {
-        # Currently registered by models() (flagship Pro deepseek + gemma-4).
+        # Currently registered by models() (Nemotron, flagship Pro deepseek
+        # and gemma-4).
+        #
+        # Nemotron 3.5 Super was chosen from the October letter eval to lead
+        # the outside writers. 100 is the "frontier" tier's value (see
+        # RateLimitedRemoteOpenLike._TIER_QUALITY), so it ranks with the
+        # strongest hosted models, and cost breaks the tie as it does within
+        # any tier: it goes ahead of the pricier frontier models and stays
+        # behind the sponsored, nearly free one.
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL": 100,
         "deepseek-ai/DeepSeek-V4-Pro-0813": 92,
         "google/gemma-4-26B-A4B-it": 80,
     }
@@ -6325,8 +6335,20 @@ class DeepInfra(RemoteFullOpenLike):
         "moonshotai/Kimi-K3": {"max_tokens": 3000},
     }
 
+    # Output caps for models in the general pools, on every call. Nemotron
+    # reasons before it writes, and the cap counts the reasoning too, so it
+    # gets the 8192 the October letter eval used; below that a letter can
+    # come back empty. That eval read only the message's content, as
+    # _do_infer does, and its letters were judged on that text.
+    _MODEL_REQUEST_EXTRAS: ClassVar[dict[str, dict[str, Any]]] = {
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL": {"max_tokens": 8192},
+    }
+
     def _request_extras(self, model: str) -> dict[str, Any]:
-        return dict(self._CHAT_REQUEST_EXTRAS.get(model, {}))
+        return dict(
+            self._CHAT_REQUEST_EXTRAS.get(model)
+            or self._MODEL_REQUEST_EXTRAS.get(model, {})
+        )
 
     @classmethod
     def chat_models(cls) -> List[ModelDescription]:
@@ -6338,6 +6360,14 @@ class DeepInfra(RemoteFullOpenLike):
     @classmethod
     def models(cls) -> List[ModelDescription]:
         return [
+            # Chosen from the October letter eval; first in the external
+            # ranking (see _MODEL_QUALITY). The cost proxy follows the others
+            # here, about 100 per dollar of output per million tokens.
+            ModelDescription(
+                cost=50,
+                name="nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+                internal_name="nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+            ),
             # The official V4-Pro release (DeepInfra: "superseding the
             # preview version"), same price as the preview it replaced
             # on 2026-10-31.

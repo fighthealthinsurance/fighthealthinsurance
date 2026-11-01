@@ -130,6 +130,8 @@ DEEPINFRA_USD_PER_MTOK: Dict[str, Tuple[float, float]] = {
     "moonshotai/Kimi-K3": (2.85, 14.25),
     "deepseek-ai/DeepSeek-V4-Pro-0813": (1.3, 2.6),
     "google/gemma-4-26B-A4B-it": (0.07, 0.34),
+    # Listed price checked on 2026-11-01.
+    "nvidia/NVIDIA-Nemotron-3.5-Super-VL": (0.15, 0.5),
 }
 FALLBACK_USD_PER_MTOK: Tuple[float, float] = (3.0, 15.0)
 
