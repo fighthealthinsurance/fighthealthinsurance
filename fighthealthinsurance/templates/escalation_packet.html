@@ -26,6 +26,30 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
   </p>
 </div>
 {% else %}
+{% if state_choices %}
+<div class="alert-box alert-box-warning" id="escalation-state-picker">
+  <h4 style="margin-top:0;">Add a letter to your state's Department of Insurance?</h4>
+  <p>
+    We don't know which state you're in, so we can't draft the letter to your
+    state insurance regulator yet. Pick your state and we'll add it. Any letter
+    already drafted below is kept.
+  </p>
+  <form action="{% url 'escalation_packet' %}" method="post" class="fhi-stack">
+    {% csrf_token %}
+    <input type="hidden" name="email" value="{{ user_email }}">
+    <input type="hidden" name="denial_id" value="{{ denial_id }}">
+    <input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">
+    <label for="escalation-your-state">Your state</label>
+    <select name="your_state" id="escalation-your-state" required>
+      <option value="">Choose your state…</option>
+      {% for abbreviation, name in state_choices %}
+      <option value="{{ abbreviation }}">{{ name }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="fhi-button fhi-button-primary">Add my state's letter</button>
+  </form>
+</div>
+{% endif %}
 <div class="alert-box" style="background:#f8f9fa; border:1px solid #dee2e6; padding:1rem;">
   <h4 style="margin-top:0;">We'll generate {{ recipients_count }} letter{{ recipients_count|pluralize }} for:</h4>
   <ul style="margin:0.5rem 0 0 1.5rem; line-height:1.6;">

@@ -2289,9 +2289,14 @@ class GenerateEscalationPacket(View):
     editable letter per recipient.
     """
 
-    def _build(self, request, denial_id, email, semi_sekret):
+    def _build(self, request, denial_id, email, semi_sekret, picked_state=""):
         from fighthealthinsurance.escalation_addresses import (
+            RECIPIENT_DOI,
             get_recipients_for_denial,
+        )
+        from fighthealthinsurance.state_help import (
+            get_state_help_by_abbreviation,
+            get_states_sorted_by_name,
         )
 
         denial = common_view_logic.get_denial_for_action(denial_id, email, semi_sekret)
@@ -2300,7 +2305,23 @@ class GenerateEscalationPacket(View):
             # plain redirect this has always returned.
             return unresolved_denial_ref_response(request)
 
+        # The page's state picker posts back here. A state we know gets
+        # saved on the denial, because the streaming backend recomputes the
+        # recipients from the row; anything else is ignored.
+        picked = (picked_state or "").strip().upper()
+        if picked and get_state_help_by_abbreviation(picked) is not None:
+            denial.your_state = picked
+            denial.save(update_fields=["your_state"])
+
         recipients = get_recipients_for_denial(denial)
+        # No state on file means no Department of Insurance letter; offer
+        # the states so the person can add one instead of losing it.
+        has_doi = any(r.recipient_type == RECIPIENT_DOI for r in recipients)
+        state_choices = (
+            []
+            if has_doi
+            else [(s.abbreviation, s.name) for s in get_states_sorted_by_name()]
+        )
         recipients_for_template = [
             {
                 "recipient_type": r.recipient_type,
@@ -2327,6 +2348,7 @@ class GenerateEscalationPacket(View):
                 "semi_sekret": semi_sekret,
                 "recipients": recipients_for_template,
                 "recipients_count": len(recipients_for_template),
+                "state_choices": state_choices,
                 "back_url": build_back_url(
                     request, "generate_appeal", denial_id, email, semi_sekret
                 ),
@@ -2349,6 +2371,7 @@ class GenerateEscalationPacket(View):
             request.POST.get("denial_id"),
             request.POST.get("email"),
             request.POST.get("semi_sekret"),
+            picked_state=request.POST.get("your_state", ""),
         )
 
 

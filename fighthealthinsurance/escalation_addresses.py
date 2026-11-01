@@ -229,12 +229,11 @@ def get_recipients_for_denial(denial: Any) -> List[EscalationRecipient]:
     return recipients
 
 
-# Wording in a denial letter that says an appeal has already been decided:
-# the insurer upheld itself, calls this its final word, or names a second
-# level. Deliberately not "external review" or "independent review": a
-# first-level denial carries those as a required notice of rights, so they
-# say nothing about where this person is in the process.
-_APPEAL_ALREADY_DECIDED_RE = re.compile(
+# Wording in a denial letter that says the insurer has upheld itself once:
+# an appeal was decided against the person. Most plans have more than one
+# internal level, so on its own this is still a job for the next appeal,
+# not a regulator; it is only named back as a supporting reason.
+_APPEAL_UPHELD_RE = re.compile(
     r"("
     r"\b(we|has|have|is|are|was|were|been)\s+(also\s+)?uph[eo]ld\b"
     r"|\buph[eo]ld\s+(our|the|its|this|that)\b"
@@ -248,10 +247,21 @@ _APPEAL_ALREADY_DECIDED_RE = re.compile(
     r"(decision|determination|denial)\b[^.;:!?\n]{0,60}?"
     r"\b(stands|remains|(is|was|has\s+been|have\s+been)\s+"
     r"(upheld|maintained|affirmed|reaffirmed|unchanged))\b"
-    r"|\bfinal (adverse|internal)? ?(benefit )?(determination|decision)\b"
+    r")",
+    re.IGNORECASE | re.UNICODE | re.DOTALL,
+)
+# Wording that says the internal appeals are done: the insurer's final
+# word, appeals exhausted, or a second- or third-level appeal decided. This
+# is the point where the regulator (and external review) is the next step.
+# Deliberately not "external review" or "independent review": a first-level
+# denial carries those as a required notice of rights, so they say nothing
+# about where this person is in the process.
+_INTERNAL_APPEALS_DONE_RE = re.compile(
+    r"("
+    r"\bfinal (adverse|internal)? ?(benefit )?(determination|decision)\b"
     r"|\bexhausted\b.{0,40}\bappeal"
-    r"|\b(second|2nd|level[- ](2|two|ii))[- ]level\b"
-    r"|\blevel[- ](2|two|ii)\b.{0,20}\bappeal"
+    r"|\b(second|2nd|third|3rd|level[- ](2|two|ii|3|three|iii))[- ]level\b"
+    r"|\blevel[- ](2|two|ii|3|three|iii)\b.{0,20}\bappeal"
     r")",
     re.IGNORECASE | re.UNICODE | re.DOTALL,
 )
@@ -277,9 +287,10 @@ _NEGATED_RE = re.compile(
 _CLAUSE_LOOKBACK_CHARS = 200
 
 
-def _appeal_already_decided(denial_text: str) -> bool:
-    """Whether the letter says an appeal on this denial has been decided."""
-    for match in _APPEAL_ALREADY_DECIDED_RE.finditer(denial_text):
+def _says_in_own_voice(pattern: re.Pattern, denial_text: str) -> bool:
+    """Whether *pattern* matches somewhere the letter states it as done,
+    not in a conditional or negated clause."""
+    for match in pattern.finditer(denial_text):
         before = denial_text[
             max(0, match.start() - _CLAUSE_LOOKBACK_CHARS) : match.start()
         ]
@@ -290,19 +301,31 @@ def _appeal_already_decided(denial_text: str) -> bool:
     return False
 
 
+def _appeal_already_decided(denial_text: str) -> bool:
+    """Whether the letter says an appeal on this denial was upheld once."""
+    return _says_in_own_voice(_APPEAL_UPHELD_RE, denial_text)
+
+
+def _internal_appeals_done(denial_text: str) -> bool:
+    """Whether the letter says the internal appeals are finished (a final
+    determination, appeals exhausted, a second- or third-level decision)."""
+    return _says_in_own_voice(_INTERNAL_APPEALS_DONE_RE, denial_text)
+
+
 # Denial types where the denial itself is the kind of thing a regulator
 # looks into, by name (fixture rows are matched by name, never by pk, as
 # ml/denial_triage.py does). "Limit for filing expired" is left out: that
 # is usually the provider's timely-filing problem, not the insurer's.
+# "Preventive Care" is left out too: its fixture regex tags the kind of care
+# ("prep", "screening", "STD", "vaccine"...), not anything the plan did wrong,
+# so a plain first-level medical-necessity denial of PrEP carried it. The
+# ACA preventive-care argument belongs in the appeal (the type's appeal_text
+# already puts it there).
 _REGULATOR_POLICED_DENIAL_TYPES: dict[str, str] = {
     "Pre-Existing Condition": (
         "Your denial cites a pre-existing condition. Health plans generally "
         "may not deny coverage on that basis, and regulators look into "
         "denials that do."
-    ),
-    "Preventive Care": (
-        "Your denial is for preventive care, which most plans are required "
-        "to cover. Regulators look into denials of required benefits."
     ),
     "In-Network Treated as Out of Network": (
         "An in-network provider was billed as out of network. Network "
@@ -316,20 +339,43 @@ _REGULATOR_POLICED_DENIAL_TYPES: dict[str, str] = {
 
 
 def regulator_escalation_reasons(denial: Any) -> List[str]:
-    """Plain-English reasons a regulator should hear about this denial.
+    """Plain-English reasons a regulator should hear about this denial now.
 
-    Empty when nothing in the denial points that way; the appeal pages then
-    show the regulator-letter callout at its normal size. Each reason is a
-    sentence for the person, in the same restrained voice as the recipient
-    rationales above. Rule-based and read from the row as it is: no model
-    call, no extra lookups beyond the denial's own relations.
+    A regulator is brought in at two points only: once the internal appeals
+    are done (the insurer's final word, a second- or third-level appeal
+    decided), or when the care is time-critical and a regulator complaint
+    should go out in parallel with the appeal. Without one of those this is
+    empty, whatever else the letter says, and the appeal pages show the
+    regulator-letter callout at its normal size. With one, the other signals
+    (a regulator the letter names, an ERISA plan, a denial type regulators
+    police, an appeal already upheld once) are added as supporting reasons.
+
+    Each reason is a sentence for the person, in the same restrained voice
+    as the recipient rationales above. Rule-based and read from the row as
+    it is: no model call, no extra lookups beyond the denial's own relations.
     """
+    denial_text = getattr(denial, "denial_text", "") or ""
     reasons: List[str] = []
 
-    if _appeal_already_decided(getattr(denial, "denial_text", "") or ""):
+    internal_done = _internal_appeals_done(denial_text)
+    if internal_done:
         reasons.append(
-            "Your letter reads like an appeal that has already been denied "
-            "once. That is when a regulator complaint helps most."
+            "Your letter reads like the insurer's final decision on your "
+            "internal appeals. That is when a regulator complaint helps most."
+        )
+
+    if getattr(denial, "urgent", False):
+        reasons.append(
+            "You marked this care as urgent. A regulator complaint can go out "
+            "in parallel with your appeal instead of waiting on it."
+        )
+
+    if not reasons:
+        return []
+
+    if not internal_done and _appeal_already_decided(denial_text):
+        reasons.append(
+            "Your letter reads like an appeal that has already been denied once."
         )
 
     regulator = getattr(denial, "regulator", None)
@@ -346,12 +392,6 @@ def regulator_escalation_reasons(denial: Any) -> List[str]:
         reasons.append(
             "This looks like an employer self-funded (ERISA) plan, so the U.S. "
             "Department of Labor also oversees how the appeal is handled."
-        )
-
-    if getattr(denial, "urgent", False):
-        reasons.append(
-            "You marked this care as urgent. A regulator complaint can go out "
-            "with your appeal instead of waiting on it."
         )
 
     denial_type_manager = getattr(denial, "denial_type", None)
