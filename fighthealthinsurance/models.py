@@ -2545,6 +2545,10 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     triage_regulation_confidence = models.FloatField(null=True, blank=True)
     triage_pre_service = models.FloatField(null=True, blank=True)
     triage_urgent = models.FloatField(null=True, blank=True)
+    # Probability the letter is the insurer's final word after the internal
+    # appeals, so a regulator should hear about it now (null on a triage
+    # stored before the question was asked).
+    triage_regulator = models.FloatField(null=True, blank=True)
     appeal_deadline = models.DateField(null=True, blank=True)
     appeal_deadline_label = models.CharField(max_length=32, null=True, blank=True)
     appeal_deadline_confidence = models.FloatField(null=True, blank=True)

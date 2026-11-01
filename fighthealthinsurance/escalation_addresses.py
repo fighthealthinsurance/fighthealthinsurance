@@ -344,20 +344,30 @@ def regulator_escalation_reasons(denial: Any) -> List[str]:
     A regulator is brought in at two points only: once the internal appeals
     are done (the insurer's final word, a second- or third-level appeal
     decided), or when the care is time-critical and a regulator complaint
-    should go out in parallel with the appeal. Without one of those this is
+    should go out in parallel with the appeal. Each is read from the letter
+    and form by the rules here, or from Jev's stored triage answers when
+    triage is on, consented to, current and confident. Without one of those this is
     empty, whatever else the letter says, and the appeal pages show the
     regulator-letter callout at its normal size. With one, the other signals
     (a regulator the letter names, an ERISA plan, a denial type regulators
     police, an appeal already upheld once) are added as supporting reasons.
 
     Each reason is a sentence for the person, in the same restrained voice
-    as the recipient rationales above. Rule-based and read from the row as
-    it is: no model call, no extra lookups beyond the denial's own relations.
+    as the recipient rationales above. Read from the row as it is: no model
+    call here (the triage was stored earlier), no extra lookups beyond the
+    denial's own relations.
     """
     denial_text = getattr(denial, "denial_text", "") or ""
     reasons: List[str] = []
 
-    internal_done = _internal_appeals_done(denial_text)
+    # Two ways to see each trigger: the rules here, read from the letter and
+    # the form, and Jev's triage answers (ml/denial_triage.regulator_signals)
+    # when a usable, confident triage is stored. Either one is enough.
+    from fighthealthinsurance.ml.denial_triage import regulator_signals
+
+    jev = regulator_signals(denial)
+
+    internal_done = _internal_appeals_done(denial_text) or jev.appeals_done
     if internal_done:
         reasons.append(
             "Your letter reads like the insurer's final decision on your "
@@ -368,6 +378,12 @@ def regulator_escalation_reasons(denial: Any) -> List[str]:
         reasons.append(
             "You marked this care as urgent. A regulator complaint can go out "
             "in parallel with your appeal instead of waiting on it."
+        )
+    elif jev.urgent:
+        reasons.append(
+            "Your letter reads like this care is time-critical. A regulator "
+            "complaint can go out in parallel with your appeal instead of "
+            "waiting on it."
         )
 
     if not reasons:

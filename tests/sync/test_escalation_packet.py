@@ -5,7 +5,8 @@ import re
 from unittest.mock import AsyncMock, patch
 
 from asgiref.sync import async_to_sync
-from django.test import TestCase, Client
+from django.test import TestCase, Client, override_settings
+from django.utils import timezone
 from django.urls import reverse
 
 from fighthealthinsurance.common_view_logic import (
@@ -24,6 +25,7 @@ from fighthealthinsurance.escalation_addresses import (
 from fighthealthinsurance.generate_regulator_letter import (
     make_regulator_letter_prompt,
 )
+from fighthealthinsurance.ml import denial_triage
 from fighthealthinsurance.models import Denial, RegulatorEscalation
 from fighthealthinsurance.state_help import StateHelp
 from tests.back_links import back_link
@@ -432,6 +434,84 @@ class RegulatorEscalationReasonsTest(TestCase):
         )
         # final, urgent, named regulator, ERISA, pre-existing condition.
         self.assertEqual(len(regulator_escalation_reasons(denial)), 5)
+
+
+TRIAGE_ON = dict(TYPESAFE_API_KEY="k", TYPESAFE_DENIAL_TRIAGE_ENABLED=True)
+
+
+class JevRegulatorReasonsTest(TestCase):
+    """Jev's stored triage answers are a second way to see each trigger."""
+
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            denial_text="Your request for prep has been denied as not medically necessary.",
+            hashed_email=Denial.get_hashed_email("jev@example.com"),
+            use_external=True,
+        )
+
+    def _triage(self, **overrides):
+        values = dict(
+            triage_category="medical_necessity",
+            triage_category_confidence=0.9,
+            triage_regulation="unknown",
+            triage_regulation_confidence=0.9,
+            triage_pre_service=0.84,
+            triage_urgent=0.03,
+            triage_regulator=0.02,
+            triage_source=denial_triage.SOURCE,
+            triage_text_hash=denial_triage.text_hash(self.denial.denial_text),
+            triaged_at=timezone.now(),
+        )
+        values.update(overrides)
+        Denial.objects.filter(pk=self.denial.pk).update(**values)
+        self.denial.refresh_from_db()
+        return self.denial
+
+    @override_settings(**TRIAGE_ON)
+    def test_a_plain_first_denial_jev_calls_routine_gives_no_reason(self):
+        self.assertEqual(regulator_escalation_reasons(self._triage()), [])
+
+    @override_settings(**TRIAGE_ON)
+    def test_jev_saying_internal_appeals_are_done_is_a_reason(self):
+        reasons = regulator_escalation_reasons(self._triage(triage_regulator=0.9))
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("final decision on your internal appeals", reasons[0])
+
+    @override_settings(**TRIAGE_ON)
+    def test_jev_saying_the_care_is_time_critical_is_a_reason(self):
+        reasons = regulator_escalation_reasons(self._triage(triage_urgent=0.9))
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("time-critical", reasons[0])
+
+    @override_settings(**TRIAGE_ON)
+    def test_urgent_marked_by_the_person_is_said_once(self):
+        self._triage(triage_urgent=0.9)
+        self.denial.urgent = True
+        reasons = regulator_escalation_reasons(self.denial)
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("You marked this care as urgent", reasons[0])
+
+    @override_settings(**TRIAGE_ON)
+    def test_unsure_jev_answers_are_not_a_reason(self):
+        denial = self._triage(triage_urgent=0.5, triage_regulator=0.5)
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_jev_answers_are_ignored_while_triage_is_off(self):
+        denial = self._triage(triage_urgent=0.9, triage_regulator=0.9)
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    @override_settings(**TRIAGE_ON)
+    def test_jev_answers_are_ignored_without_external_model_consent(self):
+        self._triage(triage_regulator=0.9)
+        Denial.objects.filter(pk=self.denial.pk).update(use_external=False)
+        self.denial.refresh_from_db()
+        self.assertEqual(regulator_escalation_reasons(self.denial), [])
+
+    @override_settings(**TRIAGE_ON)
+    def test_a_triage_of_a_replaced_letter_is_ignored(self):
+        self._triage(triage_regulator=0.9)
+        self.denial.denial_text = "A different letter."
+        self.assertEqual(regulator_escalation_reasons(self.denial), [])
 
 
 class RegulatorLetterPromptTest(TestCase):
