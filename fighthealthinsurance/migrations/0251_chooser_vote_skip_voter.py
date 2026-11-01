@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0249_denialtypes_core"),
+        ("fighthealthinsurance", "0250_denial_triage_regulator"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
