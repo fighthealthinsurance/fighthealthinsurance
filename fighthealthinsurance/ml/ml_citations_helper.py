@@ -294,7 +294,7 @@ class MLCitationsHelper:
             if cached:
                 logger.debug(
                     f"Found {len(cached.generated_context or [])} cached generic "
-                    f"citations for {procedure}/{diagnosis}"
+                    f"citations"
                 )
                 # Create a new list to avoid modifying cached data
                 result = list(cached.generated_context)
@@ -308,9 +308,7 @@ class MLCitationsHelper:
                     result.extend(extras)
                 return result
             else:
-                logger.debug(
-                    f"No cached generic citations found for {procedure}/{diagnosis}"
-                )
+                logger.debug("No cached generic citations found")
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error fetching cached generic citations: {e}"
@@ -356,8 +354,8 @@ class MLCitationsHelper:
             # Get the best result within the timeout
             try:
                 logger.debug(
-                    f"Generating best generic citations for {procedure}/{diagnosis} "
-                    f"across {len(partial_awaitables)} model(s)"
+                    f"Generating best generic citations across "
+                    f"{len(partial_awaitables)} model(s)"
                 )
                 result = []
                 try:
@@ -395,9 +393,7 @@ class MLCitationsHelper:
                             diagnosis=diagnosis,
                             defaults={"generated_context": result},
                         )
-                        logger.debug(
-                            f"Stored cached generic citations for {procedure}/{diagnosis} -- {result}"
-                        )
+                        logger.debug(f"Stored {len(result)} cached generic citations")
                     except Exception as e:
                         logger.opt(exception=True).warning(
                             f"Error caching generic citations: {e}"
@@ -479,11 +475,13 @@ class MLCitationsHelper:
             # variant's timestamp was set, which the field default never is.
             if cached is not None and fresh:
                 logger.debug(
-                    f"Using cached CMS citations for {procedure}/{diagnosis} "
-                    f"(medicare_plan={medicare_plan})"
+                    f"Using {len(cached)} cached CMS citations "
+                    f"(cache entry {cache_entry.pk}, variant {cache_field}, "
+                    f"updated {variant_updated_at})"
                 )
                 return cached[:max_results]
 
+        lookup_failed = False
         try:
             citations = await get_cms_coverage_citations(
                 procedure=procedure or None,
@@ -494,10 +492,12 @@ class MLCitationsHelper:
         except Exception as e:
             logger.opt(exception=True).debug(f"CMS coverage citation fetch failed: {e}")
             citations = []
+            lookup_failed = True
 
-        # An empty result is stored only when the NCD report was there to
-        # search, so an outage isn't remembered as "nothing applies".
-        if citations or get_cms_coverage_client().has_report():
+        # A failed lookup is never stored, and an empty result only when a
+        # fresh NCD report was there to search, so an outage isn't
+        # remembered as "nothing applies".
+        if not lookup_failed and (citations or get_cms_coverage_client().has_report()):
             # `aupdate_or_create` is atomic against the (procedure, diagnosis)
             # unique constraint, which closes the race where two concurrent
             # cache misses could otherwise create duplicate rows. We write
