@@ -14,6 +14,10 @@ import httpx
 import pytest
 
 from fighthealthinsurance.ml import citation_verification as cv
+
+# The real switch, taken before the shared autouse fixture turns checks off
+# for every test.
+_REAL_CHECKS_ENABLED = cv.checks_enabled
 from fighthealthinsurance.ml.ml_citations_helper import (
     MLCitationsHelper,
     _citation_guard_text,
@@ -995,3 +999,105 @@ class TestProxyLikeHttpx:
             )
             is None
         )
+
+
+class TestFollowUps:
+    def test_the_real_switch_reads_the_environment(self, monkeypatch):
+        monkeypatch.delenv("CITATION_CHECKS_ENABLED", raising=False)
+        assert _REAL_CHECKS_ENABLED() is True
+        for raw, expected in (
+            ("1", True),
+            ("true", True),
+            ("0", False),
+            ("false", False),
+            ("No", False),
+            (" off ", False),
+        ):
+            monkeypatch.setenv("CITATION_CHECKS_ENABLED", raw)
+            assert _REAL_CHECKS_ENABLED() is expected, raw
+
+    def test_a_dot_stuck_to_a_section_is_not_sendable(self):
+        for text in ("45 CFR 147.136.1", "42 USC 300gg.99"):
+            ids = cv.find_identifiers(text)
+            assert ids and all(i.malformed for i in ids), text
+
+    def test_sentence_punctuation_after_a_section_is_fine(self):
+        ids = cv.find_identifiers("See 45 CFR 147.136. It applies.")
+        assert ids == [cv.Identifier("cfr", "45/147/147.136")]
+
+    def test_listed_sections_are_not_looked_up(self):
+        for text in (
+            "45 CFR § 147.136, 147.999",
+            "45 CFR 147.136 and 147.140",
+            "42 U.S.C. § 300gg-19, 300gg-22",
+        ):
+            ids = cv.find_identifiers(text)
+            assert ids and all(i.malformed for i in ids), text
+
+    def test_a_section_followed_by_words_is_still_checked(self):
+        ids = cv.find_identifiers("45 CFR 147.136, internal claims and appeals")
+        assert ids == [cv.Identifier("cfr", "45/147/147.136")]
+
+
+@pytest.mark.asyncio
+class TestFollowUpsAsync:
+    async def test_no_cached_verdict_is_used_without_consent(self, checks_on):
+        citation = f"Made up. doi:{FAKE_DOI}"
+        reads = []
+
+        async def cached(ident):
+            reads.append(ident)
+            return cv.MISSING
+
+        with patch.object(cv, "_cache_get", cached):
+            out, seen = await _verify([citation], may_send=_no)
+        assert out == [cv.UNVERIFIED_LABEL + citation]
+        assert reads == [] and seen == []
+
+    async def test_a_cached_verdict_is_used_with_consent(self, checks_on):
+        citation = f"Made up. doi:{FAKE_DOI}"
+
+        async def cached(ident):
+            return cv.MISSING
+
+        with patch.object(cv, "_cache_get", cached):
+            out, seen = await _verify([citation])
+        assert out == [] and seen == []
+
+    async def test_a_trimmed_doi_called_missing_is_labelled_not_dropped(
+        self, checks_on
+    ):
+        citation = f"Made up. doi:{FAKE_DOI}."
+        out, seen = await _verify([citation])
+        assert out == [cv.UNVERIFIED_LABEL + citation]
+        assert len(seen) == 1
+
+    async def test_cfr_answers_are_kept_for_less_time(self):
+        timeouts = {}
+
+        async def aset(key, value, timeout=None):
+            timeouts[key.split(":")[2]] = timeout
+
+        with patch.object(cv.cache, "aset", aset):
+            await cv._cache_set(cv.Identifier("cfr", "45/147/147.136"), cv.FOUND)
+            await cv._cache_set(cv.Identifier("doi", REAL_DOI.lower()), cv.FOUND)
+        assert timeouts["cfr"] == 7 * 24 * 3600
+        assert timeouts["doi"] == 30 * 24 * 3600
+
+    async def test_closing_the_client_is_bounded(self, checks_on):
+        seen: List[httpx.Request] = []
+        client = _client(seen)
+
+        async def slow_close():
+            await asyncio.sleep(5)
+
+        client.aclose = slow_close  # type: ignore[method-assign]
+        start = time.monotonic()
+        with (
+            patch.object(cv, "_new_client", lambda: client),
+            patch.object(cv, "_CLOSE_TIMEOUT_SECONDS", 0.05),
+        ):
+            await cv.check_identifiers(
+                cv.find_identifiers(f"doi:{REAL_DOI}"), may_send=_yes
+            )
+        assert time.monotonic() - start < 2

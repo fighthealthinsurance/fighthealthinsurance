@@ -553,9 +553,11 @@ class MLCitationsHelper:
             logger.debug(f"CMS coverage citation fetch failed ({type(e).__name__})")
             citations = []
 
-        # An empty result is stored only from a complete lookup, so an
-        # outage or a bad report isn't remembered as "nothing applies".
-        if citations or lookup_complete:
+        # Only a complete lookup is stored. An empty result from an outage or
+        # a bad report isn't remembered as "nothing applies", and a partial
+        # one isn't remembered as the whole answer: a dropped record might
+        # have matched. A partial result still serves this request.
+        if lookup_complete:
             # `aupdate_or_create` is atomic against the (procedure, diagnosis)
             # unique constraint, which closes the race where two concurrent
             # cache misses could otherwise create duplicate rows. We write

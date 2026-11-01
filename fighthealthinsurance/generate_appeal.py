@@ -683,9 +683,9 @@ class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
             "Dear {insurance_company},\n\n"
             "I am appealing the denial of {procedure} for {diagnosis}. "
             "[Specify the surgery and its date if this care follows surgery, "
-            "or delete this sentence] Recovery from surgery is a common "
-            "reason skilled rehabilitation is medically necessary, and the "
-            "authority below governs this denial.\n\n"
+            "as recovery from surgery often makes skilled rehabilitation "
+            "necessary, or delete this sentence] The authority below governs "
+            "this denial.\n\n"
             "1. CMS coverage standards for inpatient rehabilitation and "
             "skilled nursing care (Medicare Benefit Policy Manual, "
             "chapters 1 and 8). Coverage turns on whether the patient "
@@ -1824,8 +1824,10 @@ class AppealGenerator(object):
         "- The final letter should be comprehensive but not unnecessarily long.\n"
         "- Preserve any patient/provider/plan details exactly as they appear in the drafts.\n"
         "- Keep bracketed instructions that start with Specify exactly as they are; "
-        "never turn them into statements of fact. Ordinary fields such as [Name] may "
-        "be filled from values another draft supplies."
+        "never turn them into statements of fact. A name field such as [Name] may be "
+        "filled from a name another draft supplies. Keep every other bracketed field, "
+        "such as a claim, member, policy or group number, a date or an amount, exactly "
+        "as it is; never copy one in from another draft."
     )
 
     def __init__(self):

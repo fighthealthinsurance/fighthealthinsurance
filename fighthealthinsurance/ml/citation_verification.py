@@ -25,8 +25,9 @@ What is sent, and when:
   appear in the denial's text, health history, email, employer or claim
   number (``guard_text``), so a suffix that overlaps the person's own data
   is not sent.
-* Nothing is sent unless ``may_send`` says the person's consent allows it.
-  It is asked right before the first request and again before later ones.
+* Nothing is sent, and no cached verdict is used, unless ``may_send`` says
+  the person's consent allows it. It is asked before the cache is read, right
+  before the first request and again before later ones.
 * Requests go straight through an httpx transport, not through
   ``httpx.AsyncClient.send``, which the error tracker's httpx integration
   wraps: that would put the full URL (identifiers, NCBI key) on a tracing
@@ -37,7 +38,9 @@ What happens to a citation:
 * An identifier its registry says does not exist (a documented "not found"
   answer): a short citation is dropped; in a long one (a backend's whole
   answer) every occurrence of that identifier is cut out and the rest kept.
-  This is the only thing that removes anything.
+  This is the only thing that removes anything. A DOI read with a trailing
+  "." or ";" taken off is labelled instead, since a registered DOI can end
+  in one.
 * An identifier that was not sent (odd shape, a range, overlap with the
   person's data, no consent, over the lookup limit) or could not be checked
   (timeout, refusal, error, an answer of an unexpected kind such as a
@@ -108,6 +111,8 @@ MAX_LOOKUPS = 25
 MAX_CONCURRENT_LOOKUPS = 5
 # How long a "yes" from the consent check holds before it is asked again.
 CONSENT_RECHECK_SECONDS = 1.0
+# Closing the client after the deadline is bounded too.
+_CLOSE_TIMEOUT_SECONDS = 1.0
 
 # Registry answers are cached by identifier. Existence is stable; absence is
 # kept shorter in case a new DOI or PubMed record is still being indexed.
@@ -115,6 +120,10 @@ CONSENT_RECHECK_SECONDS = 1.0
 _CACHE_PREFIX = "citecheck:v3:"
 _CACHE_FOUND_SECONDS = 30 * 24 * 3600
 _CACHE_MISSING_SECONDS = 7 * 24 * 3600
+# Regulation sections are amended, added and removed; DOIs and PubMed IDs are
+# permanent. So a CFR answer is kept for less time.
+_CFR_CACHE_FOUND_SECONDS = 7 * 24 * 3600
+_CFR_CACHE_MISSING_SECONDS = 24 * 3600
 
 _DOI_HANDLE_URL = "https://doi.org/api/handles/"
 _ESUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
@@ -234,6 +243,23 @@ _USC_TEXT = re.compile(
     + _STUCK_ON,
     re.IGNORECASE,
 )
+# A dot and a letter or digit right after the number ("147.136.1",
+# "300gg.99") is stuck on too: no section is written that way.
+_DOT_STUCK_ON = re.compile(r"\.[0-9A-Za-z]")
+# A second section listed after the first ("147.136, 147.999",
+# "147.136 and 147.140", "300gg-19, 300gg-22"): a list is not looked up, so
+# no section in it goes unchecked or unlabelled.
+_LISTED_SECTION = re.compile(
+    r"\s{0,2}(?:,|;|\s(?:and|or|&))\s{0,3}(?:§{1,2}\s{0,2})?\d{1,6}"
+    r"(?:\.\d{1,5}|[a-z]{1,3}(?:[" + _DASH + r"]\d{1,5})?)",
+    re.IGNORECASE,
+)
+
+
+def _stuck_or_listed(text: str, end: int) -> bool:
+    return bool(_DOT_STUCK_ON.match(text, end) or _LISTED_SECTION.match(text, end))
+
+
 _CFR_SECTION_VALID = re.compile(r"^\d{1,5}\.\d{1,5}(?:-\d{1,5}[A-Z]?)?$")
 # CFR has 50 titles; the U.S. Code 54.
 _CFR_TITLES = 50
@@ -366,12 +392,21 @@ def find_occurrences(citation: str) -> List[Occurrence]:
         )
         abbreviated = bool(tail) and (dash != "-" or not section_style)
         is_range = bool(m.group("range")) or m.group("signs") == "§§" or abbreviated
-        bad = bool(stuck) or is_range or not (1 <= int(title) <= _CFR_TITLES)
+        bad = (
+            bool(stuck)
+            or is_range
+            or _stuck_or_listed(text, m.end())
+            or not (1 <= int(title) <= _CFR_TITLES)
+        )
         value = f"{int(title)}/{int(part)}/{section}"
         add("cfr", value, m.start(), m.end(), bad)
     for m in _USC_TEXT.finditer(text):
         title, section, stuck = m.group(1), m.group(2), m.group(4)
-        bad = bool(stuck) or not (1 <= int(title) <= _USC_TITLES)
+        bad = (
+            bool(stuck)
+            or _stuck_or_listed(text, m.end())
+            or not (1 <= int(title) <= _USC_TITLES)
+        )
         add("usc", f"{int(title)}/{_dash(section.lower())}", m.start(), m.end(), bad)
     return found
 
@@ -527,7 +562,12 @@ async def _cache_get(ident: Identifier) -> Optional[str]:
 async def _cache_set(ident: Identifier, status: str) -> None:
     if status not in (FOUND, MISSING):
         return
-    timeout = _CACHE_FOUND_SECONDS if status == FOUND else _CACHE_MISSING_SECONDS
+    if ident.kind == "cfr":
+        timeout = (
+            _CFR_CACHE_FOUND_SECONDS if status == FOUND else _CFR_CACHE_MISSING_SECONDS
+        )
+    else:
+        timeout = _CACHE_FOUND_SECONDS if status == FOUND else _CACHE_MISSING_SECONDS
     try:
         await cache.aset(
             f"{_CACHE_PREFIX}{ident.kind}:{ident.value}", status, timeout=timeout
@@ -706,10 +746,11 @@ async def check_identifiers(
     and requests) runs inside one deadline: ``deadline`` (the event loop's
     clock) when given, else ``budget_seconds`` from now.
 
-    ``may_send`` is awaited right before the first request, and again before
-    a later one once CONSENT_RECHECK_SECONDS have passed; anything but True
-    (a failure or a timeout included) stops all requests from then on.
-    Without it no request is made at all.
+    ``may_send`` is awaited before any cached verdict is read, again right
+    before the first request, and again before a later one once
+    CONSENT_RECHECK_SECONDS have passed; anything but True (a failure or a
+    timeout included) stops everything from then on, cached verdicts
+    included. Without it nothing is read or sent at all.
     """
     loop = asyncio.get_running_loop()
     if deadline is None:
@@ -742,19 +783,6 @@ async def check_identifiers(
     if not checkable or may_send is None:
         return statuses
 
-    async def read_cache(ident: Identifier) -> None:
-        cached = await _cache_get(ident)
-        if cached is not None:
-            statuses[ident.key] = cached
-
-    reads = [asyncio.create_task(read_cache(i)) for i in checkable]
-    if remaining() > 0:
-        await asyncio.wait(reads, timeout=remaining())
-    _settle(reads)
-    to_look_up = [i for i in checkable if statuses[i.key] == UNCHECKED]
-    if not to_look_up or remaining() <= 0:
-        return statuses
-
     consent = {"ok": None, "at": 0.0}
     consent_lock = asyncio.Lock()
 
@@ -779,6 +807,24 @@ async def check_identifiers(
             consent["ok"] = allowed is True
             consent["at"] = loop.time()
             return allowed is True
+
+    # Consent comes first: without it, no cached verdict is applied either,
+    # so every identifier stays unchecked and its citation is labelled.
+    if not await consent_allows():
+        return statuses
+
+    async def read_cache(ident: Identifier) -> None:
+        cached = await _cache_get(ident)
+        if cached is not None:
+            statuses[ident.key] = cached
+
+    reads = [asyncio.create_task(read_cache(i)) for i in checkable]
+    if remaining() > 0:
+        await asyncio.wait(reads, timeout=remaining())
+    _settle(reads)
+    to_look_up = [i for i in checkable if statuses[i.key] == UNCHECKED]
+    if not to_look_up or remaining() <= 0:
+        return statuses
 
     if not await consent_allows():
         return statuses
@@ -820,7 +866,7 @@ async def check_identifiers(
         _settle(tasks)
         if own_client:
             try:
-                await http.aclose()
+                await asyncio.wait_for(http.aclose(), timeout=_CLOSE_TIMEOUT_SECONDS)
             except Exception:
                 pass
     return statuses
@@ -855,9 +901,22 @@ def _apply(
     """The citation as it should reach the letter request, or None to drop
     it (see the module docstring). Only a registry's MISSING removes
     anything."""
-    missing = [o for o in occurrences if statuses.get(o.ident.key) == MISSING]
+
+    def trimmed(o: Occurrence) -> bool:
+        # The trailing "." or ";" taken off a DOI is usually sentence
+        # punctuation, but a registered DOI can end in one. A trimmed DOI the
+        # registry calls missing is labelled rather than dropped.
+        return o.ident.kind == "doi" and citation[o.end : o.end + 1] in (".", ";")
+
+    missing = [
+        o
+        for o in occurrences
+        if statuses.get(o.ident.key) == MISSING and not trimmed(o)
+    ]
     unchecked = len(citation) > MAX_SCAN_CHARS or any(
-        statuses.get(o.ident.key, UNCHECKED) == UNCHECKED for o in occurrences
+        statuses.get(o.ident.key, UNCHECKED) == UNCHECKED
+        or (statuses.get(o.ident.key) == MISSING and trimmed(o))
+        for o in occurrences
     )
     if missing:
         if len(citation) <= SHORT_CITATION_CHARS:

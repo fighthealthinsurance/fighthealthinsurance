@@ -199,6 +199,41 @@ class TestMLCitationsHelperCMSIntegration:
         assert client._client.get.await_count == 1
         mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
+    async def test_a_partial_result_serves_the_request_but_is_not_stored(
+        self, mock_cache_cls
+    ):
+        from fighthealthinsurance.cms_coverage_api import CMSCoverageClient
+
+        # A matching record, and another with no document_id.
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {
+            "data": [
+                {"document_id": 11, "title": "MRI"},
+                {"title": "Headache"},
+            ]
+        }
+        client = CMSCoverageClient(base_url="http://test.invalid")
+        client._client = MagicMock(is_closed=False, get=AsyncMock(return_value=response))
+
+        mock_qs = MagicMock()
+        mock_qs.afirst = AsyncMock(return_value=None)
+        mock_cache_cls.objects.filter.return_value = mock_qs
+        mock_cache_cls.objects.aupdate_or_create = AsyncMock()
+
+        with patch(
+            "fighthealthinsurance.cms_coverage_api.get_cms_coverage_client",
+            return_value=client,
+        ):
+            result = await MLCitationsHelper.generate_cms_coverage_citations(
+                denial=self.mock_denial
+            )
+
+        assert len(result) == 1
+        mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
+
     def test_previous_read_path_only_sees_citations_or_a_miss(self):
         # During a rolling deploy, pods still on the previous code read rows
         # the new code wrote. This is that code's read path, verbatim from
@@ -266,7 +301,7 @@ class TestMLCitationsHelperCMSIntegration:
             return_value=(cache_entry, False)
         )
 
-        mock_fetch.return_value = ["Fresh citation"]
+        mock_fetch.return_value = CMSCoverageCitations(["Fresh citation"], complete=True)
 
         result = await MLCitationsHelper.generate_cms_coverage_citations(
             denial=self.mock_denial
@@ -324,7 +359,7 @@ class TestMLCitationsHelperCMSIntegration:
             return_value=(MagicMock(), True)
         )
 
-        mock_fetch.return_value = ["New citation"]
+        mock_fetch.return_value = CMSCoverageCitations(["New citation"], complete=True)
 
         result = await MLCitationsHelper.generate_cms_coverage_citations(
             denial=self.mock_denial
