@@ -28,7 +28,7 @@ by :func:`before_send_transaction_filter`.
 """
 
 import re
-from typing import Any, Dict, List, Sequence, Set
+from typing import Any, Dict, List, Sequence, Set, Tuple
 from urllib.parse import parse_qs, quote, quote_plus, urlsplit
 
 # Ray client connection failures are transient infrastructure noise: Ray
@@ -438,57 +438,111 @@ OUTBOUND_HTTP_QUERY_KEYS = (
 OUTBOUND_HTTP_URL_KEYS = ("url", "url.full", "http.url")
 PATH_REMOVED = "/[path removed]"
 
-# Hosts whose paths are fixed API routes or public identifiers (a PubMed ID,
-# a DOI, a coverage document number), so keeping the path helps debugging and
-# reveals nothing about a case. Every other host keeps only scheme and host:
-# the link fetcher and payer policy fetcher follow URLs found in documents,
-# and a path there can be anything. Model providers' paths are fixed routes.
-# Matched against the host name, case-insensitively, as a whole name or a
-# subdomain of it.
-OUTBOUND_PATH_KEPT_HOSTS = (
-    "eutils.ncbi.nlm.nih.gov",
-    "www.ncbi.nlm.nih.gov",
-    "pubmed.ncbi.nlm.nih.gov",
-    "www.ebi.ac.uk",
-    "api.biorxiv.org",
-    "api.unpaywall.org",
-    "doi.org",
-    "rxnav.nlm.nih.gov",
-    "clinicaltrials.gov",
-    "api.nice.org.uk",
-    "data.uspreventiveservicestaskforce.org",
-    "api.coverage.cms.gov",
-    "www.ecfr.gov",
-    "api.deepinfra.com",
-    "api.anthropic.com",
-    "api.perplexity.ai",
-    "openai.azure.com",
-    "services.ai.azure.com",
+# Paths are kept only where they match a known fixed API route of the host,
+# with any identifier in them replaced by "[id]". Anything else (a path that
+# could carry words from a case, such as a PubMed search page, or any path on
+# a host not listed here, such as the link and payer policy fetchers' targets)
+# becomes PATH_REMOVED. Each entry is (host, path pattern, replacement); the
+# host matches as a whole name or a subdomain of it, and the pattern must
+# match the whole path.
+OUTBOUND_KEPT_ROUTES: Tuple[Tuple[str, "re.Pattern[str]", str], ...] = tuple(
+    (host, re.compile(pattern), replacement)
+    for host, pattern, replacement in (
+        (
+            "eutils.ncbi.nlm.nih.gov",
+            r"/entrez/eutils/(esearch|esummary|efetch|elink|einfo|epost)\.fcgi",
+            r"\g<0>",
+        ),
+        ("www.ncbi.nlm.nih.gov", r"/pmc/utils/idconv/v1(\.0)?/?", r"\g<0>"),
+        ("www.ncbi.nlm.nih.gov", r"/pmc/articles/PMC\d+/?", "/pmc/articles/[id]"),
+        ("pubmed.ncbi.nlm.nih.gov", r"/\d+/?", "/[id]"),
+        ("www.ebi.ac.uk", r"/europepmc/webservices/rest/search", r"\g<0>"),
+        ("api.unpaywall.org", r"/v2/.+", "/v2/[id]"),
+        ("api.biorxiv.org", r"/details/(biorxiv|medrxiv)/.+", r"/details/\1/[id]"),
+        ("doi.org", r"/api/handles/.+", "/api/handles/[id]"),
+        ("doi.org", r"/10\..+", "/[id]"),
+        (
+            "rxnav.nlm.nih.gov",
+            r"/REST/(approximateTerm|rxcui|drugs|spellingsuggestions)\.json",
+            r"\g<0>",
+        ),
+        (
+            "rxnav.nlm.nih.gov",
+            r"/REST/rxcui/\d+/(properties|related|allrelated)\.json",
+            r"\g<0>",
+        ),
+        ("clinicaltrials.gov", r"/api/v2/studies", r"\g<0>"),
+        ("clinicaltrials.gov", r"/api/v2/studies/NCT\d{8}", "/api/v2/studies/[id]"),
+        ("api.nice.org.uk", r"/services/search", r"\g<0>"),
+        ("data.uspreventiveservicestaskforce.org", r"/api/json", r"\g<0>"),
+        (
+            "api.coverage.cms.gov",
+            r"/v1/(reports|metadata|data)(/[a-z]+(-[a-z]+)*)*/?",
+            r"\g<0>",
+        ),
+        (
+            "www.ecfr.gov",
+            r"/api/versioner/v1/(structure|versions|full)/((current|\d{4}-\d{2}-\d{2})/)?title-\d+\.(json|xml)",
+            r"\g<0>",
+        ),
+        (
+            "api.deepinfra.com",
+            r"/v1/openai/(chat/completions|completions|embeddings|models)",
+            r"\g<0>",
+        ),
+        (
+            "api.anthropic.com",
+            r"/v1/(messages(/count_tokens)?|complete|models)",
+            r"\g<0>",
+        ),
+        ("api.perplexity.ai", r"/chat/completions", r"\g<0>"),
+        (
+            "openai.azure.com",
+            r"/openai/deployments/[A-Za-z0-9._-]+/(chat/completions|completions|embeddings)",
+            r"/openai/deployments/[id]/\1",
+        ),
+        (
+            "services.ai.azure.com",
+            r"/(anthropic/v1/messages|models/chat/completions|openai/v1/chat/completions)",
+            r"\g<0>",
+        ),
+    )
 )
 
 # Where Sentry may send its trace headers (sentry-trace, baggage): our own
-# sites, in-cluster services and local development. By default the SDK sends
-# them to every host, outside services included. Anchored, because the SDK
-# matches these with re.search against the full URL.
+# sites, in-cluster services (a bare single-label name such as temporal-web
+# cannot be an internet host, and *.svc names are the cluster's) and local
+# development. By default the SDK sends them to every host, outside services
+# included. Anchored, because the SDK matches these with re.search against
+# the full URL.
 FHI_TRACE_PROPAGATION_TARGETS = [
     r"(?i)^https?://([a-z0-9-]+\.)*(fighthealthinsurance\.com|fightpaperwork\.com"
     r"|fightinsurance\.ai|fuckhealthinsurance\.com)(:\d+)?(/|$)",
     r"(?i)^https?://[a-z0-9.-]+\.svc(\.cluster\.local)?(:\d+)?(/|$)",
-    r"(?i)^https?://(localhost|127\.0\.0\.1)(:\d+)?(/|$)",
+    r"(?i)^https?://[a-z0-9-]+(:\d+)?(/|$)",
+    r"(?i)^https?://127\.0\.0\.1(:\d+)?(/|$)",
 ]
 
+# An absolute URL inside free text, such as a log line recorded as a
+# breadcrumb ("HTTP Request: GET https://...?q=...") or an exception message.
+_URL_IN_TEXT = re.compile(r"https?://[^\s'\"<>]+")
 
-def _keeps_path(host: str) -> bool:
+
+def _kept_path(host: str, path: str) -> str:
     host = host.lower().rstrip(".")
-    return any(
-        host == kept or host.endswith("." + kept) for kept in OUTBOUND_PATH_KEPT_HOSTS
-    )
+    for kept_host, pattern, replacement in OUTBOUND_KEPT_ROUTES:
+        if host != kept_host and not host.endswith("." + kept_host):
+            continue
+        match = pattern.fullmatch(path)
+        if match:
+            return match.expand(replacement)
+    return PATH_REMOVED
 
 
 def clean_outbound_url(url: Any) -> Any:
-    """``url`` without its query string, fragment or credentials, and without
-    its path unless the host is in OUTBOUND_PATH_KEPT_HOSTS. Anything that is
-    not a parseable absolute URL becomes FILTERED. Never raises."""
+    """``url`` without its query string, fragment or credentials, and with its
+    path kept only where it matches OUTBOUND_KEPT_ROUTES. Anything that is not
+    a parseable absolute URL becomes FILTERED. Never raises."""
     if not isinstance(url, str):
         return url
     try:
@@ -498,9 +552,20 @@ def clean_outbound_url(url: Any) -> Any:
             return FILTERED if url else url
         netloc = host if parts.port is None else f"{host}:{parts.port}"
         path = parts.path
-        if path not in ("", "/") and not _keeps_path(host):
-            path = PATH_REMOVED
+        if path not in ("", "/"):
+            path = _kept_path(host, path)
         return f"{parts.scheme}://{netloc}{path}"
+    except Exception:
+        return FILTERED
+
+
+def clean_urls_in_text(text: Any) -> Any:
+    """Every absolute URL inside ``text`` passed through clean_outbound_url.
+    Non-text passes through. Never raises."""
+    if not isinstance(text, str) or "://" not in text:
+        return text
+    try:
+        return _URL_IN_TEXT.sub(lambda m: str(clean_outbound_url(m.group(0))), text)
     except Exception:
         return FILTERED
 
@@ -515,54 +580,77 @@ def _scrub_outbound_http_data(data: Any) -> None:
             data[key] = clean_outbound_url(data[key])
 
 
+def _scrub_http_span_like(span: Any) -> None:
+    """Clean an outbound HTTP span, or a trace context taken from one."""
+    if not isinstance(span, dict):
+        return
+    if not as_text(span.get("op")).startswith(OUTBOUND_HTTP_SPAN_OP_PREFIX):
+        return
+    _scrub_outbound_http_data(span.get("data"))
+    description = span.get("description")
+    if isinstance(description, str) and " " in description:
+        method, _, url = description.partition(" ")
+        span["description"] = f"{method} {clean_outbound_url(url)}"
+    elif isinstance(description, str):
+        span["description"] = clean_outbound_url(description)
+
+
 def scrub_outbound_http_breadcrumb(crumb: Any) -> Any:
-    """Clean one outbound HTTP breadcrumb in place and return it. Other
-    breadcrumbs pass through. Never raises."""
+    """Clean one breadcrumb in place and return it: an outbound HTTP
+    breadcrumb loses its query fields, and any breadcrumb's message (a log
+    line such as httpx's "HTTP Request: GET <url>") has its URLs cleaned.
+    Never raises."""
     try:
-        if (
-            isinstance(crumb, dict)
-            and crumb.get("category") == OUTBOUND_HTTP_BREADCRUMB_CATEGORY
-        ):
+        if not isinstance(crumb, dict):
+            return crumb
+        if crumb.get("category") == OUTBOUND_HTTP_BREADCRUMB_CATEGORY:
             _scrub_outbound_http_data(crumb.get("data"))
+        if "message" in crumb:
+            crumb["message"] = clean_urls_in_text(crumb["message"])
     except Exception:
         pass
     return crumb
 
 
 def scrub_outbound_http(event: Any) -> Any:
-    """Clean every outbound HTTP span and breadcrumb in an event. Never
-    raises; anything whose shape it cannot read is left as it is."""
+    """Clean every outbound HTTP span, the trace context when the event was
+    captured inside an outbound HTTP span, every breadcrumb, and URLs inside
+    exception messages and log messages. Never raises; anything whose shape
+    it cannot read is left as it is."""
     if not isinstance(event, dict):
         return event
     try:
         spans = event.get("spans")
         if isinstance(spans, list):
             for span in spans:
-                if not isinstance(span, dict):
-                    continue
-                if not as_text(span.get("op")).startswith(OUTBOUND_HTTP_SPAN_OP_PREFIX):
-                    continue
-                _scrub_outbound_http_data(span.get("data"))
-                description = span.get("description")
-                if isinstance(description, str) and " " in description:
-                    method, _, url = description.partition(" ")
-                    span["description"] = f"{method} {clean_outbound_url(url)}"
-                elif isinstance(description, str):
-                    span["description"] = clean_outbound_url(description)
+                _scrub_http_span_like(span)
+        contexts = event.get("contexts")
+        if isinstance(contexts, dict):
+            _scrub_http_span_like(contexts.get("trace"))
         breadcrumbs = event.get("breadcrumbs")
         if isinstance(breadcrumbs, dict):
             breadcrumbs = breadcrumbs.get("values")
         if isinstance(breadcrumbs, list):
             for crumb in breadcrumbs:
                 scrub_outbound_http_breadcrumb(crumb)
+        for exc in raw_exception_entries(event):
+            if isinstance(exc, dict) and "value" in exc:
+                exc["value"] = clean_urls_in_text(exc["value"])
+        logentry = event.get("logentry")
+        if isinstance(logentry, dict):
+            for key in MESSAGE_TEXT_KEYS:
+                if key in logentry:
+                    logentry[key] = clean_urls_in_text(logentry[key])
+        if "message" in event:
+            event["message"] = clean_urls_in_text(event["message"])
     except Exception:
         pass
     return event
 
 
 def before_breadcrumb_filter(crumb: Any, hint: Any) -> Any:
-    """Sentry ``before_breadcrumb`` hook: outbound HTTP breadcrumbs lose their
-    query strings when recorded, not only when an event is sent."""
+    """Sentry ``before_breadcrumb`` hook: breadcrumbs lose outbound query
+    strings when recorded, not only when an event is sent."""
     return scrub_outbound_http_breadcrumb(crumb)
 
 

@@ -7,7 +7,10 @@ fields, clean the URL (and the path, for hosts not known to use fixed routes),
 and the propagation targets keep trace headers on our own hosts.
 """
 
+import logging
+import os
 import re
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -22,6 +25,7 @@ from fighthealthinsurance.sentry_filters import (
     before_send_filter,
     before_send_transaction_filter,
     clean_outbound_url,
+    clean_urls_in_text,
     scrub_outbound_http,
 )
 
@@ -42,11 +46,54 @@ class TestCleanOutboundUrl:
             == "https://portal.example.com" + PATH_REMOVED
         )
 
-    def test_subdomain_of_a_kept_host_keeps_its_path(self):
+    def test_subdomain_of_a_kept_host_keeps_a_known_route(self):
         assert (
-            clean_outbound_url("https://myres.openai.azure.com/openai/deployments/x")
-            == "https://myres.openai.azure.com/openai/deployments/x"
+            clean_outbound_url(
+                "https://myres.openai.azure.com/openai/deployments/gpt/chat/completions?api-version=1"
+            )
+            == "https://myres.openai.azure.com/openai/deployments/[id]/chat/completions"
         )
+
+    def test_listed_host_with_an_unknown_path_loses_it(self):
+        # A PubMed search page path carries the search words.
+        assert (
+            clean_outbound_url("https://www.ncbi.nlm.nih.gov/pubmed/lumbar%20fusion")
+            == "https://www.ncbi.nlm.nih.gov" + PATH_REMOVED
+        )
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            (
+                "https://doi.org/api/handles/10.1056%2FNEJMoa2001017",
+                "https://doi.org/api/handles/[id]",
+            ),
+            ("https://pubmed.ncbi.nlm.nih.gov/32109013/", "https://pubmed.ncbi.nlm.nih.gov/[id]"),
+            (
+                "https://api.unpaywall.org/v2/10.1056/NEJMoa2001017?email=x",
+                "https://api.unpaywall.org/v2/[id]",
+            ),
+            (
+                "https://clinicaltrials.gov/api/v2/studies/NCT01234567?format=json",
+                "https://clinicaltrials.gov/api/v2/studies/[id]",
+            ),
+            (
+                "https://rxnav.nlm.nih.gov/REST/rxcui/12345/related.json?tty=SBD",
+                "https://rxnav.nlm.nih.gov/REST/rxcui/12345/related.json",
+            ),
+            (
+                "https://www.ecfr.gov/api/versioner/v1/structure/current/title-45.json?part=147",
+                "https://www.ecfr.gov/api/versioner/v1/structure/current/title-45.json",
+            ),
+            ("https://api.anthropic.com/v1/messages", "https://api.anthropic.com/v1/messages"),
+            (
+                "https://rxnav.nlm.nih.gov/REST/drugs/metformin.json",
+                "https://rxnav.nlm.nih.gov" + PATH_REMOVED,
+            ),
+        ],
+    )
+    def test_known_routes_keep_their_shape_only(self, url, expected):
+        assert clean_outbound_url(url) == expected
 
     def test_lookalike_host_is_not_kept(self):
         assert clean_outbound_url("https://evil-doi.org/10.1/x").endswith(
@@ -58,6 +105,20 @@ class TestCleanOutboundUrl:
             clean_outbound_url("http://localhost:8001/search?q=x")
             == "http://localhost:8001" + PATH_REMOVED
         )
+
+
+class TestUrlsInText:
+    def test_log_line_url_is_cleaned(self):
+        line = (
+            'HTTP Request: GET https://eutils.ncbi.nlm.nih.gov/entrez/eutils/'
+            'esearch.fcgi?term=lumbar+fusion&api_key=k "HTTP/1.1 200 OK"'
+        )
+        out = clean_urls_in_text(line)
+        assert "lumbar" not in out and "api_key" not in out
+        assert "esearch.fcgi" in out and "HTTP/1.1 200 OK" in out
+
+    def test_text_without_urls_is_unchanged(self):
+        assert clean_urls_in_text("no links here") == "no links here"
 
     @pytest.mark.parametrize("value", ["not a url", "/relative/path?q=1"])
     def test_unparseable_becomes_filtered(self, value):
@@ -128,6 +189,50 @@ class TestEventScrub:
             "message": "SELECT 1",
         }
 
+    def test_log_breadcrumb_message_is_cleaned(self):
+        event = {
+            "breadcrumbs": [
+                {
+                    "category": "httpx",
+                    "message": "HTTP Request: GET https://api.example.org/a?term=asthma",
+                }
+            ]
+        }
+        out = scrub_outbound_http(event)
+        assert "asthma" not in out["breadcrumbs"][0]["message"]
+
+    def test_trace_context_of_an_outbound_span_is_cleaned(self):
+        event = {
+            "contexts": {
+                "trace": {
+                    "op": "http.client",
+                    "description": "GET https://api.example.org/x?term=asthma",
+                    "data": {"url": "https://api.example.org/x", "http.query": "term=asthma"},
+                }
+            }
+        }
+        trace = scrub_outbound_http(event)["contexts"]["trace"]
+        assert "asthma" not in repr(trace)
+
+    def test_inbound_trace_context_is_left_alone(self):
+        trace = {"op": "http.server", "description": "/appeal/?x=1"}
+        out = scrub_outbound_http({"contexts": {"trace": dict(trace)}})
+        assert out["contexts"]["trace"] == trace
+
+    def test_exception_message_url_is_cleaned(self):
+        event = {
+            "exception": {
+                "values": [
+                    {
+                        "type": "HTTPStatusError",
+                        "value": "Client error '404' for url 'https://api.example.org/x?term=asthma'",
+                    }
+                ]
+            }
+        }
+        out = before_send_filter(event, {})
+        assert "asthma" not in out["exception"]["values"][0]["value"]
+
     def test_existing_filters_still_drop(self):
         # The new scrub runs after the existing drops, so they still apply.
         unrouted = {
@@ -165,6 +270,7 @@ class TestPropagationTargets:
             "http://phoenix.fhi-eval.svc:6006/v1/projects",
             "http://temporal-frontend.default.svc.cluster.local:7233/",
             "http://localhost:8001/x",
+            "http://temporal-web:8080/namespaces",
         ],
     )
     def test_our_hosts_match(self, url):
@@ -196,8 +302,9 @@ class _Capture(Transport):
                 self.events.append(payload)
 
 
-@pytest.fixture
-def sentry_capture():
+def _init_capture(default_integrations: bool) -> "_Capture":
+    from sentry_sdk.integrations.httpx import HttpxIntegration
+
     transport = _Capture()
     sentry_sdk.init(
         dsn="https://public@sentry.invalid/1",
@@ -207,19 +314,35 @@ def sentry_capture():
         before_send_transaction=before_send_transaction_filter,
         before_breadcrumb=before_breadcrumb_filter,
         trace_propagation_targets=FHI_TRACE_PROPAGATION_TARGETS,
-        default_integrations=False,
+        default_integrations=default_integrations,
         auto_enabling_integrations=False,
-        integrations=[
-            __import__(
-                "sentry_sdk.integrations.httpx", fromlist=["HttpxIntegration"]
-            ).HttpxIntegration()
-        ],
+        integrations=[HttpxIntegration()],
     )
-    try:
-        yield transport
-    finally:
-        sentry_sdk.get_client().close()
-        sentry_sdk.init()  # back to a disabled client for later tests
+    return transport
+
+
+@pytest.fixture
+def restore_sentry():
+    """Never let a test reach a real DSN: SENTRY_DSN is removed for the test,
+    and the client in place before it is put back afterwards."""
+    previous = sentry_sdk.get_client()
+    env = {k: v for k, v in os.environ.items() if k != "SENTRY_DSN"}
+    with patch.dict(os.environ, env, clear=True):
+        try:
+            yield
+        finally:
+            sentry_sdk.get_client().close()
+            sentry_sdk.get_global_scope().set_client(previous)
+
+
+@pytest.fixture
+def sentry_capture(restore_sentry):
+    return _init_capture(default_integrations=False)
+
+
+@pytest.fixture
+def sentry_capture_with_defaults(restore_sentry):
+    return _init_capture(default_integrations=True)
 
 
 def test_real_httpx_request_is_scrubbed_and_untagged(sentry_capture):
@@ -247,3 +370,39 @@ def test_real_httpx_request_is_scrubbed_and_untagged(sentry_capture):
     assert "lumbar" not in blob
     assert "secret-key" not in blob
     assert "esearch.fcgi" in blob  # the fixed API path is kept
+
+
+def test_default_integrations_keep_queries_out_of_breadcrumbs(
+    sentry_capture_with_defaults,
+):
+    # With the logging integration on, httpx's INFO request line becomes a
+    # breadcrumb whose message carries the full URL. Forced to INFO here to
+    # prove the scrub, independent of the WARNING level the app sets.
+    httpx_logger = logging.getLogger("httpx")
+    previous_level = httpx_logger.level
+    previous_disable = logging.root.manager.disable
+    previous_disabled = httpx_logger.disabled
+    httpx_logger.setLevel(logging.INFO)
+    httpx_logger.disabled = False  # dictConfig may have disabled it
+    logging.disable(logging.NOTSET)  # test settings may switch logging off
+    try:
+        client = httpx.Client(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200))
+        )
+        with sentry_sdk.start_transaction(name="/appeal/", source="route"):
+            client.get(
+                "https://rxnav.nlm.nih.gov/REST/approximateTerm.json",
+                params={"term": "metformin hydrochloride", "api_key": "secret-key"},
+            )
+            sentry_sdk.capture_message("after the call")
+        sentry_sdk.flush()
+    finally:
+        httpx_logger.setLevel(previous_level)
+        logging.disable(previous_disable)
+        httpx_logger.disabled = previous_disabled
+
+    blob = repr(sentry_capture_with_defaults.events)
+    assert "metformin" not in blob
+    assert "secret-key" not in blob
+    assert "approximateTerm.json" in blob
+    assert "HTTP Request" in blob  # the log breadcrumb was recorded, then cleaned
