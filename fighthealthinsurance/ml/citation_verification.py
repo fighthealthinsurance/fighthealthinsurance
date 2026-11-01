@@ -353,18 +353,18 @@ def find_occurrences(citation: str) -> List[Occurrence]:
         # A range of sections is never looked up: checking one end could
         # call a real range missing after a misparse. Ranges are "§§", a
         # second section after a dash or "through"/"to", or an abbreviated
-        # one ("438.400-424"): a typographic dash, or a hyphen followed by a
-        # number as long as the section's and larger. Section numbers with a
-        # hyphen of their own ("2560.503-1", "2590.715-2719A") stay sections.
-        abbreviated = bool(tail) and (
-            dash != "-"
-            or (
-                tail.isdigit()
-                and sub is not None
-                and len(tail) == len(sub)
-                and int(tail) > int(sub)
-            )
+        # one: a typographic dash, or a hyphen between two plain numbers
+        # ("438.400-424", "438.2-10"). The one hyphenated form taken as a
+        # section is the Title 29 style, three or more decimal digits and a
+        # suffix of one or two ("2560.503-1"), or a suffix with a letter
+        # ("2590.715-2719A"). When in doubt it is a range, so it is not
+        # looked up.
+        section_style = (
+            tail is not None
+            and sub is not None
+            and (not tail.isdigit() or (len(sub) >= 3 and len(tail) <= 2))
         )
+        abbreviated = bool(tail) and (dash != "-" or not section_style)
         is_range = bool(m.group("range")) or m.group("signs") == "§§" or abbreviated
         bad = bool(stuck) or is_range or not (1 <= int(title) <= _CFR_TITLES)
         value = f"{int(title)}/{int(part)}/{section}"

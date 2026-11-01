@@ -916,6 +916,8 @@ class TestRoundTwoEdges:
             "42 CFR 438.400-424",
             "45 CFR 147.136 through 147.140",
             "45 CFR 147.136 to 147.140",
+            "42 CFR 438.2-10",
+            "42 CFR 438.2-1000",
         ],
     )
     def test_abbreviated_and_worded_ranges_are_never_looked_up(self, citation):
