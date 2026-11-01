@@ -201,6 +201,15 @@ spec:
               configMapKeyRef:
                 name: fhi-db-config
                 key: PDBHOST
+          # Read-only Phoenix API key for the staff status page's Phoenix panel
+          # (PHOENIX_STATUS_ENABLED). Optional so pods start before the key
+          # exists; the panel then shows Phoenix's 401 as a config problem.
+          - name: PHOENIX_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: fight-health-insurance-secret
+                key: PHOENIX_API_KEY
+                optional: true
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret
