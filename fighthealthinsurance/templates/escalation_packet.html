@@ -31,8 +31,8 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
   <h4 style="margin-top:0;">Add a letter to your state's Department of Insurance?</h4>
   <p>
     We don't know which state you're in, so we can't draft the letter to your
-    state insurance regulator yet. Pick your state and we'll add it. Any letter
-    already drafted below is kept.
+    state insurance regulator yet. Pick your state and we'll draft it with the
+    others, or skip it and we'll draft the rest now.
   </p>
   <form action="{% url 'escalation_packet' %}" method="post" class="fhi-stack">
     {% csrf_token %}
@@ -47,6 +47,7 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
       {% endfor %}
     </select>
     <button type="submit" class="fhi-button fhi-button-primary">Add my state's letter</button>
+    <button type="button" id="escalation-skip-state" class="fhi-button fhi-button-neutral">Skip the state letter</button>
   </form>
 </div>
 {% endif %}
@@ -64,7 +65,12 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
   </ul>
 </div>
 
-<div id="loading-text" style="text-align:center; padding:1rem; margin-top:1rem;">
+{% comment %}
+With the state picker up, nothing is drafted until the person picks a state
+or skips it: the picker reloads the page, and a letter edited before then
+would be lost with it (only its own Save button stores an edit).
+{% endcomment %}
+<div id="loading-text" style="text-align:center; padding:1rem; margin-top:1rem;{% if state_choices %} display:none;{% endif %}">
   <h4>Drafting your regulator letters…</h4>
   <p style="color:#666;">This usually takes 1 to 2 minutes per recipient.</p>
 </div>
@@ -234,6 +240,7 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
       }
     }
 
+    function startDrafting() {
     let buffer = '';
     const ws = new WebSocket(backendUrl);
     ws.onopen = () => ws.send(JSON.stringify(data));
@@ -264,6 +271,21 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
       console.error('WebSocket error', e);
       showFailure('Connection error', 'We lost the connection while drafting your letters, please try again.');
     };
+    }
+
+    // The state picker is up (no state on file): draft only once the person
+    // skips it. Picking a state reloads the page, which then drafts at once.
+    const statePicker = document.getElementById('escalation-state-picker');
+    const skipState = document.getElementById('escalation-skip-state');
+    if (statePicker && skipState) {
+      skipState.addEventListener('click', () => {
+        statePicker.style.display = 'none';
+        setLoading('Drafting your regulator letters…', 'This usually takes 1 to 2 minutes per recipient.');
+        startDrafting();
+      });
+    } else {
+      startDrafting();
+    }
   });
 </script>
 {% endif %}

@@ -19,7 +19,19 @@ if (!scriptPath || !scenarioName) {
   throw new Error('usage: escalation_packet_behaviour.cjs <script> <scenario>');
 }
 
-const page = buildPage(ESCALATION_MARKUP);
+// The page as it renders with no state on file: the state picker sits above
+// the letters and nothing is drafted until the person skips it.
+const PICKER_MARKUP = `
+<div id="escalation-state-picker">
+  <button type="button" id="escalation-skip-state">Skip the state letter</button>
+</div>
+`;
+
+const page = buildPage(
+  scenarioName && scenarioName.startsWith('picker_')
+    ? PICKER_MARKUP + ESCALATION_MARKUP
+    : ESCALATION_MARKUP,
+);
 install(page);
 for (const level of ['debug', 'log', 'info', 'warn', 'error']) {
   console[level] = () => {};
@@ -147,6 +159,23 @@ const scenarios = {
     const afterTheStatus = snapshot();
     ws.fireClose();
     return {afterTheError, afterTheStatus, ended: snapshot()};
+  },
+
+  // The state picker is up: no socket until the person skips it, then one.
+  picker_waits_for_skip() {
+    const source = fs.readFileSync(path.resolve(scriptPath), 'utf8');
+    // eslint-disable-next-line no-new-func
+    new Function(source)();
+    page.fireDomReady();
+    const socketsBeforeSkip = page.sockets.length;
+    page.document.getElementById('escalation-skip-state').dispatch('click');
+    const picker = page.document.getElementById('escalation-state-picker');
+    return {
+      socketsBeforeSkip,
+      socketsAfterSkip: page.sockets.length,
+      pickerDisplay: picker.style.display || '',
+      afterSkip: snapshot(),
+    };
   },
 
   // A socket that closes having said nothing at all.

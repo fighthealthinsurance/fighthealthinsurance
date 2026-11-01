@@ -272,13 +272,31 @@ class RegulatorEscalationReasonsTest(TestCase):
     def test_later_level_appeals_decided_are_a_reason(self):
         for text in (
             "Your second level appeal has been reviewed and the denial stands.",
-            "We reviewed your level 2 appeal.",
-            "This responds to your third-level appeal.",
+            "We reviewed your level 2 appeal and the denial is upheld.",
+            "We decided your third-level appeal and the denial stands.",
             "You have exhausted all internal appeals.",
         ):
             with self.subTest(text=text):
                 denial = _FakeDenial(state="", denial_text=text)
                 self.assertTrue(regulator_escalation_reasons(denial))
+
+    def test_a_later_level_named_without_a_decision_is_not_a_reason(self):
+        for text in (
+            "You have the right to request a third-level appeal within 60 days.",
+            "You have the right to a second level appeal of this decision.",
+            "We have received your third-level appeal and it is under review.",
+            "Your second level appeal is pending; a decision will follow.",
+            "This responds to your third-level appeal.",
+        ):
+            with self.subTest(text=text):
+                denial = _FakeDenial(state="", denial_text=text)
+                self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_not_yet_a_final_decision_is_negated(self):
+        denial = _FakeDenial(
+            state="", denial_text="This is not yet a final decision."
+        )
+        self.assertEqual(regulator_escalation_reasons(denial), [])
 
     def test_a_rights_notice_about_later_levels_is_not_a_reason(self):
         """A first denial's rights notice uses the same words about what
@@ -701,6 +719,29 @@ class EscalationPacketViewTest(TestCase):
         self.assertNotContains(response, 'id="escalation-state-picker"')
         self.assertContains(response, "letters for:")
         self.assertEqual(response.context["recipients_count"], 2)
+
+    def test_escalation_packet_saves_the_state_mirror_too(self):
+        self.denial.your_state = ""
+        self.denial.save()
+        self._post_packet(your_state="NY")
+        self.denial.refresh_from_db()
+        self.assertEqual(self.denial.state, "NY")
+
+    @patch("fighthealthinsurance.escalation_addresses.get_state_help_by_abbreviation")
+    def test_a_stale_picker_never_overwrites_a_usable_state(self, mock_state):
+        mock_state.return_value = StateHelp(CALIFORNIA_DATA)
+        self._post_packet(your_state="NY")
+        self.denial.refresh_from_db()
+        self.assertEqual(self.denial.your_state, "CA")
+
+    def test_the_state_picker_holds_drafting_until_skipped(self):
+        """No letter is drafted under the picker, so none can be edited and
+        then lost when picking a state reloads the page."""
+        self.denial.your_state = ""
+        self.denial.save()
+        response = self._post_packet()
+        self.assertContains(response, 'id="escalation-skip-state"')
+        self.assertContains(response, "display:none;")
 
     def test_escalation_packet_ignores_an_unknown_state(self):
         self.denial.your_state = ""

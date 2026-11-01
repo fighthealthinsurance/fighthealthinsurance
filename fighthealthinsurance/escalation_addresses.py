@@ -251,19 +251,39 @@ _APPEAL_UPHELD_RE = re.compile(
     re.IGNORECASE | re.UNICODE | re.DOTALL,
 )
 # Wording that says the internal appeals are done: the insurer's final
-# word, appeals exhausted, or a second- or third-level appeal decided. This
-# is the point where the regulator (and external review) is the next step.
-# Deliberately not "external review" or "independent review": a first-level
-# denial carries those as a required notice of rights, so they say nothing
-# about where this person is in the process.
+# word or appeals exhausted. This is the point where the regulator (and
+# external review) is the next step. Deliberately not "external review" or
+# "independent review": a first-level denial carries those as a required
+# notice of rights, so they say nothing about where this person is in the
+# process.
 _INTERNAL_APPEALS_DONE_RE = re.compile(
     r"("
     r"\bfinal (adverse|internal)? ?(benefit )?(determination|decision)\b"
     r"|\bexhausted\b.{0,40}\bappeal"
-    r"|\b(second|2nd|third|3rd|level[- ](2|two|ii|3|three|iii))[- ]level\b"
-    r"|\blevel[- ](2|two|ii|3|three|iii)\b.{0,20}\bappeal"
     r")",
     re.IGNORECASE | re.UNICODE | re.DOTALL,
+)
+# A second- or third-level appeal named. On its own that is only a level: a
+# rights notice ("you have the right to request a third-level appeal") and
+# an acknowledgement ("we received your second level appeal and it is under
+# review") name one too, while appeals remain or are pending. So it counts
+# only in a sentence that also states a decision on it and says nothing of
+# filing, rights or a review still under way (_later_level_decided).
+_LATER_LEVEL_RE = re.compile(
+    r"\b(second|2nd|third|3rd|level[- ](2|two|ii|3|three|iii))[- ]level\b"
+    r"|\blevel[- ](2|two|ii|3|three|iii)\b.{0,20}\bappeal",
+    re.IGNORECASE | re.UNICODE | re.DOTALL,
+)
+_DECISION_RE = re.compile(
+    r"\b(uph[eo]ld|denied|decided|decision|determination|stands|unchanged"
+    r"|affirmed|reaffirmed|maintained|overturn(ed)?)\b",
+    re.IGNORECASE,
+)
+_PENDING_OR_RIGHTS_RE = re.compile(
+    r"\b(right to|you can|to request|request (a|an)|to file|to submit"
+    r"|under review|being reviewed|pending|in progress|received|will"
+    r"|are reviewing|is reviewing)\b",
+    re.IGNORECASE,
 )
 # The same words in a clause about what could happen, not what did: the
 # rights notice on a first denial says "If our decision is upheld you may
@@ -277,8 +297,10 @@ _CONDITIONAL_CLAUSE_RE = re.compile(
 _CLAUSE_BREAK_RE = re.compile(r"[.;:!?\n]")
 # A negation just before the match: "this is not a final decision", "we
 # cannot affirm our original decision", "we can't uphold the denial".
+# Up to two small words may sit between: "this is not yet a final decision".
 _NEGATED_RE = re.compile(
-    r"\b(not|never|no|cannot|\w+n['\u2019]t)\s+(a|an|the|our|yet)?\s*$",
+    r"\b(not|never|no|cannot|\w+n['\u2019]t)\s+"
+    r"(?:(?:a|an|the|our|its|this|that|yet)\s+){0,2}$",
     re.IGNORECASE,
 )
 # How far back a clause is read for a conditional. Longer than any clause
@@ -287,9 +309,9 @@ _NEGATED_RE = re.compile(
 _CLAUSE_LOOKBACK_CHARS = 200
 
 
-def _says_in_own_voice(pattern: re.Pattern, denial_text: str) -> bool:
-    """Whether *pattern* matches somewhere the letter states it as done,
-    not in a conditional or negated clause."""
+def _own_voice_matches(pattern: re.Pattern, denial_text: str):
+    """Each match of *pattern* the letter states as so, not in a
+    conditional or negated clause."""
     for match in pattern.finditer(denial_text):
         before = denial_text[
             max(0, match.start() - _CLAUSE_LOOKBACK_CHARS) : match.start()
@@ -297,7 +319,27 @@ def _says_in_own_voice(pattern: re.Pattern, denial_text: str) -> bool:
         clause = _CLAUSE_BREAK_RE.split(before)[-1]
         if _CONDITIONAL_CLAUSE_RE.search(clause) or _NEGATED_RE.search(clause):
             continue
-        return True
+        yield match
+
+
+def _says_in_own_voice(pattern: re.Pattern, denial_text: str) -> bool:
+    """Whether *pattern* matches somewhere the letter states it as done."""
+    return next(_own_voice_matches(pattern, denial_text), None) is not None
+
+
+def _later_level_decided(denial_text: str) -> bool:
+    """Whether the letter states a decision on a second- or third-level
+    appeal (see _LATER_LEVEL_RE)."""
+    for match in _own_voice_matches(_LATER_LEVEL_RE, denial_text):
+        start = max(
+            (m.end() for m in _CLAUSE_BREAK_RE.finditer(denial_text, 0, match.start())),
+            default=0,
+        )
+        end_break = _CLAUSE_BREAK_RE.search(denial_text, match.end())
+        end = end_break.start() if end_break else len(denial_text)
+        sentence = denial_text[start:end]
+        if _DECISION_RE.search(sentence) and not _PENDING_OR_RIGHTS_RE.search(sentence):
+            return True
     return False
 
 
@@ -309,7 +351,9 @@ def _appeal_already_decided(denial_text: str) -> bool:
 def _internal_appeals_done(denial_text: str) -> bool:
     """Whether the letter says the internal appeals are finished (a final
     determination, appeals exhausted, a second- or third-level decision)."""
-    return _says_in_own_voice(_INTERNAL_APPEALS_DONE_RE, denial_text)
+    return _says_in_own_voice(
+        _INTERNAL_APPEALS_DONE_RE, denial_text
+    ) or _later_level_decided(denial_text)
 
 
 # Denial types where the denial itself is the kind of thing a regulator

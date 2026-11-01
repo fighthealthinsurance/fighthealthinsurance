@@ -2305,18 +2305,28 @@ class GenerateEscalationPacket(View):
             # plain redirect this has always returned.
             return unresolved_denial_ref_response(request)
 
-        # The page's state picker posts back here. A state we know gets
-        # saved on the denial, because the streaming backend recomputes the
-        # recipients from the row; anything else is ignored.
-        picked = (picked_state or "").strip().upper()
-        if picked and get_state_help_by_abbreviation(picked) is not None:
-            denial.your_state = picked
-            denial.save(update_fields=["your_state"])
-
         recipients = get_recipients_for_denial(denial)
+        has_doi = any(r.recipient_type == RECIPIENT_DOI for r in recipients)
+        # The page's state picker posts back here. It only fills a state we
+        # could not use: a stale picker from another tab never overwrites
+        # one the packet already drafts for (the stream reuses a drafted
+        # letter by recipient type, so it would name one state and send the
+        # other's letter). A known state is saved on the denial, both the
+        # column of record and its mirror as the review page does, because
+        # the streaming backend recomputes the recipients from the row.
+        picked = (picked_state or "").strip().upper()
+        if (
+            picked
+            and not has_doi
+            and get_state_help_by_abbreviation(picked) is not None
+        ):
+            denial.your_state = picked
+            denial.state = picked
+            denial.save(update_fields=["your_state", "state"])
+            recipients = get_recipients_for_denial(denial)
+            has_doi = any(r.recipient_type == RECIPIENT_DOI for r in recipients)
         # No state on file means no Department of Insurance letter; offer
         # the states so the person can add one instead of losing it.
-        has_doi = any(r.recipient_type == RECIPIENT_DOI for r in recipients)
         state_choices = (
             []
             if has_doi
