@@ -5299,7 +5299,7 @@ class RemoteOpenLike(RemoteModel):
                 transport_failures.append(f"{model} via {api_base}: unreadable body")
             return None
         except aiohttp.ClientResponseError as e:
-            # Already logged with a body preview above; keep this at debug to
+            # Already logged with a body summary above; keep this at debug to
             # avoid double-logging. Re-raise so _infer (and opted-in subclasses
             # like RemoteAnthropic) can apply status-specific handling.
             logger.debug(

@@ -193,7 +193,7 @@ class TestMissingModelCooldown:
             await model._infer(
                 system_prompts=["sys"], prompt="hi", raise_http_errors=True
             )
-        assert "does not exist" in excinfo.value.message
+        assert "does not exist" in getattr(excinfo.value, "fhi_response_body")
 
     @pytest.mark.asyncio
     async def test_rate_limited_provider_probe_raises_http_status(
