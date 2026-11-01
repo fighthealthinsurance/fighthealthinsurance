@@ -5,7 +5,6 @@ checks that no log line written while it was in flight contains it.
 """
 
 from types import SimpleNamespace
-from pathlib import Path
 from unittest.mock import patch
 
 from asgiref.sync import async_to_sync
@@ -13,7 +12,7 @@ from django import forms
 from django.test import TestCase, override_settings
 from loguru import logger
 
-from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+from fighthealthinsurance.common_view_logic import AppealsBackendHelper, DenialCreatorHelper
 from fighthealthinsurance.generate_appeal import AppealGenerator, AppealTemplateGenerator
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.models import Denial, DenialTypes, ProposedAppeal
@@ -27,6 +26,7 @@ HISTORY = "sentinel-health-history"
 DENIAL_TEXT = "sentinel-denial-text"
 QA = "sentinel-question-answer"
 QUESTION = "sentinel-question-text"
+ZIP = "99987"
 
 
 class _Logs:
@@ -180,5 +180,13 @@ class AppealGeneratorLogsTest(TestCase):
         logs.assert_clean(DENIAL_TEXT, QA, HISTORY, ANSWER, REASON)
 
     def test_a_zip_lookup_failure_logs_the_error_type_only(self):
-        source = Path("fighthealthinsurance/common_view_logic.py").read_text()
-        self.assertIn('f"Zip code lookup failed: {type(e).__name__}"', source)
+        class BrokenZipEngine:
+            def by_zipcode(self, zip_code):
+                raise RuntimeError(f"no record for {zip_code}")
+
+        with patch.object(DenialCreatorHelper, "zip_engine", BrokenZipEngine()), patch(
+            "fighthealthinsurance.ml.ml_speculative_appeals_helper.dispatch_speculative_appeals"
+        ), _Logs() as logs:
+            DenialCreatorHelper.create_or_update_denial(email=EMAIL, denial_text="Claim denied.", zip=ZIP)
+        self.assertTrue(any("Zip code lookup failed: RuntimeError" in line for line in logs.lines))
+        logs.assert_clean(ZIP)
