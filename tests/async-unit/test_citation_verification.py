@@ -1102,6 +1102,28 @@ class TestFollowUpsAsync:
         assert seen == []
         assert out == [cv.UNVERIFIED_LABEL + f"Made up. doi:{FAKE_DOI}"]
 
+    async def test_a_refusal_after_the_cache_read_discards_cached_verdicts(
+        self, checks_on
+    ):
+        citation = f"Made up. doi:{FAKE_DOI}"
+        answers = iter([True, False])
+
+        async def consent():
+            return next(answers, False)
+
+        async def cached(ident):
+            # A cached "missing" for one, nothing for the other, so a
+            # request is still due and the fresh check is reached.
+            return cv.MISSING if ident.value == FAKE_DOI.lower() else None
+
+        with patch.object(cv, "_cache_get", cached):
+            out, seen = await _verify([citation, f"doi:{REAL_DOI}"], may_send=consent)
+        assert seen == []
+        assert out == [
+            cv.UNVERIFIED_LABEL + citation,
+            cv.UNVERIFIED_LABEL + f"doi:{REAL_DOI}",
+        ]
+
     async def test_any_trimmed_doi_called_missing_is_labelled(self, checks_on):
         for ending in (":", "_", ")"):
             citation = f"Made up. doi:{FAKE_DOI}{ending}"

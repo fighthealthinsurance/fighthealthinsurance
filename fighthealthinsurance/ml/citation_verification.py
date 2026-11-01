@@ -544,9 +544,16 @@ class UntracedClient:
         return response
 
     async def aclose(self) -> None:
-        for transport in [self._fixed, *self._transports.values()]:
-            if transport is not None:
-                await transport.aclose()
+        # Concurrently, so one transport that hangs on close doesn't keep the
+        # others open; the caller bounds the whole close.
+        await asyncio.gather(
+            *(
+                transport.aclose()
+                for transport in [self._fixed, *self._transports.values()]
+                if transport is not None
+            ),
+            return_exceptions=True,
+        )
 
     async def __aenter__(self) -> "UntracedClient":
         return self
@@ -843,6 +850,10 @@ async def check_identifiers(
     # A fresh read right before the first request: the early answer is for
     # the cache, and consent could have been withdrawn while it was read.
     if not await consent_allows(fresh=True):
+        # Refused after the cache was read: no cached verdict counts either,
+        # so every identifier is unchecked and its citation labelled.
+        for ident in checkable:
+            statuses[ident.key] = UNCHECKED
         return statuses
 
     own_client = client is None
