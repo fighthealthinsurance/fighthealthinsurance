@@ -19,7 +19,7 @@ Docs: https://api.coverage.cms.gov/docs/swagger/index.html
 import re
 import time
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 import httpx
 from loguru import logger
@@ -350,62 +350,64 @@ class CMSCoverageClient:
             await self._client.aclose()
             self._client = None
 
-    async def _fetch_ncd_report(self) -> List[NCDDocument]:
-        """Fetch (and cache) the full NCD report.
+    async def load_report(self) -> Tuple[List[NCDDocument], bool]:
+        """The NCD report, and whether it is a fresh, valid one.
 
-        On any error, returns the previously-cached report if we have one,
-        otherwise an empty list. This means transient CMS outages don't
-        zero out our citations as long as the in-process cache still has
-        data from a prior successful fetch.
+        Serves the in-process copy while it is within its TTL; otherwise
+        fetches it. On any error, or a response that isn't a report, returns
+        the previously-cached report if we have one (otherwise an empty
+        list) with False, so transient CMS outages don't zero out our
+        citations but nobody mistakes the result for a finished search. A
+        data list whose every record fails to parse isn't a report either.
         """
         now = time.monotonic()
         if (
             self._ncd_report_cache is not None
             and (now - self._ncd_report_cached_at) < self._NCD_REPORT_TTL
         ):
-            return self._ncd_report_cache
+            return self._ncd_report_cache, True
+        fallback = self._ncd_report_cache or []
         try:
             client = await self._get_client()
             response = await client.get("/v1/reports/national-coverage-ncd")
             if response.status_code != 200:
                 logger.warning(f"CMS NCD report returned status {response.status_code}")
-                return self._ncd_report_cache or []
+                return fallback, False
             payload = response.json()
             if not isinstance(payload, dict) or not isinstance(
                 payload.get("data"), list
             ):
                 # Not a report: don't let it stand in for a finished search.
                 logger.warning("CMS NCD report response had no data list")
-                return self._ncd_report_cache or []
+                return fallback, False
+            records = _extract_records(payload)
             parsed = [
                 doc
-                for doc in (_parse_ncd_record(r) for r in _extract_records(payload))
+                for doc in (_parse_ncd_record(r) for r in records)
                 if doc is not None
             ]
+            if records and not parsed:
+                logger.warning("CMS NCD report had no record that could be parsed")
+                return fallback, False
             self._ncd_report_cache = parsed
             self._ncd_report_cached_at = now
-            return parsed
+            return parsed, True
         except httpx.TimeoutException:
             logger.warning("CMS Coverage API request timed out")
-            return self._ncd_report_cache or []
+            return fallback, False
         except httpx.RequestError as e:
             logger.warning(f"CMS Coverage API request failed: {e}")
-            return self._ncd_report_cache or []
+            return fallback, False
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Unexpected error fetching CMS NCD report: {e}"
             )
-            return self._ncd_report_cache or []
+            return fallback, False
 
-    def has_report(self) -> bool:
-        """Whether a fresh NCD report is loaded, so an empty search was a
-        real "nothing matched" rather than an outage. A report kept past its
-        TTL because refreshing it failed doesn't count, and a successfully
-        fetched empty report does."""
-        return (
-            self._ncd_report_cache is not None
-            and (time.monotonic() - self._ncd_report_cached_at) < self._NCD_REPORT_TTL
-        )
+    async def _fetch_ncd_report(self) -> List[NCDDocument]:
+        """The NCD report, fresh or the last good one (see ``load_report``)."""
+        records, _valid = await self.load_report()
+        return records
 
     async def search_ncds(
         self, keyword: str, max_results: int = 5
@@ -455,37 +457,51 @@ def _candidate_keywords(
     return keywords
 
 
+class CMSCoverageCitations(List[str]):
+    """The citations one lookup found, a plain list to its callers, plus
+    whether the lookup was complete: every keyword searched against one
+    fresh, valid NCD report. Only a complete empty lookup means no NCD
+    applies; an incomplete one may just be an outage."""
+
+    def __init__(self, citations: Iterable[str] = (), complete: bool = False):
+        super().__init__(citations)
+        self.complete = complete
+
+
 async def get_cms_coverage_citations(
     procedure: Optional[str],
     diagnosis: Optional[str],
     medicare_plan: bool = False,
     max_results: int = 3,
-) -> List[str]:
+) -> CMSCoverageCitations:
     """Return formatted CMS coverage citations for a procedure/diagnosis.
 
     `medicare_plan=True` triggers framing emphasizing that
     Medicare-administered plans are bound by these policies.
 
-    Returns an empty list if no usable keywords are present or if the CMS
-    API is unreachable AND we have no cached report. Transient outages
-    where the in-process report cache is still warm continue to return
-    citations from the cached data.
+    The report is loaded once and both keywords are searched against that
+    same copy, so the result's ``complete`` flag says whether all of it
+    came from a fresh, valid report. Returns an empty list if no usable
+    keywords are present or if the CMS API is unreachable AND we have no
+    cached report. Transient outages where the in-process report cache is
+    still warm continue to return citations from the cached data, marked
+    incomplete.
     """
     keywords = _candidate_keywords(procedure, diagnosis)
     if not keywords:
-        return []
+        return CMSCoverageCitations()
     client = get_cms_coverage_client()
+    records, report_valid = await client.load_report()
     citations: List[str] = []
     seen_ids: set = set()
     for keyword in keywords:
         if len(citations) >= max_results:
             break
-        ncds = await client.search_ncds(keyword=keyword, max_results=max_results)
-        for ncd in ncds:
+        for ncd in _filter_by_keyword(records, keyword, max_results):
             if ncd.document_id in seen_ids:
                 continue
             seen_ids.add(ncd.document_id)
             citations.append(ncd.as_citation(medicare_plan=medicare_plan))
             if len(citations) >= max_results:
                 break
-    return citations
+    return CMSCoverageCitations(citations, complete=report_valid)

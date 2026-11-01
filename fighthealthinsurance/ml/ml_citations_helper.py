@@ -13,7 +13,6 @@ from fighthealthinsurance.denial_history_consent import (
 from fighthealthinsurance.cms_coverage_api import (
     NCD_CITATION_MARKER,
     get_cms_coverage_citations,
-    get_cms_coverage_client,
 )
 from fighthealthinsurance.ecri_guidelines_helper import ECRIGuidelinesHelper
 from fighthealthinsurance.extralink_context_helper import (
@@ -538,23 +537,25 @@ class MLCitationsHelper:
                 )
                 return cached[:max_results]
 
-        lookup_failed = False
+        # Whether this lookup searched every keyword against one fresh,
+        # valid NCD report. A plain list (no flag) counts as incomplete.
+        lookup_complete = False
         try:
-            citations = await get_cms_coverage_citations(
+            found = await get_cms_coverage_citations(
                 procedure=procedure or None,
                 diagnosis=diagnosis or None,
                 medicare_plan=medicare_plan,
                 max_results=max_results,
             )
+            citations = list(found)
+            lookup_complete = bool(getattr(found, "complete", False))
         except Exception as e:
             logger.debug(f"CMS coverage citation fetch failed ({type(e).__name__})")
             citations = []
-            lookup_failed = True
 
-        # A failed lookup is never stored, and an empty result only when a
-        # fresh NCD report was there to search, so an outage isn't
-        # remembered as "nothing applies".
-        if not lookup_failed and (citations or get_cms_coverage_client().has_report()):
+        # An empty result is stored only from a complete lookup, so an
+        # outage or a bad report isn't remembered as "nothing applies".
+        if citations or lookup_complete:
             # `aupdate_or_create` is atomic against the (procedure, diagnosis)
             # unique constraint, which closes the race where two concurrent
             # cache misses could otherwise create duplicate rows. We write
