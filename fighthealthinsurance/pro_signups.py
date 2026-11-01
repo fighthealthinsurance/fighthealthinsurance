@@ -471,7 +471,8 @@ def forget_submissions(email: str) -> None:
     if not email:
         return
     ProfessionalInquiry.objects.filter(
-        Q(email__iexact=email) | Q(interested_professional__email__iexact=email, email="")
+        Q(email__iexact=email)
+        | Q(interested_professional__email__iexact=email, email="")
     ).delete()
 
 
