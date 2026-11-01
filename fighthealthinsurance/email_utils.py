@@ -17,6 +17,29 @@ BLOCKED_EMAIL_DOMAINS: frozenset[str] = frozenset(
 )
 
 
+# Internal / obvious-test addresses. These are real rows in our tables (staff
+# testing the forms, joke signups) but never real contacts, so outreach and the
+# subscriber cleanup queue treat them separately from genuine signups. Lives
+# here rather than in a workflow module so every consumer shares one list.
+INTERNAL_TEST_EMAILS: frozenset[str] = frozenset(
+    {
+        "testing@example.com",
+        "farts@farts.com",
+        "holden@pigscanfly.ca",
+        # Also on charts' consumer-analytics exclusion list; without these an
+        # internal tester's signup would land (business domains even sort to the
+        # FRONT of the pro-connector queue) and get a real Cofactor intro.
+        "holden.karau@gmail.com",
+        "holden@fighthealthinsurance.com",
+        "warrick@fighthealthinsurance.com",
+        "test@test.com",
+    }
+)
+
+# Signups on these TLDs are treated as spam / out of scope.
+SPAM_EMAIL_TLDS: tuple[str, ...] = (".ru", ".ua")
+
+
 def get_email_domain(email: Optional[str]) -> Optional[str]:
     """Return the lowercased domain of an email address, or None if unparseable.
 

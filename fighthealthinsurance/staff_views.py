@@ -44,6 +44,7 @@ from django.http import (
     HttpResponseForbidden,
     StreamingHttpResponse,
 )
+from django.contrib import messages
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.db.models import Q
@@ -62,6 +63,7 @@ from fighthealthinsurance import common_view_logic, forms as core_forms
 from fighthealthinsurance import experiments
 from fighthealthinsurance import letter_review, letter_review_highlight
 from fighthealthinsurance import storage_health
+from fighthealthinsurance import subscriber_hygiene
 from fighthealthinsurance.common_view_logic import schedule_follow_ups
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.followup_emails import (
@@ -5627,6 +5629,225 @@ class ProConnectorQuickIntroView(View):
             )
         )
         return self._render(request, pro, notice=notice)
+
+
+class SubscriberCleanupView(View):
+    """Staff review queue for junk / suspicious mailing list subscribers.
+
+    Our signup forms are open, so the list collects bot submissions (URLs in the
+    name field), unmailable addresses, and case-variant duplicates of the same
+    mailbox. This page shows every flagged row with the reasons it was flagged,
+    and offers three actions:
+
+      * delete the checked rows,
+      * keep the checked rows (marks them reviewed so they stop showing up), or
+      * delete every row carrying an auto-cleanable reason (needs the confirm box).
+
+    Only unambiguous junk is auto-cleanable; review-only signals (spam TLD, role
+    account, alias duplicate, ...) are never part of the bulk delete. The
+    analysis is shared with ``python manage.py cleanup_subscribers``.
+
+    Lead tables (chat leads, demo requests, interested professionals) are scanned
+    too when asked, but strictly read-only -- those rows belong to other flows.
+    """
+
+    template_name = "subscriber_cleanup.html"
+    page_size = 100
+
+    def get(self, request) -> HttpResponse:
+        return self._render(request)
+
+    def post(self, request) -> HttpResponse:
+        action = request.POST.get("action")
+        actor = getattr(request.user, "username", "") or ""
+
+        if action in ("delete_selected", "keep_selected"):
+            # Act only on rows the queue is showing right now: a stale tab or a
+            # crafted request must not delete or hide a clean subscriber, or a
+            # row someone else already reviewed.
+            queue = {
+                f.record.pk for f in subscriber_hygiene.scan_subscribers().findings
+            }
+            selected = [pk for pk in self._selected_ids(request) if pk in queue]
+            if not selected:
+                return self._render(
+                    request, error="No subscribers in the queue were selected."
+                )
+            if action == "delete_selected":
+                # whole_addresses_only: deleting one copy of an address while
+                # another stays would kill the unsubscribe link mailed from the
+                # deleted copy; tick every copy to remove an address.
+                deleted = subscriber_hygiene.delete_subscribers(
+                    selected,
+                    actor=actor,
+                    unreviewed_only=True,
+                    whole_addresses_only=True,
+                )
+                logger.info(
+                    f"Staff user {actor} deleted {deleted} mailing list "
+                    "subscriber(s) from the cleanup queue"
+                )
+                messages.success(request, self._deleted_message(deleted, len(selected)))
+            else:
+                kept = subscriber_hygiene.mark_subscribers_reviewed(
+                    selected, actor=actor
+                )
+                messages.success(
+                    request,
+                    f"Marked {kept} subscriber(s) as reviewed; they will stay.",
+                )
+            return redirect(request.get_full_path())
+
+        if action == "delete_auto":
+            if request.POST.get("confirm") != "yes":
+                return self._render(
+                    request,
+                    error="Check the confirmation box to delete every "
+                    "auto-cleanable row.",
+                )
+            # Re-scan rather than trusting ids from the form: the page may be
+            # stale, and this action is a bulk delete. unreviewed_only re-checks
+            # at delete time, so a row kept in another tab since the scan stays.
+            result = subscriber_hygiene.scan_subscribers()
+            ids = [f.record.pk for f in result.auto_cleanable_findings]
+            # whole_addresses_only re-checks the address groups at delete time,
+            # so a clean signup that landed after the scan still holds back the
+            # junk copy of its address.
+            deleted = subscriber_hygiene.delete_subscribers(
+                ids, actor=actor, unreviewed_only=True, whole_addresses_only=True
+            )
+            logger.info(
+                f"Staff user {actor} bulk-deleted {deleted} auto-cleanable "
+                "mailing list subscriber(s)"
+            )
+            messages.success(request, self._deleted_message(deleted, len(ids)))
+            # Redirect so a refresh re-runs the GET, not the bulk delete.
+            return redirect(request.get_full_path())
+
+        return self._render(request, error=f"Unknown action: {action}", status=400)
+
+    @staticmethod
+    def _deleted_message(deleted: int, requested: int) -> str:
+        message = f"Deleted {deleted} subscriber(s)."
+        skipped = requested - deleted
+        if skipped > 0:
+            message += (
+                f" Kept {skipped}: reviewed since the page loaded, or another "
+                "copy of the same address stays (tick every copy to remove an "
+                "address)."
+            )
+        return message
+
+    @staticmethod
+    def _selected_ids(request) -> List[int]:
+        ids = []
+        for raw in request.POST.getlist("subscriber_id"):
+            try:
+                ids.append(int(raw))
+            except (TypeError, ValueError):
+                continue
+        return ids
+
+    def _render(
+        self,
+        request,
+        *,
+        error: Optional[str] = None,
+        status: int = 200,
+    ) -> HttpResponse:
+        include_leads = request.GET.get("include_leads") == "1"
+        result = subscriber_hygiene.scan_subscribers()
+        # Auto-cleanable rows first so the deletable junk is what staff sees on
+        # page one, then oldest-first within each bucket.
+        findings = sorted(
+            result.findings, key=lambda f: (not f.auto_cleanable, f.record.pk)
+        )
+        try:
+            page_number = max(1, int(request.GET.get("page", 1)))
+        except (TypeError, ValueError):
+            page_number = 1
+        total_pages = max(1, -(-len(findings) // self.page_size))
+        # Clamp: deleting the last rows of the last page leaves ?page=N past
+        # the end, which would show an empty page with no way back.
+        page_number = min(page_number, total_pages)
+        start = (page_number - 1) * self.page_size
+        page = findings[start : start + self.page_size]
+
+        context: Dict[str, Any] = {
+            "title": "Subscriber Cleanup",
+            "error": error,
+            "scanned": result.scanned,
+            "flagged_count": result.flagged_count,
+            "auto_cleanable_count": len(result.auto_cleanable_findings),
+            "summary": [
+                {
+                    "code": code,
+                    "label": subscriber_hygiene.REASONS[code].label,
+                    "description": subscriber_hygiene.REASONS[code].description,
+                    "auto_cleanable": subscriber_hygiene.REASONS[code].auto_cleanable,
+                    "count": count,
+                }
+                for code, count in result.counts_by_code().items()
+            ],
+            "rows": [
+                {
+                    "id": f.record.pk,
+                    "email": f.record.email,
+                    "name": f.record.name,
+                    "phone": f.record.phone,
+                    "comments": f.record.comments,
+                    "signup_date": f.record.created,
+                    "auto_cleanable": f.auto_cleanable,
+                    "bulk_hold": f.bulk_hold,
+                    "reasons": [
+                        {
+                            "code": code,
+                            "label": subscriber_hygiene.REASONS[code].label,
+                            "detail": f.details.get(code, ""),
+                            "auto_cleanable": code
+                            in subscriber_hygiene.AUTO_CLEANABLE_CODES,
+                        }
+                        for code in f.codes
+                    ],
+                }
+                for f in page
+            ],
+            "page_number": page_number,
+            "total_pages": total_pages,
+            "include_leads": include_leads,
+            "lead_results": self._lead_results() if include_leads else [],
+        }
+        return render(request, self.template_name, context, status=status)
+
+    @staticmethod
+    def _lead_results() -> List[Dict[str, Any]]:
+        """Summaries of the read-only lead-table scans, or [] if they fail.
+
+        The lead tables are an optional extra on this page; a failure scanning
+        them must not take down the subscriber queue staff came here for.
+        """
+        try:
+            return [
+                {
+                    "source": other.source,
+                    "scanned": other.scanned,
+                    "flagged": other.flagged_count,
+                    "counts": [
+                        {
+                            "code": code,
+                            "label": subscriber_hygiene.REASONS[code].label,
+                            "count": count,
+                        }
+                        for code, count in other.counts_by_code().items()
+                    ],
+                }
+                for other in subscriber_hygiene.scan_other_contact_tables()
+            ]
+        except Exception:
+            logger.opt(exception=True).error(
+                "Subscriber cleanup: lead-table scan failed"
+            )
+            return []
 
 
 class _CSVEcho:
