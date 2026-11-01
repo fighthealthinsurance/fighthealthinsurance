@@ -249,15 +249,25 @@ _DOT_STUCK_ON = re.compile(r"\.[0-9A-Za-z]")
 # A second section listed after the first ("147.136, 147.999",
 # "147.136 and 147.140", "300gg-19, 300gg-22"): a list is not looked up, so
 # no section in it goes unchecked or unlabelled.
+# A bare number counts too ("Parts 147 and 999", "1395, 1396"), unless it
+# starts another citation ("and 29 CFR ...").
 _LISTED_SECTION = re.compile(
-    r"\s{0,2}(?:,|;|\s(?:and|or|&))\s{0,3}(?:§{1,2}\s{0,2})?\d{1,6}"
-    r"(?:\.\d{1,5}|[a-z]{1,3}(?:[" + _DASH + r"]\d{1,5})?)",
+    r"\s{0,2}(?:,\s{0,3}(?:(?:and|or|&)\s{1,3})?|;\s{0,3}|\s(?:and|or|&)\s{1,3})"
+    r"(?:§{1,2}\s{0,2})?\d{1,6}"
+    r"(?:\.\d{1,5}|[a-z]{1,3}(?:[" + _DASH + r"]\d{1,5})?)?"
+    r"(?![\w.])(?!\s{0,3}(?:C\.?\s{0,2}F\.?\s{0,2}R\b|U\.?\s{0,2}S\.?\s{0,2}C\b))",
     re.IGNORECASE,
 )
+# A plural keyword says more than one part or section is cited.
+_PLURAL_KEYWORD = re.compile(r"\b(?:Parts|Sections|Secs)\b|§§", re.IGNORECASE)
 
 
-def _stuck_or_listed(text: str, end: int) -> bool:
-    return bool(_DOT_STUCK_ON.match(text, end) or _LISTED_SECTION.match(text, end))
+def _stuck_or_listed(text: str, start: int, end: int) -> bool:
+    return bool(
+        _DOT_STUCK_ON.match(text, end)
+        or _LISTED_SECTION.match(text, end)
+        or _PLURAL_KEYWORD.search(text, start, end)
+    )
 
 
 _CFR_SECTION_VALID = re.compile(r"^\d{1,5}\.\d{1,5}(?:-\d{1,5}[A-Z]?)?$")
@@ -271,6 +281,8 @@ _LOOKS_LIKE_REFERENCE = re.compile(
     re.IGNORECASE,
 )
 _ALWAYS_TRAILING = ".,;:'\"*_‘’“”"
+# What _trim_doi may take off that a registered DOI could also end in.
+_TRIMMED_DOI_ENDINGS = frozenset(".;:_)")
 # The record-level error esummary gives for an ID that is not a PubMed
 # record. Any other error says nothing about the ID.
 _NCBI_NOT_FOUND = "cannot get document summary"
@@ -395,7 +407,7 @@ def find_occurrences(citation: str) -> List[Occurrence]:
         bad = (
             bool(stuck)
             or is_range
-            or _stuck_or_listed(text, m.end())
+            or _stuck_or_listed(text, m.start(), m.end())
             or not (1 <= int(title) <= _CFR_TITLES)
         )
         value = f"{int(title)}/{int(part)}/{section}"
@@ -404,7 +416,7 @@ def find_occurrences(citation: str) -> List[Occurrence]:
         title, section, stuck = m.group(1), m.group(2), m.group(4)
         bad = (
             bool(stuck)
-            or _stuck_or_listed(text, m.end())
+            or _stuck_or_listed(text, m.start(), m.end())
             or not (1 <= int(title) <= _USC_TITLES)
         )
         add("usc", f"{int(title)}/{_dash(section.lower())}", m.start(), m.end(), bad)
@@ -786,12 +798,14 @@ async def check_identifiers(
     consent = {"ok": None, "at": 0.0}
     consent_lock = asyncio.Lock()
 
-    async def consent_allows() -> bool:
+    async def consent_allows(fresh: bool = False) -> bool:
         async with consent_lock:
             if consent["ok"] is False:
                 return False
-            if consent["ok"] is True and loop.time() - consent["at"] < (
-                CONSENT_RECHECK_SECONDS
+            if (
+                not fresh
+                and consent["ok"] is True
+                and loop.time() - consent["at"] < CONSENT_RECHECK_SECONDS
             ):
                 return True
             try:
@@ -826,7 +840,9 @@ async def check_identifiers(
     if not to_look_up or remaining() <= 0:
         return statuses
 
-    if not await consent_allows():
+    # A fresh read right before the first request: the early answer is for
+    # the cache, and consent could have been withdrawn while it was read.
+    if not await consent_allows(fresh=True):
         return statuses
 
     own_client = client is None
@@ -903,10 +919,13 @@ def _apply(
     anything."""
 
     def trimmed(o: Occurrence) -> bool:
-        # The trailing "." or ";" taken off a DOI is usually sentence
-        # punctuation, but a registered DOI can end in one. A trimmed DOI the
-        # registry calls missing is labelled rather than dropped.
-        return o.ident.kind == "doi" and citation[o.end : o.end + 1] in (".", ";")
+        # A character taken off the end of a DOI is usually sentence
+        # punctuation or markup, but a registered DOI can end in any of
+        # these. A trimmed DOI the registry calls missing is labelled rather
+        # than dropped.
+        return o.ident.kind == "doi" and citation[o.end : o.end + 1] in (
+            _TRIMMED_DOI_ENDINGS
+        )
 
     missing = [
         o

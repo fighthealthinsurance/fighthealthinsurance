@@ -1034,6 +1034,24 @@ class TestFollowUps:
             ids = cv.find_identifiers(text)
             assert ids and all(i.malformed for i in ids), text
 
+    def test_plural_and_oxford_comma_lists_are_not_looked_up(self):
+        for text in (
+            "45 CFR Parts 147 and 999",
+            "45 CFR 147.136, and 147.999",
+            "42 U.S.C. 300gg-19, 300gg-22",
+            "42 U.S.C. 1395, 1396",
+            "45 CFR §§ 147.136",
+        ):
+            ids = cv.find_identifiers(text)
+            assert ids and all(i.malformed for i in ids), text
+
+    def test_a_second_citation_is_not_a_list(self):
+        ids = cv.find_identifiers("29 CFR 2560.503-1 and 45 CFR 147.136")
+        assert ids == [
+            cv.Identifier("cfr", "29/2560/2560.503-1"),
+            cv.Identifier("cfr", "45/147/147.136"),
+        ]
+
     def test_a_section_followed_by_words_is_still_checked(self):
         ids = cv.find_identifiers("45 CFR 147.136, internal claims and appeals")
         assert ids == [cv.Identifier("cfr", "45/147/147.136")]
@@ -1071,6 +1089,24 @@ class TestFollowUpsAsync:
         out, seen = await _verify([citation])
         assert out == [cv.UNVERIFIED_LABEL + citation]
         assert len(seen) == 1
+
+    async def test_consent_withdrawn_after_the_cache_read_stops_requests(
+        self, checks_on
+    ):
+        answers = iter([True, False])
+
+        async def consent():
+            return next(answers, False)
+
+        out, seen = await _verify([f"Made up. doi:{FAKE_DOI}"], may_send=consent)
+        assert seen == []
+        assert out == [cv.UNVERIFIED_LABEL + f"Made up. doi:{FAKE_DOI}"]
+
+    async def test_any_trimmed_doi_called_missing_is_labelled(self, checks_on):
+        for ending in (":", "_", ")"):
+            citation = f"Made up. doi:{FAKE_DOI}{ending}"
+            out, _seen = await _verify([citation])
+            assert out == [cv.UNVERIFIED_LABEL + citation], ending
 
     async def test_cfr_answers_are_kept_for_less_time(self):
         timeouts = {}
