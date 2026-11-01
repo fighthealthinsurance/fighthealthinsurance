@@ -20,6 +20,10 @@ from fighthealthinsurance.extralink_context_helper import (
 )
 from fighthealthinsurance.microsites import get_microsite
 from fighthealthinsurance.ml import llm_usage, spend
+from fighthealthinsurance.ml.citation_verification import (
+    CHECK_BUDGET_SECONDS,
+    verify_citations,
+)
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     CMSCoverageCache,
@@ -53,6 +57,63 @@ def _cached_cms_citations(value: Any) -> Optional[List[str]]:
     return None
 
 
+async def _may_check_citations_outside(denial: Denial) -> bool:
+    """Whether citation identifiers for this denial may be sent to the
+    outside registries (doi.org, NCBI, eCFR), read from the database at the
+    moment of the requests rather than from the row the run started with.
+
+    The same consent the outside citation backends get: the person allowed
+    outside services (``use_external``), and has not refused the use of
+    their health history (``health_history_consent`` is not False), since
+    citations can be chosen from it. A missing row, or a read that fails,
+    counts as no, and so does a "no" already on the row in memory.
+    """
+    if getattr(denial, "use_external", False) is not True:
+        return False
+    if getattr(denial, "health_history_consent", None) is False:
+        return False
+    denial_id = getattr(denial, "denial_id", None)
+    if denial_id is None:
+        return False
+    try:
+        row = (
+            await Denial.objects.filter(denial_id=denial_id)
+            .values("use_external", "health_history_consent")
+            .afirst()
+        )
+    except Exception as e:
+        logger.warning(
+            f"Could not read consent for denial {denial_id} before checking "
+            f"citations ({type(e).__name__}); not checking them"
+        )
+        return False
+    if row is None or not row["use_external"]:
+        return False
+    return row["health_history_consent"] is not False
+
+
+# The denial's fields whose text a DOI sent to doi.org must not overlap (see
+# citation_verification.guard_text).
+_CITATION_GUARD_FIELDS = (
+    "denial_text",
+    "health_history",
+    "raw_email",
+    "employer_name",
+    "claim_id",
+)
+
+
+def _citation_guard_text(denial: Denial) -> str:
+    """The person's own text on the denial, for the citation checker's
+    overlap guard. Read from the row in memory; nothing here is sent."""
+    parts: List[str] = []
+    for field in _CITATION_GUARD_FIELDS:
+        value = getattr(denial, field, None)
+        if isinstance(value, str) and value:
+            parts.append(value)
+    return "\n".join(parts)
+
+
 async def _denial_is_medicare_plan(denial: Optional[Denial]) -> bool:
     """Return True if the denial's plan_source indicates a Medicare plan.
 
@@ -66,7 +127,7 @@ async def _denial_is_medicare_plan(denial: Optional[Denial]) -> bool:
             name__in=["Medicare Advantage", "Medicare Regular"]
         ).aexists()
     except Exception as e:
-        logger.debug(f"Could not determine Medicare plan source: {e}")
+        logger.debug(f"Could not determine Medicare plan source ({type(e).__name__})")
         return False
 
 
@@ -184,14 +245,14 @@ class MLCitationsHelper:
                     f"Got best citations within time limit: {len(result)} results"
                 )
                 return result
-            except Exception:
-                logger.opt(exception=True).debug(
-                    "Failed to get best citations within timelimit"
+            except Exception as e:
+                logger.debug(
+                    f"Failed to get best citations within timelimit ({type(e).__name__})"
                 )
                 return []
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Failed to generate specific citations: {e}"
+            logger.warning(
+                f"Failed to generate specific citations ({type(e).__name__})"
             )
             return []
 
@@ -224,8 +285,8 @@ class MLCitationsHelper:
                 if extralink_citations:
                     extras.extend(extralink_citations)
             except Exception as e:
-                logger.opt(exception=True).warning(
-                    f"Failed to load microsite evidence snippets/extralinks: {e}"
+                logger.warning(
+                    f"Failed to load microsite evidence snippets/extralinks ({type(e).__name__})"
                 )
 
         try:
@@ -237,8 +298,8 @@ class MLCitationsHelper:
             if ecri_citations:
                 extras.extend(ecri_citations)
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Failed to load ECRI guideline citations: {e}"
+            logger.warning(
+                f"Failed to load ECRI guideline citations ({type(e).__name__})"
             )
         return extras
 
@@ -309,8 +370,8 @@ class MLCitationsHelper:
             else:
                 logger.debug("No cached generic citations found")
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Error fetching cached generic citations: {e}"
+            logger.warning(
+                f"Error fetching cached generic citations ({type(e).__name__})"
             )
 
         # If no cached citations exist, generate them
@@ -367,9 +428,7 @@ class MLCitationsHelper:
                         or []
                     )
                 except Exception as e:
-                    logger.opt(exception=True).debug(
-                        f"Error in citation generation: {e}"
-                    )
+                    logger.debug(f"Error in citation generation ({type(e).__name__})")
                     result = []
 
                 # Cache ONLY the ML-generated citations, before the
@@ -394,8 +453,8 @@ class MLCitationsHelper:
                         )
                         logger.debug(f"Stored {len(result)} cached generic citations")
                     except Exception as e:
-                        logger.opt(exception=True).warning(
-                            f"Error caching generic citations: {e}"
+                        logger.warning(
+                            f"Error caching generic citations ({type(e).__name__})"
                         )
 
                 extras = await cls._get_supplemental_citations(
@@ -408,15 +467,13 @@ class MLCitationsHelper:
                     result.extend(extras)
 
                 return result
-            except Exception:
-                logger.opt(exception=True).debug(
-                    "Failed to get best citations within timelimit"
+            except Exception as e:
+                logger.debug(
+                    f"Failed to get best citations within timelimit ({type(e).__name__})"
                 )
                 return []
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Failed to generate generic citations: {e}"
-            )
+            logger.warning(f"Failed to generate generic citations ({type(e).__name__})")
             return []
 
     @classmethod
@@ -459,7 +516,7 @@ class MLCitationsHelper:
                 procedure=procedure, diagnosis=diagnosis
             ).afirst()
         except Exception as e:
-            logger.debug(f"Could not read CMSCoverageCache: {e}")
+            logger.debug(f"Could not read CMSCoverageCache ({type(e).__name__})")
 
         if cache_entry is not None:
             cached = _cached_cms_citations(getattr(cache_entry, cache_field))
@@ -493,7 +550,7 @@ class MLCitationsHelper:
             citations = list(found)
             lookup_complete = bool(getattr(found, "complete", False))
         except Exception as e:
-            logger.opt(exception=True).debug(f"CMS coverage citation fetch failed: {e}")
+            logger.debug(f"CMS coverage citation fetch failed ({type(e).__name__})")
             citations = []
 
         # An empty result is stored only from a complete lookup, so an
@@ -512,8 +569,8 @@ class MLCitationsHelper:
                     defaults={cache_field: citations, timestamp_field: now},
                 )
             except Exception as e:
-                logger.opt(exception=True).debug(
-                    f"Failed to persist CMS coverage cache: {e}"
+                logger.debug(
+                    f"Failed to persist CMS coverage cache ({type(e).__name__})"
                 )
 
         return citations
@@ -584,13 +641,30 @@ class MLCitationsHelper:
                     or []
                 )
         except Exception as e:
-            logger.opt(exception=True).warning(f"Failed to generate citations: {e}")
+            logger.warning(f"Failed to generate citations ({type(e).__name__})")
             ml_result = []
+
+        # Check the identifiers the backends wrote (DOIs, PubMed IDs, CFR
+        # sections) before they can reach a letter: malformed or missing ones
+        # go, ones that could not be checked are labelled unverified (see
+        # ml/citation_verification.py). Time-boxed to a tenth of this run's
+        # timeout, between 2 and 6 seconds. The lookups only happen if the
+        # person's consent allows them, read again right before the first
+        # request; without it nothing is sent and every citation with an
+        # identifier is labelled unverified, as when a registry is down.
+        # CMS citations come from the coverage database itself and are added
+        # after the check.
+        ml_result = await verify_citations(
+            ml_result,
+            budget_seconds=min(CHECK_BUDGET_SECONDS, max(2.0, timeout / 10)),
+            may_send=lambda: _may_check_citations_outside(denial),
+            guard_text=_citation_guard_text(denial),
+        )
 
         try:
             cms_citations = await cms_task
         except Exception as e:
-            logger.opt(exception=True).debug(f"CMS coverage task failed: {e}")
+            logger.debug(f"CMS coverage task failed ({type(e).__name__})")
             cms_citations = []
 
         if cms_citations:
@@ -685,8 +759,8 @@ class MLCitationsHelper:
                     logger.debug("Nothing to generate citations for")
                     return []
             except Exception as e:
-                logger.opt(exception=True).warning(
-                    f"Error generating citations for denial {denial.denial_id}: {e}"
+                logger.warning(
+                    f"Error generating citations for denial {denial.denial_id} ({type(e).__name__})"
                 )
 
         # Store citations in the denial object directly using aupdate. A run
@@ -734,9 +808,9 @@ class MLCitationsHelper:
                         **{field: []}
                     )
                 except Exception as e:
-                    logger.opt(exception=True).debug(
+                    logger.debug(
                         f"Could not mark citations for denial "
-                        f"{denial.denial_id} as found empty: {e}"
+                        f"{denial.denial_id} as found empty ({type(e).__name__})"
                     )
                 return citations
             if await rows.aupdate(**{field: citations}):

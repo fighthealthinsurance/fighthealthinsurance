@@ -4,16 +4,20 @@ ECRI Guidelines Trust (https://guidelines.ecri.org/) — a publicly available
 repository of guideline content — when crafting health insurance appeals.
 
 The helper matches stored ``ECRIGuideline`` records to a denial's procedure
-and diagnosis using whole-word keyword matching, then returns short citation
-strings for the appeal letter's references section.
+and diagnosis with the same closeness rule as the Medicare coverage (NCD)
+lookup, then returns short citation strings for the appeal letter's
+references section.
 """
 
-import re
 from typing import Iterable, List, Optional
 
 from django.db.models import Q
 from loguru import logger
 
+from fighthealthinsurance.cms_coverage_api import (
+    _meaningful_tokens,
+    _title_matches,
+)
 from fighthealthinsurance.models import ECRIGuideline
 
 
@@ -66,12 +70,31 @@ def _tokens(value: str) -> List[str]:
     return seen
 
 
-def _token_matches_keyword(token: str, keyword: str) -> bool:
-    """True iff ``token`` appears as a whole word inside ``keyword``."""
-    if not keyword:
-        return False
-    pattern = rf"\b{re.escape(token)}\b"
-    return re.search(pattern, keyword.lower()) is not None
+def _prefilter_tokens(value: str) -> List[str]:
+    """Words for the coarse database fetch: each word as written and in
+    singular form, so a stored "biopsies" is still fetched for "biopsy".
+    Which candidates actually match is decided by ``_keyword_match_key``."""
+    out: List[str] = []
+    for token in _tokens(value):
+        for word in [token] + _meaningful_tokens(token):
+            if word not in out:
+                out.append(word)
+    return out
+
+
+def _keyword_match_key(query_tokens: List[str], keyword: str):
+    """How closely one of a guideline's keyword phrases fits the query, or
+    None.
+
+    The NCD lookup's rule (``cms_coverage_api._title_matches``), with the
+    keyword phrase in place of the title: one shared word is not enough
+    ("stable angina" against an "unstable angina" phrase, or any phrase
+    sharing only a generic word such as "therapy"), but a phrase the query
+    names in full is ("pci" in "pci of the lad").
+    """
+    if not keyword or not query_tokens:
+        return None
+    return _title_matches(query_tokens, keyword)
 
 
 class ECRIGuidelinesHelper:
@@ -93,18 +116,21 @@ class ECRIGuidelinesHelper:
         return q
 
     @staticmethod
-    def _guideline_matches_tokens(
-        tokens: Iterable[str], guideline: ECRIGuideline
-    ) -> bool:
-        """True iff any token whole-word-matches a procedure/diagnosis keyword."""
+    def _guideline_match_key(queries: Iterable[List[str]], guideline: ECRIGuideline):
+        """The best closeness key of any of the guideline's procedure or
+        diagnosis keyword phrases against any of the queries (the
+        procedure's tokens and the diagnosis's, each on its own), or None
+        when no phrase fits closely enough."""
         keywords: List[str] = []
         keywords.extend(guideline.procedure_keywords or [])
         keywords.extend(guideline.diagnosis_keywords or [])
-        for token in tokens:
+        best = None
+        for query_tokens in queries:
             for keyword in keywords:
-                if _token_matches_keyword(token, keyword):
-                    return True
-        return False
+                key = _keyword_match_key(query_tokens, keyword)
+                if key is not None and (best is None or key < best):
+                    best = key
+        return best
 
     @classmethod
     async def find_relevant_guidelines(
@@ -115,9 +141,11 @@ class ECRIGuidelinesHelper:
     ) -> List[ECRIGuideline]:
         """Return up to ``max_results`` active guidelines matching the inputs.
 
-        A guideline matches when any procedure/diagnosis token appears as a
-        whole word in one of the guideline's ``procedure_keywords`` or
-        ``diagnosis_keywords`` entries. Topic labels (``topics``) are too
+        A guideline matches when the procedure or the diagnosis names one of
+        its ``procedure_keywords`` or ``diagnosis_keywords`` phrases closely
+        (``_keyword_match_key``); one shared word, or a shared generic word
+        such as "therapy", is not enough. Matches are ranked by how closely
+        they fit, then by publication date. Topic labels (``topics``) are too
         broad to drive matching and are not consulted here.
         """
         procedure_norm = _normalize(procedure)
@@ -125,9 +153,19 @@ class ECRIGuidelinesHelper:
         if not procedure_norm and not diagnosis_norm:
             return []
 
+        queries = [
+            q
+            for q in (
+                _meaningful_tokens(procedure_norm),
+                _meaningful_tokens(diagnosis_norm),
+            )
+            if q
+        ]
+        if not queries:
+            return []
         tokens: List[str] = []
         for source in (procedure_norm, diagnosis_norm):
-            for token in _tokens(source):
+            for token in _prefilter_tokens(source):
                 if token not in tokens:
                     tokens.append(token)
         if not tokens:
@@ -142,17 +180,18 @@ class ECRIGuidelinesHelper:
             return []
 
         try:
-            results: List[ECRIGuideline] = []
+            scored: List[tuple] = []
             async for guideline in (
                 ECRIGuideline.objects.filter(is_active=True)
                 .filter(filters)
                 .order_by("-publication_date", "title")[:_CANDIDATE_FETCH_LIMIT]
             ):
-                if cls._guideline_matches_tokens(tokens, guideline):
-                    results.append(guideline)
-                    if len(results) >= max_results:
-                        break
-            return results
+                key = cls._guideline_match_key(queries, guideline)
+                if key is not None:
+                    # The fetch order (newest first) breaks ties.
+                    scored.append((key, len(scored), guideline))
+            scored.sort(key=lambda x: (x[0], x[1]))
+            return [g for _, _, g in scored[:max_results]]
         except Exception as e:
             # Only the exception's type: the procedure and diagnosis are the
             # person's, and a database error's message or traceback can
