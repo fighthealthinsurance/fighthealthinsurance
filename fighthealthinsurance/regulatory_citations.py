@@ -941,7 +941,7 @@ EMERGENCY_DEPARTMENT_CODES = frozenset({"99281", "99282", "99283", "99284", "992
 
 _EMERGENCY_RE = re.compile(
     r"\bemergency (?:room|department|services?|care|treatment|visit|admission|"
-    r"surgery)\b|\b(?:ER|ED) (?:visit|services?|admission)\b",
+    r"surgery|claim)\b|\b(?:ER|ED) (?:visit|services?|admission|claim|bill)\b",
     re.I,
 )
 _AIR_AMBULANCE_RE = re.compile(
@@ -964,29 +964,38 @@ _IN_NETWORK_FACILITY_RE = re.compile(
     r"ambulatory surgical center)\b",
     re.I,
 )
-# A negating word shortly before a term ("no ER visit", "was not an air
-# ambulance", "without emergency care"), or "non-" fixed to it ("non-emergency
-# services"), checked on the text just before it. "Non-" on a different word
-# does not count: a non-emergency air ambulance is still an air ambulance.
+
+# The term itself negated, and only then. Before it: "no", "not", "never" or
+# "without" right in front, an article allowed ("no ER visit", "not an air
+# ambulance"), or "non-" fixed to it ("non-emergency services"). After it: the
+# care said not to have happened ("an ER visit did not occur", "air ambulance
+# was not used", "in-network hospital was not involved"). A negation that
+# belongs to another word does not count, so "no prior authorization for
+# emergency services" still names emergency services, and a non-emergency air
+# ambulance is still an air ambulance.
 _NEGATED_BEFORE_RE = re.compile(
-    r"(?:\b(?:no|not|never|without)\b(?:\W+\w+){0,3}\W*|\bnon[- ]?)$", re.I
+    r"(?:\b(?:no|not|never|without)\s+(?:(?:an?|the|any)\s+)?|\bnon[- ]?)$", re.I
 )
-# Sentences that state general policy rather than what happened to this
-# person: "Emergency services do not require prior authorization", "If you
-# have an emergency, call 911".
-_POLICY_SENTENCE_RE = re.compile(
-    r"\bdo(?:es)? not require\b|\bif you\b|\bin an emergency\b|\bcall 911\b|"
-    r"\b(?:is|are) covered\b|\bwill be covered\b|\byour plan covers\b|"
-    r"\bgenerally\b|\bto find\b|\bvisit our\b|\bwebsite\b",
+_NEGATED_AFTER_RE = re.compile(
+    r"^\W*(?:\w+\W+){0,2}?(?:was|were|is|are|did|does|has|had)\s+(?:not|never)\s+"
+    r"(?:be(?:en)?\s+)?(?:occur|occurred|happen|happened|used|involved|provided|"
+    r"furnished|performed|take place|taken place|given)\b|"
+    r"^\W*(?:\w+\W+){0,2}?(?:wasn't|weren't|didn't|never)\s+"
+    r"(?:occur|occurred|happen|happened|used|involved|provided|furnished|"
+    r"performed|take place|given)\b",
     re.I,
 )
-# What ties a sentence to this person's own claim.
-_CLAIM_MARKER_RE = re.compile(
-    r"\byour\b|\bclaim\b|\bdenied\b|\bdenial\b|\bbilled?\b|\bon \d|"
-    r"\d{1,2}/\d{1,2}|\bdated\b|\breceived\b|\bprovided\b|\bfurnished\b",
+# Words that tie a mention to this person's claim when they appear within
+# CLAIM_WINDOW_WORDS words of it. No sentence splitting, so abbreviations
+# such as "Dr." or "U.S." never cut a mention off from its claim.
+_CLAIM_WORD_RE = re.compile(
+    r"\b(?:denied|deny|denies|denial|claims?|billed|bill|bills|charged|charges?)\b",
     re.I,
 )
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+")
+CLAIM_WINDOW_WORDS = 12
+# How close the out-of-network phrase and the participating facility phrase
+# must be, in words between them, for the facility case.
+FACILITY_PAIR_WINDOW_WORDS = 8
 
 
 def _normalize(text: str) -> str:
@@ -995,26 +1004,33 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _affirmed(pattern: re.Pattern[str], text: str) -> bool:
-    """Whether ``pattern`` occurs in ``text`` without a negating word just
-    before it."""
-    # Only the few words before the term matter, so look back a short way.
-    return any(
-        not _NEGATED_BEFORE_RE.search(text[max(0, m.start() - 60) : m.start()])
-        for m in pattern.finditer(text)
-    )
+def _negated(text: str, m: re.Match[str]) -> bool:
+    before = text[max(0, m.start() - 40) : m.start()]
+    after = text[m.end() : m.end() + 80]
+    return bool(_NEGATED_BEFORE_RE.search(before) or _NEGATED_AFTER_RE.search(after))
 
 
-def _about_this_claim(pattern: re.Pattern[str], text: str) -> bool:
-    """Whether a sentence of the denial says this person's claim involved
-    the care ``pattern`` names: affirmed, tied to the claim, and not a
-    general statement of policy."""
-    for sentence in _SENTENCE_SPLIT_RE.split(text):
-        if (
-            _affirmed(pattern, sentence)
-            and _CLAIM_MARKER_RE.search(sentence)
-            and not _POLICY_SENTENCE_RE.search(sentence)
-        ):
+def _mentions(pattern: re.Pattern[str], text: str) -> list[re.Match[str]]:
+    """The mentions of ``pattern`` in ``text`` whose term is not negated."""
+    return [m for m in pattern.finditer(text) if not _negated(text, m)]
+
+
+def _words_between(text: str, a: re.Match[str], b: re.Match[str]) -> int:
+    first, second = (a, b) if a.start() <= b.start() else (b, a)
+    return len(text[first.end() : second.start()].split())
+
+
+def _in_claim_context(pattern: re.Pattern[str], text: str) -> bool:
+    """Whether the denial text mentions the care, not negated, within
+    CLAIM_WINDOW_WORDS words of a claim word (denied, denial, claim, billed,
+    charged). A general line with no claim word nearby, such as "your plan
+    waives prior authorization for emergency services", does not count; the
+    model's "Cite only if" gate covers the cases this simple rule misjudges.
+    """
+    for m in _mentions(pattern, text):
+        left = text[: m.start()].split()[-CLAIM_WINDOW_WORDS:]
+        right = text[m.end() :].split()[:CLAIM_WINDOW_WORDS]
+        if _CLAIM_WORD_RE.search(" ".join(left + right) + " " + m.group(0)):
             return True
     return False
 
@@ -1028,12 +1044,15 @@ def surprise_billing_facts(
     """Which of the emergency and surprise-billing situations the denial is
     about: EMERGENCY_CARE, AIR_AMBULANCE, OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY.
 
-    Conservative on purpose. A situation counts when a billing code shows
-    it, when the procedure (the service denied) names it, or when a sentence
-    of the denial text ties it to this person's claim. Negated mentions ("no
-    ER visit occurred") and general policy sentences ("emergency services do
-    not require prior authorization") never count. The diagnosis is not
-    read: a diagnosis does not say where care was given.
+    In order: a billing code, or the procedure (the service denied) naming
+    the care; otherwise the denial text naming it near a claim word. The
+    facility case needs an out-of-network phrase and a participating
+    facility phrase within FACILITY_PAIR_WINDOW_WORDS words of each other,
+    in the procedure or the denial text. A mention whose term is negated
+    never counts. This only decides whether the block is offered: it says
+    the rules MAY apply, and each rule's "Cite only if" line tells the model
+    when not to cite it. The diagnosis is not read, since it does not say
+    where care was given.
     """
     del diagnosis  # accepted for a uniform call shape; see the docstring
     service = _normalize(procedure or "")
@@ -1042,27 +1061,24 @@ def surprise_billing_facts(
     facts: set[str] = set()
     if (
         code_set & AIR_AMBULANCE_CODES
-        or _affirmed(_AIR_AMBULANCE_RE, service)
-        or _about_this_claim(_AIR_AMBULANCE_RE, letter)
+        or _mentions(_AIR_AMBULANCE_RE, service)
+        or _in_claim_context(_AIR_AMBULANCE_RE, letter)
     ):
         facts.add(AIR_AMBULANCE)
     if (
         code_set & EMERGENCY_DEPARTMENT_CODES
-        or _affirmed(_EMERGENCY_RE, service)
-        or _about_this_claim(_EMERGENCY_RE, letter)
+        or _mentions(_EMERGENCY_RE, service)
+        or _in_claim_context(_EMERGENCY_RE, letter)
     ):
         facts.add(EMERGENCY_CARE)
-    # Both halves of the facility case have to be about this claim too, so
-    # a drug denial's "out-of-network benefits are not available" beside a
-    # "to find a participating hospital, visit our website" line never fires.
-    if (
-        _affirmed(_OUT_OF_NETWORK_RE, service)
-        or _about_this_claim(_OUT_OF_NETWORK_RE, letter)
-    ) and (
-        _affirmed(_IN_NETWORK_FACILITY_RE, service)
-        or _about_this_claim(_IN_NETWORK_FACILITY_RE, letter)
-    ):
-        facts.add(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY)
+    for text in (service, letter):
+        if any(
+            _words_between(text, o, f) <= FACILITY_PAIR_WINDOW_WORDS
+            for o in _mentions(_OUT_OF_NETWORK_RE, text)
+            for f in _mentions(_IN_NETWORK_FACILITY_RE, text)
+        ):
+            facts.add(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY)
+            break
     return frozenset(facts)
 
 
@@ -1085,13 +1101,15 @@ class SurpriseBillingRule:
     # the letter (and the person) can see whether it fits their plan.
     reaches: str
     source_url: str  # documentation only; not rendered into the prompt
-    # Private coverage (employer, individual, non-federal government),
-    # including self-funded ERISA plans. The No Surprises Act reaches those,
-    # and FEHB plans through 5 U.S.C. 8902(p), which applies PHS Act 2799A-1,
-    # 2799A-2 and 2799A-7 and the provider rules in 2799B to FEHB enrollees.
-    # It does not reach Medicare, Medicaid or VA care, which have their own
-    # emergency rules below where they exist.
-    private: bool
+    # Whether the rule reaches the plans the No Surprises Act covers: group
+    # health plans (employer plans, self-funded ones included, and state and
+    # local government plans, which the PHS Act counts as non-federal
+    # governmental plans) and individual coverage. FEHB plans are reached
+    # through 5 U.S.C. 8902(p), which applies PHS Act 2799A-1, 2799A-2 and
+    # 2799A-7 and the provider rules in 2799B to FEHB enrollees; those are
+    # listed in public_programs. It does not reach Medicare, Medicaid or VA
+    # care, which have their own emergency rules below where they exist.
+    nsa_plans: bool
     public_programs: frozenset[str] = frozenset()
     # The Labor regulation and the tax code section for the rule, which are
     # what an employer plan answers to under ERISA and the tax code. The tax
@@ -1138,7 +1156,10 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
         cite_when=(
             "the plan covers any emergency department services, as nearly all "
             "plans do. Emergency services is a defined term: the screening exam "
-            "and the treatment needed to stabilize the person. The rule leaves "
+            "and the treatment needed to stabilize the person, and also covered "
+            "care from out-of-network providers after stabilization during the "
+            "same visit, unless the provider met the notice-and-consent "
+            "conditions of 45 C.F.R. 149.410(b). The rule leaves "
             "only these other plan terms in place: an exclusion or coordination "
             "of benefits that is not inconsistent with emergency coverage, an "
             "affiliation or waiting period, and normal cost sharing. A missing "
@@ -1148,7 +1169,7 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
         effective="plan years beginning on or after January 1, 2022",
         reaches=_NSA_REACHES,
         source_url="https://www.ecfr.gov/current/title-45/section-149.110",
-        private=True,
+        nsa_plans=True,
         public_programs=frozenset({FEHB}),
         employer_plan_sections="29 C.F.R. § 2590.716-4 and 26 U.S.C. § 9816(a)",
     ),
@@ -1166,7 +1187,7 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
         effective="in force",
         reaches="Medicare Advantage plans only",
         source_url="https://www.ecfr.gov/current/title-42/section-422.113",
-        private=False,
+        nsa_plans=False,
         public_programs=frozenset({MEDICARE_ADVANTAGE}),
     ),
     SurpriseBillingRule(
@@ -1183,7 +1204,7 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
         effective="in force",
         reaches="Medicaid managed care plans only",
         source_url="https://www.ecfr.gov/current/title-42/section-438.114",
-        private=False,
+        nsa_plans=False,
         public_programs=frozenset({MEDICAID}),
     ),
     SurpriseBillingRule(
@@ -1193,18 +1214,22 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
             "§ 2799A-2; 45 C.F.R. § 149.130)"
         ),
         summary=(
-            "An out-of-network air ambulance must be covered with the same cost "
-            "sharing as an in-network one, counted toward the in-network "
+            "Cost sharing for an out-of-network air ambulance must be the same "
+            "as for an in-network one, and counts toward the in-network "
             f"deductible and out-of-pocket maximum. {_NO_OUT_OF_NETWORK_BENEFITS}"
         ),
         cite_when=(
             "the plan covers air ambulance services at all, in network or out. "
-            "It does not apply to ground ambulances."
+            "It sets cost sharing for covered transport; it does not override "
+            "the plan's own decision on whether the transport was medically "
+            "necessary, so if that is the reason for the denial, argue necessity "
+            "and use this rule only for the cost sharing. It does not apply to "
+            "ground ambulances."
         ),
         effective="plan years beginning on or after January 1, 2022",
         reaches=_NSA_REACHES,
         source_url="https://www.ecfr.gov/current/title-45/section-149.130",
-        private=True,
+        nsa_plans=True,
         public_programs=frozenset({FEHB}),
         employer_plan_sections="29 C.F.R. § 2590.717-1 and 26 U.S.C. § 9817",
     ),
@@ -1238,7 +1263,7 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
         effective="plan years beginning on or after January 1, 2022",
         reaches=_NSA_REACHES,
         source_url="https://www.ecfr.gov/current/title-45/section-149.120",
-        private=True,
+        nsa_plans=True,
         public_programs=frozenset({FEHB}),
         employer_plan_sections="29 C.F.R. § 2590.716-5 and 26 U.S.C. § 9816(b)",
     ),
@@ -1246,22 +1271,27 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
 
 SURPRISE_BILLING_HEADER = "EMERGENCY AND SURPRISE BILLING RULES"
 
-# Plan sources that are private coverage. A TPA carrier or an ERISA mention
-# in the letter also points to an employer plan, but next to a known public
-# program neither is enough to say the denial came from a private plan.
-_PRIVATE_SOURCES = PRIVATE_COVERAGE
+# Plan sources the No Surprises Act reaches: employer, other group,
+# marketplace and individual plans, and state or local government plans
+# (non-federal governmental plans). Not all of them are private, so the
+# caveats below say "private or state or local government plan". A TPA carrier
+# or an ERISA mention in the letter also points to an employer plan, but next
+# to a known public program neither is enough to say the denial came from one.
+_NSA_PLAN_SOURCES = PRIVATE_COVERAGE
 _EMPLOYER_SIGNALS = frozenset({ERISA, TPA, ERISA_LETTER})
 
 _UNKNOWN_PLAN_CAVEAT = (
     "Note: the plan type is not known. The No Surprises Act rules above reach "
-    "most employer and individual plans and FEHB plans, not short-term "
-    "limited-duration plans, Original Medicare, Medicare Advantage, Medicaid "
-    "or VA care, so cite one only if the plan is one it reaches."
+    "most employer, individual, and state and local government plans and FEHB "
+    "plans, not short-term limited-duration plans, Original Medicare, Medicare "
+    "Advantage, Medicaid or VA care, so cite one only if the plan is one it "
+    "reaches."
 )
-_ALSO_PRIVATE_CAVEAT = (
-    "Note: both public and private coverage were given. The No Surprises Act "
-    "rules apply only if you also have private coverage and it is the plan "
-    "that denied this; the program's own rule applies to the public coverage."
+_MORE_THAN_ONE_SOURCE_CAVEAT = (
+    "Note: coverage from more than one source was given. The No Surprises Act "
+    "rules apply only if the plan that denied this is a private or state or "
+    "local government plan, or an FEHB plan; the program's own rule applies to "
+    "the other coverage."
 )
 
 
@@ -1271,15 +1301,16 @@ def applicable_surprise_billing_rules(
     """The rules for the denial's facts that reach the plan.
 
     ``programs`` is classify_plan()'s result. With known public coverage and
-    no private plan source, only the rules written for that program, so
-    Original Medicare and VA get none and a TPA flag beside Medicaid does
-    not bring in the private rules. With no plan information, the private
-    rules, which the context block renders with an unknown-plan caveat.
+    no plan source the No Surprises Act reaches, only the rules written for
+    that program (FEHB's include the act's), so Original Medicare and VA get
+    none and a TPA flag beside Medicaid does not bring in the act's rules.
+    With no plan information, the act's rules, which the context block
+    renders with an unknown-plan caveat.
     """
     fact_set = set(facts)
     keys = set(programs)
     public = keys & PUBLIC_PROGRAMS
-    public_only = bool(public) and not keys & _PRIVATE_SOURCES
+    public_only = bool(public) and not keys & _NSA_PLAN_SOURCES
     rules: list[SurpriseBillingRule] = []
     for rule in SURPRISE_BILLING_RULES:
         if rule.fact not in fact_set:
@@ -1287,7 +1318,7 @@ def applicable_surprise_billing_rules(
         if public_only:
             if rule.public_programs & public:
                 rules.append(rule)
-        elif rule.private or rule.public_programs & public:
+        elif rule.nsa_plans or rule.public_programs & public:
             rules.append(rule)
     return rules
 
@@ -1321,10 +1352,11 @@ def get_surprise_billing_citation_context(
     rules = applicable_surprise_billing_rules(facts, keys)
     if not rules:
         return None
-    # FEHB is a public program the No Surprises Act does reach, so it never
-    # calls for the also-private caveat.
+    # FEHB is a public program the No Surprises Act does reach, so it counts
+    # with the act's plans, not with the programs that have their own rules.
     public = keys & PUBLIC_PROGRAMS - {FEHB}
-    unknown = not keys & (_PRIVATE_SOURCES | _EMPLOYER_SIGNALS | PUBLIC_PROGRAMS)
+    nsa_sources = keys & (_NSA_PLAN_SOURCES | {FEHB})
+    unknown = not keys & (_NSA_PLAN_SOURCES | _EMPLOYER_SIGNALS | PUBLIC_PROGRAMS)
     employer_plan = unknown or bool(keys & _EMPLOYER_SIGNALS)
     lines = "\n".join(_render_rule(r, employer_plan) for r in rules)
     block = (
@@ -1338,6 +1370,6 @@ def get_surprise_billing_citation_context(
     )
     if unknown:
         block = f"{block}\n{_UNKNOWN_PLAN_CAVEAT}"
-    elif public and keys & _PRIVATE_SOURCES and any(r.private for r in rules):
-        block = f"{block}\n{_ALSO_PRIVATE_CAVEAT}"
+    elif public and nsa_sources and any(r.nsa_plans for r in rules):
+        block = f"{block}\n{_MORE_THAN_ONE_SOURCE_CAVEAT}"
     return block

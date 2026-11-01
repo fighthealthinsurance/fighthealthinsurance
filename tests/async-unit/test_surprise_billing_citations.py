@@ -132,6 +132,63 @@ class TestSurpriseBillingFacts(unittest.TestCase):
         )
         self.assertNotIn(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY, facts)
 
+    def test_abbreviation_does_not_cut_the_facility_case_off(self):
+        facts = surprise_billing_facts(
+            denial_text=(
+                "The claim for anesthesia by Dr. Smith was denied. Dr. Smith's "
+                "out-of-network anesthesia at an in-network hospital is not "
+                "covered."
+            )
+        )
+        self.assertIn(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY, facts)
+
+    def test_er_claim_denied_for_authorization_through_our_website_counts(self):
+        facts = surprise_billing_facts(
+            denial_text=(
+                "Your ER claim was denied for failure to obtain authorization "
+                "through our website."
+            )
+        )
+        self.assertIn(EMERGENCY_CARE, facts)
+
+    def test_missing_authorization_for_emergency_services_still_counts(self):
+        facts = surprise_billing_facts(
+            denial_text=(
+                "The claim was denied because no prior authorization for "
+                "emergency services was obtained."
+            )
+        )
+        self.assertIn(EMERGENCY_CARE, facts)
+
+    def test_a_general_plan_statement_without_a_claim_word_does_not_count(self):
+        # A documented choice: with no claim word nearby, a general line is
+        # left out. The block only says a rule MAY apply and the model's
+        # "Cite only if" gate handles what this simple rule misjudges.
+        facts = surprise_billing_facts(
+            denial_text="Your plan waives prior authorization for emergency services."
+        )
+        self.assertNotIn(EMERGENCY_CARE, facts)
+
+    def test_care_said_not_to_have_happened_does_not_count(self):
+        cases = (
+            ("Your claim says an ER visit did not occur.", EMERGENCY_CARE),
+            ("The claim was denied; the air ambulance was not used.", AIR_AMBULANCE),
+            (
+                "The claim was denied: out-of-network anesthesia, but an "
+                "in-network hospital was not involved.",
+                OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY,
+            ),
+        )
+        for text, fact in cases:
+            with self.subTest(text=text):
+                self.assertNotIn(fact, surprise_billing_facts(denial_text=text))
+
+    def test_denied_emergency_visit_not_covered_still_counts(self):
+        facts = surprise_billing_facts(
+            denial_text="Your emergency room visit was not covered and is denied."
+        )
+        self.assertIn(EMERGENCY_CARE, facts)
+
     def test_unrelated_denial_has_no_facts(self):
         facts = surprise_billing_facts(
             denial_text="Physical therapy beyond 20 visits is not medically necessary.",
@@ -243,6 +300,11 @@ class TestLetterTextAndCitingLimits(unittest.TestCase):
         self.assertIn("covers air ambulance services at all", self.rule("149.130").cite_when)
         self.assertIn("ground ambulances", self.rule("149.130").cite_when)
 
+    def test_emergency_definition_includes_post_stabilization_care(self):
+        cite_when = self.rule("149.110").cite_when
+        self.assertIn("after stabilization during the same visit", cite_when)
+        self.assertIn("149.410(b)", cite_when)
+
     def test_emergency_limits_name_the_terms_the_rule_keeps(self):
         cite_when = self.rule("149.110").cite_when
         for phrase in ("coordination of benefits", "waiting period", "cost sharing"):
@@ -253,7 +315,9 @@ class TestLetterTextAndCitingLimits(unittest.TestCase):
     def test_cost_sharing_is_a_ceiling_except_for_air_ambulance(self):
         self.assertIn("no higher than in network", self.rule("149.110").summary)
         self.assertIn("no higher than in network", self.rule("149.120").summary)
-        self.assertIn("the same cost sharing", self.rule("149.130").summary)
+        self.assertIn(
+            "must be the same as for an in-network one", self.rule("149.130").summary
+        )
 
     def test_facility_rule_names_the_participating_facility_types(self):
         summary = self.rule("149.120").summary
@@ -377,7 +441,9 @@ class TestSurpriseBillingContext(unittest.TestCase):
         self.assertIn("149.130", block)
         self.assertIn("Cite only if the plan covers air ambulance services", block)
         self.assertIn("is for you, not for the letter", block)
-        self.assertNotIn("medically necessary", block)
+        summary_line, cite_line = block.split("\n")[1:3]
+        self.assertNotIn("medically necessary", summary_line)
+        self.assertIn("does not override the plan's own decision", cite_line)
 
     def test_medicaid_with_a_tpa_flag_gets_only_the_medicaid_rule(self):
         block = get_surprise_billing_citation_context(
@@ -388,22 +454,39 @@ class TestSurpriseBillingContext(unittest.TestCase):
         self.assertNotIn("149.110", block)
         self.assertNotIn("No Surprises Act", block)
 
-    def test_public_and_private_sources_render_the_also_private_caveat(self):
+    def test_public_and_employer_sources_render_the_more_than_one_source_caveat(self):
         block = get_surprise_billing_citation_context(
             codes=["99285"], programs=("medicaid", "erisa")
         )
         assert block is not None
         self.assertIn("149.110", block)
         self.assertIn("438.114", block)
-        self.assertIn("if you also have private coverage", block)
+        self.assertIn("private or state or local government plan", block)
 
-    def test_fehb_alone_gets_no_also_private_caveat(self):
+    def test_state_or_local_government_plan_beside_medicare_counts_as_covered(self):
+        block = get_surprise_billing_citation_context(
+            codes=["99285"], programs=("government", "medicare")
+        )
+        assert block is not None
+        self.assertIn("149.110", block)
+        self.assertIn("private or state or local government plan", block)
+        self.assertNotIn("private plan denied", block)
+
+    def test_fehb_beside_medicare_keeps_the_act_with_the_caveat(self):
+        block = get_surprise_billing_citation_context(
+            codes=["99285"], programs=("fehb", "medicare")
+        )
+        assert block is not None
+        self.assertIn("149.110", block)
+        self.assertIn("or an FEHB plan", block)
+
+    def test_fehb_alone_gets_no_caveat(self):
         block = get_surprise_billing_citation_context(
             codes=["99285"], programs=("fehb",)
         )
         assert block is not None
         self.assertIn("149.110", block)
-        self.assertNotIn("if you also have private coverage", block)
+        self.assertNotIn("more than one source", block)
         self.assertNotIn("the plan type is not known", block)
 
     def test_no_block_for_an_unrelated_denial(self):
