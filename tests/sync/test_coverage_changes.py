@@ -171,4 +171,4 @@ class CoverageChangesFallChecklistTest(TestCase):
             self.assertNotIn(re.sub(r",? Inc\.?$", "", issuer["n"]), self.text)
 
     def test_says_when_it_was_last_updated(self):
-        self.assertIn("Last updated: October 2026.", self.page)
+        self.assertIn("Last updated: November 2026.", self.page)

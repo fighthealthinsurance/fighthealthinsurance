@@ -1034,7 +1034,7 @@ def coverage_report(bundle):
 
 
 SOURCES = [
-    dict(name="CMS Transparency in Coverage public use files", years="plan years 2022-2026 (claims 2020-2024)",
+    dict(name="CMS Transparency in Coverage public use files", years="plan years 2022-2027 (claims 2020-2025)",
          url="https://www.cms.gov/marketplace/resources/data/public-use-files"),
     dict(name="California DMHC Independent Medical Review determinations", years="2010-2025",
          url="https://data.chhs.ca.gov/dataset/independent-medical-review-imr-determinations-trend"),

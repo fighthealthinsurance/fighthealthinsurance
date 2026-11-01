@@ -33,7 +33,7 @@ nothing here runs in the app.
    ```
 
 3. Compare the printed figures with the page's copy. The headline sentences in
-   `templates/denial_watch.html` name some numbers, such as the about 7% to 27% state
+   `templates/denial_watch.html` name some numbers, such as the about 6% to 26% state
    range, 72% in California, the correlations, the trend's in-network shares, and
    the out-of-network and all-claims totals in Sources and method; the tests check them. When a new year arrives, adding
    it means extending `CLAIMS_YEAR` and `LATEST_PY`, then rereading the copy.
@@ -222,7 +222,7 @@ doubled against about 1%, about 7 and 4 for every 100 under 65);
   It also stops on more in-network denials than claims, and on denials reported
   against 0 claims on either side, which have no rule yet.
 - "Network-only" means every plan the insurer sold in the latest claims year
-  (the PY2024 plan list for 2024 claims) was an HMO or EPO. Those plans mostly
+  (the PY2025 plan list for 2025 claims) was an HMO or EPO. Those plans mostly
   don't cover out-of-network care by design, so those insurers get no
   out-of-network rate, and neither does an insurer missing from that plan list.
   The others need at least 1,000 out-of-network claims for a rate.
@@ -235,7 +235,7 @@ doubled against about 1%, about 7 and 4 for every 100 under 65);
   without a builder change.
 - Out-of-network rates aren't mapped by state either: most states' figures
   would mostly show which kinds of plans their insurers sell. There's no
-  out-of-network change from 2023 (it mostly reflects which insurers reported)
+  out-of-network change from 2024 (it mostly reflects which insurers reported)
   and no out-of-network appeals figure (appeals aren't split by network).
 - `oon_meta.closed_network` sums CMS's plan-level closed-network reason
   (`Plan_Number_Claims_Denied_Due_To_Out_Of_Network`) over the insurers in the
