@@ -92,10 +92,10 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         self._open()
         self.click('#dmode button[data-m="all"]')
         gone = self.execute_script(
-            "return ['AK','ND','OH','CA'].map(s=>document.querySelector('#dmap g[data-s=\"'+s+'\"]').classList.contains('dw-gone'));"
+            "return ['MI','OH','CA'].map(s=>document.querySelector('#dmap g[data-s=\"'+s+'\"]').classList.contains('dw-gone'));"
         )
-        # Alaska and North Dakota report but have no all-claims figure; Ohio has one; California has no data here.
-        self.assertEqual(gone, [True, True, False, False])
+        # Michigan reports but has no all-claims figure; Ohio has one; California has no data here.
+        self.assertEqual(gone, [True, False, False])
 
     def _sources_open(self):
         return self.execute_script("return document.getElementById('sources-details').open")
