@@ -11,7 +11,7 @@ from fighthealthinsurance.denial_history_consent import (
     still_allowed,
 )
 from fighthealthinsurance.cms_coverage_api import (
-    NCD_MATCHER_VERSION,
+    NCD_CITATION_MARKER,
     get_cms_coverage_citations,
     get_cms_coverage_client,
 )
@@ -36,19 +36,22 @@ _CMS_CACHE_TTL = datetime.timedelta(days=30)
 
 
 def _cached_cms_citations(value: Any) -> Optional[List[str]]:
-    """The citations a CMSCoverageCache field holds for the current NCD
-    matcher, or None when it holds none for it. Entries are stored as
-    ``{"matcher_version": N, "citations": [...]}`` in the existing JSON
-    field, so no migration is needed; a bare list is from an older matcher.
+    """The citations a fresh CMSCoverageCache field holds for the current
+    NCD matcher, or None when it must be looked up again.
+
+    The field stays a plain list of citation strings, which every version
+    of this code can read. The older matcher wrote only non-empty lists
+    whose citations lack NCD_CITATION_MARKER; those are looked up again. It
+    never wrote an empty list, so a fresh [] is a finished lookup by the
+    current matcher that found nothing.
     """
-    if not isinstance(value, dict):
+    if not isinstance(value, list):
         return None
-    if value.get("matcher_version") != NCD_MATCHER_VERSION:
-        return None
-    citations = value.get("citations")
-    if not isinstance(citations, list):
-        return None
-    return [c for c in citations if isinstance(c, str)]
+    if not value:
+        return []
+    if all(isinstance(c, str) and NCD_CITATION_MARKER in c for c in value):
+        return list(value)
+    return None
 
 
 async def _denial_is_medicare_plan(denial: Optional[Denial]) -> bool:
@@ -470,9 +473,10 @@ class MLCitationsHelper:
                 variant_updated_at is not None
                 and (timezone.now() - variant_updated_at) < _CMS_CACHE_TTL
             )
-            # None is an entry from an older matcher (a bare list, from when
-            # one shared title word was a match): look it up again. An empty
-            # list is a finished lookup that found nothing.
+            # None is an entry from the older matcher, which took one shared
+            # title word as a match: look it up again. An empty list is a
+            # finished lookup that found nothing; ``fresh`` also means this
+            # variant's timestamp was set, which the field default never is.
             if cached is not None and fresh:
                 logger.debug(
                     f"Using cached CMS citations for {procedure}/{diagnosis} "
@@ -504,13 +508,7 @@ class MLCitationsHelper:
                 await CMSCoverageCache.objects.aupdate_or_create(
                     procedure=procedure,
                     diagnosis=diagnosis,
-                    defaults={
-                        cache_field: {
-                            "matcher_version": NCD_MATCHER_VERSION,
-                            "citations": citations,
-                        },
-                        timestamp_field: now,
-                    },
+                    defaults={cache_field: citations, timestamp_field: now},
                 )
             except Exception as e:
                 logger.opt(exception=True).debug(

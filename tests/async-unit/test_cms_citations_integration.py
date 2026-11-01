@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from django.utils import timezone
 
-from fighthealthinsurance.cms_coverage_api import NCD_MATCHER_VERSION
+from fighthealthinsurance.cms_coverage_api import NCD_CITATION_MARKER
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.models import Denial
 
@@ -53,11 +53,11 @@ class TestMLCitationsHelperCMSIntegration:
     async def test_uses_fresh_cache_when_available(self, mock_fetch, mock_cache_cls):
         # Simulate a fresh DB cache hit on the variant-specific timestamp
         cache_entry = MagicMock()
-        cached = ["Cached NCD A", "Cached NCD B"]
-        cache_entry.generic_citations = {
-            "matcher_version": NCD_MATCHER_VERSION,
-            "citations": cached,
-        }
+        cached = [
+            f"Cached NCD A, {NCD_CITATION_MARKER}",
+            f"Cached NCD B, {NCD_CITATION_MARKER}",
+        ]
+        cache_entry.generic_citations = cached
         cache_entry.medicare_citations = []
         cache_entry.generic_updated_at = timezone.now()
         cache_entry.medicare_updated_at = None
@@ -81,8 +81,8 @@ class TestMLCitationsHelperCMSIntegration:
     async def test_refetches_fresh_cache_from_the_older_matcher(
         self, mock_fetch, mock_cache_cls
     ):
-        # A bare list is from before titles had to match closely, so it may
-        # name an unrelated policy and is looked up again.
+        # Written before titles had to match closely: no "may apply"
+        # wording, so it may name an unrelated policy and is looked up again.
         cache_entry = MagicMock()
         cache_entry.generic_citations = ["Old-matcher NCD citation"]
         cache_entry.medicare_citations = []
@@ -110,10 +110,7 @@ class TestMLCitationsHelperCMSIntegration:
         # The empty answer is stored for this matcher, so the next denial
         # doesn't look it up again.
         kwargs = mock_cache_cls.objects.aupdate_or_create.await_args.kwargs
-        assert kwargs["defaults"]["generic_citations"] == {
-            "matcher_version": NCD_MATCHER_VERSION,
-            "citations": [],
-        }
+        assert kwargs["defaults"]["generic_citations"] == []
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
@@ -122,10 +119,7 @@ class TestMLCitationsHelperCMSIntegration:
         self, mock_fetch, mock_cache_cls
     ):
         cache_entry = MagicMock()
-        cache_entry.generic_citations = {
-            "matcher_version": NCD_MATCHER_VERSION,
-            "citations": [],
-        }
+        cache_entry.generic_citations = []
         cache_entry.medicare_citations = []
         cache_entry.generic_updated_at = timezone.now()
         cache_entry.medicare_updated_at = None
@@ -140,6 +134,35 @@ class TestMLCitationsHelperCMSIntegration:
 
         assert result == []
         mock_fetch.assert_not_called()
+
+    def test_previous_read_path_only_sees_citations_or_a_miss(self):
+        # During a rolling deploy, pods still on the previous code read rows
+        # the new code wrote. This is that code's read path, verbatim from
+        # before the change, run over both row shapes the new code writes.
+        from fighthealthinsurance.ml.ml_citations_helper import _CMS_CACHE_TTL
+
+        def previous_read(cache_entry, cache_field, timestamp_field, max_results):
+            cached = getattr(cache_entry, cache_field) or []
+            variant_updated_at = getattr(cache_entry, timestamp_field, None)
+            fresh = (
+                variant_updated_at is not None
+                and (timezone.now() - variant_updated_at) < _CMS_CACHE_TTL
+            )
+            if cached and fresh:
+                return list(cached)[:max_results]
+            return None  # a miss: it looks the citations up itself
+
+        written = [f"CMS National Coverage Determination 20.1, {NCD_CITATION_MARKER}"]
+        for rows_citations, expected in ((written, written), ([], None)):
+            entry = MagicMock()
+            entry.generic_citations = rows_citations
+            entry.generic_updated_at = timezone.now()
+            result = previous_read(
+                entry, "generic_citations", "generic_updated_at", max_results=3
+            )
+            assert result == expected
+            if result is not None:
+                assert all(isinstance(c, str) for c in result)
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
@@ -251,10 +274,7 @@ class TestMLCitationsHelperCMSIntegration:
         kwargs = mock_cache_cls.objects.aupdate_or_create.await_args.kwargs
         assert kwargs["procedure"] == "mri"
         assert kwargs["diagnosis"] == "headache"
-        assert kwargs["defaults"]["generic_citations"] == {
-            "matcher_version": NCD_MATCHER_VERSION,
-            "citations": ["New citation"],
-        }
+        assert kwargs["defaults"]["generic_citations"] == ["New citation"]
         assert kwargs["defaults"].get("generic_updated_at") is not None
 
     @pytest.mark.asyncio

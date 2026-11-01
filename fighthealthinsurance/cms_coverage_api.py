@@ -144,13 +144,11 @@ def _meaningful_tokens(text: str) -> List[str]:
     return out
 
 
-# Every NCD citation says the policy may apply, since the match is on title
-# words.
+# The phrase every NCD citation carries since titles had to match the query
+# closely. A cached citation without it was written by the older matcher,
+# which accepted one shared word, so it may be off topic and is looked up
+# again (ml_citations_helper).
 NCD_CITATION_MARKER = "may apply to this service"
-
-# Bumped whenever the title matching changes what a lookup returns, so cached
-# results from an older matcher are looked up again (ml_citations_helper).
-NCD_MATCHER_VERSION = 2
 
 
 @dataclass
