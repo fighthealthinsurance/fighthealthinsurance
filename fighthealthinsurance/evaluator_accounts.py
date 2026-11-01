@@ -46,7 +46,7 @@ def _normalize_evaluator_username(username: str) -> str:
 
 def _login_throttle_buckets(username: str):
     normalized = _normalize_evaluator_username(username)
-    if not User.objects.filter(username=normalized).exists():
+    if not User.objects.filter(username__iexact=normalized).exists():
         return ()
     account_key = salted_hmac("evaluator-login-account", normalized).hexdigest()
     return ((account_key, EVALUATOR_LOGIN_ACCOUNT_LIMIT),)
@@ -139,7 +139,19 @@ class EvaluatorLoginForm(AuthenticationForm):
         self.fields["username"].label = "Email address"
 
     def clean_username(self) -> str:
-        return _normalize_evaluator_username(self.cleaned_data["username"])
+        normalized = _normalize_evaluator_username(self.cleaned_data["username"])
+        usernames = list(
+            User.objects.filter(username__iexact=normalized).values_list(
+                "username", flat=True
+            )[:2]
+        )
+        if len(usernames) > 1:
+            raise ValidationError(
+                self.error_messages["invalid_login"],
+                code="invalid_login",
+                params={"username": self.username_field.verbose_name},
+            )
+        return usernames[0] if usernames else normalized
 
     def confirm_login_allowed(self, user) -> None:
         super().confirm_login_allowed(user)

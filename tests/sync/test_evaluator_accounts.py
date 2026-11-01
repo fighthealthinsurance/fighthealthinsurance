@@ -167,6 +167,29 @@ class EvaluatorAccountTest(TestCase):
         self.assertRedirects(response, reverse("chooser"))
         self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
 
+    def test_mixed_case_stored_username_can_log_in_case_insensitively(self):
+        user = self._evaluator(email="Judge@Example.com")
+
+        response = self.client.post(
+            self.login_url,
+            {"username": "judge@example.com", "password": self.password},
+        )
+
+        self.assertRedirects(response, reverse("chooser"))
+        self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
+
+    def test_case_insensitive_ambiguity_is_rejected(self):
+        self._evaluator(email="Judge@Example.com")
+        self._evaluator(email="judge@example.com")
+
+        response = self.client.post(
+            self.login_url,
+            {"username": "JUDGE@example.com", "password": self.password},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("_auth_user_id", self.client.session)
+
     def test_successful_login_clears_failed_attempts(self):
         user = self._evaluator()
         for _ in range(EVALUATOR_LOGIN_ACCOUNT_LIMIT - 1):
