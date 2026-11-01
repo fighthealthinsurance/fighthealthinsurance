@@ -105,6 +105,24 @@ class ReviewPageSuggestionsTest(ReviewPageTestBase):
         self.assertEqual(shown(page, "denial_type"), [])
         self.assertEqual(shown(page, "plan_source"), [])
 
+    def test_going_forward_again_keeps_denial_types_cleared_on_review(self):
+        triage(self.denial)
+        self.denial.denial_type.add(self.pre_service)
+        FindNextStepsHelper._note_cleared_on_review(self.denial, "denial_type")
+
+        page = self.on_to_review()
+
+        self.assertEqual(shown(page, "denial_type"), [str(self.pre_service.pk)])
+
+    def test_going_forward_again_keeps_a_plan_source_cleared_on_review(self):
+        triage(self.denial)
+        FindNextStepsHelper._note_cleared_on_review(self.denial, "plan_source")
+        self.without_a_plan_source()
+
+        page = self.on_to_review()
+
+        self.assertEqual(shown(page, "plan_source"), [])
+
     def test_no_suggestion_without_consent(self):
         self.without_a_plan_source()
         triage(self.denial)
@@ -249,6 +267,61 @@ class AssistantCaseSuggestionsTest(TestCase):
         with patch.object(dt, "suggestions", return_value=suggested):
             self.assertEqual(self.apply(), 0)
         self.assertFalse(self.denial.denial_type.exists())
+        self.assertFalse(self.denial.plan_source.exists())
+
+    def test_triage_does_not_restore_denial_types_cleared_on_review(self):
+        triage(self.denial)
+        self.denial.denial_type.add(self.necessary, self.pre_service)
+        FindNextStepsHelper._note_cleared_on_review(self.denial, "denial_type")
+        self.denial.denial_type.remove(self.necessary)
+
+        self.apply()
+
+        self.assertEqual(list(self.denial.denial_type.all()), [self.pre_service])
+
+    def test_triage_does_not_restore_a_plan_source_cleared_on_review(self):
+        triage(self.denial)
+        self.denial.plan_source.add(self.medicare_advantage)
+        FindNextStepsHelper._note_cleared_on_review(self.denial, "plan_source")
+        self.denial.plan_source.clear()
+
+        self.apply()
+
+        self.assertFalse(self.denial.plan_source.exists())
+
+    def test_denial_types_cleared_while_triage_is_storing_stay_cleared(self):
+        triage(self.denial)
+        self.denial.denial_type.add(self.pre_service)
+        create = models.DenialTypesRelation.objects.acreate
+
+        async def clear_then_create(**kwargs):
+            await models.Denial.objects.filter(pk=self.denial.pk).aupdate(
+                review_cleared=" denial_type "
+            )
+            return await create(**kwargs)
+
+        with patch.object(
+            models.DenialTypesRelation.objects, "acreate", side_effect=clear_then_create
+        ):
+            self.assertEqual(self.apply(), 1)  # Only the plan source was added.
+
+        self.assertEqual(list(self.denial.denial_type.all()), [self.pre_service])
+
+    def test_plan_source_cleared_while_triage_is_storing_stays_cleared(self):
+        triage(self.denial)
+        create = models.PlanSourceRelation.objects.acreate
+
+        async def clear_then_create(**kwargs):
+            await models.Denial.objects.filter(pk=self.denial.pk).aupdate(
+                review_cleared=" plan_source "
+            )
+            return await create(**kwargs)
+
+        with patch.object(
+            models.PlanSourceRelation.objects, "acreate", side_effect=clear_then_create
+        ):
+            self.assertEqual(self.apply(), 2)  # Only the denial types were added.
+
         self.assertFalse(self.denial.plan_source.exists())
 
     def test_a_new_letter_takes_them_away(self):

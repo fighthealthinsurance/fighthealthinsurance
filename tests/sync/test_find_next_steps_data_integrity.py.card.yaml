@@ -1,0 +1,15 @@
+card: 1
+name: test_find_next_steps_data_integrity
+summary: "Regression tests for review-page clearing and concurrent extraction preserving user choices"
+language: python
+kind: module
+interface:
+  - "class FindNextStepsDataIntegrityTest"
+  - "class ExtractionRespectsUserValuesTest"
+license: unknown
+provenance:
+  authored_by: unknown
+  agent: agent
+  human_reviewed: false
+triage:
+  - {"date": "2026-11-01", "agent": "agent", "task": "Reproduce triage undoing cleared plan sources and denial types", "outcome": "adopted", "notes": "Existing tests exercise the real review-clearing path; reused unchanged as surrounding integration coverage"}
