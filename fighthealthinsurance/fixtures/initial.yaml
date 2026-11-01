@@ -80,6 +80,7 @@
   pk: 2
   fields:
     name: Medically Necessary
+    core: true
     regex: "(not medically necessary|You do not meet any of these criteria\\.|not medically nocessary|nationally recognized clinical guidelines and resources)"
     form: MedicalNecessaryQuestions
     parent: 1
@@ -87,12 +88,14 @@
   pk: 3
   fields:
     name: Prior Authorization Requred
+    core: true
     regex: "(prior authorization required|prior auth required)"
     form: PriorAuthQuestions
 - model: fighthealthinsurance.denialtypes
   pk: 4
   fields:
     name: Experimental Medical Treatment
+    core: true
     regex: "(experimental treatment|experimental medical|experimental medication|experimental drugs)"
     parent: 2
     form: ExperimentalQuestions
@@ -100,6 +103,7 @@
   pk: 5
   fields:
     name: Not Covered By Plan
+    core: true
     regex: "(treatment not covered|not covered by plan)"
     form: NotCoveredByQuestions
 - model: fighthealthinsurance.denialtypes
@@ -112,11 +116,13 @@
   pk: 7
   fields:
     name: In-Network Treated as Out of Network
+    core: true
 - model: fighthealthinsurance.denialtypes
   pk: 8
   fields:
     parent: 17
     name: Denied Out-Of-Network Provider
+    core: true
     regex: "(infer-out|GAP exception|There are providers available in your network that can provide the same care.|because there are network providers in your area that can provide this care.)"
 - model: fighthealthinsurance.denialtypes
   pk: 9
@@ -153,6 +159,7 @@
   pk: 15
   fields:
     name: Insufficient Medical Information
+    core: true
     regex: "Missing Claim Information"
 - model: fighthealthinsurance.denialtypes
   pk: 16
@@ -175,6 +182,7 @@
   pk: 19
   fields:
     name: STEP Therapy -- have to try cheaper options first
+    core: true
     regex: "(STEP therapy|step 2 drug|step2 drug)"
 - model: fighthealthinsurance.denialtypes
   pk: 20
@@ -201,6 +209,7 @@
   pk: 23
   fields:
     name: Other
+    core: true
 - model: fighthealthinsurance.denialtypes
   pk: 24
   fields:
@@ -212,6 +221,7 @@
   pk: 25
   fields:
     name: Not On Formulary
+    core: true
     regex: "(not on the formulary|non-formulary|excluded from formulary)"
     form: FormularyChangeQuestions
     appeal_text: "Under federal regulations (45 CFR § 156.122), A health plan providing essential health benefits must allow you to request and gain access to clinically appropriate drugs not otherwise covered by the health plan (a request for exception). Similar regulations often exist for state regulated plans."

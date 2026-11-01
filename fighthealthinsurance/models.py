@@ -1254,6 +1254,12 @@ class DenialTypes(models.Model):
     )
     appeal_text = models.TextField(max_length=3000, blank=True)
     form = models.CharField(max_length=300, null=True, blank=True)
+    # Shown up front on the review page's denial type list; the rest sit
+    # under "More denial types" unless ticked (forms.CoreFirstCheckboxList).
+    core = models.BooleanField(
+        default=False,
+        help_text="Always show this type on the review page's list.",
+    )
 
     def get_form(self):
         if self.form is None:
