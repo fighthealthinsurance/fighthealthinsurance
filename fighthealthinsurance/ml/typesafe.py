@@ -449,27 +449,33 @@ async def ask(
         )
     if not attempts:
         raise TypeSafeError(NO_KEY)
-    # The connect bound is kept well inside the total and inside a caller's
-    # own wait_for of the same length (the chat gate's), so a host that
-    # cannot be reached fails here as a connect timeout, which counts toward
-    # the cooldown, rather than being cut off by the caller's cancellation.
+    # One deadline for the whole ask: every attempt's total is derived from
+    # the time left on it, so ask() cannot run past timeout_seconds however
+    # the attempts split the budget, and a caller's own wait_for of the same
+    # length never cancels a fallback that is still inside its share.
     # `connect` bounds the whole connect phase once (DNS, every address
     # aiohttp tries, TCP and TLS); when it expires, aiohttp (3.14) raises
     # ConnectionTimeoutError, as it wraps the timeout of connector.connect().
     # `sock_connect` alone bounds one address round, and api.typesafe.ai has
     # two addresses: the second round then ran past `total` and failed as a
     # plain TimeoutError, which never counts toward the cooldown.
-    connect_bound = min(timeout_seconds * 0.75, CONNECT_TIMEOUT_SECONDS)
+    deadline = time.monotonic() + timeout_seconds
     last_error: typing.Optional[BaseException] = None
     payload: typing.Any = None
     answered_model = premium_model
     for url, token, model, is_premium in attempts:
-        # The free attempt gets half of the caller's budget, so the premium
-        # fallback that follows it still has time inside a caller's own
-        # wait_for of the same length: a hung free endpoint must not eat the
-        # whole wait and starve the fallback.
-        attempt_total = timeout_seconds if is_premium else timeout_seconds * 0.5
-        attempt_connect = min(connect_bound, attempt_total * 0.75)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("request budget spent")
+        # The free attempt gets half of what is left, so the premium
+        # fallback that follows it still has time: a hung free endpoint
+        # must not eat the whole budget and starve the fallback. A sole
+        # attempt gets everything left.
+        if is_premium or len(attempts) == 1:
+            attempt_total = remaining
+        else:
+            attempt_total = remaining * 0.5
+        attempt_connect = min(attempt_total * 0.75, CONNECT_TIMEOUT_SECONDS)
         client_timeout = aiohttp.ClientTimeout(
             total=attempt_total, connect=attempt_connect, sock_connect=attempt_connect
         )
@@ -535,7 +541,7 @@ async def ask(
                 )
             elif is_premium and isinstance(e, aiohttp.ConnectionTimeoutError):
                 if (
-                    connect_bound >= MIN_COUNTED_CONNECT_SECONDS
+                    attempt_connect >= MIN_COUNTED_CONNECT_SECONDS
                     and _connect_timed_out()
                 ):
                     _start_cooldown(
@@ -548,6 +554,14 @@ async def ask(
     else:
         assert last_error is not None
         raise last_error
+    if isinstance(payload, dict):
+        named = payload.get("model")
+        if not isinstance(named, str) or not _MODEL_NAME.fullmatch(named.strip() or ""):
+            # The answer named no usable model. Record the name the request
+            # actually sent, so downstream provenance (letter, triage and
+            # chat scores) reads jev-1.13-free for the free route instead of
+            # mixing it into the pinned premium release's series.
+            payload["model"] = answered_model
     usage = payload.get("usage") if isinstance(payload, dict) else None
     if isinstance(usage, dict):
         # OpenCode's base Jev is free; only the premium TypeSafe answer uses
