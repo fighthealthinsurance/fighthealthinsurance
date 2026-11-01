@@ -2666,6 +2666,8 @@ class ChooserViewSet(viewsets.ViewSet):
                 "id": candidate_token(c.id),
                 "kind": c.kind,
                 "content": c.content,
+                # Only the lookups from the metadata, never the rest of it.
+                "tool_calls": (c.metadata or {}).get("tool_calls") or [],
             }
             for c in candidates
         ]

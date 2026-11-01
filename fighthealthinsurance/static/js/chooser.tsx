@@ -45,6 +45,21 @@ interface ChooserCandidate {
   id: string;
   kind: string;
   content: string;
+  // A chat draft's lookups, run before it answered (chooser_chat_tools).
+  tool_calls?: ToolCall[];
+}
+
+// One lookup a chat draft made: the tool, what it asked, the status lines
+// the tool reported and what came back for the model to read.
+interface ToolCall {
+  tool: string;
+  call: string;
+  found: string;
+  notes?: string[];
+  timed_out?: boolean;
+  // On a synthesized draft: a lookup one of the drafts it merged made. The
+  // synthesis read those drafts, not the lookups themselves.
+  from_drafts?: boolean;
 }
 
 // What the automated reviewer made of one study for this treatment and
@@ -925,6 +940,84 @@ const ChatCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
   );
 };
 
+// What a chat draft looked up before answering, so the voter can check the
+// reply against what the lookup actually found (and see when it found
+// nothing). The found text stays folded until asked for: it is long.
+const ToolCallList: React.FC<{ calls: ToolCall[] }> = ({ calls }) => {
+  const [open, setOpen] = useState<Record<number, boolean>>({});
+  const fromDrafts = calls.some((call) => call.from_drafts);
+  return (
+    <Stack gap={6}>
+      {calls.map((call, idx) => {
+        const isOpen = !!open[idx];
+        const empty = !call.found;
+        return (
+          <Box
+            key={idx}
+            p="xs"
+            style={{
+              backgroundColor: "#f3f0ff",
+              borderRadius: "6px",
+              borderLeft: "3px solid #9775fa",
+            }}
+          >
+            <Group justify="space-between" gap="xs" wrap="nowrap" align="flex-start">
+              <Text size="xs" style={{ wordBreak: "break-word" }}>
+                🔍 <b>{call.tool}</b>: {call.call}
+                {call.timed_out ? (
+                  <Text span size="xs" c="red">
+                    {" "}
+                    (timed out)
+                  </Text>
+                ) : empty ? (
+                  <Text span size="xs" c="dimmed">
+                    {" "}
+                    (found nothing)
+                  </Text>
+                ) : null}
+              </Text>
+              {!empty || (call.notes?.length ?? 0) > 0 ? (
+                <Button
+                  size="compact-xs"
+                  variant="subtle"
+                  color="violet"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setOpen((prev) => ({ ...prev, [idx]: !prev[idx] }));
+                  }}
+                >
+                  {isOpen ? "Hide" : "What it found"}
+                </Button>
+              ) : null}
+            </Group>
+            {isOpen ? (
+              <Box mt={4}>
+                {(call.notes ?? []).map((line, i) => (
+                  <Text key={i} size="xs" c="dimmed">
+                    {line}
+                  </Text>
+                ))}
+                {!empty ? (
+                  <ScrollArea.Autosize mah={240} offsetScrollbars>
+                    <Text size="xs" mt={4} style={{ whiteSpace: "pre-wrap" }}>
+                      {call.found}
+                    </Text>
+                  </ScrollArea.Autosize>
+                ) : null}
+              </Box>
+            ) : null}
+          </Box>
+        );
+      })}
+      <Text size="xs" c="dimmed">
+        {fromDrafts
+          ? "The drafts this one combines looked this up; it read their answers, not the lookups. Does it claim no more than they found?"
+          : "The draft looked this up before answering. Did it use what it found, and say no more than that?"}
+      </Text>
+    </Stack>
+  );
+};
+
 const CandidateCard: React.FC<{
   candidate: ChooserCandidate;
   label: string;
@@ -1033,6 +1126,19 @@ const CandidateCard: React.FC<{
       {checkFacts ? (
         <Box mb="sm">
           <CitationCheck citations={citations} hints={hints} hasEvidence={evidence.length > 0} />
+        </Box>
+      ) : null}
+      {candidate.tool_calls && candidate.tool_calls.length > 0 ? (
+        // Its own clicks and keys (the fold buttons, selecting text to
+        // read) are not a pick of the draft: Enter or Space on a fold
+        // button would otherwise reach the card's key handler, which picks
+        // the draft and swallows the button's own activation.
+        <Box
+          mb="sm"
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          <ToolCallList calls={candidate.tool_calls} />
         </Box>
       ) : null}
       <ScrollArea h={expanded ? undefined : 320} offsetScrollbars>

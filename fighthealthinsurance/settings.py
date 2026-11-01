@@ -357,6 +357,13 @@ class Base(Configuration):
         os.getenv("CHOOSER_PUBMED_SEARCH_TIMEOUT", "20")
     )
     CHOOSER_SIMULATED_QA = os.getenv("CHOOSER_SIMULATED_QA", "true").lower() != "false"
+    # Whether a synthetic chat draft's lookups (a PubMed search, the
+    # Medicaid directory, ...) are run and shown to the voter beside it
+    # (chooser_chat_tools); off, a draft is kept as the model wrote it.
+    CHOOSER_CHAT_TOOLS = os.getenv("CHOOSER_CHAT_TOOLS", "true").lower() != "false"
+    CHOOSER_CHAT_TOOL_TIMEOUT = _env_float(
+        "CHOOSER_CHAT_TOOL_TIMEOUT", 120.0, minimum=1.0, maximum=600.0
+    )
     # Whether a case's evidence is judged as the case is built (on topic,
     # supports, against), for the verdicts the arena shows voters. Jev
     # judges when TYPESAFE_RESEARCH_JUDGING_ENABLED is on too; whatever it
@@ -1261,6 +1268,9 @@ class _TestBase(Dev):
     # its simulated interview reach the question generators' backends.
     CHOOSER_PUBMED_LIVE_SEARCH = False
     CHOOSER_SIMULATED_QA = False
+    # Nor may a chat draft's lookups reach PubMed or the other public
+    # services; a test that runs them mocks the tools and turns this on.
+    CHOOSER_CHAT_TOOLS = False
     # Nor may a case's evidence be sent to Jev or our own model; a test that
     # wants that turns it on (with research judging itself, for Jev).
     CHOOSER_JUDGE_EVIDENCE = False

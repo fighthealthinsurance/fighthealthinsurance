@@ -22,7 +22,7 @@ import re
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any, Awaitable, Callable, List, Optional, Tuple, cast
+from typing import Any, Awaitable, Callable, List, Optional, Tuple, Union, cast
 
 from django.conf import settings
 from django.db.models import Count, Q, QuerySet
@@ -45,6 +45,7 @@ from fighthealthinsurance.ml.question_parsing import (
     is_junk_question,
 )
 from fighthealthinsurance import chooser_complexity, condition_rankings
+from fighthealthinsurance.chooser_chat_tools import ToolAnswer, answer_with_tools
 from fighthealthinsurance.models import (
     ChooserCandidate,
     ChooserTask,
@@ -146,7 +147,9 @@ _EVIDENCE_SUMMARY_CHARS = 600
 # fresh (see _fresh_tasks), so the refill keeps the new kind coming while
 # older tasks stay votable. Bump a type's version when its cases change in
 # a way votes should be told apart by.
-CASE_VERSIONS = {"appeal": 2, "chat": 1}
+# Chat cases at 2 have their drafts' lookups (PubMed and the chat's other
+# read-only tools) run and shown to the voter (see chooser_chat_tools).
+CASE_VERSIONS = {"appeal": 2, "chat": 2}
 # The simulated interview (see _interview): how many of the app's questions
 # the fictional patient is asked, how long the question generators may take,
 # and the longest answer kept.
@@ -1248,7 +1251,7 @@ async def _fill_candidates(
     task_type: str,
     kind: str,
     min_len: int,
-    ask: Callable[[Any, bool], Awaitable[Optional[str]]],
+    ask: Callable[[Any, bool], Awaitable[Optional[Union[str, ToolAnswer]]]],
     base_metadata: dict,
 ) -> None:
     """Seat up to ``CHOOSER_NUM_CANDIDATES`` ``kind`` candidates on ``task``,
@@ -1257,8 +1260,10 @@ async def _fill_candidates(
     The appeal and chat generators differ only in how a draft is asked for,
     so the bookkeeping that decides who is asked (and so which models the
     votes can measure) lives here once. ``ask(model, resample)`` returns the
-    model's reply, or None; ``resample`` is set when the model already seated
-    a candidate in this task. Each selected backend is asked once, all of
+    model's reply, or None; a chat reply comes as a ToolAnswer, whose
+    lookups are stored on the candidate as ``tool_calls`` (when it made any).
+    ``resample`` is set when the model already seated a candidate in this
+    task. Each selected backend is asked once, all of
     them at the same time, then the open slots go to the backends
     _next_retry_model picks, one at a time. A reply longer than ``min_len``
     is stored with ``base_metadata``, plus ``retry: True`` on a re-sample
@@ -1284,11 +1289,11 @@ async def _fill_candidates(
     produced: dict[int, Any] = {}
     failed: set[int] = set()
 
-    async def draft(model, resample: bool) -> Optional[str]:
+    async def draft(model, resample: bool) -> Optional[ToolAnswer]:
         """``model``'s draft, or None when it gave nothing usable or raised:
         logged either way, and the model marked failed."""
         try:
-            response = await ask(model, resample)
+            answer = await ask(model, resample)
         except Exception as e:
             retry = " (retry)" if resample else ""
             logger.warning(
@@ -1296,17 +1301,23 @@ async def _fill_candidates(
             )
             failed.add(id(model))
             return None
+        if not isinstance(answer, ToolAnswer):
+            answer = ToolAnswer(answer)
+        response = answer.text
         if response and len(response.strip()) > min_len:
-            return response
+            return answer
         _note_unusable_candidate(task, model, task_type, response)
         failed.add(id(model))
         return None
 
-    async def seat(model, response: str, resample: bool) -> None:
+    async def seat(model, answer: ToolAnswer, resample: bool) -> None:
         nonlocal candidate_index
         metadata = dict(base_metadata)
         if resample:
             metadata["retry"] = True
+        if answer.tool_calls:
+            metadata["tool_calls"] = answer.tool_calls
+        response = answer.text or ""
         await ChooserCandidate.objects.acreate(
             task=task,
             candidate_index=candidate_index,
@@ -2201,7 +2212,11 @@ async def _generate_chat_candidates(task: ChooserTask):
             "- Health insurance claim denials and appeals\n"
             "- Prior authorization requests and denials\n"
             "- Medicare eligibility, coverage, or appeals\n"
-            "- Medicaid eligibility, enrollment, or coverage issues\n\n"
+            "- Medicaid eligibility, enrollment, or coverage issues\n"
+            "- A drug or treatment denied as experimental or not medically "
+            "necessary, where the medical research would help\n"
+            "- Paying for an expensive denied prescription, or a denied "
+            "preventive screening\n\n"
             "The conversation should have 2-4 exchanges (user message, then assistant response, then user follow-up, etc.).\n"
             "End with a user question that the assistant has NOT yet answered.\n\n"
             "Format EXACTLY like this (use these exact labels):\n"
@@ -2290,23 +2305,19 @@ async def _generate_chat_candidates(task: ChooserTask):
     chat_history = task.context_json.get("history", [])
     user_prompt = task.context_json.get("prompt", "")
 
-    async def ask(model, resample: bool) -> Optional[str]:
-        # Asked the same way on a re-sample. NOTE: the parameter is
-        # current_message_for_llm — passing current_message= raised TypeError
-        # for EVERY backend and silently produced zero chat candidates.
-        # Labelled "other" in the call metrics, like the appeal synthesis:
-        # this is not a user's chat turn, though generate_chat_response
-        # labels its calls "chat" (whose budget still pays for, and caps,
-        # them).
+    async def ask(model, resample: bool) -> ToolAnswer:
+        # Asked the same way on a re-sample, through generate_chat_response
+        # as the chat asks (answer_with_tools; current_message_for_llm, not
+        # current_message=, which raised TypeError for EVERY backend and
+        # silently produced zero chat candidates). A lookup the model asks
+        # for (a PubMed search, a Medicaid directory entry, ...) is run and
+        # read back to it, as in the chat, and kept so the voter sees what
+        # it found. Labelled "other" in the call metrics, like the appeal
+        # synthesis: this is not a user's chat turn, though
+        # generate_chat_response labels its calls "chat" (whose budget still
+        # pays for, and caps, them).
         with ml_call_purpose_override("other"):
-            response, _ = await model.generate_chat_response(
-                current_message_for_llm=user_prompt,
-                previous_context_summary=None,
-                history=chat_history,
-                is_professional=True,
-                is_logged_in=True,
-            )
-        return cast(Optional[str], response)
+            return await answer_with_tools(model, user_prompt, chat_history, 50)
 
     await _fill_candidates(
         task,
@@ -2386,6 +2397,33 @@ def _build_appeal_prompt(context: dict) -> str:
     return "\n".join(parts)
 
 
+def _lookup_rank(call: dict) -> Tuple[bool, bool]:
+    """How much a lookup record shows: one that found something beats one
+    that did not, then one that finished beats one that timed out. Found
+    first: a lookup can find something and still time out while the model
+    reads it back, and that finding must not lose to an empty one."""
+    return (bool(call.get("found")), not call.get("timed_out"))
+
+
+def _merged_tool_calls(candidates: List[ChooserCandidate]) -> List[dict]:
+    """Every lookup the ``candidates`` made (their ``tool_calls``
+    metadata), once each by tool and call, in the order first made. Where
+    drafts made the same lookup, the record that shows most is kept: a
+    timeout in one draft must not hide what the same search found in
+    another. Each is marked ``from_drafts``: the synthesis read the drafts,
+    not the lookups, and the card says so."""
+    merged: dict = {}
+    for candidate in candidates:
+        for call in (candidate.metadata or {}).get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            key = (call.get("tool"), call.get("call"))
+            kept = merged.get(key)
+            if kept is None or _lookup_rank(call) > _lookup_rank(kept):
+                merged[key] = dict(call, from_drafts=True)
+    return list(merged.values())
+
+
 async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None:
     """Add one synthesized candidate combining the task's existing candidates.
 
@@ -2445,6 +2483,13 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
             )
             return
 
+        metadata: dict = {"source": "synthetic", "synthesized": True}
+        # The drafts' lookups, once each: the synthesis read the drafts, so
+        # what they found is what the voter checks it against.
+        tool_calls = _merged_tool_calls(existing)
+        if tool_calls:
+            metadata["tool_calls"] = tool_calls
+
         # Next free index: base candidates occupy 0..N-1 contiguously.
         next_index = await database_sync_to_async(
             ChooserCandidate.objects.filter(task=task).count
@@ -2456,7 +2501,7 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
             model_name=SYNTHESIZED_MODEL_NAME,
             synthesized=True,
             content=normalized,
-            metadata={"source": "synthetic", "synthesized": True},
+            metadata=metadata,
         )
         task.num_candidates_generated = next_index + 1
         # The synthesized draft is one more than the base slots: raise the

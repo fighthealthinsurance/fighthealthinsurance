@@ -231,7 +231,7 @@ class ChooserNextTaskAPITest(APITestCase):
         self.assertEqual(data["task_type"], "appeal")
         self.assertEqual(len(data["candidates"]), 2)
         self.assertEqual(data["task_context"]["procedure"], "Physical Therapy")
-        self.assertEqual(set(data["candidates"][0]), {"id", "kind", "content"})
+        self.assertEqual(set(data["candidates"][0]), {"id", "kind", "content", "tool_calls"})
 
     def test_next_task_is_blind_to_the_author(self):
         """The payload names no model and carries no synthesized flag,
