@@ -294,6 +294,26 @@ class DeleteSubscribersTest(TestCase):
             ("first", first_reviewed_at),
         )
 
+    def test_whole_addresses_only_spares_a_partial_address(self):
+        """Deleting one copy while another stays would kill the deleted copy's
+        unsubscribe link and keep mailing the person."""
+        junk = make_subscriber("jane@hospital.org", name="http://spam.example")
+        make_subscriber("Jane@Hospital.org", name="Jane Doe")
+
+        deleted = hygiene.delete_subscribers([junk.id], whole_addresses_only=True)
+
+        self.assertEqual(deleted, 0)
+
+    def test_whole_addresses_only_deletes_every_copy_when_all_selected(self):
+        first = make_subscriber("bot@spam.org", name="http://spam.example")
+        second = make_subscriber("BOT@spam.org", name="www.spam.example")
+
+        deleted = hygiene.delete_subscribers(
+            [first.id, second.id], whole_addresses_only=True
+        )
+
+        self.assertEqual(deleted, 2)
+
     def test_delete_with_no_ids_is_a_no_op(self):
         make_subscriber("jane@hospital.org")
         self.assertEqual(hygiene.delete_subscribers([]), 0)
@@ -355,6 +375,18 @@ class CleanupSubscribersCommandTest(TestCase):
 
         self._run("--apply", "--force")
         self.assertFalse(MailingListSubscriber.objects.filter(id=held.id).exists())
+
+    def test_narrowed_reasons_never_delete_part_of_an_address(self):
+        """Two junk copies of one address with different codes: --reasons for
+        one code alone must not delete just that copy."""
+        link = make_subscriber("bot@spam.org", name="http://spam.example")
+        make_subscriber("Bot@spam.org", name="Bob\nBcc: victim@hospital.org")
+
+        self._run("--apply", "--reasons", hygiene.LINK_IN_FIELDS)
+        self.assertTrue(MailingListSubscriber.objects.filter(id=link.id).exists())
+
+        self._run("--apply", "--force", "--reasons", hygiene.LINK_IN_FIELDS)
+        self.assertFalse(MailingListSubscriber.objects.filter(id=link.id).exists())
 
     def test_negative_limit_is_rejected(self):
         with self.assertRaises(CommandError):
@@ -480,6 +512,43 @@ class SubscriberCleanupViewTest(TestCase):
         response = self.client.post(self.url, {"action": "delete_selected"})
         self.assertContains(response, "No subscribers in the queue were selected.")
         self.assertEqual(MailingListSubscriber.objects.count(), 3)
+
+    def test_delete_selected_spares_a_held_copy(self):
+        held = make_subscriber("Jane@Hospital.org", name="http://spam.example")
+        self.login()
+        self.client.post(
+            self.url, {"action": "delete_selected", "subscriber_id": [str(held.id)]}
+        )
+        self.assertTrue(MailingListSubscriber.objects.filter(id=held.id).exists())
+
+    def test_delete_selected_removes_an_address_when_every_copy_is_ticked(self):
+        first = make_subscriber("bot@spam.org", name="http://spam.example")
+        second = make_subscriber("Bot@spam.org", name="www.spam.example")
+        self.login()
+        self.client.post(
+            self.url,
+            {
+                "action": "delete_selected",
+                "subscriber_id": [str(first.id), str(second.id)],
+            },
+        )
+        self.assertFalse(
+            MailingListSubscriber.objects.filter(email__iexact="bot@spam.org").exists()
+        )
+
+    def test_bulk_delete_spares_a_held_junk_copy(self):
+        held = make_subscriber("Jane@Hospital.org", name="http://spam.example")
+        self.login()
+        self.client.post(self.url, {"action": "delete_auto", "confirm": "yes"})
+        self.assertTrue(MailingListSubscriber.objects.filter(id=held.id).exists())
+
+    def test_lead_scan_failure_does_not_break_the_page(self):
+        self.login()
+        with patch.object(
+            hygiene, "scan_other_contact_tables", side_effect=RuntimeError("boom")
+        ):
+            response = self.client.get(self.url, {"include_leads": "1"})
+        self.assertContains(response, "someone@example.com")
 
     def test_page_past_the_end_is_clamped_to_the_last_page(self):
         self.login()

@@ -139,8 +139,17 @@ class Command(BaseCommand):
             actor="cleanup_subscribers",
             # Re-check at delete time: a row staff kept after the scan stays.
             unreviewed_only=not options["include_reviewed"],
+            # Never delete part of an address unless forced: a narrowed
+            # --reasons can pick one copy of an all-junk address and leave its
+            # sibling mailing them, with the deleted copy's link dead.
+            whole_addresses_only=not force,
         )
         self.stdout.write(self.style.SUCCESS(f"\nDeleted {deleted} subscriber row(s)."))
+        if deleted < len(targets):
+            self.stdout.write(
+                f"Kept {len(targets) - deleted}: reviewed since the scan, or "
+                "another copy of the same address stays (--force overrides)."
+            )
 
     def _report(self, result: hygiene.ScanResult, limit: int) -> None:
         self.stdout.write(

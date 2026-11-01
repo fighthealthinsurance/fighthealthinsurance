@@ -42,6 +42,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
 from django.db.models import QuerySet
+from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 
 from loguru import logger
@@ -113,8 +114,9 @@ REASONS: Dict[str, Reason] = {
             "Duplicate address",
             "Another row holds the same address (case-insensitively). Harmless "
             "as it stands: sends and unsubscribes already treat the address as "
-            "one person. Deleting a copy retires the unsubscribe link already "
-            "mailed from that row, so Keep is usually the right call.",
+            "one person. Deleting one copy would retire the unsubscribe link "
+            "already mailed from it, so cleanup never deletes part of an "
+            "address: keep it, or tick every copy to remove the address.",
             auto_cleanable=False,
         ),
         Reason(
@@ -691,7 +693,10 @@ def _scan_interested_professionals() -> ScanResult:
 
 
 def delete_subscribers(
-    ids: Iterable[int], actor: str = "", unreviewed_only: bool = False
+    ids: Iterable[int],
+    actor: str = "",
+    unreviewed_only: bool = False,
+    whole_addresses_only: bool = False,
 ) -> int:
     """Delete mailing list subscribers by id. Returns the number deleted.
 
@@ -702,6 +707,15 @@ def delete_subscribers(
     ``unreviewed_only`` re-checks the review state at delete time, under a row
     lock, so a row staff marked "keep" after the caller's scan is spared. The
     staff page always sets it; the command sets it unless --include-reviewed.
+
+    ``whole_addresses_only`` refuses to delete some copies of an address while
+    another copy stays: every row carries its own unsubscribe token, so the
+    deleted copy's link (possibly already in someone's inbox) would go dead
+    while the surviving row keeps mailing them. Deleting every copy is fine --
+    the mail stops. Checked against the table as it is inside this
+    transaction, so a clean signup that lands after the caller's scan also
+    spares the junk copy. The staff page always sets it; the command sets it
+    unless --force.
     """
     id_list = list(ids)
     if not id_list:
@@ -711,6 +725,19 @@ def delete_subscribers(
         if unreviewed_only:
             qs = qs.filter(cleanup_reviewed_at__isnull=True)
         rows = list(qs)
+        if whole_addresses_only and rows:
+            selected = {sub.id for sub in rows}
+            addresses = {normalized_email(sub.email) for sub in rows}
+            partial = {
+                address
+                for pk, address in MailingListSubscriber.objects.annotate(
+                    address=Lower(Trim("email"))
+                )
+                .filter(address__in=addresses)
+                .values_list("id", "address")
+                if pk not in selected
+            }
+            rows = [sub for sub in rows if normalized_email(sub.email) not in partial]
         # Log what goes away (masked) so a bad cleanup is at least reconstructible.
         for sub in rows:
             logger.info(

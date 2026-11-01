@@ -5674,14 +5674,20 @@ class SubscriberCleanupView(View):
                     request, error="No subscribers in the queue were selected."
                 )
             if action == "delete_selected":
+                # whole_addresses_only: deleting one copy of an address while
+                # another stays would kill the unsubscribe link mailed from the
+                # deleted copy; tick every copy to remove an address.
                 deleted = subscriber_hygiene.delete_subscribers(
-                    selected, actor=actor, unreviewed_only=True
+                    selected,
+                    actor=actor,
+                    unreviewed_only=True,
+                    whole_addresses_only=True,
                 )
                 logger.info(
                     f"Staff user {actor} deleted {deleted} mailing list "
                     "subscriber(s) from the cleanup queue"
                 )
-                messages.success(request, f"Deleted {deleted} subscriber(s).")
+                messages.success(request, self._deleted_message(deleted, len(selected)))
             else:
                 kept = subscriber_hygiene.mark_subscribers_reviewed(
                     selected, actor=actor
@@ -5704,18 +5710,33 @@ class SubscriberCleanupView(View):
             # at delete time, so a row kept in another tab since the scan stays.
             result = subscriber_hygiene.scan_subscribers()
             ids = [f.record.pk for f in result.auto_cleanable_findings]
+            # whole_addresses_only re-checks the address groups at delete time,
+            # so a clean signup that landed after the scan still holds back the
+            # junk copy of its address.
             deleted = subscriber_hygiene.delete_subscribers(
-                ids, actor=actor, unreviewed_only=True
+                ids, actor=actor, unreviewed_only=True, whole_addresses_only=True
             )
             logger.info(
                 f"Staff user {actor} bulk-deleted {deleted} auto-cleanable "
                 "mailing list subscriber(s)"
             )
-            messages.success(request, f"Deleted {deleted} subscriber(s).")
+            messages.success(request, self._deleted_message(deleted, len(ids)))
             # Redirect so a refresh re-runs the GET, not the bulk delete.
             return redirect(request.get_full_path())
 
         return self._render(request, error=f"Unknown action: {action}", status=400)
+
+    @staticmethod
+    def _deleted_message(deleted: int, requested: int) -> str:
+        message = f"Deleted {deleted} subscriber(s)."
+        skipped = requested - deleted
+        if skipped > 0:
+            message += (
+                f" Kept {skipped}: reviewed since the page loaded, or another "
+                "copy of the same address stays (tick every copy to remove an "
+                "address)."
+            )
+        return message
 
     @staticmethod
     def _selected_ids(request) -> List[int]:
@@ -5794,28 +5815,39 @@ class SubscriberCleanupView(View):
             "page_number": page_number,
             "total_pages": total_pages,
             "include_leads": include_leads,
-            "lead_results": (
-                [
-                    {
-                        "source": other.source,
-                        "scanned": other.scanned,
-                        "flagged": other.flagged_count,
-                        "counts": [
-                            {
-                                "code": code,
-                                "label": subscriber_hygiene.REASONS[code].label,
-                                "count": count,
-                            }
-                            for code, count in other.counts_by_code().items()
-                        ],
-                    }
-                    for other in subscriber_hygiene.scan_other_contact_tables()
-                ]
-                if include_leads
-                else []
-            ),
+            "lead_results": self._lead_results() if include_leads else [],
         }
         return render(request, self.template_name, context, status=status)
+
+    @staticmethod
+    def _lead_results() -> List[Dict[str, Any]]:
+        """Summaries of the read-only lead-table scans, or [] if they fail.
+
+        The lead tables are an optional extra on this page; a failure scanning
+        them must not take down the subscriber queue staff came here for.
+        """
+        try:
+            return [
+                {
+                    "source": other.source,
+                    "scanned": other.scanned,
+                    "flagged": other.flagged_count,
+                    "counts": [
+                        {
+                            "code": code,
+                            "label": subscriber_hygiene.REASONS[code].label,
+                            "count": count,
+                        }
+                        for code, count in other.counts_by_code().items()
+                    ],
+                }
+                for other in subscriber_hygiene.scan_other_contact_tables()
+            ]
+        except Exception:
+            logger.opt(exception=True).error(
+                "Subscriber cleanup: lead-table scan failed"
+            )
+            return []
 
 
 class _CSVEcho:
