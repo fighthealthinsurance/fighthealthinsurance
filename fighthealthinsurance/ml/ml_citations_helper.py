@@ -21,6 +21,10 @@ from fighthealthinsurance.extralink_context_helper import (
 )
 from fighthealthinsurance.microsites import get_microsite
 from fighthealthinsurance.ml import llm_usage, spend
+from fighthealthinsurance.ml.citation_verification import (
+    CHECK_BUDGET_SECONDS,
+    verify_citations,
+)
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     CMSCoverageCache,
@@ -585,6 +589,17 @@ class MLCitationsHelper:
         except Exception as e:
             logger.opt(exception=True).warning(f"Failed to generate citations: {e}")
             ml_result = []
+
+        # Check the identifiers the backends wrote (DOIs, PubMed IDs, CFR
+        # sections) before they can reach a letter: malformed or missing ones
+        # go, ones that could not be checked are labelled unverified (see
+        # ml/citation_verification.py). Time-boxed to a tenth of this run's
+        # timeout, between 2 and 6 seconds. CMS citations come from the
+        # coverage database itself and are added after the check.
+        ml_result = await verify_citations(
+            ml_result,
+            budget_seconds=min(CHECK_BUDGET_SECONDS, max(2.0, timeout / 10)),
+        )
 
         try:
             cms_citations = await cms_task

@@ -196,3 +196,79 @@ async def test_get_citations_formats_each_match():
     )
     assert any("Chronic Coronary Disease Management" in c for c in citations)
     assert any("ECRI Guidelines Trust" in c for c in citations)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_one_shared_word_is_not_a_match():
+    """The NCD lookup's rule: "stable angina" shares only "angina" with an
+    "unstable angina" keyword, and a knee injection shares only "knee" with
+    a knee arthroplasty one."""
+    knee = await ECRIGuideline.objects.acreate(
+        guideline_id="test-one-word-knee",
+        title="Knee Arthroplasty Guideline",
+        procedure_keywords=["knee arthroplasty"],
+        diagnosis_keywords=["unstable angina"],
+    )
+    results = await ECRIGuidelinesHelper.find_relevant_guidelines(
+        procedure="knee pain injection",
+        diagnosis="stable angina",
+    )
+    assert all(g.guideline_id != knee.guideline_id for g in results)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_shared_generic_word_is_not_a_match():
+    """"therapy" and "analysis" name a kind of work, not its subject."""
+    pt = await ECRIGuideline.objects.acreate(
+        guideline_id="test-generic-word",
+        title="Physical Therapy Guideline",
+        procedure_keywords=["physical therapy", "gait analysis"],
+    )
+    results = await ECRIGuidelinesHelper.find_relevant_guidelines(
+        procedure="speech therapy",
+        diagnosis="applied behavior analysis",
+    )
+    assert all(g.guideline_id != pt.guideline_id for g in results)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_plural_query_still_matches_singular_keyword():
+    stent = await ECRIGuideline.objects.acreate(
+        guideline_id="test-plural-stent",
+        title="Coronary Stent Guideline",
+        procedure_keywords=["coronary stent"],
+    )
+    results = await ECRIGuidelinesHelper.find_relevant_guidelines(
+        procedure="coronary stents",
+        diagnosis="",
+    )
+    assert any(g.guideline_id == stent.guideline_id for g in results)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_closer_match_ranks_first():
+    """A guideline whose phrase the query covers in full comes ahead of a
+    newer one that only covers most of the query."""
+    close = await ECRIGuideline.objects.acreate(
+        guideline_id="test-rank-close",
+        title="Lumbar Fusion Guideline",
+        publication_date=date(2020, 1, 1),
+        procedure_keywords=["lumbar spinal fusion"],
+    )
+    partial = await ECRIGuideline.objects.acreate(
+        guideline_id="test-rank-partial",
+        title="Spinal Fusion Guideline",
+        publication_date=date(2025, 1, 1),
+        procedure_keywords=["cervical spinal fusion"],
+    )
+    results = await ECRIGuidelinesHelper.find_relevant_guidelines(
+        procedure="lumbar spinal fusion",
+        diagnosis="",
+        max_results=5,
+    )
+    ids = [g.guideline_id for g in results]
+    assert ids.index(close.guideline_id) < ids.index(partial.guideline_id)

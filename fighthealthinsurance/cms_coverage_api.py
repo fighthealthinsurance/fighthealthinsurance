@@ -249,6 +249,9 @@ def _title_matches(query_tokens: List[str], title: str):
     word. One shared word is not enough otherwise, which is what let "air
     ambulance" match "Air-Fluidized Bed" and "applied behavior analysis"
     match "Hair Analysis". Returns a sort key (best first) or None.
+
+    The ECRI guideline lookup applies the same rule to its keyword phrases
+    (ecri_guidelines_helper), so both sources agree on what a match is.
     """
     title_tokens = set(_meaningful_tokens(title))
     if not title_tokens:

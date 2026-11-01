@@ -359,6 +359,27 @@ def _no_health_news_feeds():
 
 
 @pytest.fixture(autouse=True)
+def _no_citation_registry_lookups():
+    """No test reaches doi.org, NCBI or eCFR to check a citation.
+
+    Citation generation now checks the identifiers in model-written
+    citations against those registries (ml/citation_verification.py), and
+    many tests feed backends that return DOIs. The checks are off unless a
+    test turns them on; tests/async-unit/test_citation_verification.py does,
+    with the network faked.
+    """
+    from unittest.mock import patch
+
+    try:
+        from fighthealthinsurance.ml import citation_verification
+    except Exception:
+        yield
+        return
+    with patch.object(citation_verification, "checks_enabled", return_value=False):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _fresh_spend_ledger():
     """Each test starts with no recorded provider spend and no pauses
     (ml/spend.py keeps them in process memory when its worker is off)."""
