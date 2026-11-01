@@ -1419,6 +1419,8 @@ class TestDenialWatchGreyStateInsurersPage(TestCase):
 
     def test_the_change_view_names_the_year_it_compares_with(self):
         self.assertIn('data-m="chg">Change from 2024<', self.page)
+        # The uninsured map's own change is Census's 2023 to 2024, a different comparison.
+        self.assertIn('data-m="uchg">Change from 2023<', self.page)
         self.assertNotIn("since 2023", JS)
 
     def test_capital_health_plans_reasons_are_left_out_too(self):
