@@ -106,6 +106,44 @@ class TestContextExtraSkipsWhatThePromptCarries:
         assert m._build_context_extra(ml_citations_context=[]) == ""
 
 
+class TestPubMedLineNeedsResults:
+    """A PubMed search that finds nothing comes back as "". The line that
+    invites DOI citations must not go out with nothing to cite."""
+
+    @pytest.mark.parametrize("pubmed", ["", "   ", "\n\t"])
+    def test_empty_pubmed_adds_no_doi_line(self, pubmed):
+        extra = _model()._build_context_extra(
+            pubmed_context=pubmed, prompt="Write an appeal."
+        )
+        assert "pubmed" not in extra.lower()
+        assert "DOI" not in extra
+        assert extra == ""
+
+    def test_empty_pubmed_beside_real_context_adds_only_that_context(self):
+        extra = _model()._build_context_extra(
+            patient_context="patient has had 8 weeks of PT",
+            pubmed_context="",
+            prompt="Write an appeal.",
+        )
+        assert "8 weeks of PT" in extra
+        assert "DOI" not in extra
+
+    def test_real_pubmed_results_keep_the_doi_line(self):
+        extra = _model()._build_context_extra(
+            pubmed_context="PMID 12345678: lumbar MRI outcomes. doi:10.1000/x1",
+            prompt="Write an appeal.",
+        )
+        assert "PMID 12345678" in extra
+        assert "you can include the DOI number" in extra
+
+    @pytest.mark.parametrize("citations", ["  ", ["", ""]])
+    def test_blank_citations_add_no_citation_line(self, citations):
+        extra = _model()._build_context_extra(
+            ml_citations_context=citations, prompt="Write an appeal."
+        )
+        assert "citations" not in extra
+
+
 class TestTokenEstimateMirrorsTheWire:
     """The proactive-shed estimate counts a call-dict context only when the
     model would actually inject it, i.e. when the prompt lacks it."""

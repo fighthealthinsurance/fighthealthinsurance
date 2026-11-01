@@ -5475,7 +5475,14 @@ class RemoteOpenLike(RemoteModel):
         ):
             patient_context_max = int(self.max_len / 2)
             context_extra = f"When answering the following question you can use the patient context {patient_context[0:patient_context_max]}."
-        if pubmed_context is not None and not _already_in_prompt(pubmed_context):
+        # Only real results earn the PubMed line: an empty search comes back
+        # as "", and the line would still invite the model to cite DOIs with
+        # nothing to cite.
+        if (
+            pubmed_context is not None
+            and pubmed_context.strip()
+            and not _already_in_prompt(pubmed_context)
+        ):
             context_extra += f"You can also use this context from pubmed: {pubmed_context} and you can include the DOI number in the appeal."
         if (
             plan_context is not None
@@ -5484,7 +5491,11 @@ class RemoteOpenLike(RemoteModel):
         ):
             context_extra += f"For answering the question you can use this context about the plan {plan_context}"
         citations_text = render_citations_context(ml_citations_context)
-        if citations_text and not _already_in_prompt(citations_text):
+        if (
+            citations_text
+            and citations_text.strip()
+            and not _already_in_prompt(citations_text)
+        ):
             context_extra += (
                 f"You can also use this context from citations: {citations_text}."
             )
