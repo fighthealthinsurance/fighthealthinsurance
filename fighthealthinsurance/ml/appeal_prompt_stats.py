@@ -25,11 +25,15 @@ from fighthealthinsurance.ml.appeal_prompt_versions import (
     PROMPT_V1,
     PROMPT_V2,
     PROMPT_V3,
+    PROMPT_V4,
+    PROMPT_V5,
 )
 
-VERSIONS = (PROMPT_V1, PROMPT_V2, PROMPT_V3)
+VERSIONS = (PROMPT_V1, PROMPT_V2, PROMPT_V3, PROMPT_V4, PROMPT_V5)
 
-# Every pair of versions, earlier version first: v1-v2, v1-v3, v2-v3.
+# Every pair of versions, earlier version first: v1-v2, v1-v3, ... v4-v5.
+# The dashboard shows the pairs the current mode draws and any pair with
+# picks, so pairs no run has drawn stay off the page.
 PAIRS = tuple(itertools.combinations(VERSIONS, 2))
 
 # How many picks the head-to-head needs before the page states a lean.

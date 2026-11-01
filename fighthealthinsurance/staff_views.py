@@ -3848,9 +3848,9 @@ class ModelUsageDashboardView(generic.TemplateView):
 
     @staticmethod
     def _split_started(rows: List[Any]) -> Optional[datetime.datetime]:
-        """When the newest unbroken run of random-draw rows (half and half or
-        thirds) began, or None when the newest row draws no version at
-        random. ``rows`` is newest first."""
+        """When the newest unbroken run of random-draw rows (any mode in
+        RANDOM_MODES) began, or None when the newest row draws no version
+        at random. ``rows`` is newest first."""
         from fighthealthinsurance.ml.appeal_prompt_versions import RANDOM_MODES
 
         started = None
@@ -3873,6 +3873,7 @@ class ModelUsageDashboardView(generic.TemplateView):
             MODE_ORIGINAL,
             MODE_VERSIONS,
             OUTPUT_CONTRACT,
+            TIGHT_SYSTEM_PROMPT,
             current_letter_prompt_mode,
         )
         from fighthealthinsurance.models import LetterPromptMode
@@ -3900,6 +3901,7 @@ class ModelUsageDashboardView(generic.TemplateView):
             "head_to_head": pairs,
             "min_mixed_picks": MIN_MIXED_PICKS,
             "output_contract": OUTPUT_CONTRACT,
+            "tight_system_prompt": TIGHT_SYSTEM_PROMPT,
         }
 
     def post(self, request, *args, **kwargs):
@@ -3913,7 +3915,7 @@ class ModelUsageDashboardView(generic.TemplateView):
         mode = (request.POST.get("mode") or "").strip()
         if mode not in {m for m, _label in MODE_CHOICES}:
             return HttpResponse(
-                "Choose original, new, half and half, sectioned or thirds.",
+                "Choose one of the modes the dashboard lists.",
                 status=400,
             )
         note = (request.POST.get("note") or "").strip()[:500]

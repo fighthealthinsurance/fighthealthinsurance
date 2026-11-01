@@ -161,8 +161,26 @@ class HeadToHeadTest(TestCase):
             [
                 (apv.PROMPT_V1, apv.PROMPT_V2),
                 (apv.PROMPT_V1, apv.PROMPT_V3),
+                (apv.PROMPT_V1, apv.PROMPT_V4),
+                (apv.PROMPT_V1, apv.PROMPT_V5),
                 (apv.PROMPT_V2, apv.PROMPT_V3),
+                (apv.PROMPT_V2, apv.PROMPT_V4),
+                (apv.PROMPT_V2, apv.PROMPT_V5),
+                (apv.PROMPT_V3, apv.PROMPT_V4),
+                (apv.PROMPT_V3, apv.PROMPT_V5),
+                (apv.PROMPT_V4, apv.PROMPT_V5),
             ],
+        )
+
+    def test_a_v4_and_v5_page_counts_for_their_pair(self):
+        denial = _denial()
+        a = self._draft(denial, apv.PROMPT_V4)
+        b = self._draft(denial, apv.PROMPT_V5)
+        self._pick(denial, b, [a, b])
+        h2h = _pair(head_to_head(), apv.PROMPT_V4, apv.PROMPT_V5)
+        self.assertEqual(
+            (h2h.picks, h2h.first_chosen, h2h.second_chosen, h2h.second_expected),
+            (1, 0, 1, 0.5),
         )
 
     def test_a_page_with_all_three_versions_counts_for_each_pair(self):
@@ -395,7 +413,7 @@ class DashboardPromptSwitchTest(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertContains(
             response,
-            "Choose original, new, half and half, sectioned or thirds.",
+            "Choose one of the modes the dashboard lists.",
             status_code=400,
         )
         self.assertFalse(LetterPromptMode.objects.exists())
@@ -433,6 +451,19 @@ class DashboardPromptSwitchTest(TestCase):
         )
         self.assertContains(response, "v2 and v3")
         self.assertContains(response, "v3 picked ÷ chance")
+
+    def test_v4_or_v5_shows_only_the_v4_v5_pair(self):
+        self._staff()
+        LetterPromptMode.objects.create(mode=apv.MODE_SPLIT_V4_V5)
+        response = self.client.get(self.url)
+        self.assertEqual(self._shown_pairs(response), [(apv.PROMPT_V4, apv.PROMPT_V5)])
+        self.assertContains(response, "v4 and v5")
+        self.assertContains(response, "v5 picked ÷ chance")
+
+    def test_the_page_shows_the_tight_system_prompt(self):
+        self._staff()
+        response = self.client.get(self.url)
+        self.assertContains(response, apv.TIGHT_SYSTEM_PROMPT)
 
     def test_moving_from_half_and_half_to_thirds_keeps_the_run(self):
         self._staff()
