@@ -59,6 +59,7 @@ from dateutil.relativedelta import relativedelta
 from loguru import logger
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
+from fighthealthinsurance import experiments
 from fighthealthinsurance import letter_review, letter_review_highlight
 from fighthealthinsurance import storage_health
 from fighthealthinsurance.common_view_logic import schedule_follow_ups
@@ -421,6 +422,26 @@ class StaffDashboardView(generic.TemplateView):
     """Staff dashboard with links to all staff views."""
 
     template_name = "staff_dashboard.html"
+
+
+class ExperimentsView(generic.TemplateView):
+    """Staff page listing every experimental feature flag (experiments.py)
+    and whether it is on, off, or set but missing something it needs, as the
+    pod serving the page loaded its settings. Settings only: no database
+    and no network, and only the names of the keys it checks, never their
+    values."""
+
+    template_name = "experiments.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        rows = experiments.experiment_states()
+        ctx["title"] = "Experiments"
+        ctx["generated_at"] = timezone.now()
+        ctx["deployment"] = AdminStatusView._deployment_status()
+        ctx["groups"] = experiments.grouped(rows)
+        ctx["counts"] = experiments.summary(rows)
+        return ctx
 
 
 class PlanDocumentsDashboardView(generic.TemplateView):

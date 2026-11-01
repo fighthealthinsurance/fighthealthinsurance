@@ -437,6 +437,20 @@ class TestEvidenceJudging:
         ours._infer_no_context.assert_not_awaited()
         assert stored.scorer == research_judging.SCORER
 
+    async def test_with_jev_off_a_marked_down_own_model_is_not_asked(self):
+        """best_internal_model returns a model marked down; with Jev off (the
+        default) every case of a backfill would wait out its judging time on
+        it, so the case goes on without verdicts instead."""
+        await _cached_search("MRI Lower back pain", ["1"])
+        await _article("1", "Imaging for low back pain", abstract="Imaging helped.")
+        ours = _own_model()
+
+        with override_settings(CHOOSER_JUDGE_EVIDENCE=True):
+            evidence = await self._evidence(AsyncMock(), ours, ours_healthy=False)
+
+        ours._infer_no_context.assert_not_awaited()
+        assert [e["pmid"] for e in evidence] == ["1"]
+
     async def test_what_jev_judges_is_not_asked_of_our_own_model(self):
         await _cached_search("MRI Lower back pain", ["1"])
         await _article("1", "Imaging for low back pain", abstract="Imaging helped.")

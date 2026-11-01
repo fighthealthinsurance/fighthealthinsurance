@@ -530,6 +530,9 @@ def generate_chooser_ranked_lines():
             # How hard the case was to judge (chooser_complexity), 1 to 5;
             # null for a task scored by nobody yet.
             "complexity": task.complexity,
+            # Which case pipeline wrote it (chooser_tasks), so votes on one
+            # version can be told from votes on another.
+            "case_version": task.case_version,
             "chosen_candidate": {
                 "id": chosen.id,
                 "candidate_index": chosen.candidate_index,

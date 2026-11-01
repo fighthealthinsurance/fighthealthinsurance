@@ -163,6 +163,77 @@ class TheFingerprintIsKeyedTest(_OneCopyTestCase):
         )
 
 
+    def test_a_replayed_upload_with_the_box_ticked_is_shared_once(self):
+        """A replay adds nothing to the appeal, so it must not store a second
+        research copy or spend the share budgets again."""
+        self.post([pdf()], share_for_research="on")
+        self.post([pdf()], share_for_research="on")
+        self.assertEqual(
+            PolicyDocument.objects.filter(
+                source=PolicyDocument.SOURCE_SHARED_APPEAL
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            shared_plan_documents.shared_today(PolicyDocument.SOURCE_SHARED_APPEAL),
+            1,
+        )
+
+    def test_a_shared_copy_that_could_not_be_read_is_shared_again(self):
+        """Unreadable can mean the reads ran out of retries, so the same file
+        again is worth a second try."""
+        self.post([pdf()], share_for_research="on")
+        PolicyDocument.objects.filter(
+            source=PolicyDocument.SOURCE_SHARED_APPEAL
+        ).update(processing_status=PolicyDocument.PROCESSING_UNREADABLE)
+        self.post([pdf()], share_for_research="on")
+        self.assertEqual(
+            PolicyDocument.objects.filter(
+                source=PolicyDocument.SOURCE_SHARED_APPEAL
+            ).count(),
+            2,
+        )
+
+    def test_a_copy_that_fails_the_closer_look_does_not_stand_in_for_one_that_passes(
+        self,
+    ):
+        from django.core.exceptions import ValidationError
+
+        with patch(
+            "fighthealthinsurance.chat_forms.validate_shared_document",
+            side_effect=[ValidationError("not this one"), None],
+        ):
+            self.post(
+                [pdf(name="first.pdf"), pdf(name="second.pdf")],
+                share_for_research="on",
+            )
+        self.assertEqual(
+            PolicyDocument.objects.filter(
+                source=PolicyDocument.SOURCE_SHARED_APPEAL
+            ).count(),
+            1,
+        )
+
+
+    def test_the_copy_that_passes_the_closer_look_is_the_one_shared(self):
+        from django.core.exceptions import ValidationError
+
+        second = pdf(name="second.pdf", content=PDF + b" second")
+        expected = shared_plan_documents.fingerprint(second)
+        with patch(
+            "fighthealthinsurance.chat_forms.validate_shared_document",
+            side_effect=[ValidationError("not this one"), None],
+        ):
+            self.post(
+                [pdf(name="first.pdf", content=PDF + b" first"), second],
+                share_for_research="on",
+            )
+        shared = PolicyDocument.objects.get(
+            source=PolicyDocument.SOURCE_SHARED_APPEAL
+        )
+        self.assertEqual(shared.fingerprint, expected)
+
+
 class TwoSavesAtOnceTest(_OneCopyTestCase):
     """The second of two saves that both missed the other's row."""
 

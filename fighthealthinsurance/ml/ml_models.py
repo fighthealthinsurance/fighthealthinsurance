@@ -2961,6 +2961,63 @@ class RemoteOpenLike(RemoteModel):
     # overrides it per deployment.
     KEY_QUOTA_COOLDOWN_SECONDS: ClassVar[float] = 3600.0
 
+    def _key_cooldown(self, status: int, body: str, response: Any) -> tuple[str, float]:
+        """Why a refused key is passed over, and for how long. ``response``
+        carries the headers a 429's Retry-After is read from."""
+        # Clamped like the rate-limit wait: a zero or negative setting would
+        # make the refused key current again at once, and no fallback would
+        # ever be sent.
+        if spend.quota_refusal(status, body):
+            return "credit or quota", max(
+                1.0,
+                _env_float(
+                    "FHI_KEY_QUOTA_COOLDOWN_SECONDS", self.KEY_QUOTA_COOLDOWN_SECONDS
+                ),
+            )
+        if status == 429:
+            return "rate limit", _retry_after_seconds(response)
+        # A revoked key or disabled account: passed over for as long as
+        # _note_http_refusal parks a pair that refuses with one key.
+        return "key or account refused", max(
+            1.0, _env_float("FHI_AUTH_REFUSAL_COOLDOWN_SECONDS", 900.0)
+        )
+
+    def _probe_get(
+        self, url: str, headers_for: Callable[[Optional[str]], dict], timeout: Any
+    ) -> requests.Response:
+        """GET a health probe with the key inference would send now. When the
+        provider refuses that key and a fallback is configured, the key is
+        marked spent, as inference marks it, and the probe is sent once with
+        each other key: otherwise a refused primary reads as the provider
+        down, routing sends it nothing, and the fallback is never used. A 200
+        clears the key's cooldown. Raises what requests raises."""
+        key = self._key_ring.current
+        tried: set = set()
+        while True:
+            resp = requests.get(url, headers=headers_for(key), timeout=timeout)
+            if resp.status_code == 200:
+                self._key_ring.note_served(key)
+                return resp
+            tried.add(key)
+            if len(self._key_ring) < 2:
+                return resp
+            try:
+                body = resp.text[:2000]
+            except Exception:
+                body = ""
+            if not _key_refusal(resp.status_code, body):
+                return resp
+            why, seconds = self._key_cooldown(resp.status_code, body, resp)
+            nxt = self._key_ring.mark_spent(key, seconds)
+            if nxt is None or nxt in tried:
+                return resp
+            logger.warning(
+                f"{self}: the health check at {url} was refused with the "
+                f"{self._key_ring.position(key)} (HTTP {resp.status_code}, {why}); "
+                f"checking with the {self._key_ring.position(nxt)}."
+            )
+            key = nxt
+
     def _key_after_refusal(
         self,
         key: Optional[str],
@@ -2980,25 +3037,7 @@ class RemoteOpenLike(RemoteModel):
         if len(self._key_ring) < 2 or not _key_refusal(e.status, body):
             return None
         tried.add(key)
-        # Clamped like the rate-limit wait: a zero or negative setting would
-        # make the refused key current again at once, and no fallback would
-        # ever be sent.
-        if spend.quota_refusal(e.status, body):
-            why = "credit or quota"
-            seconds = max(
-                1.0,
-                _env_float(
-                    "FHI_KEY_QUOTA_COOLDOWN_SECONDS", self.KEY_QUOTA_COOLDOWN_SECONDS
-                ),
-            )
-        elif e.status == 429:
-            why = "rate limit"
-            seconds = _retry_after_seconds(e)
-        else:
-            # A revoked key or disabled account: passed over for as long as
-            # _note_http_refusal parks a pair that refuses with one key.
-            why = "key or account refused"
-            seconds = max(1.0, _env_float("FHI_AUTH_REFUSAL_COOLDOWN_SECONDS", 900.0))
+        why, seconds = self._key_cooldown(e.status, body, e)
         nxt = self._key_ring.mark_spent(key, seconds)
         if nxt is None or nxt in tried:
             return None
@@ -3059,13 +3098,12 @@ class RemoteOpenLike(RemoteModel):
         records."""
         url = f"{probe_base}/models"
 
-        headers = {}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
+        def headers_for(key: Optional[str]) -> dict:
+            return {"Authorization": f"Bearer {key}"} if key else {}
 
         pair = (probe_base, probe_model)
         try:
-            resp = requests.get(url, headers=headers, timeout=timeout)
+            resp = self._probe_get(url, headers_for, timeout)
         except requests.RequestException as exc:
             _log_probe_problem(
                 pair,
@@ -6815,15 +6853,18 @@ class RemoteAnthropic(RateLimitedRemoteOpenLike):
         if not get_env_variable("ANTHROPIC_API_KEY"):
             return False
         url = f"{self.api_base}/models/{self.model}"
-        headers = {
-            "x-api-key": self.token or "",
-            "anthropic-version": ANTHROPIC_API_VERSION,
-        }
+
+        def headers_for(key: Optional[str]) -> dict:
+            return {
+                "x-api-key": key or "",
+                "anthropic-version": ANTHROPIC_API_VERSION,
+            }
+
         # (connect, read): see MODEL_PROBE_BUDGET_SECONDS.
         connect = self.MODEL_PROBE_CONNECT_SECONDS
         timeout = (connect, self.MODEL_PROBE_BUDGET_SECONDS - connect)
         try:
-            resp = requests.get(url, headers=headers, timeout=timeout)
+            resp = self._probe_get(url, headers_for, timeout)
         except requests.RequestException as exc:
             logger.warning(
                 f"Unable to contact Anthropic at {url} for {self.model} "

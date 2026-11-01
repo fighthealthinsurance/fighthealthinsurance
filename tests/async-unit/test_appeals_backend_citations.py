@@ -781,10 +781,16 @@ class TestAppealsBackendHelperWithCitations:
     ],
     ids=["two_saved_appeals", "one_saved_appeal", "zero_saved_appeals"],
 )
+@pytest.mark.parametrize(
+    "use_external", [False, True], ids=["no_outside_models", "outside_models_allowed"]
+)
 @pytest.mark.asyncio
-async def test_synthesis_threshold(saved_texts, synthesis_should_run):
-    """Synthesis runs only when >=2 saved appeals exist."""
+async def test_synthesis_threshold(saved_texts, synthesis_should_run, use_external):
+    """Synthesis runs only when >=2 saved appeals exist, under the denial's
+    own outside-model consent: synthesis_backends asks hosted models only
+    with it, so the flow must hand it through as given."""
     mock_denial = _make_mock_denial()
+    mock_denial.use_external = use_external
     parameters = {
         "denial_id": "12345",
         "email": "test@example.com",
@@ -873,6 +879,10 @@ async def test_synthesis_threshold(saved_texts, synthesis_should_run):
             assert (
                 mock_appeal_gen.synthesize_appeals.call_args[1]["appeal_texts"]
                 == saved_texts
+            )
+            assert (
+                mock_appeal_gen.synthesize_appeals.call_args[1]["use_external"]
+                is use_external
             )
             # The synthesized appeal is persisted with synthesized=True so the
             # provenance is tracked independently of model_name.

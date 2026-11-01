@@ -36,10 +36,13 @@ env:
   # The OpenAI-compatible endpoint and model the script extracts with.
   # Repository variables override the defaults (DeepInfra, with the model the
   # app's router uses there); the key is a repository secret. A dedicated
-  # STATE_RESOURCES_API_KEY wins, else the DEEPINFRA_API key is reused.
+  # STATE_RESOURCES_API_KEY wins, else the DEEPINFRA_API key is reused. The
+  # key itself is set only on the step that calls the model (below), so the
+  # unpinned packages pip installs never run with it in their environment;
+  # the job sees only whether one is configured.
   HEALTH_BACKEND_URL: ${{ vars.STATE_RESOURCES_BACKEND_URL || 'https://api.deepinfra.com/v1/openai' }}
   HEALTH_BACKEND_MODEL: ${{ vars.STATE_RESOURCES_MODEL || 'google/gemma-4-26B-A4B-it' }}
-  HEALTH_BACKEND_API_KEY: ${{ secrets.STATE_RESOURCES_API_KEY || secrets.DEEPINFRA_API }}
+  HAS_MODEL_KEY: ${{ (secrets.STATE_RESOURCES_API_KEY || secrets.DEEPINFRA_API) != '' }}
 
 jobs:
   update-state-resources:
@@ -53,7 +56,7 @@ jobs:
     timeout-minutes: 300
     steps:
       - name: Check that a model key is configured
-        if: env.HEALTH_BACKEND_API_KEY == ''
+        if: env.HAS_MODEL_KEY != 'true'
         run: |
           echo "::error::No model key: add the STATE_RESOURCES_API_KEY (or DEEPINFRA_API) repository secret, a key for the endpoint in STATE_RESOURCES_BACKEND_URL (DeepInfra by default)."
           exit 1
@@ -74,6 +77,8 @@ jobs:
         run: pip install -r scripts/state_data/requirements.txt
 
       - name: Refresh the state resource index and the extracted resources
+        env:
+          HEALTH_BACKEND_API_KEY: ${{ secrets.STATE_RESOURCES_API_KEY || secrets.DEEPINFRA_API }}
         run: python scripts/state_data/extract_info.py
 
       - name: Refuse a run that lost most of the data

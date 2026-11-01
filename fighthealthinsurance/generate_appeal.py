@@ -64,7 +64,10 @@ from fighthealthinsurance.ml.appeal_prompt_versions import (
     current_letter_prompt_mode,
     uses_sectioned_prompt,
 )
-from fighthealthinsurance.letter_openings import APPEAL_SALUTATION_INSTRUCTION
+from fighthealthinsurance.letter_openings import (
+    APPEAL_SALUTATION_INSTRUCTION,
+    strip_letter_preamble,
+)
 from fighthealthinsurance.ml import llm_usage
 from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
 from fighthealthinsurance.ml.model_identity import TEMPLATE_MODEL_NAME
@@ -77,7 +80,10 @@ from fighthealthinsurance.context_utils import (
     truncate_at_boundary,
 )
 from fighthealthinsurance.denial_base import DenialBase
-from fighthealthinsurance.regulator_routing import RoutingAnswer
+from fighthealthinsurance.regulator_routing import (
+    RoutingAnswer,
+    letter_names_regulator,
+)
 
 from .exec import background_executor, executor
 from .ml.ml_models import (
@@ -2998,7 +3004,9 @@ class AppealGenerator(object):
         alt_name: Optional[str] = None
         try:
             regulator = getattr(denial, "regulator", None)
-            if regulator is not None:
+            # ERISA_LETTER means the letter named ERISA, so a regulator the
+            # model only inferred does not count.
+            if regulator is not None and letter_names_regulator(denial):
                 alt_name = getattr(regulator, "alt_name", None)
         except Exception:
             alt_name = None
@@ -3970,6 +3978,11 @@ class AppealGenerator(object):
                         prompt=prompt,
                         temperature=0.3,
                     )
+                # The race includes chat-tuned hosted models, which open with
+                # "Here is the synthesized letter:"; _infer_no_context skips
+                # the draft path's strip, so it is done here (letter_openings).
+                if result:
+                    result = strip_letter_preamble(result)
                 got = len(result.strip()) if result else 0
                 if got >= self.MIN_SYNTHESIS_CHARS:
                     logger.debug(f"Synthesis candidate from {model}: {got} chars")

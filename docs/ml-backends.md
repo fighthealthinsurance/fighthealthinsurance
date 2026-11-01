@@ -201,8 +201,8 @@ token found` warning; without `LUNA_ROUTE_KEY` it logs `Skipping chat model
 <model id>: Exception` for each LunaRoute model. Either is expected, not a
 fault.
 
-**Fallback keys.** Every key above can be paired with a second key for the
-same provider, set as `SECONDARY_<name>` (`SECONDARY_ANTHROPIC_API_KEY`,
+**Fallback keys.** Every key above except LunaRoute's can be paired with a
+second key for the same provider, set as `SECONDARY_<name>` (`SECONDARY_ANTHROPIC_API_KEY`,
 `SECONDARY_DEEPINFRA_API`, `SECONDARY_AZURE_OPENAI_API_KEY`, and so on). The
 primary key is sent until the provider refuses it: for a rate limit (HTTP
 429), for credit or quota that ran out, or as a revoked key or disabled

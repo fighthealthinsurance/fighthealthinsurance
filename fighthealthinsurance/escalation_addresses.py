@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
 from fighthealthinsurance.models import RegulatorEscalation
+from fighthealthinsurance.regulator_routing import letter_names_regulator
 from fighthealthinsurance.state_help import (
     StateHelp,
     get_state_help_by_abbreviation,
@@ -237,8 +238,16 @@ _APPEAL_ALREADY_DECIDED_RE = re.compile(
     r"("
     r"\b(we|has|have|is|are|was|were|been)\s+(also\s+)?uph[eo]ld\b"
     r"|\buph[eo]ld\s+(our|the|its|this|that)\b"
-    r"|\bour (original|initial|previous|prior|earlier) "
+    # "Our original decision" alone is in every first denial's rights notice
+    # ("you have the right to appeal our initial determination"), so it
+    # counts only with a verb saying it was kept.
+    r"|\b(maintain|affirm|reaffirm|uph[eo]ld|stand\s+by)(s|ed|ing)?\s+"
+    r"(our|the|its)\s+(original|initial|previous|prior|earlier)\s+"
     r"(decision|determination|denial)\b"
+    r"|\bour (original|initial|previous|prior|earlier) "
+    r"(decision|determination|denial)\b[^.;:!?\n]{0,60}?"
+    r"\b(stands|remains|(is|was|has\s+been|have\s+been)\s+"
+    r"(upheld|maintained|affirmed|reaffirmed|unchanged))\b"
     r"|\bfinal (adverse|internal)? ?(benefit )?(determination|decision)\b"
     r"|\bexhausted\b.{0,40}\bappeal"
     r"|\b(second|2nd|level[- ](2|two|ii))[- ]level\b"
@@ -256,6 +265,12 @@ _CONDITIONAL_CLAUSE_RE = re.compile(
     re.IGNORECASE,
 )
 _CLAUSE_BREAK_RE = re.compile(r"[.;:!?\n]")
+# A negation just before the match: "this is not a final decision", "we
+# cannot affirm our original decision", "we can't uphold the denial".
+_NEGATED_RE = re.compile(
+    r"\b(not|never|no|cannot|\w+n['\u2019]t)\s+(a|an|the|our|yet)?\s*$",
+    re.IGNORECASE,
+)
 # How far back a clause is read for a conditional. Longer than any clause
 # a letter is likely to hold, short enough that the sentence before cannot
 # lend its "if" to this one when the break between them is unpunctuated.
@@ -269,8 +284,9 @@ def _appeal_already_decided(denial_text: str) -> bool:
             max(0, match.start() - _CLAUSE_LOOKBACK_CHARS) : match.start()
         ]
         clause = _CLAUSE_BREAK_RE.split(before)[-1]
-        if not _CONDITIONAL_CLAUSE_RE.search(clause):
-            return True
+        if _CONDITIONAL_CLAUSE_RE.search(clause) or _NEGATED_RE.search(clause):
+            continue
+        return True
     return False
 
 
@@ -318,7 +334,9 @@ def regulator_escalation_reasons(denial: Any) -> List[str]:
 
     regulator = getattr(denial, "regulator", None)
     regulator_name = (getattr(regulator, "name", "") or "").strip()
-    if regulator_name:
+    # Only a regulator the letter names: one the model inferred (no regex
+    # match) is a guess about the plan, not a sign from the letter.
+    if regulator_name and letter_names_regulator(denial):
         reasons.append(
             f"Your denial letter names {regulator_name}, a regulator that "
             "oversees this kind of plan and takes consumer complaints."

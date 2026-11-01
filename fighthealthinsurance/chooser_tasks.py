@@ -728,14 +728,15 @@ async def _judge_evidence(
             )
             for a in articles
         ]
-        ours = ml_router.best_internal_model()
+        # Our own model is asked only when one looks healthy:
+        # best_internal_model returns the strongest even when every one is
+        # marked down, and a down model would spend the case's whole judging
+        # time (a backfill's hundred cases over) answering nothing. Jev is
+        # not cut short for such a fallback either.
+        reserve = bool(ml_router._healthy_general_internal())
+        ours = ml_router.best_internal_model() if reserve else None
         jev_timed_out = False
         if jev_on:
-            # Time is kept back for our own model only when one looks
-            # healthy: best_internal_model returns the strongest even when
-            # every one is marked down, and Jev should not be cut short for
-            # a fallback that is unlikely to answer.
-            reserve = bool(ml_router._healthy_general_internal())
             jev_budget = CHOOSER_EVIDENCE_JUDGING_TIMEOUT * (
                 _JEV_SHARE_OF_JUDGING if reserve else 1.0
             )

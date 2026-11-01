@@ -36,6 +36,7 @@ from fighthealthinsurance.models import (
     FollowUpSched,
     IntakeJourneyEvent,
     ProposedAppeal,
+    Regulator,
 )
 from fighthealthinsurance.views import DENIAL_SESSION_REUSE_WINDOW
 from tests.sync.test_intake_resume_link import INTAKE_ON
@@ -754,6 +755,18 @@ class ANewLetterOnTheReusedDenialTest(TestCase):
             {column: getattr(denial, column) for column in self.RESEARCH},
             {column: None for column in self.RESEARCH},
         )
+
+    def test_the_regulator_linked_for_the_first_letter_goes_with_it(self):
+        """Extraction skips the regulator lookup while one is linked, so the
+        first letter's would otherwise stand for the second."""
+        denial = self._first_letter_read_and_asked_about()
+        erisa = Regulator.objects.get(alt_name="ERISA")
+        Denial.objects.filter(denial_id=denial.denial_id).update(regulator=erisa)
+
+        denial = self._submit(self.LETTER_B)
+
+        denial.refresh_from_db()
+        self.assertIsNone(denial.regulator)
 
     def test_the_same_letter_again_keeps_its_citations_and_research(self):
         denial = self._first_letter_read_and_asked_about()

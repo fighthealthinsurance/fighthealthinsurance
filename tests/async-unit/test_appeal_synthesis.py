@@ -91,6 +91,28 @@ class TestSynthesizeAppeals(unittest.TestCase):
         )
         self.assertEqual(seen, ["other"])
 
+    @patch("fighthealthinsurance.generate_appeal.best_within_timelimit")
+    @patch("fighthealthinsurance.generate_appeal.ml_router")
+    def test_a_chat_models_preamble_comes_off_the_merged_letter(
+        self, mock_router, mock_best_within
+    ):
+        """Hosted chat models race in synthesis and open with an introduction
+        that is not part of the letter (letter_openings)."""
+        letter = "Dear Appeals Department,\n\n" + "I am writing to appeal. " * 10
+        mock_model = MagicMock(spec=RemoteModelLike)
+        mock_model._infer_no_context = AsyncMock(
+            return_value="Here is the synthesized appeal letter combining the "
+            "strongest arguments:\n\n```\n" + letter + "\n```"
+        )
+        mock_router.synthesis_backends.return_value = ([mock_model], [])
+
+        async def call_first_task(tasks, **_kwargs):
+            return await tasks[0]
+
+        mock_best_within.side_effect = call_first_task
+        result = asyncio.run(self._run_synthesize(appeal_texts=self.sample_appeals))
+        self.assertEqual(result, letter)
+
     def test_returns_none_with_empty_list(self):
         result = asyncio.run(self._run_synthesize(appeal_texts=[]))
         self.assertIsNone(result)

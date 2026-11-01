@@ -91,6 +91,12 @@
         </a>
       </li>
       <li>
+        <a href="{% url 'staff_experiments' %}">
+          <strong>Experiments</strong>
+          <div class="link-description">Every experimental feature flag and whether it is on, off, or set but missing something it needs (a TypeSafe switch without its key, say), as this pod loaded its settings</div>
+        </a>
+      </li>
+      <li>
         <a href="{% url 'temporal_ui' path='' %}">
           <strong>Temporal Web UI (view-only)</strong>
           <div class="link-description">Workflow runs and full event histories, proxied behind this login; write actions are disabled</div>

@@ -362,6 +362,15 @@ class _Sources:
         return [SimpleNamespace(name=n) for n in self._names]
 
 
+def _erisa_regulator():
+    """The ERISA fixture row's shape: its regex is what makes it a match."""
+    return SimpleNamespace(
+        alt_name="ERISA",
+        regex=re.compile(r"ERISA", re.IGNORECASE),
+        negative_regex=re.compile(""),
+    )
+
+
 class TestCollector:
     def test_reads_plan_sources_from_the_denial(self):
         denial = SimpleNamespace(plan_source=_Sources("State Marketplace / Affordable Care Act"))
@@ -375,9 +384,25 @@ class TestCollector:
         )
         assert "self-funded plan" in (AppealGenerator._collect_plan_law_context(denial) or "")
         denial = SimpleNamespace(
-            plan_source=_Sources(), regulator=SimpleNamespace(alt_name="ERISA")
+            plan_source=_Sources(),
+            denial_text="Your rights under ERISA are below.",
+            regulator=_erisa_regulator(),
         )
         assert "ERISA governs" in (AppealGenerator._collect_plan_law_context(denial) or "")
+
+    def test_an_erisa_regulator_the_letter_never_names_is_not_the_letter_naming_erisa(
+        self,
+    ):
+        """The model can link the ERISA row to a letter that never says
+        ERISA; ERISA_LETTER is for a letter that does."""
+        denial = SimpleNamespace(
+            plan_source=_Sources(),
+            denial_text="Your claim was denied.",
+            regulator=_erisa_regulator(),
+        )
+        assert "ERISA governs" not in (
+            AppealGenerator._collect_plan_law_context(denial) or ""
+        )
 
     def test_a_bare_denial_still_gets_the_hedged_block(self):
         block = AppealGenerator._collect_plan_law_context(SimpleNamespace())
