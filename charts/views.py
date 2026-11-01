@@ -465,29 +465,25 @@ def generate_chooser_ranked_lines():
         .prefetch_related("candidates")
     )
 
-    # One pass over the votes (no N+1): each vote's point goes to its chosen
-    # candidate, splits between a tie, or goes nowhere when every draft was
-    # rejected; flags and optional rationales travel with the totals.
+    # One pass over the votes for the counters: each vote's point goes to its
+    # chosen candidate, splits between a tie, or goes nowhere when every draft
+    # was rejected. Rationales are read one task at a time below so their free
+    # text does not accumulate across the whole export.
     credit_by_task: dict[int, Counter] = {}
     ties_by_task: dict[int, Counter] = {}
     flags_by_task: dict[int, Counter] = {}
     all_bad_by_task: Counter = Counter()
-    feedback_by_task: dict[int, list[dict[str, object]]] = {}
     votes_by_task: Counter = Counter()
-    for (
-        task_id,
-        chosen_id,
-        flagged_ids,
-        tied_ids,
-        all_bad,
-        rationale,
-    ) in ChooserVote.objects.filter(task__in=tasks_with_votes).values_list(
-        "task_id",
-        "chosen_candidate_id",
-        "flagged_candidate_ids",
-        "tied_candidate_ids",
-        "all_bad",
-        "rationale",
+    for task_id, chosen_id, flagged_ids, tied_ids, all_bad in (
+        ChooserVote.objects.filter(task__in=tasks_with_votes)
+        .values_list(
+            "task_id",
+            "chosen_candidate_id",
+            "flagged_candidate_ids",
+            "tied_candidate_ids",
+            "all_bad",
+        )
+        .iterator()
     ):
         votes_by_task[task_id] += 1
         if all_bad:
@@ -498,18 +494,29 @@ def generate_chooser_ranked_lines():
             ties_by_task.setdefault(task_id, Counter()).update(shares.keys())
         if flagged_ids:
             flags_by_task.setdefault(task_id, Counter()).update(set(flagged_ids))
-        if rationale:
-            feedback_by_task.setdefault(task_id, []).append(
-                {
-                    "rationale": rationale,
-                    "all_bad": all_bad,
-                    "chosen_candidate_id": chosen_id,
-                    "tied_candidate_ids": tied_ids or [],
-                    "flagged_candidate_ids": flagged_ids or [],
-                }
-            )
 
     for task in tasks_with_votes:
+        review_feedback = [
+            {
+                "rationale": rationale,
+                "all_bad": all_bad,
+                "chosen_candidate_id": chosen_id,
+                "tied_candidate_ids": tied_ids or [],
+                "flagged_candidate_ids": flagged_ids or [],
+            }
+            for chosen_id, flagged_ids, tied_ids, all_bad, rationale in (
+                ChooserVote.objects.filter(task=task)
+                .exclude(rationale="")
+                .values_list(
+                    "chosen_candidate_id",
+                    "flagged_candidate_ids",
+                    "tied_candidate_ids",
+                    "all_bad",
+                    "rationale",
+                )
+                .iterator()
+            )
+        ]
         task_credit = credit_by_task.get(task.id, Counter())
         candidates_by_id = {c.id: c for c in task.candidates.all()}
 
@@ -569,7 +576,7 @@ def generate_chooser_ranked_lines():
             ),
             "total_votes": votes_by_task[task.id],
             "all_bad_count": all_bad_by_task.get(task.id, 0),
-            "review_feedback": feedback_by_task.get(task.id, []),
+            "review_feedback": review_feedback,
             # Jev's and fhi-local's generation-time picks, for staff analysis
             # only; the voter API never exposes this task metadata.
             "scorer_picks": task.scoring_json,

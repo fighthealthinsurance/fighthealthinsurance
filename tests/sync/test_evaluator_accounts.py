@@ -1,9 +1,15 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.db import IntegrityError
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from fighthealthinsurance.evaluator_accounts import EVALUATOR_GROUP_NAME
+from fighthealthinsurance.evaluator_accounts import (
+    EVALUATOR_GROUP_NAME,
+    EVALUATOR_LOGIN_ACCOUNT_LIMIT,
+)
 
 User = get_user_model()
 
@@ -91,12 +97,35 @@ class EvaluatorAccountTest(TestCase):
         self.assertContains(response, "already exists")
         self.assertEqual(User.objects.count(), original_count)
 
+    def test_concurrent_account_creation_shows_a_form_error(self):
+        self.client.force_login(self.staff)
+
+        with patch(
+            "fighthealthinsurance.evaluator_accounts.EvaluatorAccountForm.save",
+            side_effect=IntegrityError,
+        ):
+            response = self._create_account()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "already exists")
+
     def test_mismatched_passwords_create_no_account(self):
         self.client.force_login(self.staff)
 
         response = self._create_account(password2="different-pass-123!")
 
         self.assertEqual(response.status_code, 200)
+        self.assertFalse(User.objects.filter(username="judge@example.com").exists())
+
+    def test_password_cannot_closely_match_the_evaluator_email(self):
+        self.client.force_login(self.staff)
+
+        response = self._create_account(
+            password1="judge@example.com", password2="judge@example.com"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "too similar")
         self.assertFalse(User.objects.filter(username="judge@example.com").exists())
 
     def test_hidden_login_is_noindex(self):
@@ -110,11 +139,33 @@ class EvaluatorAccountTest(TestCase):
         user = self._evaluator()
 
         response = self.client.post(
-            self.login_url, {"username": user.email, "password": self.password}
+            self.login_url,
+            {"username": user.email.upper(), "password": self.password},
         )
 
         self.assertRedirects(response, reverse("chooser"))
         self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
+
+    def test_failed_logins_are_throttled_across_clients(self):
+        user = self._evaluator()
+
+        for attempt in range(EVALUATOR_LOGIN_ACCOUNT_LIMIT):
+            with self.subTest(attempt=attempt):
+                response = Client().post(
+                    self.login_url,
+                    {"username": user.email, "password": "wrong-password"},
+                )
+                expected = (
+                    429 if attempt == EVALUATOR_LOGIN_ACCOUNT_LIMIT - 1 else 200
+                )
+                self.assertEqual(response.status_code, expected)
+
+        response = Client().post(
+            self.login_url, {"username": user.email, "password": self.password}
+        )
+        self.assertContains(
+            response, "Too many failed login attempts", status_code=429
+        )
 
     def test_login_rejects_staff_superusers_and_non_evaluators(self):
         accounts = [

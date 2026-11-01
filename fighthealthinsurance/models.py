@@ -4561,11 +4561,11 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
         tied_candidate_ids: typing.Optional[list],
     ) -> dict[int, float]:
         """Share one vote's point between its winners; an all-bad vote has none."""
+        if chosen_candidate_id is None:
+            return {}
         tied = list(dict.fromkeys(tied_candidate_ids or []))
         if len(tied) >= 2:
             return {cid: 1.0 / len(tied) for cid in tied}
-        if chosen_candidate_id is None:
-            return {}
         return {chosen_candidate_id: 1.0}
 
     @staticmethod
@@ -4629,6 +4629,13 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
             str: A string in the form "Skip of Task {task_id} by {session_key}".
         """
         return f"Skip of Task {self.task_id} by {self.session_key}"
+
+
+class EvaluatorLoginThrottle(models.Model):
+    digest = models.CharField(max_length=64, unique=True)
+    failures = models.PositiveIntegerField(default=0)
+    window_started_at = models.DateTimeField(default=timezone.now)
+    last_failure_at = models.DateTimeField(default=timezone.now)
 
 
 class EncryptedTextField(models.TextField):

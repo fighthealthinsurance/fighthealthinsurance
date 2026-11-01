@@ -49,10 +49,13 @@ from fighthealthinsurance.chooser_chat_tools import ToolAnswer, answer_with_tool
 from fighthealthinsurance.chooser_practice_areas import (
     normalize_practice_area,
     practice_area_label,
+    practice_area_text_matches,
 )
 from fighthealthinsurance.models import (
     ChooserCandidate,
+    ChooserSkip,
     ChooserTask,
+    ChooserVote,
     ModelHealthAlertState,
     PubMedArticleSummarized,
     PubMedMiniArticle,
@@ -2115,27 +2118,37 @@ async def _generate_appeal_candidates(task: ChooserTask):
                 written["procedure"] = seed.treatment
                 written["diagnosis"] = seed.condition
             missing = [k for k, v in written.items() if not v]
-            if not missing:
-                context = written
-                # Facts are wanted, not required: a scenario without them
-                # is the old kind of task, still worth a vote.
-                facts = _facts_from_response(scenario_response or "")
-                if facts:
-                    context["facts"] = facts
-                logger.info(
-                    f"ChooserTask {task.id}: {'simple' if simple else 'standard'} "
-                    f"scenario by {_model_display_name(writer)}: "
-                    f"{written['procedure']!r} for {written['diagnosis']!r} "
-                    f"({'seeded' if seed else 'invented'} pair, {len(facts)} case "
-                    f"facts) in {time.monotonic() - started:.0f}s"
-                )
-                break
             preview = (scenario_response or "")[:200]
-            logger.warning(
-                f"ChooserTask {task.id}: scenario from "
-                f"{_model_display_name(writer)} is missing {missing}. "
-                f"Response started: {preview!r}"
+            if missing:
+                logger.warning(
+                    f"ChooserTask {task.id}: scenario from "
+                    f"{_model_display_name(writer)} is missing {missing}. "
+                    f"Response started: {preview!r}"
+                )
+                continue
+            if practice_area and not practice_area_text_matches(
+                practice_area, f"{written['procedure']} {written['diagnosis']}"
+            ):
+                logger.warning(
+                    f"ChooserTask {task.id}: scenario from "
+                    f"{_model_display_name(writer)} is outside {area_label}; asking "
+                    "the next writer"
+                )
+                continue
+            context = written
+            # Facts are wanted, not required: a scenario without them
+            # is the old kind of task, still worth a vote.
+            facts = _facts_from_response(scenario_response or "")
+            if facts:
+                context["facts"] = facts
+            logger.info(
+                f"ChooserTask {task.id}: {'simple' if simple else 'standard'} "
+                f"scenario by {_model_display_name(writer)}: "
+                f"{written['procedure']!r} for {written['diagnosis']!r} "
+                f"({'seeded' if seed else 'invented'} pair, {len(facts)} case "
+                f"facts) in {time.monotonic() - started:.0f}s"
             )
+            break
         if context is None:
             # No placeholders: a task about "Medical procedure" for "Medical
             # condition" measures nothing, and it used to go READY and reach
@@ -2276,6 +2289,12 @@ async def _generate_chat_candidates(task: ChooserTask):
         # question from one that could not write one.
         history: list = []
         final_user_prompt: Optional[str] = None
+
+        def usable_for_area(question: Optional[str]) -> bool:
+            return _usable_question(question) and (
+                not practice_area or practice_area_text_matches(practice_area, question)
+            )
+
         started = time.monotonic()
         for writer in writers:
             # A backend that did not answer returns None rather than raising.
@@ -2285,7 +2304,7 @@ async def _generate_chat_candidates(task: ChooserTask):
             history, final_user_prompt = _parse_conversation(
                 conversation_response or ""
             )
-            if _usable_question(final_user_prompt):
+            if usable_for_area(final_user_prompt):
                 logger.info(
                     f"ChooserTask {task.id}: conversation by "
                     f"{_model_display_name(writer)} ({len(history)} earlier "
@@ -2293,8 +2312,9 @@ async def _generate_chat_candidates(task: ChooserTask):
                 )
                 break
             logger.warning(
-                f"ChooserTask {task.id}: could not parse a conversation from "
+                f"ChooserTask {task.id}: could not use conversation from "
                 f"{_model_display_name(writer)}"
+                + (f" for {area_label}" if practice_area else "")
             )
             final_user_prompt = None
 
@@ -2314,7 +2334,7 @@ async def _generate_chat_candidates(task: ChooserTask):
                 question = await _ask_for_single_question(writer, simple_prompt)
                 if question:
                     question = question.strip().strip('"').strip("'").strip()
-                if _usable_question(question):
+                if usable_for_area(question):
                     final_user_prompt = question
                     break
             if final_user_prompt is None:
@@ -2718,17 +2738,25 @@ async def _generate_under(
         return await _generate_single_task(claim.task_type, practice_area=practice_area)
 
 
-async def prefill_practice_area_if_needed(task_type: str, practice_area: str) -> bool:
-    """Start one targeted task when no fresh matching task is on file.
+async def prefill_practice_area_if_needed(
+    task_type: str, practice_area: str, judged: Optional[Q] = None
+) -> Optional[bool]:
+    """Start one targeted task when this judge has no fresh matching case.
 
-    This never runs inline in a web request. It uses the type's usual
-    generation claim, so a specialty request cannot overlap the general refill.
+    True means work started, False means no work is needed, and None means
+    another generation or a claim error prevented this attempt from starting.
     """
     area = normalize_practice_area(practice_area)
     if area is None or task_type not in CASE_VERSIONS:
         return False
-    fresh = _fresh_tasks(task_type).filter(context_json__practice_area=area)
-    if await fresh.acount():
+    fresh = _fresh_tasks(task_type).filter(
+        context_json__practice_area=area, candidates__is_active=True
+    )
+    if judged is not None:
+        fresh = fresh.exclude(
+            id__in=ChooserVote.objects.filter(judged).values("task_id")
+        ).exclude(id__in=ChooserSkip.objects.filter(judged).values("task_id"))
+    if await fresh.distinct().acount():
         return False
     try:
         claim = await _claim_generation(task_type)
@@ -2737,12 +2765,12 @@ async def prefill_practice_area_if_needed(task_type: str, practice_area: str) ->
             f"Chooser {area} prefill skipped: could not check the {task_type} "
             f"generation claim: {e}"
         )
-        return False
+        return None
     if claim is None:
         logger.debug(
             f"Chooser {task_type} {area} prefill waited for another generation"
         )
-        return False
+        return None
     work = _generate_under(claim, practice_area=area)
     try:
         await fire_and_forget_in_new_threadpool(work)
@@ -2754,7 +2782,9 @@ async def prefill_practice_area_if_needed(task_type: str, practice_area: str) ->
     return True
 
 
-def trigger_practice_area_prefill_async(task_type: str, practice_area: str) -> bool:
+def trigger_practice_area_prefill_async(
+    task_type: str, practice_area: str, judged: Optional[Q] = None
+) -> bool:
     """Fire and forget a throttled specialty prefill; never delay a general case."""
     from django.core.cache import cache
 
@@ -2768,12 +2798,23 @@ def trigger_practice_area_prefill_async(task_type: str, practice_area: str) -> b
     except Exception as e:
         logger.debug(f"Chooser practice-area throttle unavailable: {e}")
 
+    def release_throttle():
+        try:
+            cache.delete(throttle_key)
+        except Exception as e:
+            logger.debug(f"Chooser practice-area throttle release failed: {e}")
+
     def run_prefill():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(prefill_practice_area_if_needed(task_type, area))
+            started = loop.run_until_complete(
+                prefill_practice_area_if_needed(task_type, area, judged=judged)
+            )
+            if started is None:
+                release_throttle()
         except Exception as e:
+            release_throttle()
             logger.opt(exception=True).warning(f"Error in {area} chooser prefill: {e}")
         finally:
             loop.close()

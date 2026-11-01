@@ -762,13 +762,20 @@ class TestPracticeAreaChatGeneration:
         return task
 
     async def test_conversation_prompt_and_case_keep_the_practice_area(self):
-        writer = _writer("cardio-writer", CONVERSATION_TEXT)
-        writer._infer_no_context = AsyncMock(return_value=CONVERSATION_TEXT)
+        cardiology_conversation = (
+            "USER: My echocardiogram claim was denied by my insurer.\n"
+            "ASSISTANT: I can help you appeal that denial.\n"
+            "USER: What heart test records do I need to get started?"
+        )
+        off_area = _writer("orthopedic-writer", CONVERSATION_TEXT)
+        writer = _writer("cardio-writer", cardiology_conversation)
+        writer._infer_no_context = AsyncMock(return_value=cardiology_conversation)
 
-        task = await self._generate([writer])
+        task = await self._generate([off_area, writer])
 
         prompt = writer._infer_no_context.await_args_list[0].kwargs["prompt"]
         assert "Cardiology / heart care" in prompt
+        assert off_area.calls == 1
         assert task.context_json["practice_area"] == "cardiology"
 
     async def test_single_question_fallback_keeps_the_practice_area(self):

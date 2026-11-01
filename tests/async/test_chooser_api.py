@@ -2,7 +2,7 @@
 
 import datetime
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, override_settings
@@ -412,7 +412,7 @@ class ChooserPracticeAreaAPITest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.json()["task_id"], self.general.id)
-        prefill.assert_called_once_with("appeal", "cardiology")
+        prefill.assert_called_once_with("appeal", "cardiology", judged=ANY)
 
     def test_ready_specialty_case_is_preferred(self):
         specialty = self._specialty()
@@ -426,6 +426,18 @@ class ChooserPracticeAreaAPITest(APITestCase):
         self.assertEqual(response.json()["task_id"], specialty.id)
         self.assertEqual(response.json()["task_context"]["practice_area"], "cardiology")
         prefill.assert_not_called()
+
+    def test_specialty_case_without_active_candidates_uses_general_pool(self):
+        specialty = self._specialty()
+        specialty.candidates.update(is_active=False)
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_practice_area_prefill_async"
+        ):
+            response = self._get()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["task_id"], self.general.id)
 
     def test_unknown_area_uses_the_general_pool_without_generation(self):
         with patch(
@@ -460,7 +472,7 @@ class ChooserPracticeAreaAPITest(APITestCase):
             response = self._get()
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
-        specialty_prefill.assert_called_once_with("appeal", "cardiology")
+        specialty_prefill.assert_called_once_with("appeal", "cardiology", judged=ANY)
         general_prefill.assert_called_once_with(exhausted="appeal")
 
 
@@ -1033,6 +1045,9 @@ class ChooserReviewOutcomesAPITest(APITestCase):
         self.assertEqual(vote.flagged_candidate_ids, [self.candidate2.id])
         self.assertEqual(vote.rationale, "Neither draft answers the denial.")
         self.assertEqual(ChooserVote.shares(vote.chosen_candidate_id, []), {})
+        self.assertEqual(
+            ChooserVote.shares(None, [self.candidate1.id, self.candidate2.id]), {}
+        )
 
     def test_all_bad_cannot_include_a_winner_or_tie(self):
         with_winner = {**self._payload(), "all_bad": True}
@@ -1586,6 +1601,24 @@ class ChooserPrefillThrottleTest(SimpleTestCase):
         self.assertTrue(trigger_practice_area_prefill_async("appeal", "oncology"))
         self.assertFalse(
             trigger_practice_area_prefill_async("appeal", "not-a-specialty")
+        )
+
+    def test_busy_specialty_prefill_releases_its_throttle(self):
+        from fighthealthinsurance import chooser_tasks
+
+        self.assertTrue(
+            chooser_tasks.trigger_practice_area_prefill_async("appeal", "cardiology")
+        )
+        run_prefill = chooser_tasks.threading.Thread.call_args.kwargs["target"]
+        with patch.object(
+            chooser_tasks,
+            "prefill_practice_area_if_needed",
+            new=AsyncMock(return_value=None),
+        ):
+            run_prefill()
+
+        self.assertTrue(
+            chooser_tasks.trigger_practice_area_prefill_async("appeal", "cardiology")
         )
 
 

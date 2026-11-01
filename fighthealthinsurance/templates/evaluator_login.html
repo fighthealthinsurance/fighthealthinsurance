@@ -11,6 +11,7 @@
   {% include "partials/page_title.html" with title="Evaluator login" %}
   <div class="fhi-card">
     <p>Log in with an evaluator account to judge Appeal Arena cases and keep your review count.</p>
+    {% if login_throttled %}<p role="alert">{{ login_throttled_message }}</p>{% endif %}
     <form class="fhi-stack" action="{% url 'evaluator_login' %}" method="post">
       {% csrf_token %}
       {{ form.as_p }}

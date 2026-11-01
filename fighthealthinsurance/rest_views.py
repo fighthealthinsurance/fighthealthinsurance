@@ -2579,7 +2579,10 @@ class ChooserViewSet(viewsets.ViewSet):
         task = None
         if practice_area:
             task = chooser_complexity.ordered_for_judge(
-                available_tasks.filter(context_json__practice_area=practice_area),
+                available_tasks.filter(
+                    context_json__practice_area=practice_area,
+                    candidates__is_active=True,
+                ).distinct(),
                 task_type,
                 rounds,
                 difficulty,
@@ -2590,7 +2593,9 @@ class ChooserViewSet(viewsets.ViewSet):
                 )
 
                 try:
-                    trigger_practice_area_prefill_async(task_type, practice_area)
+                    trigger_practice_area_prefill_async(
+                        task_type, practice_area, judged=judged
+                    )
                 except Exception as e:
                     logger.warning(f"Could not trigger practice-area prefill: {e}")
         if not task:

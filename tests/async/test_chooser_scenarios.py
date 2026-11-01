@@ -588,6 +588,10 @@ class TestSeededScenario:
             "Procedure: echocardiogram\nDiagnosis: heart failure\n"
             "Insurance Company: Fictional Mutual\nDenial Reason: not medically necessary.\n"
         )
+        off_area = _writer(
+            "Procedure: Knee arthroscopy\nDiagnosis: Torn meniscus\n"
+            "Insurance Company: Fictional Mutual\nDenial Reason: experimental.\n"
+        )
         model = _writer(scenario)
         seed = AsyncMock(return_value=SeedPair("MRI", "Lower back pain", 8))
         with patch("fighthealthinsurance.chooser_tasks.ml_router") as router, patch(
@@ -596,7 +600,7 @@ class TestSeededScenario:
         ), patch(
             "fighthealthinsurance.chooser_tasks._pick_seed_pair", seed
         ), _no_live_search():
-            router.generate_text_backends.return_value = [model]
+            router.generate_text_backends.return_value = [off_area, model]
             await _generate_appeal_candidates(task)
 
         await task.arefresh_from_db()

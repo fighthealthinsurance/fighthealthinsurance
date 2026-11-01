@@ -2395,12 +2395,13 @@ const ChooserInterface: React.FC<{
               autosize
               minRows={2}
               maxRows={4}
-              onChange={(event) =>
+              onChange={(event) => {
+                const rationale = event.currentTarget.value;
                 setState((prev) => ({
                   ...prev,
-                  rationale: event.currentTarget.value,
-                }))
-              }
+                  rationale,
+                }));
+              }}
             />
             <Text size="xs" c="dimmed" ta="right" mt={4}>
               {state.rationale.length}/500
