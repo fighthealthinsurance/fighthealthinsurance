@@ -201,6 +201,15 @@ token found` warning; without `LUNA_ROUTE_KEY` it logs `Skipping chat model
 <model id>: Exception` for each LunaRoute model. Either is expected, not a
 fault.
 
+LunaRoute serves one request at a time per model and hard-fails the rest, so
+each process lets only `LUNA_ROUTE_MAX_PARALLEL` (default 1; 0 for no limit)
+LunaRoute calls per model be in flight at once. A call over that is never
+made: it fails at once (counted as `skipped_busy` in
+`fhi_ml_call_failures_total`), like a backend backing off after a 429, and
+the caller moves on to the next backend as it would from any failure. The
+count is per process only; a call that collides with another pod's is
+refused by LunaRoute and fails over the same way.
+
 **Fallback keys.** Every key above except LunaRoute's can be paired with a
 second key for the same provider, set as `SECONDARY_<name>` (`SECONDARY_ANTHROPIC_API_KEY`,
 `SECONDARY_DEEPINFRA_API`, `SECONDARY_AZURE_OPENAI_API_KEY`, and so on). The
