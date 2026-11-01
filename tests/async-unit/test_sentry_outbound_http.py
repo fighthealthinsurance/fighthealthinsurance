@@ -120,6 +120,62 @@ class TestUrlsInText:
     def test_text_without_urls_is_unchanged(self):
         assert clean_urls_in_text("no links here") == "no links here"
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "GET https://example.org/search?term=Crohn's+disease&api_key=test-key done",
+            "url 'https://example.org/search?term=Crohn's+disease&api_key=test-key'",
+            'url "https://example.org/search?term=a+b&api_key=test-key"',
+            "(see https://example.org/search?term=x)&api_key=test-key)",
+            "[https://example.org/search?q=lupus#api_key=test-key]",
+        ],
+    )
+    def test_query_is_dropped_whatever_punctuation_it_holds(self, text):
+        out = clean_urls_in_text(text)
+        assert "test-key" not in out
+        assert "disease" not in out and "lupus" not in out
+
+    def test_trailing_sentence_punctuation_survives(self):
+        assert (
+            clean_urls_in_text("Failed: https://example.org.")
+            == "Failed: https://example.org."
+        )
+
+    def test_relative_url_query_is_dropped(self):
+        out = clean_urls_in_text(
+            "Max retries exceeded with url: /search?term=patient-details (Caused by X)"
+        )
+        assert out == "Max retries exceeded with url: /search (Caused by X)"
+
+    def test_our_hosts_keep_their_path_but_not_their_query(self):
+        out = clean_urls_in_text(
+            "Forbidden (Referer checking failed - https://www.fighthealthinsurance.com/appeal/?email=a%40b.c does not match)"
+        )
+        assert "https://www.fighthealthinsurance.com/appeal/" in out
+        assert "email" not in out
+
+    def test_cms_route_with_free_text_loses_its_path(self):
+        assert (
+            clean_outbound_url("https://api.coverage.cms.gov/v1/data/jane-doe/lung-cancer")
+            == "https://api.coverage.cms.gov" + PATH_REMOVED
+        )
+        assert (
+            clean_outbound_url(
+                "https://api.coverage.cms.gov/v1/reports/national-coverage-ncd/?x=1"
+            )
+            == "https://api.coverage.cms.gov/v1/reports/national-coverage-ncd/"
+        )
+
+    def test_log_params_are_cleaned(self):
+        event = {
+            "logentry": {
+                "message": "Fetch failed: %s",
+                "params": ["https://example.org/a?term=asthma", {"u": ("/s?q=asthma",)}],
+            }
+        }
+        out = scrub_outbound_http(event)
+        assert "asthma" not in repr(out["logentry"]["params"])
+
     @pytest.mark.parametrize("value", ["not a url", "/relative/path?q=1"])
     def test_unparseable_becomes_filtered(self, value):
         assert clean_outbound_url(value) == FILTERED
@@ -406,3 +462,19 @@ def test_default_integrations_keep_queries_out_of_breadcrumbs(
     assert "secret-key" not in blob
     assert "approximateTerm.json" in blob
     assert "HTTP Request" in blob  # the log breadcrumb was recorded, then cleaned
+
+
+def test_logged_url_parameter_is_cleaned(sentry_capture_with_defaults):
+    app_logger = logging.getLogger("fhi.test.fetch")
+    previous_disable = logging.root.manager.disable
+    logging.disable(logging.NOTSET)
+    try:
+        app_logger.error(
+            "Fetch failed: %s", "https://example.org/search?term=lupus&api_key=test-key"
+        )
+        sentry_sdk.flush()
+    finally:
+        logging.disable(previous_disable)
+    blob = repr(sentry_capture_with_defaults.events)
+    assert "Fetch failed" in blob
+    assert "lupus" not in blob and "test-key" not in blob

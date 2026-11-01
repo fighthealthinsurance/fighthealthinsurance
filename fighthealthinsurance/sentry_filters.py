@@ -477,7 +477,7 @@ OUTBOUND_KEPT_ROUTES: Tuple[Tuple[str, "re.Pattern[str]", str], ...] = tuple(
         ("data.uspreventiveservicestaskforce.org", r"/api/json", r"\g<0>"),
         (
             "api.coverage.cms.gov",
-            r"/v1/(reports|metadata|data)(/[a-z]+(-[a-z]+)*)*/?",
+            r"/v1/(reports/national-coverage-ncd|metadata/license-agreement)/?",
             r"\g<0>",
         ),
         (
@@ -525,7 +525,22 @@ FHI_TRACE_PROPAGATION_TARGETS = [
 
 # An absolute URL inside free text, such as a log line recorded as a
 # breadcrumb ("HTTP Request: GET https://...?q=...") or an exception message.
-_URL_IN_TEXT = re.compile(r"https?://[^\s'\"<>]+")
+# The part before any "?" or "#" is matched separately: everything from "?" or
+# "#" up to the next whitespace is dropped, so a quote or apostrophe inside a
+# query ("term=Crohn's+disease") can't end the match early.
+_URL_IN_TEXT = re.compile(r"(https?://[^\s?#'\"<>()\[\]]+)([?#]\S*)?")
+# A relative URL with a query, as requests and urllib3 put in their errors
+# ("Max retries exceeded with url: /search?term=..."). Only the query goes.
+_RELATIVE_QUERY_IN_TEXT = re.compile(r"(?<![\w:/.])(/[^\s?#'\"<>]*)[?#]\S*")
+# Our own hosts, whose paths in messages (such as a Referer in a CSRF log
+# line) stay readable; only their query strings are dropped.
+_OUR_HOST = re.compile(
+    r"(?i)^(([a-z0-9-]+\.)*(fighthealthinsurance\.com|fightpaperwork\.com"
+    r"|fightinsurance\.ai|fuckhealthinsurance\.com)|localhost|127\.0\.0\.1)$"
+)
+# Bounds for cleaning log parameters, which can nest.
+_PARAMS_MAX_DEPTH = 4
+_PARAMS_MAX_ITEMS = 200
 
 
 def _kept_path(host: str, path: str) -> str:
@@ -559,15 +574,53 @@ def clean_outbound_url(url: Any) -> Any:
         return FILTERED
 
 
-def clean_urls_in_text(text: Any) -> Any:
-    """Every absolute URL inside ``text`` passed through clean_outbound_url.
-    Non-text passes through. Never raises."""
-    if not isinstance(text, str) or "://" not in text:
-        return text
+def _clean_url_match(match: "re.Match[str]") -> str:
+    base = match.group(1)
+    # Trailing sentence punctuation isn't part of the URL.
+    stripped = base.rstrip(".,;:!")
+    trailer = base[len(stripped) :]
     try:
-        return _URL_IN_TEXT.sub(lambda m: str(clean_outbound_url(m.group(0))), text)
+        host = urlsplit(stripped).hostname or ""
     except Exception:
         return FILTERED
+    if _OUR_HOST.match(host):
+        # Our own path stays; only the query (which can carry input) goes.
+        return stripped + ("" if match.group(2) else trailer)
+    return str(clean_outbound_url(stripped)) + ("" if match.group(2) else trailer)
+
+
+def clean_urls_in_text(text: Any) -> Any:
+    """Best effort: every URL inside ``text`` loses its query string and
+    fragment, and an outside URL keeps its path only on a known route.
+    Relative URLs lose their query strings too. Non-text passes through.
+    Never raises."""
+    if not isinstance(text, str) or ("://" not in text and "?" not in text):
+        return text
+    try:
+        text = _URL_IN_TEXT.sub(_clean_url_match, text)
+        return _RELATIVE_QUERY_IN_TEXT.sub(r"\1", text)
+    except Exception:
+        return FILTERED
+
+
+def _clean_params(value: Any, depth: int = 0) -> Any:
+    """URLs cleaned inside log parameters: strings, and strings nested in
+    lists, tuples and dicts, to a bounded depth and size. Never raises."""
+    if isinstance(value, str):
+        return clean_urls_in_text(value)
+    if depth >= _PARAMS_MAX_DEPTH:
+        return value
+    if isinstance(value, (list, tuple)):
+        cleaned = [
+            _clean_params(item, depth + 1) for item in value[:_PARAMS_MAX_ITEMS]
+        ] + list(value[_PARAMS_MAX_ITEMS:])
+        return type(value)(cleaned) if isinstance(value, tuple) else cleaned
+    if isinstance(value, dict):
+        return {
+            key: _clean_params(item, depth + 1) if index < _PARAMS_MAX_ITEMS else item
+            for index, (key, item) in enumerate(value.items())
+        }
+    return value
 
 
 def _scrub_outbound_http_data(data: Any) -> None:
@@ -641,6 +694,8 @@ def scrub_outbound_http(event: Any) -> Any:
             for key in MESSAGE_TEXT_KEYS:
                 if key in logentry:
                     logentry[key] = clean_urls_in_text(logentry[key])
+            if "params" in logentry:
+                logentry["params"] = _clean_params(logentry["params"])
         if "message" in event:
             event["message"] = clean_urls_in_text(event["message"])
     except Exception:
