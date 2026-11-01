@@ -10,6 +10,8 @@ that cares patches storage_health.placement to say.
 import os
 import shutil
 import tempfile
+import threading
+import time
 from collections import namedtuple
 from unittest import mock
 
@@ -243,6 +245,36 @@ class ObjectStoreTest(TestCase):
         self.client.list_objects.side_effect = _s3_error("NoSuchBucket")
         reach = storage_health.check_reachable(self.store)
         self.assertIn("NoSuchBucket", reach["error"])
+
+    def stuck_listing(self):
+        """The store takes the request and never answers, until cleanup."""
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+
+        def listing(*args, **kwargs):
+            gate.wait(30)
+            return iter([])
+
+        self.client.list_objects.side_effect = listing
+
+    def test_stuck_store_is_reported_unreachable(self):
+        self.stuck_listing()
+        reach = storage_health.check_reachable(self.store, timeout=0.2)
+        self.assertEqual(reach["error"], "no answer within 0.2s")
+
+    def test_stuck_store_does_not_hold_the_page(self):
+        self.stuck_listing()
+        start = time.monotonic()
+        storage_health.check_reachable(self.store, timeout=0.2)
+        self.assertLess(time.monotonic() - start, 5)
+
+    def test_stuck_store_is_not_asked_again_past_its_cap(self):
+        """A dead store cannot pile up probe threads across page loads."""
+        self.stuck_listing()
+        for _ in range(storage_health.STUCK_PROBES_PER_BACKEND):
+            storage_health.check_reachable(self.store, timeout=0.1)
+        reach = storage_health.check_reachable(self.store, timeout=0.1)
+        self.assertIn("still waiting on earlier checks", reach["error"])
 
     def test_stored_object_is_a_copy(self):
         self.assertEqual(storage_health._copy(self.store, "a.pdf"), "yes")

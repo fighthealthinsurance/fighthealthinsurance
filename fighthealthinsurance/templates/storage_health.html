@@ -53,7 +53,7 @@
   <p class="meta">
     Generated {{ generated_at }} &middot;
     <a href="{% url 'storage_health' %}">Refresh</a> &middot;
-    Checked live from the process serving this page. Every check has a timeout, so a dead backend slows the page rather than hanging it, except one stuck inside a single system call (a hung network mount), which holds the page until that call returns.
+    Checked live from the process serving this page. Every check has a time limit, so a dead backend slows the page rather than hanging it; only the write test can be held past its limit, by a write stuck inside a single system call.
     Another pod can see different results for its own disk.
   </p>
 
@@ -235,7 +235,7 @@
       </div>
 
       {% if sample.flagged %}
-        <h3>Documents without an off-disk copy</h3>
+        <h3>Documents not confirmed on an off-disk backend</h3>
         <div class="scroll-x">
         <table class="status">
           <tr>

@@ -20,9 +20,20 @@ sampled file is named by its row and the keyed file_tag that log lines use.
 import functools
 import os
 import shutil
+import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, TypeVar
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    TypeVar,
+    cast,
+)
 
 from django.conf import settings
 from django.core.files.base import ContentFile
@@ -102,6 +113,57 @@ def _timed(seconds: float, fn: Callable[[], T]) -> Tuple[T, int]:
     return box[0], int((time.monotonic() - start) * 1000)
 
 
+#: Probes of one backend that may sit stuck in a call (from this page load or
+#: an earlier one) before the page stops starting new ones against it.
+STUCK_PROBES_PER_BACKEND = 2
+# Keyed by id(): a stuck probe holds its backend, so an id is only reused
+# once every probe of the old backend has returned and freed its slot.
+_probe_slots: Dict[int, threading.BoundedSemaphore] = {}
+_probe_slots_lock = threading.Lock()
+
+
+def _probe(backend: Storage, seconds: float, fn: Callable[[], T]) -> Tuple[T, int]:
+    """Run a read-only check of backend on a worker thread, waiting at most seconds.
+
+    A call stuck inside one system call (a hung network mount, an object
+    store that took the connection and went quiet; the MinIO client's own
+    timeouts run to minutes) cannot be interrupted, so the page stops
+    waiting and leaves the thread to finish by itself. Such a thread keeps
+    its backend's slot until its call really returns, so a dead backend
+    holds at most STUCK_PROBES_PER_BACKEND threads however often the page
+    is loaded.
+
+    Only for calls that write nothing and touch no database. The write test
+    keeps _timed: a save abandoned here could land after its cleanup ran.
+    """
+    with _probe_slots_lock:
+        slots = _probe_slots.setdefault(
+            id(backend), threading.BoundedSemaphore(STUCK_PROBES_PER_BACKEND)
+        )
+    if not slots.acquire(blocking=False):
+        raise TimeoutError("still waiting on earlier checks of this backend")
+    outcome: Dict[str, Any] = {}
+    finished = threading.Event()
+
+    def run() -> None:
+        try:
+            outcome["value"] = fn()
+        except BaseException as e:  # handed back to the caller below
+            outcome["error"] = e
+        finally:
+            slots.release()
+            finished.set()
+
+    start = time.monotonic()
+    threading.Thread(target=run, name="storage-health-probe", daemon=True).start()
+    if not finished.wait(seconds):
+        raise TimeoutError(f"no answer within {seconds:g}s")
+    ms = int((time.monotonic() - start) * 1000)
+    if "error" in outcome:
+        raise outcome["error"]
+    return cast(T, outcome["value"]), ms
+
+
 def stored_file_storage() -> Optional[CombinedStorage]:
     """The CombinedStorage the document file fields write through."""
     for model in STORED_FILE_MODELS:
@@ -148,10 +210,14 @@ def placement(backend: Storage) -> Optional[str]:
     """
     if not isinstance(backend, FileSystemStorage):
         return OBJECT_STORE
+    app_dir = str(getattr(settings, "BASE_DIR", os.getcwd()))
+
+    def devices() -> Tuple[int, int]:
+        return os.stat(backend.location).st_dev, os.stat(app_dir).st_dev
+
     try:
-        here = os.stat(backend.location).st_dev
-        app = os.stat(str(getattr(settings, "BASE_DIR", os.getcwd()))).st_dev
-    except OSError:
+        (here, app), _ = _probe(backend, REACH_TIMEOUT_S, devices)
+    except OSError:  # TimeoutError included
         return None
     return APP_DISK if here == app else OWN_MOUNT
 
@@ -180,11 +246,12 @@ def _ping(backend: Storage) -> None:
             next(entries, None)
     elif store is not None:
         client, bucket = store
-        # The listing settings.py makes before it lets the store into the
-        # write path, so it needs no permission the app does not already
-        # rely on (a bucket HEAD can be denied to a key that lists fine). A
-        # prefix no document uses keeps it to one short page; it raises on a
-        # missing bucket, refused access or a dropped connection.
+        # A listing, like the one settings.py makes before it lets the store
+        # into the write path, so it needs the list permission the app
+        # already relies on (a bucket HEAD can be denied to a key that lists
+        # fine). A prefix no document uses keeps it to one empty page rather
+        # than the bucket's first thousand keys; it raises on a missing
+        # bucket, refused access or a dropped connection.
         next(iter(client.list_objects(bucket, prefix=PROBE_PREFIX)), None)
     else:
         # One round trip: a name that is never stored, so the answer is "no".
@@ -220,7 +287,7 @@ def check_reachable(
         out["error"] = "not configured"
         return out
     try:
-        _, out["ms"] = _timed(timeout, functools.partial(_ping, backend))
+        _, out["ms"] = _probe(backend, timeout, functools.partial(_ping, backend))
         out["ok"] = True
     except FileNotFoundError as e:
         # The root itself is missing: in prod an unmounted volume, locally a
@@ -244,8 +311,12 @@ def _disk(backend: Storage) -> Optional[Dict[str, Any]]:
     if not isinstance(backend, FileSystemStorage):
         return None
     try:
-        usage = shutil.disk_usage(backend.location)
-    except OSError as e:
+        usage, _ = _probe(
+            backend,
+            REACH_TIMEOUT_S,
+            functools.partial(shutil.disk_usage, backend.location),
+        )
+    except OSError as e:  # TimeoutError included
         return {"error": e.strerror or str(e), "level": WARN}
     percent = round(100.0 * usage.used / usage.total, 1) if usage.total else 0.0
     if percent >= DISK_FAIL_PERCENT:
@@ -333,7 +404,9 @@ def _admin_url(model: type[models.Model], pk: Any) -> Optional[str]:
 
 def _copy(backend: Storage, name: str) -> str:
     try:
-        found, _ = _timed(EXISTS_TIMEOUT_S, functools.partial(_has_copy, backend, name))
+        found, _ = _probe(
+            backend, EXISTS_TIMEOUT_S, functools.partial(_has_copy, backend, name)
+        )
     except Exception as e:
         # error_text: an OS error's message can hold the path, i.e. the name.
         logger.warning(f"Checking {file_tag(name)} on {backend}: {error_text(e)}")
