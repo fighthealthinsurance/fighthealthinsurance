@@ -81,6 +81,7 @@ def _is_routing_setting(name: str) -> bool:
             "ENABLED_REMOTE_MODELS",
             "FORCE_MODEL",
             "LUNA_ROUTE_KEY",
+            "OPENCODE_TOKEN",
             "FHI_DEPLOYMENT_ID",
             "FHI_RELEASE",
             "FHI_VERSION",
