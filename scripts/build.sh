@@ -96,6 +96,11 @@ export FHI_VERSION
 export FHI_BASE
 export RAY_BASE
 export MYORG
+# Hash of the feature flags ConfigMap, stamped on the long-running
+# Deployments' pod templates (fhi/feature-flags-sha) so a flags-only change
+# still rolls their pods; envFrom is only read when a container starts.
+FHI_FEATURE_FLAGS_SHA=$(sha256sum k8s/feature-flags.yaml | cut -c1-16)
+export FHI_FEATURE_FLAGS_SHA
 
 # Build the django dev container first
 FHI_VERSION_OG=${FHI_VERSION}
@@ -134,6 +139,10 @@ else
     source "${SCRIPT_DIR}/build_ray.sh"
 fi
 
+# Feature flags + Temporal address, loaded via envFrom by every app pod,
+# staging included, so it must exist before the staging pods start.
+kubectl apply -f k8s/feature-flags.yaml
+
 # Deploy a staging env
 envsubst < k8s/deploy_staging.yaml | kubectl apply -f -
 read -rp "Have you checked staging and are ready to deploy to prod? (y/n) " yn
@@ -157,8 +166,6 @@ esac
 # k8s/db-config.yaml first, or this apply will revert the host back to -8.
 kubectl apply -f k8s/db-config.yaml
 echo "PDBHOST now set to: $(kubectl -n totallylegitco get configmap fhi-db-config -o jsonpath='{.data.PDBHOST}')"
-# Feature flags + Temporal address, loaded by every app pod via envFrom.
-kubectl apply -f k8s/feature-flags.yaml
 
 # Backup schedule for fhi-pg-main-9 -- re-asserted on every deploy (same
 # pattern as db-config above) so a deleted/suspended schedule self-heals and

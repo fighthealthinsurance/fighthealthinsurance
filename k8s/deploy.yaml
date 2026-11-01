@@ -150,6 +150,9 @@ spec:
       app: fight-health-insurance-prod
   template:
     metadata:
+      annotations:
+        # Rolls the pods when k8s/feature-flags.yaml changes (scripts/build.sh).
+        fhi/feature-flags-sha: "${FHI_FEATURE_FLAGS_SHA}"
       labels:
         app: fight-health-insurance-prod
         group: fight-health-insurance-prod-webbackend

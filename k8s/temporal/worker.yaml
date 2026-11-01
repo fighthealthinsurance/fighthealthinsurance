@@ -19,6 +19,9 @@ spec:
       group: fight-health-insurance-prod-temporal-worker
   template:
     metadata:
+      annotations:
+        # Rolls the pods when k8s/feature-flags.yaml changes (scripts/build.sh).
+        fhi/feature-flags-sha: "${FHI_FEATURE_FLAGS_SHA}"
       labels:
         app: fight-health-insurance-prod
         group: fight-health-insurance-prod-temporal-worker
@@ -75,13 +78,12 @@ spec:
             # crash-loop cannot take fax sending down (external review).
             - name: TEMPORAL_WORKER_QUEUES
               value: "fax"
-            # TEMPORAL_ENABLED and TEMPORAL_HOSTNAME come from the
-            # fhi-feature-flags ConfigMap (k8s/feature-flags.yaml), shared
-            # with the web and Ray pods so they can't disagree.
+            # TEMPORAL_ENABLED, TEMPORAL_HOSTNAME and TEMPORAL_TASK_QUEUE come
+            # from the fhi-feature-flags ConfigMap (k8s/feature-flags.yaml),
+            # shared with the web and Ray pods so they can't disagree: a fax
+            # queue set here alone would leave the web pods' faxes unpolled.
             - name: TEMPORAL_NAMESPACE
               value: "default"
-            - name: TEMPORAL_TASK_QUEUE
-              value: "fhi-fax"
             # DB host from the fhi-db-config ConfigMap (see k8s/db-config.yaml),
             # same as k8s/deploy.yaml: an explicit env entry overrides the STALE
             # PDBHOST still carried by the envFrom Secrets. Without this the

@@ -154,7 +154,9 @@ Every Temporal switch lives in the **`fhi-feature-flags` ConfigMap**
 (`k8s/feature-flags.yaml`), which the web pods, the Ray cluster pods, the
 workers and the cronjobs all load via `envFrom`, after the Secrets, so the
 committed value wins over any copy a Secret still carries. Change it there and
-redeploy (`scripts/build.sh` applies it); every pod reads it at start-up.
+redeploy (`scripts/build.sh` applies it). Pods read it only at start-up, so
+the web and worker Deployments carry its hash as the `fhi/feature-flags-sha`
+pod annotation, and a flags-only change still rolls them.
 Do **not** flip `TEMPORAL_ENABLED` only on the web pods: the Ray
 `FaxPollingActor` sweep gates itself off by reading `TEMPORAL_ENABLED` *in its
 own process*, so if the Ray pods don't see the flag the sweep keeps running and
@@ -166,7 +168,7 @@ actual double transmission, but the correct configuration is one shared flag.
 | --- | --- | --- |
 | `TEMPORAL_ENABLED` and the `TEMPORAL_*_ENABLED` flows | `true` | `fhi-feature-flags` |
 | `TEMPORAL_HOSTNAME` | `temporal-frontend` (port 7233 implied; `host:port` also works) | `fhi-feature-flags` |
-| `TEMPORAL_TASK_QUEUE` | `fhi-fax` | `fhi-feature-flags` (and `worker.yaml`) |
+| `TEMPORAL_TASK_QUEUE` | `fhi-fax` | `fhi-feature-flags` |
 | `TEMPORAL_NAMESPACE` | `default` | settings default; pinned in both worker manifests |
 | `TEMPORAL_PAYLOAD_KEY` / `TEMPORAL_RESEARCH_PAYLOAD_KEY` | Fernet key(s) | `fight-health-insurance-secret` |
 

@@ -371,7 +371,7 @@ def _worker_temporal_namespaces(tdir):
 
 # Flags and the host come from the shared fhi-feature-flags ConfigMap; a
 # worker manifest setting one itself would override it for that pod alone.
-_CONFIGMAP_OWNED_ENV = {"TEMPORAL_HOST", "TEMPORAL_HOSTNAME"}
+_CONFIGMAP_OWNED_ENV = {"TEMPORAL_HOST", "TEMPORAL_HOSTNAME", "TEMPORAL_TASK_QUEUE"}
 
 
 def _worker_container(name):
@@ -396,6 +396,20 @@ def test_worker_manifests_leave_flags_and_host_to_the_configmap(name):
         or (n.startswith("TEMPORAL_") and n.endswith("_ENABLED"))
     }
     assert not owned, f"{name} sets {sorted(owned)}; use k8s/feature-flags.yaml"
+
+
+@pytest.mark.parametrize("name", ["worker.yaml", "appeal-worker.yaml"])
+def test_worker_manifests_roll_when_the_feature_flags_change(name):
+    """envFrom is read only at container start, so the pod template carries
+    the ConfigMap's hash (set by scripts/build.sh) to force a rollout."""
+    import pathlib
+
+    import yaml
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    doc = yaml.safe_load((root / "k8s" / "temporal" / name).read_text())
+    annotations = doc["spec"]["template"]["metadata"]["annotations"]
+    assert annotations["fhi/feature-flags-sha"] == "${FHI_FEATURE_FLAGS_SHA}"
 
 
 @pytest.mark.parametrize("name", ["worker.yaml", "appeal-worker.yaml"])
