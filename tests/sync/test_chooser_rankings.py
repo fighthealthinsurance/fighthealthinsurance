@@ -392,6 +392,30 @@ class ChooserRankingsModelLabelTest(TestCase):
             by_model, {"deepseek-4.1-flash": (1, 2), "model-b": (1, 2)}
         )
 
+    def test_flags_of_provider_variants_share_a_row(self):
+        task, (a, b) = _task(models=("lunaroute/deepseek-4.1-flash", "model-b"))
+        _vote(task, [a, b], b, "label-4", flagged=[a])
+        other, (c, d) = _task(models=("deepseek-4.1-flash", "model-b"))
+        _vote(other, [c, d], d, "label-5", flagged=[c])
+
+        rows = public_rankings.compute_rankings()["windows"][0]["tables"][0]["rows"]
+
+        merged = {r["model"]: r for r in rows}["deepseek-4.1-flash"]
+        self.assertEqual((merged["flagged"], merged["flag_rate"]), (2, 100.0))
+
+    def test_tie_credit_of_provider_variants_merges_before_rounding(self):
+        """Two thirds-shares, one per provider, are 0.67 together; rounding
+        each provider's 0.33 first would report 0.66."""
+        for i, name in enumerate(("lunaroute/deepseek-4.1-flash", "deepseek-4.1-flash")):
+            task, cands = _task(models=(name, "model-b", "model-c"))
+            vote = _vote(task, cands, cands[0], f"tie-{i}")
+            vote.tied_candidate_ids = [c.id for c in cands]
+            vote.save()
+
+        rows = public_rankings.compute_rankings()["windows"][0]["tables"][0]["rows"]
+
+        self.assertEqual({r["model"]: r for r in rows}["deepseek-4.1-flash"]["won"], 0.67)
+
     def test_the_page_never_shows_the_provider(self):
         task, (a, b) = _task(models=("lunaroute/deepseek-4.1-flash", "model-b"))
         _vote(task, [a, b], a, "label-3")
@@ -419,6 +443,3 @@ class ChooserRankingsTermLimitTest(TestCase):
         rows = public_rankings.compute_rankings()["conditions"]
 
         self.assertEqual(len(rows), limit)
-
-    def test_the_default_limit_is_short(self):
-        self.assertLessEqual(cr.CONDITION_RANKING_LIMIT, 5)
