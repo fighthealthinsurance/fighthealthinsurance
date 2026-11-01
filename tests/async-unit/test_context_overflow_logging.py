@@ -78,8 +78,6 @@ class TestOverflowLogging:
         warnings = cap.messages("WARNING")
         assert len(warnings) == 1
         assert "context window" in warnings[0]
-        # The server's token accounting survives into the log line.
-        assert "33223" in warnings[0]
         assert cap.messages("ERROR") == []
         assert all(r["exception"] is None for r in cap.records)
 

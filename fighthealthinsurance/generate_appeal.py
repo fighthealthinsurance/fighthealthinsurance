@@ -87,6 +87,7 @@ from fighthealthinsurance.regulator_routing import (
 
 from .exec import background_executor, executor
 from .ml.ml_models import (
+    error_kind_for_log,
     MODEL_TRANSPORT_ERRORS,
     DeadlineSkipped,
     ProviderUnavailable,
@@ -1518,7 +1519,7 @@ def _generated_to_appeals_text(
                 )
             else:
                 logger.opt(exception=True).warning(
-                    f"Appeal generation via {model_name} failed: {e}"
+                    f"Appeal generation via {model_name} failed: {error_kind_for_log(e)}"
                 )
             return
         if model_results is None:
@@ -1582,7 +1583,7 @@ def _generated_to_appeals_text(
             error_detail = f"appeal mapping failed: {e}"
             logger.opt(exception=True).error(
                 f"Appeal mapping for {model_name} failed mid-results; dropping "
-                f"the remainder of this model's output only: {e}"
+                f"the remainder of this model's output only: {error_kind_for_log(e)}"
             )
             return
     finally:
@@ -1928,7 +1929,7 @@ class AppealGenerator(object):
                         # traceback so it stays diagnosable.
                         logger.opt(exception=True).debug(
                             f"Extraction {model_method_name} via {model} "
-                            f"failed: {e}"
+                            f"failed: {error_kind_for_log(e)}"
                         )
                     extracted = None
                 if extracted is None:
@@ -3387,7 +3388,7 @@ class AppealGenerator(object):
                     )
                     logger.opt(exception=True).warning(
                         f"get_model_result: backend {model} "
-                        f"(for model_name={model_name}) failed: {e}"
+                        f"(for model_name={model_name}) failed: {error_kind_for_log(e)}"
                     )
             logger.warning(
                 f"get_model_result: all {len(model_backends)} backend(s) "
@@ -4014,7 +4015,7 @@ class AppealGenerator(object):
                     # Unexpected exception = likely code bug; keep the
                     # traceback so it stays diagnosable.
                     logger.opt(exception=True).debug(
-                        f"Synthesis via {model} failed: {e}"
+                        f"Synthesis via {model} failed: {error_kind_for_log(e)}"
                     )
             return None
 
