@@ -166,10 +166,40 @@ class TestPublicProgramFiltering(unittest.TestCase):
         self.assertIn("147.136", block)
 
     def test_private_coverage_is_unchanged_by_the_classification(self):
+        """Known private coverage gets the same block as no plan information,
+        less the sentence about the unknown plan type."""
+        private = get_regulatory_citation_context("MA", programs=("erisa", "tpa"))
+        unknown = get_regulatory_citation_context("MA")
+        assert private is not None and unknown is not None
+        self.assertNotIn("The plan type is not known", private)
+        self.assertIn("The plan type is not known", unknown)
         self.assertEqual(
-            get_regulatory_citation_context("MA", programs=("erisa", "tpa")),
-            get_regulatory_citation_context("MA"),
+            unknown.replace(
+                unknown[unknown.index(" The plan type is not known") :], ""
+            ),
+            private,
         )
+
+    def test_unknown_plan_waits_on_the_letter_for_external_review(self):
+        block = get_regulatory_citation_context("MA")
+        assert block is not None
+        self.assertIn(
+            "claim them only if the denial letter shows a private plan", block
+        )
+        self.assertIn("not Medicare, Medicaid or VA coverage", block)
+
+    def test_aca_hook_limits_external_review_to_medical_judgment(self):
+        block = get_regulatory_citation_context("MA", programs=("erisa",))
+        assert block is not None
+        self.assertNotIn("Insist on both", block)
+        self.assertIn("turns on medical judgment", block)
+        self.assertIn("claim it only for such a denial, as the plan stated it", block)
+
+    def test_regulatory_block_keeps_the_denial_basis(self):
+        block = get_regulatory_citation_context("MA", programs=("erisa",))
+        assert block is not None
+        self.assertIn("Keep the denial's basis as the plan stated it", block)
+        self.assertIn("never restate it as a different kind of denial", block)
 
     def test_public_and_private_coverage_together_keeps_the_private_rules(self):
         """A Medicare Advantage member with an employer plan too: we do not

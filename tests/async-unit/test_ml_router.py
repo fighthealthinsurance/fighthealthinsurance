@@ -990,6 +990,34 @@ class TestMLRouterSummarize(unittest.TestCase):
     def test_deepinfra_only_deployment_still_summarizes(self):
         asyncio.run(self.async_test_deepinfra_only_deployment_still_summarizes())
 
+    async def async_test_literature_summaries_describe_the_publication(self):
+        """A case report's patient must not read as the person appealing."""
+        gemma = make_routed_mock(80, external=True, reply="external summary")
+        install_models(self.router, [], {GEMMA: [gemma]})
+
+        await self.router.summarize(
+            "article", "text", use_external=True, literature=True
+        )
+
+        prompt = gemma._infer_no_context.await_args.kwargs["prompt"]
+        self.assertIn("A published case report describes", prompt)
+        self.assertIn("never call them 'the patient'", prompt)
+
+    def test_literature_summaries_describe_the_publication(self):
+        asyncio.run(self.async_test_literature_summaries_describe_the_publication())
+
+    async def async_test_plain_summaries_keep_their_prompt(self):
+        gemma = make_routed_mock(80, external=True, reply="external summary")
+        install_models(self.router, [], {GEMMA: [gemma]})
+
+        await self.router.summarize("article", "text", use_external=True)
+
+        prompt = gemma._infer_no_context.await_args.kwargs["prompt"]
+        self.assertNotIn("A published case report describes", prompt)
+
+    def test_plain_summaries_keep_their_prompt(self):
+        asyncio.run(self.async_test_plain_summaries_keep_their_prompt())
+
     async def async_test_appeal_only_internal_waits_behind_gemma(self):
         """fhi-legacy's digit soup passes the length check, so when it is the
         only internal left it must not go ahead of Gemma."""

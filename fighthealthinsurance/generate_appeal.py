@@ -954,6 +954,16 @@ def identifier_found_in_text(identifier: str, text: str) -> bool:
     return False
 
 
+# The label on the PubMed block in every appeal prompt version. Article
+# summaries stored before the summarizer wrote in the third person can read
+# like a patient profile ("the patient presents with..."), and a model copied
+# those as the person's own facts, so the label says whose facts they are.
+PUBMED_REFERENCES_LABEL = (
+    "PubMed references (published literature about people in studies, not "
+    "this patient's own history; use these):"
+)
+
+
 # Tier-shed retry: reduce prompt size when zero-result failures may stem
 # from context-window overflow. Each enrichment context appears on TWO
 # surfaces and both need to shrink in lockstep, otherwise we'd null the
@@ -2578,10 +2588,11 @@ class AppealGenerator(object):
                 f"{base}\n\nPAYER PRIOR-AUTH RULES: The following entries come from "
                 "the payer's own published prior-authorization requirement list. "
                 "Use them when the denial relies on PA grounds — point out exactly "
-                "which rule (or absence of one) supports approval, cite the "
+                "which listed rule supports approval, cite the "
                 "criteria document by name, and reference the published "
                 "submission channel where relevant. Do not invent rules that "
-                "are not listed below.\n"
+                "are not listed below, and do not read a code's absence from "
+                "this list as anything the payer said.\n"
                 f"{pa_context}"
             )
         # Add citation instructions - be explicit about not hallucinating.
@@ -2604,7 +2615,7 @@ class AppealGenerator(object):
             if not is_blank_context(ml_context):
                 base = f"{base}\n\nProvided citations (use these): {ml_context}"
             if not is_blank_context(pubmed_context):
-                base = f"{base}\n\nPubMed references (use these): {pubmed_context}"
+                base = f"{base}\n\n{PUBMED_REFERENCES_LABEL} {pubmed_context}"
             if nice_context is not None and nice_context != "":
                 # nice_context already carries the international-guidance caveat
                 # (see INTERNATIONAL_GUIDANCE_CAVEAT in nice_tools); the header
@@ -2831,10 +2842,11 @@ class AppealGenerator(object):
                 "PAYER PRIOR-AUTH RULES: The following entries come from "
                 "the payer's own published prior-authorization requirement list. "
                 "Use them when the denial relies on PA grounds -- point out exactly "
-                "which rule (or absence of one) supports approval, cite the "
+                "which listed rule supports approval, cite the "
                 "criteria document by name, and reference the published "
                 "submission channel where relevant. Do not invent rules that "
-                "are not listed below.\n"
+                "are not listed below, and do not read a code's absence from "
+                "this list as anything the payer said.\n"
                 f"{pa_context}"
             )
 
@@ -2869,7 +2881,7 @@ class AppealGenerator(object):
             if not is_blank_context(ml_context):
                 sections.append(f"Provided citations (use these): {ml_context}")
             if not is_blank_context(pubmed_context):
-                sections.append(f"PubMed references (use these): {pubmed_context}")
+                sections.append(f"{PUBMED_REFERENCES_LABEL} {pubmed_context}")
             if _present(nice_context):
                 # nice_context already carries the international-guidance caveat
                 # (see INTERNATIONAL_GUIDANCE_CAVEAT in nice_tools); the header

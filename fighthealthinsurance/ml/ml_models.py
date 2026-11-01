@@ -5539,7 +5539,7 @@ class RemoteOpenLike(RemoteModel):
             and not is_blank_context(pubmed_context)
             and not _already_in_prompt(pubmed_context)
         ):
-            context_extra += f"You can also use this context from pubmed: {pubmed_context} and you can include the DOI number in the appeal."
+            context_extra += f"You can also use this published literature from PubMed, which describes people in studies, not this patient: {pubmed_context} and you can include the DOI number in the appeal."
         if (
             plan_context is not None
             and len(plan_context) > 3

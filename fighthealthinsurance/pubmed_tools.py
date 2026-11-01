@@ -1243,7 +1243,9 @@ class PubMedTools(object):
             try:
                 r: Optional[str] = await asyncio.wait_for(
                     ml_router.summarize(
-                        title="Combined contexts", text=joined_contexts
+                        title="Combined contexts",
+                        text=joined_contexts,
+                        literature=True,
                     ),
                     timeout=summary_budget,
                 )
@@ -1508,6 +1510,7 @@ class PubMedTools(object):
                             title=title,
                             abstract=abstract,
                             text=article_text,
+                            literature=True,
                         ),
                     )
                     return article

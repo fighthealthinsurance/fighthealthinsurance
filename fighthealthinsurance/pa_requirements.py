@@ -411,14 +411,20 @@ def _matches_any_requirement(
 def format_pa_context(
     requirements: Iterable[PayerPriorAuthRequirement],
     requested_codes: Optional[Sequence[str]] = None,
+    include_unmatched: bool = True,
 ) -> str:
     """
     Render a list of PA requirements as a readable context block for ML
     prompts. Returns an empty string when there is nothing actionable to say.
+
+    ``include_unmatched`` adds a line naming requested codes our index has no
+    rule for. That is a note about our own index, not something the payer
+    said, so the appeal prompt leaves it out: letters read it as the payer's
+    word, or as proof no prior authorization was needed.
     """
     requirements_list = list(requirements)
     unmatched: List[str] = []
-    if requested_codes:
+    if requested_codes and include_unmatched:
         unmatched = [
             code
             for code in requested_codes
@@ -571,7 +577,9 @@ def get_pa_context_for_denial(denial: Denial) -> str:
     requirements, codes = _denial_lookup(denial)
     if not codes:
         return ""
-    return format_pa_context(requirements, requested_codes=codes)
+    return format_pa_context(
+        requirements, requested_codes=codes, include_unmatched=False
+    )
 
 
 # Category-keyed clarifying questions. Each entry is a list of

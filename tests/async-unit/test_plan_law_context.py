@@ -230,6 +230,21 @@ class TestClassifyPlan:
         assert "only where the paragraph above says the plan owes one" in block
         assert "is owed" not in block.split("If citing the applicable law", 1)[1]
 
+    def test_the_invitation_keeps_the_denial_basis(self):
+        """A plan exclusion must not be argued as medical necessity just to
+        claim an external review."""
+        invitation = _block("Employer -- Private").split(
+            "If citing the applicable law", 1
+        )[1]
+        assert "Keep the denial's basis as the plan stated it" in invitation
+        assert "never restate it as a different kind of denial" in invitation
+
+    def test_the_person_facing_paragraphs_carry_no_drafting_instruction(self):
+        from fighthealthinsurance.regulatory_citations import plan_law_paragraphs
+
+        text = " ".join(plan_law_paragraphs(["Employer -- Private"], for_person=True))
+        assert "Keep the denial's basis" not in text
+
 
 class TestTheBlockItself:
     ALL = [

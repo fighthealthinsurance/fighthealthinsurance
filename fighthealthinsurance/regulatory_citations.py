@@ -160,9 +160,13 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
     RegulatoryHook(
         name="ACA internal appeal and external review rights (45 C.F.R. § 147.136)",
         summary=(
-            "Non-grandfathered plans must provide a full and fair internal "
-            "appeal and access to independent external review. Insist on both, "
-            "and on the documents and clinical criteria relied upon."
+            "Non-grandfathered private plans must provide a full and fair "
+            "internal appeal and the documents and clinical criteria relied "
+            "upon. Independent external review covers a denial that turns on "
+            "medical judgment (medical necessity, appropriateness, level of "
+            "care, or an experimental or investigational label) or a "
+            "rescission; claim it only for such a denial, as the plan stated "
+            "it."
         ),
         jurisdiction="US",
         effective="in force",
@@ -175,9 +179,11 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
         applies_to_self_insured=True,
         plain_summary=(
             "Plans that are not grandfathered must offer a full and fair "
-            "internal appeal and access to an independent external review. "
-            "A person can ask for both, and for the documents and clinical "
-            "criteria the plan relied on."
+            "internal appeal, and a person can ask for the documents and "
+            "clinical criteria the plan relied on. An independent external "
+            "review is available when the denial turns on medical judgment, "
+            "such as medical necessity or an experimental label, or is a "
+            "rescission."
         ),
     ),
 )
@@ -426,6 +432,18 @@ _STATE_NAME_TO_ABBR: dict[str, str] = {
 }
 
 
+# Laws listed for a plan invited letters to restate a denial so a right would
+# apply: a plan exclusion or an eligibility denial argued as medical necessity
+# to claim an independent external review. The appeal prompt's regulatory and
+# plan-law blocks both carry this, so the denial's basis stays the plan's own.
+_KEEP_DENIAL_BASIS = (
+    "Keep the denial's basis as the plan stated it (a plan exclusion, an "
+    "eligibility rule, an experimental label, or medical necessity): argue "
+    "that basis on its own terms, and never restate it as a different kind of "
+    "denial so that a right or a law would apply."
+)
+
+
 def _normalize_state(state: Optional[str]) -> Optional[str]:
     """Return a 2-letter state code from a 2-letter code or a full name."""
     if not state:
@@ -582,13 +600,23 @@ def get_regulatory_citation_context(
             "plans; self-insured (ERISA) employer plans are typically exempt, so "
             "confirm the plan type before relying on a state mandate."
         )
+        if not keys and self_insured is None:
+            # No plan-type evidence at all: the ACA appeal rules reach private
+            # plans only, so the external review claim waits on the letter.
+            caveat += (
+                " The plan type is not known: the ACA appeal and external "
+                "review rules reach private plans, not Medicare, Medicaid or "
+                "VA coverage, so claim them only if the denial letter shows a "
+                "private plan."
+            )
 
     header = (
         "REGULATORY CONTEXT: The following federal and state laws MAY support "
         "this appeal depending on the plan type and the specific service. Cite "
         "them BY NAME only where they actually apply to this denial. Do not "
         "assert applicability you cannot support, and do not invent statute "
-        "section numbers, dates, or quotations beyond what is provided here."
+        "section numbers, dates, or quotations beyond what is provided here. "
+        + _KEEP_DENIAL_BASIS
     )
     return f"{header}\n{bullet_lines}\n{caveat}"
 
@@ -716,7 +744,8 @@ _INVITATION = (
     "letter more seriously when it names the rule the plan must follow. Cite "
     "it only where it applies and where it helps the argument. Never cite a "
     "law that does not govern this plan, and do not invent section numbers, "
-    "deadlines, quotations, or case names beyond what is listed here."
+    "deadlines, quotations, or case names beyond what is listed here. "
+    + _KEEP_DENIAL_BASIS
 )
 
 _LETTER_CONFLICT_FACT = (
