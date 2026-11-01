@@ -92,8 +92,10 @@ CONDITION_RANKING_REFRESH_TIMEOUT = getattr(
 # How long one refresh holds the fleet-wide "running" claim at most, so a
 # process that dies mid-refresh does not hold the next one off for longer.
 _RUN_CLAIM_SECONDS = 30 * 60
-# Rows per list on the public page.
-CONDITION_RANKING_LIMIT = getattr(settings, "CONDITION_RANKING_LIMIT", 25)
+# Rows per list on the public page. Kept short as defense in depth: should a
+# name or other free text ever slip past the filters above, it would also
+# have to be among the few most common terms to be shown.
+CONDITION_RANKING_LIMIT = getattr(settings, "CONDITION_RANKING_LIMIT", 5)
 # Pause between NCBI calls: 3 requests a second without an API key.
 _NCBI_PAUSE_SECONDS = 0.4
 _LOOKUP_TIMEOUT_SECONDS = 10.0

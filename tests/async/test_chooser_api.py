@@ -231,7 +231,7 @@ class ChooserNextTaskAPITest(APITestCase):
         self.assertEqual(data["task_type"], "appeal")
         self.assertEqual(len(data["candidates"]), 2)
         self.assertEqual(data["task_context"]["procedure"], "Physical Therapy")
-        self.assertEqual(set(data["candidates"][0]), {"id", "kind", "content"})
+        self.assertEqual(set(data["candidates"][0]), {"id", "kind", "content", "tool_calls"})
 
     def test_next_task_is_blind_to_the_author(self):
         """The payload names no model and carries no synthesized flag,
@@ -1040,6 +1040,225 @@ class ChooserSessionFallbackTest(APITestCase):
         self.assertEqual(response2.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("already voted", response2.json()["error"])
 
+
+class ChooserJudgeIdentityTest(APITestCase):
+    """A case a judge has already judged is not served to them again: not in
+    the same session, not to the same signed-in user from another session,
+    and, when the request has no session cookie, not to the same address."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+    ADDRESS = "203.0.113.7"
+
+    def setUp(self):
+        self.task = ChooserTask.objects.create(
+            task_type="appeal", status="READY", context_json={"procedure": "Test"}
+        )
+        self.candidate1 = ChooserCandidate.objects.create(
+            task=self.task,
+            candidate_index=0,
+            kind="appeal_letter",
+            model_name="model-a",
+            content="Content A",
+        )
+        self.candidate2 = ChooserCandidate.objects.create(
+            task=self.task,
+            candidate_index=1,
+            kind="appeal_letter",
+            model_name="model-b",
+            content="Content B",
+        )
+        self.user = User.objects.create_user(
+            username="judge", email="judge@example.com", password="pw-judge-123"
+        )
+        # Keep the prefill a used-up pool sets off from generating anything.
+        patcher = patch(
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async",
+            return_value=True,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _vote_elsewhere(self, **voter):
+        ChooserVote.objects.create(
+            task=self.task,
+            chosen_candidate=self.candidate1,
+            presented_candidate_ids=[self.candidate1.id, self.candidate2.id],
+            session_key=voter.pop("session_key", "another-session"),
+            **voter,
+        )
+
+    def _next(self, **extra):
+        return self.client.get(reverse("chooser-next-appeal"), **extra)
+
+    def _vote_data(self):
+        return json.dumps(
+            {
+                "task_id": self.task.id,
+                "chosen_candidate_id": candidate_token(self.candidate1.id),
+                "presented_candidate_ids": [
+                    candidate_token(self.candidate1.id),
+                    candidate_token(self.candidate2.id),
+                ],
+            }
+        )
+
+    def test_a_signed_in_user_is_not_served_a_case_they_judged_in_another_session(
+        self,
+    ):
+        self._vote_elsewhere(user=self.user)
+        self.client.force_login(self.user)
+        self.assertEqual(self._next().status_code, status.HTTP_202_ACCEPTED)
+
+    def test_a_signed_in_user_is_not_served_a_case_they_skipped_in_another_session(
+        self,
+    ):
+        ChooserSkip.objects.create(
+            task=self.task, session_key="another-session", user=self.user
+        )
+        self.client.force_login(self.user)
+        self.assertEqual(self._next().status_code, status.HTTP_202_ACCEPTED)
+
+    def test_another_users_vote_does_not_hide_the_case(self):
+        other = User.objects.create_user(
+            username="other", email="other@example.com", password="pw-other-123"
+        )
+        self._vote_elsewhere(user=other)
+        self.client.force_login(self.user)
+        self.assertEqual(self._next().status_code, status.HTTP_200_OK)
+
+    def test_a_signed_in_user_cannot_vote_twice_from_another_session(self):
+        self._vote_elsewhere(user=self.user)
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("chooser-vote"),
+            self._vote_data(),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_a_vote_records_the_signed_in_user(self):
+        self.client.force_login(self.user)
+        self.client.post(
+            reverse("chooser-vote"),
+            self._vote_data(),
+            content_type="application/json",
+        )
+        self.assertEqual(ChooserVote.objects.get(task=self.task).user, self.user)
+
+    def test_a_vote_records_a_digest_of_the_address_not_the_address(self):
+        self.client.post(
+            reverse("chooser-vote"),
+            self._vote_data(),
+            content_type="application/json",
+            HTTP_CF_CONNECTING_IP=self.ADDRESS,
+        )
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertNotIn(self.ADDRESS, vote.client_key)
+        self.assertRegex(vote.client_key, r"^[0-9a-f]{64}$")
+
+    def test_a_request_without_a_session_is_not_served_a_case_judged_from_its_address(
+        self,
+    ):
+        from fighthealthinsurance.rest_views import ChooserViewSet
+
+        self._vote_elsewhere(client_key=ChooserViewSet.client_key_for(self.ADDRESS))
+        response = self._next(HTTP_CF_CONNECTING_IP=self.ADDRESS)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+
+    def test_a_request_without_a_session_is_served_a_case_judged_elsewhere(self):
+        from fighthealthinsurance.rest_views import ChooserViewSet
+
+        self._vote_elsewhere(client_key=ChooserViewSet.client_key_for("198.51.100.9"))
+        response = self._next(HTTP_CF_CONNECTING_IP=self.ADDRESS)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_a_session_is_not_held_to_other_sessions_at_its_address(self):
+        from fighthealthinsurance.rest_views import ChooserViewSet
+
+        # The first request sets the session cookie; after that the session,
+        # not the shared address, says what this judge has seen.
+        self._next(HTTP_CF_CONNECTING_IP=self.ADDRESS)
+        self._vote_elsewhere(client_key=ChooserViewSet.client_key_for(self.ADDRESS))
+        response = self._next(HTTP_CF_CONNECTING_IP=self.ADDRESS)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+
+    def test_a_session_keeps_hiding_what_its_address_judged_before_it_began(self):
+        from fighthealthinsurance.rest_views import ChooserViewSet
+
+        self._vote_elsewhere(client_key=ChooserViewSet.client_key_for(self.ADDRESS))
+        self._next(HTTP_CF_CONNECTING_IP=self.ADDRESS)
+        # The second request carries the new session's cookie.
+        response = self._next(HTTP_CF_CONNECTING_IP=self.ADDRESS)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+
+    def test_a_stale_session_cookie_counts_as_no_session(self):
+        from django.conf import settings
+        from fighthealthinsurance.rest_views import ChooserViewSet
+
+        self.client.cookies[settings.SESSION_COOKIE_NAME] = "expired-session-key"
+        self._vote_elsewhere(client_key=ChooserViewSet.client_key_for(self.ADDRESS))
+        response = self._next(HTTP_CF_CONNECTING_IP=self.ADDRESS)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+
+    def test_a_skip_without_a_csrf_token_does_not_count_for_the_user(self):
+        from rest_framework.test import APIClient
+
+        client = APIClient(enforce_csrf_checks=True)
+        client.force_login(self.user)
+        client.post(
+            reverse("chooser-skip"),
+            json.dumps({"task_id": self.task.id}),
+            content_type="application/json",
+        )
+        self.assertIsNone(ChooserSkip.objects.get(task=self.task).user)
+
+    def test_a_user_skipping_in_two_sessions_leaves_one_skip(self):
+        ChooserSkip.objects.create(
+            task=self.task, session_key="another-session", user=self.user
+        )
+        self.client.force_login(self.user)
+        self.client.post(
+            reverse("chooser-skip"),
+            json.dumps({"task_id": self.task.id}),
+            content_type="application/json",
+        )
+        self.assertEqual(ChooserSkip.objects.filter(task=self.task).count(), 1)
+
+    def test_a_vote_with_a_valid_csrf_token_records_the_signed_in_user(self):
+        from django.conf import settings
+        from django.middleware.csrf import _get_new_csrf_string
+        from rest_framework.test import APIClient
+
+        client = APIClient(enforce_csrf_checks=True)
+        client.force_login(self.user)
+        token = _get_new_csrf_string()
+        client.cookies[settings.CSRF_COOKIE_NAME] = token
+        client.post(
+            reverse("chooser-vote"),
+            self._vote_data(),
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(ChooserVote.objects.get(task=self.task).user, self.user)
+
+    def test_the_database_holds_one_skip_per_user_per_task(self):
+        from django.db import IntegrityError, transaction
+
+        ChooserSkip.objects.create(
+            task=self.task, session_key="another-session", user=self.user
+        )
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            ChooserSkip.objects.create(
+                task=self.task, session_key="a-third-session", user=self.user
+            )
+
+    def test_the_database_holds_one_vote_per_user_per_task(self):
+        from django.db import IntegrityError, transaction
+
+        self._vote_elsewhere(user=self.user)
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            self._vote_elsewhere(user=self.user, session_key="a-third-session")
 
 class ChooserPrefillTest(APITestCase):
     """Test the prefill functionality."""

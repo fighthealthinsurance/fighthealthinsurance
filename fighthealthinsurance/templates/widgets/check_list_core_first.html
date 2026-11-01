@@ -1,0 +1,12 @@
+{% comment %}form_utils.CoreFirstCheckboxList: the common tick boxes up front, the rest folded under a disclosure that needs no script.{% endcomment %}
+{% with id=widget.attrs.id %}<div{% if id %} id="{{ id }}"{% endif %} class="fhi-check-group" role="group"{% if widget.group_label %} aria-label="{{ widget.group_label }}"{% endif %}{% if id and widget.group_help %} aria-describedby="{{ id }}_helptext"{% endif %}>
+  <div class="fhi-check-list">{% for option in widget.shown_options %}
+    <div class="fhi-check-row">{% include option.template_name with widget=option %}</div>{% endfor %}
+  </div>{% if widget.more_options %}
+  <details class="fhi-check-more">
+    <summary>{{ widget.more_label }} ({{ widget.more_options|length }})</summary>
+    <div class="fhi-check-list">{% for option in widget.more_options %}
+      <div class="fhi-check-row">{% include option.template_name with widget=option %}</div>{% endfor %}
+    </div>
+  </details>{% endif %}
+</div>{% endwith %}

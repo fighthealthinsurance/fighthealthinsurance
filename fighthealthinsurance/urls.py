@@ -94,6 +94,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="admin_status",
     ),
     path(
+        "timbit/help/experiments",
+        staff_member_required(staff_views.ExperimentsView.as_view()),
+        name="staff_experiments",
+    ),
+    path(
         "timbit/temporal",
         staff_member_required(staff_views.TemporalUIProxyView.as_view()),
         name="temporal_ui_root",
@@ -183,6 +188,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "timbit/help/plan_documents",
         staff_member_required(staff_views.PlanDocumentsDashboardView.as_view()),
         name="plan_documents_dashboard",
+    ),
+    path(
+        "timbit/help/storage",
+        staff_member_required(staff_views.StorageHealthView.as_view()),
+        name="storage_health",
     ),
     path(
         "timbit/help/model_backends",

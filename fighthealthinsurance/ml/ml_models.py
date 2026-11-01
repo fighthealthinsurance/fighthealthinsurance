@@ -1617,6 +1617,17 @@ class RemoteModelLike(DenialBase):
         leg = "backup" if backup_by_base or backup_by_model else "primary"
         return label, leg, _endpoint_label(api_base or primary or backup)
 
+    def _count_skipped_call(self, reason: str) -> None:
+        """Count a call a skip kept off the wire as the shared transport does:
+        outcome=none, with the skip as its failure reason. Uncounted, the
+        failure rate would fall during the very outage that started the
+        cooldown."""
+        metric_model, leg, endpoint = self._metric_identity(
+            getattr(self, "api_base", None)
+        )
+        record_ml_call(metric_model, "none", 0.0, leg=leg, endpoint=endpoint)
+        record_ml_failure(metric_model, reason, leg=leg, endpoint=endpoint)
+
     def quality(self) -> int:
         return 100
 
@@ -6343,6 +6354,62 @@ class DeepInfra(RemoteFullOpenLike):
         ]
 
 
+class LocalConcurrencyGate:
+    """At most ``limit`` calls in flight per key in this process, refusing
+    the rest at once rather than queueing them.
+
+    For a provider that hard-fails a request over its concurrency limit
+    (LunaRoute serves one at a time): a call that would go over is better
+    not made, so the caller moves on to the next backend straight away
+    instead of waiting for the provider's refusal. Local only: another
+    process's calls are not counted, and the provider refusing those is the
+    usual failure the caller fails over from. A threading lock, not an
+    asyncio one, since backends are called from several event loops (the
+    executor threads, Ray actors) in one process.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._in_flight: dict[Any, int] = {}
+
+    def try_acquire(self, key: Any, limit: Optional[int]) -> bool:
+        """Take a slot for ``key`` if fewer than ``limit`` are held. ``None``
+        (or below 1) is no limit, and always succeeds."""
+        with self._lock:
+            held = self._in_flight.get(key, 0)
+            if limit is not None and limit >= 1 and held >= limit:
+                return False
+            self._in_flight[key] = held + 1
+            return True
+
+    def release(self, key: Any) -> None:
+        with self._lock:
+            held = self._in_flight.get(key, 0) - 1
+            if held > 0:
+                self._in_flight[key] = held
+            else:
+                self._in_flight.pop(key, None)
+
+    def in_flight(self, key: Any) -> int:
+        with self._lock:
+            return self._in_flight.get(key, 0)
+
+
+def max_parallel_from_env(var_name: str, default: Optional[int]) -> Optional[int]:
+    """A concurrency limit read from ``var_name``: a whole number, with 0 or
+    below meaning no limit (None), and ``default`` when it is unset or not a
+    number."""
+    raw = get_env_variable(var_name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        logger.warning(f"{var_name}={raw!r} is not a whole number; using {default}")
+        return default
+    return value if value >= 1 else None
+
+
 class LunaRoute(RemoteFullOpenLike):
     """LunaRoute's inference gateway, which speaks the OpenAI Chat
     Completions shape at ``gw.lunaroute.com/v1`` (docs.lunaroute.com).
@@ -6368,6 +6435,13 @@ class LunaRoute(RemoteFullOpenLike):
         "lunaroute/deepseek-4.1-flash": "deepseek-4.1-flash",
         "lunaroute/glm-5.3": "glm-5.3",
     }
+    # LunaRoute serves one request at a time per model and hard-fails the
+    # rest, so a call while one is in flight here is not made: it skips at
+    # once, as a rate-limit back-off does, and the caller moves on to the
+    # next backend. LUNA_ROUTE_MAX_PARALLEL changes the limit (0 for none).
+    MAX_PARALLEL_ENV: ClassVar[str] = "LUNA_ROUTE_MAX_PARALLEL"
+    DEFAULT_MAX_PARALLEL: ClassVar[int] = 1
+    _concurrency: ClassVar[LocalConcurrencyGate] = LocalConcurrencyGate()
 
     @classmethod
     def config_status(cls) -> Tuple[str, Optional[str]]:
@@ -6402,6 +6476,60 @@ class LunaRoute(RemoteFullOpenLike):
             ModelDescription(cost=0, name=name, internal_name=model_id)
             for name, model_id in cls.ARENA_MODELS.items()
         ]
+
+    @classmethod
+    def max_parallel(cls) -> Optional[int]:
+        """Calls this process lets in flight per model at once, or None for
+        no limit. Read per call."""
+        return max_parallel_from_env(cls.MAX_PARALLEL_ENV, cls.DEFAULT_MAX_PARALLEL)
+
+    async def _infer(
+        self,
+        system_prompts: list[str],
+        prompt,
+        patient_context=None,
+        plan_context=None,
+        pubmed_context=None,
+        ml_citations_context=None,
+        history: Optional[List[dict[str, str]]] = None,
+        temperature=0.7,
+        raise_http_errors: bool = False,
+        timeout: Optional[float] = None,
+        raise_on_unavailable: bool = False,
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """The shared transport, once a slot is free (see max_parallel).
+        With none free the call is skipped: None, or ProviderUnavailable
+        with ``raise_on_unavailable``, the same as any backend that could
+        not be asked, so the caller fails over without waiting."""
+        key = (self.api_base, self.model)
+        if not self._concurrency.try_acquire(key, self.max_parallel()):
+            logger.debug(
+                f"{self}: skipping {self.model} -- a call is already in flight "
+                f"(max {self.max_parallel()} at once)"
+            )
+            self._count_skipped_call("skipped_busy")
+            if raise_on_unavailable:
+                raise ProviderUnavailable(
+                    f"{self.PROVIDER_LABEL} {self.model}: already serving the "
+                    "most calls it takes at once"
+                )
+            return None
+        try:
+            return await super()._infer(
+                system_prompts=system_prompts,
+                prompt=prompt,
+                patient_context=patient_context,
+                plan_context=plan_context,
+                pubmed_context=pubmed_context,
+                ml_citations_context=ml_citations_context,
+                history=history,
+                temperature=temperature,
+                raise_http_errors=raise_http_errors,
+                timeout=timeout,
+                raise_on_unavailable=raise_on_unavailable,
+            )
+        finally:
+            self._concurrency.release(key)
 
 
 class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
@@ -6507,15 +6635,6 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
     def rate_limiter(self) -> RateLimiter:
         """Get the rate limiter for this model instance."""
         return self._rate_limiters[self.model]
-
-    def _count_skipped_call(self, reason: str) -> None:
-        """Count a call a skip kept off the wire as the shared transport does:
-        outcome=none, with the skip as its failure reason. Uncounted, the
-        failure rate would fall during the very outage that started the
-        cooldown."""
-        metric_model, leg, endpoint = self._metric_identity(self.api_base)
-        record_ml_call(metric_model, "none", 0.0, leg=leg, endpoint=endpoint)
-        record_ml_failure(metric_model, reason, leg=leg, endpoint=endpoint)
 
     def _retry_after_seconds(
         self, e: aiohttp.ClientResponseError, default: float = 60.0

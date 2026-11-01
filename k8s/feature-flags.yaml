@@ -1,0 +1,41 @@
+# fhi-feature-flags -- the production feature switches and Temporal address,
+# in git instead of buried in the fight-health-insurance-secret Secret.
+#
+# Every app pod (web, jobs, Temporal workers, cronjobs) loads this with
+# envFrom AFTER its secretRefs. For a key in more than one envFrom source the
+# last one wins, so these values win over any copy the Secrets still carry.
+#
+# Only the switches and the non-secret Temporal address live here. The payload
+# keys (TEMPORAL_PAYLOAD_KEY, TEMPORAL_RESEARCH_PAYLOAD_KEY) and TYPESAFE_API_KEY
+# stay in the Secret. The namespaces and the other task queues keep their
+# settings.py defaults; the worker manifests pin the ones they host.
+#
+# The k8s service links (TEMPORAL_FRONTEND_SERVICE_HOST, TEMPORAL_WEB_PORT,
+# ...) also show up in the environment; nothing reads them.
+#
+# Values are strings: settings.py treats "true" as on, anything else as off.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fhi-feature-flags
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance
+    component: feature-flags
+data:
+  # Temporal connection: hostname (port 7233 is implied) and the fax queue.
+  TEMPORAL_HOSTNAME: "temporal-frontend"
+  TEMPORAL_TASK_QUEUE: "fhi-fax"
+  # Temporal flows. Each TEMPORAL_*_ENABLED takes effect only with
+  # TEMPORAL_ENABLED; plan documents also need TEMPORAL_RESEARCH_PAYLOAD_KEY.
+  TEMPORAL_ENABLED: "true"
+  TEMPORAL_APPEAL_JOURNEY_ENABLED: "true"
+  TEMPORAL_INTAKE_JOURNEY_ENABLED: "true"
+  TEMPORAL_CHAT_POLICY_ENABLED: "true"
+  TEMPORAL_PLAN_DOCUMENTS_ENABLED: "true"
+  # TypeSafe (Jev) features; inert without TYPESAFE_API_KEY.
+  TYPESAFE_CHAT_SHADOW_ENABLED: "true"
+  TYPESAFE_DENIAL_TRIAGE_ENABLED: "true"
+  TYPESAFE_LETTER_RANKING_ENABLED: "true"
+  # The on-device advanced OCR option on the upload page.
+  ADVANCED_OCR_OFFERED: "false"

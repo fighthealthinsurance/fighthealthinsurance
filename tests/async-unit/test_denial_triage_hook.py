@@ -30,6 +30,7 @@ def _result():
                 "regulation": {"choice": "unknown", "confidence": 0.4},
                 "pre_service": {"noul": 0.1},
                 "urgent": {"noul": 0.02},
+                "regulator": {"noul": 0.03},
                 "deadline": {"choice": "180 days from notice", "confidence": 0.95},
             }
         },
@@ -97,6 +98,8 @@ def test_a_date_confirmed_during_the_call_resolves_the_window_at_write_time():
                     "regulation": {"choice": "unknown", "confidence": 0.4},
                     "pre_service": {"noul": 0.1},
                     "urgent": {"noul": 0.02},
+                    "regulator": {"noul": 0.03},
+                "regulator": {"noul": 0.03},
                     "deadline": {"choice": "180 days from notice", "confidence": 0.95},
                 }
             },

@@ -64,7 +64,12 @@ from fighthealthinsurance.ml import letter_quality, spend, typesafe
 # release, so a triage stored before then is redone.
 # 3: the regulation choices became the PlanSource kinds, so a stored answer
 # maps onto the plan source intake asks for.
-RUBRIC_VERSION = 3
+# 4: the urgent question was tightened to the letter's own handling of THIS
+# request (it now drives the regulator callout, so the expedited-appeal
+# rights notice every denial carries must not read as urgent), and the
+# regulator question was added. A triage stored before reads as not current
+# and is redone; until then it steers nothing.
+RUBRIC_VERSION = 4
 _RUBRIC_SUFFIX = f"/rubric-{RUBRIC_VERSION}"
 # The provenance under the default model; rows record source_for(payload).
 SOURCE = f"typesafe/{typesafe.DEFAULT_MODEL}{_RUBRIC_SUFFIX}"
@@ -190,9 +195,35 @@ PRE_SERVICE_QUESTION = (
     "The denial is for a service the patient has not yet received (a prior "
     "authorization or pre-service request), not a claim for care already provided"
 )
+# Tight on purpose: a yes pre-ticks the urgent box and brings in a
+# regulator in parallel with the appeal (escalation_addresses). Nearly every
+# denial carries a rights notice about asking for an expedited appeal "if"
+# the situation is urgent; that boilerplate, the conditional, is the false
+# positive this must not fire on.
 URGENT_QUESTION = (
-    "The letter indicates an expedited or urgent review, or that delay could "
-    "seriously jeopardize the patient's health or ability to regain function"
+    "This specific request is time-critical by the letter's own account: the "
+    "letter says the insurer handled THIS request as an expedited, urgent or "
+    "concurrent review (care already under way, such as an inpatient stay or "
+    "ongoing treatment, being cut short), or it states that a physician has "
+    "said waiting the standard time could seriously jeopardize the patient's "
+    "life, health or ability to regain maximum function. Answer no for the "
+    "standard notice that the patient MAY ask for an expedited or urgent "
+    "appeal IF their situation is urgent, for a routine prior authorization "
+    "or claim decided on the standard timeline, and for care that is "
+    "scheduled, elective or preventive with no stated time pressure"
+)
+# Whether this is the point to bring in a regulator: the internal appeals
+# are done. Time-critical care is the other point, and URGENT_QUESTION
+# already asks that. Read by escalation_addresses.regulator_escalation_reasons
+# through regulator_signals.
+REGULATOR_QUESTION = (
+    "The letter is the insurer's final decision after the patient's internal "
+    "appeals: a second- or third-level appeal was decided, the internal "
+    "appeals are exhausted, or the letter calls itself the final adverse "
+    "determination, so the patient's next step is an external review or a "
+    "complaint to a regulator. Not a first denial that only explains the "
+    "right to appeal, to an external review or to contact a regulator, and "
+    "not a first appeal decided where another internal level remains"
 )
 DEADLINE_QUESTION = (
     "Which of these is the deadline by which the patient must file an INTERNAL "
@@ -524,6 +555,7 @@ def build_questions(
         },
         "pre_service": {"type": "noul", "instructions": PRE_SERVICE_QUESTION},
         "urgent": {"type": "noul", "instructions": URGENT_QUESTION},
+        "regulator": {"type": "noul", "instructions": REGULATOR_QUESTION},
     }
     if candidates:
         options = {c.label: f"{c.label}: {c.snippet}" for c in candidates}
@@ -549,6 +581,8 @@ class Triage:
     deadline_confidence: typing.Optional[float]
     input_tokens: int
     source: str = SOURCE
+    # Probability the internal appeals are done (REGULATOR_QUESTION).
+    regulator: typing.Optional[float] = None
 
 
 class TriageError(Exception):
@@ -600,6 +634,7 @@ def parse(payload: typing.Any, candidates: list[DateCandidate]) -> Triage:
         regulation, regulation_conf = _choice(answers, "regulation", REGULATION)
         pre_service = _unit(answers["pre_service"]["noul"], "pre_service")
         urgent = _unit(answers["urgent"]["noul"], "urgent")
+        regulator = _unit(answers["regulator"]["noul"], "regulator")
         deadline: typing.Optional[datetime.date] = None
         deadline_label: typing.Optional[str] = None
         deadline_conf: typing.Optional[float] = None
@@ -624,6 +659,7 @@ def parse(payload: typing.Any, candidates: list[DateCandidate]) -> Triage:
         regulation_confidence=regulation_conf,
         pre_service=pre_service,
         urgent=urgent,
+        regulator=regulator,
         deadline=deadline,
         deadline_label=deadline_label,
         deadline_confidence=deadline_conf,
@@ -695,6 +731,7 @@ TRIAGE_COLUMNS = (
     "triage_regulation_confidence",
     "triage_pre_service",
     "triage_urgent",
+    "triage_regulator",
     "appeal_deadline",
     "appeal_deadline_label",
     "appeal_deadline_confidence",
@@ -723,6 +760,7 @@ def row_values(
         "triage_regulation_confidence": result.regulation_confidence,
         "triage_pre_service": result.pre_service,
         "triage_urgent": result.urgent,
+        "triage_regulator": result.regulator,
         "appeal_deadline": result.deadline,
         "appeal_deadline_label": result.deadline_label,
         "appeal_deadline_confidence": result.deadline_confidence,
@@ -882,4 +920,29 @@ def suggestions(denial: typing.Any, *, min_confidence: float) -> Suggestions:
         plan_source_name=plan_source_name,
         urgent=_at_least(getattr(denial, "triage_urgent", None), min_confidence),
         pre_service=pre_service,
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class RegulatorSignals:
+    """What a usable, confident triage says about bringing in a regulator."""
+
+    urgent: bool = False  # time-critical (URGENT_QUESTION)
+    appeals_done: bool = False  # internal appeals finished (REGULATOR_QUESTION)
+
+
+def regulator_signals(
+    denial: typing.Any, *, min_confidence: float = SUGGEST_CONFIDENCE
+) -> RegulatorSignals:
+    """Jev's two answers that decide whether a regulator should hear about
+    this denial now, at ``min_confidence`` or above; nothing unless the
+    triage is usable (consent, current text, triage switched on). A triage
+    stored before the regulator question has no answer for it, read as no."""
+    if not usable(denial):
+        return RegulatorSignals()
+    return RegulatorSignals(
+        urgent=_at_least(getattr(denial, "triage_urgent", None), min_confidence),
+        appeals_done=_at_least(
+            getattr(denial, "triage_regulator", None), min_confidence
+        ),
     )
