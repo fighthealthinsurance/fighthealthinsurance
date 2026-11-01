@@ -15,6 +15,8 @@ from fighthealthinsurance.cms_coverage_api import (
     _candidate_keywords,
     NCD_CITATION_MARKER,
     _filter_by_keyword,
+    _meaningful_tokens,
+    _singular,
     _parse_ncd_record,
     _tokenize,
     get_cms_coverage_citations,
@@ -250,6 +252,39 @@ class TestFilterByKeyword:
         results = _filter_by_keyword(docs, "MRI brain", max_results=2)
         assert [d.title for d in results] == ["MRI of the Brain", "MRI"]
 
+    def test_plural_and_singular_count_as_the_same_word(self):
+        docs = self._docs("Knee Replacement Surgery")
+        results = _filter_by_keyword(docs, "knee replacements", max_results=5)
+        assert [d.title for d in results] == ["Knee Replacement Surgery"]
+
+    def test_one_word_query_needs_a_title_of_that_word(self):
+        docs = self._docs("Speech Generating Devices", "Speech")
+        results = _filter_by_keyword(docs, "speech", max_results=5)
+        assert [d.title for d in results] == ["Speech"]
+
+    def test_exactly_half_of_the_query_is_not_most(self):
+        # Two of four query words, and two of four title words.
+        docs = self._docs("Total Joint Replacement Surgery of the Hip")
+        results = _filter_by_keyword(
+            docs, "shoulder joint replacement revision", max_results=5
+        )
+        assert results == []
+
+
+class TestSingular:
+    def test_plain_plurals(self):
+        assert _singular("replacements") == "replacement"
+        assert _singular("therapies") == "therapy"
+        assert _singular("patches") == "patch"
+        assert _singular("x") == "x"
+
+    def test_singular_words_ending_in_s_are_kept(self):
+        for word in ("analysis", "diabetes", "lupus", "bypass", "pancreas"):
+            assert _singular(word) == word
+
+    def test_generic_words_are_dropped_in_either_form(self):
+        assert _meaningful_tokens("therapies and treatments") == []
+
 
 class TestCMSCoverageClientSearch:
     @pytest.mark.asyncio
@@ -281,9 +316,9 @@ class TestCMSCoverageClientSearch:
         )
         client._client = mock_http
 
-        results = await client.search_ncds("mri", max_results=5)
+        results = await client.search_ncds("MRI brain", max_results=5)
 
-        assert {r.document_id for r in results} == {220, 222}
+        assert {r.document_id for r in results} == {220}
 
     @pytest.mark.asyncio
     async def test_search_ncds_returns_empty_for_blank_keyword(self):
@@ -349,14 +384,14 @@ class TestCMSCoverageClientSearch:
         )
         client._client = mock_http
 
-        first = await client.search_ncds("MRI")
+        first = await client.search_ncds("MRI brain")
         assert len(first) == 1
 
         # Force the report-cache TTL to expire and simulate an outage
         client._ncd_report_cached_at = 0.0
         mock_http.get = AsyncMock(side_effect=httpx.RequestError("outage"))
 
-        second = await client.search_ncds("MRI")
+        second = await client.search_ncds("MRI brain")
 
         assert {d.document_id for d in second} == {d.document_id for d in first}
 

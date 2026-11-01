@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from django.utils import timezone
 
-from fighthealthinsurance.cms_coverage_api import NCD_CITATION_MARKER
+from fighthealthinsurance.cms_coverage_api import NCD_MATCHER_VERSION
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.models import Denial
 
@@ -53,11 +53,11 @@ class TestMLCitationsHelperCMSIntegration:
     async def test_uses_fresh_cache_when_available(self, mock_fetch, mock_cache_cls):
         # Simulate a fresh DB cache hit on the variant-specific timestamp
         cache_entry = MagicMock()
-        cached = [
-            f"Cached NCD A, {NCD_CITATION_MARKER}",
-            f"Cached NCD B, {NCD_CITATION_MARKER}",
-        ]
-        cache_entry.generic_citations = cached
+        cached = ["Cached NCD A", "Cached NCD B"]
+        cache_entry.generic_citations = {
+            "matcher_version": NCD_MATCHER_VERSION,
+            "citations": cached,
+        }
         cache_entry.medicare_citations = []
         cache_entry.generic_updated_at = timezone.now()
         cache_entry.medicare_updated_at = None
@@ -81,7 +81,7 @@ class TestMLCitationsHelperCMSIntegration:
     async def test_refetches_fresh_cache_from_the_older_matcher(
         self, mock_fetch, mock_cache_cls
     ):
-        # Written before titles had to match closely: no marker, so it may
+        # A bare list is from before titles had to match closely, so it may
         # name an unrelated policy and is looked up again.
         cache_entry = MagicMock()
         cache_entry.generic_citations = ["Old-matcher NCD citation"]
@@ -97,12 +97,72 @@ class TestMLCitationsHelperCMSIntegration:
         )
         mock_fetch.return_value = []
 
+        with patch(
+            "fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_client"
+        ) as mock_client:
+            mock_client.return_value.has_report.return_value = True
+            result = await MLCitationsHelper.generate_cms_coverage_citations(
+                denial=self.mock_denial
+            )
+
+        assert result == []
+        mock_fetch.assert_awaited_once()
+        # The empty answer is stored for this matcher, so the next denial
+        # doesn't look it up again.
+        kwargs = mock_cache_cls.objects.aupdate_or_create.await_args.kwargs
+        assert kwargs["defaults"]["generic_citations"] == {
+            "matcher_version": NCD_MATCHER_VERSION,
+            "citations": [],
+        }
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
+    @patch("fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_citations")
+    async def test_uses_cached_empty_result_from_this_matcher(
+        self, mock_fetch, mock_cache_cls
+    ):
+        cache_entry = MagicMock()
+        cache_entry.generic_citations = {
+            "matcher_version": NCD_MATCHER_VERSION,
+            "citations": [],
+        }
+        cache_entry.medicare_citations = []
+        cache_entry.generic_updated_at = timezone.now()
+        cache_entry.medicare_updated_at = None
+
+        mock_qs = MagicMock()
+        mock_qs.afirst = AsyncMock(return_value=cache_entry)
+        mock_cache_cls.objects.filter.return_value = mock_qs
+
         result = await MLCitationsHelper.generate_cms_coverage_citations(
             denial=self.mock_denial
         )
 
         assert result == []
-        mock_fetch.assert_awaited_once()
+        mock_fetch.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
+    @patch("fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_citations")
+    async def test_does_not_store_empty_result_during_an_outage(
+        self, mock_fetch, mock_cache_cls
+    ):
+        mock_qs = MagicMock()
+        mock_qs.afirst = AsyncMock(return_value=None)
+        mock_cache_cls.objects.filter.return_value = mock_qs
+        mock_cache_cls.objects.aupdate_or_create = AsyncMock()
+        mock_fetch.return_value = []
+
+        with patch(
+            "fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_client"
+        ) as mock_client:
+            mock_client.return_value.has_report.return_value = False
+            result = await MLCitationsHelper.generate_cms_coverage_citations(
+                denial=self.mock_denial
+            )
+
+        assert result == []
+        mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
@@ -191,7 +251,10 @@ class TestMLCitationsHelperCMSIntegration:
         kwargs = mock_cache_cls.objects.aupdate_or_create.await_args.kwargs
         assert kwargs["procedure"] == "mri"
         assert kwargs["diagnosis"] == "headache"
-        assert kwargs["defaults"]["generic_citations"] == ["New citation"]
+        assert kwargs["defaults"]["generic_citations"] == {
+            "matcher_version": NCD_MATCHER_VERSION,
+            "citations": ["New citation"],
+        }
         assert kwargs["defaults"].get("generic_updated_at") is not None
 
     @pytest.mark.asyncio

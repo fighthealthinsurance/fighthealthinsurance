@@ -95,19 +95,62 @@ def _tokenize(text: str) -> List[str]:
     ]
 
 
+# Singular words that end in "s" and must not lose it.
+_KEEP_TRAILING_S = frozenset(
+    {
+        "diabetes",
+        "herpes",
+        "measles",
+        "mumps",
+        "rabies",
+        "rickets",
+        "scabies",
+        "series",
+        "species",
+    }
+)
+
+
+def _singular(token: str) -> str:
+    """A light, conservative singular form, so "replacements" and
+    "Replacement" count as the same word. Only plain plural endings are
+    touched: words ending in -is, -us, -ss, -as or -os ("analysis",
+    "lupus", "bypass", "pancreas") and the listed singulars ("diabetes")
+    stay as they are."""
+    if len(token) <= 3 or token in _KEEP_TRAILING_S:
+        return token
+    if token.endswith("ies") and len(token) > 4:
+        return token[:-3] + "y"
+    if token.endswith(("is", "us", "ss", "as", "os")):
+        return token
+    if token.endswith(("sses", "xes", "ches", "shes")):
+        return token[:-2]
+    if token.endswith("s"):
+        return token[:-1]
+    return token
+
+
+_GENERIC_MEDICAL_STEMS = frozenset(_singular(w) for w in _GENERIC_MEDICAL_WORDS)
+
+
 def _meaningful_tokens(text: str) -> List[str]:
-    """``_tokenize`` without the generic medical words, deduplicated in order."""
+    """``_tokenize`` in singular form without the generic medical words,
+    deduplicated in order."""
     out: List[str] = []
     for t in _tokenize(text):
-        if t not in _GENERIC_MEDICAL_WORDS and t not in out:
+        t = _singular(t)
+        if t not in _GENERIC_MEDICAL_STEMS and t not in out:
             out.append(t)
     return out
 
 
-# The phrase every NCD citation carries since titles had to match the query
-# closely. A cached citation without it was written by the older matcher,
-# which accepted one shared word, so it may be off topic and is fetched again.
+# Every NCD citation says the policy may apply, since the match is on title
+# words.
 NCD_CITATION_MARKER = "may apply to this service"
+
+# Bumped whenever the title matching changes what a lookup returns, so cached
+# results from an older matcher are looked up again (ml_citations_helper).
+NCD_MATCHER_VERSION = 2
 
 
 @dataclass
@@ -189,15 +232,14 @@ def _parse_ncd_record(record: dict) -> Optional[NCDDocument]:
         return None
 
 
-def _title_matches(query_tokens: List[str], single_word_query: bool, title: str):
+def _title_matches(query_tokens: List[str], title: str):
     """Score an NCD title against the query's meaningful tokens, or None.
 
     A title matches when the query names its subject closely, in one of two
     ways:
 
-    * Most of the query is in the title: at least half of the query's
-      meaningful tokens, and at least two when it has two or more. A query
-      that is one word to begin with ("MRI") only needs that word.
+    * Most of the query is in the title: more than half of the query's
+      meaningful tokens, and at least two.
     * Most of the title is in the query: at least two shared tokens that
       are more than half the title's, so a long procedure description
       still finds a short title ("Cardiac Rehabilitation Programs" for
@@ -205,7 +247,8 @@ def _title_matches(query_tokens: List[str], single_word_query: bool, title: str)
     * All of the title is in the query: every meaningful title token
       appears in it ("Ambulance Services" for "air ambulance").
 
-    One shared word is not enough otherwise, which is what let "air
+    A one-word query can only match the last way, a title that is that one
+    word. One shared word is not enough otherwise, which is what let "air
     ambulance" match "Air-Fluidized Bed" and "applied behavior analysis"
     match "Hair Analysis". Returns a sort key (best first) or None.
     """
@@ -215,10 +258,7 @@ def _title_matches(query_tokens: List[str], single_word_query: bool, title: str)
     matched = sum(1 for t in query_tokens if t in title_tokens)
     if matched == 0:
         return None
-    if len(query_tokens) == 1:
-        most_of_query = single_word_query
-    else:
-        most_of_query = matched >= max(2, (len(query_tokens) + 1) // 2)
+    most_of_query = matched >= 2 and matched * 2 > len(query_tokens)
     most_of_title = matched >= 2 and matched * 2 > len(title_tokens)
     all_of_title = title_tokens.issubset(query_tokens)
     if not (most_of_query or most_of_title or all_of_title):
@@ -252,10 +292,9 @@ def _filter_by_keyword(
     query_tokens = _meaningful_tokens(keyword)
     if not query_tokens:
         return []
-    single_word_query = len(_tokenize(keyword)) == 1
     scored: List[tuple] = []
     for r in records:
-        key = _title_matches(query_tokens, single_word_query, r.title)
+        key = _title_matches(query_tokens, r.title)
         if key is not None:
             scored.append((key, r))
     scored.sort(key=lambda x: x[0])
@@ -336,6 +375,11 @@ class CMSCoverageClient:
                 f"Unexpected error fetching CMS NCD report: {e}"
             )
             return self._ncd_report_cache or []
+
+    def has_report(self) -> bool:
+        """Whether an NCD report has been fetched, so an empty search was a
+        real "nothing matched" rather than an outage."""
+        return bool(self._ncd_report_cache)
 
     async def search_ncds(
         self, keyword: str, max_results: int = 5

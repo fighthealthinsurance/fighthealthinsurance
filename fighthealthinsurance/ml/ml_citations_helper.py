@@ -11,8 +11,9 @@ from fighthealthinsurance.denial_history_consent import (
     still_allowed,
 )
 from fighthealthinsurance.cms_coverage_api import (
-    NCD_CITATION_MARKER,
+    NCD_MATCHER_VERSION,
     get_cms_coverage_citations,
+    get_cms_coverage_client,
 )
 from fighthealthinsurance.ecri_guidelines_helper import ECRIGuidelinesHelper
 from fighthealthinsurance.extralink_context_helper import (
@@ -32,6 +33,22 @@ from fighthealthinsurance.utils import best_within_timelimit
 # documents change rarely, so a long TTL is fine; we just don't want
 # entries to live forever in case the public URLs or titles change.
 _CMS_CACHE_TTL = datetime.timedelta(days=30)
+
+
+def _cached_cms_citations(value: Any) -> Optional[List[str]]:
+    """The citations a CMSCoverageCache field holds for the current NCD
+    matcher, or None when it holds none for it. Entries are stored as
+    ``{"matcher_version": N, "citations": [...]}`` in the existing JSON
+    field, so no migration is needed; a bare list is from an older matcher.
+    """
+    if not isinstance(value, dict):
+        return None
+    if value.get("matcher_version") != NCD_MATCHER_VERSION:
+        return None
+    citations = value.get("citations")
+    if not isinstance(citations, list):
+        return None
+    return [c for c in citations if isinstance(c, str)]
 
 
 async def _denial_is_medicare_plan(denial: Optional[Denial]) -> bool:
@@ -447,23 +464,21 @@ class MLCitationsHelper:
             logger.debug(f"Could not read CMSCoverageCache: {e}")
 
         if cache_entry is not None:
-            cached = getattr(cache_entry, cache_field) or []
+            cached = _cached_cms_citations(getattr(cache_entry, cache_field))
             variant_updated_at = getattr(cache_entry, timestamp_field, None)
             fresh = (
                 variant_updated_at is not None
                 and (timezone.now() - variant_updated_at) < _CMS_CACHE_TTL
             )
-            # Entries written before titles had to match closely carry no
-            # marker and may name an unrelated policy: look them up again.
-            current = all(
-                isinstance(c, str) and NCD_CITATION_MARKER in c for c in cached
-            )
-            if cached and fresh and current:
+            # None is an entry from an older matcher (a bare list, from when
+            # one shared title word was a match): look it up again. An empty
+            # list is a finished lookup that found nothing.
+            if cached is not None and fresh:
                 logger.debug(
                     f"Using cached CMS citations for {procedure}/{diagnosis} "
                     f"(medicare_plan={medicare_plan})"
                 )
-                return list(cached)[:max_results]
+                return cached[:max_results]
 
         try:
             citations = await get_cms_coverage_citations(
@@ -476,7 +491,9 @@ class MLCitationsHelper:
             logger.opt(exception=True).debug(f"CMS coverage citation fetch failed: {e}")
             citations = []
 
-        if citations:
+        # An empty result is stored only when the NCD report was there to
+        # search, so an outage isn't remembered as "nothing applies".
+        if citations or get_cms_coverage_client().has_report():
             # `aupdate_or_create` is atomic against the (procedure, diagnosis)
             # unique constraint, which closes the race where two concurrent
             # cache misses could otherwise create duplicate rows. We write
@@ -487,7 +504,13 @@ class MLCitationsHelper:
                 await CMSCoverageCache.objects.aupdate_or_create(
                     procedure=procedure,
                     diagnosis=diagnosis,
-                    defaults={cache_field: citations, timestamp_field: now},
+                    defaults={
+                        cache_field: {
+                            "matcher_version": NCD_MATCHER_VERSION,
+                            "citations": citations,
+                        },
+                        timestamp_field: now,
+                    },
                 )
             except Exception as e:
                 logger.opt(exception=True).debug(
