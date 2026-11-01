@@ -870,3 +870,126 @@ class TestUntracedClientProxy:
             direct = client._transport_for("https://skip.example/x")
         assert via_proxy is not direct
         assert client._transports.keys() == {"http://proxy.internal:3128", None}
+
+
+class TestRoundTwoEdges:
+    def test_a_doi_running_into_the_scan_cap_is_not_sendable(self):
+        filler = "x" * (cv.MAX_SCAN_CHARS - 12)
+        citation = filler + " 10.1056/NEJMoa2034577 more text"
+        (ident,) = cv.find_identifiers(citation)
+        assert ident.kind == "doi" and ident.malformed
+
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            " PMID: 33301246 more",
+            " https://pubmed.ncbi.nlm.nih.gov/33301246/ more",
+            " 45 CFR 147.136 more",
+        ],
+    )
+    def test_other_forms_running_into_the_scan_cap_are_not_sendable(self, tail):
+        cut = len(tail.split(" more")[0]) - 3
+        citation = "x" * (cv.MAX_SCAN_CHARS - cut) + tail
+        idents = cv.find_identifiers(citation)
+        assert idents and all(i.malformed for i in idents)
+
+    def test_a_scan_cap_inside_plain_text_leaves_earlier_identifiers_alone(self):
+        citation = f"doi:{REAL_DOI} " + "x" * cv.MAX_SCAN_CHARS
+        assert cv.find_identifiers(citation) == [cv.Identifier("doi", REAL_DOI.lower())]
+
+    @pytest.mark.parametrize(
+        "citation", ["DOI: https://doi.org/10.12/bad", "DOI: 10.1056/"]
+    )
+    def test_a_doi_mention_nothing_was_read_from_is_flagged(self, citation):
+        idents = cv.find_identifiers(citation)
+        assert idents and all(i.kind == "doi" and i.malformed for i in idents)
+
+    def test_a_doi_mention_covered_by_a_read_doi_adds_nothing(self):
+        assert cv.find_identifiers(f"DOI: https://doi.org/{REAL_DOI}") == [
+            cv.Identifier("doi", REAL_DOI.lower())
+        ]
+
+    @pytest.mark.parametrize(
+        "citation",
+        [
+            "42 CFR §§ 438.400–424",
+            "42 CFR 438.400-424",
+            "45 CFR 147.136 through 147.140",
+            "45 CFR 147.136 to 147.140",
+        ],
+    )
+    def test_abbreviated_and_worded_ranges_are_never_looked_up(self, citation):
+        (ident,) = cv.find_identifiers(citation)
+        assert ident.kind == "cfr" and ident.malformed
+
+    @pytest.mark.parametrize(
+        "citation, value",
+        [
+            ("29 CFR 2560.503-1", "29/2560/2560.503-1"),
+            ("29 CFR 2590.715-2719A", "29/2590/2590.715-2719A"),
+        ],
+    )
+    def test_hyphenated_section_numbers_stay_sections(self, citation, value):
+        assert cv.find_identifiers(citation) == [cv.Identifier("cfr", value)]
+
+
+@pytest.mark.asyncio
+class TestGuardBounds:
+    async def test_large_guard_text_is_fast(self):
+        guard = ("lorem ipsum dolor sit amet " * 7000)[: cv.MAX_GUARD_CHARS]
+        started = time.monotonic()
+        statuses, seen = await _check(f"doi:{REAL_DOI}", guard_text=guard)
+        assert time.monotonic() - started < 2.0
+        assert len(seen) == 1
+
+    async def test_guard_text_past_the_cap_blocks_every_doi(self):
+        statuses, seen = await _check(
+            f"doi:{REAL_DOI} PMID {REAL_PMID}",
+            guard_text="z" * (cv.MAX_GUARD_CHARS + 1),
+        )
+        assert statuses[_key("doi", REAL_DOI.lower())] == cv.UNCHECKED
+        assert statuses[_key("pmid", REAL_PMID)] == cv.FOUND
+        assert [r for r in seen if "doi.org" in str(r.url)] == []
+
+    async def test_guard_rejected_dois_count_toward_max_lookups(self):
+        held = " ".join(f"doi:10.1000/held{n}" for n in range(cv.MAX_LOOKUPS))
+        statuses, seen = await _check(held + f" doi:{REAL_DOI}", guard_text="held" * 3)
+        assert seen == []
+        assert statuses[_key("doi", REAL_DOI.lower())] == cv.UNCHECKED
+
+
+class TestProxyLikeHttpx:
+    def _proxy_for(self, env, url):
+        with patch.dict("os.environ", env, clear=True):
+            client = cv.UntracedClient()
+            transport = client._transport_for(url)
+        return {id(t): k for k, t in client._transports.items()}[id(transport)]
+
+    def test_a_scheme_less_proxy_still_works(self):
+        assert (
+            self._proxy_for(
+                {"HTTPS_PROXY": "proxy.example:3128"}, "https://doi.org/api/x"
+            )
+            == "http://proxy.example:3128"
+        )
+
+    def test_no_proxy_with_a_scheme_still_matches(self):
+        assert (
+            self._proxy_for(
+                {
+                    "HTTPS_PROXY": "http://proxy.example:3128",
+                    "NO_PROXY": "https://doi.org",
+                },
+                "https://doi.org/api/x",
+            )
+            is None
+        )
+
+    def test_no_proxy_star_bypasses_everything(self):
+        assert (
+            self._proxy_for(
+                {"HTTPS_PROXY": "http://proxy.example:3128", "NO_PROXY": "*"},
+                "https://doi.org/api/x",
+            )
+            is None
+        )

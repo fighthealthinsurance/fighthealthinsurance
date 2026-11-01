@@ -61,6 +61,7 @@ from typing import (
     Awaitable,
     Callable,
     Dict,
+    FrozenSet,
     Iterable,
     List,
     Optional,
@@ -68,14 +69,15 @@ from typing import (
     Tuple,
     cast,
 )
-from urllib.parse import quote, urlsplit
-from urllib.request import getproxies_environment
-from urllib.request import (  # type: ignore[attr-defined]  # not in typeshed
-    proxy_bypass_environment,
-)
+from urllib.parse import quote
 
 import httpx
 from django.core.cache import cache
+
+# httpx's own reading of the proxy environment, so this client picks the
+# same proxy an httpx.AsyncClient would (scheme-less HTTPS_PROXY values,
+# NO_PROXY entries with or without a scheme, "*", IPs).
+from httpx._utils import URLPattern, get_environment_proxies
 from loguru import logger
 
 from fighthealthinsurance.env_utils import get_env_variable
@@ -201,17 +203,22 @@ _SUBSECTIONS = (
     r"((?:\([0-9A-Za-z]{1,4}\)|\s{0,2}[" + _DASH + r"]\s{0,2}\([0-9A-Za-z]{1,4}\))*)"
 )
 # A range of sections, "438.400-438.424".
-_SECTION_RANGE = r"(\s{0,2}[" + _DASH + r"]\s{0,2}\d{1,5}\.\d{1,5})?"
+# A range of sections: "438.400-438.424", or "147.136 through 147.140".
+_SECTION_RANGE = (
+    r"(?P<range>\s{0,2}[" + _DASH + r"]\s{0,2}\d{1,5}\.\d{1,5}"
+    r"|\s{1,3}(?:through|thru|to)\s{1,3}\d{1,5}(?:\.\d{1,5})?)?"
+)
 # Anything else stuck to the number ("147.136oops", "300gg-???") makes it an
 # identifier that is not sent, rather than letting a valid-looking prefix
 # through. Markdown emphasis and quotes end the number.
 _STUCK_ON = "([^\\s,;:.)\\]*_\"'‘’“”]*)"
 _CFR_TEXT = re.compile(
-    r"(?<![\w.])(\d{1,3})\s{0,3}C\.?\s{0,2}F\.?\s{0,2}R\.?\s{0,3}"
-    r"(?:Parts?|Sec(?:tion)?s?\.?|§{1,2})?\s{0,3}"
-    r"(\d{1,5})(?:\.(\d{1,5}(?:["
+    r"(?<![\w.])(?P<title>\d{1,3})\s{0,3}C\.?\s{0,2}F\.?\s{0,2}R\.?\s{0,3}"
+    r"(?:Parts?|Sec(?:tion)?s?\.?|(?P<signs>§{1,2}))?\s{0,3}"
+    r"(?P<part>\d{1,5})(?:\.(?P<sub>\d{1,5})"
+    r"(?:(?P<dash>["
     + _DASH
-    + r"]\d{1,5}[A-Z]?(?!\.\d))?))?"
+    + r"])(?P<tail>\d{1,5}[A-Z]?)(?!\.\d))?)?"
     + _SECTION_RANGE
     + _SUBSECTIONS
     + _STUCK_ON,
@@ -285,9 +292,24 @@ def find_occurrences(citation: str) -> List[Occurrence]:
     its first MAX_SCAN_CHARS), with its span. Those that may not be sent are
     marked malformed."""
     text = citation[:MAX_SCAN_CHARS]
+    cut_short = len(citation) > MAX_SCAN_CHARS
     found: List[Occurrence] = []
 
-    def add(kind: str, value: str, start: int, end: int, malformed: bool) -> None:
+    def add(
+        kind: str,
+        value: str,
+        start: int,
+        end: int,
+        malformed: bool,
+        raw_end: Optional[int] = None,
+    ) -> None:
+        # A match in the last word before the scan cap (nothing but
+        # non-space characters between it and the cap) may be the front of a
+        # longer identifier; querying it could call a real one missing.
+        if cut_short and not any(
+            c.isspace() for c in text[raw_end if raw_end is not None else end :]
+        ):
+            malformed = True
         found.append(Occurrence(Identifier(kind, value, malformed), start, end))
 
     for m in _DOI_CANDIDATE.finditer(text):
@@ -300,33 +322,51 @@ def find_occurrences(citation: str) -> List[Occurrence]:
         # Stopping at "<" may mean the DOI was cut short; never send it.
         truncated = text[m.end() : m.end() + 1] == "<"
         if valid_doi(doi) and not truncated:
-            add("doi", doi.lower(), start, end, False)
+            add("doi", doi.lower(), start, end, False, m.end())
         else:
-            add("doi", doi.lower()[:120], start, end, True)
+            add("doi", doi.lower()[:120], start, end, True, m.end())
+    doi_spans = [(o.start, o.end) for o in found if o.ident.kind == "doi"]
     for m in _DOI_MENTION.finditer(text):
         token = m.group(1).lstrip("*_[(<\"'‘“")
-        if (
-            not token
-            or _DOI_START.match(token)  # a candidate above
-            or token.lower().startswith(("http://", "https://"))  # ditto
-            or _NO_DOI.match(token.rstrip(_ALWAYS_TRAILING))
-        ):
+        if not token or _NO_DOI.match(token.rstrip(_ALWAYS_TRAILING)):
+            continue
+        # Skipped only when a DOI read above covers what follows "DOI:"; a
+        # mention nothing was read from ("DOI: 10.1056/", a doi.org link to
+        # something that is not a DOI) is an identifier that is not sent.
+        if any(s < m.end(1) and m.start(1) < e for s, e in doi_spans):
             continue
         add("doi", _trim_doi(token).lower()[:120], m.start(), m.end(), True)
     for m in _PMID_TEXT.finditer(text):
         token = m.group(1).rstrip(_ALWAYS_TRAILING)
         end = m.start(1) + len(token)
-        add("pmid", token[:20], m.start(), end, not _PMID_VALID.match(token))
+        add("pmid", token[:20], m.start(), end, not _PMID_VALID.match(token), m.end())
     for m in _PUBMED_URL.finditer(text):
         token = m.group(1).rstrip(_ALWAYS_TRAILING)
         add("pmid", token[:20], m.start(), m.end(), not _PMID_VALID.match(token))
     for m in _CFR_TEXT.finditer(text):
-        title, part, sub = m.group(1), m.group(2), m.group(3)
-        section_range, stuck = m.group(4), m.group(6)
-        section = _dash(f"{part}.{sub}") if sub else ""
+        title, part, sub = m.group("title"), m.group("part"), m.group("sub")
+        dash, tail = m.group("dash"), m.group("tail")
+        stuck = m.groups()[-1]
+        section = f"{part}.{sub}" if sub else ""
+        if tail:
+            section += f"-{tail}"
         # A range of sections is never looked up: checking one end could
-        # call a real range missing after a misparse.
-        bad = bool(stuck) or bool(section_range) or not (1 <= int(title) <= _CFR_TITLES)
+        # call a real range missing after a misparse. Ranges are "§§", a
+        # second section after a dash or "through"/"to", or an abbreviated
+        # one ("438.400-424"): a typographic dash, or a hyphen followed by a
+        # number as long as the section's and larger. Section numbers with a
+        # hyphen of their own ("2560.503-1", "2590.715-2719A") stay sections.
+        abbreviated = bool(tail) and (
+            dash != "-"
+            or (
+                tail.isdigit()
+                and sub is not None
+                and len(tail) == len(sub)
+                and int(tail) > int(sub)
+            )
+        )
+        is_range = bool(m.group("range")) or m.group("signs") == "§§" or abbreviated
+        bad = bool(stuck) or is_range or not (1 <= int(title) <= _CFR_TITLES)
         value = f"{int(title)}/{int(part)}/{section}"
         add("cfr", value, m.start(), m.end(), bad)
     for m in _USC_TEXT.finditer(text):
@@ -345,22 +385,47 @@ def find_identifiers(citation: str) -> List[Identifier]:
     return out
 
 
-def _overlaps(doi: str, guard_text: str) -> bool:
+# The most guard text read. Past it, no DOI is sent at all, since the unread
+# rest could overlap any of them.
+MAX_GUARD_CHARS = 200_000
+
+
+@dataclass(frozen=True)
+class _Guard:
+    """The four-character runs of the person's text, built once per check."""
+
+    grams: FrozenSet[str]
+    blocks_all: bool = False
+
+    @classmethod
+    def of(cls, text: str) -> "_Guard":
+        if len(text) > MAX_GUARD_CHARS:
+            return cls(frozenset(), blocks_all=True)
+        lowered = text.lower()
+        return cls(frozenset(lowered[i : i + 4] for i in range(len(lowered) - 3)))
+
+
+_NO_GUARD = _Guard(frozenset())
+
+
+def _overlaps(doi: str, guard: _Guard) -> bool:
     """Whether any four characters in a row of the DOI's suffix appear in
-    ``guard_text`` (already lowercased)."""
-    if not guard_text:
+    the guard's text."""
+    if guard.blocks_all:
+        return True
+    if not guard.grams:
         return False
     suffix = doi.split("/", 1)[1].lower() if "/" in doi else doi.lower()
-    return any(suffix[i : i + 4] in guard_text for i in range(len(suffix) - 3))
+    return any(suffix[i : i + 4] in guard.grams for i in range(len(suffix) - 3))
 
 
-def _sendable(ident: Identifier, guard_text: str = "") -> bool:
+def _sendable(ident: Identifier, guard: _Guard = _NO_GUARD) -> bool:
     """A last check, right before a request, that only an identifier of the
     expected shape, and no DOI overlapping the person's data, goes out."""
     if ident.malformed:
         return False
     if ident.kind == "doi":
-        return valid_doi(ident.value) and not _overlaps(ident.value, guard_text)
+        return valid_doi(ident.value) and not _overlaps(ident.value, guard)
     if ident.kind == "pmid":
         return bool(_PMID_VALID.match(ident.value))
     if ident.kind == "cfr":
@@ -395,11 +460,14 @@ class UntracedClient:
     def _transport_for(self, url: str) -> httpx.AsyncBaseTransport:
         if self._fixed is not None:
             return self._fixed
-        parts = urlsplit(url)
-        proxies = getproxies_environment()
-        proxy = proxies.get(parts.scheme) or proxies.get("all")
-        if proxy and proxy_bypass_environment(parts.hostname or "", proxies):
-            proxy = None
+        target = httpx.URL(url)
+        mounts = sorted(
+            (URLPattern(pattern), proxy)
+            for pattern, proxy in get_environment_proxies().items()
+        )
+        proxy = next(
+            (proxy for pattern, proxy in mounts if pattern.matches(target)), None
+        )
         if proxy not in self._transports:
             self._transports[proxy] = httpx.AsyncHTTPTransport(retries=0, proxy=proxy)
         return self._transports[proxy]
@@ -650,18 +718,27 @@ async def check_identifiers(
     def remaining() -> float:
         return max(0.0, cast(float, deadline) - loop.time())
 
-    guard = guard_text.lower()
     statuses: Dict[Tuple[str, str, bool], str] = {}
     checkable: List[Identifier] = []
+    built: Optional[_Guard] = None
+    considered = 0
     for ident in identifiers:
         if ident.key in statuses:
             continue
         if ident.kind == "usc" and not ident.malformed:
             statuses[ident.key] = FORM_ONLY
-        else:
-            statuses[ident.key] = UNCHECKED
-            if len(checkable) < MAX_LOOKUPS and _sendable(ident, guard):
-                checkable.append(ident)
+            continue
+        statuses[ident.key] = UNCHECKED
+        # Every identifier weighed counts toward the limit, those the guard
+        # holds back included, and none is weighed past the deadline.
+        if ident.malformed or considered >= MAX_LOOKUPS or remaining() <= 0:
+            continue
+        considered += 1
+        if ident.kind == "doi" and built is None:
+            built = _Guard.of(guard_text)
+        if _sendable(ident, built or _NO_GUARD):
+            checkable.append(ident)
+    guard = built or _NO_GUARD
     if not checkable or may_send is None:
         return statuses
 
