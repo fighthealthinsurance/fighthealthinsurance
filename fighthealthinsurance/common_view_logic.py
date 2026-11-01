@@ -5790,7 +5790,7 @@ class AppealsBackendHelper:
 
         This coroutine retrieves denial and related context, processes templates and forms to construct appeal components, gathers citation contexts, and yields appeal texts with relevant substitutions applied. Previously saved appeals are yielded first, followed by newly generated appeals, each formatted as a JSON string.
         """
-        logger.debug(f"Parameter names received: {sorted(parameters)}")
+        logger.debug(f"Parameters received: {len(parameters)}")
 
         # Extract specific parameters needed early
         denial_id = parameters["denial_id"]
@@ -6551,7 +6551,7 @@ class AppealsBackendHelper:
                                 medical_context.add(mc)
                         except Exception as e:
                             logger.debug(
-                                f"Error {e} processing form {form} for medical context"
+                                f"{type(e).__name__} processing form {form} for medical context"
                             )
                     # Check for plan context
                     op = getattr(parsed, "plan_context", None)
