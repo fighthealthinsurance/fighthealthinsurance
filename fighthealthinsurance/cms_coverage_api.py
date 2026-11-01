@@ -111,12 +111,26 @@ _KEEP_TRAILING_S = frozenset(
 )
 
 
+# Words the suffix rules below would get wrong, mapped to their singular.
+_IRREGULAR_SINGULARS = {
+    "analyses": "analysis",
+    "axes": "axis",
+    "diagnoses": "diagnosis",
+    "lens": "lens",
+    "lenses": "lens",
+    "prostheses": "prosthesis",
+    "viruses": "virus",
+}
+
+
 def _singular(token: str) -> str:
     """A light, conservative singular form, so "replacements" and
     "Replacement" count as the same word. Only plain plural endings are
     touched: words ending in -is, -us, -ss, -as or -os ("analysis",
     "lupus", "bypass", "pancreas") and the listed singulars ("diabetes")
-    stay as they are."""
+    stay as they are, and a few irregular words ("lenses") are mapped."""
+    if token in _IRREGULAR_SINGULARS:
+        return _IRREGULAR_SINGULARS[token]
     if len(token) <= 3 or token in _KEEP_TRAILING_S:
         return token
     if token.endswith("ies") and len(token) > 4:
@@ -354,6 +368,12 @@ class CMSCoverageClient:
                 logger.warning(f"CMS NCD report returned status {response.status_code}")
                 return self._ncd_report_cache or []
             payload = response.json()
+            if not isinstance(payload, dict) or not isinstance(
+                payload.get("data"), list
+            ):
+                # Not a report: don't let it stand in for a finished search.
+                logger.warning("CMS NCD report response had no data list")
+                return self._ncd_report_cache or []
             parsed = [
                 doc
                 for doc in (_parse_ncd_record(r) for r in _extract_records(payload))
@@ -375,9 +395,14 @@ class CMSCoverageClient:
             return self._ncd_report_cache or []
 
     def has_report(self) -> bool:
-        """Whether an NCD report has been fetched, so an empty search was a
-        real "nothing matched" rather than an outage."""
-        return bool(self._ncd_report_cache)
+        """Whether a fresh NCD report is loaded, so an empty search was a
+        real "nothing matched" rather than an outage. A report kept past its
+        TTL because refreshing it failed doesn't count, and a successfully
+        fetched empty report does."""
+        return (
+            self._ncd_report_cache is not None
+            and (time.monotonic() - self._ncd_report_cached_at) < self._NCD_REPORT_TTL
+        )
 
     async def search_ncds(
         self, keyword: str, max_results: int = 5

@@ -481,6 +481,7 @@ class MLCitationsHelper:
                 )
                 return cached[:max_results]
 
+        lookup_failed = False
         try:
             citations = await get_cms_coverage_citations(
                 procedure=procedure or None,
@@ -491,10 +492,12 @@ class MLCitationsHelper:
         except Exception as e:
             logger.opt(exception=True).debug(f"CMS coverage citation fetch failed: {e}")
             citations = []
+            lookup_failed = True
 
-        # An empty result is stored only when the NCD report was there to
-        # search, so an outage isn't remembered as "nothing applies".
-        if citations or get_cms_coverage_client().has_report():
+        # A failed lookup is never stored, and an empty result only when a
+        # fresh NCD report was there to search, so an outage isn't
+        # remembered as "nothing applies".
+        if not lookup_failed and (citations or get_cms_coverage_client().has_report()):
             # `aupdate_or_create` is atomic against the (procedure, diagnosis)
             # unique constraint, which closes the race where two concurrent
             # cache misses could otherwise create duplicate rows. We write
