@@ -154,3 +154,100 @@ class TestBackendGetRegulator:
         model._infer_no_context = AsyncMock(return_value=ANSWER)  # type: ignore[method-assign]
         assert await model.get_regulator_routing("   ") is None
         model._infer_no_context.assert_not_called()
+
+
+class TestRegulatorNameVariants:
+    """A model trained on hand-written names says them a little differently
+    from state_help.json; the same body under a near name still resolves."""
+
+    @pytest.mark.parametrize(
+        "said, alt_name",
+        [
+            ("Texas Department of Insurance (TDI)", "TX insurance department"),
+            # external_review.py's name for it; state_help says "State".
+            ("Washington Office of the Insurance Commissioner", "WA insurance department"),
+            ("New York Department of Financial Services", "NY insurance department"),
+            ("Georgia Office of Commissioner of Insurance", "GA insurance department"),
+            ("Florida Department of Insurance", "FL insurance department"),
+            ("Texas Health and Human Services Commission", "TX Medicaid"),
+            ("Texas Medicaid", "TX Medicaid"),
+            ("Medi-Cal", "CA Medicaid"),
+            ("AHCCCS", "AZ Medicaid"),
+            ("Employee Benefits Security Administration", "ERISA"),
+            ("Centers for Medicare and Medicaid Services", "CMS"),
+        ],
+    )
+    def test_near_names_resolve_to_the_same_body(self, said, alt_name):
+        found = rr.regulator_defaults(said)
+        assert found is not None, said
+        assert found.alt_name == alt_name
+
+    def test_a_bare_generic_word_is_not_a_body(self):
+        assert rr.regulator_defaults("Medicaid") is None
+        assert rr.regulator_defaults("Department of Insurance") is None
+
+
+class TestPlanSourceRegulator:
+    """The regulator the person's own answers about their plan settle."""
+
+    def test_medicare_is_cms(self):
+        assert rr.plan_source_regulator(["Medicare Advantage"], None).alt_name == "CMS"
+
+    def test_medicaid_is_the_states_agency(self):
+        # The fixture row's name carries trailing spaces.
+        found = rr.plan_source_regulator(["Medicaid  "], "TX")
+        assert found.alt_name == "TX Medicaid"
+
+    def test_medicaid_without_a_state_is_unsettled(self):
+        assert rr.plan_source_regulator(["Medicaid"], None) is None
+
+    def test_marketplace_is_the_states_insurance_department(self):
+        found = rr.plan_source_regulator(
+            ["State Marketplace / Affordable Care Act"], "ny"
+        )
+        assert found.alt_name == "NY insurance department"
+
+    def test_california_marketplace_is_left_to_the_model(self):
+        # The DMHC or the CDI, depending on the plan.
+        assert (
+            rr.plan_source_regulator(["State Marketplace / Affordable Care Act"], "CA")
+            is None
+        )
+
+    def test_federal_employee_and_va(self):
+        assert rr.plan_source_regulator(["Employer -- Federal Government"], "TX").alt_name == "OPM"
+        assert rr.plan_source_regulator(["Veterans Affairs"], "TX").alt_name == "VA"
+
+    @pytest.mark.parametrize(
+        "sources",
+        [
+            ["Employer -- Private   "],
+            ["Union"],
+            ["Don't know"],
+            [],
+            # Dual eligible: two regulators, so neither is settled.
+            ["Medicare Regular", "Medicaid"],
+            # One settled source beside one that isn't leaves it open.
+            ["Medicare Regular", "Employer -- Private"],
+        ],
+    )
+    def test_answers_that_do_not_settle_it(self, sources):
+        assert rr.plan_source_regulator(sources, "TX") is None
+
+    def test_two_medicare_answers_agree(self):
+        found = rr.plan_source_regulator(["Medicare Regular", "Medicare Advantage"], "TX")
+        assert found.alt_name == "CMS"
+
+
+class TestPlanFacts:
+    def test_lists_what_the_person_said(self):
+        facts = rr.plan_facts(["Employer -- Private   ", "Don't know"], "TX", "Acme", "Aetna")
+        assert facts.startswith("What the patient told us about their plan:")
+        assert "Where the coverage comes from: Employer -- Private." in facts
+        assert "Don't know" not in facts
+        assert "Employer: Acme." in facts
+        assert "Insurance company: Aetna." in facts
+        assert "lives in Texas" in facts
+
+    def test_nothing_said_is_empty(self):
+        assert rr.plan_facts(["Don't know"], None, "  ", None) == ""
