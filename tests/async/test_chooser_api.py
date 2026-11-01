@@ -1152,10 +1152,9 @@ class ChooserJudgeIdentityTest(APITestCase):
             content_type="application/json",
             HTTP_CF_CONNECTING_IP=self.ADDRESS,
         )
-        from fighthealthinsurance.rest_views import ChooserViewSet
-
         vote = ChooserVote.objects.get(task=self.task)
-        self.assertEqual(vote.client_key, ChooserViewSet.client_key_for(self.ADDRESS))
+        self.assertNotIn(self.ADDRESS, vote.client_key)
+        self.assertRegex(vote.client_key, r"^[0-9a-f]{64}$")
 
     def test_a_request_without_a_session_is_not_served_a_case_judged_from_its_address(
         self,
@@ -1225,6 +1224,34 @@ class ChooserJudgeIdentityTest(APITestCase):
             content_type="application/json",
         )
         self.assertEqual(ChooserSkip.objects.filter(task=self.task).count(), 1)
+
+    def test_a_vote_with_a_valid_csrf_token_records_the_signed_in_user(self):
+        from django.conf import settings
+        from django.middleware.csrf import _get_new_csrf_string
+        from rest_framework.test import APIClient
+
+        client = APIClient(enforce_csrf_checks=True)
+        client.force_login(self.user)
+        token = _get_new_csrf_string()
+        client.cookies[settings.CSRF_COOKIE_NAME] = token
+        client.post(
+            reverse("chooser-vote"),
+            self._vote_data(),
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(ChooserVote.objects.get(task=self.task).user, self.user)
+
+    def test_the_database_holds_one_skip_per_user_per_task(self):
+        from django.db import IntegrityError, transaction
+
+        ChooserSkip.objects.create(
+            task=self.task, session_key="another-session", user=self.user
+        )
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            ChooserSkip.objects.create(
+                task=self.task, session_key="a-third-session", user=self.user
+            )
 
     def test_the_database_holds_one_vote_per_user_per_task(self):
         from django.db import IntegrityError, transaction

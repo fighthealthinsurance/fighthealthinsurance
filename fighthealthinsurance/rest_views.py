@@ -2547,21 +2547,20 @@ class ChooserViewSet(viewsets.ViewSet):
         # Get tasks that this judge has already voted on or skipped. The
         # votes on this type are the rounds the judge has done, which set
         # how complex a case they are ready for; skips are not rounds.
-        voted = list(
-            ChooserVote.objects.filter(judged)
-            .values_list("task_id", "task__task_type")
+        # Both stay in the database as subqueries: a judge matched by a
+        # shared address can have a long history, and this endpoint is polled.
+        rounds = (
+            ChooserVote.objects.filter(judged, task__task_type=task_type)
+            .values("task_id")
             .distinct()
+            .count()
         )
-        rounds = sum(1 for _, voted_type in voted if voted_type == task_type)
-        skipped_task_ids = ChooserSkip.objects.filter(judged).values_list(
-            "task_id", flat=True
-        )
-        excluded_task_ids = {task_id for task_id, _ in voted} | set(skipped_task_ids)
 
         # Find READY tasks of the requested type that haven't been voted on or skipped
         available_tasks = chooser_complexity.ordered_for_judge(
             ChooserTask.objects.filter(task_type=task_type, status="READY")
-            .exclude(id__in=excluded_task_ids)
+            .exclude(id__in=ChooserVote.objects.filter(judged).values("task_id"))
+            .exclude(id__in=ChooserSkip.objects.filter(judged).values("task_id"))
             .annotate(vote_count=Count("votes")),
             task_type,
             rounds,
