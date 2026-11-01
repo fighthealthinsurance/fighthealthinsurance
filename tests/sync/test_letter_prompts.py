@@ -46,7 +46,7 @@ class LetterPromptModeSettingTest(TestCase):
         self.assertEqual(apv.current_letter_prompt_mode(), apv.MODE_SPLIT)
 
     def test_the_new_modes_are_read_back(self):
-        for mode in (apv.MODE_SECTIONED, apv.MODE_THIRDS):
+        for mode in (apv.MODE_SECTIONED, apv.MODE_THIRDS, apv.MODE_SPLIT_V2_V3):
             with self.subTest(mode=mode):
                 LetterPromptMode.objects.create(mode=mode)
                 apv.reset_letter_prompt_mode_cache()
@@ -374,7 +374,7 @@ class DashboardPromptSwitchTest(TestCase):
 
     def test_the_new_modes_can_be_saved(self):
         self._staff()
-        for mode in (apv.MODE_SECTIONED, apv.MODE_THIRDS):
+        for mode in (apv.MODE_SECTIONED, apv.MODE_THIRDS, apv.MODE_SPLIT_V2_V3):
             with self.subTest(mode=mode):
                 response = self.client.post(self.url, {"mode": mode})
                 self.assertEqual(response.status_code, 302)
@@ -395,7 +395,7 @@ class DashboardPromptSwitchTest(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertContains(
             response,
-            "Choose original, new, half and half, sectioned or thirds.",
+            "Choose original, new, half and half, sectioned, thirds, or v2 or v3.",
             status_code=400,
         )
         self.assertFalse(LetterPromptMode.objects.exists())
@@ -433,6 +433,12 @@ class DashboardPromptSwitchTest(TestCase):
         )
         self.assertContains(response, "v2 and v3")
         self.assertContains(response, "v3 picked ÷ chance")
+
+    def test_v2_or_v3_shows_only_the_v2_v3_pair(self):
+        self._staff()
+        LetterPromptMode.objects.create(mode=apv.MODE_SPLIT_V2_V3)
+        response = self.client.get(self.url)
+        self.assertEqual(self._shown_pairs(response), [(apv.PROMPT_V2, apv.PROMPT_V3)])
 
     def test_moving_from_half_and_half_to_thirds_keeps_the_run(self):
         self._staff()

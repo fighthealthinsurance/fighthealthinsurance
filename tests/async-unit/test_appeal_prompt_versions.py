@@ -160,6 +160,8 @@ def test_the_contract_versions_put_the_contract_last(version):
         (apv.MODE_THIRDS, 0.66, apv.PROMPT_V2),
         (apv.MODE_THIRDS, 0.67, apv.PROMPT_V3),
         (apv.MODE_THIRDS, 0.99, apv.PROMPT_V3),
+        (apv.MODE_SPLIT_V2_V3, 0.2, apv.PROMPT_V3),
+        (apv.MODE_SPLIT_V2_V3, 0.7, apv.PROMPT_V2),
         ("something-else", 0.2, apv.PROMPT_V1),
     ],
 )
@@ -191,7 +193,23 @@ def test_the_existing_modes_keep_their_values():
 
 
 def test_only_the_split_modes_draw_at_random():
-    assert apv.RANDOM_MODES == {apv.MODE_SPLIT, apv.MODE_THIRDS}
+    assert apv.RANDOM_MODES == {
+        apv.MODE_SPLIT,
+        apv.MODE_THIRDS,
+        apv.MODE_SPLIT_V2_V3,
+    }
+
+
+def test_v2_or_v3_never_draws_the_original():
+    # Over many real draws, the v2 or v3 mode writes both layouts that carry
+    # the output contract and never falls back to v1.
+    drawn = [apv.choose_prompt_version(apv.MODE_SPLIT_V2_V3) for _ in range(400)]
+    assert set(drawn) == {apv.PROMPT_V2, apv.PROMPT_V3}
+
+
+def test_v2_or_v3_fits_the_stored_field():
+    # LetterPromptMode.mode is max_length=16.
+    assert len(apv.MODE_SPLIT_V2_V3) <= 16
 
 
 def test_an_unreadable_setting_means_original():

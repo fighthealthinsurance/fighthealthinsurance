@@ -18,8 +18,10 @@ make_open_prompt.
 Which version a letter gets is a staff setting (LetterPromptMode rows,
 changed on the Model Usage dashboard): original (v1 for every letter), new
 (v2 for every letter), split (each full-letter call draws v1 or v2 at
-random, half and half), sectioned (v3 for every letter) or thirds (each
-full-letter call draws v1, v2 or v3 at random, a third each). Every draft
+random, half and half), sectioned (v3 for every letter), thirds (each
+full-letter call draws v1, v2 or v3 at random, a third each) or v2 or v3
+(each full-letter call draws v2 or v3 at random, half and half, to compare
+the two layouts that both carry the output contract). Every draft
 records the version that wrote it, so the staff page can compare how often
 people pick each version's letters.
 """
@@ -60,6 +62,7 @@ MODE_NEW = "new"
 MODE_SPLIT = "split"
 MODE_SECTIONED = "sectioned"
 MODE_THIRDS = "thirds"
+MODE_SPLIT_V2_V3 = "split_v2_v3"
 
 # Stored on LetterPromptMode rows, so a value keeps its meaning for good: add
 # modes, never repurpose one.
@@ -69,6 +72,10 @@ MODE_CHOICES = (
     (MODE_SPLIT, "Half and half: each draft is written with v1 or v2 at random"),
     (MODE_SECTIONED, "Sectioned prompt (v3) for every letter"),
     (MODE_THIRDS, "Thirds: each draft is written with v1, v2 or v3 at random"),
+    (
+        MODE_SPLIT_V2_V3,
+        "v2 or v3: each draft is written with v2 or v3 at random",
+    ),
 )
 
 _MODES = frozenset(m for m, _label in MODE_CHOICES)
@@ -80,6 +87,7 @@ MODE_VERSIONS = {
     MODE_SPLIT: (PROMPT_V1, PROMPT_V2),
     MODE_SECTIONED: (PROMPT_V3,),
     MODE_THIRDS: (PROMPT_V1, PROMPT_V2, PROMPT_V3),
+    MODE_SPLIT_V2_V3: (PROMPT_V2, PROMPT_V3),
 }
 
 # The modes that draw a version at random for each call: the runs the staff
@@ -113,7 +121,7 @@ def uses_sectioned_prompt(version: Optional[str]) -> bool:
     return version == PROMPT_V3
 
 
-# The random draw for split and thirds. Its own generator, not the
+# The random draw for the random-draw modes. Its own generator, not the
 # module-level random one that make_open_prompt shuffles its examples with,
 # and a module attribute so tests can force any side.
 _split_draw: Callable[[], float] = random.SystemRandom().random
@@ -134,6 +142,8 @@ def choose_prompt_version(mode: str) -> str:
         if draw < 2 / 3:
             return PROMPT_V2
         return PROMPT_V3
+    if mode == MODE_SPLIT_V2_V3:
+        return PROMPT_V3 if _split_draw() < 0.5 else PROMPT_V2
     return PROMPT_V1
 
 

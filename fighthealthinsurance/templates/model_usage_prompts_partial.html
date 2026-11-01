@@ -28,7 +28,7 @@ tables sit in each window below, counted like the model table.
 
   <h3>Pages that showed both versions <span class="source-label">(since the random draw began)</span></h3>
   {% if panel.head_to_head is None %}
-    <p class="note">Neither half and half nor thirds is running, so there's no head-to-head yet.</p>
+    <p class="note">No random-draw mode (half and half, thirds, or v2 or v3) is running, so there's no head-to-head yet.</p>
   {% else %}
     <p class="note">The fairest comparison: two versions on the same page, for the same case, one pair at a time. Only picks that reported which drafts were on screen count; a pick of a third version, a template or a synthesized letter counts as something else. Since {{ panel.split_started|date:"Y-m-d H:i" }}.</p>
     {% for h in panel.head_to_head %}
