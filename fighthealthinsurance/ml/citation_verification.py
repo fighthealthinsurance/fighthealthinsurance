@@ -2,43 +2,54 @@
 
 The citation backends are asked for real, verifiable references, but nothing
 checked that the DOIs, PubMed IDs and CFR sections they return exist. This
-module finds those identifiers in each citation string, checks the form of
-each one, and asks the public registry whether it exists:
+module finds those identifiers in each citation string and asks the public
+registry whether each one exists:
 
 * DOIs: the DOI handle service (doi.org/api/handles).
 * PubMed IDs: NCBI E-utilities esummary, the service the app already uses.
 * CFR sections: eCFR's versioner API, whose structure of a title's part
-  lists every section in it, and which answers 404 for a part or title that
-  does not exist.
+  lists every section in it, and which answers a missing part with an
+  empty JSON object.
 
-U.S. Code sections are checked for form only: there is no simple public
-lookup, and a well-known statute cited from memory is usually right.
+U.S. Code sections are never looked up: there is no simple public lookup,
+and a well-known statute cited from memory is usually right.
 
-Only the identifiers leave the app, never the citation text, the denial or
-anything about the person, and only identifiers that pass a strict form check
-are sent at all: a DOI's suffix is limited to the registry's recommended
-characters and length (so a "DOI" a model filled with words, or a path like
-``../``, is treated as malformed and never sent), a PubMed ID to digits, a CFR
-reference to numbers. The caller decides, right before any request, whether
-the person's consent allows the lookups (``may_send``); when it does not, no
-request is made. Every check is time-boxed: a registry that is slow
-or down never holds up a letter, and a citation it could not check is kept,
-labelled as unverified, rather than dropped. The same goes for an answer of
-an unexpected kind: a redirect (to a bot check, a login page, anywhere), a
-page that is not the JSON the registry documents, or JSON of another shape.
-Only an answer in the registry's documented form counts as found or missing.
+What is sent, and when:
+
+* Only an identifier of the expected shape is sent: a DOI whose suffix uses
+  the registry's recommended characters, at most 100 of them, with no path
+  segments such as ".."; a PubMed ID of digits; a CFR title, part and
+  section of numbers. The form check bounds the shape of what goes out; it
+  cannot tell what a well-formed string means.
+* A DOI is also held back when any four characters in a row of its suffix
+  appear in the denial's text, health history, email, employer or claim
+  number (``guard_text``), so a suffix that overlaps the person's own data
+  is not sent.
+* Nothing is sent unless ``may_send`` says the person's consent allows it.
+  It is asked right before the first request and again before later ones.
+* Requests go straight through an httpx transport, not through
+  ``httpx.AsyncClient.send``, which the error tracker's httpx integration
+  wraps: that would put the full URL (identifiers, NCBI key) on a tracing
+  span and send tracing headers to the registry.
 
 What happens to a citation:
 
-* An identifier that is malformed, or that its registry says does not exist:
-  a short citation is dropped; in a long one (a backend's whole answer) the
-  identifier is cut out and the rest kept.
-* An identifier that could not be checked (timeout, error): the citation is
-  kept with ``UNVERIFIED_LABEL`` in front, so the letter writer knows not to
-  lean on it.
+* An identifier its registry says does not exist (a documented "not found"
+  answer): a short citation is dropped; in a long one (a backend's whole
+  answer) every occurrence of that identifier is cut out and the rest kept.
+  This is the only thing that removes anything.
+* An identifier that was not sent (odd shape, a range, overlap with the
+  person's data, no consent, over the lookup limit) or could not be checked
+  (timeout, refusal, error, an answer of an unexpected kind such as a
+  redirect or a page that is not the registry's JSON): the citation is kept
+  with ``UNVERIFIED_LABEL`` in front, so the letter writer knows not to lean
+  on it.
 * Every identifier found: kept as it is.
 * No identifier at all (a guideline title, a URL, a plain-text reference):
   kept as it is. There is nothing to look up.
+
+Every check is time-boxed, parsing included: a registry that is slow or down
+never holds up a letter.
 """
 
 from __future__ import annotations
@@ -53,10 +64,15 @@ from typing import (
     Iterable,
     List,
     Optional,
+    Sequence,
     Tuple,
     cast,
 )
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
+from urllib.request import getproxies_environment
+from urllib.request import (  # type: ignore[attr-defined]  # not in typeshed
+    proxy_bypass_environment,
+)
 
 import httpx
 from django.core.cache import cache
@@ -70,25 +86,31 @@ UNVERIFIED_LABEL = "Unverified, use only if you can confirm it: "
 REMOVED_REFERENCE = "(unverified reference removed)"
 
 # A citation at most this long is one reference, and goes when one of its
-# identifiers is bad. Longer strings are a backend's whole answer, which
-# usually holds several references; only the bad identifier is cut out.
+# identifiers is missing. Longer strings are a backend's whole answer, which
+# usually holds several references; only the missing identifier is cut out.
 SHORT_CITATION_CHARS = 500
+# Only this much of a citation is scanned for identifiers; a longer one is
+# labelled unverified, since part of it went unread.
+MAX_SCAN_CHARS = 20_000
 
-# The whole check for one denial's citations, in seconds, cache reads and
-# consent check included. What has not answered by then counts as unchecked.
+# The whole check for one denial's citations, in seconds: parsing, cache
+# reads, consent checks and requests. What has not answered by then counts
+# as unchecked.
 CHECK_BUDGET_SECONDS = 6.0
 # Each request to a registry, in seconds.
 REQUEST_TIMEOUT_SECONDS = 3.0
-# Identifiers looked up (cache or registry) per denial; the rest count as
+# Identifiers looked up (cache or registry) per run; the rest count as
 # unchecked without either.
 MAX_LOOKUPS = 25
 # Requests in flight at once.
 MAX_CONCURRENT_LOOKUPS = 5
+# How long a "yes" from the consent check holds before it is asked again.
+CONSENT_RECHECK_SECONDS = 1.0
 
 # Registry answers are cached by identifier. Existence is stable; absence is
 # kept shorter in case a new DOI or PubMed record is still being indexed.
 # Only those two verdicts are cached, never an error or a refusal.
-_CACHE_PREFIX = "citecheck:v2:"
+_CACHE_PREFIX = "citecheck:v3:"
 _CACHE_FOUND_SECONDS = 30 * 24 * 3600
 _CACHE_MISSING_SECONDS = 7 * 24 * 3600
 
@@ -98,10 +120,12 @@ _ECFR_STRUCTURE_URL = "https://www.ecfr.gov/api/versioner/v1/structure/current/"
 
 FOUND = "found"
 MISSING = "missing"
-MALFORMED = "malformed"
 UNCHECKED = "unchecked"
 # Well formed, and not looked up by design (U.S. Code).
 FORM_ONLY = "form_only"
+# Kept for callers and tests that name it; an identifier of the wrong shape
+# is never sent and counts as unchecked.
+MALFORMED = UNCHECKED
 
 
 def checks_enabled() -> bool:
@@ -112,11 +136,17 @@ def checks_enabled() -> bool:
 
 @dataclass(frozen=True)
 class Identifier:
-    """One identifier found in a citation string."""
+    """One identifier found in a citation string. ``malformed`` means it is
+    not of a shape that may be sent (wrong form, a range, possibly cut
+    short); it is never looked up."""
 
     kind: str  # "doi", "pmid", "cfr" or "usc"
     value: str  # normalized: DOI lowercased, PMID digits, "45/147/147.136"
     malformed: bool = False
+
+    @property
+    def key(self) -> Tuple[str, str, bool]:
+        return (self.kind, self.value, self.malformed)
 
 
 @dataclass(frozen=True)
@@ -129,45 +159,72 @@ class Occurrence:
 
 
 # A DOI suffix may only hold the characters Crossref recommends, and at most
-# this many of them. Anything else (words, "=", "&", "?", "%", "@", spaces,
-# "..") makes the "DOI" malformed, so it is never sent.
+# this many of them. Anything else makes the "DOI" one that is not sent.
 _DOI_MAX_SUFFIX = 100
 _DOI_VALID = re.compile(r"^10\.\d{4,9}/[A-Za-z0-9\-._;()/:]{1,%d}$" % _DOI_MAX_SUFFIX)
 # A DOI candidate: "10." with a registrant code and "/", up to whitespace,
-# a quote, a bracket or a brace. Not preceded by a word character, a dot, a
-# hyphen or a slash (other than doi.org's own), so "110.1234/x" or a
-# version number is not one.
+# a quote (straight or curly), a bracket, a brace or "<". Not preceded by a
+# word character, a dot, a hyphen or a slash (other than doi.org's own), so
+# "110.1234/x" or a version number is not one.
 _DOI_CANDIDATE = re.compile(
-    r"(?:(?<=doi\.org/)|(?<![\w.\-/]))10\.\d{4,9}/[^\s\"'<>\[\]{}|\\^`]+"
+    "(?:(?<=doi\\.org/)|(?<![\\w.\\-/]))10\\.\\d{4,9}/"
+    "[^\\s\"'‘’“”<>\\[\\]{}|\\\\^`]+"
 )
+# A URL query or fragment after a DOI: "?utm_source=..." or "#abstract".
+_DOI_QUERY = re.compile(r"(?:\?[\w.\-]+=|#[\w\-]*$)")
 # Prefixes that belong to a DOI occurrence when cutting it out.
 _DOI_PREFIX = re.compile(
-    r"(?:https?://(?:dx\.)?doi\.org/|doi\.org/|doi\s*:\s*)$", re.IGNORECASE
-)
-# Something introduced as a DOI that does not start like one.
-_DOI_MENTION = re.compile(
-    r"\b(?:https?://(?:dx\.)?)?doi(?:\.org/|\s*:\s*)(\S+)", re.IGNORECASE
-)
-_DOI_START = re.compile(r"10\.\d{4,9}/")
-_PMID_VALID = re.compile(r"^[1-9]\d{0,8}$")
-_PMID_TEXT = re.compile(r"\bPMID\s*[:#]?\s*([^\s,;\])]+)", re.IGNORECASE)
-_PUBMED_URL = re.compile(
-    r"(?:https?://)?(?:www\.)?pubmed\.ncbi\.nlm\.nih\.gov/([^\s/?#\])\"'<>]+)/?",
+    r"(?:https?://(?:dx\.)?doi\.org/|doi\.org/|doi[*_\s]{0,5}:[*_\s]{0,5})$",
     re.IGNORECASE,
 )
-# Subsections such as "(b)(1)(ii)" may follow a section. Anything else
-# stuck to the number ("147.136oops", "300gg-???") makes it malformed rather
-# than letting a valid-looking prefix through.
-_SUBSECTIONS = r"((?:\([0-9A-Za-z]{1,4}\))*)"
-_STUCK_ON = r"([^\s,;:.)\]]*)"
+# Something introduced as a DOI ("DOI:", "**DOI:**", "doi.org/").
+_DOI_MENTION = re.compile(
+    r"\bdoi(?:\.org/|[*_\s]{0,5}:[*_\s]{0,5})(\S{1,200})", re.IGNORECASE
+)
+_DOI_START = re.compile(r"10\.\d{4,9}/")
+# What "DOI:" is sometimes followed by when there is no DOI.
+_NO_DOI = re.compile(
+    r"^(?:n/?a|none|null|unknown|unavailable|not\s+available|tbd|-+)$", re.I
+)
+_PMID_VALID = re.compile(r"^[1-9]\d{0,8}$")
+_PMID_TEXT = re.compile(
+    r"\bPMID[*_\s]{0,5}[:#]?[*_\s]{0,5}([^\s,;\])*_]{1,20})", re.IGNORECASE
+)
+_PUBMED_URL = re.compile(
+    r"(?:https?://)?(?:www\.)?pubmed\.ncbi\.nlm\.nih\.gov/([^\s/?#\])\"'<>]{1,20})/?",
+    re.IGNORECASE,
+)
+_DASH = "-‐‑‒–—"
+# Subsections such as "(b)(1)" may follow a section, and a subsection range
+# "(b)(1)-(3)".
+_SUBSECTIONS = (
+    r"((?:\([0-9A-Za-z]{1,4}\)|\s{0,2}[" + _DASH + r"]\s{0,2}\([0-9A-Za-z]{1,4}\))*)"
+)
+# A range of sections, "438.400-438.424".
+_SECTION_RANGE = r"(\s{0,2}[" + _DASH + r"]\s{0,2}\d{1,5}\.\d{1,5})?"
+# Anything else stuck to the number ("147.136oops", "300gg-???") makes it an
+# identifier that is not sent, rather than letting a valid-looking prefix
+# through. Markdown emphasis and quotes end the number.
+_STUCK_ON = "([^\\s,;:.)\\]*_\"'‘’“”]*)"
 _CFR_TEXT = re.compile(
-    r"(?<![\w.])(\d{1,3})\s*C\.?\s*F\.?\s*R\.?\s*(?:Parts?|Sec(?:tion)?s?\.?|§{1,2})?"
-    r"\s*(\d{1,5})(?:\.(\d{1,5}(?:-\d{1,5}[A-Z]?)?))?" + _SUBSECTIONS + _STUCK_ON,
+    r"(?<![\w.])(\d{1,3})\s{0,3}C\.?\s{0,2}F\.?\s{0,2}R\.?\s{0,3}"
+    r"(?:Parts?|Sec(?:tion)?s?\.?|§{1,2})?\s{0,3}"
+    r"(\d{1,5})(?:\.(\d{1,5}(?:["
+    + _DASH
+    + r"]\d{1,5}[A-Z]?(?!\.\d))?))?"
+    + _SECTION_RANGE
+    + _SUBSECTIONS
+    + _STUCK_ON,
     re.IGNORECASE,
 )
 _USC_TEXT = re.compile(
-    r"(?<![\w.])(\d{1,3})\s*U\.?\s*S\.?\s*C\.?\s*(?:Sec(?:tion)?s?\.?|§{1,2})?\s*"
-    r"(\d{1,6}[a-z]{0,3}(?:-\d{1,5}[a-z]{0,2})?)" + _SUBSECTIONS + _STUCK_ON,
+    r"(?<![\w.])(\d{1,3})\s{0,3}U\.?\s{0,2}S\.?\s{0,2}C\.?\s{0,3}"
+    r"(?:Sec(?:tion)?s?\.?|§{1,2})?\s{0,3}"
+    r"(\d{1,6}[a-z]{0,3}(?:["
+    + _DASH
+    + r"]\d{1,5}[a-z]{0,2})?)"
+    + _SUBSECTIONS
+    + _STUCK_ON,
     re.IGNORECASE,
 )
 _CFR_SECTION_VALID = re.compile(r"^\d{1,5}\.\d{1,5}(?:-\d{1,5}[A-Z]?)?$")
@@ -177,14 +234,24 @@ _USC_TITLES = 54
 # Cheap test for "this string cites something", used to label citations
 # when the check itself fails.
 _LOOKS_LIKE_REFERENCE = re.compile(
-    r"10\.\d{4,9}/|\bPMID\b|pubmed\.ncbi|C\.?\s*F\.?\s*R\b|U\.?\s*S\.?\s*C\b",
+    r"10\.\d{4,9}/|\bPMID\b|pubmed\.ncbi|C\.?\s{0,2}F\.?\s{0,2}R\b|U\.?\s{0,2}S\.?\s{0,2}C\b",
     re.IGNORECASE,
 )
-_ALWAYS_TRAILING = ".,;:'\""
+_ALWAYS_TRAILING = ".,;:'\"*_‘’“”"
+# The record-level error esummary gives for an ID that is not a PubMed
+# record. Any other error says nothing about the ID.
+_NCBI_NOT_FOUND = "cannot get document summary"
+
+
+def _dash(text: str) -> str:
+    """Hyphens and dashes of every kind as "-"."""
+    for d in _DASH[1:]:
+        text = text.replace(d, "-")
+    return text
 
 
 def valid_doi(doi: str) -> bool:
-    """Whether ``doi`` is safe and plausible to send: the registry's
+    """Whether ``doi`` is of a shape that may be sent: the registry's
     recommended characters and length, no "..", no empty, "." or ".."
     path segment."""
     if not _DOI_VALID.match(doi) or ".." in doi:
@@ -193,10 +260,16 @@ def valid_doi(doi: str) -> bool:
     return all(seg not in ("", ".", "..") for seg in segments)
 
 
-def _trim_doi(candidate: str) -> str:
-    """Drop the punctuation a sentence leaves on a DOI: always ". , ; : '",
-    and a ")" only while the DOI has more ")" than "(", since DOIs such as
-    10.1016/S0140-6736(20)30183-5 hold balanced parentheses."""
+def _trim_doi(candidate: str, in_url: bool = False) -> str:
+    """Drop what a URL or a sentence leaves on a DOI: in a doi.org link, a
+    "?key=value" query or "#fragment"; always, trailing punctuation, markdown
+    emphasis and quotes, and a ")" only while the DOI has more ")" than "(",
+    since DOIs such as 10.1016/S0140-6736(20)30183-5 hold balanced
+    parentheses. Outside a link a "?" or "#" stays, and makes the DOI one
+    that is not sent."""
+    query = _DOI_QUERY.search(candidate) if in_url else None
+    if query:
+        candidate = candidate[: query.start()]
     while candidate:
         if candidate[-1] in _ALWAYS_TRAILING:
             candidate = candidate[:-1]
@@ -208,45 +281,58 @@ def _trim_doi(candidate: str) -> str:
 
 
 def find_occurrences(citation: str) -> List[Occurrence]:
-    """Every DOI, PubMed ID, CFR and U.S. Code reference in a citation, with
-    its span. Those of a wrong form are marked malformed and are never
-    sent anywhere."""
+    """Every DOI, PubMed ID, CFR and U.S. Code reference in a citation (in
+    its first MAX_SCAN_CHARS), with its span. Those that may not be sent are
+    marked malformed."""
+    text = citation[:MAX_SCAN_CHARS]
     found: List[Occurrence] = []
 
     def add(kind: str, value: str, start: int, end: int, malformed: bool) -> None:
         found.append(Occurrence(Identifier(kind, value, malformed), start, end))
 
-    for m in _DOI_CANDIDATE.finditer(citation):
-        doi = _trim_doi(m.group(0))
+    for m in _DOI_CANDIDATE.finditer(text):
+        in_url = text[max(0, m.start() - 8) : m.start()].lower().endswith("doi.org/")
+        doi = _trim_doi(m.group(0), in_url)
         start, end = m.start(), m.start() + len(doi)
-        prefix = _DOI_PREFIX.search(citation, 0, start)
+        prefix = _DOI_PREFIX.search(text, max(0, start - 30), start)
         if prefix and prefix.end() == start:
             start = prefix.start()
-        if valid_doi(doi):
+        # Stopping at "<" may mean the DOI was cut short; never send it.
+        truncated = text[m.end() : m.end() + 1] == "<"
+        if valid_doi(doi) and not truncated:
             add("doi", doi.lower(), start, end, False)
         else:
             add("doi", doi.lower()[:120], start, end, True)
-    for m in _DOI_MENTION.finditer(citation):
-        if _DOI_START.match(m.group(1)):
-            continue  # a candidate above, valid or not
-        add("doi", _trim_doi(m.group(1)).lower()[:120], m.start(), m.end(), True)
-    for m in _PMID_TEXT.finditer(citation):
+    for m in _DOI_MENTION.finditer(text):
+        token = m.group(1).lstrip("*_[(<\"'‘“")
+        if (
+            not token
+            or _DOI_START.match(token)  # a candidate above
+            or token.lower().startswith(("http://", "https://"))  # ditto
+            or _NO_DOI.match(token.rstrip(_ALWAYS_TRAILING))
+        ):
+            continue
+        add("doi", _trim_doi(token).lower()[:120], m.start(), m.end(), True)
+    for m in _PMID_TEXT.finditer(text):
         token = m.group(1).rstrip(_ALWAYS_TRAILING)
         end = m.start(1) + len(token)
         add("pmid", token[:20], m.start(), end, not _PMID_VALID.match(token))
-    for m in _PUBMED_URL.finditer(citation):
-        token = m.group(1)
+    for m in _PUBMED_URL.finditer(text):
+        token = m.group(1).rstrip(_ALWAYS_TRAILING)
         add("pmid", token[:20], m.start(), m.end(), not _PMID_VALID.match(token))
-    for m in _CFR_TEXT.finditer(citation):
-        title, part, sub, stuck = m.group(1), m.group(2), m.group(3), m.group(5)
-        section = f"{part}.{sub}" if sub else ""
-        bad = bool(stuck) or not (1 <= int(title) <= _CFR_TITLES)
+    for m in _CFR_TEXT.finditer(text):
+        title, part, sub = m.group(1), m.group(2), m.group(3)
+        section_range, stuck = m.group(4), m.group(6)
+        section = _dash(f"{part}.{sub}") if sub else ""
+        # A range of sections is never looked up: checking one end could
+        # call a real range missing after a misparse.
+        bad = bool(stuck) or bool(section_range) or not (1 <= int(title) <= _CFR_TITLES)
         value = f"{int(title)}/{int(part)}/{section}"
         add("cfr", value, m.start(), m.end(), bad)
-    for m in _USC_TEXT.finditer(citation):
+    for m in _USC_TEXT.finditer(text):
         title, section, stuck = m.group(1), m.group(2), m.group(4)
         bad = bool(stuck) or not (1 <= int(title) <= _USC_TITLES)
-        add("usc", f"{int(title)}/{section.lower()}", m.start(), m.end(), bad)
+        add("usc", f"{int(title)}/{_dash(section.lower())}", m.start(), m.end(), bad)
     return found
 
 
@@ -259,13 +345,22 @@ def find_identifiers(citation: str) -> List[Identifier]:
     return out
 
 
-def _sendable(ident: Identifier) -> bool:
-    """A last check, right before a request, that only a well-formed
-    identifier goes out."""
+def _overlaps(doi: str, guard_text: str) -> bool:
+    """Whether any four characters in a row of the DOI's suffix appear in
+    ``guard_text`` (already lowercased)."""
+    if not guard_text:
+        return False
+    suffix = doi.split("/", 1)[1].lower() if "/" in doi else doi.lower()
+    return any(suffix[i : i + 4] in guard_text for i in range(len(suffix) - 3))
+
+
+def _sendable(ident: Identifier, guard_text: str = "") -> bool:
+    """A last check, right before a request, that only an identifier of the
+    expected shape, and no DOI overlapping the person's data, goes out."""
     if ident.malformed:
         return False
     if ident.kind == "doi":
-        return valid_doi(ident.value)
+        return valid_doi(ident.value) and not _overlaps(ident.value, guard_text)
     if ident.kind == "pmid":
         return bool(_PMID_VALID.match(ident.value))
     if ident.kind == "cfr":
@@ -276,12 +371,77 @@ def _sendable(ident: Identifier) -> bool:
     return False
 
 
-def _new_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        timeout=httpx.Timeout(REQUEST_TIMEOUT_SECONDS, connect=2.0),
-        follow_redirects=False,
-        headers={"Accept": "application/json"},
-    )
+class UntracedClient:
+    """GET requests sent straight through an httpx transport.
+
+    Not through ``httpx.AsyncClient.send``: the error tracker's httpx
+    integration wraps that method, recording the full URL (the identifier,
+    and NCBI's key and IDs in the query) on a tracing span and adding
+    tracing headers to the request. A transport sends exactly what is built
+    here, follows no redirect, and logs nothing. Like an httpx client, it
+    honours the HTTPS_PROXY / NO_PROXY environment, which a bare transport
+    would not.
+    """
+
+    def __init__(
+        self,
+        transport: Optional[httpx.AsyncBaseTransport] = None,
+        timeout: float = REQUEST_TIMEOUT_SECONDS,
+    ) -> None:
+        self._fixed = transport
+        self._transports: Dict[Optional[str], httpx.AsyncBaseTransport] = {}
+        self._timeout = timeout
+
+    def _transport_for(self, url: str) -> httpx.AsyncBaseTransport:
+        if self._fixed is not None:
+            return self._fixed
+        parts = urlsplit(url)
+        proxies = getproxies_environment()
+        proxy = proxies.get(parts.scheme) or proxies.get("all")
+        if proxy and proxy_bypass_environment(parts.hostname or "", proxies):
+            proxy = None
+        if proxy not in self._transports:
+            self._transports[proxy] = httpx.AsyncHTTPTransport(retries=0, proxy=proxy)
+        return self._transports[proxy]
+
+    async def get(
+        self, url: str, params: Optional[Dict[str, str]] = None
+    ) -> httpx.Response:
+        request = httpx.Request(
+            "GET",
+            httpx.URL(url, params=params),
+            headers={"Accept": "application/json"},
+            extensions={
+                "timeout": {
+                    "connect": min(2.0, self._timeout),
+                    "read": self._timeout,
+                    "write": self._timeout,
+                    "pool": self._timeout,
+                }
+            },
+        )
+        transport = self._transport_for(url)
+        response = await transport.handle_async_request(request)
+        try:
+            await response.aread()
+        finally:
+            await response.aclose()
+        return response
+
+    async def aclose(self) -> None:
+        for transport in [self._fixed, *self._transports.values()]:
+            if transport is not None:
+                await transport.aclose()
+
+    async def __aenter__(self) -> "UntracedClient":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()
+
+
+def _new_client() -> UntracedClient:
+    return UntracedClient()
 
 
 async def _cache_get(ident: Identifier) -> Optional[str]:
@@ -311,7 +471,7 @@ async def _cache_set(ident: Identifier, status: str) -> None:
 def _json_body(resp: httpx.Response) -> Optional[object]:
     """The parsed body of a JSON answer, or None for anything else: a
     redirect, an HTML page (a bot check or challenge), a refusal or server
-    error, or a body that does not parse. Redirects are never followed."""
+    error, or a body that does not parse."""
     if resp.is_redirect or resp.status_code not in (200, 404):
         return None
     content_type = resp.headers.get("content-type", "").lower()
@@ -324,7 +484,7 @@ def _json_body(resp: httpx.Response) -> Optional[object]:
     return body
 
 
-async def _check_doi(client: httpx.AsyncClient, doi: str) -> str:
+async def _check_doi(client: UntracedClient, doi: str) -> str:
     """FOUND when the handle service resolves this DOI (200, responseCode 1
     for the same handle), MISSING when it says there is no such handle (404,
     responseCode 100), UNCHECKED for any other answer. The DOI is sent as one
@@ -345,18 +505,10 @@ async def _check_doi(client: httpx.AsyncClient, doi: str) -> str:
     return UNCHECKED
 
 
-# The record-level errors esummary gives for an ID that is not a PubMed
-# record. Any other error says nothing about the ID.
-_NCBI_NOT_FOUND = re.compile(
-    r"cannot get document summary|invalid uid|uid .*not found|not found",
-    re.IGNORECASE,
-)
-
-
-async def _check_pmids(client: httpx.AsyncClient, pmids: List[str]) -> Dict[str, str]:
-    """One esummary call for all the PubMed IDs. A record whose error says
-    the ID is not found is MISSING; a record with a title or journal is
-    FOUND; anything else is UNCHECKED."""
+async def _check_pmids(client: UntracedClient, pmids: List[str]) -> Dict[str, str]:
+    """One esummary call for all the PubMed IDs. A record whose error is
+    NCBI's "cannot get document summary" is MISSING; a record with a title
+    or journal is FOUND; anything else is UNCHECKED."""
     from fighthealthinsurance.pubmed_tools import _EUTILS_PARAMS
 
     out = {p: UNCHECKED for p in pmids}
@@ -384,7 +536,7 @@ async def _check_pmids(client: httpx.AsyncClient, pmids: List[str]) -> Dict[str,
             continue
         error = record.get("error")
         if error:
-            if isinstance(error, str) and _NCBI_NOT_FOUND.search(error):
+            if isinstance(error, str) and error.strip().lower() == _NCBI_NOT_FOUND:
                 out[pmid] = MISSING
         elif record.get("title") or record.get("source"):
             # A real summary carries the article's title and journal.
@@ -404,16 +556,19 @@ def _structure_nodes(node: object):
                 stack.extend(children)
 
 
-async def _check_cfr(client: httpx.AsyncClient, value: str) -> str:
+async def _check_cfr(client: UntracedClient, value: str) -> str:
     """Look the part up in eCFR's versioner API (the structure of
     ``title-N`` for ``part=P`` on the current date).
 
-    * 200 with the title's structure, holding the part: FOUND for a part,
-      and for a section that the part lists; MISSING for a section the part
-      does not list (the part's structure is the full list of its sections).
-    * 404 with a JSON body: the title or part does not exist, MISSING.
-    * Anything else (a redirect, a non-JSON page such as a bot check, JSON of
-      another shape, a refusal or server error): UNCHECKED.
+    * 200 with the title's structure, holding the part and its sections:
+      FOUND for a part, and for a section the part lists; MISSING for a
+      section it does not list (the part's structure is the full list of its
+      sections). A part listing no sections is UNCHECKED.
+    * 404 with eCFR's answer for a part that does not exist, an empty JSON
+      object: MISSING.
+    * Anything else (another 404 body, a redirect, a non-JSON page such as a
+      bot check, JSON of another shape, a refusal or server error):
+      UNCHECKED.
     """
     title, part, section = value.split("/", 2)
     try:
@@ -427,7 +582,7 @@ async def _check_cfr(client: httpx.AsyncClient, value: str) -> str:
     if data is None:
         return UNCHECKED
     if resp.status_code == 404:
-        return MISSING
+        return MISSING if data == {} else UNCHECKED
     if not isinstance(data, dict):
         return UNCHECKED
     if data.get("type") != "title" or str(data.get("identifier")) != title:
@@ -442,73 +597,114 @@ async def _check_cfr(client: httpx.AsyncClient, value: str) -> str:
     )
     if part_node is None:
         return UNCHECKED
+    sections = [
+        str(n.get("identifier"))
+        for n in _structure_nodes(part_node)
+        if n.get("type") == "section"
+    ]
+    if not sections:
+        return UNCHECKED
     if not section:
         return FOUND
-    for n in _structure_nodes(part_node):
-        if n.get("type") == "section" and str(n.get("identifier")) == section:
-            return FOUND
-    return MISSING
+    return FOUND if section in sections else MISSING
+
+
+def _settle(tasks: Iterable["asyncio.Task[None]"]) -> None:
+    """Cancel what is still running and retrieve every task's outcome, so no
+    exception is left unretrieved for the event loop to report."""
+
+    def retrieve(task: "asyncio.Task[None]") -> None:
+        if not task.cancelled():
+            task.exception()
+
+    for task in tasks:
+        if task.done():
+            retrieve(task)
+        else:
+            task.cancel()
+            task.add_done_callback(retrieve)
 
 
 async def check_identifiers(
     identifiers: Iterable[Identifier],
     budget_seconds: float = CHECK_BUDGET_SECONDS,
-    client: Optional[httpx.AsyncClient] = None,
+    client: Optional[UntracedClient] = None,
     may_send: Optional[Callable[[], Awaitable[bool]]] = None,
-) -> Dict[Tuple[str, str], str]:
-    """Status for each (kind, value): FOUND, MISSING, MALFORMED, UNCHECKED or
-    FORM_ONLY. Never raises, and the whole of it (cache reads, the consent
-    check and the requests) runs inside one ``budget_seconds`` deadline.
+    guard_text: str = "",
+    deadline: Optional[float] = None,
+) -> Dict[Tuple[str, str, bool], str]:
+    """Status for each identifier's key: FOUND, MISSING, UNCHECKED or
+    FORM_ONLY. Never raises, and the whole of it (cache reads, consent checks
+    and requests) runs inside one deadline: ``deadline`` (the event loop's
+    clock) when given, else ``budget_seconds`` from now.
 
-    ``may_send`` is awaited right before the first request; if it answers
-    anything but True (or fails, or runs out of time), no request is made
-    and what was not cached stays UNCHECKED. Without it, requests are
-    allowed: the production caller always passes one.
+    ``may_send`` is awaited right before the first request, and again before
+    a later one once CONSENT_RECHECK_SECONDS have passed; anything but True
+    (a failure or a timeout included) stops all requests from then on.
+    Without it no request is made at all.
     """
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + budget_seconds
+    if deadline is None:
+        deadline = loop.time() + budget_seconds
 
     def remaining() -> float:
-        return max(0.0, deadline - loop.time())
+        return max(0.0, cast(float, deadline) - loop.time())
 
-    statuses: Dict[Tuple[str, str], str] = {}
+    guard = guard_text.lower()
+    statuses: Dict[Tuple[str, str, bool], str] = {}
     checkable: List[Identifier] = []
     for ident in identifiers:
-        key = (ident.kind, ident.value)
-        if key in statuses:
+        if ident.key in statuses:
             continue
-        if ident.malformed:
-            statuses[key] = MALFORMED
-        elif ident.kind == "usc":
-            statuses[key] = FORM_ONLY
+        if ident.kind == "usc" and not ident.malformed:
+            statuses[ident.key] = FORM_ONLY
         else:
-            statuses[key] = UNCHECKED
-            if len(checkable) < MAX_LOOKUPS and _sendable(ident):
+            statuses[ident.key] = UNCHECKED
+            if len(checkable) < MAX_LOOKUPS and _sendable(ident, guard):
                 checkable.append(ident)
-    if not checkable:
+    if not checkable or may_send is None:
         return statuses
 
     async def read_cache(ident: Identifier) -> None:
         cached = await _cache_get(ident)
         if cached is not None:
-            statuses[(ident.kind, ident.value)] = cached
+            statuses[ident.key] = cached
 
     reads = [asyncio.create_task(read_cache(i)) for i in checkable]
-    _done, pending = await asyncio.wait(reads, timeout=remaining())
-    for task in pending:
-        task.cancel()
-    to_look_up = [i for i in checkable if statuses[(i.kind, i.value)] == UNCHECKED]
+    if remaining() > 0:
+        await asyncio.wait(reads, timeout=remaining())
+    _settle(reads)
+    to_look_up = [i for i in checkable if statuses[i.key] == UNCHECKED]
     if not to_look_up or remaining() <= 0:
         return statuses
 
-    if may_send is not None:
-        try:
-            allowed = await asyncio.wait_for(may_send(), timeout=remaining())
-        except Exception as e:
-            logger.debug(f"Citation checks: consent check failed ({type(e).__name__})")
-            allowed = False
-        if allowed is not True:
-            return statuses
+    consent = {"ok": None, "at": 0.0}
+    consent_lock = asyncio.Lock()
+
+    async def consent_allows() -> bool:
+        async with consent_lock:
+            if consent["ok"] is False:
+                return False
+            if consent["ok"] is True and loop.time() - consent["at"] < (
+                CONSENT_RECHECK_SECONDS
+            ):
+                return True
+            try:
+                allowed = await asyncio.wait_for(
+                    cast(Callable[[], Awaitable[bool]], may_send)(),
+                    timeout=remaining(),
+                )
+            except Exception as e:
+                logger.debug(
+                    f"Citation checks: consent check failed ({type(e).__name__})"
+                )
+                allowed = False
+            consent["ok"] = allowed is True
+            consent["at"] = loop.time()
+            return allowed is True
+
+    if not await consent_allows():
+        return statuses
 
     own_client = client is None
     http = client if client is not None else _new_client()
@@ -516,21 +712,23 @@ async def check_identifiers(
 
     async def one(ident: Identifier) -> None:
         async with gate:
-            if not _sendable(ident):
+            if not _sendable(ident, guard) or not await consent_allows():
                 return
             if ident.kind == "doi":
                 status = await _check_doi(http, ident.value)
             else:
                 status = await _check_cfr(http, ident.value)
-        statuses[(ident.kind, ident.value)] = status
+        statuses[ident.key] = status
         await _cache_set(ident, status)
 
     async def pmids(group: List[Identifier]) -> None:
         async with gate:
+            if not await consent_allows():
+                return
             found = await _check_pmids(http, [i.value for i in group])
         for ident in group:
             status = found.get(ident.value, UNCHECKED)
-            statuses[(ident.kind, ident.value)] = status
+            statuses[ident.key] = status
             await _cache_set(ident, status)
 
     tasks = [asyncio.create_task(one(i)) for i in to_look_up if i.kind != "pmid"]
@@ -538,12 +736,11 @@ async def check_identifiers(
     if pmid_group:
         tasks.append(asyncio.create_task(pmids(pmid_group)))
     try:
-        _done, pending = await asyncio.wait(tasks, timeout=remaining())
-        for task in pending:
-            task.cancel()
+        await asyncio.wait(tasks, timeout=remaining())
     except Exception as e:
         logger.debug(f"Citation checks stopped early ({type(e).__name__})")
     finally:
+        _settle(tasks)
         if own_client:
             try:
                 await http.aclose()
@@ -575,26 +772,27 @@ def _label(citation: str) -> str:
 
 def _apply(
     citation: str,
-    occurrences: List[Occurrence],
-    statuses: Dict[Tuple[str, str], str],
+    occurrences: Sequence[Occurrence],
+    statuses: Dict[Tuple[str, str, bool], str],
 ) -> Optional[str]:
     """The citation as it should reach the letter request, or None to drop
-    it (see the module docstring)."""
-
-    def status(occ: Occurrence) -> Optional[str]:
-        return statuses.get((occ.ident.kind, occ.ident.value))
-
-    bad = [o for o in occurrences if status(o) in (MISSING, MALFORMED)]
-    unchecked = any(status(o) == UNCHECKED for o in occurrences)
-    if bad:
+    it (see the module docstring). Only a registry's MISSING removes
+    anything."""
+    missing = [o for o in occurrences if statuses.get(o.ident.key) == MISSING]
+    unchecked = len(citation) > MAX_SCAN_CHARS or any(
+        statuses.get(o.ident.key, UNCHECKED) == UNCHECKED for o in occurrences
+    )
+    if missing:
         if len(citation) <= SHORT_CITATION_CHARS:
             return None
-        citation = _cut(citation, [(o.start, o.end) for o in bad])
+        citation = _cut(citation, [(o.start, o.end) for o in missing])
     return _label(citation) if unchecked else citation
 
 
 def _label_if_reference(citation: object) -> object:
-    if isinstance(citation, str) and _LOOKS_LIKE_REFERENCE.search(citation):
+    if isinstance(citation, str) and _LOOKS_LIKE_REFERENCE.search(
+        citation[:MAX_SCAN_CHARS]
+    ):
         return _label(citation)
     return citation
 
@@ -602,31 +800,45 @@ def _label_if_reference(citation: object) -> object:
 async def verify_citations(
     citations: List[str],
     budget_seconds: float = CHECK_BUDGET_SECONDS,
-    client: Optional[httpx.AsyncClient] = None,
+    client: Optional[UntracedClient] = None,
     may_send: Optional[Callable[[], Awaitable[bool]]] = None,
+    guard_text: str = "",
 ) -> List[str]:
-    """``citations`` with bad identifiers dropped or cut out and unchecked
-    ones labelled, in the same order. Strings with no identifier pass through
-    untouched. Never raises: on any unexpected error every citation that
-    looks like a reference comes back labelled unverified."""
+    """``citations`` with missing identifiers dropped or cut out and the
+    rest of the unverified ones labelled, in the same order. Strings with no
+    identifier pass through untouched. Never raises: on any unexpected error
+    every citation that looks like a reference comes back labelled
+    unverified."""
     if not citations or not checks_enabled():
         return citations
     try:
-        found = [
-            (c, find_occurrences(c)) if isinstance(c, str) else (c, [])
-            for c in citations
-        ]
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + budget_seconds
+        found: List[Tuple[object, List[Occurrence]]] = []
+        for c in citations:
+            # Parsing counts against the deadline: past it, the remaining
+            # citations are only labelled.
+            if isinstance(c, str) and loop.time() < deadline:
+                found.append((c, find_occurrences(c)))
+            else:
+                found.append((c, []))
+                if isinstance(c, str):
+                    found[-1] = (_label_if_reference(c), [])
         statuses = await check_identifiers(
             [o.ident for _c, occs in found for o in occs],
-            budget_seconds=budget_seconds,
             client=client,
             may_send=may_send,
+            guard_text=guard_text,
+            deadline=deadline,
         )
         out: List[str] = []
         dropped = 0
         for citation, occs in found:
-            if not occs:
-                out.append(citation)
+            if not occs or not isinstance(citation, str):
+                if isinstance(citation, str) and len(citation) > MAX_SCAN_CHARS:
+                    # Part of it went unread, so nothing vouches for it.
+                    citation = _label(citation)
+                out.append(cast(str, citation))
                 continue
             kept = _apply(citation, occs, statuses)
             if kept is None:
@@ -636,7 +848,7 @@ async def verify_citations(
         if dropped:
             logger.info(
                 f"Citation checks dropped {dropped} of {len(citations)} citations "
-                "with a malformed or missing identifier"
+                "whose identifier was not found"
             )
         return out
     except Exception as e:
