@@ -3336,7 +3336,7 @@ class DenialCreatorHelper:
                 try:
                     inferred_state = cls._zip_engine().by_zipcode(zip).state
                 except Exception as e:
-                    logger.debug(f"Zip code lookup failed for {zip}: {e}")
+                    logger.debug(f"Zip code lookup failed: {type(e).__name__}")
                 if inferred_state:
                     denial.your_state = inferred_state
                     changed_state_fields.append("your_state")
@@ -5790,7 +5790,7 @@ class AppealsBackendHelper:
 
         This coroutine retrieves denial and related context, processes templates and forms to construct appeal components, gathers citation contexts, and yields appeal texts with relevant substitutions applied. Previously saved appeals are yielded first, followed by newly generated appeals, each formatted as a JSON string.
         """
-        logger.debug(f"Raw parameters received: {parameters}")
+        logger.debug(f"Parameter names received: {sorted(parameters)}")
 
         # Extract specific parameters needed early
         denial_id = parameters["denial_id"]
@@ -6191,7 +6191,7 @@ class AppealsBackendHelper:
                     # normalized text) are one draft to the user: stream
                     # the first, skip its twins, and don't count them in
                     # `old` (review).
-                    logger.debug(f"Skipping duplicate existing appeal {appeal}")
+                    logger.debug(f"Skipping duplicate existing appeal {appeal.pk}")
                     continue
                 if old >= cls.MAX_REPLAYED_APPEALS:
                     # Past the cap: remember it, don't show it. The cap counts
@@ -6202,7 +6202,7 @@ class AppealsBackendHelper:
                     held_back_keys.add(key)
                     continue
                 old = old + 1
-                logger.debug(f"Found existing appeal {appeal}, yielding")
+                logger.debug(f"Found existing appeal {appeal.pk}, yielding")
                 served_keys.add(key)
                 if (
                     scoring_active
@@ -6575,7 +6575,7 @@ class AppealsBackendHelper:
                         and parsed.cleaned_data["medical_reason"] != ""
                     ):
                         medical_reasons.add(parsed.cleaned_data["medical_reason"])
-                        logger.debug(f"Med reason {medical_reasons}")
+                        logger.debug(f"Medical reasons so far: {len(medical_reasons)}")
                     # Questionable dynamic template
                     new_prefaces = parsed.preface()
                     for p in new_prefaces:
