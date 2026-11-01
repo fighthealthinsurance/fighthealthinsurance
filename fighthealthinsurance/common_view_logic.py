@@ -119,6 +119,7 @@ from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.ml.serving_registry import aserving_id_for
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.form_utils import *
+from fighthealthinsurance.ml.ml_models import error_kind_for_log
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.generate_appeal import backend_label
 from fighthealthinsurance.ml.model_attempt_log import (
@@ -7532,7 +7533,7 @@ class AppealsBackendHelper:
                 # stream with a proper done frame instead of a dirty one. The
                 # failure is not hidden: it is logged here and the zero-appeal
                 # diagnostic (keyed on the pre-reserve count) still fires.
-                gen_error = f"{type(e).__name__}: {e}"
+                gen_error = error_kind_for_log(e)
                 logger.opt(exception=True).error(
                     f"[gen_id={generation_id}] make_appeals raised for denial "
                     f"{denial_id} after {make_appeals_seconds:.1f}s; falling "
