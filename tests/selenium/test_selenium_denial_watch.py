@@ -83,7 +83,7 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         self.click('#tmode button[data-m="out"]')
         self.assert_text_eventually_contains("about twice the in-network rate", "tnote")
         self.assertIn(
-            "out-of-network denial rate by year, 2022 to 2024",
+            "out-of-network denial rate by year, 2022 to 2025",
             self.get_attribute("#tline", "aria-label"),
         )
         self.assertTrue(self.execute_script("return !!document.querySelector('#tnote a[href=\"#who-to-call\"]')"))
@@ -92,10 +92,10 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         self._open()
         self.click('#dmode button[data-m="all"]')
         gone = self.execute_script(
-            "return ['AK','ND','OH','CA'].map(s=>document.querySelector('#dmap g[data-s=\"'+s+'\"]').classList.contains('dw-gone'));"
+            "return ['MI','OH','CA'].map(s=>document.querySelector('#dmap g[data-s=\"'+s+'\"]').classList.contains('dw-gone'));"
         )
-        # Alaska and North Dakota report but have no all-claims figure; Ohio has one; California has no data here.
-        self.assertEqual(gone, [True, True, False, False])
+        # Michigan reports but has no all-claims figure; Ohio has one; California has no data here.
+        self.assertEqual(gone, [True, False, False])
 
     def _sources_open(self):
         return self.execute_script("return document.getElementById('sources-details').open")
@@ -173,12 +173,12 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         california = DATA["grey_issuers"]["CA"]
         self._open()
         self.select_option_by_value("#istate", "CA")
-        self.assert_text_eventually_contains("in California, 2024 claims", "icount")
+        self.assert_text_eventually_contains("in California, 2025 claims", "icount")
         self.assertEqual(sorted(self._rows()), sorted(r["n"] for r in california["rows"]))
         heads = self.execute_script("return [...document.querySelectorAll('#itable thead th')].map(c => c.textContent)")
         self.assertEqual(heads, ["Insurer", "Denial rate", "Claims"])
         self.assertIn("These reports have no appeal counts.", self.get_text("#isource"))
-        self.assertIn("Not in the table: Aetna CVS Health (no 2024 report posted)", self.get_text("#ileft"))
+        self.assertIn("Not in the table: Aetna CVS Health (no 2025 report posted)", self.get_text("#ileft"))
 
     def test_map_buttons_wrap_on_a_phone(self):
         self._open(375, 812)

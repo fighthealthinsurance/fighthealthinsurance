@@ -380,13 +380,13 @@ class TestOpenEnrollmentSeason(TestCase):
         self.assertIn('href="https://www.healthcare.gov/marketplace-in-your-state/"', sources)
 
     def test_shoppers_hear_that_some_insurers_have_left(self):
-        # The insurer table is mostly 2024 data, and some of its insurers don't sell 2027 plans; no insurer is named.
+        # The insurer table is mostly 2025 data, and some of its insurers don't sell 2027 plans; no insurer is named.
         html = _enroll(IN_SEASON)
         top = _text(_top(html))
-        # The table has HealthCare.gov insurers for 2024 and five grey states from other sources or years, so the pointer says mostly.
+        # The table has HealthCare.gov insurers for 2025 and six grey states from other sources or years, so the pointer says mostly.
         years = [DATA["trend"][-1]["year"]] * len({i["s"] for i in DATA["issuers"]}) + [g["year"] for g in DATA["grey_issuers"].values()]
-        self.assertGreater(years.count(2024), len(years) / 2)
-        self.assertIn("See how often your state's insurers denied claims, where we have figures (mostly 2024), and how often", top)
+        self.assertGreater(years.count(2025), len(years) / 2)
+        self.assertIn("See how often your state's insurers denied claims, where we have figures (mostly 2025), and how often", top)
         self.assertNotIn("each HealthCare.gov insurer", top)
         self.assertIn("some of those insurers don't sell plans for 2027", top)
         self.assertNotIn("Cigna", top)
@@ -779,18 +779,19 @@ class TestOpenEnrollmentMarketplace(TestCase):
     def test_bridge_says_the_denial_rates_scope_and_year(self):
         year = DATA["trend"][-1]["year"]
         bridge = _text(_between(self.questions, '<p id="denials-bridge">', "</p>"))
-        # The insurer table and the every-state chart carry the same five grey states, from other sources or years.
+        # The insurer table and the every-state chart carry the same six grey states, from other sources or years.
         names = _load_builder().STATE_NAMES
         grey = DATA["grey_issuers"]
         self.assertEqual(set(grey), set(DATA["state_reports"]) | set(DATA["earlier"]))
         reports = sorted(names[s] for s in DATA["state_reports"])
         older = sorted(names[s] for s in DATA["earlier"])
-        five = {5: "five"}[len(grey)]
+        self.assertEqual(len(grey), 6)
+        self.assertEqual(reports, ["California", "Pennsylvania"])
         self.assertEqual(
             bridge,
             f"Partly. The denial rates on Denial Watch's state map are for HealthCare.gov insurers' marketplace plans, from {year} claims. "
-            f"Its every-state chart and insurer table add {five} states that run their own marketplace, from other sources or years: "
-            f"{' and '.join(reports)} from their insurers' own reports for {year}, which can include plans sold outside the marketplace, "
+            f"Its every-state chart and insurer table add six states that run their own marketplace, from other sources or years: "
+            f"California (2025) and Pennsylvania (2024) from their insurers' own reports, which can include plans sold outside the marketplace, "
             f"and {', '.join(older[:-1])} and {older[-1]} from earlier years. CMS's enrollment count covers every marketplace nationwide.",
         )
         self.assertNotIn("only for HealthCare.gov", bridge)

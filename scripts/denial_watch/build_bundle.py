@@ -34,8 +34,8 @@ DEFAULT_OUT = REPO / "fighthealthinsurance" / "static" / "denial_watch.json"
 RAW = HERE / "raw"  # replaced by --raw-dir
 
 # PUF plan year -> the calendar year its claims come from.
-CLAIMS_YEAR = {2022: 2020, 2023: 2021, 2024: 2022, 2025: 2023, 2026: 2024}
-LATEST_PY = 2026
+CLAIMS_YEAR = {2022: 2020, 2023: 2021, 2024: 2022, 2025: 2023, 2026: 2024, 2027: 2025}
+LATEST_PY = 2027
 MIN_ISSUER_CLAIMS = 50_000  # in-network claims, for the insurer table
 MIN_APPEALS_FOR_RATE = 30  # an insurer's appeal win rate is shown only on this many appeals
 MIN_STATE_APPEALS = 50
@@ -49,6 +49,7 @@ KNOWN_DENIED_OVER_CLAIMS = {
     2024: {("KS", 18558)},
     2025: {("ND", 37160)},
     2026: {("AK", 73836), ("ND", 37160)},
+    2027: {("MI", 98185)},
 }
 
 # (state, issuer id) whose appeals-won count looks like a reporting error, so it's left out like a
@@ -59,6 +60,12 @@ DOUBTFUL_WON = {
         ("KS", 34368), ("AZ", 91450), ("WV", 50328),  # rate suppressed, counts printed
         ("UT", 22013), ("OR", 77969),  # same counts as the 2025 file
     },
+    2027: {("UT", 22013), ("TX", 66252), ("LA", 98780)},  # rate suppressed, counts printed
+}
+
+# (state, issuer id) whose in-network denials look like a reporting error, so they're left out like a missing cell.
+DOUBTFUL_DENIED_IN = {
+    2027: {("FL", 66966)},  # 448,953 of 466,619 denied (96%), after 6.5% the year before
 }
 
 # Plan-level reason columns (in-network, and a claim can count under more than one).
@@ -74,9 +81,19 @@ REASONS = {
     "plan_number_claims_denied_due_to_administrative_reason": "Administrative (missing information, duplicate, late filing, billing)",
     "plan_number_claims_denied_other": "Other / not specified",
 }
+# The PY2027 file splits each reason by network and fixes two misspelled names.
+REASON_COLUMNS_2027 = {
+    col: col.replace("enrolle_", "enrollee_").replace("proceduce", "procedure") + "_in_network" for col in REASONS
+}
 PLAN_DENIED_IN = "plan_number_claims_denied_in_network"
+# The PY2027 file splits plan-level in-network denials into these two, which add up to the older count.
+PLAN_DENIED_IN_2027 = (
+    "plan_number_claims_denied_in_network_non_behavioral_health",
+    "plan_number_claims_denied_in_network_behavioral_health_only",
+)
 # CMS's closed-network reason: out-of-network care the plan doesn't cover (this column name from PY2024 on).
 CLOSED_NETWORK = "plan_number_claims_denied_due_to_out_of_network"
+CLOSED_NETWORK_2027 = "plan_number_claims_denied_due_to_out_of_network_provider"
 
 
 def num(x):
@@ -110,24 +127,30 @@ def read_puf(py):
         if kind and kind != "QHP":
             continue
         add_plan_row(issuers, r)
+        if (r["state"], r["issuer_id"]) in DOUBTFUL_DENIED_IN.get(py, ()):
+            continue  # its plan-level reasons stay out with its issuer-level denials
         for col in REASONS:
-            v = num(r.get(col))
+            v = num(r.get(col if col in r else REASON_COLUMNS_2027[col]))
             if v:
                 reasons[col] = reasons.get(col, 0.0) + v
-        plan_denied += num(r.get(PLAN_DENIED_IN)) or 0.0
+        in_network = [PLAN_DENIED_IN] if PLAN_DENIED_IN in r else PLAN_DENIED_IN_2027
+        plan_denied += sum(num(r.get(col)) or 0.0 for col in in_network)
     drop_doubtful_won(issuers, py)
+    for key in DOUBTFUL_DENIED_IN.get(py, ()):
+        issuers[key]["den_in"] = None  # a KeyError means the file changed: recheck the list
     return list(issuers.values()), reasons, plan_denied
 
 
 def add_plan_row(issuers, r):
     """Fold one plan row into its insurer: claim counts once, plan types and the closed-network reason per plan."""
     key = (r["state"], r["issuer_id"])
+    closed_col = CLOSED_NETWORK_2027 if CLOSED_NETWORK_2027 in r else CLOSED_NETWORK
     if key not in issuers:  # issuer fields repeat on every plan row
-        issuers[key] = dict(issuer_cells(r), types=set(), closed=0.0 if CLOSED_NETWORK in r else None)
+        issuers[key] = dict(issuer_cells(r), types=set(), closed=0.0 if closed_col in r else None)
     if r.get("plan_type"):
         issuers[key]["types"].add(str(r["plan_type"]).strip())
     if issuers[key]["closed"] is not None:
-        issuers[key]["closed"] += num(r.get(CLOSED_NETWORK)) or 0.0
+        issuers[key]["closed"] += num(r.get(closed_col)) or 0.0
 
 
 def issuer_cells(r):
@@ -142,7 +165,8 @@ def issuer_cells(r):
         rec_in=g("issuer_claims_received_in_network", "issuer_claims_received"),
         den_in=g("issuer_claims_denied_in_network", "issuer_claims_denials", "issuer_claims_denied"),
         rec_out=g("issuer_claims_received_out_of_network"), den_out=g("issuer_claims_denied_out_of_network"),
-        ap_filed=g("issuer_internal_appeals_filed"), ap_over=g("issuer_number_internal_appeals_overturned"),
+        ap_filed=g("issuer_internal_appeals_claims_filed", "issuer_internal_appeals_filed"),
+        ap_over=g("issuer_number_internal_appeals_claims_overturned", "issuer_number_internal_appeals_overturned"),
     )
 
 
@@ -300,7 +324,7 @@ def load_state_reports(shown, earlier, path=STATE_REPORTS_CSV):
 
     Only the every-state chart and the grey state's readout show them, never the map, the national figures or the ranges.
     """
-    out, name, year = {}, pathlib.Path(path).name, CLAIMS_YEAR[LATEST_PY]
+    out, name, latest = {}, pathlib.Path(path).name, CLAIMS_YEAR[LATEST_PY]
     with open(path, newline="") as f:
         for r in csv.DictReader(f):
             st = r["state"]
@@ -311,8 +335,10 @@ def load_state_reports(shown, earlier, path=STATE_REPORTS_CSV):
             # A state with a CMS figure already has one; a second, from another source, would give it two bars.
             if st in shown or st in earlier:
                 sys.exit(f"{name}: {st} already has a CMS figure")
-            if r["claims_year"] != str(year):
-                sys.exit(f"{name}: {st} is for {r['claims_year']} claims, and the chart sets these beside the map's {year}")
+            # A state's report can lag the map by a year; the page names each report's year.
+            year = int(r["claims_year"]) if r["claims_year"].isdigit() else 0
+            if year not in (latest, latest - 1):
+                sys.exit(f"{name}: {st} is for {r['claims_year']} claims, too far from the map's {latest}")
             for k in ("insurers", "in_network_claims"):
                 if not re.fullmatch(r"[1-9][0-9]*", r[k]):
                     sys.exit(f"{name}: {k} must be a count above 0 for {st}, not {r[k]!r}")
@@ -1099,7 +1125,7 @@ def main(argv=None):
         print("grey insurers", k, g["year"], g["publisher"], f"{len(g['rows'])} listed",
               [(i["n"], i["r"], i["a"], i["o"]) for i in g["rows"]], "left out", [(x["n"], x["why"]) for x in g["left_out"]])
     om = bundle["oon_meta"]
-    print("out-of-network by 2024 plan types: network-only", om["net_only"], "other", om["other"], "unknown", om["unknown_plan_types"])
+    print(f"out-of-network by {PLAN_TYPES_PY} plan types: network-only", om["net_only"], "other", om["other"], "unknown", om["unknown_plan_types"])
     print("closed-network reason", f"{om['closed_network']['denied']:,.0f}", f"= {om['closed_network']['share']:.1%} of out-of-network denials")
     whys = [i["out"]["why"] for i in bundle["issuers"]]
     print("insurer rows with an out-of-network rate", whys.count(None),
