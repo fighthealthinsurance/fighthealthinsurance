@@ -304,6 +304,16 @@ class DeleteSubscribersTest(TestCase):
 
         self.assertEqual(deleted, 0)
 
+    def test_whole_addresses_only_spares_a_copy_whose_twin_ends_in_a_tab(self):
+        """SQL TRIM strips only spaces; a twin stored with a trailing tab is
+        still the same address and still gets mailed."""
+        junk = make_subscriber("jane@hospital.org", name="http://spam.example")
+        make_subscriber("Jane@Hospital.org\t", name="Jane Doe")
+
+        deleted = hygiene.delete_subscribers([junk.id], whole_addresses_only=True)
+
+        self.assertEqual(deleted, 0)
+
     def test_whole_addresses_only_deletes_every_copy_when_all_selected(self):
         first = make_subscriber("bot@spam.org", name="http://spam.example")
         second = make_subscriber("BOT@spam.org", name="www.spam.example")

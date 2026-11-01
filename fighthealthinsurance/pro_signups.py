@@ -461,12 +461,17 @@ def _is_valid_email(value: str) -> bool:
 def forget_submissions(email: str) -> None:
     """Delete this address's logged submissions (Remove my data).
 
-    Includes rows linked to this address's lead, such as a phone match sent
-    from another address, since the lead itself is deleted too.
+    Rows sent from another address stay, even when a phone match linked
+    them to this address's lead: they hold someone else's name, email and
+    message, and a removal request (or a planted phone number) must not
+    erase them. Deleting the lead unlinks them. A linked row with no email
+    of its own can't belong to anyone else, so it goes.
     """
     email = (email or "").strip()
+    if not email:
+        return
     ProfessionalInquiry.objects.filter(
-        Q(email__iexact=email) | Q(interested_professional__email__iexact=email)
+        Q(email__iexact=email) | Q(interested_professional__email__iexact=email, email="")
     ).delete()
 
 

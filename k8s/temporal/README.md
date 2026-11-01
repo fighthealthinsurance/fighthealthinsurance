@@ -156,7 +156,10 @@ workers and the cronjobs all load via `envFrom`, after the Secrets, so the
 committed value wins over any copy a Secret still carries. Change it there and
 redeploy (`scripts/build.sh` applies it). Pods read it only at start-up, so
 the web and worker Deployments carry its hash as the `fhi/feature-flags-sha`
-pod annotation, and a flags-only change still rolls them.
+pod annotation, and a flags-only change still rolls them. The Ray cluster
+needs no annotation: `scripts/build.sh` deletes and recreates it on every
+deploy. Staging loads its own copy, `fhi-feature-flags-staging`, so the prod
+ConfigMap only changes once the prod deploy is approved.
 Do **not** flip `TEMPORAL_ENABLED` only on the web pods: the Ray
 `FaxPollingActor` sweep gates itself off by reading `TEMPORAL_ENABLED` *in its
 own process*, so if the Ray pods don't see the flag the sweep keeps running and

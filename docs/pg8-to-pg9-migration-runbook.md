@@ -677,7 +677,8 @@ Confirm no application sessions remain and keep writes paused through the
 comparison. Create a fresh backup after quiescing; a backup from before the
 pause cannot provide an exact comparison with live `-9`.
 
-Run in the same Bash session as the restore steps:
+Run in the same Bash session as the restore steps (the child `bash` shell
+started there, so `set -euo pipefail` cannot close your terminal):
 
 ```bash
 set -euo pipefail

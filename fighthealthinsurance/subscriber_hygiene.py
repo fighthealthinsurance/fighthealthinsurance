@@ -41,8 +41,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
-from django.db.models import QuerySet
-from django.db.models.functions import Lower, Trim
+from django.db.models import Q, QuerySet
 from django.utils import timezone
 
 from loguru import logger
@@ -728,14 +727,19 @@ def delete_subscribers(
         if whole_addresses_only and rows:
             selected = {sub.id for sub in rows}
             addresses = {normalized_email(sub.email) for sub in rows}
+            # Narrow in SQL, then compare with normalized_email in Python:
+            # SQL TRIM strips only spaces, while normalized_email strips any
+            # whitespace, so a copy stored as "jane@x.com\t" would slip past
+            # an SQL-side comparison and lose its partner's unsubscribe link.
+            candidates = Q()
+            for address in addresses:
+                candidates |= Q(email__icontains=address)
             partial = {
-                address
-                for pk, address in MailingListSubscriber.objects.annotate(
-                    address=Lower(Trim("email"))
-                )
-                .filter(address__in=addresses)
-                .values_list("id", "address")
-                if pk not in selected
+                normalized_email(email)
+                for pk, email in MailingListSubscriber.objects.filter(
+                    candidates
+                ).values_list("id", "email")
+                if pk not in selected and normalized_email(email) in addresses
             }
             rows = [sub for sub in rows if normalized_email(sub.email) not in partial]
         # Log what goes away (masked) so a bad cleanup is at least reconstructible.

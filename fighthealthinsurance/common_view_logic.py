@@ -5015,6 +5015,9 @@ class DenialCreatorHelper:
         ).aupdate(regulator=regulator)
         return EXTRACTION_OUTCOME_FOUND if updated else EXTRACTION_OUTCOME_NOTHING_FOUND
 
+    # Seconds the review page waits for the model to name a regulator.
+    REGULATOR_FROM_PLAN_MODEL_TIMEOUT = 20
+
     @classmethod
     async def extract_set_regulator_from_plan(
         cls,
@@ -5074,12 +5077,24 @@ class DenialCreatorHelper:
             )
             if facts and letter.strip():
                 try:
-                    answer = await appealGenerator.get_regulator_routing(
-                        f"{letter}\n\n{facts}",
-                        use_external=bool(denial.use_external),
+                    # Bounded: the review page's POST waits on this inline,
+                    # and get_regulator_routing tries every extraction
+                    # backend in turn (each with its own long timeout).
+                    answer = await asyncio.wait_for(
+                        appealGenerator.get_regulator_routing(
+                            f"{letter}\n\n{facts}",
+                            use_external=bool(denial.use_external),
+                        ),
+                        timeout=cls.REGULATOR_FROM_PLAN_MODEL_TIMEOUT,
                     )
                 except ExtractionUnavailable as e:
                     logger.info(f"extract_set_regulator_from_plan({denial_id}): {e}")
+                    answer = None
+                except asyncio.TimeoutError:
+                    logger.info(
+                        f"extract_set_regulator_from_plan({denial_id}): model "
+                        f"gave no answer in {cls.REGULATOR_FROM_PLAN_MODEL_TIMEOUT}s"
+                    )
                     answer = None
                 if answer is not None:
                     logger.info(

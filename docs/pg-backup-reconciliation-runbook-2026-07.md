@@ -485,7 +485,11 @@ proceeding.
 
 #### 2. Select the backup and create the restore cluster
 
-Run in one Bash session. The 26h freshness limit matches `FhiPg9BackupTooOld`.
+Run in one Bash session, and start that session as a child shell (type
+`bash` first): the block sets `set -euo pipefail`, so a failed step (a
+`kubectl wait` timeout, the stale-backup `exit 1`) ends that shell rather
+than closing your terminal. If it does exit, find the restore cluster by its
+`fhi-restore-drill=pg9` label. The 26h freshness limit matches `FhiPg9BackupTooOld`.
 If selection fails or the backup is stale, stop and use Phases 3/3a to repair
 backups before retrying.
 For a migration comparison, set `DRILL_BACKUP_NAME` to the fresh backup created

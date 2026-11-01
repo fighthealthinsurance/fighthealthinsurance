@@ -7,6 +7,7 @@ the employer) often can: some settle it outright, and the rest go to the
 model with the letter.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 from asgiref.sync import async_to_sync
@@ -85,6 +86,19 @@ class ExtractSetRegulatorFromPlanTest(RegulatorFromPlanTestBase):
         self.assertIn("Employer: Acme Widgets.", sent)
         self.assertIn("Employer -- Private", sent)
         self.assertIn("lives in Texas", sent)
+
+    @patch.object(DenialCreatorHelper, "REGULATOR_FROM_PLAN_MODEL_TIMEOUT", 0.01)
+    @patch(_GENERATOR)
+    def test_a_slow_model_is_given_up_on_and_nothing_is_linked(self, generator):
+        async def never_answers(*args, **kwargs):
+            await asyncio.sleep(60)
+
+        generator.get_regulator_routing = never_answers
+        denial = self._make_denial(your_state="TX", employer_name="Acme Widgets")
+        denial.plan_source.set([_source("Employer -- Private")])
+        self._rerun(denial)
+        denial.refresh_from_db()
+        self.assertIsNone(denial.regulator)
 
     @patch(_GENERATOR)
     def test_a_regulator_the_letter_names_is_kept(self, generator):

@@ -139,9 +139,14 @@ else
     source "${SCRIPT_DIR}/build_ray.sh"
 fi
 
-# Feature flags + Temporal address, loaded via envFrom by every app pod,
-# staging included, so it must exist before the staging pods start.
-kubectl apply -f k8s/feature-flags.yaml
+# Feature flags + Temporal address, loaded via envFrom by every app pod.
+# Staging shares the namespace with prod, so it gets its own copy
+# (fhi-feature-flags-staging): applying the prod ConfigMap here would hand new
+# flag values to the prod CronJobs and any restarted prod pod (on the old
+# image) before anyone answers the prod prompt below. The prod copy is
+# applied after that prompt.
+sed 's/^  name: fhi-feature-flags$/  name: fhi-feature-flags-staging/' k8s/feature-flags.yaml \
+    | kubectl apply -f -
 
 # Deploy a staging env
 envsubst < k8s/deploy_staging.yaml | kubectl apply -f -
@@ -165,6 +170,8 @@ esac
 # already flipped the LIVE ConfigMap to -9, you MUST also commit that flip into
 # k8s/db-config.yaml first, or this apply will revert the host back to -8.
 kubectl apply -f k8s/db-config.yaml
+# Prod feature flags, only now that prod is approved (see the staging copy above).
+kubectl apply -f k8s/feature-flags.yaml
 echo "PDBHOST now set to: $(kubectl -n totallylegitco get configmap fhi-db-config -o jsonpath='{.data.PDBHOST}')"
 
 # Backup schedule for fhi-pg-main-9 -- re-asserted on every deploy (same

@@ -126,7 +126,7 @@ DEEPINFRA_USD_PER_MTOK: Dict[str, Tuple[float, float]] = {
     "mistralai/Mistral-Small-3.2-24B-Instruct-2506": (0.075, 0.2),
     "zai-org/GLM-5.3-Flash": (0.15, 0.5),
     "deepseek-ai/DeepSeek-V4.1-Flash-1017": (0.2, 0.6),
-    "Qwen/Qwen3.8-Max": (1.65, 4.951),
+    "Qwen/Qwen3.8-Max": (1.65, 4.95),
     "moonshotai/Kimi-K3": (2.85, 14.25),
     "deepseek-ai/DeepSeek-V4-Pro-0813": (1.3, 2.6),
     "google/gemma-4-26B-A4B-it": (0.07, 0.34),
