@@ -164,13 +164,16 @@ class TestParityTemplateRestsOnEnforcedLaw(unittest.TestCase):
         paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "2. ")
         self.assertIn("29 CFR 2590.712(d); 45 CFR 146.136(d)", paragraph)
 
-    def test_erisa_document_request_also_goes_to_the_plan_administrator(self):
+    def test_erisa_document_request_points_to_the_plan_administrator(self):
         paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "2. ")
+        # Sending a copy is the person's own act, so the letter asks them to
+        # say whether they did rather than saying it for them.
         self.assertIn(
-            "sending a copy to the plan administrator named in my summary plan "
-            "description",
+            "[Specify the plan administrator named in your summary plan "
+            "description if you are sending them a copy, or delete this sentence]",
             paragraph,
         )
+        self.assertNotIn("I am sending a copy", paragraph)
 
     def test_essential_health_benefits_are_limited_to_the_plans_they_bind(self):
         paragraph = _paragraph(MentalHealthParityAppeal.static_appeal(), "4. ")
@@ -313,6 +316,11 @@ class TestFillInsAreCaughtBeforeALetterLeaves(unittest.TestCase):
 
     FILL_INS = (
         (
+            MentalHealthParityAppeal,
+            "[Specify the plan administrator named in your summary plan "
+            "description if you are sending them a copy, or delete this sentence]",
+        ),
+        (
             AdvancedImagingAppeal,
             "[Specify the ACR Appropriateness Criteria scenario that rates this "
             "study usually appropriate, and why a lower-cost study was not "
@@ -398,6 +406,13 @@ class TestOlderTemplatesAskRatherThanAssert(unittest.TestCase):
         letter = PostSurgicalRehabAppeal.static_appeal()
         self.assertNotIn("following surgery for", letter)
         self.assertNotIn("post-operative status", letter)
+
+
+class TestImagingClosingIsConditional(unittest.TestCase):
+    def test_missed_diagnosis_risk_applies_only_before_the_study(self):
+        letter = AdvancedImagingAppeal.static_appeal()
+        self.assertNotIn("Delaying or denying this imaging risks", letter)
+        self.assertIn("If the study has not yet been done, delaying it risks", letter)
 
 
 class TestSynthesisKeepsFillIns(unittest.TestCase):

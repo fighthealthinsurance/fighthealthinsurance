@@ -410,8 +410,8 @@ class MentalHealthParityAppeal(SpecializedDenialTemplate):
             "45 CFR 146.136(d)); and (c) every guideline and other document relevant "
             "to my claim (29 CFR 2560.503-1(g)(1)(v) and (h)(2)(iii); MHPAEA FAQs Part "
             "45, Q6). If ERISA covers my plan, this is also an ERISA § 104(b)(4) "
-            "request, and I am sending a copy to the plan administrator named in my "
-            "summary plan description.\n\n"
+            "request. [Specify the plan administrator named in your summary plan "
+            "description if you are sending them a copy, or delete this sentence]\n\n"
             "3. Clinical review and automated tools. A denial based on medical "
             "necessity must explain, on request, the clinical judgment applied to my "
             "circumstances (29 CFR 2560.503-1(g)(1)(v)(B)); I request it. Please name "
@@ -501,8 +501,8 @@ class AdvancedImagingAppeal(SpecializedDenialTemplate):
             "NCD and the covered indication that matches this order, or delete "
             "this sentence]\n\n"
             + _automated_review_paragraph(3, "an automated utilization-management tool")
-            + "Delaying or denying this imaging risks missed diagnoses and "
-            "downstream cost from lower-yield workups. I respectfully "
+            + "If the study has not yet been done, delaying it risks missed "
+            "diagnoses and downstream cost from lower-yield workups. I respectfully "
             "request that the denial be overturned.\n\n"
             "Sincerely,\n[Name]\n"
         )
