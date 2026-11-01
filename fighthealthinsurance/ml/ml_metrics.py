@@ -68,9 +68,10 @@ ML_CALLS_TOTAL = Counter(
 # (outcome=none/timeout/error) and once here with its classified reason
 # (transport_error, http_error, bad_body, no_text, context_overflow, missing_model,
 # skipped_missing_model, skipped_refused, skipped_budget, skipped_cooling,
-# skipped_rate_limited, unexpected_error). The skips are calls not made
-# because the pair failed moments ago (or its provider's budget is spent, or
-# it is backing off after a 429); counting them as plain outcome=none would
+# skipped_rate_limited, skipped_busy, unexpected_error). The skips are calls
+# not made because the pair failed moments ago (or its provider's budget is
+# spent, it is backing off after a 429, or it is already serving all the
+# calls it takes at once); counting them as plain outcome=none would
 # let the failure rate fall during the very outage that started the cooldown.
 ML_CALL_FAILURES_TOTAL = Counter(
     "fhi_ml_call_failures_total",
