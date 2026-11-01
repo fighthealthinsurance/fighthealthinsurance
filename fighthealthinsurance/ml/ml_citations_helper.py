@@ -58,6 +58,37 @@ def _cached_cms_citations(value: Any) -> Optional[List[str]]:
     return None
 
 
+async def _may_check_citations_outside(denial: Denial) -> bool:
+    """Whether citation identifiers for this denial may be sent to the
+    outside registries (doi.org, NCBI, eCFR), read from the database at the
+    moment of the requests rather than from the row the run started with.
+
+    The same consent the outside citation backends get: the person allowed
+    outside services (``use_external``), and has not refused the use of
+    their health history (``health_history_consent`` is not False), since
+    citations can be chosen from it. A missing row, or a read that fails,
+    counts as no.
+    """
+    denial_id = getattr(denial, "denial_id", None)
+    if denial_id is None:
+        return False
+    try:
+        row = (
+            await Denial.objects.filter(denial_id=denial_id)
+            .values("use_external", "health_history_consent")
+            .afirst()
+        )
+    except Exception as e:
+        logger.warning(
+            f"Could not read consent for denial {denial_id} before checking "
+            f"citations ({type(e).__name__}); not checking them"
+        )
+        return False
+    if row is None or not row["use_external"]:
+        return False
+    return row["health_history_consent"] is not False
+
+
 async def _denial_is_medicare_plan(denial: Optional[Denial]) -> bool:
     """Return True if the denial's plan_source indicates a Medicare plan.
 
@@ -594,11 +625,16 @@ class MLCitationsHelper:
         # sections) before they can reach a letter: malformed or missing ones
         # go, ones that could not be checked are labelled unverified (see
         # ml/citation_verification.py). Time-boxed to a tenth of this run's
-        # timeout, between 2 and 6 seconds. CMS citations come from the
-        # coverage database itself and are added after the check.
+        # timeout, between 2 and 6 seconds. The lookups only happen if the
+        # person's consent allows them, read again right before the first
+        # request; without it nothing is sent and every citation with an
+        # identifier is labelled unverified, as when a registry is down.
+        # CMS citations come from the coverage database itself and are added
+        # after the check.
         ml_result = await verify_citations(
             ml_result,
             budget_seconds=min(CHECK_BUDGET_SECONDS, max(2.0, timeout / 10)),
+            may_send=lambda: _may_check_citations_outside(denial),
         )
 
         try:

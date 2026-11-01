@@ -15,7 +15,13 @@ U.S. Code sections are checked for form only: there is no simple public
 lookup, and a well-known statute cited from memory is usually right.
 
 Only the identifiers leave the app, never the citation text, the denial or
-anything about the person. Every check is time-boxed: a registry that is slow
+anything about the person, and only identifiers that pass a strict form check
+are sent at all: a DOI's suffix is limited to the registry's recommended
+characters and length (so a "DOI" a model filled with words, or a path like
+``../``, is treated as malformed and never sent), a PubMed ID to digits, a CFR
+reference to numbers. The caller decides, right before any request, whether
+the person's consent allows the lookups (``may_send``); when it does not, no
+request is made. Every check is time-boxed: a registry that is slow
 or down never holds up a letter, and a citation it could not check is kept,
 labelled as unverified, rather than dropped. The same goes for an answer of
 an unexpected kind: a redirect (to a bot check, a login page, anywhere), a
@@ -40,7 +46,16 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import (
+    Awaitable,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    cast,
+)
 from urllib.parse import quote
 
 import httpx
@@ -59,18 +74,20 @@ REMOVED_REFERENCE = "(unverified reference removed)"
 # usually holds several references; only the bad identifier is cut out.
 SHORT_CITATION_CHARS = 500
 
-# The whole check for one denial's citations, in seconds. What has not
-# answered by then counts as unchecked.
+# The whole check for one denial's citations, in seconds, cache reads and
+# consent check included. What has not answered by then counts as unchecked.
 CHECK_BUDGET_SECONDS = 6.0
 # Each request to a registry, in seconds.
 REQUEST_TIMEOUT_SECONDS = 3.0
-# Identifiers looked up per denial; the rest count as unchecked.
+# Identifiers looked up (cache or registry) per denial; the rest count as
+# unchecked without either.
 MAX_LOOKUPS = 25
 # Requests in flight at once.
 MAX_CONCURRENT_LOOKUPS = 5
 
 # Registry answers are cached by identifier. Existence is stable; absence is
 # kept shorter in case a new DOI or PubMed record is still being indexed.
+# Only those two verdicts are cached, never an error or a refusal.
 _CACHE_PREFIX = "citecheck:v2:"
 _CACHE_FOUND_SECONDS = 30 * 24 * 3600
 _CACHE_MISSING_SECONDS = 7 * 24 * 3600
@@ -99,88 +116,172 @@ class Identifier:
 
     kind: str  # "doi", "pmid", "cfr" or "usc"
     value: str  # normalized: DOI lowercased, PMID digits, "45/147/147.136"
-    text: str  # the matched text, for cutting it out
     malformed: bool = False
 
 
-_TRAILING_PUNCT = ".,;:)]}>'\""
+@dataclass(frozen=True)
+class Occurrence:
+    """Where an identifier appears in a citation, for cutting it out."""
 
-# A DOI: "10.", a registrant code, "/", and a suffix.
-_DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"<>]+")
-# Something introduced as a DOI, valid or not.
-_DOI_MENTION_RE = re.compile(r"\bdoi(?:\.org/|\s*:\s*|\s+)(\S+)", re.IGNORECASE)
-_PMID_RE = re.compile(r"\bPMID\s*[:#]?\s*([^\s,;)\]]+)", re.IGNORECASE)
-_PUBMED_URL_RE = re.compile(r"pubmed\.ncbi\.nlm\.nih\.gov/(\d+)", re.IGNORECASE)
-_CFR_RE = re.compile(
-    r"\b(\d{1,3})\s*C\.?\s*F\.?\s*R\.?\s*(?:Part|Parts|Sec(?:tion)?\.?|§+)?\s*"
-    r"(\d{1,5})(?:\.(\d{1,5}(?:-\d{1,3})?))?",
+    ident: Identifier
+    start: int
+    end: int
+
+
+# A DOI suffix may only hold the characters Crossref recommends, and at most
+# this many of them. Anything else (words, "=", "&", "?", "%", "@", spaces,
+# "..") makes the "DOI" malformed, so it is never sent.
+_DOI_MAX_SUFFIX = 100
+_DOI_VALID = re.compile(r"^10\.\d{4,9}/[A-Za-z0-9\-._;()/:]{1,%d}$" % _DOI_MAX_SUFFIX)
+# A DOI candidate: "10." with a registrant code and "/", up to whitespace,
+# a quote, a bracket or a brace. Not preceded by a word character, a dot, a
+# hyphen or a slash (other than doi.org's own), so "110.1234/x" or a
+# version number is not one.
+_DOI_CANDIDATE = re.compile(
+    r"(?:(?<=doi\.org/)|(?<![\w.\-/]))10\.\d{4,9}/[^\s\"'<>\[\]{}|\\^`]+"
+)
+# Prefixes that belong to a DOI occurrence when cutting it out.
+_DOI_PREFIX = re.compile(
+    r"(?:https?://(?:dx\.)?doi\.org/|doi\.org/|doi\s*:\s*)$", re.IGNORECASE
+)
+# Something introduced as a DOI that does not start like one.
+_DOI_MENTION = re.compile(
+    r"\b(?:https?://(?:dx\.)?)?doi(?:\.org/|\s*:\s*)(\S+)", re.IGNORECASE
+)
+_DOI_START = re.compile(r"10\.\d{4,9}/")
+_PMID_VALID = re.compile(r"^[1-9]\d{0,8}$")
+_PMID_TEXT = re.compile(r"\bPMID\s*[:#]?\s*([^\s,;\])]+)", re.IGNORECASE)
+_PUBMED_URL = re.compile(
+    r"(?:https?://)?(?:www\.)?pubmed\.ncbi\.nlm\.nih\.gov/([^\s/?#\])\"'<>]+)/?",
     re.IGNORECASE,
 )
-_USC_RE = re.compile(
-    r"\b(\d{1,3})\s*U\.?\s*S\.?\s*C\.?\s*(?:Sec(?:tion)?\.?|§+)?\s*(\d{1,6}[a-z]{0,3})",
+# Subsections such as "(b)(1)(ii)" may follow a section. Anything else
+# stuck to the number ("147.136oops", "300gg-???") makes it malformed rather
+# than letting a valid-looking prefix through.
+_SUBSECTIONS = r"((?:\([0-9A-Za-z]{1,4}\))*)"
+_STUCK_ON = r"([^\s,;:.)\]]*)"
+_CFR_TEXT = re.compile(
+    r"(?<![\w.])(\d{1,3})\s*C\.?\s*F\.?\s*R\.?\s*(?:Parts?|Sec(?:tion)?s?\.?|§{1,2})?"
+    r"\s*(\d{1,5})(?:\.(\d{1,5}(?:-\d{1,5}[A-Z]?)?))?" + _SUBSECTIONS + _STUCK_ON,
     re.IGNORECASE,
 )
-_PMID_FORM = re.compile(r"^[1-9]\d{0,8}$")
-_DOI_FORM = re.compile(r"^10\.\d{4,9}/\S+$")
+_USC_TEXT = re.compile(
+    r"(?<![\w.])(\d{1,3})\s*U\.?\s*S\.?\s*C\.?\s*(?:Sec(?:tion)?s?\.?|§{1,2})?\s*"
+    r"(\d{1,6}[a-z]{0,3}(?:-\d{1,5}[a-z]{0,2})?)" + _SUBSECTIONS + _STUCK_ON,
+    re.IGNORECASE,
+)
+_CFR_SECTION_VALID = re.compile(r"^\d{1,5}\.\d{1,5}(?:-\d{1,5}[A-Z]?)?$")
 # CFR has 50 titles; the U.S. Code 54.
 _CFR_TITLES = 50
 _USC_TITLES = 54
+# Cheap test for "this string cites something", used to label citations
+# when the check itself fails.
+_LOOKS_LIKE_REFERENCE = re.compile(
+    r"10\.\d{4,9}/|\bPMID\b|pubmed\.ncbi|C\.?\s*F\.?\s*R\b|U\.?\s*S\.?\s*C\b",
+    re.IGNORECASE,
+)
+_ALWAYS_TRAILING = ".,;:'\""
 
 
-def _clean(value: str) -> str:
-    return value.rstrip(_TRAILING_PUNCT)
+def valid_doi(doi: str) -> bool:
+    """Whether ``doi`` is safe and plausible to send: the registry's
+    recommended characters and length, no "..", no empty, "." or ".."
+    path segment."""
+    if not _DOI_VALID.match(doi) or ".." in doi:
+        return False
+    segments = doi.split("/")[1:]
+    return all(seg not in ("", ".", "..") for seg in segments)
+
+
+def _trim_doi(candidate: str) -> str:
+    """Drop the punctuation a sentence leaves on a DOI: always ". , ; : '",
+    and a ")" only while the DOI has more ")" than "(", since DOIs such as
+    10.1016/S0140-6736(20)30183-5 hold balanced parentheses."""
+    while candidate:
+        if candidate[-1] in _ALWAYS_TRAILING:
+            candidate = candidate[:-1]
+        elif candidate[-1] == ")" and candidate.count(")") > candidate.count("("):
+            candidate = candidate[:-1]
+        else:
+            break
+    return candidate
+
+
+def find_occurrences(citation: str) -> List[Occurrence]:
+    """Every DOI, PubMed ID, CFR and U.S. Code reference in a citation, with
+    its span. Those of a wrong form are marked malformed and are never
+    sent anywhere."""
+    found: List[Occurrence] = []
+
+    def add(kind: str, value: str, start: int, end: int, malformed: bool) -> None:
+        found.append(Occurrence(Identifier(kind, value, malformed), start, end))
+
+    for m in _DOI_CANDIDATE.finditer(citation):
+        doi = _trim_doi(m.group(0))
+        start, end = m.start(), m.start() + len(doi)
+        prefix = _DOI_PREFIX.search(citation, 0, start)
+        if prefix and prefix.end() == start:
+            start = prefix.start()
+        if valid_doi(doi):
+            add("doi", doi.lower(), start, end, False)
+        else:
+            add("doi", doi.lower()[:120], start, end, True)
+    for m in _DOI_MENTION.finditer(citation):
+        if _DOI_START.match(m.group(1)):
+            continue  # a candidate above, valid or not
+        add("doi", _trim_doi(m.group(1)).lower()[:120], m.start(), m.end(), True)
+    for m in _PMID_TEXT.finditer(citation):
+        token = m.group(1).rstrip(_ALWAYS_TRAILING)
+        end = m.start(1) + len(token)
+        add("pmid", token[:20], m.start(), end, not _PMID_VALID.match(token))
+    for m in _PUBMED_URL.finditer(citation):
+        token = m.group(1)
+        add("pmid", token[:20], m.start(), m.end(), not _PMID_VALID.match(token))
+    for m in _CFR_TEXT.finditer(citation):
+        title, part, sub, stuck = m.group(1), m.group(2), m.group(3), m.group(5)
+        section = f"{part}.{sub}" if sub else ""
+        bad = bool(stuck) or not (1 <= int(title) <= _CFR_TITLES)
+        value = f"{int(title)}/{int(part)}/{section}"
+        add("cfr", value, m.start(), m.end(), bad)
+    for m in _USC_TEXT.finditer(citation):
+        title, section, stuck = m.group(1), m.group(2), m.group(4)
+        bad = bool(stuck) or not (1 <= int(title) <= _USC_TITLES)
+        add("usc", f"{int(title)}/{section.lower()}", m.start(), m.end(), bad)
+    return found
 
 
 def find_identifiers(citation: str) -> List[Identifier]:
-    """The DOIs, PubMed IDs, CFR and U.S. Code references in one citation,
-    each once, with those of a wrong form marked malformed."""
-    found: List[Identifier] = []
-    seen: set = set()
+    """The distinct identifiers in a citation, in order of appearance."""
+    out: List[Identifier] = []
+    for occ in sorted(find_occurrences(citation), key=lambda o: o.start):
+        if occ.ident not in out:
+            out.append(occ.ident)
+    return out
 
-    def add(ident: Identifier) -> None:
-        key = (ident.kind, ident.value, ident.malformed)
-        if key not in seen:
-            seen.add(key)
-            found.append(ident)
 
-    for m in _DOI_RE.finditer(citation):
-        doi = _clean(m.group(0))
-        add(Identifier("doi", doi.lower(), doi))
-    for m in _DOI_MENTION_RE.finditer(citation):
-        token = _clean(m.group(1))
-        if token.lower().startswith("https://doi.org/"):
-            token = token[len("https://doi.org/") :]
-        if not _DOI_FORM.match(token):
-            add(Identifier("doi", token.lower(), m.group(0), malformed=True))
-    for m in _PMID_RE.finditer(citation):
-        token = _clean(m.group(1))
-        if _PMID_FORM.match(token):
-            add(Identifier("pmid", token, m.group(0)))
-        else:
-            add(Identifier("pmid", token, m.group(0), malformed=True))
-    for m in _PUBMED_URL_RE.finditer(citation):
-        token = m.group(1)
-        add(
-            Identifier("pmid", token, m.group(0), malformed=not _PMID_FORM.match(token))
-        )
-    for m in _CFR_RE.finditer(citation):
-        title, part, sub = m.group(1), m.group(2), m.group(3)
-        bad = not (1 <= int(title) <= _CFR_TITLES)
-        section = f"{part}.{sub}" if sub else ""
-        add(
-            Identifier(
-                "cfr", f"{int(title)}/{int(part)}/{section}", m.group(0), malformed=bad
-            )
-        )
-    for m in _USC_RE.finditer(citation):
-        title, section = m.group(1), m.group(2)
-        bad = not (1 <= int(title) <= _USC_TITLES)
-        add(
-            Identifier(
-                "usc", f"{int(title)}/{section.lower()}", m.group(0), malformed=bad
-            )
-        )
-    return found
+def _sendable(ident: Identifier) -> bool:
+    """A last check, right before a request, that only a well-formed
+    identifier goes out."""
+    if ident.malformed:
+        return False
+    if ident.kind == "doi":
+        return valid_doi(ident.value)
+    if ident.kind == "pmid":
+        return bool(_PMID_VALID.match(ident.value))
+    if ident.kind == "cfr":
+        parts = ident.value.split("/")
+        if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit():
+            return False
+        return not parts[2] or bool(_CFR_SECTION_VALID.match(parts[2]))
+    return False
+
+
+def _new_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(REQUEST_TIMEOUT_SECONDS, connect=2.0),
+        follow_redirects=False,
+        headers={"Accept": "application/json"},
+    )
 
 
 async def _cache_get(ident: Identifier) -> Optional[str]:
@@ -188,7 +289,11 @@ async def _cache_get(ident: Identifier) -> Optional[str]:
         value = await cache.aget(f"{_CACHE_PREFIX}{ident.kind}:{ident.value}")
     except Exception:
         return None
-    return value if isinstance(value, str) else None
+    if value == FOUND:
+        return FOUND
+    if value == MISSING:
+        return MISSING
+    return None
 
 
 async def _cache_set(ident: Identifier, status: str) -> None:
@@ -205,9 +310,9 @@ async def _cache_set(ident: Identifier, status: str) -> None:
 
 def _json_body(resp: httpx.Response) -> Optional[object]:
     """The parsed body of a JSON answer, or None for anything else: a
-    redirect, an HTML page (a bot check or challenge), or a body that does
-    not parse. Redirects are never followed."""
-    if resp.is_redirect or not (200 <= resp.status_code < 500):
+    redirect, an HTML page (a bot check or challenge), a refusal or server
+    error, or a body that does not parse. Redirects are never followed."""
+    if resp.is_redirect or resp.status_code not in (200, 404):
         return None
     content_type = resp.headers.get("content-type", "").lower()
     if not content_type.startswith("application/json"):
@@ -220,11 +325,12 @@ def _json_body(resp: httpx.Response) -> Optional[object]:
 
 
 async def _check_doi(client: httpx.AsyncClient, doi: str) -> str:
-    """FOUND when the handle service resolves this DOI (responseCode 1 for
-    the same handle), MISSING when it says there is no such handle
-    (responseCode 100, with a 404), UNCHECKED for any other answer."""
+    """FOUND when the handle service resolves this DOI (200, responseCode 1
+    for the same handle), MISSING when it says there is no such handle (404,
+    responseCode 100), UNCHECKED for any other answer. The DOI is sent as one
+    fully encoded path segment."""
     try:
-        resp = await client.get(_DOI_HANDLE_URL + quote(doi, safe="/"))
+        resp = await client.get(_DOI_HANDLE_URL + quote(doi, safe=""))
     except Exception:
         return UNCHECKED
     data = _json_body(resp)
@@ -239,9 +345,18 @@ async def _check_doi(client: httpx.AsyncClient, doi: str) -> str:
     return UNCHECKED
 
 
+# The record-level errors esummary gives for an ID that is not a PubMed
+# record. Any other error says nothing about the ID.
+_NCBI_NOT_FOUND = re.compile(
+    r"cannot get document summary|invalid uid|uid .*not found|not found",
+    re.IGNORECASE,
+)
+
+
 async def _check_pmids(client: httpx.AsyncClient, pmids: List[str]) -> Dict[str, str]:
-    """One esummary call for all the PubMed IDs. A record with an "error"
-    (NCBI's "cannot get document summary") is MISSING."""
+    """One esummary call for all the PubMed IDs. A record whose error says
+    the ID is not found is MISSING; a record with a title or journal is
+    FOUND; anything else is UNCHECKED."""
     from fighthealthinsurance.pubmed_tools import _EUTILS_PARAMS
 
     out = {p: UNCHECKED for p in pmids}
@@ -267,8 +382,10 @@ async def _check_pmids(client: httpx.AsyncClient, pmids: List[str]) -> Dict[str,
         record = result.get(pmid)
         if not isinstance(record, dict) or record.get("uid") != pmid:
             continue
-        if record.get("error"):
-            out[pmid] = MISSING
+        error = record.get("error")
+        if error:
+            if isinstance(error, str) and _NCBI_NOT_FOUND.search(error):
+                out[pmid] = MISSING
         elif record.get("title") or record.get("source"):
             # A real summary carries the article's title and journal.
             out[pmid] = FOUND
@@ -296,12 +413,13 @@ async def _check_cfr(client: httpx.AsyncClient, value: str) -> str:
       does not list (the part's structure is the full list of its sections).
     * 404 with a JSON body: the title or part does not exist, MISSING.
     * Anything else (a redirect, a non-JSON page such as a bot check, JSON of
-      another shape, a server error): UNCHECKED.
+      another shape, a refusal or server error): UNCHECKED.
     """
     title, part, section = value.split("/", 2)
     try:
         resp = await client.get(
-            f"{_ECFR_STRUCTURE_URL}title-{title}.json", params={"part": part}
+            f"{_ECFR_STRUCTURE_URL}title-{int(title)}.json",
+            params={"part": str(int(part))},
         )
     except Exception:
         return UNCHECKED
@@ -310,7 +428,7 @@ async def _check_cfr(client: httpx.AsyncClient, value: str) -> str:
         return UNCHECKED
     if resp.status_code == 404:
         return MISSING
-    if resp.status_code != 200 or not isinstance(data, dict):
+    if not isinstance(data, dict):
         return UNCHECKED
     if data.get("type") != "title" or str(data.get("identifier")) != title:
         return UNCHECKED
@@ -336,11 +454,25 @@ async def check_identifiers(
     identifiers: Iterable[Identifier],
     budget_seconds: float = CHECK_BUDGET_SECONDS,
     client: Optional[httpx.AsyncClient] = None,
+    may_send: Optional[Callable[[], Awaitable[bool]]] = None,
 ) -> Dict[Tuple[str, str], str]:
     """Status for each (kind, value): FOUND, MISSING, MALFORMED, UNCHECKED or
-    FORM_ONLY. Never raises and never runs past ``budget_seconds``."""
+    FORM_ONLY. Never raises, and the whole of it (cache reads, the consent
+    check and the requests) runs inside one ``budget_seconds`` deadline.
+
+    ``may_send`` is awaited right before the first request; if it answers
+    anything but True (or fails, or runs out of time), no request is made
+    and what was not cached stays UNCHECKED. Without it, requests are
+    allowed: the production caller always passes one.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + budget_seconds
+
+    def remaining() -> float:
+        return max(0.0, deadline - loop.time())
+
     statuses: Dict[Tuple[str, str], str] = {}
-    to_look_up: List[Identifier] = []
+    checkable: List[Identifier] = []
     for ident in identifiers:
         key = (ident.kind, ident.value)
         if key in statuses:
@@ -350,38 +482,52 @@ async def check_identifiers(
         elif ident.kind == "usc":
             statuses[key] = FORM_ONLY
         else:
-            cached = await _cache_get(ident)
-            if cached in (FOUND, MISSING):
-                statuses[key] = cached
-            elif len(to_look_up) < MAX_LOOKUPS:
-                statuses[key] = UNCHECKED
-                to_look_up.append(ident)
-            else:
-                statuses[key] = UNCHECKED
-    if not to_look_up:
+            statuses[key] = UNCHECKED
+            if len(checkable) < MAX_LOOKUPS and _sendable(ident):
+                checkable.append(ident)
+    if not checkable:
         return statuses
 
+    async def read_cache(ident: Identifier) -> None:
+        cached = await _cache_get(ident)
+        if cached is not None:
+            statuses[(ident.kind, ident.value)] = cached
+
+    reads = [asyncio.create_task(read_cache(i)) for i in checkable]
+    _done, pending = await asyncio.wait(reads, timeout=remaining())
+    for task in pending:
+        task.cancel()
+    to_look_up = [i for i in checkable if statuses[(i.kind, i.value)] == UNCHECKED]
+    if not to_look_up or remaining() <= 0:
+        return statuses
+
+    if may_send is not None:
+        try:
+            allowed = await asyncio.wait_for(may_send(), timeout=remaining())
+        except Exception as e:
+            logger.debug(f"Citation checks: consent check failed ({type(e).__name__})")
+            allowed = False
+        if allowed is not True:
+            return statuses
+
     own_client = client is None
-    if client is None:
-        client = httpx.AsyncClient(
-            timeout=httpx.Timeout(REQUEST_TIMEOUT_SECONDS, connect=2.0),
-            follow_redirects=False,
-            headers={"Accept": "application/json"},
-        )
+    http = client if client is not None else _new_client()
     gate = asyncio.Semaphore(MAX_CONCURRENT_LOOKUPS)
 
     async def one(ident: Identifier) -> None:
         async with gate:
+            if not _sendable(ident):
+                return
             if ident.kind == "doi":
-                status = await _check_doi(client, ident.value)
+                status = await _check_doi(http, ident.value)
             else:
-                status = await _check_cfr(client, ident.value)
+                status = await _check_cfr(http, ident.value)
         statuses[(ident.kind, ident.value)] = status
         await _cache_set(ident, status)
 
     async def pmids(group: List[Identifier]) -> None:
         async with gate:
-            found = await _check_pmids(client, [i.value for i in group])
+            found = await _check_pmids(http, [i.value for i in group])
         for ident in group:
             status = found.get(ident.value, UNCHECKED)
             statuses[(ident.kind, ident.value)] = status
@@ -392,34 +538,64 @@ async def check_identifiers(
     if pmid_group:
         tasks.append(asyncio.create_task(pmids(pmid_group)))
     try:
-        _done, pending = await asyncio.wait(tasks, timeout=budget_seconds)
+        _done, pending = await asyncio.wait(tasks, timeout=remaining())
         for task in pending:
             task.cancel()
     except Exception as e:
-        logger.opt(exception=True).debug(f"Citation checks stopped early: {e}")
+        logger.debug(f"Citation checks stopped early ({type(e).__name__})")
     finally:
         if own_client:
             try:
-                await client.aclose()
+                await http.aclose()
             except Exception:
                 pass
     return statuses
 
 
-def _apply(citation: str, idents: List[Identifier], statuses) -> Optional[str]:
+def _cut(citation: str, spans: List[Tuple[int, int]]) -> str:
+    """``citation`` with each span replaced by REMOVED_REFERENCE, working
+    from the end so earlier spans keep their positions. Overlapping spans
+    are merged first."""
+    merged: List[Tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    for start, end in reversed(merged):
+        citation = citation[:start] + REMOVED_REFERENCE + citation[end:]
+    return citation
+
+
+def _label(citation: str) -> str:
+    if citation.startswith(UNVERIFIED_LABEL):
+        return citation
+    return UNVERIFIED_LABEL + citation
+
+
+def _apply(
+    citation: str,
+    occurrences: List[Occurrence],
+    statuses: Dict[Tuple[str, str], str],
+) -> Optional[str]:
     """The citation as it should reach the letter request, or None to drop
     it (see the module docstring)."""
-    bad = [i for i in idents if statuses.get((i.kind, i.value)) in (MISSING, MALFORMED)]
+
+    def status(occ: Occurrence) -> Optional[str]:
+        return statuses.get((occ.ident.kind, occ.ident.value))
+
+    bad = [o for o in occurrences if status(o) in (MISSING, MALFORMED)]
+    unchecked = any(status(o) == UNCHECKED for o in occurrences)
     if bad:
         if len(citation) <= SHORT_CITATION_CHARS:
             return None
-        for ident in bad:
-            citation = citation.replace(ident.text, REMOVED_REFERENCE)
-        return citation
-    if any(statuses.get((i.kind, i.value)) == UNCHECKED for i in idents):
-        if citation.startswith(UNVERIFIED_LABEL):
-            return citation
-        return UNVERIFIED_LABEL + citation
+        citation = _cut(citation, [(o.start, o.end) for o in bad])
+    return _label(citation) if unchecked else citation
+
+
+def _label_if_reference(citation: object) -> object:
+    if isinstance(citation, str) and _LOOKS_LIKE_REFERENCE.search(citation):
+        return _label(citation)
     return citation
 
 
@@ -427,30 +603,32 @@ async def verify_citations(
     citations: List[str],
     budget_seconds: float = CHECK_BUDGET_SECONDS,
     client: Optional[httpx.AsyncClient] = None,
+    may_send: Optional[Callable[[], Awaitable[bool]]] = None,
 ) -> List[str]:
     """``citations`` with bad identifiers dropped or cut out and unchecked
     ones labelled, in the same order. Strings with no identifier pass through
-    untouched. Never raises: on any unexpected error the citations come back
-    as they were, which is what the app did before these checks."""
+    untouched. Never raises: on any unexpected error every citation that
+    looks like a reference comes back labelled unverified."""
     if not citations or not checks_enabled():
         return citations
     try:
         found = [
-            (c, find_identifiers(c)) if isinstance(c, str) else (c, [])
+            (c, find_occurrences(c)) if isinstance(c, str) else (c, [])
             for c in citations
         ]
         statuses = await check_identifiers(
-            [i for _c, idents in found for i in idents],
+            [o.ident for _c, occs in found for o in occs],
             budget_seconds=budget_seconds,
             client=client,
+            may_send=may_send,
         )
         out: List[str] = []
         dropped = 0
-        for citation, idents in found:
-            if not idents:
+        for citation, occs in found:
+            if not occs:
                 out.append(citation)
                 continue
-            kept = _apply(citation, idents, statuses)
+            kept = _apply(citation, occs, statuses)
             if kept is None:
                 dropped += 1
             else:
@@ -462,5 +640,13 @@ async def verify_citations(
             )
         return out
     except Exception as e:
-        logger.opt(exception=True).warning(f"Citation checks failed: {e}")
-        return citations
+        # Only the exception's type: its message or a traceback could carry
+        # citation text.
+        logger.warning(
+            f"Citation checks failed ({type(e).__name__}); "
+            "labelling the citations unverified"
+        )
+        try:
+            return [cast(str, _label_if_reference(c)) for c in citations]
+        except Exception:
+            return [_label(c) if isinstance(c, str) else c for c in citations]
