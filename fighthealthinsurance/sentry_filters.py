@@ -28,7 +28,7 @@ by :func:`before_send_transaction_filter`.
 """
 
 import re
-from typing import Any, Dict, List, Sequence, Set
+from typing import Any, Dict, List, Sequence, Set, Tuple
 from urllib.parse import parse_qs, quote, quote_plus, urlsplit
 
 # Ray client connection failures are transient infrastructure noise: Ray
@@ -421,6 +421,298 @@ def strip_sharing_form_details(event: Any) -> Any:
     return event
 
 
+# Outbound HTTP requests are recorded by Sentry's httpx, aiohttp and stdlib
+# integrations as "http.client" spans and "httplib" breadcrumbs. Those carry
+# the request's query string and fragment as separate fields, and the URL
+# itself in the span description. Query strings to outside services are built
+# from case details and carry API keys, so they never leave this process:
+# only scheme, host and (for the hosts below) path are kept.
+OUTBOUND_HTTP_SPAN_OP_PREFIX = "http.client"
+OUTBOUND_HTTP_BREADCRUMB_CATEGORY = "httplib"
+OUTBOUND_HTTP_QUERY_KEYS = (
+    "http.query",
+    "http.fragment",
+    "url.query",
+    "url.fragment",
+)
+OUTBOUND_HTTP_URL_KEYS = ("url", "url.full", "http.url")
+PATH_REMOVED = "/[path removed]"
+
+# Paths are kept only where they match a known fixed API route of the host,
+# with any identifier in them replaced by "[id]". Anything else (a path that
+# could carry words from a case, such as a PubMed search page, or any path on
+# a host not listed here, such as the link and payer policy fetchers' targets)
+# becomes PATH_REMOVED. Each entry is (host, path pattern, replacement); the
+# host matches as a whole name or a subdomain of it, and the pattern must
+# match the whole path.
+OUTBOUND_KEPT_ROUTES: Tuple[Tuple[str, "re.Pattern[str]", str], ...] = tuple(
+    (host, re.compile(pattern), replacement)
+    for host, pattern, replacement in (
+        (
+            "eutils.ncbi.nlm.nih.gov",
+            r"/entrez/eutils/(esearch|esummary|efetch|elink|einfo|epost)\.fcgi",
+            r"\g<0>",
+        ),
+        ("www.ncbi.nlm.nih.gov", r"/pmc/utils/idconv/v1(\.0)?/?", r"\g<0>"),
+        ("www.ncbi.nlm.nih.gov", r"/pmc/articles/PMC\d+/?", "/pmc/articles/[id]"),
+        ("pubmed.ncbi.nlm.nih.gov", r"/\d+/?", "/[id]"),
+        ("www.ebi.ac.uk", r"/europepmc/webservices/rest/search", r"\g<0>"),
+        ("api.unpaywall.org", r"/v2/.+", "/v2/[id]"),
+        ("api.biorxiv.org", r"/details/(biorxiv|medrxiv)/.+", r"/details/\1/[id]"),
+        ("doi.org", r"/api/handles/.+", "/api/handles/[id]"),
+        ("doi.org", r"/10\..+", "/[id]"),
+        (
+            "rxnav.nlm.nih.gov",
+            r"/REST/(approximateTerm|rxcui|drugs|spellingsuggestions)\.json",
+            r"\g<0>",
+        ),
+        (
+            "rxnav.nlm.nih.gov",
+            r"/REST/rxcui/\d+/(properties|related|allrelated)\.json",
+            r"\g<0>",
+        ),
+        ("clinicaltrials.gov", r"/api/v2/studies", r"\g<0>"),
+        ("clinicaltrials.gov", r"/api/v2/studies/NCT\d{8}", "/api/v2/studies/[id]"),
+        ("api.nice.org.uk", r"/services/search", r"\g<0>"),
+        ("data.uspreventiveservicestaskforce.org", r"/api/json", r"\g<0>"),
+        (
+            "api.coverage.cms.gov",
+            r"/v1/(reports/national-coverage-ncd|metadata/license-agreement)/?",
+            r"\g<0>",
+        ),
+        (
+            "www.ecfr.gov",
+            r"/api/versioner/v1/(structure|versions|full)/((current|\d{4}-\d{2}-\d{2})/)?title-\d+\.(json|xml)",
+            r"\g<0>",
+        ),
+        (
+            "api.deepinfra.com",
+            r"/v1/openai/(chat/completions|completions|embeddings|models)",
+            r"\g<0>",
+        ),
+        (
+            "api.anthropic.com",
+            r"/v1/(messages(/count_tokens)?|complete|models)",
+            r"\g<0>",
+        ),
+        ("api.perplexity.ai", r"/chat/completions", r"\g<0>"),
+        (
+            "openai.azure.com",
+            r"/openai/deployments/[A-Za-z0-9._-]+/(chat/completions|completions|embeddings)",
+            r"/openai/deployments/[id]/\1",
+        ),
+        (
+            "services.ai.azure.com",
+            r"/(anthropic/v1/messages|models/chat/completions|openai/v1/chat/completions)",
+            r"\g<0>",
+        ),
+    )
+)
+
+# Where Sentry may send its trace headers (sentry-trace, baggage): our own
+# sites, in-cluster services (a bare single-label name such as temporal-web
+# cannot be an internet host, and *.svc names are the cluster's) and local
+# development. By default the SDK sends them to every host, outside services
+# included. Anchored, because the SDK matches these with re.search against
+# the full URL.
+FHI_TRACE_PROPAGATION_TARGETS = [
+    r"(?i)^https?://([a-z0-9-]+\.)*(fighthealthinsurance\.com|fightpaperwork\.com"
+    r"|fightinsurance\.ai|fuckhealthinsurance\.com)(:\d+)?(/|$)",
+    r"(?i)^https?://[a-z0-9.-]+\.svc(\.cluster\.local)?(:\d+)?(/|$)",
+    r"(?i)^https?://[a-z0-9-]+(:\d+)?(/|$)",
+    r"(?i)^https?://127\.0\.0\.1(:\d+)?(/|$)",
+]
+
+# An absolute URL inside free text, such as a log line recorded as a
+# breadcrumb ("HTTP Request: GET https://...?q=...") or an exception message.
+# The part before any "?" or "#" is matched separately: everything from "?" or
+# "#" up to the next whitespace is dropped, so a quote or apostrophe inside a
+# query ("term=Crohn's+disease") can't end the match early.
+_URL_IN_TEXT = re.compile(
+    r"(https?://(?:\[[0-9A-Fa-f:.]+\](?::\d+)?|[^\s?#'\"<>()\[\]/]+)"
+    r"(?:/[^\s?#\"<>()\[\]]*)?)([?#]\S*)?"
+)
+# A relative URL with a query, as requests and urllib3 put in their errors
+# ("Max retries exceeded with url: /search?term=..."). Only the query goes.
+_RELATIVE_QUERY_IN_TEXT = re.compile(r"(?<![\w:/.])(/[^\s?#'\"<>]*)[?#]\S*")
+# Our own hosts, whose paths in messages (such as a Referer in a CSRF log
+# line) stay readable; only their query strings are dropped.
+_OUR_HOST = re.compile(
+    r"(?i)^(([a-z0-9-]+\.)*(fighthealthinsurance\.com|fightpaperwork\.com"
+    r"|fightinsurance\.ai|fuckhealthinsurance\.com)|localhost|127\.0\.0\.1)$"
+)
+# Bounds for cleaning log parameters, which can nest.
+_PARAMS_MAX_DEPTH = 4
+_PARAMS_MAX_ITEMS = 200
+
+
+def _kept_path(host: str, path: str) -> str:
+    host = host.lower().rstrip(".")
+    for kept_host, pattern, replacement in OUTBOUND_KEPT_ROUTES:
+        if host != kept_host and not host.endswith("." + kept_host):
+            continue
+        match = pattern.fullmatch(path)
+        if match:
+            return match.expand(replacement)
+    return PATH_REMOVED
+
+
+def clean_outbound_url(url: Any) -> Any:
+    """``url`` without its query string, fragment or credentials, and with its
+    path kept only where it matches OUTBOUND_KEPT_ROUTES. Anything that is not
+    a parseable absolute URL becomes FILTERED. Never raises."""
+    if not isinstance(url, str):
+        return url
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        if not parts.scheme or not host:
+            return FILTERED if url else url
+        shown_host = f"[{host}]" if ":" in host else host
+        netloc = shown_host if parts.port is None else f"{shown_host}:{parts.port}"
+        path = parts.path
+        if path not in ("", "/"):
+            path = _kept_path(host, path)
+        return f"{parts.scheme}://{netloc}{path}"
+    except Exception:
+        return FILTERED
+
+
+def _clean_url_match(match: "re.Match[str]") -> str:
+    base = match.group(1)
+    # Trailing sentence punctuation isn't part of the URL.
+    stripped = base.rstrip(".,;:!'")
+    trailer = base[len(stripped) :]
+    try:
+        host = urlsplit(stripped).hostname or ""
+    except Exception:
+        return FILTERED
+    if _OUR_HOST.match(host):
+        # Our own path stays; only the query (which can carry input) goes.
+        return stripped + ("" if match.group(2) else trailer)
+    return str(clean_outbound_url(stripped)) + ("" if match.group(2) else trailer)
+
+
+def clean_urls_in_text(text: Any) -> Any:
+    """Best effort: every URL inside ``text`` loses its query string and
+    fragment, and an outside URL keeps its path only on a known route.
+    Relative URLs lose their query strings too. Non-text passes through.
+    Never raises."""
+    if not isinstance(text, str) or ("://" not in text and "?" not in text):
+        return text
+    try:
+        text = _URL_IN_TEXT.sub(_clean_url_match, text)
+        return _RELATIVE_QUERY_IN_TEXT.sub(r"\1", text)
+    except Exception:
+        return FILTERED
+
+
+def _clean_params(value: Any, depth: int = 0) -> Any:
+    """URLs cleaned inside log parameters: strings, and strings nested in
+    lists, tuples and dicts, to a bounded depth and size. Never raises."""
+    if isinstance(value, str):
+        return clean_urls_in_text(value)
+    if depth >= _PARAMS_MAX_DEPTH:
+        return value
+    if isinstance(value, (list, tuple)):
+        cleaned = [
+            _clean_params(item, depth + 1) for item in value[:_PARAMS_MAX_ITEMS]
+        ] + list(value[_PARAMS_MAX_ITEMS:])
+        return type(value)(cleaned) if isinstance(value, tuple) else cleaned
+    if isinstance(value, dict):
+        return {
+            key: _clean_params(item, depth + 1) if index < _PARAMS_MAX_ITEMS else item
+            for index, (key, item) in enumerate(value.items())
+        }
+    return value
+
+
+def _scrub_outbound_http_data(data: Any) -> None:
+    if not isinstance(data, dict):
+        return
+    for key in OUTBOUND_HTTP_QUERY_KEYS:
+        data.pop(key, None)
+    for key in OUTBOUND_HTTP_URL_KEYS:
+        if key in data:
+            data[key] = clean_outbound_url(data[key])
+
+
+def _scrub_http_span_like(span: Any) -> None:
+    """Clean an outbound HTTP span, or a trace context taken from one."""
+    if not isinstance(span, dict):
+        return
+    if not as_text(span.get("op")).startswith(OUTBOUND_HTTP_SPAN_OP_PREFIX):
+        return
+    _scrub_outbound_http_data(span.get("data"))
+    description = span.get("description")
+    if isinstance(description, str) and " " in description:
+        method, _, url = description.partition(" ")
+        span["description"] = f"{method} {clean_outbound_url(url)}"
+    elif isinstance(description, str):
+        span["description"] = clean_outbound_url(description)
+
+
+def scrub_outbound_http_breadcrumb(crumb: Any) -> Any:
+    """Clean one breadcrumb in place and return it: an outbound HTTP
+    breadcrumb loses its query fields, and any breadcrumb's message (a log
+    line such as httpx's "HTTP Request: GET <url>") has its URLs cleaned.
+    Never raises."""
+    try:
+        if not isinstance(crumb, dict):
+            return crumb
+        if crumb.get("category") == OUTBOUND_HTTP_BREADCRUMB_CATEGORY:
+            _scrub_outbound_http_data(crumb.get("data"))
+        if "message" in crumb:
+            crumb["message"] = clean_urls_in_text(crumb["message"])
+    except Exception:
+        pass
+    return crumb
+
+
+def scrub_outbound_http(event: Any) -> Any:
+    """Clean every outbound HTTP span, the trace context when the event was
+    captured inside an outbound HTTP span, every breadcrumb, and URLs inside
+    exception messages and log messages. Never raises; anything whose shape
+    it cannot read is left as it is."""
+    if not isinstance(event, dict):
+        return event
+    try:
+        spans = event.get("spans")
+        if isinstance(spans, list):
+            for span in spans:
+                _scrub_http_span_like(span)
+        contexts = event.get("contexts")
+        if isinstance(contexts, dict):
+            _scrub_http_span_like(contexts.get("trace"))
+        breadcrumbs = event.get("breadcrumbs")
+        if isinstance(breadcrumbs, dict):
+            breadcrumbs = breadcrumbs.get("values")
+        if isinstance(breadcrumbs, list):
+            for crumb in breadcrumbs:
+                scrub_outbound_http_breadcrumb(crumb)
+        for exc in raw_exception_entries(event):
+            if isinstance(exc, dict) and "value" in exc:
+                exc["value"] = clean_urls_in_text(exc["value"])
+        logentry = event.get("logentry")
+        if isinstance(logentry, dict):
+            for key in MESSAGE_TEXT_KEYS:
+                if key in logentry:
+                    logentry[key] = clean_urls_in_text(logentry[key])
+            if "params" in logentry:
+                logentry["params"] = _clean_params(logentry["params"])
+        if "message" in event:
+            event["message"] = clean_urls_in_text(event["message"])
+    except Exception:
+        pass
+    return event
+
+
+def before_breadcrumb_filter(crumb: Any, hint: Any) -> Any:
+    """Sentry ``before_breadcrumb`` hook: breadcrumbs lose outbound query
+    strings when recorded, not only when an event is sent."""
+    return scrub_outbound_http_breadcrumb(crumb)
+
+
 def before_send_filter(event: Any, hint: Any) -> Any:
     """Drop known-noise error events. Returns the event, or None to discard.
 
@@ -507,6 +799,7 @@ def before_send_filter(event: Any, hint: Any) -> Any:
     event = strip_letter_review_details(event)
     event = strip_sharing_form_details(event)
     event = strip_confirm_delete_details(event)
+    event = scrub_outbound_http(event)
     return strip_local_variables_near_assistant_text(event)
 
 
@@ -538,4 +831,4 @@ def before_send_transaction_filter(event: Any, hint: Any) -> Any:
         and transaction_info.get("source") == UNROUTED_TRANSACTION_SOURCE
     ):
         return None
-    return strip_confirm_delete_details(event)
+    return scrub_outbound_http(strip_confirm_delete_details(event))

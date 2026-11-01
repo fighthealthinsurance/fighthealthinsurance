@@ -7,6 +7,7 @@ For more information on this file, see
 https://docs.djangoproject.com/en/4.1/howto/deployment/asgi/
 """
 
+import logging
 import os
 import sys
 from typing import Any
@@ -100,6 +101,8 @@ if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
     from sentry_sdk.integrations.logging import ignore_logger
 
     from fighthealthinsurance.sentry_filters import (
+        FHI_TRACE_PROPAGATION_TARGETS,
+        before_breadcrumb_filter,
         before_send_filter,
         before_send_transaction_filter,
     )
@@ -114,6 +117,10 @@ if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
     # is read, would carry the body and its tool arguments into the event as
     # local variables. Matched with fnmatch, so this covers every mcp.* logger.
     ignore_logger("mcp.*")
+    # httpx logs every request's full URL, query string included, at INFO, and
+    # the logging integration turns INFO lines into breadcrumbs. LOGGING is
+    # rebuilt by load_loguru, so the level is set on the logger itself.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     # Sentry's MCP integration records every tool argument whatever
     # send_default_pii says, and its Starlette integration (Starlette comes
@@ -163,6 +170,11 @@ if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
         ignore_errors=[Resolver404],
         before_send=before_send_filter,
         before_send_transaction=before_send_transaction_filter,
+        # Outbound request details stay out of Sentry: query strings and most
+        # paths are cleaned from spans and breadcrumbs (see sentry_filters),
+        # and trace headers go only to our own hosts, not to outside services.
+        before_breadcrumb=before_breadcrumb_filter,
+        trace_propagation_targets=FHI_TRACE_PROPAGATION_TARGETS,
         _experiments={
             # Set continuous_profiling_auto_start to True
             # to automatically start the profiler on when
