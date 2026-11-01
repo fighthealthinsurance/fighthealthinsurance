@@ -282,6 +282,11 @@ _LATER_LEVEL_RE = re.compile(
     r"|\blevel[- ](2|two|ii|3|three|iii)\b.{0,20}\bappeal",
     re.IGNORECASE | re.UNICODE | re.DOTALL,
 )
+# A clause about some other appeal: its decision is not the later level's.
+_OTHER_APPEAL_RE = re.compile(
+    r"\b(first|1st|initial|level[- ](1|one|i))[- ](level\b|appeal)",
+    re.IGNORECASE,
+)
 _DECISION_RE = re.compile(
     r"\b(uph[eo]ld|denied|decided|decision|determination|stands|unchanged"
     r"|affirmed|reaffirmed|maintained|overturn(ed)?)\b",
@@ -302,7 +307,7 @@ _PENDING_OR_RIGHTS_RE = re.compile(
 # appeals". Any of these in the clause before the match disqualifies it.
 _CONDITIONAL_CLAUSE_RE = re.compile(
     r"\b(if|should|unless|in the event|may|might|would|will|could"
-    r"|once(?!\s+again\b)|(when|after|until)\s+(you|your))\b",
+    r"|once(?!\s+again\b)|(when|after|until)\s+(you|your|all|the))\b",
     re.IGNORECASE,
 )
 _CLAUSE_BREAK_RE = re.compile(r"[.;:!?\n]")
@@ -346,10 +351,13 @@ def _later_level_decided(denial_text: str) -> bool:
     """Whether the letter states a decision on a second- or third-level
     appeal (see _LATER_LEVEL_RE).
 
-    The decision may sit anywhere in the sentence ("has concluded; the
-    decision is upheld"), but only the clause naming the appeal can say it
-    is pending or still open, so a rights notice in a later clause ("…;
-    you can request an external review") does not cancel the decision.
+    The decision counts in the clause naming the appeal, or in a later
+    clause of the same sentence that names no other appeal ("has
+    concluded; the decision is upheld"), never in an earlier one ("we
+    denied your first-level appeal; we received your second-level
+    appeal"). Only the appeal's own clause can say it is pending or still
+    open, so a rights notice in a later clause ("…; you can request an
+    external review") does not cancel the decision.
     """
     sentence_breaks = [m.start() for m in _SENTENCE_BREAK_RE.finditer(denial_text)]
     clause_breaks = [m.start() for m in _CLAUSE_BREAK_RE.finditer(denial_text)]
@@ -363,12 +371,18 @@ def _later_level_decided(denial_text: str) -> bool:
         )
 
     for match in _own_voice_matches(_LATER_LEVEL_RE, denial_text):
-        s_start, s_end = bounds(sentence_breaks, match.start(), match.end())
+        _, s_end = bounds(sentence_breaks, match.start(), match.end())
         c_start, c_end = bounds(clause_breaks, match.start(), match.end())
-        if _DECISION_RE.search(
-            denial_text[s_start:s_end]
-        ) and not _PENDING_OR_RIGHTS_RE.search(denial_text[c_start:c_end]):
+        if _PENDING_OR_RIGHTS_RE.search(denial_text[c_start:c_end]):
+            continue
+        if _DECISION_RE.search(denial_text[c_start:c_end]):
             return True
+        later = denial_text[c_end:s_end]
+        for clause in _CLAUSE_BREAK_RE.split(later):
+            if _OTHER_APPEAL_RE.search(clause) or _LATER_LEVEL_RE.search(clause):
+                break
+            if _DECISION_RE.search(clause):
+                return True
     return False
 
 

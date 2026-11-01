@@ -288,6 +288,8 @@ class RegulatorEscalationReasonsTest(TestCase):
             "Your second level appeal is pending; a decision will follow.",
             "We will review your second-level appeal and make a decision within 30 days.",
             "Your internal appeals have not been exhausted.",
+            "After all internal appeals have been exhausted, you may request an external review.",
+            "We denied your first-level appeal; we received your second-level appeal.",
             "Your second-level appeal concerns our original denial decision and is being processed.",
             "This responds to your third-level appeal.",
         ):
