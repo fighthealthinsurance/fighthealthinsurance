@@ -222,7 +222,7 @@ _SECTION_RANGE = (
 # through. Markdown emphasis and quotes end the number.
 _STUCK_ON = "([^\\s,;:.)\\]*_\"'‘’“”]*)"
 _CFR_TEXT = re.compile(
-    r"(?<![\w.])(?P<title>\d{1,3})\s{0,3}C\.?\s{0,2}F\.?\s{0,2}R\.?\s{0,3}"
+    r"(?<![0-9A-Za-z.])(?P<title>\d{1,3})\s{0,3}C\.?\s{0,2}F\.?\s{0,2}R\.?\s{0,3}"
     r"(?:Parts?|Sec(?:tion)?s?\.?|(?P<signs>§{1,2}))?\s{0,3}"
     r"(?P<part>\d{1,5})(?:\.(?P<sub>\d{1,5})"
     r"(?:(?P<dash>["
@@ -234,7 +234,7 @@ _CFR_TEXT = re.compile(
     re.IGNORECASE,
 )
 _USC_TEXT = re.compile(
-    r"(?<![\w.])(\d{1,3})\s{0,3}U\.?\s{0,2}S\.?\s{0,2}C\.?\s{0,3}"
+    r"(?<![0-9A-Za-z.])(\d{1,3})\s{0,3}U\.?\s{0,2}S\.?\s{0,2}C\.?\s{0,3}"
     r"(?:Sec(?:tion)?s?\.?|§{1,2})?\s{0,3}"
     r"(\d{1,6}[a-z]{0,3}(?:["
     + _DASH
@@ -250,12 +250,14 @@ _DOT_STUCK_ON = re.compile(r"\.[0-9A-Za-z]")
 # "147.136 and 147.140", "300gg-19, 300gg-22"): a list is not looked up, so
 # no section in it goes unchecked or unlabelled.
 # A bare number counts too ("Parts 147 and 999", "1395, 1396"), unless it
-# starts another citation ("and 29 CFR ...").
+# starts another citation ("and 29 CFR ..."). The listed item may end a
+# sentence or close emphasis ("147.136.", "147.136_"); one with a dot stuck
+# to it ("147.136.1") still makes a list, so nothing in it is looked up.
 _LISTED_SECTION = re.compile(
     r"\s{0,2}(?:,\s{0,3}(?:(?:and|or|&)\s{1,3})?|;\s{0,3}|\s(?:and|or|&)\s{1,3})"
     r"(?:§{1,2}\s{0,2})?\d{1,6}"
     r"(?:\.\d{1,5}|[a-z]{1,3}(?:[" + _DASH + r"]\d{1,5})?)?"
-    r"(?![\w.])(?!\s{0,3}(?:C\.?\s{0,2}F\.?\s{0,2}R\b|U\.?\s{0,2}S\.?\s{0,2}C\b))",
+    r"(?![0-9A-Za-z])(?!\s{0,3}(?:C\.?\s{0,2}F\.?\s{0,2}R\b|U\.?\s{0,2}S\.?\s{0,2}C\b))",
     re.IGNORECASE,
 )
 # A plural keyword says more than one part or section is cited.

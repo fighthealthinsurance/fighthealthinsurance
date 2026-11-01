@@ -1041,6 +1041,10 @@ class TestFollowUps:
             "42 U.S.C. 300gg-19, 300gg-22",
             "42 U.S.C. 1395, 1396",
             "45 CFR §§ 147.136",
+            "45 CFR 147.999, 147.136.",
+            "_45 CFR 147.999, 147.136_",
+            "45 CFR 147.999, 147.136. Next sentence.",
+            "45 CFR 147.999, 147.136.1",
         ):
             ids = cv.find_identifiers(text)
             assert ids and all(i.malformed for i in ids), text
@@ -1125,7 +1129,7 @@ class TestFollowUpsAsync:
         ]
 
     async def test_any_trimmed_doi_called_missing_is_labelled(self, checks_on):
-        for ending in (":", "_", ")"):
+        for ending in (";", ":", "_", ")"):
             citation = f"Made up. doi:{FAKE_DOI}{ending}"
             out, _seen = await _verify([citation])
             assert out == [cv.UNVERIFIED_LABEL + citation], ending
@@ -1141,6 +1145,9 @@ class TestFollowUpsAsync:
             await cv._cache_set(cv.Identifier("doi", REAL_DOI.lower()), cv.FOUND)
         assert timeouts["cfr"] == 7 * 24 * 3600
         assert timeouts["doi"] == 30 * 24 * 3600
+        with patch.object(cv.cache, "aset", aset):
+            await cv._cache_set(cv.Identifier("cfr", "45/147/147.999"), cv.MISSING)
+        assert timeouts["cfr"] == 24 * 3600
 
     async def test_closing_the_client_is_bounded(self, checks_on):
         seen: List[httpx.Request] = []
