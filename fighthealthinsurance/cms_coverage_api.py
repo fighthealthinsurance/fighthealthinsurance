@@ -332,6 +332,10 @@ class CMSCoverageClient:
         self._client: Optional[httpx.AsyncClient] = None
         self._ncd_report_cache: Optional[List[NCDDocument]] = None
         self._ncd_report_cached_at: float = 0.0
+        # Whether every record in the cached report parsed. A report that
+        # lost some is still searched, but an empty search of it can't say
+        # nothing applies: the dropped record might have been the match.
+        self._ncd_report_complete: bool = False
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -348,21 +352,23 @@ class CMSCoverageClient:
             self._client = None
 
     async def load_report(self) -> Tuple[List[NCDDocument], bool]:
-        """The NCD report, and whether it is a fresh, valid one.
+        """The NCD report, and whether it is a fresh, complete one.
 
         Serves the in-process copy while it is within its TTL; otherwise
         fetches it. On any error, or a response that isn't a report, returns
         the previously-cached report if we have one (otherwise an empty
         list) with False, so transient CMS outages don't zero out our
         citations but nobody mistakes the result for a finished search. A
-        data list whose every record fails to parse isn't a report either.
+        data list whose every record fails to parse isn't a report either,
+        and one that lost only some records is kept and searched but
+        reported as incomplete, on later cache hits too.
         """
         now = time.monotonic()
         if (
             self._ncd_report_cache is not None
             and (now - self._ncd_report_cached_at) < self._NCD_REPORT_TTL
         ):
-            return self._ncd_report_cache, True
+            return self._ncd_report_cache, self._ncd_report_complete
         fallback = self._ncd_report_cache or []
         try:
             client = await self._get_client()
@@ -386,9 +392,16 @@ class CMSCoverageClient:
             if records and not parsed:
                 logger.warning("CMS NCD report had no record that could be parsed")
                 return fallback, False
+            complete = len(parsed) == len(records)
+            if not complete:
+                logger.warning(
+                    f"CMS NCD report: {len(records) - len(parsed)} record(s) "
+                    f"could not be parsed"
+                )
             self._ncd_report_cache = parsed
             self._ncd_report_cached_at = now
-            return parsed, True
+            self._ncd_report_complete = complete
+            return parsed, complete
         except httpx.TimeoutException:
             logger.warning("CMS Coverage API request timed out")
             return fallback, False
