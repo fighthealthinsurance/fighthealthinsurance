@@ -87,6 +87,7 @@ def test_payload_dataclasses_carry_only_opaque_identifiers():
         "denial_uuid",
         "delay_send",
         "contact_opt_in",
+        "appeal_task_queue",
         # ChatRoutingPolicyInput: a number of minutes, no case at all.
         "window_minutes",
         # SharedPlanDocumentsInput: the uuid a share's rows carry.

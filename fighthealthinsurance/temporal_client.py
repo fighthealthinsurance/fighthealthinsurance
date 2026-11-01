@@ -471,6 +471,7 @@ async def signal_with_start_intake(
         hashed_email=hashed_email,
         denial_uuid=str(denial_uuid),
         contact_opt_in=contact_opt_in,
+        appeal_task_queue=settings.TEMPORAL_APPEAL_TASK_QUEUE,
     )
     if event == "form_completed":
         # A RUNNING journey just receives the signal. A CLOSED one (abandoned,
@@ -482,7 +483,7 @@ async def signal_with_start_intake(
             "IntakeJourneyWorkflow",
             payload,
             id=workflow_id,
-            task_queue=settings.TEMPORAL_APPEAL_TASK_QUEUE,
+            task_queue=settings.TEMPORAL_INTAKE_TASK_QUEUE,
             id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
             # The two policies cover different states and BOTH are needed:
             # reuse governs a CLOSED execution (start a fresh run), conflict
@@ -502,7 +503,7 @@ async def signal_with_start_intake(
             "IntakeJourneyWorkflow",
             payload,
             id=workflow_id,
-            task_queue=settings.TEMPORAL_APPEAL_TASK_QUEUE,
+            task_queue=settings.TEMPORAL_INTAKE_TASK_QUEUE,
             # One intake journey per denial: a repeat of the first step must
             # not start a fresh run (and a fresh 24h nudge timer) for a case
             # that already has one. Bounded by namespace history retention;

@@ -169,6 +169,7 @@ actual double transmission, but the correct configuration is one shared flag.
 | `TEMPORAL_ENABLED` and the `TEMPORAL_*_ENABLED` flows | `true` | `fhi-feature-flags` |
 | `TEMPORAL_HOSTNAME` | `temporal-frontend` (port 7233 implied; `host:port` also works) | `fhi-feature-flags` |
 | `TEMPORAL_TASK_QUEUE` | `fhi-fax` | `fhi-feature-flags` |
+| `TEMPORAL_INTAKE_TASK_QUEUE` | `fhi-intake` | settings default |
 | `TEMPORAL_NAMESPACE` | `default` | settings default; pinned in both worker manifests |
 | `TEMPORAL_PAYLOAD_KEY` / `TEMPORAL_RESEARCH_PAYLOAD_KEY` | Fernet key(s) | `fight-health-insurance-secret` |
 
@@ -345,6 +346,30 @@ the UI then expects to be served under the public path, i.e.
 `fhi-research` namespace: pick it in the UI's namespace menu, or open
 `/timbit/temporal/namespaces/fhi-research/workflows`. The proxy passes every
 namespace's pages through.
+
+## Seeing one case at a time
+
+Each kind of work has its own task queue, so the UI's list can show one kind at a
+time. These links list every run on that queue:
+
+| Case | Queues | Link |
+| --- | --- | --- |
+| Create the appeal letter: intake | `fhi-intake` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-intake%22` |
+| Create the appeal letter: generation | `fhi-appeals` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-appeals%22` |
+| Submit the letter by fax | `fhi-fax` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-fax%22` |
+| Evals | `fhi-eval` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-eval%22` |
+| Evals: served writes | `fhi-eval-writer` | `/timbit/temporal/namespaces/default/workflows?query=TaskQueue%3D%22fhi-eval-writer%22` |
+
+To follow one denial, open `intake-<denial uuid>` and `generate-appeal-<denial uuid>`
+by workflow id; a child's page links to its parent. Fax ids are `send-fax-<fax uuid>`.
+Email isn't a Temporal workflow.
+
+Journeys that started before `fhi-intake` existed finish on `fhi-appeals`, so
+both queues stay hosted while any are open.
+
+To move new journeys back to `fhi-appeals`, set `TEMPORAL_INTAKE_TASK_QUEUE` on the
+web pods only. Change the worker's only once no journey is open on `fhi-intake`: a
+worker that stops polling it strands them.
 
 ## Rollback
 

@@ -34,6 +34,10 @@ def test_appeal_role_registers_nothing_while_the_journey_flag_is_off():
     )
 
 
+def test_intake_queue_hosts_the_journey_alone():
+    assert _names(registry.intake_workflows()) == ["IntakeJourneyWorkflow"]
+
+
 def test_intake_workflow_appears_only_with_its_own_flag():
     journey_only = registry.workflows_for_role(
         "appeal", journey_enabled=True, intake_enabled=False

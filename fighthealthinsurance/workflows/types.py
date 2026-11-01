@@ -38,11 +38,14 @@ class IntakeJourneyInput:
         denial_uuid: The ``Denial`` uuid, as a string.
         contact_opt_in: Whether the user opted into stored contact
             (``store_raw_email``); gates the single abandonment nudge.
+        appeal_task_queue: Where generation runs as the journey's child. Blank
+            in runs started on the appeal queue, whose child stays there.
     """
 
     hashed_email: str
     denial_uuid: str
     contact_opt_in: bool = False
+    appeal_task_queue: str = ""
 
 
 @dataclass
