@@ -435,31 +435,38 @@ def provider_body_for_log(body: Any) -> str:
     """A provider's response in a form safe to log: its size and error labels.
 
     Providers can echo the request back, and the request holds patient data, so
-    the text itself stays out of the logs.
+    the text itself stays out of the logs. Called while handling failures, so it
+    never raises: any odd body falls back to saying less.
     """
-    text = body if isinstance(body, str) else str(body)
-    summary = f"{len(text)} chars"
+    try:
+        text = body if isinstance(body, str) else str(body)
+        summary = f"{len(text)} chars"
+    except Exception:
+        return "unreadable body"
     try:
         parsed = body if isinstance(body, dict) else json.loads(text)
-    except (TypeError, ValueError):
+        if not isinstance(parsed, dict):
+            return summary
+        error = parsed.get("error")
+        fields = error if isinstance(error, dict) else parsed
+        labels = [
+            f"{key}={fields[key]}"
+            for key in ("type", "code", "object")
+            if isinstance(fields.get(key), (str, int))
+            and _ERROR_LABEL.fullmatch(str(fields[key]))
+        ]
+    except Exception:  # RecursionError on deeply nested JSON, among others
         return summary
-    if not isinstance(parsed, dict):
-        return summary
-    error = parsed.get("error")
-    fields = error if isinstance(error, dict) else parsed
-    labels = [
-        f"{key}={fields[key]}"
-        for key in ("type", "code", "object")
-        if isinstance(fields.get(key), (str, int))
-        and _ERROR_LABEL.fullmatch(str(fields[key]))
-    ]
     return ", ".join([summary, *labels])
 
 
 def error_kind_for_log(exc: BaseException) -> str:
     """An exception's type, with the status for an HTTP error, and never its text."""
-    status = getattr(exc, "status", None)
     name = type(exc).__name__
+    try:
+        status = getattr(exc, "status", None)
+    except Exception:
+        return name
     return f"{name} (HTTP {status})" if isinstance(status, int) else name
 
 
@@ -4503,7 +4510,9 @@ class RemoteOpenLike(RemoteModel):
         if (status != 400 or external) and _http_error_indicates_retired_model(
             status, body
         ):
-            self._note_missing_model(api_base, model, f"HTTP {status}: {body[:200]}")
+            self._note_missing_model(
+                api_base, model, f"HTTP {status}: {provider_body_for_log(body)}"
+            )
             return "missing_model"
         if self._note_spend_refusal(status, body):
             return "credit"
@@ -5233,7 +5242,11 @@ class RemoteOpenLike(RemoteModel):
                                 json_result.get("message") or json_result
                             )[:300]
                             if _http_error_indicates_retired_model(404, error_message):
-                                self._note_missing_model(api_base, model, error_message)
+                                self._note_missing_model(
+                                    api_base,
+                                    model,
+                                    provider_body_for_log(error_message),
+                                )
                                 record_ml_failure(
                                     metric_model,
                                     "missing_model",
@@ -5250,8 +5263,9 @@ class RemoteOpenLike(RemoteModel):
                                         request_info=response.request_info,
                                         history=(),
                                         status=404,
-                                        message=error_message,
+                                        message="model not served",
                                     )
+                                    _attach_error_body(missing, error_message)
                                     setattr(missing, _REASON_RECORDED_ATTR, True)
                                     raise missing
                                 # As the HTTP 404 branch: a caller that asked
@@ -7611,12 +7625,11 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             if _http_error_indicates_context_overflow(e.status, body_text):
                 # As on the shared transport (__infer): the prompt outran the
                 # model's context window, a per-request condition rather
-                # than a broken deployment. One WARNING quoting the provider
-                # (it carries the token counts), then None so the caller
+                # than a broken deployment. One WARNING, then None so the caller
                 # moves on; a probe still gets the raw error.
                 logger.warning(
                     f"{self}: prompt exceeds {self.model}'s context window at "
-                    f"{self.api_base} -- {body_text[:300]}"
+                    f"{self.api_base} -- {provider_body_for_log(body_text)}"
                 )
                 if not note_failures:
                     raise

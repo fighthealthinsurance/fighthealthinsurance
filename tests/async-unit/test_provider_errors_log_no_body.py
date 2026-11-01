@@ -41,7 +41,24 @@ class TestProviderBodyForLog:
         assert provider_body_for_log(f'["{SENTINEL}"]').endswith("chars")
 
 
+    def test_deep_json_and_a_broken_body_fall_back_without_raising(self):
+        class Broken:
+            def __str__(self):
+                raise RuntimeError(SENTINEL)
+
+        assert provider_body_for_log("[" * 5000 + "]" * 5000).endswith("chars")
+        assert provider_body_for_log(Broken()) == "unreadable body"
+
+
 class TestErrorKindForLog:
+    def test_a_status_that_raises_gives_the_type(self):
+        class Odd(Exception):
+            @property
+            def status(self):
+                raise RuntimeError(SENTINEL)
+
+        assert error_kind_for_log(Odd()) == "Odd"
+
     def test_a_plain_exception_gives_its_type(self):
         assert error_kind_for_log(ValueError(SENTINEL)) == "ValueError"
 
@@ -60,6 +77,8 @@ class TestProviderBodiesStayOutOfLogs:
             (400, {"body": f"This model's maximum context length is 10 tokens. {SENTINEL}"}),
             (200, {"json_data": {"object": "chat.completion", "choices": [], "echo": SENTINEL}}),
             (200, {"json_data": {"object": "error", "message": SENTINEL}}),
+            (404, {"body": f"The model does not exist. {SENTINEL}"}),
+            (200, {"json_data": {"object": "error", "message": f"The model does not exist. {SENTINEL}"}}),
         ],
     )
     async def test_no_line_carries_the_response_text(self, status, kwargs, make_fake_model_post, log_capture):
