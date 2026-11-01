@@ -450,6 +450,35 @@ class TestLoadReport:
         assert client._ncd_report_cache is None
 
 
+class TestPartlyParsedReport:
+    @pytest.mark.asyncio
+    async def test_report_that_lost_a_record_is_searched_but_incomplete(self):
+        # One valid unrelated record, and a relevant one with no document_id.
+        payload = {
+            "data": [
+                _ncd_record(document_id=11, title="Acupuncture"),
+                {"title": "Hyperbaric Oxygen", "document_display_id": "20.29"},
+            ]
+        }
+        client = CMSCoverageClient(base_url="http://test.invalid")
+        mock_http = MagicMock()
+        mock_http.is_closed = False
+        mock_http.get = AsyncMock(return_value=_make_response(200, payload))
+        client._client = mock_http
+
+        with patch(
+            "fighthealthinsurance.cms_coverage_api.get_cms_coverage_client",
+            return_value=client,
+        ):
+            fresh = await get_cms_coverage_citations("hyperbaric oxygen", None)
+            from_cache = await get_cms_coverage_citations("hyperbaric oxygen", None)
+
+        assert mock_http.get.await_count == 1  # the second came from the cache
+        for result in (fresh, from_cache):
+            assert result == []
+            assert not result.complete
+
+
 class TestGetCMSCoverageCitations:
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.cms_coverage_api.get_cms_coverage_client")

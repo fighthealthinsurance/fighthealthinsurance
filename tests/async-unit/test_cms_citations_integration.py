@@ -161,6 +161,44 @@ class TestMLCitationsHelperCMSIntegration:
         assert result == []
         mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
+    async def test_partly_parsed_report_never_stores_an_empty_result(
+        self, mock_cache_cls
+    ):
+        from fighthealthinsurance.cms_coverage_api import CMSCoverageClient
+
+        # A valid unrelated record, and the relevant one with no document_id.
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {
+            "data": [
+                {"document_id": 11, "title": "Acupuncture"},
+                {"title": "MRI"},
+            ]
+        }
+        client = CMSCoverageClient(base_url="http://test.invalid")
+        client._client = MagicMock(is_closed=False, get=AsyncMock(return_value=response))
+
+        mock_qs = MagicMock()
+        mock_qs.afirst = AsyncMock(return_value=None)
+        mock_cache_cls.objects.filter.return_value = mock_qs
+        mock_cache_cls.objects.aupdate_or_create = AsyncMock()
+
+        with patch(
+            "fighthealthinsurance.cms_coverage_api.get_cms_coverage_client",
+            return_value=client,
+        ):
+            # A fresh fetch, then a hit on the in-process report.
+            for _ in range(2):
+                result = await MLCitationsHelper.generate_cms_coverage_citations(
+                    denial=self.mock_denial
+                )
+                assert result == []
+
+        assert client._client.get.await_count == 1
+        mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
+
     def test_previous_read_path_only_sees_citations_or_a_miss(self):
         # During a rolling deploy, pods still on the previous code read rows
         # the new code wrote. This is that code's read path, verbatim from
