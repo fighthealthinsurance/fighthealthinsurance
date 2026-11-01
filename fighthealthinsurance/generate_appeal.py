@@ -573,7 +573,7 @@ class SpecialtyMedicationAppeal(SpecializedDenialTemplate):
 
 
 class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
-    name = "Physical therapy continuation (visits beyond initial sessions)"
+    name = "Physical, occupational or speech therapy denial"
     text_patterns = (
         r"\bphysical\s+therapy\b",
         r"\bPT\s+(?:visits|sessions|services)\b",
@@ -609,7 +609,7 @@ class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
     @classmethod
     def static_appeal(cls) -> str:
         return (
-            "Re: Appeal of denied therapy continuation, claim {claim_id}\n\n"
+            "Re: Appeal of denied therapy, claim {claim_id}\n\n"
             "Dear {insurance_company},\n\n"
             "I am appealing the denial of {procedure} for {diagnosis}. If "
             "the denial rests on a visit cap or a finding that the patient "
@@ -636,7 +636,9 @@ class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
 
 
 class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
-    name = "Post-surgical rehabilitation denial"
+    name = (
+        "Rehabilitation or skilled nursing denial (after surgery, if it followed one)"
+    )
     # Every pattern requires explicit rehab/therapy/SNF/IRF context so we
     # don't mistake denials of the surgery itself (e.g., a bare "ACL
     # repair" denial) for denials of the post-surgical rehabilitation.
@@ -745,8 +747,8 @@ class GLP1WeightLossAppeal(SpecializedDenialTemplate):
     citations = (
         "American Medical Association recognition of obesity as a disease "
         "(AMA Policy H-440.842, adopted 2013)",
-        "FDA-approved labeling for the prescribed anti-obesity medication — "
-        "e.g., Wegovy (semaglutide 2.4 mg) for chronic weight management and, "
+        "FDA labeling for the prescribed medication, if it is approved for "
+        "the patient's use, e.g. Wegovy (semaglutide 2.4 mg) for chronic weight management and, "
         "under its 2024 SELECT-trial indication, reduction of major adverse "
         "cardiovascular events; Zepbound (tirzepatide) for chronic weight "
         "management and for moderate-to-severe obstructive sleep apnea in "
@@ -765,28 +767,25 @@ class GLP1WeightLossAppeal(SpecializedDenialTemplate):
             "claim {claim_id}\n\n"
             "Dear {insurance_company},\n\n"
             "I am appealing the denial of {procedure} for {diagnosis}. "
-            "Anti-obesity medications such as GLP-1 and GIP/GLP-1 receptor "
-            "agonists are FDA-approved treatments for a recognized disease. "
-            "Please show the individualized clinical analysis behind this "
-            "denial.\n\n"
+            "Several GLP-1 and GIP/GLP-1 receptor agonists are FDA-approved "
+            "treatments for obesity, a recognized disease. Please show the "
+            "individualized clinical analysis behind this denial.\n\n"
             "1. Obesity is a disease, not a cosmetic concern. The American "
             "Medical Association formally recognized obesity as a disease in "
             "2013 (Policy H-440.842). To the extent this denial relies on a "
-            "'cosmetic,' 'lifestyle,' or 'weight-loss' exclusion, that "
-            "exclusion does not properly reach FDA-approved pharmacotherapy "
-            "prescribed to treat a diagnosed disease. Please quote the exact "
-            "plan language relied upon and explain how it encompasses the "
-            "FDA-approved indication at issue.\n\n"
-            "2. FDA-approved indication. The requested medication is FDA-"
-            "approved for chronic weight management in patients with obesity, "
-            "or with overweight and a weight-related comorbidity [Specify the "
-            "patient's BMI and weight-related comorbidity], and, for several "
-            "agents, "
-            "additional medical "
-            "indications (Wegovy for reducing major adverse cardiovascular "
-            "events in adults with established cardiovascular disease; "
-            "Zepbound for moderate-to-severe obstructive sleep apnea in adults "
-            "with obesity). Where the patient is being treated for such an "
+            "'cosmetic,' 'lifestyle,' or 'weight-loss' exclusion, and the "
+            "medication is FDA-approved for the patient's use, that exclusion "
+            "does not properly reach pharmacotherapy prescribed to treat a "
+            "diagnosed disease. Please quote the exact plan language relied "
+            "upon and explain how it applies to this treatment.\n\n"
+            "2. FDA-approved indication. [Specify the drug's FDA-approved "
+            "indication that matches this patient, with the patient's BMI and "
+            "any weight-related comorbidity, or delete this paragraph] Some of "
+            "these drugs carry further approved indications (Wegovy for "
+            "reducing major adverse cardiovascular events in adults with "
+            "established cardiovascular disease; Zepbound for "
+            "moderate-to-severe obstructive sleep apnea in adults with "
+            "obesity). Where the patient is being treated for an approved "
             "indication, the therapy treats a recognized medical condition; if "
             "the plan finds it not medically necessary for this patient, "
             "please explain why.\n\n"
@@ -1813,8 +1812,9 @@ class AppealGenerator(object):
         "- If drafts disagree on facts, prefer the most specific and well-supported version.\n"
         "- The final letter should be comprehensive but not unnecessarily long.\n"
         "- Preserve any patient/provider/plan details exactly as they appear in the drafts.\n"
-        "- Keep bracketed fill-ins, such as [Specify ...], exactly as they are; never "
-        "turn them into statements of fact."
+        "- Keep bracketed instructions that start with Specify exactly as they are; "
+        "never turn them into statements of fact. Ordinary fields such as [Name] may "
+        "be filled from values another draft supplies."
     )
 
     def __init__(self):

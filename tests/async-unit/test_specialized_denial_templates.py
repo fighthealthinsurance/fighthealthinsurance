@@ -303,7 +303,7 @@ class TestPatientSpecificClaimsAreFillIns(unittest.TestCase):
     def test_glp1_indication_asks_for_the_patients_details(self):
         text = GLP1WeightLossAppeal.static_appeal()
         self.assertNotIn("FDA-approved for the patient's condition", text)
-        self.assertIn("[Specify the patient's BMI and weight-related comorbidity]", text)
+        self.assertIn("[Specify the drug's FDA-approved indication", text)
 
 
 class TestFillInsAreCaughtBeforeALetterLeaves(unittest.TestCase):
@@ -329,7 +329,9 @@ class TestFillInsAreCaughtBeforeALetterLeaves(unittest.TestCase):
         ),
         (
             GLP1WeightLossAppeal,
-            "[Specify the patient's BMI and weight-related comorbidity]",
+            "[Specify the drug's FDA-approved indication that matches this "
+            "patient, with the patient's BMI and any weight-related "
+            "comorbidity, or delete this paragraph]",
         ),
         (
             PostSurgicalRehabAppeal,
@@ -399,10 +401,63 @@ class TestOlderTemplatesAskRatherThanAssert(unittest.TestCase):
 
 
 class TestSynthesisKeepsFillIns(unittest.TestCase):
-    def test_synthesis_prompt_keeps_bracketed_fill_ins(self):
+    def test_synthesis_keeps_only_specify_instructions_as_written(self):
         prompt = AppealGenerator.SYNTHESIS_SYSTEM_PROMPT
-        self.assertIn("Keep bracketed fill-ins", prompt)
+        self.assertIn(
+            "Keep bracketed instructions that start with Specify exactly as they are",
+            prompt,
+        )
         self.assertIn("never turn them into statements of fact", prompt)
+
+    def test_synthesis_may_fill_ordinary_fields(self):
+        prompt = AppealGenerator.SYNTHESIS_SYSTEM_PROMPT
+        self.assertIn(
+            "Ordinary fields such as [Name] may be filled from values another "
+            "draft supplies",
+            prompt,
+        )
+        self.assertNotIn("Keep bracketed fill-ins", prompt)
+
+
+class TestGLP1ApprovalIsThePatientsToState(unittest.TestCase):
+    DENIAL = "Investigational weight-loss medication, not FDA-approved."
+
+    def test_unapproved_drug_denial_still_matches(self):
+        self.assertTrue(GLP1WeightLossAppeal.matches(self.DENIAL))
+
+    def test_no_approval_claim_once_the_fill_ins_are_deleted(self):
+        letter = re.sub(
+            r"\[Specify[^\]]*\] ?", "", GLP1WeightLossAppeal.static_appeal()
+        )
+        for claim in (
+            "The requested medication is FDA-approved",
+            "FDA-approved indication at issue",
+            "FDA-approved pharmacotherapy",
+        ):
+            with self.subTest(claim=claim):
+                self.assertNotIn(claim, letter)
+        # What's left about approval is conditional or about other drugs.
+        self.assertIn("medication is FDA-approved for the patient's use", letter)
+        self.assertIn("Several GLP-1 and GIP/GLP-1 receptor agonists", letter)
+
+    def test_hint_makes_labeling_conditional(self):
+        hint = GLP1WeightLossAppeal.model_prompt_hint()
+        self.assertIn("if it is approved for the patient's use", hint)
+
+
+class TestTherapyAndRehabNamesStayNeutral(unittest.TestCase):
+    def test_rehab_hint_mentions_surgery_only_conditionally(self):
+        hint = PostSurgicalRehabAppeal.model_prompt_hint()
+        self.assertIn("Rehabilitation or skilled nursing denial", hint)
+        self.assertIn("if it followed one", hint)
+        self.assertNotIn("Post-surgical rehabilitation denial", hint)
+
+    def test_therapy_name_and_subject_do_not_assume_continuation(self):
+        hint = PhysicalTherapyContinuationAppeal.model_prompt_hint()
+        letter = PhysicalTherapyContinuationAppeal.static_appeal()
+        self.assertNotIn("continuation", hint.lower())
+        self.assertIn("Re: Appeal of denied therapy, claim {claim_id}", letter)
+        self.assertNotIn("therapy continuation", letter)
 
 
 class TestRealImagingHintBlock(unittest.TestCase):
