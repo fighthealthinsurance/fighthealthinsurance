@@ -215,6 +215,26 @@ def test_a_timed_out_lookup_does_not_hide_the_same_search_that_finished():
     assert _merged_tool_calls(drafts)[0]["found"] == FOUND
 
 
+def test_a_later_timed_out_lookup_does_not_replace_the_finished_one():
+    finished = {"tool": "PubMed", "call": "q", "found": FOUND}
+    timed_out = {"tool": "PubMed", "call": "q", "found": "", "timed_out": True}
+    drafts = [
+        ChooserCandidate(metadata={"tool_calls": [finished]}),
+        ChooserCandidate(metadata={"tool_calls": [timed_out]}),
+    ]
+    assert _merged_tool_calls(drafts)[0]["found"] == FOUND
+
+
+def test_findings_from_a_timed_out_lookup_beat_an_empty_finished_one():
+    timed_out = {"tool": "PubMed", "call": "q", "found": FOUND, "timed_out": True}
+    finished = {"tool": "PubMed", "call": "q", "found": ""}
+    drafts = [
+        ChooserCandidate(metadata={"tool_calls": [finished]}),
+        ChooserCandidate(metadata={"tool_calls": [timed_out]}),
+    ]
+    assert _merged_tool_calls(drafts)[0]["found"] == FOUND
+
+
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
 class TestChatCandidatesKeepTheirLookups:
@@ -319,9 +339,12 @@ async def test_a_financial_assistance_lookup_records_what_it_asked_for():
         "fighthealthinsurance.chat.tools.financial_assistance_tool."
         "FinancialAssistanceTool.execute",
         AsyncMock(return_value=(ANSWER, "")),
-    ):
+    ) as execute:
         answer = await answer_with_tools(model, QUESTION, HISTORY, 50)
-    assert answer.tool_calls[0]["call"] == '{"drug": "Wegovy", "state": "CA"}'
+    assert (execute.await_count, answer.tool_calls[0]["call"]) == (
+        1,
+        '{"drug": "Wegovy", "state": "CA"}',
+    )
 
 
 def test_the_medicaid_tools_get_the_state_their_handlers_index():

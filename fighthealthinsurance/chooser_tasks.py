@@ -2398,9 +2398,11 @@ def _build_appeal_prompt(context: dict) -> str:
 
 
 def _lookup_rank(call: dict) -> Tuple[bool, bool]:
-    """How much a lookup record shows: one that finished beats one that
-    timed out, and one that found something beats one that did not."""
-    return (not call.get("timed_out"), bool(call.get("found")))
+    """How much a lookup record shows: one that found something beats one
+    that did not, then one that finished beats one that timed out. Found
+    first: a lookup can find something and still time out while the model
+    reads it back, and that finding must not lose to an empty one."""
+    return (bool(call.get("found")), not call.get("timed_out"))
 
 
 def _merged_tool_calls(candidates: List[ChooserCandidate]) -> List[dict]:
