@@ -95,6 +95,7 @@ from .ml.ml_models import (
     can_be_asked,
     context_already_in_prompt,
     describe_model_error,
+    is_blank_context,
     render_citations_context,
     repetition_penalty,
 )
@@ -993,12 +994,14 @@ _PROMPT_TIER1_NULLS: tuple[str, ...] = (
 # letter gets (Melanie, 2026-09-07). Shedding it would drop the citation from
 # exactly the long, complicated denials where it helps most.
 
-# ``pa_context`` is the one tier-1 section ``make_open_prompt`` gates on
-# ``.strip()`` (line ~1661) rather than ``!= ""``: a whitespace-only value
-# renders nothing there, so it must NOT be treated as sheddable — nulling it
-# would only force a needless prompt rebuild (which reshuffles the randomized
-# GOOD EXAMPLEs) with no size reduction. See ``_shed_context``.
-_PROMPT_TIER1_STRIP_GATED: frozenset[str] = frozenset({"pa_context"})
+# The tier-1 sections ``make_open_prompt`` gates on a non-blank value rather
+# than ``!= ""``: a whitespace-only value renders nothing there, so it must
+# NOT be treated as sheddable: nulling it would only force a needless prompt
+# rebuild (which reshuffles the randomized GOOD EXAMPLEs) with no size
+# reduction. See ``_shed_context``.
+_PROMPT_TIER1_STRIP_GATED: frozenset[str] = frozenset(
+    {"pa_context", "pubmed_context", "ml_context"}
+)
 
 # Tier-2 truncation caps. ``plan_context`` lives on BOTH the prompt and the
 # call-dict surface and is truncated to the same length on each, so the cap
@@ -1094,17 +1097,18 @@ def _shed_context(
             # null (and rebuild for) a section that actually contributes
             # prompt bytes there. Most sections render on ``!= ""`` — a
             # whitespace-only value still trips ``has_citations`` and renders
-            # the section header (e.g. ``Provided citations (use these):    ``),
-            # so it must be shed. ``pa_context`` is the exception:
-            # ``make_open_prompt`` gates it on ``.strip()``, so a
-            # whitespace-only pa_context renders nothing and is already a
-            # no-op; nulling it would only force a needless rebuild (which
-            # reshuffles the randomized GOOD EXAMPLEs) with no size reduction.
+            # the section header, so it must be shed. The strip-gated ones
+            # (``pa_context``, ``pubmed_context``, ``ml_context``) render
+            # nothing when blank, so a blank one is already a no-op; nulling
+            # it would only force a needless rebuild (which reshuffles the
+            # randomized GOOD EXAMPLEs) with no size reduction.
             val = shed_kwargs.get(key)
             if not isinstance(val, str):
                 continue
             rendered = (
-                bool(val.strip()) if key in _PROMPT_TIER1_STRIP_GATED else val != ""
+                not is_blank_context(val)
+                if key in _PROMPT_TIER1_STRIP_GATED
+                else val != ""
             )
             if rendered:
                 shed_kwargs[key] = None
@@ -1138,7 +1142,9 @@ def _shed_context(
                     break
         if tier >= 1:
             for key in _SHEDDABLE_TIER1:
-                if new.get(key) is not None:
+                # A blank context sends nothing, so nulling it is no
+                # reduction and must not count as one.
+                if not is_blank_context(new.get(key)):
                     new[key] = None
                     changed.add(key)
         if tier >= 2:
@@ -1229,13 +1235,12 @@ def _estimate_call_token_footprint(
     if isinstance(citations, (list, tuple)):
         citations = render_citations_context(list(citations))
     total = estimate_tokens(prompt)
-    for value in (
-        patient_context,
-        call.get("plan_context"),
-        call.get("pubmed_context"),
-        citations,
-    ):
+    for value in (patient_context, call.get("plan_context")):
         if not context_already_in_prompt(prompt, value):
+            total += estimate_tokens(value)
+    # A blank PubMed or citation block is not sent, so it is not counted.
+    for value in (call.get("pubmed_context"), citations):
+        if not is_blank_context(value) and not context_already_in_prompt(prompt, value):
             total += estimate_tokens(value)
     return total
 
@@ -1328,8 +1333,14 @@ def _add_proactive_shed_variants(
     # shed-relevant content (everything but the level) to detect no-op variants
     # -- otherwise the added level key alone would make v != src and we'd
     # duplicate the full call.
+    # A blank call-dict context and None send the same bytes, so they compare
+    # equal here too.
     def _without_level(d: dict) -> dict:
-        return {k: v for k, v in d.items() if k != "context_level"}
+        return {
+            k: (None if k in _SHEDDABLE_TIER1 and is_blank_context(v) else v)
+            for k, v in d.items()
+            if k != "context_level"
+        }
 
     shed_variants = [
         v
@@ -2578,8 +2589,8 @@ class AppealGenerator(object):
         # "may ONLY cite references provided below" instruction keeps that
         # guidance consistent.
         has_citations = (
-            (ml_context is not None and ml_context != "")
-            or (pubmed_context is not None and pubmed_context != "")
+            not is_blank_context(ml_context)
+            or not is_blank_context(pubmed_context)
             or (rag_context is not None and rag_context != "")
             or (nice_context is not None and nice_context != "")
             or (uspstf_context is not None and uspstf_context != "")
@@ -2589,9 +2600,9 @@ class AppealGenerator(object):
             base = f"{base}\n\nCITATION INSTRUCTIONS: You may ONLY cite medical literature, studies, or references that are explicitly provided below. Do NOT invent, fabricate, or hallucinate any citations, PMIDs, NCT IDs, journal names, author names, or study details. If you want to make a medical claim, either cite from the provided references or state it as general medical knowledge without a specific citation."
             if rag_context is not None and rag_context != "":
                 base = f"{base}\n\nEvidence from medical guidelines and regulations:\n{rag_context}"
-            if ml_context is not None and ml_context != "":
+            if not is_blank_context(ml_context):
                 base = f"{base}\n\nProvided citations (use these): {ml_context}"
-            if pubmed_context is not None and pubmed_context != "":
+            if not is_blank_context(pubmed_context):
                 base = f"{base}\n\nPubMed references (use these): {pubmed_context}"
             if nice_context is not None and nice_context != "":
                 # nice_context already carries the international-guidance caveat
@@ -2727,8 +2738,8 @@ class AppealGenerator(object):
 
         def _present(value: Optional[str]) -> bool:
             # The historical ``!= ""`` gate (a whitespace-only value still
-            # renders). ``_shed_context`` relies on it; ``pa_context`` is the
-            # one ``.strip()``-gated section (``_PROMPT_TIER1_STRIP_GATED``).
+            # renders). ``_shed_context`` relies on it; the sections gated on
+            # a non-blank value instead are ``_PROMPT_TIER1_STRIP_GATED``.
             return value is not None and value != ""
 
         def _known(value: Optional[str]) -> bool:
@@ -2832,8 +2843,8 @@ class AppealGenerator(object):
         # "may ONLY cite references provided below" instruction keeps that
         # guidance consistent.
         has_citations = (
-            _present(ml_context)
-            or _present(pubmed_context)
+            not is_blank_context(ml_context)
+            or not is_blank_context(pubmed_context)
             or _present(rag_context)
             or _present(nice_context)
             or _present(uspstf_context)
@@ -2854,9 +2865,9 @@ class AppealGenerator(object):
                     "Evidence from medical guidelines and regulations:\n"
                     f"{rag_context}"
                 )
-            if _present(ml_context):
+            if not is_blank_context(ml_context):
                 sections.append(f"Provided citations (use these): {ml_context}")
-            if _present(pubmed_context):
+            if not is_blank_context(pubmed_context):
                 sections.append(f"PubMed references (use these): {pubmed_context}")
             if _present(nice_context):
                 # nice_context already carries the international-guidance caveat

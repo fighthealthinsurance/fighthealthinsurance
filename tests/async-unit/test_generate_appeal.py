@@ -1047,6 +1047,52 @@ class TestDualCallContextBudget:
             )
         assert result == [call]
 
+    def test_no_sibling_when_the_only_sheddable_context_is_blank(self):
+        # A blank PubMed or citation block sends nothing, so nulling it is no
+        # reduction: the variant matches the source and is dropped.
+        big_plan = "x" * (8000 * 4)
+        call = _make_call(
+            prompt="UNRELATED",
+            plan_context=big_plan,
+            pubmed_context="",
+            ml_citations_context=["", "  "],
+        )
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={"fhi-internal": [_backend_with_context(8000)]},
+        ):
+            result = _add_proactive_shed_variants(
+                [call],
+                open_prompt_kwargs={"pubmed_context": " \n\t", "ml_context": ""},
+                rebuild_prompt=self._noop_rebuild,
+                original_open_prompt="UNRELATED",
+                denial_id=1,
+            )
+        assert result == [call]
+
+    def test_blank_call_dict_context_is_not_reported_as_shed(self):
+        _, changed = _shed_context(
+            [_make_call(pubmed_context="   ", ml_citations_context=[])], tier=1
+        )
+        assert "pubmed_context" not in changed
+        assert "ml_citations_context" not in changed
+
+
+class TestTokenEstimateIgnoresBlankContext:
+    def test_blank_pubmed_and_citations_add_no_tokens(self):
+        bare = _make_call(pubmed_context=None, ml_citations_context=None)
+        blank = _make_call(pubmed_context=" \n\t ", ml_citations_context=["", "  "])
+        assert _estimate_call_token_footprint(blank) == _estimate_call_token_footprint(
+            bare
+        )
+
+    def test_real_pubmed_still_counts(self):
+        bare = _make_call(pubmed_context=None)
+        real = _make_call(pubmed_context="PMID 12345678: lumbar MRI outcomes " * 20)
+        assert _estimate_call_token_footprint(real) > _estimate_call_token_footprint(
+            bare
+        )
+
 
 # --- make_appeals router-call-pattern tests --------------------------------
 

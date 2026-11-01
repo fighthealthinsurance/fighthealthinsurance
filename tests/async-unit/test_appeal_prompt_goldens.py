@@ -377,19 +377,17 @@ GOLDEN_V1 = {
         "following denial:\n"
         "The requested infusion is experimental and investigational."
     ),
+    # A whitespace-only ml_context renders no citation section: it gets the
+    # no-citations instruction instead.
     "unknown_and_blank_values": (
         "\n"
         "\n"
-        "CITATION INSTRUCTIONS: You may ONLY cite medical literature, "
-        "studies, or references that are explicitly provided below. Do NOT "
-        "invent, fabricate, or hallucinate any citations, PMIDs, NCT IDs, "
-        "journal names, author names, or study details. If you want to "
-        "make a medical claim, either cite from the provided references or "
-        "state it as general medical knowledge without a specific "
-        "citation.\n"
-        "\n"
-        "Provided citations (use these):   Write a health insurance appeal "
-        "for the following denial:\n"
+        "IMPORTANT: No specific medical citations have been provided. Do NOT "
+        "invent or hallucinate any citations, PMIDs, NCT IDs, journal names, "
+        "or study references. You may state general medical knowledge "
+        "without citations, but do not fabricate specific study "
+        "references.Write a health insurance appeal for the following "
+        "denial:\n"
         "Denied."
     ),
 }

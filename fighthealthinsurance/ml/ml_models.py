@@ -213,6 +213,19 @@ def render_citations_context(
     return "\n".join(str(c) for c in ml_citations_context if c)
 
 
+def is_blank_context(value: Any) -> bool:
+    """True when a context value would put nothing on the wire: None, an
+    empty or whitespace-only string, or a list of such strings. A search
+    that finds nothing comes back as "", which is not the same as having
+    results. The prompt builders, the context block, the shedder and the
+    size estimate all ask this one question, so they agree."""
+    if value is None:
+        return True
+    if isinstance(value, (list, tuple)):
+        return all(is_blank_context(v) for v in value)
+    return not str(value).strip()
+
+
 def context_already_in_prompt(prompt: Optional[str], value: Any) -> bool:
     """True when ``prompt`` already carries ``value`` verbatim.
 
@@ -5475,7 +5488,14 @@ class RemoteOpenLike(RemoteModel):
         ):
             patient_context_max = int(self.max_len / 2)
             context_extra = f"When answering the following question you can use the patient context {patient_context[0:patient_context_max]}."
-        if pubmed_context is not None and not _already_in_prompt(pubmed_context):
+        # Only real results earn the PubMed line: an empty search comes back
+        # as "", and the line would still invite the model to cite DOIs with
+        # nothing to cite.
+        if (
+            pubmed_context is not None
+            and not is_blank_context(pubmed_context)
+            and not _already_in_prompt(pubmed_context)
+        ):
             context_extra += f"You can also use this context from pubmed: {pubmed_context} and you can include the DOI number in the appeal."
         if (
             plan_context is not None
@@ -5484,7 +5504,11 @@ class RemoteOpenLike(RemoteModel):
         ):
             context_extra += f"For answering the question you can use this context about the plan {plan_context}"
         citations_text = render_citations_context(ml_citations_context)
-        if citations_text and not _already_in_prompt(citations_text):
+        if (
+            citations_text is not None
+            and not is_blank_context(citations_text)
+            and not _already_in_prompt(citations_text)
+        ):
             context_extra += (
                 f"You can also use this context from citations: {citations_text}."
             )
