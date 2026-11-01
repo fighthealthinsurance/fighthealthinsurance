@@ -4498,12 +4498,34 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
     # evenly between the tied candidates (see _chooser_stats).
     tied_candidate_ids = models.JSONField(default=list, blank=True, null=True)
     session_key = models.CharField(max_length=100, db_index=True)
+    # Who else this judge is, so the Arena does not serve the same person a
+    # case twice: the signed-in user (a person keeps their votes across
+    # browsers and a login that rotates the session key), and a keyed digest
+    # of the client address (see ChooserViewSet._voter), which stands in for
+    # the session when the request brought no session cookie. Never the
+    # address itself. Blank on rows written before these fields.
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    client_key = models.CharField(max_length=64, blank=True, default="", db_index=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         # Prevent same session from voting on same task multiple times
         unique_together = [["task", "session_key"]]
+        # And the same signed-in user, from any of their sessions
+        constraints = [
+            models.UniqueConstraint(
+                fields=["task", "user"],
+                condition=models.Q(user__isnull=False),
+                name="chooser_vote_one_per_user",
+            )
+        ]
         indexes = [
             models.Index(fields=["task"]),
             models.Index(fields=["session_key"]),
@@ -4552,11 +4574,28 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
         ChooserTask, on_delete=models.CASCADE, related_name="skips"
     )
     session_key = models.CharField(max_length=100, db_index=True)
+    # The judge's user and address digest, as on ChooserVote.
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    client_key = models.CharField(max_length=64, blank=True, default="", db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         # Prevent same session from skipping same task multiple times
         unique_together = [["task", "session_key"]]
+        # And the same signed-in user, from any of their sessions
+        constraints = [
+            models.UniqueConstraint(
+                fields=["task", "user"],
+                condition=models.Q(user__isnull=False),
+                name="chooser_skip_one_per_user",
+            )
+        ]
         indexes = [
             models.Index(fields=["task"]),
             models.Index(fields=["session_key"]),

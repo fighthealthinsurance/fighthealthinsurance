@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import io
 import json
 import random
@@ -6,7 +7,7 @@ import typing
 from typing import Optional
 
 from django.core.exceptions import SuspiciousFileOperation
-from django.db import IntegrityError, models
+from django.db import IntegrityError, models, transaction
 from django.db.models import Count, Q
 from django.http import FileResponse, Http404, StreamingHttpResponse
 from django.http.response import HttpResponseBase
@@ -2409,12 +2410,123 @@ class ChooserViewSet(viewsets.ViewSet):
             session_key = fallback_key
         return session_key
 
+    # The sub-key a client address is digested under for ChooserVote and
+    # ChooserSkip.client_key. One fixed period: the digest has to match the
+    # same address next week too, or a cookieless judge sees old cases again.
+    VOTER_KEY_LABEL = b"chooser-voter"
+    VOTER_KEY_PERIOD = "all"
+
+    def _voter(self, request: Request) -> dict:
+        """Who is judging, as the fields a vote or skip is stored with:
+        ``session_key``, the signed-in ``user`` (or None), and
+        ``client_key``, a keyed digest of the client address (blank when
+        there is none). Not the raw address, which is personal data the
+        Arena has no use for beyond telling one judge from another."""
+        from django.contrib.auth import get_user
+
+        # The view takes no DRF authenticators, so DRF's user is anonymous
+        # (unless a test forced one), and DRF writes that anonymous user over
+        # the Django request's too. The person signed in to the site is read
+        # from the session itself.
+        user = getattr(request, "user", None)
+        if not getattr(user, "is_authenticated", False):
+            user = get_user(request._request)
+        if not getattr(user, "is_authenticated", False):
+            user = None
+        # The view takes no DRF authenticators, so DRF's CSRF check (part of
+        # its session authentication) never runs. A vote or skip only counts
+        # for the signed-in user when the request passes it, or a page on
+        # another site could post a skip that hides a case from the user in
+        # all their sessions. Failing it, the request still counts for its
+        # session, as it did before users were recorded.
+        if user is not None and not self._passes_csrf(request):
+            user = None
+        return {
+            "session_key": self._get_session_key(request),
+            "user": user,
+            "client_key": self.client_key_for(self._client_address(request)),
+        }
+
+    @classmethod
+    def client_key_for(cls, address: str) -> str:
+        """The stored digest of a client address, or blank for none."""
+        from fighthealthinsurance import client_network
+
+        if not address:
+            return ""
+        return client_network.period_key(
+            cls.VOTER_KEY_LABEL, cls.VOTER_KEY_PERIOD, address
+        )
+
+    @staticmethod
+    def _passes_csrf(request: Request) -> bool:
+        """Whether the request passes Django's CSRF check, the way DRF's
+        SessionAuthentication enforces it. Safe methods always pass."""
+        from rest_framework.authentication import CSRFCheck
+
+        def no_view(_request: typing.Any) -> HttpResponseBase:
+            return HttpResponseBase()
+
+        check = CSRFCheck(no_view)
+        check.process_request(request._request)
+        return check.process_view(request._request, no_view, (), {}) is None
+
+    @staticmethod
+    def _has_session(request: Request) -> bool:
+        """Whether the request came in an established session: it brought a
+        session cookie naming the session it is in (not one that expired or
+        was deleted, which gets a new session under the same cookie name),
+        and the session has a real key (not the fallback, which only lasts as
+        long as a session the client keeps)."""
+        from django.conf import settings
+
+        cookie = request.COOKIES.get(settings.SESSION_COOKIE_NAME)
+        if not cookie or cookie != request.session.session_key:
+            return False
+        return not request.session.get("_fallback_session_key")
+
+    # A session that began without one inherits what its address had judged
+    # by then: the address digest and the moment, kept in the session, so a
+    # judge does not get those cases back on their second request (when the
+    # new cookie makes the session, not the address, say who they are), and
+    # a later vote by another session at a shared address still does not
+    # hide anything from them.
+    SESSION_ADDRESS_KEY = "chooser_address_key"
+    SESSION_ADDRESS_UNTIL = "chooser_address_until"
+
+    def _judged_by(self, request: Request, voter: dict) -> Q:
+        """The votes or skips this judge already made: the session's, the
+        signed-in user's from any session, and the ones made from the same
+        address up to when this session began, if it began without one."""
+        judged = Q(session_key=voter["session_key"])
+        if voter["user"] is not None:
+            judged |= Q(user=voter["user"])
+        if voter["client_key"] and not self._has_session(request):
+            judged |= Q(client_key=voter["client_key"])
+            if self.SESSION_ADDRESS_KEY not in request.session:
+                request.session[self.SESSION_ADDRESS_KEY] = voter["client_key"]
+                request.session[self.SESSION_ADDRESS_UNTIL] = timezone.now().isoformat()
+            return judged
+        inherited = request.session.get(self.SESSION_ADDRESS_KEY)
+        until = request.session.get(self.SESSION_ADDRESS_UNTIL)
+        if inherited and until:
+            try:
+                judged |= Q(
+                    client_key=inherited,
+                    created_at__lte=datetime.datetime.fromisoformat(until),
+                )
+            except ValueError:
+                pass
+        return judged
+
     def _get_next_task(self, request: Request, task_type: str) -> Response:
         """
         Get the next available chooser task for the given type.
 
         Selection logic (chooser_complexity.ordered_for_judge):
-        1. Exclude tasks where this session key has already voted or skipped
+        1. Exclude tasks this judge has already voted on or skipped: in this
+           session, as the signed-in user from any session, or, when the
+           request brought no session, from the same address (_judged_by)
         2. While the session is warming up (its first votes on this type),
            or when it asks for straightforward or complex cases (the
            ``difficulty`` query parameter), prefer appeal cases with
@@ -2430,26 +2542,25 @@ class ChooserViewSet(viewsets.ViewSet):
         denied = self._captcha_gate(request)
         if denied is not None:
             return denied
-        session_key = self._get_session_key(request)
+        judged = self._judged_by(request, self._voter(request))
 
-        # Get tasks that this session has already voted on or skipped. The
-        # votes on this type are the rounds the session has judged, which
-        # set how complex a case it is ready for; skips are not rounds.
-        voted = list(
-            ChooserVote.objects.filter(session_key=session_key).values_list(
-                "task_id", "task__task_type"
-            )
+        # Get tasks that this judge has already voted on or skipped. The
+        # votes on this type are the rounds the judge has done, which set
+        # how complex a case they are ready for; skips are not rounds.
+        # Both stay in the database as subqueries: a judge matched by a
+        # shared address can have a long history, and this endpoint is polled.
+        rounds = (
+            ChooserVote.objects.filter(judged, task__task_type=task_type)
+            .values("task_id")
+            .distinct()
+            .count()
         )
-        rounds = sum(1 for _, voted_type in voted if voted_type == task_type)
-        skipped_task_ids = ChooserSkip.objects.filter(
-            session_key=session_key
-        ).values_list("task_id", flat=True)
-        excluded_task_ids = {task_id for task_id, _ in voted} | set(skipped_task_ids)
 
         # Find READY tasks of the requested type that haven't been voted on or skipped
         available_tasks = chooser_complexity.ordered_for_judge(
             ChooserTask.objects.filter(task_type=task_type, status="READY")
-            .exclude(id__in=excluded_task_ids)
+            .exclude(id__in=ChooserVote.objects.filter(judged).values("task_id"))
+            .exclude(id__in=ChooserSkip.objects.filter(judged).values("task_id"))
             .annotate(vote_count=Count("votes")),
             task_type,
             rounds,
@@ -2638,7 +2749,8 @@ class ChooserViewSet(viewsets.ViewSet):
         if denied is not None:
             return denied
 
-        session_key = self._get_session_key(request)
+        voter = self._voter(request)
+        judged = self._judged_by(request, voter)
         task_id = serializer.validated_data["task_id"]
         # The references come back as the tokens the next-task endpoint
         # served; anything that resolves to no candidate is a bad request,
@@ -2710,8 +2822,9 @@ class ChooserViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Check if this session has already voted on this task
-        if ChooserVote.objects.filter(task=task, session_key=session_key).exists():
+        # Check if this judge has already voted on this task, in this
+        # session or (signed in, or with no session) another
+        if ChooserVote.objects.filter(judged, task=task).exists():
             return Response(
                 serializers.ErrorSerializer(
                     {"error": "You have already voted on this task"}
@@ -2804,15 +2917,19 @@ class ChooserViewSet(viewsets.ViewSet):
             )
 
         # Create the vote
+        # One vote per session, and per signed-in user, is held by the
+        # database too, for two votes racing from two sessions; atomic, so a
+        # refused insert leaves the request's transaction usable.
         try:
-            vote = ChooserVote.objects.create(
-                task=task,
-                chosen_candidate=chosen_candidate,
-                presented_candidate_ids=presented_candidate_ids,
-                flagged_candidate_ids=flagged_candidate_ids,
-                tied_candidate_ids=tied_candidate_ids,
-                session_key=session_key,
-            )
+            with transaction.atomic():
+                vote = ChooserVote.objects.create(
+                    task=task,
+                    chosen_candidate=chosen_candidate,
+                    presented_candidate_ids=presented_candidate_ids,
+                    flagged_candidate_ids=flagged_candidate_ids,
+                    tied_candidate_ids=tied_candidate_ids,
+                    **voter,
+                )
         except IntegrityError:
             return Response(
                 serializers.ErrorSerializer(
@@ -2860,7 +2977,7 @@ class ChooserViewSet(viewsets.ViewSet):
         if denied is not None:
             return denied
 
-        session_key = self._get_session_key(request)
+        voter = self._voter(request)
         task_id = serializer.validated_data["task_id"]
 
         # Validate task exists
@@ -2872,8 +2989,9 @@ class ChooserViewSet(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        judged = self._judged_by(request, voter)
         # Check if already voted on this task (can't skip if already voted)
-        if ChooserVote.objects.filter(task=task, session_key=session_key).exists():
+        if ChooserVote.objects.filter(judged, task=task).exists():
             return Response(
                 serializers.ErrorSerializer(
                     {"error": "You have already voted on this task"}
@@ -2881,11 +2999,21 @@ class ChooserViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Create the skip record (or ignore if already skipped)
-        ChooserSkip.objects.get_or_create(
-            task=task,
-            session_key=session_key,
-        )
+        # Create the skip record, or ignore it if this judge already skipped
+        # the task in any session (one skip per user is also held by the
+        # database, for two skips racing from two of their sessions).
+        if not ChooserSkip.objects.filter(judged, task=task).exists():
+            try:
+                ChooserSkip.objects.get_or_create(
+                    task=task,
+                    session_key=voter["session_key"],
+                    defaults={
+                        "user": voter["user"],
+                        "client_key": voter["client_key"],
+                    },
+                )
+            except IntegrityError:
+                pass
 
         return Response(
             serializers.ChooserSkipResponseSerializer(
