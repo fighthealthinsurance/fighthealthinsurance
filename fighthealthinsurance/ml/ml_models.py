@@ -83,6 +83,7 @@ def _served_sample(probe_model: str, served: set[str], limit: int = 8) -> list[s
 from fighthealthinsurance.env_utils import get_env_variable
 from fighthealthinsurance.ml import llm_usage, spend
 from fighthealthinsurance.ml.ml_metrics import (
+    ML_CALL_PURPOSE,
     labelled_ml_calls,
     record_ml_call,
     record_ml_failure,
@@ -6300,10 +6301,14 @@ class DeepInfra(RemoteFullOpenLike):
     # own suggested replacement, GLM-5.3, is a coding model that scored 0.70
     # in the September letter test, so it was not taken. Kimi-K3 stays: it
     # was the best writer in that test and is asked only for side-by-sides.
+    # The 1017 Flash is NOT here: it shares its name with OpenCode's free
+    # copy, and a chat-only registration would shadow the general pool's
+    # [OpenCode, DeepInfra] ordering (chat would bill DeepInfra while the
+    # free endpoint is healthy). Chat reaches it through the general pool,
+    # free first with the paid endpoint as the fallback.
     CHAT_MODELS: ClassVar[List[str]] = [
         "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
         "zai-org/GLM-5.3-Flash",
-        "deepseek-ai/DeepSeek-V4.1-Flash-1017",
         "Qwen/Qwen3.8-Max",
         "moonshotai/Kimi-K3",
     ]
@@ -6326,6 +6331,14 @@ class DeepInfra(RemoteFullOpenLike):
     }
 
     def _request_extras(self, model: str) -> dict[str, Any]:
+        # The output caps exist because chat replies are short. The general
+        # pool answers through these same instances (the Flash release is
+        # one of its models), and an appeal draft cut off at the chat
+        # length would be a silently truncated letter, so the caps apply
+        # to chat calls only (ML_CALL_PURPOSE, set by the chat entry
+        # point).
+        if ML_CALL_PURPOSE.get() != "chat":
+            return {}
         return dict(self._CHAT_REQUEST_EXTRAS.get(model, {}))
 
     @classmethod
@@ -6338,8 +6351,13 @@ class DeepInfra(RemoteFullOpenLike):
     @classmethod
     def models(cls) -> List[ModelDescription]:
         return [
-            # Same friendly name as OpenCode's free copy.  models_by_name
-            # therefore tries OpenCode first and this paid endpoint next.
+            # Same friendly name as OpenCode's free copy, so models_by_name
+            # orders [OpenCode, DeepInfra] and a caller that cannot submit
+            # to OpenCode (no key, concurrency full) submits to this paid
+            # endpoint instead. That is where the ordering helps: once a
+            # backend's futures are in flight the fan-out awaits them, and
+            # an inference failure afterwards fails over to the other
+            # MODELS in the race, not to this same-name backup.
             ModelDescription(
                 cost=15,
                 name="deepseek-ai/DeepSeek-V4.1-Flash-1017",

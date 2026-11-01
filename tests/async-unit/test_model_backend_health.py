@@ -1735,10 +1735,11 @@ class TestTypeSafeProbe:
         assert result.category == mhc.CATEGORY_OTHER
         assert result.error == "skipped: the spend ledger did not load (ml/spend.py)"
 
-    def test_the_ledger_is_not_waited_on_without_a_premium_key(self):
-        """The free OpenCode route never reads the ledger; waiting on it (and
-        failing the probe when it does not load) applies only when a premium
-        key can spend budget."""
+    def test_the_ledger_is_not_waited_on_when_the_free_route_is_primary(self):
+        """ask() omits the premium fallback while the ledger is unloaded, so
+        with the free route primary (the token set, alone or with a premium
+        key) there is nothing to wait for; a probe skipped here reads as a
+        failure in the deploy alert."""
         from django.test import override_settings
 
         from fighthealthinsurance.ml import spend, typesafe
@@ -1750,12 +1751,19 @@ class TestTypeSafeProbe:
             }
         )
         wait = Mock(side_effect=AssertionError("waited on the ledger"))
-        with override_settings(OPENCODE_TOKEN="open-test-token"), patch.object(
-            typesafe, "ask", ask
-        ), patch.object(spend._ledger, "wait_until_loaded", wait):
-            result = asyncio.run(mhc.check_typesafe(mhc.typesafe_entry(), timeout=5))
+        for conf in (
+            {"OPENCODE_TOKEN": "open-test-token"},
+            {"OPENCODE_TOKEN": "open-test-token", "TYPESAFE_API_KEY": "test-key"},
+        ):
+            with override_settings(**conf), patch.object(
+                typesafe, "ask", ask
+            ), patch.object(spend._ledger, "wait_until_loaded", wait):
+                result = asyncio.run(
+                    mhc.check_typesafe(mhc.typesafe_entry(), timeout=5)
+                )
+            assert result.ok and result.probability == 0.9
         wait.assert_not_called()
-        ask.assert_awaited_once()
+        assert ask.await_count == 2
         assert result.ok and result.probability == 0.9
 
     def test_a_timeout(self):

@@ -130,18 +130,36 @@ class ChatOnlyModelsTest(SimpleTestCase):
             self.assertNotIn(name, router.chat_outside_models_by_name)
 
     def test_every_chat_model_is_length_capped_and_thinking_is_never_disabled(self):
+        from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
+
         with patch.object(ml_models, "get_env_variable", return_value="test-key"):
-            for name in ml_models.DeepInfra.CHAT_MODELS:
-                extras = ml_models.DeepInfra(model=name)._request_extras(name)
-                self.assertIn("max_tokens", extras, name)
-                # DeepInfra answers 400 to a request that turns a model's
-                # thinking off, so the flag is never sent.
-                self.assertNotIn("chat_template_kwargs", extras, name)
-            # The one that reasons first gets room to answer after it.
-            extras = ml_models.DeepInfra(model="moonshotai/Kimi-K3")._request_extras(
-                "moonshotai/Kimi-K3"
-            )
-            self.assertGreaterEqual(extras["max_tokens"], 3000)
+            # The caps exist for chat replies; outside a chat call the same
+            # instances serve appeals and summaries, which must not be cut
+            # off at the chat length.
+            with ml_call_purpose("chat"):
+                for name in ml_models.DeepInfra.CHAT_MODELS:
+                    extras = ml_models.DeepInfra(model=name)._request_extras(name)
+                    self.assertIn("max_tokens", extras, name)
+                    # DeepInfra answers 400 to a request that turns a model's
+                    # thinking off, so the flag is never sent.
+                    self.assertNotIn("chat_template_kwargs", extras, name)
+                # The one that reasons first gets room to answer after it.
+                extras = ml_models.DeepInfra(
+                    model="moonshotai/Kimi-K3"
+                )._request_extras("moonshotai/Kimi-K3")
+                self.assertGreaterEqual(extras["max_tokens"], 3000)
+            extras = ml_models.DeepInfra(
+                model=ml_models.DeepInfra.CHAT_MODELS[0]
+            )._request_extras(ml_models.DeepInfra.CHAT_MODELS[0])
+            self.assertNotIn("max_tokens", extras)
+
+    def test_the_promoted_flash_is_not_length_capped_outside_chat(self):
+        """The 1017 Flash answers appeals through the general pool as well;
+        an appeal draft cut off at the chat length would be silently
+        truncated."""
+        with patch.object(ml_models, "get_env_variable", return_value="test-key"):
+            model = ml_models.DeepInfra(model=ml_models.OpenCode.FLASH_NAME)
+        self.assertEqual(model._request_extras(ml_models.OpenCode.FLASH_NAME), {})
 
     def test_every_chat_model_has_a_list_price(self):
         """A chat model missing from the price table is charged at the high

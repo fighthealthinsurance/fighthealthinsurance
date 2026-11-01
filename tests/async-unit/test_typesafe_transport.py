@@ -131,7 +131,10 @@ def test_anything_but_https_is_refused_before_a_session_exists(url):
 def test_https_in_any_case_is_accepted_and_the_json_comes_back():
     session = _FakeSession()
     assert _ask(session, TYPESAFE_API_URL="HTTPS://typesafe.invalid/v1/systemone") == {
-        "answers": {}
+        "answers": {},
+        # The canned answer names no model; it comes back named what was
+        # asked (review).
+        "model": typesafe.DEFAULT_MODEL,
     }
     url, body, headers = session.posted[0]
     assert url == "HTTPS://typesafe.invalid/v1/systemone"
@@ -533,7 +536,10 @@ class TestConnectBound:
     def test_a_short_request_timeout_leaves_room_after_the_connect(self):
         # The chat gate's default: it waits the same 1.5s itself.
         timeout = self._client_timeout(1.5)
-        assert 0 < timeout.sock_connect < timeout.total == 1.5
+        # A sole attempt gets everything left, which is a shade under 1.5s
+        # once ask() itself is running.
+        assert 1.4 < timeout.total <= 1.5
+        assert 0 < timeout.sock_connect < timeout.total
 
     def test_a_long_request_timeout_caps_the_connect(self):
         assert self._client_timeout(20).sock_connect == typesafe.CONNECT_TIMEOUT_SECONDS
@@ -601,9 +607,9 @@ class TestConnectBound:
         assert typesafe.cooling_down() is True
 
     def test_the_free_attempt_gets_half_the_budget_so_the_fallback_has_time(self):
-        """Every attempt shares the caller's timeout_seconds: a hung free
-        endpoint must not eat the whole wait, or a caller's own wait_for of
-        the same length (the chat gate's) cancels before the fallback runs."""
+        """Every attempt draws on the one deadline: a hung free endpoint
+        must not eat the whole wait, or a caller's own wait_for of the
+        same length (the chat gate's) cancels before the fallback runs."""
         timeouts = []
         sessions = [_FakeSession(429), _FakeSession()]
 
@@ -616,9 +622,55 @@ class TestConnectBound:
             typesafe.aiohttp, "ClientSession", factory
         ):
             asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=2.0))
-        assert timeouts[0].total == 1.0
+        assert timeouts[0].total == pytest.approx(1.0, abs=0.05)
         assert 0 < timeouts[0].sock_connect == timeouts[0].connect < timeouts[0].total
-        assert timeouts[1].total == 2.0
+        # The fallback may not start a fresh budget: it gets what is left.
+        assert timeouts[1].total == pytest.approx(2.0, abs=0.05)
+        assert timeouts[1].total <= 2.0
+
+    def test_the_fallbacks_total_shrinks_by_what_the_free_attempt_spent(self):
+        """The premium attempt is bounded by the one deadline, not a fresh
+        timeout_seconds: wall clock the free attempt burns (up to half the
+        budget) comes out of the fallback's share."""
+
+        class _SlowResponse(_FakeResponse):
+            async def __aenter__(self):
+                await asyncio.sleep(0.3)
+                return self
+
+        free = _FakeSession(429)
+        free.response = _SlowResponse(429)
+        timeouts = []
+        sessions = [free, _FakeSession()]
+
+        def factory(**kwargs):
+            timeouts.append(kwargs["timeout"])
+            return sessions[len(timeouts) - 1]
+
+        conf = {**SETTINGS, "OPENCODE_TOKEN": "open-test-key"}
+        with override_settings(**conf), patch.object(
+            typesafe.aiohttp, "ClientSession", factory
+        ):
+            asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=2.0))
+        assert timeouts[0].total == pytest.approx(1.0, abs=0.05)
+        assert timeouts[1].total <= 2.0 - 0.3
+        assert timeouts[1].total > 2.0 - 0.3 - 0.5
+
+    def test_a_sole_free_attempt_gets_the_whole_budget(self):
+        """With no premium fallback eligible, nothing is held back."""
+        timeouts = []
+
+        def factory(**kwargs):
+            timeouts.append(kwargs["timeout"])
+            return _FakeSession()
+
+        conf = {**SETTINGS, "OPENCODE_TOKEN": "open-test-key", "TYPESAFE_API_KEY": None}
+        with override_settings(**conf), patch.object(
+            typesafe.aiohttp, "ClientSession", factory
+        ):
+            asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=2.0))
+        assert timeouts[0].total == pytest.approx(2.0, abs=0.05)
+        assert timeouts[0].total <= 2.0
 
 
 class TestPremiumFallback:
@@ -647,11 +699,30 @@ class TestPremiumFallback:
             typesafe.aiohttp, "ClientSession", factory
         ):
             assert asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=1)) == {
-                "answers": {}
+                "answers": {},
+                # The premium answer named no model either, so it comes back
+                # named what was asked (review).
+                "model": typesafe.DEFAULT_MODEL,
             }
         assert calls["n"] == 1
         assert len(free.posted) == 1 and len(premium.posted) == 1
         assert premium.posted[0][0] == "https://typesafe.invalid/v1/systemone"
+
+    def test_a_nameless_free_answer_comes_back_named_for_provenance(self):
+        """Downstream provenance (letter, triage and chat scores) reads
+        payload["model"]: a free answer that names no model must come back
+        named what was actually asked, not the pinned premium release."""
+        session = _FakeSession()
+        conf = {
+            **SETTINGS,
+            "OPENCODE_TOKEN": "open-test-key",
+            "TYPESAFE_API_KEY": None,
+        }
+        with override_settings(**conf), patch.object(
+            typesafe.aiohttp, "ClientSession", session
+        ):
+            payload = asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=1))
+        assert payload["model"] == typesafe.OPENCODE_MODEL
 
     def test_the_premium_budget_is_rechecked_before_the_fallback_posts(self):
         """The free attempt can eat its whole half of the budget; a budget
