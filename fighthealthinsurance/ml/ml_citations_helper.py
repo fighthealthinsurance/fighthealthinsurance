@@ -10,7 +10,10 @@ from fighthealthinsurance.denial_history_consent import (
     history_may_be_used,
     still_allowed,
 )
-from fighthealthinsurance.cms_coverage_api import get_cms_coverage_citations
+from fighthealthinsurance.cms_coverage_api import (
+    NCD_CITATION_MARKER,
+    get_cms_coverage_citations,
+)
 from fighthealthinsurance.ecri_guidelines_helper import ECRIGuidelinesHelper
 from fighthealthinsurance.extralink_context_helper import (
     ExtraLinkContextHelper,
@@ -450,7 +453,12 @@ class MLCitationsHelper:
                 variant_updated_at is not None
                 and (timezone.now() - variant_updated_at) < _CMS_CACHE_TTL
             )
-            if cached and fresh:
+            # Entries written before titles had to match closely carry no
+            # marker and may name an unrelated policy: look them up again.
+            current = all(
+                isinstance(c, str) and NCD_CITATION_MARKER in c for c in cached
+            )
+            if cached and fresh and current:
                 logger.debug(
                     f"Using cached CMS citations for {procedure}/{diagnosis} "
                     f"(medicare_plan={medicare_plan})"

@@ -54,6 +54,38 @@ _STOPWORDS = frozenset(
 )
 
 
+# Words that name a kind of medical work rather than what it is done to or
+# for. They appear in many unrelated NCD titles ("Hair Analysis", "Applied
+# Behavior Analysis"; "Knee Replacement Surgery", "valve surgery";
+# "Speech Generating Devices", "speech therapy"), so a
+# title sharing only one of them with the query is not a match. They are
+# dropped from both sides before matching.
+_GENERIC_MEDICAL_WORDS = frozenset(
+    {
+        "analysis",
+        "care",
+        "disorder",
+        "disorders",
+        "evaluation",
+        "management",
+        "procedure",
+        "procedures",
+        "service",
+        "services",
+        "surgeries",
+        "surgery",
+        "surgical",
+        "test",
+        "testing",
+        "tests",
+        "therapies",
+        "therapy",
+        "treatment",
+        "treatments",
+    }
+)
+
+
 def _tokenize(text: str) -> List[str]:
     """Split text into lowercase alphanumeric tokens, dropping stopwords."""
     return [
@@ -61,6 +93,21 @@ def _tokenize(text: str) -> List[str]:
         for t in re.findall(r"[a-z0-9]+", text.lower())
         if t not in _STOPWORDS and len(t) >= 2
     ]
+
+
+def _meaningful_tokens(text: str) -> List[str]:
+    """``_tokenize`` without the generic medical words, deduplicated in order."""
+    out: List[str] = []
+    for t in _tokenize(text):
+        if t not in _GENERIC_MEDICAL_WORDS and t not in out:
+            out.append(t)
+    return out
+
+
+# The phrase every NCD citation carries since titles had to match the query
+# closely. A cached citation without it was written by the older matcher,
+# which accepted one shared word, so it may be off topic and is fetched again.
+NCD_CITATION_MARKER = "may apply to this service"
 
 
 @dataclass
@@ -90,7 +137,9 @@ class NCDDocument:
         narrowly limited determinations). The citation is a reference: the
         appeal-generation LLM can use the linked policy as authority for
         Medicare's medical-necessity criteria, but we don't preemptively
-        characterize it as favorable.
+        characterize it as favorable. The match is on title words, so the
+        citation says the policy may apply and leaves the model to use it
+        only when it fits the case.
         """
         url = self.public_url
         url_part = f" ({url})" if url else ""
@@ -106,7 +155,8 @@ class NCDDocument:
             )
         return (
             f"CMS National Coverage Determination {self.document_display_id} — "
-            f'"{self.title}"{url_part}: see this Medicare coverage policy for '
+            f'"{self.title}"{url_part}: a Medicare coverage policy that '
+            f"{NCD_CITATION_MARKER}; cite it only if it fits this case, for "
             f"the applicable coverage criteria{tail}"
         )
 
@@ -139,35 +189,77 @@ def _parse_ncd_record(record: dict) -> Optional[NCDDocument]:
         return None
 
 
+def _title_matches(query_tokens: List[str], single_word_query: bool, title: str):
+    """Score an NCD title against the query's meaningful tokens, or None.
+
+    A title matches when the query names its subject closely, in one of two
+    ways:
+
+    * Most of the query is in the title: at least half of the query's
+      meaningful tokens, and at least two when it has two or more. A query
+      that is one word to begin with ("MRI") only needs that word.
+    * Most of the title is in the query: at least two shared tokens that
+      are more than half the title's, so a long procedure description
+      still finds a short title ("Cardiac Rehabilitation Programs" for
+      cardiac rehabilitation after valve surgery).
+    * All of the title is in the query: every meaningful title token
+      appears in it ("Ambulance Services" for "air ambulance").
+
+    One shared word is not enough otherwise, which is what let "air
+    ambulance" match "Air-Fluidized Bed" and "applied behavior analysis"
+    match "Hair Analysis". Returns a sort key (best first) or None.
+    """
+    title_tokens = set(_meaningful_tokens(title))
+    if not title_tokens:
+        return None
+    matched = sum(1 for t in query_tokens if t in title_tokens)
+    if matched == 0:
+        return None
+    if len(query_tokens) == 1:
+        most_of_query = single_word_query
+    else:
+        most_of_query = matched >= max(2, (len(query_tokens) + 1) // 2)
+    most_of_title = matched >= 2 and matched * 2 > len(title_tokens)
+    all_of_title = title_tokens.issubset(query_tokens)
+    if not (most_of_query or most_of_title or all_of_title):
+        return None
+    query_share = matched / len(query_tokens)
+    title_share = matched / len(title_tokens)
+    # Best first: more of the query covered, then more of the title, then
+    # more shared words, then the shorter title.
+    return (-query_share, -title_share, -matched, len(title))
+
+
 def _filter_by_keyword(
     records: List[NCDDocument], keyword: str, max_results: int
 ) -> List[NCDDocument]:
     """Token-based keyword filter on NCD titles.
 
-    Tokenizes both the input keyword and each NCD title (dropping stopwords
-    and short tokens), then returns titles ranked by how many input tokens
-    they share. This lets multi-word inputs like "MRI brain" match titles
-    like "MRI of the Brain" or "Magnetic Resonance Imaging — Brain".
+    Tokenizes both the input keyword and each NCD title (dropping stopwords,
+    short tokens and generic medical words), then keeps only titles that
+    match the query closely (see ``_title_matches``) and ranks them by how
+    much of the query they cover. This lets multi-word inputs like "MRI
+    brain" match titles like "MRI of the Brain" without a single shared
+    word pulling in an unrelated policy. Nothing matching means no NCD: an
+    off-topic citation is worse than none.
 
     The MCD reports endpoints don't reliably accept a keyword filter, so we
     pull the report and filter locally. The full report is small enough
     (~hundreds of NCDs) that this is cheap.
     """
-    tokens = _tokenize(keyword) if keyword else []
-    if not tokens:
+    if not keyword:
         return []
+    query_tokens = _meaningful_tokens(keyword)
+    if not query_tokens:
+        return []
+    single_word_query = len(_tokenize(keyword)) == 1
     scored: List[tuple] = []
     for r in records:
-        title_tokens = set(_tokenize(r.title))
-        if not title_tokens:
-            continue
-        match_count = sum(1 for t in tokens if t in title_tokens)
-        if match_count == 0:
-            continue
-        # Sort key: more matches first, then shorter title (more specific).
-        scored.append((-match_count, len(r.title), r))
-    scored.sort(key=lambda x: (x[0], x[1]))
-    return [r for _, _, r in scored[:max_results]]
+        key = _title_matches(query_tokens, single_word_query, r.title)
+        if key is not None:
+            scored.append((key, r))
+    scored.sort(key=lambda x: x[0])
+    return [r for _, r in scored[:max_results]]
 
 
 class CMSCoverageClient:

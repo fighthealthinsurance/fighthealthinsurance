@@ -13,6 +13,7 @@ from fighthealthinsurance.cms_coverage_api import (
     CMSCoverageClient,
     NCDDocument,
     _candidate_keywords,
+    NCD_CITATION_MARKER,
     _filter_by_keyword,
     _parse_ncd_record,
     _tokenize,
@@ -91,6 +92,9 @@ class TestNCDDocument:
         assert "220.5" in text
         assert "Magnetic Resonance Imaging" in text
         assert "Medicare coverage policy" in text
+        # Matched on title words, so offered as possibly applicable.
+        assert NCD_CITATION_MARKER in text
+        assert "only if it fits this case" in text
         # We deliberately don't claim the NCD recognizes the service as
         # covered — NCDs can be non-coverage decisions.
         assert "recognizing this service as covered" not in text
@@ -190,6 +194,61 @@ class TestFilterByKeyword:
     def test_returns_empty_for_blank_input(self):
         docs = self._docs("MRI Brain")
         assert _filter_by_keyword(docs, "", max_results=5) == []
+
+    def test_one_shared_word_is_not_a_match(self):
+        # "air" alone pulled in an unrelated bed policy for an air
+        # ambulance denial.
+        docs = self._docs("Air-Fluidized Bed")
+        assert _filter_by_keyword(docs, "air ambulance", max_results=5) == []
+
+    def test_generic_medical_word_is_not_a_match(self):
+        # Applied behavior analysis shares only "analysis" with this title.
+        docs = self._docs("Hair Analysis")
+        assert _filter_by_keyword(docs, "applied behavior analysis", 5) == []
+        assert _filter_by_keyword(docs, "ABA therapy", max_results=5) == []
+
+    def test_generic_word_dropped_query_needs_the_whole_title(self):
+        # "speech therapy" is just "speech" once "therapy" is dropped; a
+        # title with more than that subject is not a match.
+        docs = self._docs("Speech Generating Devices")
+        assert _filter_by_keyword(docs, "speech therapy", max_results=5) == []
+
+    def test_title_named_in_full_by_the_query_matches(self):
+        docs = self._docs("Ambulance Services", "Air-Fluidized Bed")
+        results = _filter_by_keyword(docs, "air ambulance", max_results=5)
+        assert [d.title for d in results] == ["Ambulance Services"]
+
+    def test_genuine_match_still_found(self):
+        docs = self._docs(
+            "Hyperbaric Oxygen Therapy",
+            "Oxygen for Home Use",
+            "Hair Analysis",
+        )
+        results = _filter_by_keyword(
+            docs, "hyperbaric oxygen therapy for diabetic wounds", max_results=5
+        )
+        assert [d.title for d in results] == ["Hyperbaric Oxygen Therapy"]
+
+    def test_long_query_finds_a_short_title_it_mostly_names(self):
+        docs = self._docs(
+            "Cardiac Rehabilitation Programs",  # two of its three words
+            "Knee Replacement Surgery",  # only "replacement"; surgery is generic
+            "Total Joint Replacement Surgery of the Hip",  # two of four
+        )
+        results = _filter_by_keyword(
+            docs,
+            "cardiac rehabilitation after valve replacement surgery",
+            max_results=5,
+        )
+        assert [d.title for d in results] == ["Cardiac Rehabilitation Programs"]
+
+    def test_ranks_by_share_of_the_query_covered(self):
+        docs = self._docs(
+            "MRI",  # all of the title, half the query
+            "MRI of the Brain",  # all of the query
+        )
+        results = _filter_by_keyword(docs, "MRI brain", max_results=2)
+        assert [d.title for d in results] == ["MRI of the Brain", "MRI"]
 
 
 class TestCMSCoverageClientSearch:
