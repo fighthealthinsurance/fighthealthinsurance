@@ -15,7 +15,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from django.utils import timezone
 
-from fighthealthinsurance.cms_coverage_api import NCD_CITATION_MARKER
+from fighthealthinsurance.cms_coverage_api import (
+    NCD_CITATION_MARKER,
+    CMSCoverageCitations,
+)
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.models import Denial
 
@@ -103,15 +106,12 @@ class TestMLCitationsHelperCMSIntegration:
         mock_cache_cls.objects.aupdate_or_create = AsyncMock(
             return_value=(cache_entry, False)
         )
-        mock_fetch.return_value = []
+        # A complete lookup that found nothing.
+        mock_fetch.return_value = CMSCoverageCitations([], complete=True)
 
-        with patch(
-            "fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_client"
-        ) as mock_client:
-            mock_client.return_value.has_report.return_value = True
-            result = await MLCitationsHelper.generate_cms_coverage_citations(
-                denial=self.mock_denial
-            )
+        result = await MLCitationsHelper.generate_cms_coverage_citations(
+            denial=self.mock_denial
+        )
 
         assert result == []
         mock_fetch.assert_awaited_once()
@@ -154,13 +154,9 @@ class TestMLCitationsHelperCMSIntegration:
         mock_cache_cls.objects.aupdate_or_create = AsyncMock()
         mock_fetch.side_effect = RuntimeError("lookup broke")
 
-        with patch(
-            "fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_client"
-        ) as mock_client:
-            mock_client.return_value.has_report.return_value = True
-            result = await MLCitationsHelper.generate_cms_coverage_citations(
-                denial=self.mock_denial
-            )
+        result = await MLCitationsHelper.generate_cms_coverage_citations(
+            denial=self.mock_denial
+        )
 
         assert result == []
         mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
@@ -204,15 +200,12 @@ class TestMLCitationsHelperCMSIntegration:
         mock_qs.afirst = AsyncMock(return_value=None)
         mock_cache_cls.objects.filter.return_value = mock_qs
         mock_cache_cls.objects.aupdate_or_create = AsyncMock()
-        mock_fetch.return_value = []
+        # Searched a stale or invalid report: not a finished lookup.
+        mock_fetch.return_value = CMSCoverageCitations([], complete=False)
 
-        with patch(
-            "fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_client"
-        ) as mock_client:
-            mock_client.return_value.has_report.return_value = False
-            result = await MLCitationsHelper.generate_cms_coverage_citations(
-                denial=self.mock_denial
-            )
+        result = await MLCitationsHelper.generate_cms_coverage_citations(
+            denial=self.mock_denial
+        )
 
         assert result == []
         mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
