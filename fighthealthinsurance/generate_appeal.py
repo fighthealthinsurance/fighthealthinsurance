@@ -3319,6 +3319,7 @@ class AppealGenerator(object):
             prof_pov: bool = False,
             stage: str = "",
             context_level: Optional[str] = None,
+            prompt_version: Optional[str] = None,
         ) -> Tuple[List[Future[Tuple[str, Optional[str]]]], str]:
             if model_name not in ml_router.models_by_name:
                 sample = list(itertools.islice(ml_router.models_by_name.keys(), 10))
@@ -3371,6 +3372,7 @@ class AppealGenerator(object):
                         pubmed_context=pubmed_context,
                         ml_citations_context=ml_citations_context,
                         prof_pov=prof_pov,
+                        prompt_version=prompt_version,
                     )
 
                     # Truthiness matters: an empty futures list is a FAILED
@@ -3415,6 +3417,7 @@ class AppealGenerator(object):
             pubmed_context: Optional[str],
             ml_citations_context: Optional[List[str]],
             prof_pov: bool = False,
+            prompt_version: Optional[str] = None,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             # If the model has parallelism use it.
             if isinstance(model, RemoteFullOpenLike):
@@ -3429,6 +3432,9 @@ class AppealGenerator(object):
                     prof_pov=prof_pov,
                     submit_executor=submit_pool,
                     deadline=deadline,
+                    # v4 changes the system prompt, so the version reaches
+                    # the backend as well as the draft's provenance.
+                    prompt_version=prompt_version,
                 )
             # Otherwise submit the backend's own sync ``infer`` -- but ONLY a
             # real override (this is also the seam tests use to inject fake
@@ -3638,9 +3644,10 @@ class AppealGenerator(object):
             # slow-backend diagnosis needs.
             model_futures: List[Tuple[dict, Future]] = []
             for call in calls:
-                # context_level and prompt_version are provenance metadata, not
-                # inference args; strip them before spreading the call into
-                # get_model_result.
+                # context_level and prompt_version are provenance metadata,
+                # stripped before spreading the call into get_model_result and
+                # passed to it by name (v4 and v5 also pick the system
+                # prompt).
                 context_level = call.get("context_level")
                 call_kwargs = {
                     k: v
@@ -3656,7 +3663,10 @@ class AppealGenerator(object):
                 submitted_at = time.monotonic()
                 submitted_wall = timezone.now()
                 futures, backend = get_model_result(
-                    **call_kwargs, stage=stage, context_level=context_level
+                    **call_kwargs,
+                    stage=stage,
+                    context_level=context_level,
+                    prompt_version=call.get("prompt_version"),
                 )
                 for fut in futures:
                     model_futures.append(

@@ -2977,7 +2977,7 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     # this existed and for flows that cannot say (share, professional).
     presented_ids = models.JSONField(null=True, blank=True)
     # The appeal prompt version that wrote this draft, one of
-    # ml/appeal_prompt_versions.PROMPT_V1 / PROMPT_V2 / PROMPT_V3, stamped
+    # ml/appeal_prompt_versions.PROMPT_V1 to PROMPT_V5, stamped
     # when a model writes a full letter and copied onto the chosen row. Null
     # for rows from before versioning and for drafts no letter prompt wrote:
     # templates, synthesized letters and medically-necessary templated
