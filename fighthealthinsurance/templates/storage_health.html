@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; background: #f5f5f5; color: #222; }
+    h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+    h2 { color: #555; margin-top: 0; border-left: 4px solid #007bff; padding-left: 10px; }
+    .status-section { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    /* Every text colour here clears 4.5:1 on what it sits on (tests/sync/test_contrast.py). */
+    .nav-back { display: inline-block; margin-bottom: 14px; color: #0056b3; text-decoration: none; }
+    .nav-back:hover { text-decoration: underline; }
+    .meta { color: #666; font-size: 0.9em; margin-bottom: 18px; }
+    .meta a { color: #0056b3; }
+    .summary-line { font-size: 1.05em; margin: 6px 0 12px 0; }
+    .scroll-x { overflow-x: auto; }
+    table.status { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    table.status th, table.status td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; vertical-align: top; }
+    /* Backend names are one long word (EXTERNAL_STORAGE_B); let headers break inside them. */
+    table.status th { background: #f0f4f8; }
+    table.status th.backend-col { overflow-wrap: anywhere; }
+    table.status td.num, table.status th.num { text-align: right; }
+    .status-badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.82em; font-weight: bold; color: white; background: #6c757d; }
+    .status-badge.ok { color: white; background: #1e7e34; }
+    .status-badge.fail { color: white; background: #c82333; }
+    .status-badge.warn { color: #333; background: #f0ad4e; }
+    .status-badge.off { color: white; background: #6c757d; }
+    .error-text { color: #c82333; font-size: 0.85em; word-break: break-word; }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.78em; background: #e9ecef; color: #555; }
+    .stat-grid { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; }
+    .stat-card { flex: 1 1 120px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 12px 14px; }
+    .stat-card .value { font-size: 1.8em; font-weight: bold; color: #333; }
+    .stat-card .label { font-size: 0.85em; color: #666; margin-top: 2px; }
+    .stat-card.stat-alert .value { color: #c82333; }
+    .endpoint { font-family: monospace, monospace; font-size: 0.85em; word-break: break-all; }
+    .sub { font-size: 0.85em; color: #666; margin-top: 2px; }
+    .bar { background: #e9ecef; border-radius: 4px; height: 8px; width: 120px; margin-top: 4px; overflow: hidden; }
+    .bar span { display: block; height: 100%; background: #1e7e34; }
+    .bar span.warn { background: #f0ad4e; }
+    .bar span.fail { background: #c82333; }
+    ul.problems { margin: 6px 0 0 0; padding-left: 0; list-style: none; }
+    ul.problems li { margin-bottom: 6px; }
+    .copy-yes { color: #155724; }
+    .copy-no, .copy-error { color: #c82333; font-weight: bold; }
+    .copy-skipped, .copy-late { color: #6c757d; }
+    button.run { padding: 8px 16px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95em; }
+    button.run:hover { background: #004085; }
+  </style>
+</head>
+<body>
+  <a class="nav-back" href="{% url 'staff_dashboard' %}">&laquo; Back to Staff Dashboard</a>
+  <h1>{{ title }}</h1>
+  <p class="meta">
+    Generated {{ generated_at }} &middot;
+    <a href="{% url 'storage_health' %}">Refresh</a> &middot;
+    Checked live from the process serving this page. Every check has a time limit, so a dead backend slows the page rather than hanging it; only the write test can be held past its limit, by a write stuck inside a single system call.
+    Another pod can see different results for its own disk.
+  </p>
+
+  {# ---------------- Overall ---------------- #}
+  <div class="status-section">
+    <h2>💾 Overall</h2>
+    <p class="summary-line">
+      {% if level == "fail" %}
+        <span class="status-badge fail">FAILING</span>
+      {% elif level == "warn" %}
+        <span class="status-badge warn">DEGRADED</span>
+      {% else %}
+        <span class="status-badge ok">HEALTHY</span>
+      {% endif %}
+      &nbsp;{{ backends|length }} backend{{ backends|length|pluralize }} in the write path
+    </p>
+    {% if problems %}
+      <ul class="problems">
+        {% for p in problems %}
+          <li><span class="status-badge {{ p.level }}">{% if p.level == "fail" %}FAIL{% else %}WARN{% endif %}</span> {{ p.text }}</li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>Every backend answers, no disk is past {{ disk_warn|floatformat:0 }}% full, and every recent document checked has a copy off the app's disk.</p>
+    {% endif %}
+  </div>
+
+  {# ---------------- Backends ---------------- #}
+  <div class="status-section">
+    <h2>🗄️ Backends</h2>
+    <p class="sub">
+      Each upload is written to every backend below, in this order, and read back from the first that has it.
+      A copy on the <strong>app's disk</strong> shares a device with the app's code: in a container that is the pod's own layer, gone when the pod goes and never seen by another pod.
+      An <strong>own mount</strong> is a separate volume, and an <strong>object store</strong> lives off the host.
+      Disks warn at {{ disk_warn|floatformat:0 }}% full and fail at {{ disk_fail|floatformat:0 }}%.
+    </p>
+    <div class="scroll-x">
+    <table class="status">
+      <tr>
+        <th>Backend</th>
+        <th>Kind</th>
+        <th>Where</th>
+        <th>Copies kept on</th>
+        <th>Answers</th>
+        <th>Disk</th>
+        <th>Status</th>
+      </tr>
+      {% for b in backends %}
+        <tr>
+          <td><strong>{{ b.label }}</strong></td>
+          <td>{{ b.kind }}</td>
+          <td class="endpoint">{{ b.location|default:"—" }}</td>
+          <td>{{ b.placement|default:"unknown" }}</td>
+          <td>
+            {% if b.reach.ok %}
+              yes <span class="sub">({{ b.reach.ms }} ms)</span>
+            {% else %}
+              <span class="error-text">no: {{ b.reach.error }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if b.disk.error %}
+              <span class="error-text">could not read: {{ b.disk.error }}</span>
+            {% elif b.disk %}
+              {{ b.disk.percent }}% used
+              <div class="bar"><span class="{% if b.disk.level != 'ok' %}{{ b.disk.level }}{% endif %}" style="width: {{ b.disk.percent|floatformat:0 }}%"></span></div>
+              <div class="sub">{{ b.disk.free|filesizeformat }} free of {{ b.disk.total|filesizeformat }}</div>
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td><span class="status-badge {{ b.level }}">{{ b.level|upper }}</span></td>
+        </tr>
+      {% endfor %}
+      {% for slot in unconfigured %}
+        <tr>
+          <td><strong>{{ slot.label }}</strong></td>
+          <td colspan="5">{% if slot.level == "fail" %}<span class="error-text">{{ slot.note }}</span>{% else %}<span class="sub">{{ slot.note }}</span>{% endif %}</td>
+          <td><span class="status-badge {{ slot.level }}">{% if slot.level == "fail" %}FAIL{% else %}OFF{% endif %}</span></td>
+        </tr>
+      {% endfor %}
+    </table>
+    </div>
+  </div>
+
+  {# ---------------- Write test ---------------- #}
+  <div class="status-section">
+    <h2>✍️ Write test</h2>
+    <p class="sub">
+      Writes a small file named <code>fhi-storage-health-probe-…</code> to each backend, reads it back, and deletes it.
+      It catches what answering alone does not: a read-only or full volume, or an object store that lists but refuses writes.
+      It only runs when you press the button.
+    </p>
+    <form method="post" action="{% url 'storage_health' %}">
+      {% csrf_token %}
+      <input type="hidden" name="sample" value="{{ sample_size }}">
+      <button type="submit" class="run">Run write test</button>
+    </form>
+    {% if write_results is not None %}
+      <div class="scroll-x">
+      <table class="status">
+        <tr>
+          <th>Backend</th>
+          <th>Result</th>
+          <th class="num">Write</th>
+          <th class="num">Read back</th>
+          <th class="num">Delete</th>
+        </tr>
+        {% for r in write_results %}
+          <tr>
+            <td><strong>{{ r.label }}</strong></td>
+            <td>
+              {% if r.ok %}
+                <span class="status-badge ok">PASSED</span>
+              {% else %}
+                <span class="status-badge fail">FAILED</span>{% if r.step %} at {{ r.step }}{% endif %}
+                <div class="error-text">{{ r.error }}</div>
+              {% endif %}
+            </td>
+            <td class="num">{% if r.write_ms is not None %}{{ r.write_ms }} ms{% else %}—{% endif %}</td>
+            <td class="num">{% if r.read_ms is not None %}{{ r.read_ms }} ms{% else %}—{% endif %}</td>
+            <td class="num">{% if r.delete_ms is not None %}{{ r.delete_ms }} ms{% else %}—{% endif %}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5">No backend to test.</td></tr>
+        {% endfor %}
+      </table>
+      </div>
+    {% endif %}
+  </div>
+
+  {# ---------------- Recent documents ---------------- #}
+  <div class="status-section">
+    <h2>📄 Recent documents</h2>
+    {% if sample %}
+      <p class="sub">
+        The newest {{ sample.per_field }} document{{ sample.per_field|pluralize }} in each file field, checked for a copy on each backend that answers.
+        Documents are named by row and by the tag log lines use, never by file name.
+        <a href="{% url 'storage_health' %}?sample={{ more_sample }}">Check {{ more_sample }} per field</a>
+        &middot; <a href="{% url 'storage_health' %}?sample=0">skip this check</a>
+      </p>
+      <div class="stat-grid">
+        {% for state, count in sample.states.items %}
+          <div class="stat-card{% if count and state != 'safe' %} stat-alert{% endif %}">
+            <div class="value">{{ count }}</div>
+            <div class="label">{{ state }}</div>
+          </div>
+        {% endfor %}
+      </div>
+      <p class="sub">
+        <strong>safe</strong>: a copy off the app's disk &middot;
+        <strong>local only</strong>: copies only on the app's disk &middot;
+        <strong>missing</strong>: no backend this process reaches has it &middot;
+        <strong>unknown</strong>: no copy found, but a backend errored, did not answer (skipped), or was reached after the time limit (late) &middot;
+        <strong>not checked</strong>: the check's time limit came first.
+      </p>
+
+      <div class="scroll-x">
+      <table class="status">
+        <tr>
+          <th>File field</th>
+          <th>Encrypted</th>
+          <th class="num">Rows with a file</th>
+          <th class="num">Checked</th>
+          {% for b in backends %}<th class="num backend-col">On {{ b.label }}</th>{% endfor %}
+        </tr>
+        {% for f in sample.fields %}
+          <tr>
+            <td><code>{{ f.label }}</code></td>
+            <td>{{ f.encrypted|yesno:"yes,no" }}</td>
+            <td class="num">{{ f.files }}</td>
+            <td class="num">{{ f.sampled }}</td>
+            {% for label, present in f.present.items %}
+              <td class="num">{% if f.sampled %}{{ present }} / {{ f.sampled }}{% else %}—{% endif %}</td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </table>
+      </div>
+
+      {% if sample.flagged %}
+        <h3>Documents not confirmed on an off-disk backend</h3>
+        <div class="scroll-x">
+        <table class="status">
+          <tr>
+            <th>Row</th>
+            <th>File tag</th>
+            <th>State</th>
+            {% for b in backends %}<th class="backend-col">{{ b.label }}</th>{% endfor %}
+          </tr>
+          {% for d in sample.flagged %}
+            <tr>
+              <td>
+                <code>{{ d.field }}</code>
+                {% if d.admin_url %}<a href="{{ d.admin_url }}">{{ d.pk }}</a>{% else %}{{ d.pk }}{% endif %}
+              </td>
+              <td class="endpoint">{{ d.tag }}</td>
+              <td>{{ d.state }}</td>
+              {% for label, found in d.copies.items %}
+                <td class="copy-{{ found }}">{{ found }}</td>
+              {% empty %}
+                {% for b in backends %}<td class="copy-skipped">—</td>{% endfor %}
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </table>
+        </div>
+      {% endif %}
+    {% else %}
+      <p class="sub">
+        Skipped. <a href="{% url 'storage_health' %}">Check the newest documents</a> for their copies.
+      </p>
+    {% endif %}
+  </div>
+</body>
+</html>
