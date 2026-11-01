@@ -162,29 +162,23 @@ races the Temporal delay timer on the same paid fax (both would try to send
 it). The atomic `vendor_send_completed` claim in `fax_send_core` prevents an
 actual double transmission, but the correct configuration is one shared flag.
 
-Only four Temporal values are read from the environment:
-
 | Env var | Value | Where |
 | --- | --- | --- |
+| `TEMPORAL_ENABLED` and the `TEMPORAL_*_ENABLED` flows | `true` | `fhi-feature-flags` |
 | `TEMPORAL_HOSTNAME` | `temporal-frontend` (port 7233 implied; `host:port` also works) | `fhi-feature-flags` |
-| `TEMPORAL_TASK_QUEUE` | `fhi-fax` | `fhi-feature-flags` |
-| `TEMPORAL_PAYLOAD_KEY` | Fernet key(s) | `fight-health-insurance-secret` |
-| `TEMPORAL_RESEARCH_PAYLOAD_KEY` | Fernet key(s) | `fight-health-insurance-secret` |
+| `TEMPORAL_TASK_QUEUE` | `fhi-fax` | `fhi-feature-flags` (and `worker.yaml`) |
+| `TEMPORAL_NAMESPACE` | `default` | settings default; pinned in both worker manifests |
+| `TEMPORAL_PAYLOAD_KEY` / `TEMPORAL_RESEARCH_PAYLOAD_KEY` | Fernet key(s) | `fight-health-insurance-secret` |
 
-Plus the switches (`TEMPORAL_ENABLED` and the `TEMPORAL_*_ENABLED` flows), all
-in `fhi-feature-flags`. The namespaces (`default`, `fhi-research`), the other
-task queues (`fhi-appeals`, `fhi-chat-policy`, `fhi-plan-documents`), the UI
-upstream, TLS and the activity pool size are fixed in `settings.py`; the
-old `TEMPORAL_HOST`, `TEMPORAL_NAMESPACE`, `TEMPORAL_*_TASK_QUEUE`,
-`TEMPORAL_RESEARCH_NAMESPACE`, `TEMPORAL_TLS` and
-`TEMPORAL_MAX_ACTIVITY_WORKERS` env vars are ignored. The
-`TEMPORAL_FRONTEND_*` / `TEMPORAL_WEB_*` variables in a pod's environment are
-Kubernetes service links; nothing reads them.
+`TEMPORAL_HOST`, the older name for the address, is still read when
+`TEMPORAL_HOSTNAME` is unset. The `TEMPORAL_FRONTEND_*` / `TEMPORAL_WEB_*`
+variables in a pod's environment are Kubernetes service links; nothing reads
+them.
 
-The in-cluster frontend is plaintext. To talk TLS (or mTLS) to a different
-cluster, set `TEMPORAL_TLS`, `TEMPORAL_CLIENT_CERT_PATH` and
-`TEMPORAL_CLIENT_KEY_PATH` in a configuration class in `settings.py` — with
-only one of the two paths set, the client silently falls back to plain TLS.
+`TEMPORAL_TLS=true` enables (server-side) TLS to the cluster. For **mTLS**,
+additionally set **both** `TEMPORAL_CLIENT_CERT_PATH` and
+`TEMPORAL_CLIENT_KEY_PATH` — if either is missing the client silently falls
+back to plain TLS.
 
 ## Pre-flight checklist (verify before flipping the flag)
 
@@ -396,8 +390,8 @@ is never on the chat path, so chat behaves the same with all of this off.
 
 | Setting | Default | Where |
 | --- | --- | --- |
-| `TEMPORAL_CHAT_POLICY_ENABLED` | on | `fhi-feature-flags`, next to the journey flags |
-| `TEMPORAL_CHAT_POLICY_TASK_QUEUE` | `fhi-chat-policy` | fixed in `settings.py` |
+| `TEMPORAL_CHAT_POLICY_ENABLED` | off (on in `fhi-feature-flags`) | `fhi-feature-flags`, next to the journey flags |
+| `TEMPORAL_CHAT_POLICY_TASK_QUEUE` | `fhi-chat-policy` | `appeal-worker.yaml` |
 
 - **Flag:** takes effect only with `TEMPORAL_ENABLED`, and does not need the
   journey flags.
@@ -452,9 +446,9 @@ the share page's 30-day reminders in place of the Ray email loop.
 
 | Setting | Default | Where |
 | --- | --- | --- |
-| `TEMPORAL_PLAN_DOCUMENTS_ENABLED` | on | `fhi-feature-flags`, next to the journey flags |
-| `TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE` | `fhi-plan-documents` | fixed in `settings.py` |
-| `TEMPORAL_RESEARCH_NAMESPACE` | `fhi-research` | fixed in `settings.py` |
+| `TEMPORAL_PLAN_DOCUMENTS_ENABLED` | off (on in `fhi-feature-flags`) | `fhi-feature-flags`, next to the journey flags |
+| `TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE` | `fhi-plan-documents` | `appeal-worker.yaml` |
+| `TEMPORAL_RESEARCH_NAMESPACE` | `fhi-research` | `appeal-worker.yaml`; the web pods use the settings default |
 | `TEMPORAL_RESEARCH_PAYLOAD_KEY` | unset | shared app secret; required for this flag |
 
 - **A namespace of their own:** these runs, the sweep Schedule and the

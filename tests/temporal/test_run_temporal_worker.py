@@ -350,18 +350,28 @@ def test_fax_worker_slots_match_the_thread_executor():
 
 
 def _worker_temporal_namespaces(tdir):
-    """The Temporal namespaces the workers use: the one both use, and the
-    research namespace the appeal worker hosts plan documents in. Both are
-    fixed in settings.py (no env var), so every pod agrees on them."""
-    from fighthealthinsurance.settings import Base
+    """The Temporal namespaces the worker manifests pin: the one both use,
+    and the research namespace the appeal worker hosts plan documents in."""
+    import re
 
-    assert Base.TEMPORAL_NAMESPACE != Base.TEMPORAL_RESEARCH_NAMESPACE
-    return {Base.TEMPORAL_NAMESPACE, Base.TEMPORAL_RESEARCH_NAMESPACE}
+    configured = set()
+    for name in ("worker.yaml", "appeal-worker.yaml"):
+        text = (tdir / name).read_text()
+        m = re.search(r'name: TEMPORAL_NAMESPACE\s*\n\s*value: "([^"]+)"', text)
+        assert m, f"{name} must pin TEMPORAL_NAMESPACE"
+        configured.add(m.group(1))
+    assert len(configured) == 1
+    research = re.search(
+        r'name: TEMPORAL_RESEARCH_NAMESPACE\s*\n\s*value: "([^"]+)"',
+        (tdir / "appeal-worker.yaml").read_text(),
+    )
+    assert research, "appeal-worker.yaml must pin TEMPORAL_RESEARCH_NAMESPACE"
+    return configured | {research.group(1)}
 
 
-# Per-pod role knobs a worker manifest may set; every other TEMPORAL_* value
-# comes from settings.py or the fhi-feature-flags ConfigMap.
-_WORKER_ROLE_ENV = {"TEMPORAL_WORKER", "TEMPORAL_WORKER_QUEUES", "TEMPORAL_METRICS_BIND"}
+# Flags and the host come from the shared fhi-feature-flags ConfigMap; a
+# worker manifest setting one itself would override it for that pod alone.
+_CONFIGMAP_OWNED_ENV = {"TEMPORAL_HOST", "TEMPORAL_HOSTNAME"}
 
 
 def _worker_container(name):
@@ -377,12 +387,15 @@ def _worker_container(name):
 
 
 @pytest.mark.parametrize("name", ["worker.yaml", "appeal-worker.yaml"])
-def test_worker_manifests_set_no_temporal_config_of_their_own(name):
-    """An explicit env entry would beat the shared ConfigMap, letting a worker
-    drift from the web pods on a flag, host or queue."""
+def test_worker_manifests_leave_flags_and_host_to_the_configmap(name):
     env = {e["name"] for e in _worker_container(name).get("env", [])}
-    own = {n for n in env if n.startswith("TEMPORAL_")} - _WORKER_ROLE_ENV
-    assert not own, f"{name} sets {sorted(own)}; use k8s/feature-flags.yaml"
+    owned = {
+        n
+        for n in env
+        if n in _CONFIGMAP_OWNED_ENV
+        or (n.startswith("TEMPORAL_") and n.endswith("_ENABLED"))
+    }
+    assert not owned, f"{name} sets {sorted(owned)}; use k8s/feature-flags.yaml"
 
 
 @pytest.mark.parametrize("name", ["worker.yaml", "appeal-worker.yaml"])
@@ -1110,12 +1123,23 @@ def test_sigterm_drains_the_policy_worker_too():
     assert calls == ["q-policy"]
 
 
-def test_the_chat_policy_queue_is_fixed_in_settings():
-    """Not read from the env, so the worker and a web pod running
-    ensure_temporal_schedules always name the same queue."""
-    from fighthealthinsurance.settings import Base
+def test_the_appeal_manifest_names_the_policy_queue_and_leaves_the_flag_off():
+    """Applying the manifest must not turn the policy on (the flag comes from
+    the app secrets), and its queue must match the settings default that a
+    web pod running ensure_temporal_schedules would use."""
+    import pathlib
+    import re
 
-    assert Base.TEMPORAL_CHAT_POLICY_TASK_QUEUE == "fhi-chat-policy"
+    root = pathlib.Path(__file__).resolve().parents[2]
+    text = (root / "k8s" / "temporal" / "appeal-worker.yaml").read_text()
+    m = re.search(
+        r'name: TEMPORAL_CHAT_POLICY_TASK_QUEUE\s*\n\s*value: "([^"]+)"', text
+    )
+    assert m, "appeal-worker.yaml must name the chat policy queue"
+    settings_src = (root / "fighthealthinsurance" / "settings.py").read_text()
+    default = re.search(r'"TEMPORAL_CHAT_POLICY_TASK_QUEUE", "([^"]+)"', settings_src)
+    assert default and m.group(1) == default.group(1)
+    assert not re.search(r"name: TEMPORAL_CHAT_POLICY_ENABLED\b", text)
 
 
 # --- The shared plan documents queue -------------------------------------------
@@ -1300,12 +1324,31 @@ def test_sigterm_drains_the_plan_documents_worker_too():
     assert calls == ["q-plan-docs"]
 
 
-def test_the_plan_documents_queue_and_namespace_are_fixed_in_settings():
-    from fighthealthinsurance.settings import Base
+def test_the_appeal_manifest_names_the_plan_documents_queue_and_leaves_the_flag_off():
+    import pathlib
+    import re
 
+    root = pathlib.Path(__file__).resolve().parents[2]
+    text = (root / "k8s" / "temporal" / "appeal-worker.yaml").read_text()
+    m = re.search(
+        r'name: TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE\s*\n\s*value: "([^"]+)"', text
+    )
+    assert m, "appeal-worker.yaml must name the plan documents queue"
+    settings_src = (root / "fighthealthinsurance" / "settings.py").read_text()
+    default = re.search(
+        r'"TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE", "([^"]+)"', settings_src
+    )
+    assert default and m.group(1) == default.group(1)
     # fhi-* so the queue alerts in worker-alerts.yaml cover it.
-    assert Base.TEMPORAL_PLAN_DOCUMENTS_TASK_QUEUE == "fhi-plan-documents"
-    assert Base.TEMPORAL_RESEARCH_NAMESPACE == "fhi-research"
+    assert m.group(1).startswith("fhi-")
+    assert not re.search(r"name: TEMPORAL_PLAN_DOCUMENTS_ENABLED\b", text)
+    assert not re.search(r"name: TEMPORAL_PAYLOAD_KEY\b", text)
+    assert not re.search(r"name: TEMPORAL_RESEARCH_PAYLOAD_KEY\b", text)
+    # The research namespace, pinned to the default the web pods use.
+    ns = re.search(r'name: TEMPORAL_RESEARCH_NAMESPACE\s*\n\s*value: "([^"]+)"', text)
+    assert ns, "appeal-worker.yaml must name the research namespace"
+    default_ns = re.search(r'"TEMPORAL_RESEARCH_NAMESPACE", "([^"]+)"', settings_src)
+    assert default_ns and ns.group(1) == default_ns.group(1) == "fhi-research"
 
 
 @pytest.mark.parametrize(

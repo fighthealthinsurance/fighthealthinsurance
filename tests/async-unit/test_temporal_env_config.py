@@ -1,10 +1,8 @@
-"""Temporal reads only its host, fax queue and payload keys from the env.
+"""TEMPORAL_HOSTNAME parsing and the fhi-feature-flags ConfigMap.
 
-Everything else Temporal needs (namespaces, the other task queues, TLS, the
-activity pool) is fixed in settings.py, and the on/off switches come from the
-fhi-feature-flags ConfigMap (k8s/feature-flags.yaml) every app pod loads.
-These pin both sides so a pod can't drift onto another namespace or queue
-because of a stray variable in a Secret.
+Production sets the Temporal host and the feature switches in
+k8s/feature-flags.yaml, which every app pod loads after its Secrets. These
+pin that each key there is something settings.py actually reads.
 """
 
 import re
@@ -19,13 +17,10 @@ REPO_DIR = Path(__file__).resolve().parent.parent.parent
 SETTINGS = REPO_DIR / "fighthealthinsurance" / "settings.py"
 FEATURE_FLAGS = REPO_DIR / "k8s" / "feature-flags.yaml"
 
-# The only TEMPORAL_* values (besides the *_ENABLED switches) settings.py may
-# read from the environment.
+# Non-flag values the ConfigMap carries (read by settings.py with os.getenv).
 _TEMPORAL_ENV_VALUES = {
     "TEMPORAL_HOSTNAME",
     "TEMPORAL_TASK_QUEUE",
-    "TEMPORAL_PAYLOAD_KEY",
-    "TEMPORAL_RESEARCH_PAYLOAD_KEY",
 }
 
 
@@ -49,21 +44,13 @@ def test_temporal_host_from_hostname(hostname, expected):
     assert _temporal_host(hostname) == expected
 
 
-def test_settings_reads_no_other_temporal_values_from_env():
-    """Only the four values and the TEMPORAL_*_ENABLED switches."""
-    read = set(
-        re.findall(r"os\.getenv\(\s*\"(TEMPORAL_[A-Z_]+)\"", SETTINGS.read_text())
-    )
-    unexpected = {
-        name
-        for name in read
-        if name not in _TEMPORAL_ENV_VALUES and not name.endswith("_ENABLED")
-    }
-    assert not unexpected, f"settings.py reads {sorted(unexpected)} from the env"
-
-
 def test_feature_flags_configmap_sets_the_temporal_host_by_hostname():
     assert _flags_configmap()["TEMPORAL_HOSTNAME"] == "temporal-frontend"
+
+
+@pytest.mark.parametrize("name", sorted(_TEMPORAL_ENV_VALUES))
+def test_feature_flags_configmap_values_are_read_by_settings(name):
+    assert re.search(rf'os\.getenv\(\s*"{name}"', SETTINGS.read_text())
 
 
 @pytest.mark.parametrize(

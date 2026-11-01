@@ -5,10 +5,10 @@
 # envFrom AFTER its secretRefs. For a key in more than one envFrom source the
 # last one wins, so these values win over any copy the Secrets still carry.
 #
-# Only the switches and the non-secret Temporal values live here. The payload
+# Only the switches and the non-secret Temporal address live here. The payload
 # keys (TEMPORAL_PAYLOAD_KEY, TEMPORAL_RESEARCH_PAYLOAD_KEY) and TYPESAFE_API_KEY
-# stay in the Secret. Namespaces and the other task queues are fixed in
-# settings.py and are not read from the environment at all.
+# stay in the Secret. The namespaces and the other task queues keep their
+# settings.py defaults; the worker manifests pin the ones they host.
 #
 # The k8s service links (TEMPORAL_FRONTEND_SERVICE_HOST, TEMPORAL_WEB_PORT,
 # ...) also show up in the environment; nothing reads them.
