@@ -292,6 +292,39 @@ class RegulatorEscalationReasonsTest(TestCase):
                 denial = _FakeDenial(state="", denial_text=text)
                 self.assertEqual(regulator_escalation_reasons(denial), [])
 
+    def test_more_ways_to_say_the_internal_appeals_are_done(self):
+        for text in (
+            "All available internal appeals have been exhausted.",
+            "Your second-level appeal has concluded; the decision is upheld.",
+            "We received and denied your second-level appeal.",
+        ):
+            with self.subTest(text=text):
+                denial = _FakeDenial(state="", denial_text=text)
+                self.assertTrue(regulator_escalation_reasons(denial))
+
+    def test_a_final_decision_at_this_level_is_not_the_end(self):
+        denial = _FakeDenial(
+            state="",
+            denial_text=(
+                "This is our final decision at this level. You may request a "
+                "second level appeal within 60 days."
+            ),
+        )
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_appeals_exhausted_in_a_rights_notice_is_not_a_reason(self):
+        denial = _FakeDenial(
+            state="",
+            denial_text="Once your internal appeals are exhausted, you may ask for an external review.",
+        )
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_not_considered_a_final_decision_is_negated(self):
+        denial = _FakeDenial(
+            state="", denial_text="This is not considered a final decision."
+        )
+        self.assertEqual(regulator_escalation_reasons(denial), [])
+
     def test_not_yet_a_final_decision_is_negated(self):
         denial = _FakeDenial(
             state="", denial_text="This is not yet a final decision."

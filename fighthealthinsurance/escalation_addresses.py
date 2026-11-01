@@ -258,8 +258,12 @@ _APPEAL_UPHELD_RE = re.compile(
 # process.
 _INTERNAL_APPEALS_DONE_RE = re.compile(
     r"("
+    # "Our final decision at this level" is the last word of one level
+    # while the letter offers the next, so it does not count.
     r"\bfinal (adverse|internal)? ?(benefit )?(determination|decision)\b"
+    r"(?!\s+(at|for|on|of)\s+(this|the\s+first|the\s+current)\s+level\b)"
     r"|\bexhausted\b.{0,40}\bappeal"
+    r"|\bappeals?\b[^.;:!?\n]{0,40}\bexhausted\b"
     r")",
     re.IGNORECASE | re.UNICODE | re.DOTALL,
 )
@@ -281,7 +285,7 @@ _DECISION_RE = re.compile(
 )
 _PENDING_OR_RIGHTS_RE = re.compile(
     r"\b(right to|you can|to request|request (a|an)|to file|to submit"
-    r"|under review|being reviewed|pending|in progress|received|will"
+    r"|under review|being reviewed|pending|in progress|will"
     r"|are reviewing|is reviewing)\b",
     re.IGNORECASE,
 )
@@ -291,16 +295,20 @@ _PENDING_OR_RIGHTS_RE = re.compile(
 # appeals". Any of these in the clause before the match disqualifies it.
 _CONDITIONAL_CLAUSE_RE = re.compile(
     r"\b(if|should|unless|in the event|may|might|would|will|could"
-    r"|once you|when you|after you|until you)\b",
+    r"|once|(when|after|until)\s+(you|your))\b",
     re.IGNORECASE,
 )
 _CLAUSE_BREAK_RE = re.compile(r"[.;:!?\n]")
+# A whole sentence, for reading a later-level appeal with its decision:
+# "Your second-level appeal has concluded; the decision is upheld."
+_SENTENCE_BREAK_RE = re.compile(r"[.!?\n]")
 # A negation just before the match: "this is not a final decision", "we
 # cannot affirm our original decision", "we can't uphold the denial".
-# Up to two small words may sit between: "this is not yet a final decision".
+# A few small words may sit between: "this is not yet a final decision",
+# "this is not considered a final decision".
 _NEGATED_RE = re.compile(
     r"\b(not|never|no|cannot|\w+n['\u2019]t)\s+"
-    r"(?:(?:a|an|the|our|its|this|that|yet)\s+){0,2}$",
+    r"(?:(?:a|an|the|our|its|this|that|yet|be|been|considered|deemed)\s+){0,3}$",
     re.IGNORECASE,
 )
 # How far back a clause is read for a conditional. Longer than any clause
@@ -332,10 +340,13 @@ def _later_level_decided(denial_text: str) -> bool:
     appeal (see _LATER_LEVEL_RE)."""
     for match in _own_voice_matches(_LATER_LEVEL_RE, denial_text):
         start = max(
-            (m.end() for m in _CLAUSE_BREAK_RE.finditer(denial_text, 0, match.start())),
+            (
+                m.end()
+                for m in _SENTENCE_BREAK_RE.finditer(denial_text, 0, match.start())
+            ),
             default=0,
         )
-        end_break = _CLAUSE_BREAK_RE.search(denial_text, match.end())
+        end_break = _SENTENCE_BREAK_RE.search(denial_text, match.end())
         end = end_break.start() if end_break else len(denial_text)
         sentence = denial_text[start:end]
         if _DECISION_RE.search(sentence) and not _PENDING_OR_RIGHTS_RE.search(sentence):
