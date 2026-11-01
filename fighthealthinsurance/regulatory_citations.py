@@ -629,14 +629,17 @@ def get_regulatory_citation_context(
         )
         if not keys and self_insured is None:
             # No plan-type evidence at all: 147.136 binds group health plans
-            # and health insurers, not Medicare, Medicaid or VA, so the
-            # external review claim waits on the letter.
+            # (non-federal governmental plans included; self-insured ones use
+            # the federal process under (d)(4)) and health insurers, not
+            # Medicare, Medicaid or VA, so the external review claim waits on
+            # the letter.
             caveat += (
                 " The plan type is not known: the ACA appeal and external "
-                "review rules apply to private health plans and insurers, not "
-                "Medicare, Medicaid or VA coverage, which have their own appeal "
-                "rights, so claim them only if the denial letter shows a "
-                "private plan."
+                "review rules apply to private health plans and insurers and "
+                "to state or local government employer plans, not Medicare, "
+                "Medicaid or VA coverage, which have their own appeal rights, "
+                "so claim them only if the denial letter shows a private plan "
+                "or a state or local government employer plan."
             )
 
     header = (

@@ -184,7 +184,9 @@ class TestPublicProgramFiltering(unittest.TestCase):
         block = get_regulatory_citation_context("MA")
         assert block is not None
         self.assertIn(
-            "claim them only if the denial letter shows a private plan", block
+            "claim them only if the denial letter shows a private plan or a "
+            "state or local government employer plan",
+            block,
         )
         self.assertIn("not Medicare, Medicaid or VA coverage", block)
 
@@ -223,6 +225,8 @@ class TestPublicProgramFiltering(unittest.TestCase):
         block = get_regulatory_citation_context("MA")
         assert block is not None
         self.assertIn("apply to private health plans and insurers", block)
+        self.assertIn("to state or local government employer plans", block)
+        self.assertIn("not Medicare, Medicaid or VA coverage", block)
         self.assertIn("which have their own appeal rights", block)
 
     def test_public_and_private_coverage_together_keeps_the_private_rules(self):
