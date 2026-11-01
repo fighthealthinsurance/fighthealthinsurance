@@ -20,9 +20,41 @@ REAL_PMID = "33301246"
 FAKE_PMID = "99999999"
 
 
-def _registry(seen: List[httpx.Request], delay: float = 0.0, fail: bool = False):
+# eCFR's structure of title 45 for part 147, cut down to what the check reads.
+TITLE_45_PART_147 = {
+    "identifier": "45",
+    "type": "title",
+    "children": [
+        {
+            "identifier": "A",
+            "type": "subtitle",
+            "children": [
+                {
+                    "identifier": "147",
+                    "type": "part",
+                    "children": [
+                        {"identifier": "147.104", "type": "section"},
+                        {"identifier": "147.136", "type": "section"},
+                    ],
+                }
+            ],
+        }
+    ],
+}
+
+BOT_CHECK_PAGE = "<html><body>Please confirm you are a human</body></html>"
+
+
+def _registry(
+    seen: List[httpx.Request],
+    delay: float = 0.0,
+    fail: bool = False,
+    ecfr: str = "real",
+):
     """A fake doi.org / NCBI / eCFR that knows REAL_DOI, REAL_PMID and
-    45 CFR 147.136, and records every request."""
+    45 CFR 147.136, and records every request. ``ecfr`` swaps eCFR's real
+    answers for a bot-check redirect ("redirect") or a 200 challenge page
+    ("challenge")."""
 
     async def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
@@ -34,21 +66,33 @@ def _registry(seen: List[httpx.Request], delay: float = 0.0, fail: bool = False)
         if "doi.org/api/handles/" in url:
             doi = url.split("/api/handles/", 1)[1]
             if doi.lower() == REAL_DOI.lower():
-                return httpx.Response(200, json={"responseCode": 1})
-            return httpx.Response(404, json={"responseCode": 100})
+                return httpx.Response(200, json={"responseCode": 1, "handle": doi})
+            return httpx.Response(404, json={"responseCode": 100, "handle": doi})
         if "esummary.fcgi" in url:
             ids = request.url.params["id"].split(",")
             result: dict = {"uids": ids}
             for pmid in ids:
                 if pmid == REAL_PMID:
-                    result[pmid] = {"uid": pmid}
+                    result[pmid] = {
+                        "uid": pmid,
+                        "title": "Safety and Efficacy of the BNT162b2 Vaccine.",
+                        "source": "N Engl J Med",
+                    }
                 else:
                     result[pmid] = {"uid": pmid, "error": "cannot get document summary"}
             return httpx.Response(200, json={"result": result})
         if "ecfr.gov" in url:
-            if "title-45" in url and request.url.params.get("section") == "147.136":
-                return httpx.Response(302, headers={"location": "https://x"})
-            return httpx.Response(404)
+            if ecfr == "redirect":
+                return httpx.Response(
+                    302, headers={"location": "https://www.ecfr.gov/bot-check"}
+                )
+            if ecfr == "challenge":
+                return httpx.Response(
+                    200, text=BOT_CHECK_PAGE, headers={"content-type": "text/html"}
+                )
+            if "title-45.json" in url and request.url.params.get("part") == "147":
+                return httpx.Response(200, json=TITLE_45_PART_147)
+            return httpx.Response(404, json={})
         return httpx.Response(500)
 
     return handler
@@ -148,6 +192,102 @@ class TestCheckIdentifiers:
             elapsed = loop.time() - started
         assert statuses[("doi", REAL_DOI.lower())] == cv.UNCHECKED
         assert elapsed < 2.0
+
+    async def _cfr(self, citation, **kw):
+        seen: List[httpx.Request] = []
+        async with _client(seen, **kw) as client:
+            return await cv.check_identifiers(
+                cv.find_identifiers(citation), client=client
+            )
+
+    async def test_a_genuine_section_is_found(self):
+        statuses = await self._cfr("45 CFR 147.136")
+        assert statuses == {("cfr", "45/147/147.136"): cv.FOUND}
+
+    async def test_a_genuine_part_is_found(self):
+        statuses = await self._cfr("45 CFR Part 147")
+        assert statuses == {("cfr", "45/147/"): cv.FOUND}
+
+    async def test_a_section_the_part_does_not_list_is_missing(self):
+        statuses = await self._cfr("45 CFR 147.999")
+        assert statuses == {("cfr", "45/147/147.999"): cv.MISSING}
+
+    async def test_a_genuine_404_is_missing(self):
+        statuses = await self._cfr("45 CFR 999.1")
+        assert statuses == {("cfr", "45/999/999.1"): cv.MISSING}
+
+    async def test_a_bot_check_redirect_is_unchecked(self):
+        statuses = await self._cfr("45 CFR 147.136", ecfr="redirect")
+        assert statuses == {("cfr", "45/147/147.136"): cv.UNCHECKED}
+
+    async def test_a_challenge_page_is_unchecked(self):
+        statuses = await self._cfr("45 CFR 147.999", ecfr="challenge")
+        assert statuses == {("cfr", "45/147/147.999"): cv.UNCHECKED}
+
+    async def test_ecfr_json_of_another_shape_is_unchecked(self):
+        async def handler(request):
+            return httpx.Response(200, json={"error": "something else"})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            statuses = await cv.check_identifiers(
+                cv.find_identifiers("45 CFR 147.136"), client=c
+            )
+        assert statuses == {("cfr", "45/147/147.136"): cv.UNCHECKED}
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            httpx.Response(302, headers={"location": "https://doi.org/login"}),
+            httpx.Response(
+                200, text=BOT_CHECK_PAGE, headers={"content-type": "text/html"}
+            ),
+            httpx.Response(200, json={"responseCode": 1, "handle": "10.9999/other"}),
+            httpx.Response(200, json={"responseCode": 100}),
+            httpx.Response(503, json={"responseCode": 100}),
+        ],
+    )
+    async def test_an_unexpected_doi_answer_is_unchecked(self, response):
+        async def handler(request):
+            return response
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            statuses = await cv.check_identifiers(
+                cv.find_identifiers(f"doi:{FAKE_DOI}"), client=c
+            )
+        assert statuses == {("doi", FAKE_DOI.lower()): cv.UNCHECKED}
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            httpx.Response(302, headers={"location": "https://www.ncbi.nlm.nih.gov/"}),
+            httpx.Response(
+                200, text=BOT_CHECK_PAGE, headers={"content-type": "text/html"}
+            ),
+            httpx.Response(200, json={"esearchresult": {}}),
+            # A record with neither title nor source is not a summary.
+            httpx.Response(
+                200,
+                json={"result": {"uids": [REAL_PMID], REAL_PMID: {"uid": REAL_PMID}}},
+            ),
+        ],
+    )
+    async def test_an_unexpected_ncbi_answer_is_unchecked(self, response):
+        async def handler(request):
+            return response
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            statuses = await cv.check_identifiers(
+                cv.find_identifiers(f"PMID {REAL_PMID}"), client=c
+            )
+        assert statuses == {("pmid", REAL_PMID): cv.UNCHECKED}
+
+    async def test_redirects_are_never_followed(self):
+        seen: List[httpx.Request] = []
+        async with _client(seen, ecfr="redirect") as client:
+            await cv.check_identifiers(
+                cv.find_identifiers("45 CFR 147.136"), client=client
+            )
+        assert len(seen) == 1
 
     async def test_us_code_is_checked_for_form_only(self):
         seen: List[httpx.Request] = []

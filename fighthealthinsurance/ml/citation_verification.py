@@ -7,8 +7,9 @@ each one, and asks the public registry whether it exists:
 
 * DOIs: the DOI handle service (doi.org/api/handles).
 * PubMed IDs: NCBI E-utilities esummary, the service the app already uses.
-* CFR sections: the eCFR renderer, which answers 404 for a part or section
-  that does not exist.
+* CFR sections: eCFR's versioner API, whose structure of a title's part
+  lists every section in it, and which answers 404 for a part or title that
+  does not exist.
 
 U.S. Code sections are checked for form only: there is no simple public
 lookup, and a well-known statute cited from memory is usually right.
@@ -16,7 +17,10 @@ lookup, and a well-known statute cited from memory is usually right.
 Only the identifiers leave the app, never the citation text, the denial or
 anything about the person. Every check is time-boxed: a registry that is slow
 or down never holds up a letter, and a citation it could not check is kept,
-labelled as unverified, rather than dropped.
+labelled as unverified, rather than dropped. The same goes for an answer of
+an unexpected kind: a redirect (to a bot check, a login page, anywhere), a
+page that is not the JSON the registry documents, or JSON of another shape.
+Only an answer in the registry's documented form counts as found or missing.
 
 What happens to a citation:
 
@@ -67,13 +71,13 @@ MAX_CONCURRENT_LOOKUPS = 5
 
 # Registry answers are cached by identifier. Existence is stable; absence is
 # kept shorter in case a new DOI or PubMed record is still being indexed.
-_CACHE_PREFIX = "citecheck:v1:"
+_CACHE_PREFIX = "citecheck:v2:"
 _CACHE_FOUND_SECONDS = 30 * 24 * 3600
 _CACHE_MISSING_SECONDS = 7 * 24 * 3600
 
 _DOI_HANDLE_URL = "https://doi.org/api/handles/"
 _ESUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
-_ECFR_RENDERER_URL = "https://www.ecfr.gov/api/renderer/v1/content/enhanced/current/"
+_ECFR_STRUCTURE_URL = "https://www.ecfr.gov/api/versioner/v1/structure/current/"
 
 FOUND = "found"
 MISSING = "missing"
@@ -199,18 +203,38 @@ async def _cache_set(ident: Identifier, status: str) -> None:
         pass
 
 
+def _json_body(resp: httpx.Response) -> Optional[object]:
+    """The parsed body of a JSON answer, or None for anything else: a
+    redirect, an HTML page (a bot check or challenge), or a body that does
+    not parse. Redirects are never followed."""
+    if resp.is_redirect or not (200 <= resp.status_code < 500):
+        return None
+    content_type = resp.headers.get("content-type", "").lower()
+    if not content_type.startswith("application/json"):
+        return None
+    try:
+        body: object = resp.json()
+    except Exception:
+        return None
+    return body
+
+
 async def _check_doi(client: httpx.AsyncClient, doi: str) -> str:
-    """FOUND when the handle service resolves the DOI, MISSING when it says
-    there is no such handle (responseCode 100), UNCHECKED otherwise."""
+    """FOUND when the handle service resolves this DOI (responseCode 1 for
+    the same handle), MISSING when it says there is no such handle
+    (responseCode 100, with a 404), UNCHECKED for any other answer."""
     try:
         resp = await client.get(_DOI_HANDLE_URL + quote(doi, safe="/"))
-        data = resp.json()
     except Exception:
         return UNCHECKED
-    code = data.get("responseCode") if isinstance(data, dict) else None
-    if code == 1:
+    data = _json_body(resp)
+    if not isinstance(data, dict):
+        return UNCHECKED
+    code = data.get("responseCode")
+    handle = str(data.get("handle", "")).lower()
+    if code == 1 and resp.status_code == 200 and handle == doi.lower():
         return FOUND
-    if code == 100:
+    if code == 100 and resp.status_code == 404:
         return MISSING
     return UNCHECKED
 
@@ -231,39 +255,81 @@ async def _check_pmids(client: httpx.AsyncClient, pmids: List[str]) -> Dict[str,
                 "retmode": "json",
             },
         )
-        result = resp.json().get("result", {})
     except Exception:
         return out
-    if not isinstance(result, dict):
+    data = _json_body(resp)
+    if resp.status_code != 200 or not isinstance(data, dict):
+        return out
+    result = data.get("result")
+    if not isinstance(result, dict) or not isinstance(result.get("uids"), list):
         return out
     for pmid in pmids:
         record = result.get(pmid)
-        if not isinstance(record, dict):
+        if not isinstance(record, dict) or record.get("uid") != pmid:
             continue
         if record.get("error"):
             out[pmid] = MISSING
-        elif record.get("uid") == pmid:
+        elif record.get("title") or record.get("source"):
+            # A real summary carries the article's title and journal.
             out[pmid] = FOUND
     return out
 
 
+def _structure_nodes(node: object):
+    """Every node of an eCFR structure tree, depth first."""
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, dict):
+            yield current
+            children = current.get("children")
+            if isinstance(children, list):
+                stack.extend(children)
+
+
 async def _check_cfr(client: httpx.AsyncClient, value: str) -> str:
-    """FOUND when eCFR serves the part (and section), MISSING on 404. The
-    renderer answers an existing section with a redirect to its full path,
-    which is not followed."""
+    """Look the part up in eCFR's versioner API (the structure of
+    ``title-N`` for ``part=P`` on the current date).
+
+    * 200 with the title's structure, holding the part: FOUND for a part,
+      and for a section that the part lists; MISSING for a section the part
+      does not list (the part's structure is the full list of its sections).
+    * 404 with a JSON body: the title or part does not exist, MISSING.
+    * Anything else (a redirect, a non-JSON page such as a bot check, JSON of
+      another shape, a server error): UNCHECKED.
+    """
     title, part, section = value.split("/", 2)
-    params = {"part": part}
-    if section:
-        params["section"] = section
     try:
-        resp = await client.get(f"{_ECFR_RENDERER_URL}title-{title}", params=params)
+        resp = await client.get(
+            f"{_ECFR_STRUCTURE_URL}title-{title}.json", params={"part": part}
+        )
     except Exception:
         return UNCHECKED
-    if resp.status_code < 400:
-        return FOUND
+    data = _json_body(resp)
+    if data is None:
+        return UNCHECKED
     if resp.status_code == 404:
         return MISSING
-    return UNCHECKED
+    if resp.status_code != 200 or not isinstance(data, dict):
+        return UNCHECKED
+    if data.get("type") != "title" or str(data.get("identifier")) != title:
+        return UNCHECKED
+    part_node = next(
+        (
+            n
+            for n in _structure_nodes(data)
+            if n.get("type") == "part" and str(n.get("identifier")) == part
+        ),
+        None,
+    )
+    if part_node is None:
+        return UNCHECKED
+    if not section:
+        return FOUND
+    for n in _structure_nodes(part_node):
+        if n.get("type") == "section" and str(n.get("identifier")) == section:
+            return FOUND
+    return MISSING
 
 
 async def check_identifiers(
