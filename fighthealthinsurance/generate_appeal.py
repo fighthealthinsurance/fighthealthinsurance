@@ -3604,7 +3604,7 @@ class AppealGenerator(object):
             # Otherwise just put in as is.
             initial_appeals.append(static_appeal)
 
-        logger.debug(f"Initial appeal {initial_appeals}")
+        logger.debug(f"Initial appeals: {len(initial_appeals)}")
         # Executor map wants a list for each parameter.
 
         # Context shedding re-renders the sectioned prompt too when any call
@@ -3628,7 +3628,7 @@ class AppealGenerator(object):
             calls,
             stage: str = "",
         ) -> Iterator[GeneratedAppeal]:
-            logger.debug(f"Calling models: {calls}")
+            logger.debug(f"Calling models: {[c.get('model_name') for c in calls]}")
             # Bind model_name AND context_level to each future so we can recover
             # them after the per-call iterator collapses results to (kind, text)
             # pairs. The submit timestamps and prompt size ride along so the
