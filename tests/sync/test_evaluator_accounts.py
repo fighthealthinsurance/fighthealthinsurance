@@ -100,14 +100,32 @@ class EvaluatorAccountTest(TestCase):
     def test_concurrent_account_creation_shows_a_form_error(self):
         self.client.force_login(self.staff)
 
+        def lose_account_race():
+            User.objects.create_user(
+                username="judge@example.com",
+                email="judge@example.com",
+                password=self.password,
+            )
+            raise IntegrityError
+
         with patch(
             "fighthealthinsurance.evaluator_accounts.EvaluatorAccountForm.save",
-            side_effect=IntegrityError,
+            side_effect=lose_account_race,
         ):
             response = self._create_account()
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "already exists")
+
+    def test_unrelated_account_integrity_errors_are_not_hidden(self):
+        self.client.force_login(self.staff)
+
+        with patch(
+            "fighthealthinsurance.evaluator_accounts.EvaluatorAccountForm.save",
+            side_effect=IntegrityError,
+        ):
+            with self.assertRaises(IntegrityError):
+                self._create_account()
 
     def test_mismatched_passwords_create_no_account(self):
         self.client.force_login(self.staff)
@@ -140,7 +158,7 @@ class EvaluatorAccountTest(TestCase):
 
         response = self.client.post(
             self.login_url,
-            {"username": user.email.upper(), "password": self.password},
+            {"username": "ＪＵＤＧＥ@example.com", "password": self.password},
         )
 
         self.assertRedirects(response, reverse("chooser"))
@@ -149,15 +167,16 @@ class EvaluatorAccountTest(TestCase):
     def test_failed_logins_are_throttled_across_clients(self):
         user = self._evaluator()
 
-        for attempt in range(EVALUATOR_LOGIN_ACCOUNT_LIMIT):
+        for attempt in range(EVALUATOR_LOGIN_ACCOUNT_LIMIT + 1):
             with self.subTest(attempt=attempt):
+                username = (
+                    user.email if attempt % 2 == 0 else "ＪＵＤＧＥ@example.com"
+                )
                 response = Client().post(
                     self.login_url,
-                    {"username": user.email, "password": "wrong-password"},
+                    {"username": username, "password": "wrong-password"},
                 )
-                expected = (
-                    429 if attempt == EVALUATOR_LOGIN_ACCOUNT_LIMIT - 1 else 200
-                )
+                expected = 429 if attempt == EVALUATOR_LOGIN_ACCOUNT_LIMIT else 200
                 self.assertEqual(response.status_code, expected)
 
         response = Client().post(

@@ -20,6 +20,7 @@ from django.test import override_settings
 from prometheus_client import REGISTRY
 
 from fighthealthinsurance import chooser_tasks
+from fighthealthinsurance.chooser_practice_areas import practice_area_text_matches
 from fighthealthinsurance.chooser_tasks import (
     _external_backends_without_fresh_tasks,
     _forced_arena_models,
@@ -736,6 +737,14 @@ class TestAReplyThatCantBeUsedGoesToTheNextWriter:
         assert silent.calls == 1 + 2
 
 
+def test_womens_health_matching_handles_ob_gyn_but_not_cervical_spine():
+    assert practice_area_text_matches("womens-health", "OB-GYN visit")
+    assert practice_area_text_matches("womens-health", "Cervical cancer screening")
+    assert not practice_area_text_matches(
+        "womens-health", "MRI for cervical spine radiculopathy"
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
 class TestPracticeAreaChatGeneration:
@@ -767,7 +776,12 @@ class TestPracticeAreaChatGeneration:
             "ASSISTANT: I can help you appeal that denial.\n"
             "USER: What heart test records do I need to get started?"
         )
-        off_area = _writer("orthopedic-writer", CONVERSATION_TEXT)
+        off_area = _writer(
+            "orthopedic-writer",
+            "USER: My knee MRI claim was denied by my insurer.\n"
+            "ASSISTANT: I can help you appeal that denial.\n"
+            "USER: Could a heart specialist help?",
+        )
         writer = _writer("cardio-writer", cardiology_conversation)
         writer._infer_no_context = AsyncMock(return_value=cardiology_conversation)
 

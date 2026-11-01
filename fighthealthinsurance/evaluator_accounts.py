@@ -1,4 +1,5 @@
 import datetime
+import unicodedata
 from typing import Any
 
 from django import forms
@@ -34,46 +35,22 @@ def is_evaluator(user: Any) -> bool:
 
 EVALUATOR_LOGIN_WINDOW = datetime.timedelta(minutes=15)
 EVALUATOR_LOGIN_ACCOUNT_LIMIT = 5
-EVALUATOR_LOGIN_ADDRESS_LIMIT = 30
 EVALUATOR_LOGIN_THROTTLED_MESSAGE = (
     "Too many failed login attempts. Please try again in 15 minutes."
 )
 
 
-def _login_throttle_buckets(request, username: str):
-    from fighthealthinsurance import client_network
+def _normalize_evaluator_username(username: str) -> str:
+    return unicodedata.normalize("NFKC", username).strip().lower()
 
-    normalized = username.strip().lower()
+
+def _login_throttle_buckets(username: str):
+    normalized = _normalize_evaluator_username(username)
     account_key = salted_hmac("evaluator-login-account", normalized).hexdigest()
-    raw_address = client_network.cf_ip_from_meta(request.META) or request.META.get(
-        "REMOTE_ADDR", ""
-    )
-    network = client_network.prefix_of(raw_address, v4_bits=32, v6_bits=64)
-    address_key = client_network.period_key(b"evaluator-login-address", "all", network)
-    return (
-        (account_key, EVALUATOR_LOGIN_ACCOUNT_LIMIT),
-        (address_key, EVALUATOR_LOGIN_ADDRESS_LIMIT),
-    )
+    return ((account_key, EVALUATOR_LOGIN_ACCOUNT_LIMIT),)
 
 
-def _login_attempt_allowed(buckets) -> bool:
-    from fighthealthinsurance.models import EvaluatorLoginThrottle
-
-    cutoff = timezone.now() - EVALUATOR_LOGIN_WINDOW
-    for digest, limit in buckets:
-        failures = (
-            EvaluatorLoginThrottle.objects.filter(
-                digest=digest, window_started_at__gte=cutoff
-            )
-            .values_list("failures", flat=True)
-            .first()
-        )
-        if failures is not None and failures >= limit:
-            return False
-    return True
-
-
-def _record_login_failure(buckets) -> bool:
+def _reserve_login_attempt(buckets) -> bool:
     from fighthealthinsurance.models import EvaluatorLoginThrottle
 
     now = timezone.now()
@@ -89,18 +66,13 @@ def _record_login_failure(buckets) -> bool:
             if row.window_started_at < cutoff:
                 row.failures = 0
                 row.window_started_at = now
+            if row.failures >= limit:
+                allowed = False
+                continue
             row.failures += 1
             row.last_failure_at = now
             row.save(update_fields=["failures", "window_started_at", "last_failure_at"])
-            if row.failures >= limit:
-                allowed = False
     return allowed
-
-
-def _clear_account_login_failures(buckets) -> None:
-    from fighthealthinsurance.models import EvaluatorLoginThrottle
-
-    EvaluatorLoginThrottle.objects.filter(digest=buckets[0][0]).delete()
 
 
 class EvaluatorAccountForm(forms.Form):
@@ -115,7 +87,7 @@ class EvaluatorAccountForm(forms.Form):
     )
 
     def clean_email(self) -> str:
-        email = self.cleaned_data["email"].strip().lower()
+        email = _normalize_evaluator_username(self.cleaned_data["email"])
         if len(email) > 150:
             raise ValidationError("Use an email address of 150 characters or fewer.")
         if (
@@ -159,7 +131,7 @@ class EvaluatorLoginForm(AuthenticationForm):
         self.fields["username"].label = "Email address"
 
     def clean_username(self) -> str:
-        return str(self.cleaned_data["username"].strip().lower())
+        return _normalize_evaluator_username(self.cleaned_data["username"])
 
     def confirm_login_allowed(self, user) -> None:
         super().confirm_login_allowed(user)
@@ -183,6 +155,10 @@ class AddEvaluatorAccountView(generic.FormView):
         try:
             user = form.save()
         except IntegrityError:
+            if not User.objects.filter(
+                username__iexact=form.cleaned_data["email"]
+            ).exists():
+                raise
             form.add_error("email", "An account with this email already exists.")
             return self.form_invalid(form)
         messages.success(
@@ -209,11 +185,11 @@ class EvaluatorLoginView(generic.FormView):
         return kwargs
 
     def post(self, request, *args, **kwargs):
-        self._throttle_buckets = _login_throttle_buckets(
-            request, request.POST.get("username", "")
-        )
-        if not _login_attempt_allowed(self._throttle_buckets):
-            return self._throttled_response()
+        username = request.POST.get("username", "")
+        if username and request.POST.get("password"):
+            buckets = _login_throttle_buckets(username)
+            if not _reserve_login_attempt(buckets):
+                return self._throttled_response()
         return super().post(request, *args, **kwargs)
 
     def _throttled_response(self):
@@ -227,13 +203,6 @@ class EvaluatorLoginView(generic.FormView):
             status=429,
         )
 
-    def form_invalid(self, form):
-        if self.request.POST.get("username") and self.request.POST.get("password"):
-            if not _record_login_failure(self._throttle_buckets):
-                return self._throttled_response()
-        return super().form_invalid(form)
-
     def form_valid(self, form):
-        _clear_account_login_failures(self._throttle_buckets)
         login(self.request, form.get_user())
         return redirect("chooser")

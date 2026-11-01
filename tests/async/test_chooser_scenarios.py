@@ -589,7 +589,7 @@ class TestSeededScenario:
             "Insurance Company: Fictional Mutual\nDenial Reason: not medically necessary.\n"
         )
         off_area = _writer(
-            "Procedure: Knee arthroscopy\nDiagnosis: Torn meniscus\n"
+            "Procedure: Knee arthroscopy\nDiagnosis: heart failure\n"
             "Insurance Company: Fictional Mutual\nDenial Reason: experimental.\n"
         )
         model = _writer(scenario)

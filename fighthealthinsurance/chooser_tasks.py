@@ -2126,8 +2126,9 @@ async def _generate_appeal_candidates(task: ChooserTask):
                     f"Response started: {preview!r}"
                 )
                 continue
-            if practice_area and not practice_area_text_matches(
-                practice_area, f"{written['procedure']} {written['diagnosis']}"
+            if practice_area and not all(
+                practice_area_text_matches(practice_area, written[field])
+                for field in ("procedure", "diagnosis")
             ):
                 logger.warning(
                     f"ChooserTask {task.id}: scenario from "
@@ -2295,6 +2296,13 @@ async def _generate_chat_candidates(task: ChooserTask):
                 not practice_area or practice_area_text_matches(practice_area, question)
             )
 
+        def history_matches_area() -> bool:
+            return not practice_area or all(
+                turn["role"] != "user"
+                or practice_area_text_matches(practice_area, turn["content"])
+                for turn in history
+            )
+
         started = time.monotonic()
         for writer in writers:
             # A backend that did not answer returns None rather than raising.
@@ -2304,7 +2312,7 @@ async def _generate_chat_candidates(task: ChooserTask):
             history, final_user_prompt = _parse_conversation(
                 conversation_response or ""
             )
-            if usable_for_area(final_user_prompt):
+            if usable_for_area(final_user_prompt) and history_matches_area():
                 logger.info(
                     f"ChooserTask {task.id}: conversation by "
                     f"{_model_display_name(writer)} ({len(history)} earlier "
@@ -2804,6 +2812,12 @@ def trigger_practice_area_prefill_async(
         except Exception as e:
             logger.debug(f"Chooser practice-area throttle release failed: {e}")
 
+    def retry_soon():
+        try:
+            cache.set(throttle_key, 1, min(5, CHOOSER_PREFILL_THROTTLE_SECONDS))
+        except Exception as e:
+            logger.debug(f"Chooser practice-area retry throttle failed: {e}")
+
     def run_prefill():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -2812,7 +2826,7 @@ def trigger_practice_area_prefill_async(
                 prefill_practice_area_if_needed(task_type, area, judged=judged)
             )
             if started is None:
-                release_throttle()
+                retry_soon()
         except Exception as e:
             release_throttle()
             logger.opt(exception=True).warning(f"Error in {area} chooser prefill: {e}")

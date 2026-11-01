@@ -2581,8 +2581,10 @@ class ChooserViewSet(viewsets.ViewSet):
             task = chooser_complexity.ordered_for_judge(
                 available_tasks.filter(
                     context_json__practice_area=practice_area,
-                    candidates__is_active=True,
-                ).distinct(),
+                    id__in=ChooserCandidate.objects.filter(is_active=True).values(
+                        "task_id"
+                    ),
+                ),
                 task_type,
                 rounds,
                 difficulty,

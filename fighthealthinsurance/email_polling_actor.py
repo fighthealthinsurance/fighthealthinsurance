@@ -63,6 +63,7 @@ class EmailPollingActor:
         # then every 24 hours. Each deploy recreates this actor, so each
         # deploy starts with a purge.
         self.last_session_clear_check: Optional[datetime.datetime] = None
+        self.last_login_throttle_clear_check: Optional[datetime.datetime] = None
         # None: the first pass of run() starts a fax reconcile.
         self.last_fax_reconcile: Optional[datetime.datetime] = None
         self._fax_reconcile_task: Optional[asyncio.Future] = None
@@ -224,8 +225,9 @@ class EmailPollingActor:
     async def _run_daily_cleanups(self) -> None:
         """Run each daily cleanup that is due.
 
-        Expired sessions are cleared on the first pass and then every 24
-        hours; expired emails every 24 hours from start-up. Each cleanup is
+        Expired sessions and evaluator-login throttles are cleared on the
+        first pass and then every 24 hours; expired emails every 24 hours from
+        start-up. Each cleanup is
         stamped as it starts and has its own try/except, so a failure in one
         leaves the other and the email work running, and is tried again the
         next day.
@@ -245,6 +247,16 @@ class EmailPollingActor:
                 await self._clear_expired_emails()
         except Exception:
             self._logger.opt(exception=True).error("Error clearing expired emails")
+        try:
+            if self.last_login_throttle_clear_check is None or (
+                now - self.last_login_throttle_clear_check
+            ) > datetime.timedelta(hours=24):
+                self.last_login_throttle_clear_check = now
+                await self._clear_expired_evaluator_login_throttles()
+        except Exception:
+            self._logger.opt(exception=True).error(
+                "Error clearing expired evaluator login throttles"
+            )
 
     async def _run_fax_reconcile(self) -> None:
         """Start a fax reconcile pass every FAX_RECONCILE_EVERY.
@@ -323,6 +335,16 @@ class EmailPollingActor:
                 self._logger.info(f"Cleared {expired_count} expired sessions")
         except Exception:
             self._logger.opt(exception=True).error("Error clearing expired sessions")
+
+    async def _clear_expired_evaluator_login_throttles(self) -> None:
+        from fighthealthinsurance.evaluator_accounts import EVALUATOR_LOGIN_WINDOW
+        from fighthealthinsurance.models import EvaluatorLoginThrottle
+
+        cutoff = timezone.now() - EVALUATOR_LOGIN_WINDOW
+        deleted, _ = await EvaluatorLoginThrottle.objects.filter(
+            window_started_at__lt=cutoff
+        ).adelete()
+        self._logger.info(f"Cleared {deleted} expired evaluator login throttles")
 
     async def _clear_expired_emails(self) -> None:
         """Clear emails from denials 30 days after follow-up was sent for users who didn't opt in."""

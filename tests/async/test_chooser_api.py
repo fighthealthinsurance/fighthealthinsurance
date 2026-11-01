@@ -439,6 +439,32 @@ class ChooserPracticeAreaAPITest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.json()["task_id"], self.general.id)
 
+    def test_specialty_vote_count_is_not_multiplied_by_candidates(self):
+        specialty = self._specialty()
+        candidates = list(specialty.candidates.all())
+        candidate_ids = [candidate.id for candidate in candidates]
+        for index in range(2):
+            ChooserVote.objects.create(
+                task=specialty,
+                chosen_candidate=candidates[0],
+                presented_candidate_ids=candidate_ids,
+                session_key=f"another-judge-{index}",
+            )
+        vote_counts = []
+
+        def capture_vote_counts(queryset, *args):
+            vote_counts.extend(queryset.values_list("vote_count", flat=True))
+            return queryset
+
+        with patch(
+            "fighthealthinsurance.rest_views.chooser_complexity.ordered_for_judge",
+            side_effect=capture_vote_counts,
+        ):
+            response = self._get()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(vote_counts, [2])
+
     def test_unknown_area_uses_the_general_pool_without_generation(self):
         with patch(
             "fighthealthinsurance.chooser_tasks.trigger_practice_area_prefill_async"
@@ -1603,7 +1629,7 @@ class ChooserPrefillThrottleTest(SimpleTestCase):
             trigger_practice_area_prefill_async("appeal", "not-a-specialty")
         )
 
-    def test_busy_specialty_prefill_releases_its_throttle(self):
+    def test_busy_specialty_prefill_keeps_a_short_retry_throttle(self):
         from fighthealthinsurance import chooser_tasks
 
         self.assertTrue(
@@ -1617,7 +1643,7 @@ class ChooserPrefillThrottleTest(SimpleTestCase):
         ):
             run_prefill()
 
-        self.assertTrue(
+        self.assertFalse(
             chooser_tasks.trigger_practice_area_prefill_async("appeal", "cardiology")
         )
 
