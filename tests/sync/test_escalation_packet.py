@@ -286,6 +286,8 @@ class RegulatorEscalationReasonsTest(TestCase):
             "You have the right to a second level appeal of this decision.",
             "We have received your third-level appeal and it is under review.",
             "Your second level appeal is pending; a decision will follow.",
+            "We will review your second-level appeal and make a decision within 30 days.",
+            "Your internal appeals have not been exhausted.",
             "Your second-level appeal concerns our original denial decision and is being processed.",
             "This responds to your third-level appeal.",
         ):
@@ -298,6 +300,10 @@ class RegulatorEscalationReasonsTest(TestCase):
             "All available internal appeals have been exhausted.",
             "Your second-level appeal has concluded; the decision is upheld.",
             "We received and denied your second-level appeal.",
+            "Your second-level appeal was denied and we will mail you the written decision.",
+            "We denied your second-level appeal; you can request an external review.",
+            "After review of your second level appeal we have once again upheld the denial; this is our final decision.",
+            "We have once again reached our final adverse determination.",
         ):
             with self.subTest(text=text):
                 denial = _FakeDenial(state="", denial_text=text)

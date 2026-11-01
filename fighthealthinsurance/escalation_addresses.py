@@ -17,6 +17,7 @@ text; this module is the complementary "where do we send a letter"
 address book that combines per-state DOI data and national resources.
 """
 
+import bisect
 import re
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
@@ -263,7 +264,10 @@ _INTERNAL_APPEALS_DONE_RE = re.compile(
     r"\bfinal (adverse|internal)? ?(benefit )?(determination|decision)\b"
     r"(?!\s+(at|for|on|of)\s+(this|the\s+first|the\s+current)\s+level\b)"
     r"|\bexhausted\b.{0,40}\bappeal"
-    r"|\bappeals?\b[^.;:!?\n]{0,40}\bexhausted\b"
+    # Appeals before "exhausted", with no negation between them ("your
+    # appeals have not been exhausted").
+    r"|\bappeals?\b(?:(?!\b(?:not|never|yet)\b|n['\u2019]t\b)[^.;:!?\n]){0,40}"
+    r"\bexhausted\b"
     r")",
     re.IGNORECASE | re.UNICODE | re.DOTALL,
 )
@@ -286,8 +290,10 @@ _DECISION_RE = re.compile(
 _PENDING_OR_RIGHTS_RE = re.compile(
     r"\b(right to|you can|to request|request (a|an)|to file|to submit"
     r"|under review|being reviewed|being processed|processing|pending"
-    r"|in progress|will"
-    r"|are reviewing|is reviewing)\b",
+    r"|in progress|are reviewing|is reviewing"
+    # A decision still to come, not "we will mail you the decision".
+    r"|will (be )?(review|decid|consider|issue|make|notify|respond)\w*"
+    r"|decision will)\b",
     re.IGNORECASE,
 )
 # The same words in a clause about what could happen, not what did: the
@@ -296,7 +302,7 @@ _PENDING_OR_RIGHTS_RE = re.compile(
 # appeals". Any of these in the clause before the match disqualifies it.
 _CONDITIONAL_CLAUSE_RE = re.compile(
     r"\b(if|should|unless|in the event|may|might|would|will|could"
-    r"|once|(when|after|until)\s+(you|your))\b",
+    r"|once(?!\s+again\b)|(when|after|until)\s+(you|your))\b",
     re.IGNORECASE,
 )
 _CLAUSE_BREAK_RE = re.compile(r"[.;:!?\n]")
@@ -338,19 +344,30 @@ def _says_in_own_voice(pattern: re.Pattern, denial_text: str) -> bool:
 
 def _later_level_decided(denial_text: str) -> bool:
     """Whether the letter states a decision on a second- or third-level
-    appeal (see _LATER_LEVEL_RE)."""
-    for match in _own_voice_matches(_LATER_LEVEL_RE, denial_text):
-        start = max(
-            (
-                m.end()
-                for m in _SENTENCE_BREAK_RE.finditer(denial_text, 0, match.start())
-            ),
-            default=0,
+    appeal (see _LATER_LEVEL_RE).
+
+    The decision may sit anywhere in the sentence ("has concluded; the
+    decision is upheld"), but only the clause naming the appeal can say it
+    is pending or still open, so a rights notice in a later clause ("…;
+    you can request an external review") does not cancel the decision.
+    """
+    sentence_breaks = [m.start() for m in _SENTENCE_BREAK_RE.finditer(denial_text)]
+    clause_breaks = [m.start() for m in _CLAUSE_BREAK_RE.finditer(denial_text)]
+
+    def bounds(breaks: List[int], start: int, end: int) -> tuple[int, int]:
+        before = bisect.bisect_left(breaks, start)
+        after = bisect.bisect_left(breaks, end)
+        return (
+            breaks[before - 1] + 1 if before else 0,
+            breaks[after] if after < len(breaks) else len(denial_text),
         )
-        end_break = _SENTENCE_BREAK_RE.search(denial_text, match.end())
-        end = end_break.start() if end_break else len(denial_text)
-        sentence = denial_text[start:end]
-        if _DECISION_RE.search(sentence) and not _PENDING_OR_RIGHTS_RE.search(sentence):
+
+    for match in _own_voice_matches(_LATER_LEVEL_RE, denial_text):
+        s_start, s_end = bounds(sentence_breaks, match.start(), match.end())
+        c_start, c_end = bounds(clause_breaks, match.start(), match.end())
+        if _DECISION_RE.search(
+            denial_text[s_start:s_end]
+        ) and not _PENDING_OR_RIGHTS_RE.search(denial_text[c_start:c_end]):
             return True
     return False
 
