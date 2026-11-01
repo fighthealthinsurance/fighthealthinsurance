@@ -449,6 +449,27 @@ class GetPaContextForDenialTests(TestCase):
         self.assertIn("95810", context)
         self.assertIn("UHC Sleep Medicine policy", context)
 
+    def test_letter_context_leaves_out_our_index_note(self):
+        """A code our index lacks is a note about our index, not something the
+        payer said, so the appeal prompt never sees it."""
+        denial = Denial.objects.create(
+            hashed_email="x" * 64,
+            denial_text="UnitedHealthcare denied 95810 and 99999 on prior authorization.",
+            insurance_company_obj=self.uhc,
+        )
+        context = get_pa_context_for_denial(denial)
+        self.assertIn("95810", context)
+        self.assertNotIn("not in our index", context)
+        self.assertNotIn("99999", context)
+
+    def test_letter_context_is_empty_when_only_unindexed_codes(self):
+        denial = Denial.objects.create(
+            hashed_email="x" * 64,
+            denial_text="UnitedHealthcare denied 99999 on prior authorization.",
+            insurance_company_obj=self.uhc,
+        )
+        self.assertEqual(get_pa_context_for_denial(denial), "")
+
     def test_returns_empty_string_when_no_codes(self):
         denial = Denial.objects.create(
             hashed_email="x" * 64,

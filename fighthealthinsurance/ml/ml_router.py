@@ -1371,6 +1371,7 @@ class MLRouter(object):
         *,
         use_external: bool = True,
         max_input_chars: int = 1000,
+        literature: bool = False,
     ) -> Optional[str]:
         """Summarize ``text``/``abstract`` for use in an appeal.
 
@@ -1382,7 +1383,10 @@ class MLRouter(object):
         PHI to an external provider. ``max_input_chars`` caps how much source
         text is fed to the model (default 1000 for short article snippets;
         denial-text summarization passes a larger cap so the summary actually
-        reflects the whole letter).
+        reflects the whole letter). ``literature`` is for published articles:
+        the summary then describes what the publication reports, in the third
+        person, so a case report's patient is never read as the person
+        appealing.
         """
         # Our strongest healthy internal first, then the cheap DeepInfra
         # generalist (only when use_external allows it and it looks healthy),
@@ -1409,6 +1413,14 @@ class MLRouter(object):
             "non-country specific and then other countries. We're focused on "
             "helping American patients and providers."
         )
+        if literature:
+            instructions = (
+                f"{instructions} Describe what each publication reports in "
+                "the third person, for example 'A published case report "
+                "describes...' or 'This study found...'. The people in these "
+                "studies are not the person appealing: never call them 'the "
+                "patient' and never write a patient profile."
+            )
         # Each attempt must carry SOURCE TEXT. The abstract-only retry below is
         # skipped when there is no abstract: with abstract=None its prompt would
         # be the bare instruction with nothing to summarize, and a model answers

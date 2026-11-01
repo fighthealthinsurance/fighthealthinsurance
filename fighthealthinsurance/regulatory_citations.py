@@ -92,6 +92,22 @@ class RegulatoryHook:
 
 # Federal hooks apply broadly (subject to plan type); included alongside any
 # matched state hook so the model has both layers to draw on.
+# What independent external review covers under 45 C.F.R. § 147.136(d)(1):
+# a denial involving medical judgment (the rule's list is "including, but not
+# limited to"), a rescission, and, since the No Surprises Act, whether the
+# plan followed its surprise-billing and cost-sharing protections. A denial
+# for failing eligibility requirements is not covered. Grandfathered plans
+# owe external review only for the surprise-billing disputes (147.136(a)(1)(ii)).
+_EXTERNAL_REVIEW_SCOPE = (
+    "a denial that involves medical judgment (including medical necessity, "
+    "appropriateness, level of care, or an experimental label), a rescission, "
+    "or a dispute over whether the plan followed the No Surprises Act's "
+    "surprise-billing and cost-sharing protections"
+)
+_GRANDFATHERED_REVIEW = (
+    "a grandfathered plan owes it only for the surprise-billing disputes"
+)
+
 FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
     RegulatoryHook(
         name="CMS Interoperability and Prior Authorization Final Rule (CMS-0057-F)",
@@ -160,9 +176,17 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
     RegulatoryHook(
         name="ACA internal appeal and external review rights (45 C.F.R. § 147.136)",
         summary=(
-            "Non-grandfathered plans must provide a full and fair internal "
-            "appeal and access to independent external review. Insist on both, "
-            "and on the documents and clinical criteria relied upon."
+            "Non-grandfathered group health plans and health insurers must "
+            "provide a full and fair internal appeal and the documents and "
+            "clinical criteria relied upon. Independent external review "
+            "covers "
+            + _EXTERNAL_REVIEW_SCOPE
+            + "; "
+            + _GRANDFATHERED_REVIEW
+            + ". For a denial in one of these categories, claim the right to "
+            "external review; if the plan gave a different reason, argue that "
+            "the denial is really one of these only where the record supports "
+            "it. A denial for failing eligibility requirements is not eligible."
         ),
         jurisdiction="US",
         effective="in force",
@@ -175,9 +199,14 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
         applies_to_self_insured=True,
         plain_summary=(
             "Plans that are not grandfathered must offer a full and fair "
-            "internal appeal and access to an independent external review. "
-            "A person can ask for both, and for the documents and clinical "
-            "criteria the plan relied on."
+            "internal appeal, and a person can ask for the documents and "
+            "clinical criteria the plan relied on. An independent external "
+            "review is available for "
+            + _EXTERNAL_REVIEW_SCOPE
+            + "; "
+            + _GRANDFATHERED_REVIEW
+            + ". A denial for failing eligibility "
+            "requirements is not covered."
         ),
     ),
 )
@@ -426,6 +455,22 @@ _STATE_NAME_TO_ABBR: dict[str, str] = {
 }
 
 
+# Laws listed for a plan invited letters to restate a denial so a right would
+# apply: a plan exclusion or an eligibility denial argued as medical necessity
+# to claim an independent external review, with no support in the record. A
+# supported challenge to the plan's reason is often the appeal itself (a
+# service labelled cosmetic that the records show is reconstructive), so it
+# stays open. The appeal prompt's regulatory and plan-law blocks both carry
+# this.
+_KEEP_DENIAL_BASIS = (
+    "State the plan's reason for the denial exactly as the plan gave it, and "
+    "never misstate what the plan said. You may argue that the plan's reason "
+    "or its category is wrong when the record supports it, for example that a "
+    "service labelled cosmetic is reconstructive; do not recast the denial "
+    "only so that a right or a law would apply."
+)
+
+
 def _normalize_state(state: Optional[str]) -> Optional[str]:
     """Return a 2-letter state code from a 2-letter code or a full name."""
     if not state:
@@ -582,13 +627,28 @@ def get_regulatory_citation_context(
             "plans; self-insured (ERISA) employer plans are typically exempt, so "
             "confirm the plan type before relying on a state mandate."
         )
+        if not keys and self_insured is None:
+            # No plan-type evidence at all: 147.136 binds group health plans
+            # (non-federal governmental plans included; self-insured ones use
+            # the federal process under (d)(4)) and health insurers, not
+            # Medicare, Medicaid or VA, so the external review claim waits on
+            # the letter.
+            caveat += (
+                " The plan type is not known: the ACA appeal and external "
+                "review rules apply to private health plans and insurers and "
+                "to state or local government employer plans, not Medicare, "
+                "Medicaid or VA coverage, which have their own appeal rights, "
+                "so claim them only if the denial letter shows a private plan "
+                "or a state or local government employer plan."
+            )
 
     header = (
         "REGULATORY CONTEXT: The following federal and state laws MAY support "
         "this appeal depending on the plan type and the specific service. Cite "
         "them BY NAME only where they actually apply to this denial. Do not "
         "assert applicability you cannot support, and do not invent statute "
-        "section numbers, dates, or quotations beyond what is provided here."
+        "section numbers, dates, or quotations beyond what is provided here. "
+        + _KEEP_DENIAL_BASIS
     )
     return f"{header}\n{bullet_lines}\n{caveat}"
 
@@ -615,12 +675,12 @@ _ERISA_TEXT = (
     "for the denial and the plan provisions it relied on, must provide on "
     "request the internal rule or clinical criteria it applied and identify "
     "any medical expert it consulted, and must give a full and fair review by "
-    "someone who did not make the original decision. If the plan is not "
-    "grandfathered and the denial turns on medical judgment (medical "
-    "necessity, appropriateness, level of care, or an experimental label) or "
-    "is a rescission, {who} is also owed an independent external review "
-    "(45 C.F.R. § 147.136, applied to group plans by 29 C.F.R. § "
-    "2590.715-2719); a denial for ineligibility is not. ERISA does not apply "
+    "someone who did not make the original decision. For "
+    + _EXTERNAL_REVIEW_SCOPE
+    + ", {who} is also owed an independent external review (45 C.F.R. § "
+    "147.136, applied to group plans by 29 C.F.R. § 2590.715-2719); "
+    + _GRANDFATHERED_REVIEW
+    + ", and a denial for ineligibility is not covered. ERISA does not apply "
     "to government or church employer plans (29 U.S.C. § 1003(b))."
 )
 _TPA_ONLY_FACTS = (
@@ -646,8 +706,9 @@ _OTHER_GROUP_FACTS = (
 _ACA_MARKETPLACE_TEXT = (
     "This is marketplace (Affordable Care Act) coverage. If it is an "
     "individual plan bought on the marketplace, ERISA does not apply; the "
-    "plan owes an internal appeal and, for a denial that turns on medical "
-    "judgment or is a rescission, an independent external review under the "
+    "plan owes an internal appeal and, for "
+    + _EXTERNAL_REVIEW_SCOPE
+    + ", an independent external review under the "
     "ACA (45 C.F.R. § 147.136), and it must cover the ten essential health "
     "benefit categories (42 U.S.C. § 18022){say_so}. If it is small employer "
     "(SHOP) coverage, it is an "
@@ -658,9 +719,11 @@ _ACA_MARKETPLACE_TEXT = (
 _GOVERNMENT_EMPLOYER = (
     "This is a state or local government employer plan, so ERISA does not "
     "apply (29 U.S.C. § 1003(b)(1)). A non-grandfathered plan still owes the "
-    "ACA internal appeal and, for a denial that turns on medical judgment, an "
-    "independent external review (45 C.F.R. § 147.136), and state insurance "
-    "law may apply if the plan is fully insured."
+    "ACA internal appeal and, for "
+    + _EXTERNAL_REVIEW_SCOPE
+    + ", an independent external review (45 C.F.R. § 147.136; "
+    + _GRANDFATHERED_REVIEW
+    + "), and state insurance law may apply if the plan is fully insured."
 )
 _FEDERAL_EMPLOYER = (
     "This is a federal employee (FEHB) plan under 5 U.S.C. chapter 89, so "
@@ -704,7 +767,9 @@ _UNKNOWN_TEXT = (
     "ERISA's claims-procedure rule (29 C.F.R. § 2560.503-1) most likely "
     "applies; if they show it is a marketplace plan or other non-grandfathered "
     "individual coverage, the ACA internal appeal and external review rules "
-    "(45 C.F.R. § 147.136) apply to a denial that turns on medical judgment."
+    "(45 C.F.R. § 147.136) apply, with external review for "
+    + _EXTERNAL_REVIEW_SCOPE
+    + "."
 )
 _TWO_SOURCES_FACT = "More than one coverage source was given."
 _INVITATION = (
@@ -716,7 +781,8 @@ _INVITATION = (
     "letter more seriously when it names the rule the plan must follow. Cite "
     "it only where it applies and where it helps the argument. Never cite a "
     "law that does not govern this plan, and do not invent section numbers, "
-    "deadlines, quotations, or case names beyond what is listed here."
+    "deadlines, quotations, or case names beyond what is listed here. "
+    + _KEEP_DENIAL_BASIS
 )
 
 _LETTER_CONFLICT_FACT = (
@@ -776,9 +842,10 @@ _FOR_PROMPT = _PlanLawWording(
     + " Use whichever the denial letter or the plan documents support.",
     unknown=_UNKNOWN_TEXT.format(who="the patient")
     + " Name one of them only when the letter itself supports it; otherwise "
-    "ask for the plan's internal appeal and, where the denial is about medical "
-    "judgment, an independent external review in plain words rather than "
-    "naming a statute.",
+    "ask for the plan's internal appeal and, where the denial is one an "
+    "independent external review covers (medical judgment, a rescission, or "
+    "a surprise-billing dispute), an independent external review in plain "
+    "words rather than naming a statute.",
     two_sources=_TWO_SOURCES_FACT + " Use the one the denial letter itself supports.",
     letter_conflict=_LETTER_CONFLICT_FACT
     + " Follow the letter only if the plan documents confirm a private "

@@ -339,7 +339,7 @@ def test_v3_lays_the_prompt_out_in_labelled_sections_in_order():
         "DETAILS TO INCLUDE",
         "PLAN DETAILS:",
         "CITATION INSTRUCTIONS:",
-        "PubMed references (use these): PMID 1",
+        "PubMed references (published literature about people in studies, not this patient's own history; use these): PMID 1",
         "DENIAL LETTER:",
     ]
     positions = [prompt.find(label) for label in labels]
