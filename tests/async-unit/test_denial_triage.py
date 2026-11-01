@@ -250,7 +250,26 @@ class TestQuestions:
         assert questions["regulation"]["type"] == "choice"
         assert questions["pre_service"]["type"] == "noul"
         assert questions["urgent"]["type"] == "noul"
+        assert questions["regulator"]["type"] == "noul"
         assert set(questions["category"]["criteria"]) == set(dt.CATEGORIES)
+
+
+class TestUrgentQuestionIsTight:
+    """A yes brings in a regulator, so the rights notice about asking for an
+    expedited appeal must be named as a no."""
+
+    def test_it_asks_about_this_request_not_a_possible_one(self):
+        assert "THIS request" in dt.URGENT_QUESTION
+
+    def test_it_names_the_expedited_appeal_rights_notice_as_a_no(self):
+        assert "MAY ask for an expedited or urgent appeal IF" in dt.URGENT_QUESTION
+
+    def test_routine_and_preventive_care_are_named_as_a_no(self):
+        assert "routine prior authorization" in dt.URGENT_QUESTION
+        assert "preventive" in dt.URGENT_QUESTION
+
+    def test_it_is_the_question_sent(self):
+        assert dt.build_questions([])["urgent"]["instructions"] == dt.URGENT_QUESTION
 
 
 def _payload(deadline="180 days from notice", deadline_conf=0.9, category="medical_necessity"):
@@ -259,6 +278,7 @@ def _payload(deadline="180 days from notice", deadline_conf=0.9, category="medic
         "regulation": {"type": "choice", "choice": "employer_private", "confidence": 0.6},
         "pre_service": {"type": "noul", "noul": 0.92},
         "urgent": {"type": "noul", "noul": 0.05},
+        "regulator": {"type": "noul", "noul": 0.1},
     }
     if deadline is not None:
         answers["deadline"] = {"type": "choice", "choice": deadline, "confidence": deadline_conf}
@@ -278,6 +298,7 @@ class TestParse:
         assert result.deadline == datetime.date(2027, 3, 1)
         assert result.deadline_confidence == pytest.approx(0.9)
         assert result.input_tokens == 700
+        assert result.regulator == pytest.approx(0.1)
 
     def test_none_of_these(self):
         result = dt.parse(_payload(deadline=dt.NONE_LABEL), self.candidates)
@@ -450,6 +471,7 @@ class _Triaged:
         self.triage_regulation_confidence = fields.get("regulation_confidence", 0.9)
         self.triage_pre_service = fields.get("pre_service", 0.95)
         self.triage_urgent = fields.get("urgent", 0.9)
+        self.triage_regulator = fields.get("regulator", 0.9)
 
 
 @pytest.mark.usefixtures("triage_on")
@@ -584,3 +606,33 @@ class TestDeadlineFlag:
             assert "October 15, 2026" in dt.deadline_sentence_if_enabled(
                 denial, self.TODAY
             )
+
+
+@pytest.mark.usefixtures("triage_on")
+class TestRegulatorSignals:
+    """Jev's answers that bring in a regulator: time-critical care, or the
+    internal appeals done."""
+
+    def test_confident_answers_are_both_signals(self):
+        found = dt.regulator_signals(_Triaged(urgent=0.9, regulator=0.9))
+        assert found.urgent and found.appeals_done
+
+    def test_unsure_answers_are_not_signals(self):
+        found = dt.regulator_signals(_Triaged(urgent=0.5, regulator=0.5))
+        assert not found.urgent and not found.appeals_done
+
+    def test_a_triage_from_before_the_question_has_no_appeals_done_answer(self):
+        assert not dt.regulator_signals(_Triaged(regulator=None)).appeals_done
+
+    def test_without_consent_there_are_no_signals(self):
+        assert dt.regulator_signals(_Triaged(use_external=False)) == (
+            dt.RegulatorSignals()
+        )
+
+    def test_a_stale_triage_gives_no_signals(self):
+        assert dt.regulator_signals(_Triaged(stale=True)) == dt.RegulatorSignals()
+
+
+class TestRegulatorSignalsSwitchedOff:
+    def test_with_triage_off_there_are_no_signals(self):
+        assert dt.regulator_signals(_Triaged()) == dt.RegulatorSignals()

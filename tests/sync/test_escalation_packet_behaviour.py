@@ -187,3 +187,24 @@ def test_a_progress_message_cannot_paint_over_bad_news(page_script):
     after_status = result["afterTheStatus"]
     assert after_status["loadingDetail"] == after_error["loadingDetail"], after_status
     assert "Drafting letter 2 of 4" not in after_status["visibleText"], after_status
+
+
+@needs_node
+def test_the_state_picker_holds_drafting_until_the_person_skips_it(page_script):
+    """Nothing is drafted under the picker, so no edit can be lost when picking
+    a state reloads the page; skipping it starts the one socket."""
+    result = run_scenario(page_script, "picker_waits_for_skip")
+    assert result["socketsBeforeSkip"] == 0, result
+    assert result["socketsAfterSkip"] == 1, result
+    assert result["pickerDisplay"] == "none", result
+    assert STILL_DRAFTING in result["afterSkip"]["loadingHeading"].lower(), result
+
+
+def test_the_fake_picker_carries_the_real_pages_ids():
+    html = render_to_string(
+        "escalation_packet.html", {**CONTEXT, "state_choices": [("CA", "California")]}
+    )
+    driver = DRIVER.read_text()
+    for ident in ("escalation-state-picker", "escalation-skip-state"):
+        assert f'id="{ident}"' in html, ident
+        assert f'id="{ident}"' in driver, ident

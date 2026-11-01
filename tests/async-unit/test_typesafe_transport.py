@@ -784,6 +784,7 @@ class TestDenialTriageThroughAsk:
                 "regulation": {"type": "choice", "choice": "employer_private", "confidence": 0.6},
                 "pre_service": {"type": "noul", "noul": 0.92},
                 "urgent": {"type": "noul", "noul": 0.05},
+                "regulator": {"type": "noul", "noul": 0.04},
                 "deadline": {"type": "choice", "choice": "180 days from notice", "confidence": 0.9},
             },
             "usage": {"input_tokens": 400, "output_tokens": 30},

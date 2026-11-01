@@ -193,6 +193,7 @@ class DenialAdmin(admin.ModelAdmin):
             "triage_regulation_confidence",
             "triage_pre_service",
             "triage_urgent",
+            "triage_regulator",
             "appeal_deadline",
             "appeal_deadline_label",
             "appeal_deadline_confidence",
@@ -266,6 +267,11 @@ class DenialAdmin(admin.ModelAdmin):
             f"regulation={obj.triage_regulation} ({(obj.triage_regulation_confidence or 0):.2f})",
             f"pre_service={(obj.triage_pre_service or 0):.2f}",
             f"urgent={(obj.triage_urgent or 0):.2f}",
+            (
+                f"regulator={obj.triage_regulator:.2f}"
+                if obj.triage_regulator is not None
+                else ""
+            ),
             f"deadline={self.appeal_deadline_current(obj) or 'none'}",
             (
                 f"deadline_check={obj.appeal_deadline_check}"
