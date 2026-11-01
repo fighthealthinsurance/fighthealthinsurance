@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Add Evaluators Account</title>
+  <meta name="robots" content="noindex,nofollow,noarchive">
+</head>
+<body>
+  <h1>Add Evaluators Account</h1>
+  <p>Create a login for reviewing Appeal Arena cases. This account has no staff, admin, patient, or professional privileges.</p>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Add Evaluators Account</button>
+  </form>
+  <p><a href="{% url 'staff_dashboard' %}">Back to Staff Dashboard</a></p>
+</body>
+</html>

@@ -38,6 +38,7 @@ from fighthealthinsurance.chooser_tasks import (
     generation_underway,
     launch_backfill,
     prefill_if_needed,
+    prefill_practice_area_if_needed,
 )
 from fighthealthinsurance.models import (
     ChooserCandidate,
@@ -697,6 +698,96 @@ class TestPrefillForATypeASessionUsedUp:
         await _claim_generation("appeal")
 
         assert await _prefilled_types(exhausted="appeal") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestPracticeAreaPrefill:
+    async def _prefill(self, area="cardiology", judged=None):
+        with patch(
+            "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
+            new=_run_in_place,
+        ), patch(
+            "fighthealthinsurance.chooser_tasks._generate_single_task",
+            new=AsyncMock(return_value=True),
+        ) as single:
+            started = await prefill_practice_area_if_needed(
+                "appeal", area, judged=judged
+            )
+        return started, single
+
+    async def test_general_stock_does_not_suppress_a_requested_specialty(self):
+        await _make_task("appeal")
+        await _make_task("chat")
+
+        started, single = await self._prefill()
+
+        assert started is True
+        single.assert_awaited_once_with("appeal", practice_area="cardiology")
+
+    async def test_a_fresh_matching_case_is_not_duplicated(self):
+        task = await _make_task("appeal")
+        task.context_json = {"practice_area": "cardiology"}
+        await task.asave()
+        await _make_candidate(task)
+
+        started, single = await self._prefill()
+
+        assert started is False
+        single.assert_not_awaited()
+
+    async def test_a_match_skipped_by_this_judge_is_replenished(self):
+        from django.db.models import Q
+
+        from fighthealthinsurance.models import ChooserSkip
+
+        task = await _make_task("appeal")
+        task.context_json = {"practice_area": "cardiology"}
+        await task.asave()
+        await _make_candidate(task)
+        await ChooserSkip.objects.acreate(task=task, session_key="specialty-skip")
+
+        started, single = await self._prefill(
+            judged=Q(session_key="specialty-skip")
+        )
+
+        assert started is True
+        single.assert_awaited_once_with("appeal", practice_area="cardiology")
+
+    async def test_another_specialty_does_not_count_as_a_match(self):
+        task = await _make_task("appeal")
+        task.context_json = {"practice_area": "oncology"}
+        await task.asave()
+
+        started, single = await self._prefill()
+
+        assert started is True
+        single.assert_awaited_once_with("appeal", practice_area="cardiology")
+
+    async def test_a_voted_match_can_be_replenished(self):
+        task = await _make_task("appeal")
+        task.context_json = {"practice_area": "cardiology"}
+        await task.asave()
+        candidate = await _make_candidate(task)
+        await ChooserVote.objects.acreate(
+            task=task,
+            chosen_candidate=candidate,
+            presented_candidate_ids=[candidate.id],
+            session_key="specialty-vote",
+        )
+
+        started, single = await self._prefill()
+
+        assert started is True
+        single.assert_awaited_once_with("appeal", practice_area="cardiology")
+
+    async def test_a_held_generation_claim_skips_the_specialty(self):
+        await _claim_generation("appeal")
+
+        started, single = await self._prefill()
+
+        assert started is None
+        single.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -189,6 +189,46 @@ class ChooserRankedExportContentTest(StaffExportTestBase):
         )
 
 
+    def test_chooser_ranked_export_carries_scorer_picks(self):
+        task = ChooserTask.objects.create(
+            task_type="appeal", status="READY", source="synthetic"
+        )
+        candidate = ChooserCandidate.objects.create(
+            task=task,
+            candidate_index=0,
+            kind="appeal_letter",
+            model_name="model-a",
+            content="Appeal text",
+        )
+        task.scoring_json = {
+            "jev": {
+                "candidate_id": candidate.id,
+                "candidate_index": 0,
+                "model_name": "model-a",
+                "score": 0.9,
+                "scorer": "typesafe/jev-1.13.0/rubric-2",
+            },
+            "fhi_local": {
+                "candidate_id": candidate.id,
+                "candidate_index": 0,
+                "model_name": "model-a",
+                "score": 0.8,
+                "scorer": "fhi-local/chooser-rubric-1",
+            },
+        }
+        task.save()
+        ChooserVote.objects.create(
+            task=task,
+            chosen_candidate=candidate,
+            presented_candidate_ids=[candidate.id],
+            session_key="session-1",
+        )
+
+        [record] = self.get_export_lines("chooser_ranked_export")
+
+        self.assertEqual(record["scorer_picks"], task.scoring_json)
+
+
     def test_chooser_ranked_export_carries_the_complexity(self):
         scored = ChooserTask.objects.create(
             task_type="appeal", status="READY", source="synthetic", complexity=3
@@ -282,6 +322,59 @@ class ChooserRankedExportContentTest(StaffExportTestBase):
             },
             {a.id: (0, 0), b.id: (0.5, 1), c.id: (1.5, 1)},
         )
+
+
+class ChooserAllBadExportContentTest(StaffExportTestBase):
+    def test_export_keeps_all_bad_tasks_and_anonymous_review_feedback(self):
+        task = ChooserTask.objects.create(
+            task_type="appeal", status="READY", source="synthetic"
+        )
+        candidates = [
+            ChooserCandidate.objects.create(
+                task=task,
+                candidate_index=i,
+                kind="appeal_letter",
+                model_name=f"model-{i}",
+                content=f"Appeal text {i}",
+            )
+            for i in range(2)
+        ]
+        presented = [candidate.id for candidate in candidates]
+        for session, rationale in (
+            ("session-1", "Both drafts invent medical history."),
+            ("session-2", ""),
+        ):
+            ChooserVote.objects.create(
+                task=task,
+                chosen_candidate=None,
+                presented_candidate_ids=presented,
+                all_bad=True,
+                rationale=rationale,
+                session_key=session,
+            )
+
+        [record] = self.get_export_lines("chooser_ranked_export")
+
+        self.assertIsNone(record["chosen_candidate"])
+        self.assertEqual(record["vote_count"], 0)
+        self.assertEqual(record["total_votes"], 2)
+        self.assertEqual(record["all_bad_count"], 2)
+        self.assertEqual(
+            [candidate["votes"] for candidate in record["all_candidates"]], [0, 0]
+        )
+        self.assertEqual(
+            record["review_feedback"],
+            [
+                {
+                    "rationale": "Both drafts invent medical history.",
+                    "all_bad": True,
+                    "chosen_candidate_id": None,
+                    "tied_candidate_ids": [],
+                    "flagged_candidate_ids": [],
+                }
+            ],
+        )
+        self.assertNotIn("session", json.dumps(record["review_feedback"]))
 
 
 class DenialAppealExportContentTest(StaffExportTestBase):

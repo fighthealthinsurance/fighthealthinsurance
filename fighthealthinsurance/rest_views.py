@@ -55,6 +55,7 @@ from fighthealthinsurance.ml.ml_models import (
 )
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance import chooser_complexity
+from fighthealthinsurance.chooser_practice_areas import normalize_practice_area
 from fighthealthinsurance.chooser_tokens import candidate_token, resolve_candidate
 from fighthealthinsurance.upload_limits import stored_size_limit
 from fighthealthinsurance.models import (
@@ -2543,7 +2544,8 @@ class ChooserViewSet(viewsets.ViewSet):
         denied = self._captcha_gate(request)
         if denied is not None:
             return denied
-        judged = self._judged_by(request, self._voter(request))
+        voter = self._voter(request)
+        judged = self._judged_by(request, voter)
 
         # Get tasks that this judge has already voted on or skipped. The
         # votes on this type are the rounds the judge has done, which set
@@ -2557,18 +2559,51 @@ class ChooserViewSet(viewsets.ViewSet):
             .count()
         )
 
-        # Find READY tasks of the requested type that haven't been voted on or skipped
-        available_tasks = chooser_complexity.ordered_for_judge(
+        # Find READY tasks of the requested type that haven't been voted on or skipped.
+        available_tasks = (
             ChooserTask.objects.filter(task_type=task_type, status="READY")
             .exclude(id__in=ChooserVote.objects.filter(judged).values("task_id"))
             .exclude(id__in=ChooserSkip.objects.filter(judged).values("task_id"))
-            .annotate(vote_count=Count("votes")),
-            task_type,
-            rounds,
-            chooser_complexity.preference_from(request.query_params.get("difficulty")),
+            .annotate(vote_count=Count("votes"))
+        )
+        difficulty = chooser_complexity.preference_from(
+            request.query_params.get("difficulty")
+        )
+        practice_area = normalize_practice_area(
+            request.query_params.get("practice_area")
         )
 
-        task = available_tasks.first()
+        # A requested specialty never holds up the general pool. Prefer a
+        # matching case already on file; otherwise ask for one in the
+        # background and serve the usual next case while it is being written.
+        task = None
+        if practice_area:
+            task = chooser_complexity.ordered_for_judge(
+                available_tasks.filter(
+                    context_json__practice_area=practice_area,
+                    id__in=ChooserCandidate.objects.filter(is_active=True).values(
+                        "task_id"
+                    ),
+                ),
+                task_type,
+                rounds,
+                difficulty,
+            ).first()
+            if not task:
+                from fighthealthinsurance.chooser_tasks import (
+                    trigger_practice_area_prefill_async,
+                )
+
+                try:
+                    trigger_practice_area_prefill_async(
+                        task_type, practice_area, judged=judged
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not trigger practice-area prefill: {e}")
+        if not task:
+            task = chooser_complexity.ordered_for_judge(
+                available_tasks, task_type, rounds, difficulty
+            ).first()
 
         if not task:
             # Nothing for this session. Generation used to run right here,
@@ -2685,6 +2720,10 @@ class ChooserViewSet(viewsets.ViewSet):
             "task_context": context,
             "candidates": candidate_data,
         }
+        if voter["user"] is not None:
+            response_data["review_count"] = ChooserVote.objects.filter(
+                user=voter["user"]
+            ).count()
 
         return Response(
             serializers.ChooserTaskSerializer(response_data).data,
@@ -2712,13 +2751,25 @@ class ChooserViewSet(viewsets.ViewSet):
         ),
     )
 
-    @extend_schema(responses=_NEXT_TASK_RESPONSES, parameters=[_DIFFICULTY_PARAMETER])
+    _PRACTICE_AREA_PARAMETER = OpenApiParameter(
+        name="practice_area",
+        type=OpenApiTypes.STR,
+        location=OpenApiParameter.QUERY,
+        required=False,
+        description=(
+            "Prefer cases in this supported practice area. Matching cases are "
+            "generated in the background; general cases remain available meanwhile."
+        ),
+    )
+    _NEXT_TASK_PARAMETERS = [_DIFFICULTY_PARAMETER, _PRACTICE_AREA_PARAMETER]
+
+    @extend_schema(responses=_NEXT_TASK_RESPONSES, parameters=_NEXT_TASK_PARAMETERS)
     @action(detail=False, methods=["get"], url_path="next/appeal")
     def next_appeal(self, request: Request) -> Response:
         """Get the next appeal letter chooser task."""
         return self._get_next_task(request, "appeal")
 
-    @extend_schema(responses=_NEXT_TASK_RESPONSES, parameters=[_DIFFICULTY_PARAMETER])
+    @extend_schema(responses=_NEXT_TASK_RESPONSES, parameters=_NEXT_TASK_PARAMETERS)
     @action(detail=False, methods=["get"], url_path="next/chat")
     def next_chat(self, request: Request) -> Response:
         """Get the next chat response chooser task."""
@@ -2734,13 +2785,10 @@ class ChooserViewSet(viewsets.ViewSet):
     )
     @action(detail=False, methods=["post"])
     def vote(self, request: Request) -> Response:
-        """
-        Register a user's vote for a chooser task.
+        """Record one review: a winner, a tie, or no usable candidates.
 
-        Validates the task exists and is in a votable state, the chosen candidate belongs to the task and was presented, any flags and any tie are among the presented candidates (a tie: two or more, unflagged, the chosen one among them), and the session has not already voted on the task; then creates a ChooserVote.
-
-        Returns:
-            response (Response): On success, a 200 response containing {"success": True, "message": "Vote recorded successfully", "vote_id": <id>}. On failure, a 4xx response with an error message.
+        Candidate references and outcomes are validated before creating the
+        vote. Signed-in judges also receive their account-wide review count.
         """
         serializer = serializers.ChooserVoteRequestSerializer(data=request.data)
         if not serializer.is_valid():
@@ -2755,11 +2803,29 @@ class ChooserViewSet(viewsets.ViewSet):
         voter = self._voter(request)
         judged = self._judged_by(request, voter)
         task_id = serializer.validated_data["task_id"]
+        all_bad = serializer.validated_data["all_bad"]
+        chosen_token = serializer.validated_data.get("chosen_candidate_id")
+        if all_bad and (
+            chosen_token is not None or serializer.validated_data["tied_candidate_ids"]
+        ):
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "An all-bad review cannot name a winner or a tie"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not all_bad and chosen_token is None:
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "A review needs a chosen candidate or all_bad=true"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         # The references come back as the tokens the next-task endpoint
         # served; anything that resolves to no candidate is a bad request,
         # not a candidate that happens not to match.
-        chosen_candidate_id = resolve_candidate(
-            serializer.validated_data["chosen_candidate_id"]
+        chosen_candidate_id = (
+            resolve_candidate(chosen_token) if chosen_token is not None else None
         )
         presented_resolved = [
             resolve_candidate(v)
@@ -2774,9 +2840,8 @@ class ChooserViewSet(viewsets.ViewSet):
             for v in serializer.validated_data.get("tied_candidate_ids") or []
         ]
         if (
-            chosen_candidate_id is None
-            or None in presented_resolved + flagged_resolved + tied_resolved
-        ):
+            not all_bad and chosen_candidate_id is None
+        ) or None in presented_resolved + flagged_resolved + tied_resolved:
             return Response(
                 serializers.ErrorSerializer(
                     {"error": "Invalid candidate reference"}
@@ -2812,18 +2877,21 @@ class ChooserViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Validate chosen candidate exists and belongs to this task
-        try:
-            chosen_candidate = ChooserCandidate.objects.get(
-                id=chosen_candidate_id, task=task
-            )
-        except ChooserCandidate.DoesNotExist:
-            return Response(
-                serializers.ErrorSerializer(
-                    {"error": "Invalid candidate for this task"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # An all-bad review has no pick to validate; every other review's
+        # chosen candidate must belong to this task.
+        chosen_candidate: Optional[ChooserCandidate] = None
+        if chosen_candidate_id is not None:
+            try:
+                chosen_candidate = ChooserCandidate.objects.get(
+                    id=chosen_candidate_id, task=task
+                )
+            except ChooserCandidate.DoesNotExist:
+                return Response(
+                    serializers.ErrorSerializer(
+                        {"error": "Invalid candidate for this task"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         # Check if this judge has already voted on this task, in this
         # session or (signed in, or with no session) another
@@ -2835,8 +2903,10 @@ class ChooserViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Validate that chosen_candidate_id is in presented_candidate_ids
-        if chosen_candidate_id not in presented_candidate_ids:
+        if (
+            chosen_candidate_id is not None
+            and chosen_candidate_id not in presented_candidate_ids
+        ):
             return Response(
                 serializers.ErrorSerializer(
                     {"error": "Chosen candidate was not in the presented candidates"}
@@ -2856,7 +2926,10 @@ class ChooserViewSet(viewsets.ViewSet):
 
         # A flag says "this one made things up"; it cannot also be the pick,
         # and it must be one of the drafts the voter actually saw.
-        if chosen_candidate_id in flagged_candidate_ids:
+        if (
+            chosen_candidate_id is not None
+            and chosen_candidate_id in flagged_candidate_ids
+        ):
             return Response(
                 serializers.ErrorSerializer(
                     {"error": "The chosen candidate cannot also be flagged"}
@@ -2914,12 +2987,11 @@ class ChooserViewSet(viewsets.ViewSet):
         # A tie is stood for by its first draft shown, whichever of the tied
         # drafts the client named; every tied id is one of this task's
         # active candidates by now.
-        if tied_candidate_ids and tied_candidate_ids[0] != chosen_candidate.id:
+        if tied_candidate_ids and tied_candidate_ids[0] != chosen_candidate_id:
             chosen_candidate = ChooserCandidate.objects.get(
                 id=tied_candidate_ids[0], task=task
             )
 
-        # Create the vote
         # One vote per session, and per signed-in user, is held by the
         # database too, for two votes racing from two sessions; atomic, so a
         # refused insert leaves the request's transaction usable.
@@ -2931,6 +3003,8 @@ class ChooserViewSet(viewsets.ViewSet):
                     presented_candidate_ids=presented_candidate_ids,
                     flagged_candidate_ids=flagged_candidate_ids,
                     tied_candidate_ids=tied_candidate_ids,
+                    all_bad=all_bad,
+                    rationale=serializer.validated_data["rationale"],
                     **voter,
                 )
         except IntegrityError:
@@ -2941,14 +3015,17 @@ class ChooserViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        response_data = {
+            "success": True,
+            "message": "Vote recorded successfully",
+            "vote_id": vote.id,
+        }
+        if voter["user"] is not None:
+            response_data["review_count"] = ChooserVote.objects.filter(
+                user=voter["user"]
+            ).count()
         return Response(
-            serializers.ChooserVoteResponseSerializer(
-                {
-                    "success": True,
-                    "message": "Vote recorded successfully",
-                    "vote_id": vote.id,
-                }
-            ).data,
+            serializers.ChooserVoteResponseSerializer(response_data).data,
             status=status.HTTP_200_OK,
         )
 

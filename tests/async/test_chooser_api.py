@@ -2,7 +2,7 @@
 
 import datetime
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, override_settings
@@ -249,6 +249,11 @@ class ChooserNextTaskAPITest(APITestCase):
             content="A blend of the other drafts into one letter.",
             metadata={"source": "synthetic", "synthesized": True},
         )
+        self.task.scoring_json = {
+            "jev": {"candidate_id": self.candidate1.id, "model_name": "model-a"},
+            "fhi_local": {"candidate_id": synthesized.id, "model_name": "synthesized"},
+        }
+        self.task.save()
         response = self.client.get(reverse("chooser-next-appeal"))
         body = response.content.decode()
         for leak in (
@@ -258,6 +263,9 @@ class ChooserNextTaskAPITest(APITestCase):
             "candidate_index",
             "model-a",
             "model-b",
+            "scoring_json",
+            "scorer_picks",
+            "fhi_local",
         ):
             self.assertNotIn(leak, body)
         ids = [c["id"] for c in response.json()["candidates"]]
@@ -350,6 +358,148 @@ class ChooserNextTaskAPITest(APITestCase):
         # The pool is not empty, so the prefill has to be told this session
         # used the appeals up or it would never make another.
         mock_prefill.assert_called_once_with(exhausted="appeal")
+
+
+class ChooserPracticeAreaAPITest(APITestCase):
+    """Specialty cases are preferred when ready, never required to start."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        self.general = ChooserTask.objects.create(
+            task_type="appeal",
+            status="READY",
+            case_version=2,
+            context_json={"procedure": "General treatment"},
+        )
+        for i in range(2):
+            ChooserCandidate.objects.create(
+                task=self.general,
+                candidate_index=i,
+                kind="appeal_letter",
+                model_name=f"model-{i}",
+                content=f"General draft {i}",
+            )
+
+    def _specialty(self, area="cardiology"):
+        task = ChooserTask.objects.create(
+            task_type="appeal",
+            status="READY",
+            case_version=2,
+            context_json={"practice_area": area, "procedure": "Specialty treatment"},
+        )
+        for i in range(2):
+            ChooserCandidate.objects.create(
+                task=task,
+                candidate_index=i,
+                kind="appeal_letter",
+                model_name=f"specialty-model-{i}",
+                content=f"Specialty draft {i}",
+            )
+        return task
+
+    def _get(self, area="cardiology"):
+        return self.client.get(
+            reverse("chooser-next-appeal"), {"practice_area": area}
+        )
+
+    def test_general_case_is_served_while_specialty_is_generated(self):
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_practice_area_prefill_async",
+            return_value=True,
+        ) as prefill:
+            response = self._get()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["task_id"], self.general.id)
+        prefill.assert_called_once_with("appeal", "cardiology", judged=ANY)
+
+    def test_ready_specialty_case_is_preferred(self):
+        specialty = self._specialty()
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_practice_area_prefill_async"
+        ) as prefill:
+            response = self._get()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["task_id"], specialty.id)
+        self.assertEqual(response.json()["task_context"]["practice_area"], "cardiology")
+        prefill.assert_not_called()
+
+    def test_specialty_case_without_active_candidates_uses_general_pool(self):
+        specialty = self._specialty()
+        specialty.candidates.update(is_active=False)
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_practice_area_prefill_async"
+        ):
+            response = self._get()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["task_id"], self.general.id)
+
+    def test_specialty_vote_count_is_not_multiplied_by_candidates(self):
+        specialty = self._specialty()
+        candidates = list(specialty.candidates.all())
+        candidate_ids = [candidate.id for candidate in candidates]
+        for index in range(2):
+            ChooserVote.objects.create(
+                task=specialty,
+                chosen_candidate=candidates[0],
+                presented_candidate_ids=candidate_ids,
+                session_key=f"another-judge-{index}",
+            )
+        vote_counts = []
+
+        def capture_vote_counts(queryset, *args):
+            vote_counts.extend(queryset.values_list("vote_count", flat=True))
+            return queryset
+
+        with patch(
+            "fighthealthinsurance.rest_views.chooser_complexity.ordered_for_judge",
+            side_effect=capture_vote_counts,
+        ):
+            response = self._get()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(vote_counts, [2])
+
+    def test_unknown_area_uses_the_general_pool_without_generation(self):
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_practice_area_prefill_async"
+        ) as prefill:
+            response = self._get("ignore-previous-instructions")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["task_id"], self.general.id)
+        prefill.assert_not_called()
+
+    def test_prefill_failure_still_serves_the_general_case(self):
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_practice_area_prefill_async",
+            side_effect=RuntimeError("no worker"),
+        ):
+            response = self._get()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["task_id"], self.general.id)
+
+    def test_empty_general_pool_waits_for_background_generation(self):
+        ChooserTask.objects.all().delete()
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_practice_area_prefill_async",
+            return_value=True,
+        ) as specialty_prefill, patch(
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async",
+            return_value=True,
+        ) as general_prefill:
+            response = self._get()
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        specialty_prefill.assert_called_once_with("appeal", "cardiology", judged=ANY)
+        general_prefill.assert_called_once_with(exhausted="appeal")
 
 
 class ChooserNextTaskDoesNotGenerateInlineTest(APITestCase):
@@ -849,6 +999,147 @@ class ChooserVoteAPITest(APITestCase):
         self.assertEqual(ChooserVote.objects.filter(task=self.task).count(), 1)
 
 
+class ChooserReviewOutcomesAPITest(APITestCase):
+    """Optional rationales, no-winner reviews, and account review totals."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        self.task = ChooserTask.objects.create(task_type="appeal", status="READY")
+        self.candidate1 = ChooserCandidate.objects.create(
+            task=self.task,
+            candidate_index=0,
+            kind="appeal_letter",
+            model_name="model-a",
+            content="Content A",
+        )
+        self.candidate2 = ChooserCandidate.objects.create(
+            task=self.task,
+            candidate_index=1,
+            kind="appeal_letter",
+            model_name="model-b",
+            content="Content B",
+        )
+
+    def _payload(self):
+        return {
+            "task_id": self.task.id,
+            "chosen_candidate_id": candidate_token(self.candidate1.id),
+            "presented_candidate_ids": [
+                candidate_token(self.candidate1.id),
+                candidate_token(self.candidate2.id),
+            ],
+        }
+
+    def _post(self, data):
+        return self.client.post(
+            reverse("chooser-vote"), json.dumps(data), content_type="application/json"
+        )
+
+    def test_rationale_is_trimmed_and_stored(self):
+        data = {**self._payload(), "rationale": "  Draft A sticks to the facts. \n"}
+
+        response = self._post(data)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual(vote.rationale, "Draft A sticks to the facts.")
+        self.assertFalse(vote.all_bad)
+
+    def test_rationale_is_limited_to_500_characters(self):
+        response = self._post({**self._payload(), "rationale": "x" * 501})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(ChooserVote.objects.count(), 0)
+
+    def test_all_bad_records_no_winner_and_keeps_feedback(self):
+        data = self._payload()
+        data.pop("chosen_candidate_id")
+        data.update(
+            all_bad=True,
+            rationale="Neither draft answers the denial.",
+            flagged_candidate_ids=[candidate_token(self.candidate2.id)],
+        )
+
+        response = self._post(data)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertTrue(vote.all_bad)
+        self.assertIsNone(vote.chosen_candidate)
+        self.assertEqual(vote.tied_candidate_ids, [])
+        self.assertEqual(vote.flagged_candidate_ids, [self.candidate2.id])
+        self.assertEqual(vote.rationale, "Neither draft answers the denial.")
+        self.assertEqual(ChooserVote.shares(vote.chosen_candidate_id, []), {})
+        self.assertEqual(
+            ChooserVote.shares(None, [self.candidate1.id, self.candidate2.id]), {}
+        )
+
+    def test_all_bad_cannot_include_a_winner_or_tie(self):
+        with_winner = {**self._payload(), "all_bad": True}
+        with_tie = self._payload()
+        with_tie.pop("chosen_candidate_id")
+        with_tie.update(
+            all_bad=True,
+            tied_candidate_ids=[
+                candidate_token(self.candidate1.id),
+                candidate_token(self.candidate2.id),
+            ],
+        )
+
+        for data in (with_winner, with_tie):
+            with self.subTest(data=data):
+                response = self._post(data)
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertIn("all-bad", response.json()["error"])
+        self.assertEqual(ChooserVote.objects.count(), 0)
+
+    def test_an_ordinary_vote_still_requires_a_winner(self):
+        data = self._payload()
+        data.pop("chosen_candidate_id")
+
+        response = self._post(data)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("chosen candidate", response.json()["error"])
+        self.assertEqual(ChooserVote.objects.count(), 0)
+
+    def test_anonymous_responses_omit_the_account_review_count(self):
+        task_response = self.client.get(reverse("chooser-next-appeal"))
+        vote_response = self._post(self._payload())
+
+        self.assertNotIn("review_count", task_response.json())
+        self.assertNotIn("review_count", vote_response.json())
+
+    def test_signed_in_review_count_covers_both_arenas(self):
+        user = User.objects.create_user(
+            username="counting-judge", email="counting@example.com", password="pw-count-123"
+        )
+        chat_task = ChooserTask.objects.create(task_type="chat", status="READY")
+        chat_candidate = ChooserCandidate.objects.create(
+            task=chat_task,
+            candidate_index=0,
+            kind="chat_response",
+            model_name="model-chat",
+            content="Chat answer",
+        )
+        ChooserVote.objects.create(
+            task=chat_task,
+            chosen_candidate=chat_candidate,
+            presented_candidate_ids=[chat_candidate.id],
+            session_key="another-session",
+            user=user,
+        )
+        self.client.force_login(user)
+
+        task_response = self.client.get(reverse("chooser-next-appeal"))
+        vote_response = self._post(self._payload())
+
+        self.assertEqual(task_response.json()["review_count"], 1)
+        self.assertEqual(vote_response.json()["review_count"], 2)
+        self.assertEqual(ChooserVote.objects.filter(user=user).count(), 2)
+
+
 class ChooserTieVoteAPITest(APITestCase):
     """Votes that call a tie between two or more drafts."""
 
@@ -1321,6 +1612,40 @@ class ChooserPrefillThrottleTest(SimpleTestCase):
 
         trigger_prefill_async(exhausted="appeal")
         self.assertFalse(trigger_prefill_async(exhausted="appeal"))
+
+    def test_practice_areas_have_independent_throttles(self):
+        from fighthealthinsurance.chooser_tasks import (
+            trigger_practice_area_prefill_async,
+        )
+
+        self.assertTrue(
+            trigger_practice_area_prefill_async("appeal", "cardiology")
+        )
+        self.assertFalse(
+            trigger_practice_area_prefill_async("appeal", "cardiology")
+        )
+        self.assertTrue(trigger_practice_area_prefill_async("appeal", "oncology"))
+        self.assertFalse(
+            trigger_practice_area_prefill_async("appeal", "not-a-specialty")
+        )
+
+    def test_busy_specialty_prefill_keeps_a_short_retry_throttle(self):
+        from fighthealthinsurance import chooser_tasks
+
+        self.assertTrue(
+            chooser_tasks.trigger_practice_area_prefill_async("appeal", "cardiology")
+        )
+        run_prefill = chooser_tasks.threading.Thread.call_args.kwargs["target"]
+        with patch.object(
+            chooser_tasks,
+            "prefill_practice_area_if_needed",
+            new=AsyncMock(return_value=None),
+        ):
+            run_prefill()
+
+        self.assertFalse(
+            chooser_tasks.trigger_practice_area_prefill_async("appeal", "cardiology")
+        )
 
 
 class ChooserSkipModelTest(APITestCase):

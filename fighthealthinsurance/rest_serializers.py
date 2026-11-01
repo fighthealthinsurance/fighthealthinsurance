@@ -945,6 +945,7 @@ class ChooserTaskSerializer(serializers.Serializer):
     task_type = serializers.CharField()
     task_context = serializers.JSONField(required=False, allow_null=True)
     candidates = ChooserCandidateSerializer(many=True)
+    review_count = serializers.IntegerField(required=False, min_value=0)
 
 
 class ChooserNoTaskSerializer(serializers.Serializer):
@@ -965,7 +966,8 @@ class ChooserVoteRequestSerializer(serializers.Serializer):
     task_id = serializers.IntegerField(required=True)
     # Candidate references as the next-task endpoint served them: opaque
     # tokens (chooser_tokens), and nothing else (see resolve_candidate).
-    chosen_candidate_id = serializers.CharField(required=True)
+    # An all-bad review has no chosen candidate.
+    chosen_candidate_id = serializers.CharField(required=False, allow_null=True)
     presented_candidate_ids = serializers.ListField(
         child=serializers.CharField(), required=True
     )
@@ -979,6 +981,14 @@ class ChooserVoteRequestSerializer(serializers.Serializer):
     tied_candidate_ids = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
+    all_bad = serializers.BooleanField(required=False, default=False)
+    rationale = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=500,
+        trim_whitespace=True,
+        default="",
+    )
 
 
 class ChooserVoteResponseSerializer(serializers.Serializer):
@@ -987,6 +997,7 @@ class ChooserVoteResponseSerializer(serializers.Serializer):
     success = serializers.BooleanField()
     message = serializers.CharField()
     vote_id = serializers.IntegerField(required=False)
+    review_count = serializers.IntegerField(required=False, min_value=0)
 
 
 class ChooserSkipRequestSerializer(serializers.Serializer):

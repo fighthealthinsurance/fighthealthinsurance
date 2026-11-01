@@ -35,6 +35,7 @@ from fighthealthinsurance import (
     agent_docs,
     assistant_handoff_views,
     assistant_terms_views,
+    evaluator_accounts,
     fax_views,
     intake_resume_views,
     public_rankings,
@@ -87,6 +88,16 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "timbit/help/",
         staff_member_required(staff_views.StaffDashboardView.as_view()),
         name="staff_dashboard",
+    ),
+    path(
+        "timbit/help/evaluators/add",
+        staff_member_required(evaluator_accounts.AddEvaluatorAccountView.as_view()),
+        name="add_evaluator_account",
+    ),
+    path(
+        "evaluators/login/",
+        evaluator_accounts.EvaluatorLoginView.as_view(),
+        name="evaluator_login",
     ),
     path(
         "timbit/help/status",

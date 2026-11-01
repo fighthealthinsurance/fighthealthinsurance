@@ -75,6 +75,12 @@
 <body>
   <h1>Staff Dashboard</h1>
 
+  {% if messages %}
+  <div class="dashboard-section" role="status">
+    {% for message in messages %}{{ message }}{% endfor %}
+  </div>
+  {% endif %}
+
   <div class="dashboard-section">
     <h2>🩺 System Status</h2>
     <ul class="link-list">
@@ -162,6 +168,12 @@
   <div class="dashboard-section">
     <h2>👤 User Management</h2>
     <ul class="link-list">
+      <li>
+        <a href="{% url 'add_evaluator_account' %}">
+          <strong>Add Evaluators Account</strong>
+          <div class="link-description">Create a non-admin login for reviewing Appeal Arena cases; evaluators cannot access staff or Django admin pages</div>
+        </a>
+      </li>
       <li>
         <a href="{% url 'activate_pro' %}">
           <strong>Activate Pro User</strong>

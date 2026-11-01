@@ -4399,6 +4399,9 @@ class ChooserTask(ExportModelOperationsMixin("ChooserTask"), models.Model):  # t
 
     # Normalized JSON context for flexibility (contains denial summary or chat prompt)
     context_json = models.JSONField(null=True, blank=True)
+    # Backend-only judge picks, keyed "jev" and "fhi_local". Kept out of the
+    # case context and voter API so scoring cannot unblind the candidates.
+    scoring_json = models.JSONField(default=dict, blank=True)
 
     source = models.CharField(max_length=50, default="synthetic")
     num_candidates_expected = models.IntegerField(default=4)
@@ -4478,16 +4481,18 @@ class ChooserCandidate(ExportModelOperationsMixin("ChooserCandidate"), models.Mo
 
 
 class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # type: ignore
-    """
-    Model to store user votes selecting the best candidate from a ChooserTask.
-    """
+    """One Arena review: a winner, equally good winners, or no usable draft."""
 
     id = models.AutoField(primary_key=True)
     task = models.ForeignKey(
         ChooserTask, on_delete=models.CASCADE, related_name="votes"
     )
     chosen_candidate = models.ForeignKey(
-        ChooserCandidate, on_delete=models.CASCADE, related_name="votes"
+        ChooserCandidate,
+        on_delete=models.CASCADE,
+        related_name="votes",
+        null=True,
+        blank=True,
     )
     presented_candidate_ids = models.JSONField()  # List of candidate IDs shown to user
     # The presented candidates the voter flagged as making things up (an
@@ -4505,6 +4510,10 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
     # has a chosen candidate; counting is tie-aware and splits the vote
     # evenly between the tied candidates (see _chooser_stats).
     tied_candidate_ids = models.JSONField(default=list, blank=True, null=True)
+    # A review can reject every draft without calling any one a winner. These
+    # votes still count as presentations, with zero winning credit for all.
+    all_bad = models.BooleanField(default=False)
+    rationale = models.TextField(blank=True, default="")
     session_key = models.CharField(max_length=100, db_index=True)
     # Who else this judge is, so the Arena does not serve the same person a
     # case twice: the signed-in user (a person keeps their votes across
@@ -4526,13 +4535,18 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
     class Meta:
         # Prevent same session from voting on same task multiple times
         unique_together = [["task", "session_key"]]
-        # And the same signed-in user, from any of their sessions
         constraints = [
+            # And the same signed-in user, from any of their sessions
             models.UniqueConstraint(
                 fields=["task", "user"],
                 condition=models.Q(user__isnull=False),
                 name="chooser_vote_one_per_user",
-            )
+            ),
+            models.CheckConstraint(
+                condition=Q(all_bad=True, chosen_candidate__isnull=True)
+                | Q(all_bad=False, chosen_candidate__isnull=False),
+                name="chooser_vote_outcome_matches_pick",
+            ),
         ]
         indexes = [
             models.Index(fields=["task"]),
@@ -4543,12 +4557,12 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
 
     @staticmethod
     def shares(
-        chosen_candidate_id: int, tied_candidate_ids: typing.Optional[list]
+        chosen_candidate_id: typing.Optional[int],
+        tied_candidate_ids: typing.Optional[list],
     ) -> dict[int, float]:
-        """How one vote's single point is shared out: all of it to the chosen
-        candidate, or an even share to each candidate of a tie (1/k for a
-        k-way tie). Every count of chooser wins goes through this, so a tie
-        never counts as a full win for whichever draft stands for it."""
+        """Share one vote's point between its winners; an all-bad vote has none."""
+        if chosen_candidate_id is None:
+            return {}
         tied = list(dict.fromkeys(tied_candidate_ids or []))
         if len(tied) >= 2:
             return {cid: 1.0 / len(tied) for cid in tied}
@@ -4562,12 +4576,8 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
         return int(rounded) if rounded == int(rounded) else rounded
 
     def __str__(self):
-        """
-        Return a human-readable label for the vote that includes the chosen candidate ID and the task ID.
-
-        Returns:
-            str: A string in the form "Vote for Candidate {chosen_candidate_id} on Task {task_id}".
-        """
+        if self.all_bad:
+            return f"No usable candidates on Task {self.task_id}"
         return f"Vote for Candidate {self.chosen_candidate_id} on Task {self.task_id}"
 
 
@@ -4619,6 +4629,13 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
             str: A string in the form "Skip of Task {task_id} by {session_key}".
         """
         return f"Skip of Task {self.task_id} by {self.session_key}"
+
+
+class EvaluatorLoginThrottle(models.Model):
+    digest = models.CharField(max_length=64, unique=True)
+    failures = models.PositiveIntegerField(default=0)
+    window_started_at = models.DateTimeField(default=timezone.now)
+    last_failure_at = models.DateTimeField(default=timezone.now)
 
 
 class EncryptedTextField(models.TextField):

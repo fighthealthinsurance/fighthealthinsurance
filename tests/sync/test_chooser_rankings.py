@@ -193,6 +193,29 @@ class ChooserRankingsPageTest(TestCase):
         self.assertEqual([r["rank"] for r in rows], [1, 2, 3, 4])
 
 
+class ChooserAllBadRankingsTest(TestCase):
+    def test_all_bad_reviews_count_as_shown_with_no_wins(self):
+        task, candidates = _task()
+        ChooserVote.objects.create(
+            task=task,
+            chosen_candidate=None,
+            presented_candidate_ids=[candidate.id for candidate in candidates],
+            all_bad=True,
+            rationale="Neither is safe to send.",
+            session_key="all-bad-session",
+        )
+
+        data = public_rankings.compute_rankings()
+        rows = data["windows"][0]["tables"][0]["rows"]
+
+        self.assertEqual(
+            {row["model"]: (row["shown"], row["won"]) for row in rows},
+            {"model-a": (1, 0), "model-b": (1, 0)},
+        )
+        self.assertEqual(data["totals"]["votes"], 1)
+        self.assertNotIn("Neither is safe", json.dumps(data))
+
+
 class ChooserRankingsLeaderTest(TestCase):
     """Who is winning: each table names its leader, the first model past
     warming up, and the page says so at the top rather than leaving the

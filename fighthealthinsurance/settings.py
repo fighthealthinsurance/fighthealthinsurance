@@ -373,6 +373,11 @@ class Base(Configuration):
     CHOOSER_JUDGE_EVIDENCE = (
         os.getenv("CHOOSER_JUDGE_EVIDENCE", "true").lower() != "false"
     )
+    # Best-effort Jev and fhi-local picks for each generated case, stored only
+    # in backend metadata and never shown to voters.
+    CHOOSER_SCORE_CANDIDATES = (
+        os.getenv("CHOOSER_SCORE_CANDIDATES", "true").lower() != "false"
+    )
     CHOOSER_EVIDENCE_JUDGING_TIMEOUT = float(
         os.getenv("CHOOSER_EVIDENCE_JUDGING_TIMEOUT", "60")
     )
@@ -1286,6 +1291,8 @@ class _TestBase(Dev):
     # Nor may a case's evidence be sent to Jev or our own model; a test that
     # wants that turns it on (with research judging itself, for Jev).
     CHOOSER_JUDGE_EVIDENCE = False
+    # Candidate judging is mocked and enabled per test, never read from the host.
+    CHOOSER_SCORE_CANDIDATES = False
     # Every case a test builds is the standard, seeded kind unless the test
     # asks for a simple one; a random draw would make the seeded tests flaky.
     CHOOSER_SIMPLE_CASE_SHARE = 0.0

@@ -30,7 +30,7 @@ from django.utils import timezone
 
 from fighthealthinsurance import views
 from fighthealthinsurance.email_polling_actor import EmailPollingActor
-from fighthealthinsurance.models import Denial, FollowUpSched
+from fighthealthinsurance.models import Denial, EvaluatorLoginThrottle, FollowUpSched
 
 # Access the underlying class through the Ray decorator's __ray_metadata__.
 _Klass = getattr(EmailPollingActor, "__ray_metadata__", None)
@@ -51,6 +51,7 @@ def actor():
     # The fax reconcile's pass is its own task; these loop tests only see
     # it start.
     built._start_fax_reconcile = AsyncMock()
+    built._clear_expired_evaluator_login_throttles = AsyncMock()
     built.plan_documents_reminder_sender.afind_candidates = AsyncMock(return_value=[])
     return built
 
@@ -110,6 +111,27 @@ class TestThePurge:
         async_to_sync(actor._clear_expired_sessions)()
 
         assert actor._logger.method_calls == [call.info("Cleared 1 expired sessions")]
+
+
+class TestEvaluatorLoginThrottlePurge:
+    @pytest.mark.django_db
+    def test_expired_rows_are_deleted_and_current_rows_kept(self, actor):
+        stale = EvaluatorLoginThrottle.objects.create(
+            digest="stale",
+            window_started_at=timezone.now() - datetime.timedelta(days=1),
+        )
+        current = EvaluatorLoginThrottle.objects.create(digest="current")
+
+        async_to_sync(_Underlying._clear_expired_evaluator_login_throttles)(actor)
+
+        remaining_ids = set(EvaluatorLoginThrottle.objects.values_list("id", flat=True))
+        assert remaining_ids == {current.id}
+        assert not EvaluatorLoginThrottle.objects.filter(id=stale.id).exists()
+
+    def test_the_first_daily_pass_runs_the_purge(self, actor):
+        run_passes(actor)
+
+        actor._clear_expired_evaluator_login_throttles.assert_awaited_once()
 
 
 class TestTheEmailClearing:

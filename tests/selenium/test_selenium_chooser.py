@@ -105,9 +105,19 @@ class SeleniumTestChooserPageLoad(FHISeleniumBase, StaticLiveServerTestCase):
         """
         self.open(f"{self.live_server_url}/chooser/")
 
-        # Should explain what the user is doing, and that making things up is a foul
+        # The checklist gives a quality rubric and calibrates fouls separately
+        # from simply disliking a draft.
         self.assert_text("Appeal Arena", timeout=10)
+        self.assert_text("Truthful first, then responsive, useful, and clear")
         self.assert_text("Making things up is a foul")
+        self.assert_text("not automatically a foul")
+
+    def test_chooser_page_offers_an_optional_practice_area(self):
+        self.open(f"{self.live_server_url}/chooser/")
+
+        self.assert_text("Which area of practice do you know best?", timeout=10)
+        self.assert_text("General cases are always available")
+        self.assert_element("[data-testid='arena-practice-area']")
 
     def test_chooser_page_requires_tos_agreement(self):
         """Verify chooser entry buttons are gated behind an explicit Terms of Service agreement."""
