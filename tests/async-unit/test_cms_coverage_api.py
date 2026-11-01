@@ -411,7 +411,7 @@ class TestCMSCoverageClientSearch:
         assert {d.document_id for d in second} == {d.document_id for d in first}
 
 
-class TestHasReport:
+class TestLoadReport:
     def _client(self, payload):
         client = CMSCoverageClient(base_url="http://test.invalid")
         mock_http = MagicMock()
@@ -421,27 +421,33 @@ class TestHasReport:
         return client
 
     @pytest.mark.asyncio
-    async def test_fresh_empty_report_counts(self):
+    async def test_fresh_empty_report_is_valid(self):
         client = self._client(_ncd_payload([]))
-        assert await client.search_ncds("MRI brain") == []
-        assert client.has_report()
+        assert await client.load_report() == ([], True)
 
     @pytest.mark.asyncio
-    async def test_expired_report_does_not_count(self):
+    async def test_expired_report_served_in_an_outage_is_not_valid(self):
         client = self._client(_ncd_payload([_ncd_record(title="MRI Brain")]))
-        await client.search_ncds("MRI brain")
-        assert client.has_report()
+        records, valid = await client.load_report()
+        assert valid and len(records) == 1
         # Past its TTL, as when a refresh failed and the old report is served.
         client._ncd_report_cached_at = time.monotonic() - client._NCD_REPORT_TTL - 1
         client._client.get = AsyncMock(side_effect=httpx.RequestError("outage"))
-        await client.search_ncds("MRI brain")
-        assert not client.has_report()
+        records, valid = await client.load_report()
+        assert len(records) == 1
+        assert not valid
 
     @pytest.mark.asyncio
     async def test_malformed_response_is_not_a_report(self):
         client = self._client({"meta": {}})
-        assert await client.search_ncds("MRI brain") == []
-        assert not client.has_report()
+        assert await client.load_report() == ([], False)
+        assert client._ncd_report_cache is None
+
+    @pytest.mark.asyncio
+    async def test_report_whose_records_all_fail_to_parse_is_not_a_report(self):
+        client = self._client({"data": [{"title": "no id"}, {"document_id": 3}]})
+        assert await client.load_report() == ([], False)
+        assert client._ncd_report_cache is None
 
 
 class TestGetCMSCoverageCitations:
@@ -456,12 +462,13 @@ class TestGetCMSCoverageCitations:
     @patch("fighthealthinsurance.cms_coverage_api.get_cms_coverage_client")
     async def test_returns_empty_when_search_returns_nothing(self, mock_get_client):
         mock_client = MagicMock()
-        mock_client.search_ncds = AsyncMock(return_value=[])
+        mock_client.load_report = AsyncMock(return_value=([], True))
         mock_get_client.return_value = mock_client
 
         result = await get_cms_coverage_citations("MRI", "headache")
 
         assert result == []
+        assert result.complete
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.cms_coverage_api.get_cms_coverage_client")
@@ -474,15 +481,80 @@ class TestGetCMSCoverageCitations:
             title="Magnetic Resonance Imaging",
             url_path="/data/ncd?ncdid=220&ncdver=1",
         )
-        # Both procedure ("MRI") and diagnosis ("imaging") return the same NCD
-        mock_client.search_ncds = AsyncMock(return_value=[ncd])
+        # Both the procedure and the diagnosis match the same NCD.
+        mock_client.load_report = AsyncMock(return_value=([ncd], True))
         mock_get_client.return_value = mock_client
 
         citations = await get_cms_coverage_citations(
-            procedure="MRI", diagnosis="imaging", max_results=5
+            procedure="magnetic resonance imaging",
+            diagnosis="resonance imaging",
+            max_results=5,
         )
 
         assert len(citations) == 1
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.cms_coverage_api.get_cms_coverage_client")
+    async def test_one_report_serves_both_keywords(self, mock_get_client):
+        # The report is loaded once, so a failure can't fall on the
+        # procedure search alone while the diagnosis search succeeds.
+        mock_client = MagicMock()
+        ncd = NCDDocument(
+            document_id=11, document_display_id="20.29", title="Hyperbaric Oxygen"
+        )
+        mock_client.load_report = AsyncMock(return_value=([ncd], True))
+        mock_get_client.return_value = mock_client
+
+        result = await get_cms_coverage_citations(
+            "hyperbaric oxygen", "diabetic foot ulcer"
+        )
+
+        mock_client.load_report.assert_awaited_once()
+        assert len(result) == 1
+        assert result.complete
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.cms_coverage_api.get_cms_coverage_client")
+    async def test_lookup_on_an_invalid_report_is_incomplete(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_client.load_report = AsyncMock(return_value=([], False))
+        mock_get_client.return_value = mock_client
+
+        result = await get_cms_coverage_citations("MRI brain", "headache")
+
+        assert result == []
+        assert not result.complete
+
+    @pytest.mark.asyncio
+    async def test_failed_procedure_fetch_cannot_store_an_empty_result(self):
+        # Path A end to end: the first fetch fails, then the report comes
+        # back. Before, the procedure search hit the failure and the
+        # diagnosis search the good report, and [] looked finished.
+        client = CMSCoverageClient(base_url="http://test.invalid")
+        mock_http = MagicMock()
+        mock_http.is_closed = False
+        mock_http.get = AsyncMock(
+            side_effect=[
+                httpx.RequestError("outage"),
+                _make_response(
+                    200, _ncd_payload([_ncd_record(title="Hyperbaric Oxygen")])
+                ),
+            ]
+        )
+        client._client = mock_http
+        with patch(
+            "fighthealthinsurance.cms_coverage_api.get_cms_coverage_client",
+            return_value=client,
+        ):
+            first = await get_cms_coverage_citations(
+                "hyperbaric oxygen", "diabetic foot ulcer"
+            )
+            second = await get_cms_coverage_citations(
+                "hyperbaric oxygen", "diabetic foot ulcer"
+            )
+
+        assert first == [] and not first.complete
+        assert len(second) == 1 and second.complete
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.cms_coverage_api.get_cms_coverage_client")
@@ -493,7 +565,7 @@ class TestGetCMSCoverageCitations:
             document_display_id="220.5",
             title="MRI",
         )
-        mock_client.search_ncds = AsyncMock(return_value=[ncd])
+        mock_client.load_report = AsyncMock(return_value=([ncd], True))
         mock_get_client.return_value = mock_client
 
         commercial = await get_cms_coverage_citations("MRI", None, medicare_plan=False)
