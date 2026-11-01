@@ -1184,6 +1184,55 @@ class ChooserJudgeIdentityTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
 
+    def test_a_session_keeps_hiding_what_its_address_judged_before_it_began(self):
+        from fighthealthinsurance.rest_views import ChooserViewSet
+
+        self._vote_elsewhere(client_key=ChooserViewSet.client_key_for(self.ADDRESS))
+        self._next(HTTP_CF_CONNECTING_IP=self.ADDRESS)
+        # The second request carries the new session's cookie.
+        response = self._next(HTTP_CF_CONNECTING_IP=self.ADDRESS)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+
+    def test_a_stale_session_cookie_counts_as_no_session(self):
+        from django.conf import settings
+        from fighthealthinsurance.rest_views import ChooserViewSet
+
+        self.client.cookies[settings.SESSION_COOKIE_NAME] = "expired-session-key"
+        self._vote_elsewhere(client_key=ChooserViewSet.client_key_for(self.ADDRESS))
+        response = self._next(HTTP_CF_CONNECTING_IP=self.ADDRESS)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+
+    def test_a_skip_without_a_csrf_token_does_not_count_for_the_user(self):
+        from rest_framework.test import APIClient
+
+        client = APIClient(enforce_csrf_checks=True)
+        client.force_login(self.user)
+        client.post(
+            reverse("chooser-skip"),
+            json.dumps({"task_id": self.task.id}),
+            content_type="application/json",
+        )
+        self.assertIsNone(ChooserSkip.objects.get(task=self.task).user)
+
+    def test_a_user_skipping_in_two_sessions_leaves_one_skip(self):
+        ChooserSkip.objects.create(
+            task=self.task, session_key="another-session", user=self.user
+        )
+        self.client.force_login(self.user)
+        self.client.post(
+            reverse("chooser-skip"),
+            json.dumps({"task_id": self.task.id}),
+            content_type="application/json",
+        )
+        self.assertEqual(ChooserSkip.objects.filter(task=self.task).count(), 1)
+
+    def test_the_database_holds_one_vote_per_user_per_task(self):
+        from django.db import IntegrityError, transaction
+
+        self._vote_elsewhere(user=self.user)
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            self._vote_elsewhere(user=self.user, session_key="a-third-session")
+
 class ChooserPrefillTest(APITestCase):
     """Test the prefill functionality."""
 

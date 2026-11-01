@@ -4518,6 +4518,14 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
     class Meta:
         # Prevent same session from voting on same task multiple times
         unique_together = [["task", "session_key"]]
+        # And the same signed-in user, from any of their sessions
+        constraints = [
+            models.UniqueConstraint(
+                fields=["task", "user"],
+                condition=models.Q(user__isnull=False),
+                name="chooser_vote_one_per_user",
+            )
+        ]
         indexes = [
             models.Index(fields=["task"]),
             models.Index(fields=["session_key"]),
@@ -4580,6 +4588,14 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
     class Meta:
         # Prevent same session from skipping same task multiple times
         unique_together = [["task", "session_key"]]
+        # And the same signed-in user, from any of their sessions
+        constraints = [
+            models.UniqueConstraint(
+                fields=["task", "user"],
+                condition=models.Q(user__isnull=False),
+                name="chooser_skip_one_per_user",
+            )
+        ]
         indexes = [
             models.Index(fields=["task"]),
             models.Index(fields=["session_key"]),

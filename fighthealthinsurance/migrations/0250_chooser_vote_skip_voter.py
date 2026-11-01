@@ -49,4 +49,20 @@ class Migration(migrations.Migration):
                 to=settings.AUTH_USER_MODEL,
             ),
         ),
+        migrations.AddConstraint(
+            model_name="chooserskip",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("user__isnull", False)),
+                fields=("task", "user"),
+                name="chooser_skip_one_per_user",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="chooservote",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("user__isnull", False)),
+                fields=("task", "user"),
+                name="chooser_vote_one_per_user",
+            ),
+        ),
     ]
