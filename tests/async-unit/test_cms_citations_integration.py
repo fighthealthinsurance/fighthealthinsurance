@@ -15,6 +15,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from django.utils import timezone
 
+from fighthealthinsurance.cms_coverage_api import (
+    NCD_CITATION_MARKER,
+    CMSCoverageCitations,
+)
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.models import Denial
 
@@ -49,10 +53,16 @@ class TestMLCitationsHelperCMSIntegration:
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
     @patch("fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_citations")
-    async def test_uses_fresh_cache_when_available(self, mock_fetch, mock_cache_cls):
+    async def test_uses_fresh_cache_when_available(
+        self, mock_fetch, mock_cache_cls, log_capture
+    ):
         # Simulate a fresh DB cache hit on the variant-specific timestamp
         cache_entry = MagicMock()
-        cache_entry.generic_citations = ["Cached NCD A", "Cached NCD B"]
+        cached = [
+            f"Cached NCD A, {NCD_CITATION_MARKER}",
+            f"Cached NCD B, {NCD_CITATION_MARKER}",
+        ]
+        cache_entry.generic_citations = cached
         cache_entry.medicare_citations = []
         cache_entry.generic_updated_at = timezone.now()
         cache_entry.medicare_updated_at = None
@@ -62,12 +72,180 @@ class TestMLCitationsHelperCMSIntegration:
         mock_cache_cls.objects.filter.return_value = mock_qs
         mock_cache_cls.objects.aupdate_or_create = AsyncMock()
 
+        with log_capture() as cap:
+            result = await MLCitationsHelper.generate_cms_coverage_citations(
+                denial=self.mock_denial
+            )
+
+        assert result == cached
+        mock_fetch.assert_not_called()
+        mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
+        # The procedure and diagnosis are the patient's medical details and
+        # stay out of the logs.
+        logged = " ".join(r["message"] for r in cap.records).lower()
+        assert "mri" not in logged
+        assert "headache" not in logged
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
+    @patch("fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_citations")
+    async def test_refetches_fresh_cache_from_the_older_matcher(
+        self, mock_fetch, mock_cache_cls
+    ):
+        # Written before titles had to match closely: no "may apply"
+        # wording, so it may name an unrelated policy and is looked up again.
+        cache_entry = MagicMock()
+        cache_entry.generic_citations = ["Old-matcher NCD citation"]
+        cache_entry.medicare_citations = []
+        cache_entry.generic_updated_at = timezone.now()
+        cache_entry.medicare_updated_at = None
+
+        mock_qs = MagicMock()
+        mock_qs.afirst = AsyncMock(return_value=cache_entry)
+        mock_cache_cls.objects.filter.return_value = mock_qs
+        mock_cache_cls.objects.aupdate_or_create = AsyncMock(
+            return_value=(cache_entry, False)
+        )
+        # A complete lookup that found nothing.
+        mock_fetch.return_value = CMSCoverageCitations([], complete=True)
+
         result = await MLCitationsHelper.generate_cms_coverage_citations(
             denial=self.mock_denial
         )
 
-        assert result == ["Cached NCD A", "Cached NCD B"]
+        assert result == []
+        mock_fetch.assert_awaited_once()
+        # The empty answer is stored for this matcher, so the next denial
+        # doesn't look it up again.
+        kwargs = mock_cache_cls.objects.aupdate_or_create.await_args.kwargs
+        assert kwargs["defaults"]["generic_citations"] == []
+        assert kwargs["defaults"]["generic_updated_at"] is not None
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
+    @patch("fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_citations")
+    async def test_uses_cached_empty_result_from_this_matcher(
+        self, mock_fetch, mock_cache_cls
+    ):
+        cache_entry = MagicMock()
+        cache_entry.generic_citations = []
+        cache_entry.medicare_citations = []
+        cache_entry.generic_updated_at = timezone.now()
+        cache_entry.medicare_updated_at = None
+
+        mock_qs = MagicMock()
+        mock_qs.afirst = AsyncMock(return_value=cache_entry)
+        mock_cache_cls.objects.filter.return_value = mock_qs
+
+        result = await MLCitationsHelper.generate_cms_coverage_citations(
+            denial=self.mock_denial
+        )
+
+        assert result == []
         mock_fetch.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
+    @patch("fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_citations")
+    async def test_failed_lookup_is_not_stored(self, mock_fetch, mock_cache_cls):
+        mock_qs = MagicMock()
+        mock_qs.afirst = AsyncMock(return_value=None)
+        mock_cache_cls.objects.filter.return_value = mock_qs
+        mock_cache_cls.objects.aupdate_or_create = AsyncMock()
+        mock_fetch.side_effect = RuntimeError("lookup broke")
+
+        result = await MLCitationsHelper.generate_cms_coverage_citations(
+            denial=self.mock_denial
+        )
+
+        assert result == []
+        mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
+    async def test_partly_parsed_report_never_stores_an_empty_result(
+        self, mock_cache_cls
+    ):
+        from fighthealthinsurance.cms_coverage_api import CMSCoverageClient
+
+        # A valid unrelated record, and the relevant one with no document_id.
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {
+            "data": [
+                {"document_id": 11, "title": "Acupuncture"},
+                {"title": "MRI"},
+            ]
+        }
+        client = CMSCoverageClient(base_url="http://test.invalid")
+        client._client = MagicMock(is_closed=False, get=AsyncMock(return_value=response))
+
+        mock_qs = MagicMock()
+        mock_qs.afirst = AsyncMock(return_value=None)
+        mock_cache_cls.objects.filter.return_value = mock_qs
+        mock_cache_cls.objects.aupdate_or_create = AsyncMock()
+
+        with patch(
+            "fighthealthinsurance.cms_coverage_api.get_cms_coverage_client",
+            return_value=client,
+        ):
+            # A fresh fetch, then a hit on the in-process report.
+            for _ in range(2):
+                result = await MLCitationsHelper.generate_cms_coverage_citations(
+                    denial=self.mock_denial
+                )
+                assert result == []
+
+        assert client._client.get.await_count == 1
+        mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
+
+    def test_previous_read_path_only_sees_citations_or_a_miss(self):
+        # During a rolling deploy, pods still on the previous code read rows
+        # the new code wrote. This is that code's read path, verbatim from
+        # before the change, run over both row shapes the new code writes.
+        from fighthealthinsurance.ml.ml_citations_helper import _CMS_CACHE_TTL
+
+        def previous_read(cache_entry, cache_field, timestamp_field, max_results):
+            cached = getattr(cache_entry, cache_field) or []
+            variant_updated_at = getattr(cache_entry, timestamp_field, None)
+            fresh = (
+                variant_updated_at is not None
+                and (timezone.now() - variant_updated_at) < _CMS_CACHE_TTL
+            )
+            if cached and fresh:
+                return list(cached)[:max_results]
+            return None  # a miss: it looks the citations up itself
+
+        written = [f"CMS National Coverage Determination 20.1, {NCD_CITATION_MARKER}"]
+        for rows_citations, expected in ((written, written), ([], None)):
+            entry = MagicMock()
+            entry.generic_citations = rows_citations
+            entry.generic_updated_at = timezone.now()
+            result = previous_read(
+                entry, "generic_citations", "generic_updated_at", max_results=3
+            )
+            assert result == expected
+            if result is not None:
+                assert all(isinstance(c, str) for c in result)
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
+    @patch("fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_citations")
+    async def test_does_not_store_empty_result_during_an_outage(
+        self, mock_fetch, mock_cache_cls
+    ):
+        mock_qs = MagicMock()
+        mock_qs.afirst = AsyncMock(return_value=None)
+        mock_cache_cls.objects.filter.return_value = mock_qs
+        mock_cache_cls.objects.aupdate_or_create = AsyncMock()
+        # Searched a stale or invalid report: not a finished lookup.
+        mock_fetch.return_value = CMSCoverageCitations([], complete=False)
+
+        result = await MLCitationsHelper.generate_cms_coverage_citations(
+            denial=self.mock_denial
+        )
+
+        assert result == []
         mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
 
     @pytest.mark.asyncio

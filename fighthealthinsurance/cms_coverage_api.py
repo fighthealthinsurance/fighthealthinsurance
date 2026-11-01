@@ -19,7 +19,7 @@ Docs: https://api.coverage.cms.gov/docs/swagger/index.html
 import re
 import time
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 import httpx
 from loguru import logger
@@ -54,6 +54,38 @@ _STOPWORDS = frozenset(
 )
 
 
+# Words that name a kind of medical work rather than what it is done to or
+# for. They appear in many unrelated NCD titles ("Hair Analysis", "Applied
+# Behavior Analysis"; "Knee Replacement Surgery", "valve surgery";
+# "Speech Generating Devices", "speech therapy"), so a
+# title sharing only one of them with the query is not a match. They are
+# dropped from both sides before matching.
+_GENERIC_MEDICAL_WORDS = frozenset(
+    {
+        "analysis",
+        "care",
+        "disorder",
+        "disorders",
+        "evaluation",
+        "management",
+        "procedure",
+        "procedures",
+        "service",
+        "services",
+        "surgeries",
+        "surgery",
+        "surgical",
+        "test",
+        "testing",
+        "tests",
+        "therapies",
+        "therapy",
+        "treatment",
+        "treatments",
+    }
+)
+
+
 def _tokenize(text: str) -> List[str]:
     """Split text into lowercase alphanumeric tokens, dropping stopwords."""
     return [
@@ -61,6 +93,76 @@ def _tokenize(text: str) -> List[str]:
         for t in re.findall(r"[a-z0-9]+", text.lower())
         if t not in _STOPWORDS and len(t) >= 2
     ]
+
+
+# Singular words that end in "s" and must not lose it.
+_KEEP_TRAILING_S = frozenset(
+    {
+        "diabetes",
+        "herpes",
+        "measles",
+        "mumps",
+        "rabies",
+        "rickets",
+        "scabies",
+        "series",
+        "species",
+    }
+)
+
+
+# Words the suffix rules below would get wrong, mapped to their singular.
+_IRREGULAR_SINGULARS = {
+    "analyses": "analysis",
+    "axes": "axis",
+    "diagnoses": "diagnosis",
+    "lens": "lens",
+    "lenses": "lens",
+    "prostheses": "prosthesis",
+    "viruses": "virus",
+}
+
+
+def _singular(token: str) -> str:
+    """A light, conservative singular form, so "replacements" and
+    "Replacement" count as the same word. Only plain plural endings are
+    touched: words ending in -is, -us, -ss, -as or -os ("analysis",
+    "lupus", "bypass", "pancreas") and the listed singulars ("diabetes")
+    stay as they are, and a few irregular words ("lenses") are mapped."""
+    if token in _IRREGULAR_SINGULARS:
+        return _IRREGULAR_SINGULARS[token]
+    if len(token) <= 3 or token in _KEEP_TRAILING_S:
+        return token
+    if token.endswith("ies") and len(token) > 4:
+        return token[:-3] + "y"
+    if token.endswith(("is", "us", "ss", "as", "os")):
+        return token
+    if token.endswith(("sses", "xes", "ches", "shes")):
+        return token[:-2]
+    if token.endswith("s"):
+        return token[:-1]
+    return token
+
+
+_GENERIC_MEDICAL_STEMS = frozenset(_singular(w) for w in _GENERIC_MEDICAL_WORDS)
+
+
+def _meaningful_tokens(text: str) -> List[str]:
+    """``_tokenize`` in singular form without the generic medical words,
+    deduplicated in order."""
+    out: List[str] = []
+    for t in _tokenize(text):
+        t = _singular(t)
+        if t not in _GENERIC_MEDICAL_STEMS and t not in out:
+            out.append(t)
+    return out
+
+
+# The phrase every NCD citation carries since titles had to match the query
+# closely. A cached citation without it was written by the older matcher,
+# which accepted one shared word, so it may be off topic and is looked up
+# again (ml_citations_helper).
+NCD_CITATION_MARKER = "may apply to this service"
 
 
 @dataclass
@@ -90,7 +192,9 @@ class NCDDocument:
         narrowly limited determinations). The citation is a reference: the
         appeal-generation LLM can use the linked policy as authority for
         Medicare's medical-necessity criteria, but we don't preemptively
-        characterize it as favorable.
+        characterize it as favorable. The match is on title words, so the
+        citation says the policy may apply and leaves the model to use it
+        only when it fits the case.
         """
         url = self.public_url
         url_part = f" ({url})" if url else ""
@@ -106,7 +210,8 @@ class NCDDocument:
             )
         return (
             f"CMS National Coverage Determination {self.document_display_id} — "
-            f'"{self.title}"{url_part}: see this Medicare coverage policy for '
+            f'"{self.title}"{url_part}: a Medicare coverage policy that '
+            f"{NCD_CITATION_MARKER}; cite it only if it fits this case, for "
             f"the applicable coverage criteria{tail}"
         )
 
@@ -139,35 +244,73 @@ def _parse_ncd_record(record: dict) -> Optional[NCDDocument]:
         return None
 
 
+def _title_matches(query_tokens: List[str], title: str):
+    """Score an NCD title against the query's meaningful tokens, or None.
+
+    A title matches when the query names its subject closely, in one of two
+    ways:
+
+    * Most of the query is in the title: more than half of the query's
+      meaningful tokens, and at least two.
+    * Most of the title is in the query: at least two shared tokens that
+      are more than half the title's, so a long procedure description
+      still finds a short title ("Cardiac Rehabilitation Programs" for
+      cardiac rehabilitation after valve surgery).
+    * All of the title is in the query: every meaningful title token
+      appears in it ("Ambulance Services" for "air ambulance").
+
+    A one-word query can only match the last way, a title that is that one
+    word. One shared word is not enough otherwise, which is what let "air
+    ambulance" match "Air-Fluidized Bed" and "applied behavior analysis"
+    match "Hair Analysis". Returns a sort key (best first) or None.
+    """
+    title_tokens = set(_meaningful_tokens(title))
+    if not title_tokens:
+        return None
+    matched = sum(1 for t in query_tokens if t in title_tokens)
+    if matched == 0:
+        return None
+    most_of_query = matched >= 2 and matched * 2 > len(query_tokens)
+    most_of_title = matched >= 2 and matched * 2 > len(title_tokens)
+    all_of_title = title_tokens.issubset(query_tokens)
+    if not (most_of_query or most_of_title or all_of_title):
+        return None
+    query_share = matched / len(query_tokens)
+    title_share = matched / len(title_tokens)
+    # Best first: more of the query covered, then more of the title, then
+    # more shared words, then the shorter title.
+    return (-query_share, -title_share, -matched, len(title))
+
+
 def _filter_by_keyword(
     records: List[NCDDocument], keyword: str, max_results: int
 ) -> List[NCDDocument]:
     """Token-based keyword filter on NCD titles.
 
-    Tokenizes both the input keyword and each NCD title (dropping stopwords
-    and short tokens), then returns titles ranked by how many input tokens
-    they share. This lets multi-word inputs like "MRI brain" match titles
-    like "MRI of the Brain" or "Magnetic Resonance Imaging — Brain".
+    Tokenizes both the input keyword and each NCD title (dropping stopwords,
+    short tokens and generic medical words), then keeps only titles that
+    match the query closely (see ``_title_matches``) and ranks them by how
+    much of the query they cover. This lets multi-word inputs like "MRI
+    brain" match titles like "MRI of the Brain" without a single shared
+    word pulling in an unrelated policy. Nothing matching means no NCD: an
+    off-topic citation is worse than none.
 
     The MCD reports endpoints don't reliably accept a keyword filter, so we
     pull the report and filter locally. The full report is small enough
     (~hundreds of NCDs) that this is cheap.
     """
-    tokens = _tokenize(keyword) if keyword else []
-    if not tokens:
+    if not keyword:
+        return []
+    query_tokens = _meaningful_tokens(keyword)
+    if not query_tokens:
         return []
     scored: List[tuple] = []
     for r in records:
-        title_tokens = set(_tokenize(r.title))
-        if not title_tokens:
-            continue
-        match_count = sum(1 for t in tokens if t in title_tokens)
-        if match_count == 0:
-            continue
-        # Sort key: more matches first, then shorter title (more specific).
-        scored.append((-match_count, len(r.title), r))
-    scored.sort(key=lambda x: (x[0], x[1]))
-    return [r for _, _, r in scored[:max_results]]
+        key = _title_matches(query_tokens, r.title)
+        if key is not None:
+            scored.append((key, r))
+    scored.sort(key=lambda x: x[0])
+    return [r for _, r in scored[:max_results]]
 
 
 class CMSCoverageClient:
@@ -189,6 +332,10 @@ class CMSCoverageClient:
         self._client: Optional[httpx.AsyncClient] = None
         self._ncd_report_cache: Optional[List[NCDDocument]] = None
         self._ncd_report_cached_at: float = 0.0
+        # Whether every record in the cached report parsed. A report that
+        # lost some is still searched, but an empty search of it can't say
+        # nothing applies: the dropped record might have been the match.
+        self._ncd_report_complete: bool = False
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -204,46 +351,73 @@ class CMSCoverageClient:
             await self._client.aclose()
             self._client = None
 
-    async def _fetch_ncd_report(self) -> List[NCDDocument]:
-        """Fetch (and cache) the full NCD report.
+    async def load_report(self) -> Tuple[List[NCDDocument], bool]:
+        """The NCD report, and whether it is a fresh, complete one.
 
-        On any error, returns the previously-cached report if we have one,
-        otherwise an empty list. This means transient CMS outages don't
-        zero out our citations as long as the in-process cache still has
-        data from a prior successful fetch.
+        Serves the in-process copy while it is within its TTL; otherwise
+        fetches it. On any error, or a response that isn't a report, returns
+        the previously-cached report if we have one (otherwise an empty
+        list) with False, so transient CMS outages don't zero out our
+        citations but nobody mistakes the result for a finished search. A
+        data list whose every record fails to parse isn't a report either,
+        and one that lost only some records is kept and searched but
+        reported as incomplete, on later cache hits too.
         """
         now = time.monotonic()
         if (
             self._ncd_report_cache is not None
             and (now - self._ncd_report_cached_at) < self._NCD_REPORT_TTL
         ):
-            return self._ncd_report_cache
+            return self._ncd_report_cache, self._ncd_report_complete
+        fallback = self._ncd_report_cache or []
         try:
             client = await self._get_client()
             response = await client.get("/v1/reports/national-coverage-ncd")
             if response.status_code != 200:
                 logger.warning(f"CMS NCD report returned status {response.status_code}")
-                return self._ncd_report_cache or []
+                return fallback, False
             payload = response.json()
+            if not isinstance(payload, dict) or not isinstance(
+                payload.get("data"), list
+            ):
+                # Not a report: don't let it stand in for a finished search.
+                logger.warning("CMS NCD report response had no data list")
+                return fallback, False
+            records = _extract_records(payload)
             parsed = [
                 doc
-                for doc in (_parse_ncd_record(r) for r in _extract_records(payload))
+                for doc in (_parse_ncd_record(r) for r in records)
                 if doc is not None
             ]
+            if records and not parsed:
+                logger.warning("CMS NCD report had no record that could be parsed")
+                return fallback, False
+            complete = len(parsed) == len(records)
+            if not complete:
+                logger.warning(
+                    f"CMS NCD report: {len(records) - len(parsed)} record(s) "
+                    f"could not be parsed"
+                )
             self._ncd_report_cache = parsed
             self._ncd_report_cached_at = now
-            return parsed
+            self._ncd_report_complete = complete
+            return parsed, complete
         except httpx.TimeoutException:
             logger.warning("CMS Coverage API request timed out")
-            return self._ncd_report_cache or []
+            return fallback, False
         except httpx.RequestError as e:
             logger.warning(f"CMS Coverage API request failed: {e}")
-            return self._ncd_report_cache or []
+            return fallback, False
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Unexpected error fetching CMS NCD report: {e}"
             )
-            return self._ncd_report_cache or []
+            return fallback, False
+
+    async def _fetch_ncd_report(self) -> List[NCDDocument]:
+        """The NCD report, fresh or the last good one (see ``load_report``)."""
+        records, _valid = await self.load_report()
+        return records
 
     async def search_ncds(
         self, keyword: str, max_results: int = 5
@@ -293,37 +467,51 @@ def _candidate_keywords(
     return keywords
 
 
+class CMSCoverageCitations(List[str]):
+    """The citations one lookup found, a plain list to its callers, plus
+    whether the lookup was complete: every keyword searched against one
+    fresh, valid NCD report. Only a complete empty lookup means no NCD
+    applies; an incomplete one may just be an outage."""
+
+    def __init__(self, citations: Iterable[str] = (), complete: bool = False):
+        super().__init__(citations)
+        self.complete = complete
+
+
 async def get_cms_coverage_citations(
     procedure: Optional[str],
     diagnosis: Optional[str],
     medicare_plan: bool = False,
     max_results: int = 3,
-) -> List[str]:
+) -> CMSCoverageCitations:
     """Return formatted CMS coverage citations for a procedure/diagnosis.
 
     `medicare_plan=True` triggers framing emphasizing that
     Medicare-administered plans are bound by these policies.
 
-    Returns an empty list if no usable keywords are present or if the CMS
-    API is unreachable AND we have no cached report. Transient outages
-    where the in-process report cache is still warm continue to return
-    citations from the cached data.
+    The report is loaded once and both keywords are searched against that
+    same copy, so the result's ``complete`` flag says whether all of it
+    came from a fresh, valid report. Returns an empty list if no usable
+    keywords are present or if the CMS API is unreachable AND we have no
+    cached report. Transient outages where the in-process report cache is
+    still warm continue to return citations from the cached data, marked
+    incomplete.
     """
     keywords = _candidate_keywords(procedure, diagnosis)
     if not keywords:
-        return []
+        return CMSCoverageCitations()
     client = get_cms_coverage_client()
+    records, report_valid = await client.load_report()
     citations: List[str] = []
     seen_ids: set = set()
     for keyword in keywords:
         if len(citations) >= max_results:
             break
-        ncds = await client.search_ncds(keyword=keyword, max_results=max_results)
-        for ncd in ncds:
+        for ncd in _filter_by_keyword(records, keyword, max_results):
             if ncd.document_id in seen_ids:
                 continue
             seen_ids.add(ncd.document_id)
             citations.append(ncd.as_citation(medicare_plan=medicare_plan))
             if len(citations) >= max_results:
                 break
-    return citations
+    return CMSCoverageCitations(citations, complete=report_valid)

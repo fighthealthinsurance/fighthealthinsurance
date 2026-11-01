@@ -10,7 +10,10 @@ from fighthealthinsurance.denial_history_consent import (
     history_may_be_used,
     still_allowed,
 )
-from fighthealthinsurance.cms_coverage_api import get_cms_coverage_citations
+from fighthealthinsurance.cms_coverage_api import (
+    NCD_CITATION_MARKER,
+    get_cms_coverage_citations,
+)
 from fighthealthinsurance.ecri_guidelines_helper import ECRIGuidelinesHelper
 from fighthealthinsurance.extralink_context_helper import (
     ExtraLinkContextHelper,
@@ -29,6 +32,25 @@ from fighthealthinsurance.utils import best_within_timelimit
 # documents change rarely, so a long TTL is fine; we just don't want
 # entries to live forever in case the public URLs or titles change.
 _CMS_CACHE_TTL = datetime.timedelta(days=30)
+
+
+def _cached_cms_citations(value: Any) -> Optional[List[str]]:
+    """The citations a fresh CMSCoverageCache field holds for the current
+    NCD matcher, or None when it must be looked up again.
+
+    The field stays a plain list of citation strings, which every version
+    of this code can read. The older matcher wrote only non-empty lists
+    whose citations lack NCD_CITATION_MARKER; those are looked up again. It
+    never wrote an empty list, so a fresh [] is a finished lookup by the
+    current matcher that found nothing.
+    """
+    if not isinstance(value, list):
+        return None
+    if not value:
+        return []
+    if all(isinstance(c, str) and NCD_CITATION_MARKER in c for c in value):
+        return list(value)
+    return None
 
 
 async def _denial_is_medicare_plan(denial: Optional[Denial]) -> bool:
@@ -271,7 +293,7 @@ class MLCitationsHelper:
             if cached:
                 logger.debug(
                     f"Found {len(cached.generated_context or [])} cached generic "
-                    f"citations for {procedure}/{diagnosis}"
+                    f"citations"
                 )
                 # Create a new list to avoid modifying cached data
                 result = list(cached.generated_context)
@@ -285,9 +307,7 @@ class MLCitationsHelper:
                     result.extend(extras)
                 return result
             else:
-                logger.debug(
-                    f"No cached generic citations found for {procedure}/{diagnosis}"
-                )
+                logger.debug("No cached generic citations found")
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error fetching cached generic citations: {e}"
@@ -333,8 +353,8 @@ class MLCitationsHelper:
             # Get the best result within the timeout
             try:
                 logger.debug(
-                    f"Generating best generic citations for {procedure}/{diagnosis} "
-                    f"across {len(partial_awaitables)} model(s)"
+                    f"Generating best generic citations across "
+                    f"{len(partial_awaitables)} model(s)"
                 )
                 result = []
                 try:
@@ -372,9 +392,7 @@ class MLCitationsHelper:
                             diagnosis=diagnosis,
                             defaults={"generated_context": result},
                         )
-                        logger.debug(
-                            f"Stored cached generic citations for {procedure}/{diagnosis} -- {result}"
-                        )
+                        logger.debug(f"Stored {len(result)} cached generic citations")
                     except Exception as e:
                         logger.opt(exception=True).warning(
                             f"Error caching generic citations: {e}"
@@ -444,31 +462,43 @@ class MLCitationsHelper:
             logger.debug(f"Could not read CMSCoverageCache: {e}")
 
         if cache_entry is not None:
-            cached = getattr(cache_entry, cache_field) or []
+            cached = _cached_cms_citations(getattr(cache_entry, cache_field))
             variant_updated_at = getattr(cache_entry, timestamp_field, None)
             fresh = (
                 variant_updated_at is not None
                 and (timezone.now() - variant_updated_at) < _CMS_CACHE_TTL
             )
-            if cached and fresh:
+            # None is an entry from the older matcher, which took one shared
+            # title word as a match: look it up again. An empty list is a
+            # finished lookup that found nothing; ``fresh`` also means this
+            # variant's timestamp was set, which the field default never is.
+            if cached is not None and fresh:
                 logger.debug(
-                    f"Using cached CMS citations for {procedure}/{diagnosis} "
-                    f"(medicare_plan={medicare_plan})"
+                    f"Using {len(cached)} cached CMS citations "
+                    f"(cache entry {cache_entry.pk}, variant {cache_field}, "
+                    f"updated {variant_updated_at})"
                 )
-                return list(cached)[:max_results]
+                return cached[:max_results]
 
+        # Whether this lookup searched every keyword against one fresh,
+        # valid NCD report. A plain list (no flag) counts as incomplete.
+        lookup_complete = False
         try:
-            citations = await get_cms_coverage_citations(
+            found = await get_cms_coverage_citations(
                 procedure=procedure or None,
                 diagnosis=diagnosis or None,
                 medicare_plan=medicare_plan,
                 max_results=max_results,
             )
+            citations = list(found)
+            lookup_complete = bool(getattr(found, "complete", False))
         except Exception as e:
             logger.opt(exception=True).debug(f"CMS coverage citation fetch failed: {e}")
             citations = []
 
-        if citations:
+        # An empty result is stored only from a complete lookup, so an
+        # outage or a bad report isn't remembered as "nothing applies".
+        if citations or lookup_complete:
             # `aupdate_or_create` is atomic against the (procedure, diagnosis)
             # unique constraint, which closes the race where two concurrent
             # cache misses could otherwise create duplicate rows. We write

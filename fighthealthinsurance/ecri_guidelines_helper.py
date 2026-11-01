@@ -154,10 +154,10 @@ class ECRIGuidelinesHelper:
                         break
             return results
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Error querying ECRI guidelines for {procedure_norm}/"
-                f"{diagnosis_norm}: {e}"
-            )
+            # Only the exception's type: the procedure and diagnosis are the
+            # person's, and a database error's message or traceback can
+            # repeat the query's values.
+            logger.warning(f"Error querying ECRI guidelines ({type(e).__name__})")
             return []
 
     @classmethod

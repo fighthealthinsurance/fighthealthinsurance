@@ -4,6 +4,7 @@ These tests mock httpx so they exercise the full parsing/matching/framing
 logic without hitting the real CMS API.
 """
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -13,7 +14,10 @@ from fighthealthinsurance.cms_coverage_api import (
     CMSCoverageClient,
     NCDDocument,
     _candidate_keywords,
+    NCD_CITATION_MARKER,
     _filter_by_keyword,
+    _meaningful_tokens,
+    _singular,
     _parse_ncd_record,
     _tokenize,
     get_cms_coverage_citations,
@@ -91,6 +95,9 @@ class TestNCDDocument:
         assert "220.5" in text
         assert "Magnetic Resonance Imaging" in text
         assert "Medicare coverage policy" in text
+        # Matched on title words, so offered as possibly applicable.
+        assert NCD_CITATION_MARKER in text
+        assert "only if it fits this case" in text
         # We deliberately don't claim the NCD recognizes the service as
         # covered — NCDs can be non-coverage decisions.
         assert "recognizing this service as covered" not in text
@@ -191,6 +198,108 @@ class TestFilterByKeyword:
         docs = self._docs("MRI Brain")
         assert _filter_by_keyword(docs, "", max_results=5) == []
 
+    def test_one_shared_word_is_not_a_match(self):
+        # "air" alone pulled in an unrelated bed policy for an air
+        # ambulance denial.
+        docs = self._docs("Air-Fluidized Bed")
+        assert _filter_by_keyword(docs, "air ambulance", max_results=5) == []
+
+    def test_generic_medical_word_is_not_a_match(self):
+        # Applied behavior analysis shares only "analysis" with this title.
+        docs = self._docs("Hair Analysis")
+        assert _filter_by_keyword(docs, "applied behavior analysis", 5) == []
+        assert _filter_by_keyword(docs, "ABA therapy", max_results=5) == []
+
+    def test_generic_word_dropped_query_needs_the_whole_title(self):
+        # "speech therapy" is just "speech" once "therapy" is dropped; a
+        # title with more than that subject is not a match.
+        docs = self._docs("Speech Generating Devices")
+        assert _filter_by_keyword(docs, "speech therapy", max_results=5) == []
+
+    def test_title_named_in_full_by_the_query_matches(self):
+        docs = self._docs("Ambulance Services", "Air-Fluidized Bed")
+        results = _filter_by_keyword(docs, "air ambulance", max_results=5)
+        assert [d.title for d in results] == ["Ambulance Services"]
+
+    def test_genuine_match_still_found(self):
+        docs = self._docs(
+            "Hyperbaric Oxygen Therapy",
+            "Oxygen for Home Use",
+            "Hair Analysis",
+        )
+        results = _filter_by_keyword(
+            docs, "hyperbaric oxygen therapy for diabetic wounds", max_results=5
+        )
+        assert [d.title for d in results] == ["Hyperbaric Oxygen Therapy"]
+
+    def test_long_query_finds_a_short_title_it_mostly_names(self):
+        docs = self._docs(
+            "Cardiac Rehabilitation Programs",  # two of its three words
+            "Knee Replacement Surgery",  # only "replacement"; surgery is generic
+            "Total Joint Replacement Surgery of the Hip",  # two of four
+        )
+        results = _filter_by_keyword(
+            docs,
+            "cardiac rehabilitation after valve replacement surgery",
+            max_results=5,
+        )
+        assert [d.title for d in results] == ["Cardiac Rehabilitation Programs"]
+
+    def test_ranks_by_share_of_the_query_covered(self):
+        docs = self._docs(
+            "MRI",  # all of the title, half the query
+            "MRI of the Brain",  # all of the query
+        )
+        results = _filter_by_keyword(docs, "MRI brain", max_results=2)
+        assert [d.title for d in results] == ["MRI of the Brain", "MRI"]
+
+    def test_plural_and_singular_count_as_the_same_word(self):
+        docs = self._docs("Knee Replacement Surgery")
+        results = _filter_by_keyword(docs, "knee replacements", max_results=5)
+        assert [d.title for d in results] == ["Knee Replacement Surgery"]
+
+    def test_one_word_query_needs_a_title_of_that_word(self):
+        docs = self._docs("Speech Generating Devices", "Speech")
+        results = _filter_by_keyword(docs, "speech", max_results=5)
+        assert [d.title for d in results] == ["Speech"]
+
+    def test_exactly_half_of_the_query_is_not_most(self):
+        # Two of four query words, and two of four title words.
+        docs = self._docs("Total Joint Replacement Surgery of the Hip")
+        results = _filter_by_keyword(
+            docs, "shoulder joint replacement revision", max_results=5
+        )
+        assert results == []
+
+
+class TestSingular:
+    def test_plain_plurals(self):
+        assert _singular("replacements") == "replacement"
+        assert _singular("therapies") == "therapy"
+        assert _singular("patches") == "patch"
+        assert _singular("x") == "x"
+
+    def test_singular_words_ending_in_s_are_kept(self):
+        for word in ("analysis", "diabetes", "lupus", "bypass", "pancreas"):
+            assert _singular(word) == word
+
+    def test_irregular_words(self):
+        assert _singular("lens") == "lens"
+        assert _singular("lenses") == "lens"
+        assert _singular("axes") == "axis"
+        assert _singular("process") == "process"
+        assert _singular("processes") == "process"
+
+    def test_lens_and_lenses_match(self):
+        docs = [
+            NCDDocument(document_id=1, document_display_id="1", title="Intraocular Lenses")
+        ]
+        results = _filter_by_keyword(docs, "intraocular lens", max_results=5)
+        assert [d.title for d in results] == ["Intraocular Lenses"]
+
+    def test_generic_words_are_dropped_in_either_form(self):
+        assert _meaningful_tokens("therapies and treatments") == []
+
 
 class TestCMSCoverageClientSearch:
     @pytest.mark.asyncio
@@ -222,9 +331,9 @@ class TestCMSCoverageClientSearch:
         )
         client._client = mock_http
 
-        results = await client.search_ncds("mri", max_results=5)
+        results = await client.search_ncds("MRI brain", max_results=5)
 
-        assert {r.document_id for r in results} == {220, 222}
+        assert {r.document_id for r in results} == {220}
 
     @pytest.mark.asyncio
     async def test_search_ncds_returns_empty_for_blank_keyword(self):
@@ -290,16 +399,84 @@ class TestCMSCoverageClientSearch:
         )
         client._client = mock_http
 
-        first = await client.search_ncds("MRI")
+        first = await client.search_ncds("MRI brain")
         assert len(first) == 1
 
         # Force the report-cache TTL to expire and simulate an outage
         client._ncd_report_cached_at = 0.0
         mock_http.get = AsyncMock(side_effect=httpx.RequestError("outage"))
 
-        second = await client.search_ncds("MRI")
+        second = await client.search_ncds("MRI brain")
 
         assert {d.document_id for d in second} == {d.document_id for d in first}
+
+
+class TestLoadReport:
+    def _client(self, payload):
+        client = CMSCoverageClient(base_url="http://test.invalid")
+        mock_http = MagicMock()
+        mock_http.is_closed = False
+        mock_http.get = AsyncMock(return_value=_make_response(200, payload))
+        client._client = mock_http
+        return client
+
+    @pytest.mark.asyncio
+    async def test_fresh_empty_report_is_valid(self):
+        client = self._client(_ncd_payload([]))
+        assert await client.load_report() == ([], True)
+
+    @pytest.mark.asyncio
+    async def test_expired_report_served_in_an_outage_is_not_valid(self):
+        client = self._client(_ncd_payload([_ncd_record(title="MRI Brain")]))
+        records, valid = await client.load_report()
+        assert valid and len(records) == 1
+        # Past its TTL, as when a refresh failed and the old report is served.
+        client._ncd_report_cached_at = time.monotonic() - client._NCD_REPORT_TTL - 1
+        client._client.get = AsyncMock(side_effect=httpx.RequestError("outage"))
+        records, valid = await client.load_report()
+        assert len(records) == 1
+        assert not valid
+
+    @pytest.mark.asyncio
+    async def test_malformed_response_is_not_a_report(self):
+        client = self._client({"meta": {}})
+        assert await client.load_report() == ([], False)
+        assert client._ncd_report_cache is None
+
+    @pytest.mark.asyncio
+    async def test_report_whose_records_all_fail_to_parse_is_not_a_report(self):
+        client = self._client({"data": [{"title": "no id"}, {"document_id": 3}]})
+        assert await client.load_report() == ([], False)
+        assert client._ncd_report_cache is None
+
+
+class TestPartlyParsedReport:
+    @pytest.mark.asyncio
+    async def test_report_that_lost_a_record_is_searched_but_incomplete(self):
+        # One valid unrelated record, and a relevant one with no document_id.
+        payload = {
+            "data": [
+                _ncd_record(document_id=11, title="Acupuncture"),
+                {"title": "Hyperbaric Oxygen", "document_display_id": "20.29"},
+            ]
+        }
+        client = CMSCoverageClient(base_url="http://test.invalid")
+        mock_http = MagicMock()
+        mock_http.is_closed = False
+        mock_http.get = AsyncMock(return_value=_make_response(200, payload))
+        client._client = mock_http
+
+        with patch(
+            "fighthealthinsurance.cms_coverage_api.get_cms_coverage_client",
+            return_value=client,
+        ):
+            fresh = await get_cms_coverage_citations("hyperbaric oxygen", None)
+            from_cache = await get_cms_coverage_citations("hyperbaric oxygen", None)
+
+        assert mock_http.get.await_count == 1  # the second came from the cache
+        for result in (fresh, from_cache):
+            assert result == []
+            assert not result.complete
 
 
 class TestGetCMSCoverageCitations:
@@ -314,12 +491,13 @@ class TestGetCMSCoverageCitations:
     @patch("fighthealthinsurance.cms_coverage_api.get_cms_coverage_client")
     async def test_returns_empty_when_search_returns_nothing(self, mock_get_client):
         mock_client = MagicMock()
-        mock_client.search_ncds = AsyncMock(return_value=[])
+        mock_client.load_report = AsyncMock(return_value=([], True))
         mock_get_client.return_value = mock_client
 
         result = await get_cms_coverage_citations("MRI", "headache")
 
         assert result == []
+        assert result.complete
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.cms_coverage_api.get_cms_coverage_client")
@@ -332,15 +510,80 @@ class TestGetCMSCoverageCitations:
             title="Magnetic Resonance Imaging",
             url_path="/data/ncd?ncdid=220&ncdver=1",
         )
-        # Both procedure ("MRI") and diagnosis ("imaging") return the same NCD
-        mock_client.search_ncds = AsyncMock(return_value=[ncd])
+        # Both the procedure and the diagnosis match the same NCD.
+        mock_client.load_report = AsyncMock(return_value=([ncd], True))
         mock_get_client.return_value = mock_client
 
         citations = await get_cms_coverage_citations(
-            procedure="MRI", diagnosis="imaging", max_results=5
+            procedure="magnetic resonance imaging",
+            diagnosis="resonance imaging",
+            max_results=5,
         )
 
         assert len(citations) == 1
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.cms_coverage_api.get_cms_coverage_client")
+    async def test_one_report_serves_both_keywords(self, mock_get_client):
+        # The report is loaded once, so a failure can't fall on the
+        # procedure search alone while the diagnosis search succeeds.
+        mock_client = MagicMock()
+        ncd = NCDDocument(
+            document_id=11, document_display_id="20.29", title="Hyperbaric Oxygen"
+        )
+        mock_client.load_report = AsyncMock(return_value=([ncd], True))
+        mock_get_client.return_value = mock_client
+
+        result = await get_cms_coverage_citations(
+            "hyperbaric oxygen", "diabetic foot ulcer"
+        )
+
+        mock_client.load_report.assert_awaited_once()
+        assert len(result) == 1
+        assert result.complete
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.cms_coverage_api.get_cms_coverage_client")
+    async def test_lookup_on_an_invalid_report_is_incomplete(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_client.load_report = AsyncMock(return_value=([], False))
+        mock_get_client.return_value = mock_client
+
+        result = await get_cms_coverage_citations("MRI brain", "headache")
+
+        assert result == []
+        assert not result.complete
+
+    @pytest.mark.asyncio
+    async def test_failed_procedure_fetch_cannot_store_an_empty_result(self):
+        # Path A end to end: the first fetch fails, then the report comes
+        # back. Before, the procedure search hit the failure and the
+        # diagnosis search the good report, and [] looked finished.
+        client = CMSCoverageClient(base_url="http://test.invalid")
+        mock_http = MagicMock()
+        mock_http.is_closed = False
+        mock_http.get = AsyncMock(
+            side_effect=[
+                httpx.RequestError("outage"),
+                _make_response(
+                    200, _ncd_payload([_ncd_record(title="Hyperbaric Oxygen")])
+                ),
+            ]
+        )
+        client._client = mock_http
+        with patch(
+            "fighthealthinsurance.cms_coverage_api.get_cms_coverage_client",
+            return_value=client,
+        ):
+            first = await get_cms_coverage_citations(
+                "hyperbaric oxygen", "diabetic foot ulcer"
+            )
+            second = await get_cms_coverage_citations(
+                "hyperbaric oxygen", "diabetic foot ulcer"
+            )
+
+        assert first == [] and not first.complete
+        assert len(second) == 1 and second.complete
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.cms_coverage_api.get_cms_coverage_client")
@@ -351,7 +594,7 @@ class TestGetCMSCoverageCitations:
             document_display_id="220.5",
             title="MRI",
         )
-        mock_client.search_ncds = AsyncMock(return_value=[ncd])
+        mock_client.load_report = AsyncMock(return_value=([ncd], True))
         mock_get_client.return_value = mock_client
 
         commercial = await get_cms_coverage_citations("MRI", None, medicare_plan=False)
