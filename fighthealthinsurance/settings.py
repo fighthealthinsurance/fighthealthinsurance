@@ -56,6 +56,23 @@ def _ucr_int(name: str, default: int, minimum: int) -> int:
     return max(value, minimum)
 
 
+def _temporal_host(hostname: str) -> str:
+    """host:port for the Temporal frontend from TEMPORAL_HOSTNAME.
+
+    Takes a bare hostname (the frontend's gRPC port 7233 is added) or an
+    explicit host:port. Empty means a local dev server.
+    """
+    hostname = hostname.strip()
+    if not hostname:
+        return "localhost:7233"
+    if hostname.startswith("["):
+        # Bracketed IPv6, with or without a port.
+        return hostname if "]:" in hostname else f"{hostname}:7233"
+    if ":" in hostname:
+        return hostname
+    return f"{hostname}:7233"
+
+
 def _env_flag(name: str, default: str = "0") -> bool:
     """Parse an env-backed boolean flag.
 
@@ -581,7 +598,13 @@ class Base(Configuration):
     # models' higher base score keeping the failed reply in front. It is
     # still delivered when nothing else usable arrives. On by default.
     FHI_CHAT_JEV_GATE_DEMOTE_FAILED = _env_flag("FHI_CHAT_JEV_GATE_DEMOTE_FAILED", "1")
-    TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
+    # The Temporal frontend: TEMPORAL_HOSTNAME is a hostname
+    # ("temporal-frontend", port 7233 implied) or host:port. TEMPORAL_HOST,
+    # the older name, still works when TEMPORAL_HOSTNAME is unset. Production
+    # sets it in k8s/feature-flags.yaml.
+    TEMPORAL_HOST = _temporal_host(
+        os.getenv("TEMPORAL_HOSTNAME") or os.getenv("TEMPORAL_HOST") or ""
+    )
     TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
     # Namespace for research runs (shared plan documents), apart from patient ones.
     TEMPORAL_RESEARCH_NAMESPACE = os.getenv(
