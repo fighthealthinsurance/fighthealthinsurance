@@ -1093,10 +1093,11 @@ class SurpriseBillingRule:
     # emergency rules below where they exist.
     private: bool
     public_programs: frozenset[str] = frozenset()
-    # The Labor and Treasury copies of the rule, which are the ones an
-    # employer plan answers to under ERISA and the tax code. Rendered for an
-    # employer, TPA or unknown plan, since the model may not add sections of
-    # its own.
+    # The Labor regulation and the tax code section for the rule, which are
+    # what an employer plan answers to under ERISA and the tax code. The tax
+    # code is cited by statute: Treasury's version is a 2021 temporary
+    # regulation whose current status is unsettled. Rendered for an employer,
+    # TPA or unknown plan, since the model may not add sections of its own.
     employer_plan_sections: str = ""
 
 
@@ -1149,7 +1150,7 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
         source_url="https://www.ecfr.gov/current/title-45/section-149.110",
         private=True,
         public_programs=frozenset({FEHB}),
-        employer_plan_sections="29 C.F.R. § 2590.716-4 and 26 C.F.R. § 54.9816-4T",
+        employer_plan_sections="29 C.F.R. § 2590.716-4 and 26 U.S.C. § 9816(a)",
     ),
     SurpriseBillingRule(
         fact=EMERGENCY_CARE,
@@ -1205,7 +1206,7 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
         source_url="https://www.ecfr.gov/current/title-45/section-149.130",
         private=True,
         public_programs=frozenset({FEHB}),
-        employer_plan_sections="29 C.F.R. § 2590.717-1 and 26 C.F.R. § 54.9817-1T",
+        employer_plan_sections="29 C.F.R. § 2590.717-1 and 26 U.S.C. § 9817",
     ),
     SurpriseBillingRule(
         fact=OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY,
@@ -1239,7 +1240,7 @@ SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
         source_url="https://www.ecfr.gov/current/title-45/section-149.120",
         private=True,
         public_programs=frozenset({FEHB}),
-        employer_plan_sections="29 C.F.R. § 2590.716-5 and 26 C.F.R. § 54.9816-5T",
+        employer_plan_sections="29 C.F.R. § 2590.716-5 and 26 U.S.C. § 9816(b)",
     ),
 )
 

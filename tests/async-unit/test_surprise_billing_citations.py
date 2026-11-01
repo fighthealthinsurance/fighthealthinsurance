@@ -319,10 +319,10 @@ class TestLetterTextAndCitingLimits(unittest.TestCase):
 class TestEmployerPlanSections(unittest.TestCase):
     PARALLELS = (
         "29 C.F.R. § 2590.716-4",
-        "26 C.F.R. § 54.9816-4T",
+        "26 U.S.C. § 9816(a)",
     )
 
-    def test_erisa_tpa_and_unknown_plans_get_the_labor_and_treasury_sections(self):
+    def test_erisa_tpa_and_unknown_plans_get_the_labor_and_tax_code_sections(self):
         for programs in (("erisa",), ("tpa",), ("erisa_letter",), ()):
             with self.subTest(programs=programs):
                 block = get_surprise_billing_citation_context(
@@ -345,14 +345,20 @@ class TestEmployerPlanSections(unittest.TestCase):
         assert block is not None
         for section in (
             "2590.716-4",
-            "54.9816-4T",
+            "26 U.S.C. § 9816(a)",
             "2590.716-5",
-            "54.9816-5T",
+            "26 U.S.C. § 9816(b)",
             "2590.717-1",
-            "54.9817-1T",
+            "26 U.S.C. § 9817",
         ):
             with self.subTest(section=section):
                 self.assertIn(section, block)
+
+    def test_no_treasury_temporary_regulation_is_cited(self):
+        for rule in SURPRISE_BILLING_RULES:
+            with self.subTest(rule=rule.name):
+                self.assertNotIn("54.981", rule.employer_plan_sections)
+                self.assertNotIn("26 C.F.R.", rule.employer_plan_sections)
 
     def test_marketplace_plan_gets_only_the_hhs_section(self):
         block = get_surprise_billing_citation_context(
