@@ -4284,7 +4284,11 @@ class ModelUsageDashboardView(generic.TemplateView):
         since: Optional[datetime.datetime],
         until: Optional[datetime.datetime] = None,
         source: Optional[str] = None,
+        label_for: Callable[[Optional[str]], Optional[str]] = normalize_model_label,
     ) -> List[Dict[str, Any]]:
+        # ``label_for`` maps a stored model name to the row it counts under;
+        # the public rankings pass one that folds "provider/model" into
+        # "model", so equivalent providers of one model share a row.
         # Both chosen and presented derive from the same vote set (filtered
         # by ChooserVote.created_at), so a window's win rates compare like
         # with like: every vote event contributes its chosen candidate once
@@ -4339,7 +4343,7 @@ class ModelUsageDashboardView(generic.TemplateView):
         )
         chosen_by_label: Counter = Counter()
         for cid, credit in chosen_credit.items():
-            label = normalize_model_label(cand_to_model.get(cid)) or UNKNOWN_MODEL_LABEL
+            label = label_for(cand_to_model.get(cid)) or UNKNOWN_MODEL_LABEL
             chosen_by_label[label] += credit
         chosen = {
             label: ChooserVote.rounded_credit(credit)
@@ -4347,12 +4351,12 @@ class ModelUsageDashboardView(generic.TemplateView):
         }
         presented: Counter = Counter()
         for cid, n in counter.items():
-            presented_label = normalize_model_label(cand_to_model.get(cid))
+            presented_label = label_for(cand_to_model.get(cid))
             if presented_label is not None:
                 presented[presented_label] += n
         flagged: Counter = Counter()
         for cid, n in flag_counter.items():
-            flagged_label = normalize_model_label(cand_to_model.get(cid))
+            flagged_label = label_for(cand_to_model.get(cid))
             if flagged_label is not None:
                 flagged[flagged_label] += n
         return _merge_stats(chosen, dict(presented), flagged=dict(flagged))

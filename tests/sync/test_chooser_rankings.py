@@ -358,3 +358,67 @@ class ChooserRankingsTermsTest(TestCase):
         self.assertIn("5+", body)
         self.assertNotIn("Jane Doe", body)
         self.assertNotIn("Something unvouched", body)
+
+
+class ChooserRankingsModelLabelTest(TestCase):
+    """The page names a model without its provider, and counts every
+    provider of one model as a single row."""
+
+    def test_public_model_label_strips_the_provider_prefix(self):
+        self.assertEqual(
+            public_rankings.public_model_label("lunaroute/deepseek-4.1-flash"),
+            "deepseek-4.1-flash",
+        )
+
+    def test_public_model_label_leaves_a_bare_name_alone(self):
+        self.assertEqual(
+            public_rankings.public_model_label("deepseek-4.1-flash"),
+            "deepseek-4.1-flash",
+        )
+
+    def test_public_model_label_of_nothing_is_none(self):
+        self.assertIsNone(public_rankings.public_model_label("  "))
+
+    def test_providers_of_one_model_share_a_row(self):
+        task, (a, b) = _task(models=("lunaroute/deepseek-4.1-flash", "model-b"))
+        _vote(task, [a, b], a, "label-1")
+        other, (c, d) = _task(models=("deepseek-4.1-flash", "model-b"))
+        _vote(other, [c, d], d, "label-2")
+
+        rows = public_rankings.compute_rankings()["windows"][0]["tables"][0]["rows"]
+
+        by_model = {r["model"]: (r["won"], r["shown"]) for r in rows}
+        self.assertEqual(
+            by_model, {"deepseek-4.1-flash": (1, 2), "model-b": (1, 2)}
+        )
+
+    def test_the_page_never_shows_the_provider(self):
+        task, (a, b) = _task(models=("lunaroute/deepseek-4.1-flash", "model-b"))
+        _vote(task, [a, b], a, "label-3")
+
+        body = self.client.get(reverse("chooser_rankings")).content.decode()
+
+        self.assertIn("deepseek-4.1-flash", body)
+        self.assertNotIn("lunaroute", body)
+
+
+class ChooserRankingsTermLimitTest(TestCase):
+    def test_each_list_shows_at_most_the_term_limit(self):
+        now = timezone.now()
+        limit = cr.CONDITION_RANKING_LIMIT
+        for n in range(limit + 2):
+            MedicalTermCheck.objects.create(
+                term=f"condition {chr(97 + n)}",
+                kind=cr.KIND_CONDITION,
+                is_real=True,
+                people=cr.CONDITION_RANKING_MIN_PEOPLE,
+                checked_at=now,
+                counted_at=now,
+            )
+
+        rows = public_rankings.compute_rankings()["conditions"]
+
+        self.assertEqual(len(rows), limit)
+
+    def test_the_default_limit_is_short(self):
+        self.assertLessEqual(cr.CONDITION_RANKING_LIMIT, 5)

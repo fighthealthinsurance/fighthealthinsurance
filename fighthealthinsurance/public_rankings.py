@@ -14,7 +14,16 @@ Everything on it is either synthetic or aggregate:
   else the staff dashboard shows stay off this page.
 * The condition and treatment lists come from ``condition_rankings``: terms
   on at least k distinct denials, shaped like medical terms, vouched for by
-  a medical vocabulary, with counts rounded down to a multiple of k.
+  a medical vocabulary, with counts rounded down to a multiple of k. Only
+  the top ``CONDITION_RANKING_LIMIT`` (5) of each are shown: a short list of the
+  most common terms is defense in depth should something that is not a
+  medical term (a name, say) ever slip past those filters, since a string
+  only reaches the top few by being something a great many people typed.
+
+Models are shown by model name alone (``public_model_label``): a
+"provider/model" label is cut to "model", and every provider serving the same
+model counts as one row, on the broad assumption that they serve the same
+weights.
 
 The numbers are computed at most once per ``PUBLIC_RANKINGS_CACHE_SECONDS``
 per process and never touch a model or NCBI. ``?format=json`` returns the
@@ -32,6 +41,7 @@ from django.views.generic import TemplateView
 from loguru import logger
 
 from fighthealthinsurance import condition_rankings
+from fighthealthinsurance.ml.model_identity import normalize_model_label
 from fighthealthinsurance.models import ChooserTask, ChooserVote
 from fighthealthinsurance.staff_views import ModelUsageDashboardView
 from fighthealthinsurance.utils import arena_rankings_page_enabled
@@ -104,12 +114,23 @@ def _later(a: Optional[datetime.datetime], b: Optional[datetime.datetime]):
     return max(a, b)
 
 
+def public_model_label(raw: Optional[str]) -> Optional[str]:
+    """A stored model name as the public page shows and groups it: the
+    reporting label (normalize_model_label) without any "provider/" prefix,
+    so "lunaroute/deepseek-4.1-flash" and "deepseek-4.1-flash" are one row.
+    We assume, broadly, that providers serving one model are equivalent."""
+    label = normalize_model_label(raw)
+    if label is None:
+        return None
+    return label.rsplit("/", 1)[-1].strip() or label
+
+
 def _model_rows(kind: str, since: Optional[datetime.datetime]) -> List[Dict[str, Any]]:
     """The leaderboard rows for ``kind`` since ``since``: synthetic votes
     only, models with a denominator only, best win rate first among those
     past PUBLIC_RANKINGS_MIN_SHOWN, then the rest by votes shown."""
     rows = ModelUsageDashboardView._chooser_stats(
-        kind, since, None, source=SYNTHETIC_SOURCE
+        kind, since, None, source=SYNTHETIC_SOURCE, label_for=public_model_label
     )
     out = []
     for r in rows:

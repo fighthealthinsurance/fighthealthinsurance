@@ -417,7 +417,7 @@ class Base(Configuration):
     CONDITION_RANKING_REFRESH_TIMEOUT = int(
         os.getenv("CONDITION_RANKING_REFRESH_TIMEOUT", "180")
     )
-    CONDITION_RANKING_LIMIT = int(os.getenv("CONDITION_RANKING_LIMIT", "25"))
+    CONDITION_RANKING_LIMIT = int(os.getenv("CONDITION_RANKING_LIMIT", "5"))
     PUBLIC_RANKINGS_CACHE_SECONDS = int(
         os.getenv("PUBLIC_RANKINGS_CACHE_SECONDS", str(15 * 60))
     )
