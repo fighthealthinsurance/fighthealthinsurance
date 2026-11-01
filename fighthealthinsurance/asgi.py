@@ -100,6 +100,8 @@ if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
     from sentry_sdk.integrations.logging import ignore_logger
 
     from fighthealthinsurance.sentry_filters import (
+        FHI_TRACE_PROPAGATION_TARGETS,
+        before_breadcrumb_filter,
         before_send_filter,
         before_send_transaction_filter,
     )
@@ -163,6 +165,11 @@ if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
         ignore_errors=[Resolver404],
         before_send=before_send_filter,
         before_send_transaction=before_send_transaction_filter,
+        # Outbound request details stay out of Sentry: query strings and most
+        # paths are cleaned from spans and breadcrumbs (see sentry_filters),
+        # and trace headers go only to our own hosts, not to outside services.
+        before_breadcrumb=before_breadcrumb_filter,
+        trace_propagation_targets=FHI_TRACE_PROPAGATION_TARGETS,
         _experiments={
             # Set continuous_profiling_auto_start to True
             # to automatically start the profiler on when

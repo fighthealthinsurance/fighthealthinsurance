@@ -421,6 +421,151 @@ def strip_sharing_form_details(event: Any) -> Any:
     return event
 
 
+# Outbound HTTP requests are recorded by Sentry's httpx, aiohttp and stdlib
+# integrations as "http.client" spans and "httplib" breadcrumbs. Those carry
+# the request's query string and fragment as separate fields, and the URL
+# itself in the span description. Query strings to outside services are built
+# from case details and carry API keys, so they never leave this process:
+# only scheme, host and (for the hosts below) path are kept.
+OUTBOUND_HTTP_SPAN_OP_PREFIX = "http.client"
+OUTBOUND_HTTP_BREADCRUMB_CATEGORY = "httplib"
+OUTBOUND_HTTP_QUERY_KEYS = (
+    "http.query",
+    "http.fragment",
+    "url.query",
+    "url.fragment",
+)
+OUTBOUND_HTTP_URL_KEYS = ("url", "url.full", "http.url")
+PATH_REMOVED = "/[path removed]"
+
+# Hosts whose paths are fixed API routes or public identifiers (a PubMed ID,
+# a DOI, a coverage document number), so keeping the path helps debugging and
+# reveals nothing about a case. Every other host keeps only scheme and host:
+# the link fetcher and payer policy fetcher follow URLs found in documents,
+# and a path there can be anything. Model providers' paths are fixed routes.
+# Matched against the host name, case-insensitively, as a whole name or a
+# subdomain of it.
+OUTBOUND_PATH_KEPT_HOSTS = (
+    "eutils.ncbi.nlm.nih.gov",
+    "www.ncbi.nlm.nih.gov",
+    "pubmed.ncbi.nlm.nih.gov",
+    "www.ebi.ac.uk",
+    "api.biorxiv.org",
+    "api.unpaywall.org",
+    "doi.org",
+    "rxnav.nlm.nih.gov",
+    "clinicaltrials.gov",
+    "api.nice.org.uk",
+    "data.uspreventiveservicestaskforce.org",
+    "api.coverage.cms.gov",
+    "www.ecfr.gov",
+    "api.deepinfra.com",
+    "api.anthropic.com",
+    "api.perplexity.ai",
+    "openai.azure.com",
+    "services.ai.azure.com",
+)
+
+# Where Sentry may send its trace headers (sentry-trace, baggage): our own
+# sites, in-cluster services and local development. By default the SDK sends
+# them to every host, outside services included. Anchored, because the SDK
+# matches these with re.search against the full URL.
+FHI_TRACE_PROPAGATION_TARGETS = [
+    r"(?i)^https?://([a-z0-9-]+\.)*(fighthealthinsurance\.com|fightpaperwork\.com"
+    r"|fightinsurance\.ai|fuckhealthinsurance\.com)(:\d+)?(/|$)",
+    r"(?i)^https?://[a-z0-9.-]+\.svc(\.cluster\.local)?(:\d+)?(/|$)",
+    r"(?i)^https?://(localhost|127\.0\.0\.1)(:\d+)?(/|$)",
+]
+
+
+def _keeps_path(host: str) -> bool:
+    host = host.lower().rstrip(".")
+    return any(
+        host == kept or host.endswith("." + kept) for kept in OUTBOUND_PATH_KEPT_HOSTS
+    )
+
+
+def clean_outbound_url(url: Any) -> Any:
+    """``url`` without its query string, fragment or credentials, and without
+    its path unless the host is in OUTBOUND_PATH_KEPT_HOSTS. Anything that is
+    not a parseable absolute URL becomes FILTERED. Never raises."""
+    if not isinstance(url, str):
+        return url
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        if not parts.scheme or not host:
+            return FILTERED if url else url
+        netloc = host if parts.port is None else f"{host}:{parts.port}"
+        path = parts.path
+        if path not in ("", "/") and not _keeps_path(host):
+            path = PATH_REMOVED
+        return f"{parts.scheme}://{netloc}{path}"
+    except Exception:
+        return FILTERED
+
+
+def _scrub_outbound_http_data(data: Any) -> None:
+    if not isinstance(data, dict):
+        return
+    for key in OUTBOUND_HTTP_QUERY_KEYS:
+        data.pop(key, None)
+    for key in OUTBOUND_HTTP_URL_KEYS:
+        if key in data:
+            data[key] = clean_outbound_url(data[key])
+
+
+def scrub_outbound_http_breadcrumb(crumb: Any) -> Any:
+    """Clean one outbound HTTP breadcrumb in place and return it. Other
+    breadcrumbs pass through. Never raises."""
+    try:
+        if (
+            isinstance(crumb, dict)
+            and crumb.get("category") == OUTBOUND_HTTP_BREADCRUMB_CATEGORY
+        ):
+            _scrub_outbound_http_data(crumb.get("data"))
+    except Exception:
+        pass
+    return crumb
+
+
+def scrub_outbound_http(event: Any) -> Any:
+    """Clean every outbound HTTP span and breadcrumb in an event. Never
+    raises; anything whose shape it cannot read is left as it is."""
+    if not isinstance(event, dict):
+        return event
+    try:
+        spans = event.get("spans")
+        if isinstance(spans, list):
+            for span in spans:
+                if not isinstance(span, dict):
+                    continue
+                if not as_text(span.get("op")).startswith(OUTBOUND_HTTP_SPAN_OP_PREFIX):
+                    continue
+                _scrub_outbound_http_data(span.get("data"))
+                description = span.get("description")
+                if isinstance(description, str) and " " in description:
+                    method, _, url = description.partition(" ")
+                    span["description"] = f"{method} {clean_outbound_url(url)}"
+                elif isinstance(description, str):
+                    span["description"] = clean_outbound_url(description)
+        breadcrumbs = event.get("breadcrumbs")
+        if isinstance(breadcrumbs, dict):
+            breadcrumbs = breadcrumbs.get("values")
+        if isinstance(breadcrumbs, list):
+            for crumb in breadcrumbs:
+                scrub_outbound_http_breadcrumb(crumb)
+    except Exception:
+        pass
+    return event
+
+
+def before_breadcrumb_filter(crumb: Any, hint: Any) -> Any:
+    """Sentry ``before_breadcrumb`` hook: outbound HTTP breadcrumbs lose their
+    query strings when recorded, not only when an event is sent."""
+    return scrub_outbound_http_breadcrumb(crumb)
+
+
 def before_send_filter(event: Any, hint: Any) -> Any:
     """Drop known-noise error events. Returns the event, or None to discard.
 
@@ -507,6 +652,7 @@ def before_send_filter(event: Any, hint: Any) -> Any:
     event = strip_letter_review_details(event)
     event = strip_sharing_form_details(event)
     event = strip_confirm_delete_details(event)
+    event = scrub_outbound_http(event)
     return strip_local_variables_near_assistant_text(event)
 
 
@@ -538,4 +684,4 @@ def before_send_transaction_filter(event: Any, hint: Any) -> Any:
         and transaction_info.get("source") == UNROUTED_TRANSACTION_SOURCE
     ):
         return None
-    return strip_confirm_delete_details(event)
+    return scrub_outbound_http(strip_confirm_delete_details(event))
