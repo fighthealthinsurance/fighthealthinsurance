@@ -6431,7 +6431,9 @@ class OpenCode(RemoteFullOpenLike):
 
     def __init__(self, model: str, dual_mode: bool = False):
         token = get_env_variable("OPENCODE_TOKEN")
-        if token is None or len(token) < 1:
+        if token is None or not token.strip():
+            # Matches config_status, which reports a whitespace-only token
+            # as missing_credentials.
             raise Exception("No token found for OpenCode")
         super().__init__(
             self.API_BASE,

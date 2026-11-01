@@ -13,6 +13,7 @@ is a WARNING once per use and day.
 
 import asyncio
 import datetime
+import json
 import os
 import socket
 import ssl
@@ -101,8 +102,12 @@ def _no_cooldown():
 
 def _ask(session, state="doc", timeout_seconds=1, **overrides):
     conf = {**SETTINGS, **overrides}
-    with override_settings(**conf), patch.object(typesafe.aiohttp, "ClientSession", session):
-        return asyncio.run(typesafe.ask(state, QUESTIONS, timeout_seconds=timeout_seconds))
+    with override_settings(**conf), patch.object(
+        typesafe.aiohttp, "ClientSession", session
+    ):
+        return asyncio.run(
+            typesafe.ask(state, QUESTIONS, timeout_seconds=timeout_seconds)
+        )
 
 
 @pytest.mark.parametrize(
@@ -125,11 +130,40 @@ def test_anything_but_https_is_refused_before_a_session_exists(url):
 
 def test_https_in_any_case_is_accepted_and_the_json_comes_back():
     session = _FakeSession()
-    assert _ask(session, TYPESAFE_API_URL="HTTPS://typesafe.invalid/v1/systemone") == {"answers": {}}
+    assert _ask(session, TYPESAFE_API_URL="HTTPS://typesafe.invalid/v1/systemone") == {
+        "answers": {}
+    }
     url, body, headers = session.posted[0]
     assert url == "HTTPS://typesafe.invalid/v1/systemone"
     assert headers["Authorization"] == "Bearer test-key"
     assert body["state"] == "doc"
+
+
+def test_the_premium_fallback_url_must_be_https_too():
+    """On the free route with a premium key, a failing OpenCode attempt falls
+    through to TYPESAFE_API_URL with the bearer token and the state: that URL
+    is validated before anything is sent, not only the OpenCode one."""
+    session = _FakeSession()
+    with pytest.raises(typesafe.TypeSafeError, match="TYPESAFE_API_URL must use https"):
+        _ask(
+            session,
+            OPENCODE_TOKEN="open-test-key",
+            TYPESAFE_API_URL="http://typesafe.invalid/v1/systemone",
+        )
+    assert session.opened == 0 and session.posted == []
+
+
+def test_the_premium_url_is_not_checked_without_a_premium_key():
+    """With only the free route configured, TYPESAFE_API_URL is never posted
+    to, so a bad value there does not refuse the request."""
+    session = _FakeSession()
+    _ask(
+        session,
+        OPENCODE_TOKEN="open-test-key",
+        TYPESAFE_API_KEY=None,
+        TYPESAFE_API_URL="http://typesafe.invalid",
+    )
+    assert session.posted[0][0] == typesafe.OPENCODE_API_URL
 
 
 def test_a_non_200_raises_with_the_status_attached():
@@ -165,7 +199,10 @@ def test_the_body_is_the_documented_state_model_and_questions():
     _ask(session)
     _, body, headers = session.posted[0]
     assert body == {"state": "doc", "model": "jev-1.13.0", "questions": QUESTIONS}
-    assert headers == {"Authorization": "Bearer test-key", "Content-Type": "application/json"}
+    assert headers == {
+        "Authorization": "Bearer test-key",
+        "Content-Type": "application/json",
+    }
 
 
 def test_the_state_is_capped():
@@ -196,7 +233,9 @@ def test_the_pinned_release_is_the_default_and_the_test_pin():
     assert typesafe.model_name() == typesafe.DEFAULT_MODEL
 
 
-@pytest.mark.parametrize("value", ["jev latest", "typesafe/jev", "jev\nlatest", "x" * 49])
+@pytest.mark.parametrize(
+    "value", ["jev latest", "typesafe/jev", "jev\nlatest", "x" * 49]
+)
 def test_a_model_setting_that_is_not_a_model_name_is_refused_before_a_session(value):
     session = _FakeSession()
     with pytest.raises(typesafe.TypeSafeError, match="TYPESAFE_MODEL") as info:
@@ -265,9 +304,15 @@ class TestCooldown:
     @pytest.mark.parametrize(
         "error",
         [
-            _connector_error(aiohttp.ClientConnectorError, ConnectionRefusedError(111, "refused")),
-            _connector_error(aiohttp.ClientConnectorDNSError, socket.gaierror(-2, "not known")),
-            _connector_error(aiohttp.ClientConnectorSSLError, ssl.SSLError(1, "handshake")),
+            _connector_error(
+                aiohttp.ClientConnectorError, ConnectionRefusedError(111, "refused")
+            ),
+            _connector_error(
+                aiohttp.ClientConnectorDNSError, socket.gaierror(-2, "not known")
+            ),
+            _connector_error(
+                aiohttp.ClientConnectorSSLError, ssl.SSLError(1, "handshake")
+            ),
         ],
         ids=["refused", "dns", "tls"],
     )
@@ -288,7 +333,9 @@ class TestCooldown:
         assert letter_quality.failure_summary(info.value) == "HTTP 401"
 
     def test_the_skip_after_an_unreachable_endpoint_carries_no_status(self):
-        error = _connector_error(aiohttp.ClientConnectorError, ConnectionRefusedError(111, "x"))
+        error = _connector_error(
+            aiohttp.ClientConnectorError, ConnectionRefusedError(111, "x")
+        )
         with pytest.raises(aiohttp.ClientConnectorError):
             _ask(_FakeSession(error=error))
         with pytest.raises(typesafe.TypeSafeCoolingDown) as info:
@@ -321,7 +368,9 @@ class TestCooldown:
         """A failed connect is often a passing blip: it holds requests back
         for CONNECT_COOLDOWN_SECONDS, not the refusal window."""
         clock = _Clock()
-        error = _connector_error(aiohttp.ClientConnectorError, ConnectionRefusedError(111, "x"))
+        error = _connector_error(
+            aiohttp.ClientConnectorError, ConnectionRefusedError(111, "x")
+        )
         with patch.object(typesafe, "time", clock):
             with pytest.raises(aiohttp.ClientConnectorError):
                 _ask(_FakeSession(error=error))
@@ -356,6 +405,30 @@ class TestCooldown:
         session = _FakeSession()
         _ask(session)
         assert len(session.posted) == 1
+
+    def test_a_free_answer_between_premium_connect_timeouts_keeps_the_streak(self):
+        """The streak measures whether the premium endpoint can be reached:
+        an OpenCode answer between its connect timeouts must not clear it,
+        or the fallback would retry an unreachable endpoint every request."""
+        _connect_timeout()
+        sessions = [
+            _FakeSession(429),
+            _FakeSession(error=aiohttp.ConnectionTimeoutError("x")),
+        ]
+
+        def factory(**kwargs):
+            return sessions.pop(0)
+
+        conf = {**SETTINGS, "OPENCODE_TOKEN": "open-test-key"}
+        with override_settings(**conf), patch.object(
+            typesafe.aiohttp, "ClientSession", factory
+        ):
+            with pytest.raises(aiohttp.ConnectionTimeoutError):
+                asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=20))
+        session = _FakeSession()
+        with pytest.raises(typesafe.TypeSafeCoolingDown):
+            _ask(session)
+        assert session.opened == 0 and session.posted == []
 
     def test_connect_timeouts_under_a_short_bound_start_no_cooldown(self):
         """A caller's leftover budget can be too short for a healthy host's
@@ -433,16 +506,16 @@ class TestCooldown:
         assert len([m for m in cap.messages("DEBUG") if "not asked" in m]) == 3
 
     def test_the_window_comes_from_the_environment_when_not_set(self):
-        with patch.dict(os.environ, {"FHI_TYPESAFE_COOLDOWN_SECONDS": "60"}), override_settings(
-            FHI_TYPESAFE_COOLDOWN_SECONDS=None
-        ):
+        with patch.dict(
+            os.environ, {"FHI_TYPESAFE_COOLDOWN_SECONDS": "60"}
+        ), override_settings(FHI_TYPESAFE_COOLDOWN_SECONDS=None):
             assert typesafe.cooldown_seconds() == 60.0
 
     @pytest.mark.parametrize("value", [None, "", "soon", "-5", "nan", "inf"])
     def test_an_unset_or_unusable_window_is_fifteen_minutes(self, value):
-        with patch.dict(os.environ, {"FHI_TYPESAFE_COOLDOWN_SECONDS": ""}), override_settings(
-            FHI_TYPESAFE_COOLDOWN_SECONDS=value
-        ):
+        with patch.dict(
+            os.environ, {"FHI_TYPESAFE_COOLDOWN_SECONDS": ""}
+        ), override_settings(FHI_TYPESAFE_COOLDOWN_SECONDS=value):
             assert typesafe.cooldown_seconds() == 900.0
 
 
@@ -527,6 +600,84 @@ class TestConnectBound:
                     asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=0.4))
         assert typesafe.cooling_down() is True
 
+    def test_the_free_attempt_gets_half_the_budget_so_the_fallback_has_time(self):
+        """Every attempt shares the caller's timeout_seconds: a hung free
+        endpoint must not eat the whole wait, or a caller's own wait_for of
+        the same length (the chat gate's) cancels before the fallback runs."""
+        timeouts = []
+        sessions = [_FakeSession(429), _FakeSession()]
+
+        def factory(**kwargs):
+            timeouts.append(kwargs["timeout"])
+            return sessions[len(timeouts) - 1]
+
+        conf = {**SETTINGS, "OPENCODE_TOKEN": "open-test-key"}
+        with override_settings(**conf), patch.object(
+            typesafe.aiohttp, "ClientSession", factory
+        ):
+            asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=2.0))
+        assert timeouts[0].total == 1.0
+        assert 0 < timeouts[0].sock_connect == timeouts[0].connect < timeouts[0].total
+        assert timeouts[1].total == 2.0
+
+
+class TestPremiumFallback:
+    """The premium attempt follows a failed free attempt. It is held to the
+    budget and the cooldown as they stand when it is about to post, and a
+    malformed free answer does not keep it from running."""
+
+    CONF = {**SETTINGS, "OPENCODE_TOKEN": "open-test-key"}
+
+    def test_a_malformed_free_answer_falls_through_to_the_premium_attempt(self):
+        free = _FakeSession(200)
+        calls = {"n": 0}
+
+        async def bad_json():
+            calls["n"] += 1
+            raise json.JSONDecodeError("bad", "doc", 0)
+
+        free.response.json = bad_json
+        premium = _FakeSession()
+        sessions = [free, premium]
+
+        def factory(**kwargs):
+            return sessions.pop(0)
+
+        with override_settings(**self.CONF), patch.object(
+            typesafe.aiohttp, "ClientSession", factory
+        ):
+            assert asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=1)) == {
+                "answers": {}
+            }
+        assert calls["n"] == 1
+        assert len(free.posted) == 1 and len(premium.posted) == 1
+        assert premium.posted[0][0] == "https://typesafe.invalid/v1/systemone"
+
+    def test_the_premium_budget_is_rechecked_before_the_fallback_posts(self):
+        """The free attempt can eat its whole half of the budget; a budget
+        spent meanwhile must refuse the fallback before it posts."""
+        session = _FakeSession(429)
+        with override_settings(**self.CONF), patch.object(
+            spend, "allows", side_effect=[True, False]
+        ), patch.object(typesafe.aiohttp, "ClientSession", session):
+            with pytest.raises(typesafe.TypeSafeBudgetSpent):
+                asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=1))
+        assert len(session.posted) == 1
+
+    def test_a_cooldown_started_mid_free_attempt_refuses_the_fallback(self):
+        def start_and_refuse():
+            typesafe._start_cooldown("answered HTTP 401", 401)
+            raise typesafe.TypeSafeCoolingDown("cooling down", status=401)
+
+        session = _FakeSession(429)
+        with override_settings(**self.CONF), patch.object(
+            typesafe, "_refuse_while_cooling", side_effect=start_and_refuse
+        ), patch.object(typesafe.aiohttp, "ClientSession", session):
+            with pytest.raises(typesafe.TypeSafeCoolingDown) as info:
+                asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=1))
+        assert info.value.status == 401
+        assert len(session.posted) == 1
+
 
 class TestCoolingDownPredicate:
     """typesafe.cooling_down(): whether ask() would refuse before sending, for
@@ -546,6 +697,15 @@ class TestCoolingDownPredicate:
             with pytest.raises(typesafe.TypeSafeError):
                 _ask(_FakeSession(401), FHI_TYPESAFE_COOLDOWN_SECONDS=60)
             clock.now += 61
+            assert typesafe.cooling_down() is False
+
+    def test_false_on_the_free_route_during_a_premium_cooldown(self):
+        """The cooldown refuses only the premium attempt; the free OpenCode
+        route still answers, so callers must not skip their work."""
+        with pytest.raises(typesafe.TypeSafeError):
+            _ask(_FakeSession(401))
+        assert typesafe.cooling_down() is True
+        with override_settings(OPENCODE_TOKEN="open-test-key"):
             assert typesafe.cooling_down() is False
 
 
@@ -597,6 +757,28 @@ class TestSkipReason:
         typesafe._start_cooldown("could not be reached", None, cap=60)
         assert "after a failed connection" in self._reason()
 
+    def test_a_cooldown_is_no_skip_on_the_free_route(self):
+        """The staff pages must not report Jev as skipped while the free
+        OpenCode route still answers."""
+        typesafe._start_cooldown("could not be reached", None, cap=60)
+        assert "cooling down" in self._reason()
+        assert (
+            self._reason(
+                OPENCODE_TOKEN="open-test-key", TYPESAFE_API_KEY="premium-test-key"
+            )
+            is None
+        )
+
+    def test_a_spent_budget_is_no_skip_on_the_free_route(self):
+        with patch.object(spend, "allows", return_value=False):
+            assert "budget is spent" in self._reason()
+            assert (
+                self._reason(
+                    OPENCODE_TOKEN="open-test-key", TYPESAFE_API_KEY="premium-test-key"
+                )
+                is None
+            )
+
 
 class TestRefusedBeforeSending:
     """typesafe.refused_before_sending(): the probe says "skipped" for these,
@@ -631,10 +813,14 @@ class TestBudgetSpentLog:
     or month: a WARNING once per use and UTC day, then debug lines."""
 
     def _refuse(self, use, times):
-        with override_settings(**SETTINGS), patch.object(spend, "allows", return_value=False):
+        with override_settings(**SETTINGS), patch.object(
+            spend, "allows", return_value=False
+        ):
             for _ in range(times):
                 with pytest.raises(typesafe.TypeSafeBudgetSpent):
-                    asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=1, use=use))
+                    asyncio.run(
+                        typesafe.ask("doc", QUESTIONS, timeout_seconds=1, use=use)
+                    )
 
     @staticmethod
     def _warnings(cap):
@@ -658,7 +844,9 @@ class TestBudgetSpentLog:
 
     def test_a_use_last_announced_yesterday_is_announced_again(self, log_capture):
         today = datetime.datetime.now(datetime.timezone.utc).date()
-        typesafe._budget_spent_logged[spend.LETTERS] = today - datetime.timedelta(days=1)
+        typesafe._budget_spent_logged[spend.LETTERS] = today - datetime.timedelta(
+            days=1
+        )
         with log_capture() as cap:
             self._refuse(spend.LETTERS, times=1)
         assert len(self._warnings(cap)) == 1
@@ -707,6 +895,21 @@ class TestReportedModel:
     def test_an_odd_name_in_the_response_cannot_forge_provenance(self, odd):
         assert typesafe.reported_model({"model": odd}) == typesafe.DEFAULT_MODEL
 
+    def test_the_fallback_can_name_the_attempted_model(self):
+        """The OpenCode route asks for jev-1.13-free, not the pinned premium
+        release: when that answer names no model, the usage row records what
+        was actually asked."""
+        assert (
+            typesafe.reported_model({"answers": {}}, typesafe.OPENCODE_MODEL)
+            == typesafe.OPENCODE_MODEL
+        )
+        assert (
+            typesafe.reported_model({"model": "weird!"}, "jev-fhi-ft") == "jev-fhi-ft"
+        )
+        # Without a default the pinned release stands: the premium request
+        # names it.
+        assert typesafe.reported_model({"answers": {}}) == typesafe.DEFAULT_MODEL
+
 
 # The features go through ask() unchanged: the same fake session, the real
 # _post seams, the documented request and a documented response.
@@ -723,14 +926,20 @@ def _letter_payload(model):
         q: {"type": "score", "score": 2.0, "confidence": 0.9}
         for q in letter_quality.SCORE_QUESTIONS
     }
-    return {"model": model, "answers": answers, "usage": {"input_tokens": 900, "output_tokens": 20}}
+    return {
+        "model": model,
+        "answers": answers,
+        "usage": {"input_tokens": 900, "output_tokens": 20},
+    }
 
 
 def _score(session, **overrides):
     with override_settings(**{**_ENABLED, **overrides}), patch.object(
         typesafe.aiohttp, "ClientSession", session
     ):
-        return asyncio.run(letter_quality.score_letter("The denial.", "Dear reviewer, the letter."))
+        return asyncio.run(
+            letter_quality.score_letter("The denial.", "Dear reviewer, the letter.")
+        )
 
 
 class TestLetterScoringThroughAsk:
@@ -746,16 +955,29 @@ class TestLetterScoringThroughAsk:
 
     def test_the_scorer_records_the_model_the_response_names(self):
         score = _score(_FakeSession(payload=_letter_payload("jev-1.13.0")))
-        assert score.scorer == f"typesafe/jev-1.13.0/rubric-{letter_quality.RUBRIC_VERSION}"
+        assert (
+            score.scorer
+            == f"typesafe/jev-1.13.0/rubric-{letter_quality.RUBRIC_VERSION}"
+        )
 
     def test_a_model_change_starts_a_new_series(self):
         """A repointed alias answers under a new versioned id, so its scores
         get their own scorer string and are never averaged into the old one."""
-        old = _score(_FakeSession(payload=_letter_payload("jev-1.13.0")), TYPESAFE_MODEL="jev-latest")
-        new = _score(_FakeSession(payload=_letter_payload("jev-1.14.0")), TYPESAFE_MODEL="jev-latest")
+        old = _score(
+            _FakeSession(payload=_letter_payload("jev-1.13.0")),
+            TYPESAFE_MODEL="jev-latest",
+        )
+        new = _score(
+            _FakeSession(payload=_letter_payload("jev-1.14.0")),
+            TYPESAFE_MODEL="jev-latest",
+        )
         assert old.scorer != new.scorer
-        assert new.scorer == f"typesafe/jev-1.14.0/rubric-{letter_quality.RUBRIC_VERSION}"
-        assert letter_quality.same_rubric(old.scorer) and letter_quality.same_rubric(new.scorer)
+        assert (
+            new.scorer == f"typesafe/jev-1.14.0/rubric-{letter_quality.RUBRIC_VERSION}"
+        )
+        assert letter_quality.same_rubric(old.scorer) and letter_quality.same_rubric(
+            new.scorer
+        )
 
     def test_a_422_is_no_score_and_its_status_reaches_the_failure_hook(self):
         calls = []
@@ -766,7 +988,10 @@ class TestLetterScoringThroughAsk:
         with override_settings(**_ENABLED), patch.object(
             typesafe.aiohttp, "ClientSession", _FakeSession(422)
         ):
-            assert asyncio.run(letter_quality.score_letter("d", "letter", on_failure=hook)) is None
+            assert (
+                asyncio.run(letter_quality.score_letter("d", "letter", on_failure=hook))
+                is None
+            )
         assert calls == ["HTTP 422"]
 
 
@@ -780,24 +1005,47 @@ class TestDenialTriageThroughAsk:
         return {
             "model": model,
             "answers": {
-                "category": {"type": "choice", "choice": "medical_necessity", "confidence": 0.85},
-                "regulation": {"type": "choice", "choice": "employer_private", "confidence": 0.6},
+                "category": {
+                    "type": "choice",
+                    "choice": "medical_necessity",
+                    "confidence": 0.85,
+                },
+                "regulation": {
+                    "type": "choice",
+                    "choice": "employer_private",
+                    "confidence": 0.6,
+                },
                 "pre_service": {"type": "noul", "noul": 0.92},
                 "urgent": {"type": "noul", "noul": 0.05},
                 "regulator": {"type": "noul", "noul": 0.04},
-                "deadline": {"type": "choice", "choice": "180 days from notice", "confidence": 0.9},
+                "deadline": {
+                    "type": "choice",
+                    "choice": "180 days from notice",
+                    "confidence": 0.9,
+                },
             },
             "usage": {"input_tokens": 400, "output_tokens": 30},
         }
 
-    def test_the_letter_goes_out_as_state_and_the_source_names_the_answering_model(self):
+    def test_the_letter_goes_out_as_state_and_the_source_names_the_answering_model(
+        self,
+    ):
         session = _FakeSession(payload=self._payload("jev-1.13.0"))
-        with override_settings(**_ENABLED), patch.object(typesafe.aiohttp, "ClientSession", session):
-            result = asyncio.run(denial_triage.triage(self.LETTER, datetime.date(2026, 9, 2)))
+        with override_settings(**_ENABLED), patch.object(
+            typesafe.aiohttp, "ClientSession", session
+        ):
+            result = asyncio.run(
+                denial_triage.triage(self.LETTER, datetime.date(2026, 9, 2))
+            )
         assert result is not None and result.category == "medical_necessity"
-        assert result.source == f"typesafe/jev-1.13.0/rubric-{denial_triage.RUBRIC_VERSION}"
+        assert (
+            result.source
+            == f"typesafe/jev-1.13.0/rubric-{denial_triage.RUBRIC_VERSION}"
+        )
         _, body, _ = session.posted[0]
         assert set(body) == {"state", "model", "questions"}
         assert body["state"] == self.LETTER
         assert body["model"] == "jev-1.13.0"
-        assert {"category", "regulation", "pre_service", "urgent", "deadline"} <= set(body["questions"])
+        assert {"category", "regulation", "pre_service", "urgent", "deadline"} <= set(
+            body["questions"]
+        )

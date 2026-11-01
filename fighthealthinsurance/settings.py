@@ -288,7 +288,9 @@ class Base(Configuration):
     TYPESAFE_API_KEY = os.getenv("TYPESAFE_API_KEY")
     # OpenCode serves the base Jev release for free.  ml/typesafe.py prefers
     # it when present and falls through to TypeSafe for the paid/custom model.
-    OPENCODE_TOKEN = os.getenv("OPENCODE_TOKEN")
+    # Through get_env_variable, like the OpenCode backend's own read, so a
+    # token that exists only in the local .env reaches Jev too.
+    OPENCODE_TOKEN = get_env_variable("OPENCODE_TOKEN")
     TYPESAFE_API_URL = os.getenv(
         "TYPESAFE_API_URL", "https://api.typesafe.ai/v1/systemone"
     )

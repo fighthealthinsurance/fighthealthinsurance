@@ -1008,15 +1008,22 @@ async def check_typesafe(
         questions = TYPESAFE_PROBE_QUESTIONS
     result.started_at = datetime.now(dt_timezone.utc)
     # The wait is an Event, not the database, so a plain thread is enough.
-    try:
-        loaded = await asyncio.wait_for(
-            asyncio.to_thread(
-                spend._ledger.wait_until_loaded, TYPESAFE_LEDGER_WAIT_SECONDS
-            ),
-            TYPESAFE_LEDGER_WAIT_SECONDS,
-        )
-    except (asyncio.TimeoutError, TimeoutError):
-        loaded = False
+    # The free OpenCode route never reads the ledger, so with only that key
+    # there is nothing to wait for; a probe skipped here reads as a failure
+    # in the deploy alert.
+    from django.conf import settings
+
+    loaded = True
+    if getattr(settings, "TYPESAFE_API_KEY", None):
+        try:
+            loaded = await asyncio.wait_for(
+                asyncio.to_thread(
+                    spend._ledger.wait_until_loaded, TYPESAFE_LEDGER_WAIT_SECONDS
+                ),
+                TYPESAFE_LEDGER_WAIT_SECONDS,
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            loaded = False
     if not loaded:
         # ask() would refuse it as a spent budget, which it is not.
         result.category = CATEGORY_OTHER

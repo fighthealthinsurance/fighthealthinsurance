@@ -15,7 +15,7 @@ import datetime
 import json
 import os
 from io import StringIO
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import aiohttp
 import pytest
@@ -592,9 +592,7 @@ class TestRetiredModels:
     def test_a_model_whose_only_endpoint_is_retired_is_not_registered(
         self, monkeypatch, fresh_router
     ):
-        router = self._legacy_with_backup(
-            monkeypatch, f"/models/{MAY}", primary=False
-        )
+        router = self._legacy_with_backup(monkeypatch, f"/models/{MAY}", primary=False)
         assert "fhi-legacy" not in router.models_by_name
 
     def test_any_backend_can_retire_a_model_by_name(self, monkeypatch, fresh_router):
@@ -1545,6 +1543,8 @@ class TestCatalogFailureIsVisible:
     def test_a_check_naming_the_class_keeps_the_row(self, monkeypatch):
         """The class name is what the row reports, so re-checking it works."""
         assert len(self._catalog_rows(monkeypatch, ["RemoteAzureOpenAI"])) == 1
+
+
 class TestTypeSafeProbe:
     """TypeSafe (Jev) is probed with one canned yes/no question; its
     failures land in the same categories, rows and e-mail as a model's."""
@@ -1565,12 +1565,12 @@ class TestTypeSafeProbe:
             return asyncio.run(mhc.check_typesafe(entry, timeout=5))
 
     def test_without_a_key_it_is_not_configured_and_not_a_failure(self):
+        from fighthealthinsurance.ml import typesafe
+
         entry = mhc.typesafe_entry()
         assert entry.category == mhc.CATEGORY_NOT_CONFIGURED
         assert not entry.enabled and not entry.failed
-        assert entry.error == (
-            "skipped: neither OPENCODE_TOKEN nor TYPESAFE_API_KEY is set"
-        )
+        assert entry.error == f"skipped: {typesafe.NO_KEY}"
         assert entry.provider == mhc.TYPESAFE_PROVIDER
 
     def test_a_probability_passes(self):
@@ -1592,7 +1592,10 @@ class TestTypeSafeProbe:
     def test_an_answer_too_large_for_a_float_is_malformed(self):
         """float() of a huge integer raises OverflowError, not ValueError."""
         ask = AsyncMock(
-            return_value={"model": "jev-1.13.0", "answers": {"probe": {"noul": 10**400}}}
+            return_value={
+                "model": "jev-1.13.0",
+                "answers": {"probe": {"noul": 10**400}},
+            }
         )
         result = self._probe(ask)
         assert not result.ok
@@ -1640,7 +1643,9 @@ class TestTypeSafeProbe:
         from fighthealthinsurance.ml import typesafe
 
         result = self._probe(
-            AsyncMock(side_effect=typesafe.TypeSafeError(f"HTTP {status}", status=status))
+            AsyncMock(
+                side_effect=typesafe.TypeSafeError(f"HTTP {status}", status=status)
+            )
         )
         assert result.category == category and result.failed
         assert result.error == f"HTTP {status}"
@@ -1701,7 +1706,9 @@ class TestTypeSafeProbe:
         )
         assert unreachable.category == mhc.CATEGORY_NETWORK
         refused = self._probe(
-            AsyncMock(side_effect=typesafe.TypeSafeCoolingDown("cooling down", status=401))
+            AsyncMock(
+                side_effect=typesafe.TypeSafeCoolingDown("cooling down", status=401)
+            )
         )
         assert refused.category == mhc.CATEGORY_AUTH
 
@@ -1720,23 +1727,50 @@ class TestTypeSafeProbe:
         from fighthealthinsurance.ml import spend, typesafe
 
         ask = AsyncMock()
-        with override_settings(**self.KEY), patch.object(typesafe, "ask", ask), patch.object(
-            spend._ledger, "wait_until_loaded", return_value=False
-        ):
+        with override_settings(**self.KEY), patch.object(
+            typesafe, "ask", ask
+        ), patch.object(spend._ledger, "wait_until_loaded", return_value=False):
             result = asyncio.run(mhc.check_typesafe(mhc.typesafe_entry(), timeout=5))
         ask.assert_not_awaited()
         assert result.category == mhc.CATEGORY_OTHER
         assert result.error == "skipped: the spend ledger did not load (ml/spend.py)"
+
+    def test_the_ledger_is_not_waited_on_without_a_premium_key(self):
+        """The free OpenCode route never reads the ledger; waiting on it (and
+        failing the probe when it does not load) applies only when a premium
+        key can spend budget."""
+        from django.test import override_settings
+
+        from fighthealthinsurance.ml import spend, typesafe
+
+        ask = AsyncMock(
+            return_value={
+                "model": typesafe.OPENCODE_MODEL,
+                "answers": {"probe": {"noul": 0.9}},
+            }
+        )
+        wait = Mock(side_effect=AssertionError("waited on the ledger"))
+        with override_settings(OPENCODE_TOKEN="open-test-token"), patch.object(
+            typesafe, "ask", ask
+        ), patch.object(spend._ledger, "wait_until_loaded", wait):
+            result = asyncio.run(mhc.check_typesafe(mhc.typesafe_entry(), timeout=5))
+        wait.assert_not_called()
+        ask.assert_awaited_once()
+        assert result.ok and result.probability == 0.9
 
     def test_a_timeout(self):
         result = self._probe(AsyncMock(side_effect=asyncio.TimeoutError()))
         assert result.category == mhc.CATEGORY_TIMEOUT
 
     def test_an_answer_without_a_probability_is_malformed(self):
-        result = self._probe(AsyncMock(return_value={"answers": {"probe": {"noul": 3}}}))
+        result = self._probe(
+            AsyncMock(return_value={"answers": {"probe": {"noul": 3}}})
+        )
         assert result.category == mhc.CATEGORY_MALFORMED_RESPONSE
 
-    def test_the_run_includes_typesafe_only_when_wanted(self, monkeypatch, fresh_router):
+    def test_the_run_includes_typesafe_only_when_wanted(
+        self, monkeypatch, fresh_router
+    ):
         _clear_provider_env(monkeypatch)
         results = asyncio.run(mhc.run_checks_async())
         assert mhc.TYPESAFE_PROVIDER in {r.provider for r in results}

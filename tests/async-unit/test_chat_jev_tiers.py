@@ -184,7 +184,12 @@ class TestRankRequest:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "replies",
-        [[REPLY], [REPLY] * (chat_gate.MAX_RANKED + 1), [REPLY, ""], [REPLY, "x" * 10**6]],
+        [
+            [REPLY],
+            [REPLY] * (chat_gate.MAX_RANKED + 1),
+            [REPLY, ""],
+            [REPLY, "x" * 10**6],
+        ],
     )
     async def test_nothing_is_sent_without_two_to_four_judgeable_replies(self, replies):
         post = AsyncMock()
@@ -314,7 +319,9 @@ class TestGateRanking:
                 outcome=chat_gate.RANK_PICKED, scores=(_scores(), _scores())
             )
         )
-        with override_settings(**ENABLED), patch.object(chat_gate, "rank_replies", new=rank):
+        with override_settings(**ENABLED), patch.object(
+            chat_gate, "rank_replies", new=rank
+        ):
             first = await gate.rank(MESSAGE, [REPLY, OTHER])
             second = await gate.rank(MESSAGE, [REPLY, OTHER])
         assert first.outcome == chat_gate.RANK_PICKED
@@ -328,7 +335,9 @@ class TestGateRanking:
     async def test_no_ranking_before_a_check_looked_up_the_identifiers(self):
         gate = _gate()
         rank = AsyncMock()
-        with override_settings(**ENABLED), patch.object(chat_gate, "rank_replies", new=rank):
+        with override_settings(**ENABLED), patch.object(
+            chat_gate, "rank_replies", new=rank
+        ):
             result = await gate.rank(MESSAGE, [REPLY, OTHER])
         assert result.outcome == chat_gate.SKIPPED
         rank.assert_not_awaited()
@@ -428,7 +437,9 @@ class TestCandidates:
         from fighthealthinsurance.chat.safety_filters import DELETE_DATA_SENTINEL
         from fighthealthinsurance.chat_interface import ChatInterface
 
-        tool = 'Let me check. **medicaid_info {"state": "CA", "topic": "", "limit": 5}**'
+        tool = (
+            'Let me check. **medicaid_info {"state": "CA", "topic": "", "limit": 5}**'
+        )
         calls, completed, scores = self._completed(
             REPLY, tool, f"Sure, I can do that. {DELETE_DATA_SENTINEL}", "Ok.", OTHER
         )
@@ -442,7 +453,14 @@ class TestCandidates:
         labels = {calls[0]: "claude", calls[1]: "fhi-local"}
         picked = completed[calls[0]]
         choice = _interface()._crucial_alternate(
-            picked, "claude", [], [], completed, scores, calls, labels,
+            picked,
+            "claude",
+            [],
+            [],
+            completed,
+            scores,
+            calls,
+            labels,
             excluded=_shown_reply(completed[calls[1]]),
         )
         assert choice is None
@@ -477,3 +495,38 @@ async def test_a_cancelled_turn_drops_the_identifier_list():
     await interface._end_cancelled_turn()
     assert interface._reply_gate is None
     assert gate._identifiers is None
+
+
+class TestChatBudgetGate:
+    """budget_allows() in the chat gate and shadow scoring: a spent or paused
+    TypeSafe chat budget must not disable the free OpenCode route, which
+    records no TypeSafe spend; the premium routes still consult it."""
+
+    def test_the_free_route_is_not_held_back_by_the_premium_budget(self):
+        from fighthealthinsurance.ml import chat_shadow
+
+        conf = {
+            "OPENCODE_TOKEN": "open-test-key",
+            "TYPESAFE_MODEL": typesafe.DEFAULT_MODEL,
+        }
+        with override_settings(**conf), patch.object(
+            spend, "allows", return_value=False
+        ):
+            assert chat_gate.budget_allows() is True
+            assert chat_shadow.budget_allows() is True
+
+    def test_the_premium_route_still_consults_the_budget(self):
+        from fighthealthinsurance.ml import chat_shadow
+
+        conf = {"OPENCODE_TOKEN": "open-test-key", "TYPESAFE_MODEL": "jev-fhi-ft"}
+        with override_settings(**conf), patch.object(
+            spend, "allows", return_value=False
+        ):
+            assert chat_gate.budget_allows() is False
+            assert chat_shadow.budget_allows() is False
+
+    def test_without_the_free_route_the_budget_decides(self):
+        with override_settings(TYPESAFE_API_KEY="test-key"), patch.object(
+            spend, "allows", return_value=True
+        ):
+            assert chat_gate.budget_allows() is True

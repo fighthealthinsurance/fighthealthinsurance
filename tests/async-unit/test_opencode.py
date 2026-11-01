@@ -114,3 +114,32 @@ def test_regular_flash_model_orders_free_opencode_before_deepinfra():
         OpenCode.FLASH_MODEL,
         OpenCode.FLASH_NAME,
     ]
+
+
+def test_a_whitespace_only_token_is_rejected_like_a_missing_one():
+    """config_status reports it as missing_credentials; the constructor must
+    not accept what the status page calls missing."""
+    with patch.dict(os.environ, {"OPENCODE_TOKEN": "   "}, clear=False):
+        assert OpenCode.config_status()[0] == "missing_credentials"
+        with pytest.raises(Exception, match="No token found for OpenCode"):
+            OpenCode(OpenCode.FLASH_MODEL)
+
+
+@pytest.mark.asyncio
+async def test_the_usage_row_names_the_free_model_when_the_answer_names_none():
+    calls = []
+    responses = [_Response(200, "")]
+    with (
+        override_settings(OPENCODE_TOKEN="open-test-token"),
+        patch.object(typesafe.spend, "record") as spend_record,
+        patch.object(
+            typesafe.llm_usage,
+            "record_llm_usage",
+            side_effect=lambda **kw: calls.append(kw),
+        ),
+        patch.object(typesafe.aiohttp, "ClientSession", _sessions(responses, [])),
+    ):
+        await typesafe.ask("state", {}, timeout_seconds=1)
+
+    assert calls[-1]["model"] == f"opencode/{typesafe.OPENCODE_MODEL}"
+    spend_record.assert_not_called()

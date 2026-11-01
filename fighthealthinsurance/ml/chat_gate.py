@@ -306,7 +306,10 @@ def enabled() -> bool:
 def budget_allows() -> bool:
     """Whether TypeSafe's chat budget (ml/spend.py) allows a request now.
     When it does not, the turn routes by our own rules, as with the check
-    off."""
+    off. The default-model OpenCode route is free and records no TypeSafe
+    spend; ask() still applies the budget to any premium fallback."""
+    if typesafe.opencode_route():
+        return True
     return spend.allows(spend.TYPESAFE, spend.CHAT)
 
 
