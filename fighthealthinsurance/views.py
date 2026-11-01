@@ -1520,8 +1520,8 @@ def review_form(
     also pre-ticks the denial types it names and, when the row has none, the
     plan source, each marked as read from the letter. What the person leaves
     ticked is saved by find_next_steps and is what every later step reads.
-    The way back shows the row as they left it, so an unticked suggestion
-    stays unticked.
+    The way back shows the row as they left it. Lists cleared on review
+    stay as left on either route, even when the triage suggests them again.
     """
     from_letter = []
     denial_date = denial.denial_date
@@ -1537,7 +1537,7 @@ def review_form(
         suggested = denial_triage.suggestions(
             denial, min_confidence=denial_triage.SUGGEST_CONFIDENCE
         )
-        if suggested.denial_type_names:
+        if suggested.denial_type_names and not denial.cleared_on_review("denial_type"):
             have = {denial_type.pk for denial_type in denial_types}
             extra = [
                 denial_type
@@ -1549,7 +1549,11 @@ def review_form(
             if extra:
                 denial_types += extra
                 from_letter.append("denial_type")
-        if suggested.plan_source_name and not plan_sources:
+        if (
+            suggested.plan_source_name
+            and not plan_sources
+            and not denial.cleared_on_review("plan_source")
+        ):
             plan_sources = list(
                 models.PlanSource.objects.filter(name=suggested.plan_source_name)[:1]
             )

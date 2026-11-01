@@ -4887,7 +4887,8 @@ class DenialCreatorHelper:
         Here the bar is ml/denial_triage.APPLY_CONFIDENCE, and only what the
         case lacks is added: denial types it does not already have (from any
         source, or the type would be listed, and its questions asked, twice),
-        and a plan source only when it has none. Each row carries the
+        and a plan source only when it has none. If the case has reached
+        review, choices cleared there stay cleared. Each row carries the
         ``typesafe`` source, so a replaced letter's sweep takes it away
         (_invalidate_denial_text_artifacts); rows added while the letter was
         replaced, or the person withdrew external-model consent, are removed
@@ -4907,7 +4908,7 @@ class DenialCreatorHelper:
         )
         type_pks: list[int] = []
         source_pks: list[int] = []
-        if suggested.denial_type_names:
+        if suggested.denial_type_names and not denial.cleared_on_review("denial_type"):
             have = {
                 pk
                 async for pk in DenialTypesRelation.objects.filter(
@@ -4925,6 +4926,7 @@ class DenialCreatorHelper:
                 type_pks.append(relation.pk)
         if (
             suggested.plan_source_name
+            and not denial.cleared_on_review("plan_source")
             and not await PlanSourceRelation.objects.filter(denial=denial).aexists()
         ):
             plan_source = await PlanSource.objects.filter(
@@ -4946,6 +4948,25 @@ class DenialCreatorHelper:
                 "removed them"
             )
             return 0
+        # A review can clear either list while these inserts are in flight.
+        # Remove only this run's additions, keeping the person's other choices
+        # and suggestions for the list they did not clear.
+        if (
+            type_pks
+            and not await Denial.objects.filter(
+                Denial.not_cleared_on_review("denial_type"), denial_id=denial_id
+            ).aexists()
+        ):
+            await DenialTypesRelation.objects.filter(pk__in=type_pks).adelete()
+            type_pks = []
+        if (
+            source_pks
+            and not await Denial.objects.filter(
+                Denial.not_cleared_on_review("plan_source"), denial_id=denial_id
+            ).aexists()
+        ):
+            await PlanSourceRelation.objects.filter(pk__in=source_pks).adelete()
+            source_pks = []
         return len(type_pks) + len(source_pks)
 
     @classmethod

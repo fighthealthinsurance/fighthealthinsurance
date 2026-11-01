@@ -1,0 +1,23 @@
+card: 1
+name: test_jev_downstream
+summary: "Hermetic fixtures and regression tests for denial-triage form defaults, persistence, consent and review corrections"
+language: python
+kind: module
+interface:
+  - "triage(denial, **overrides)"
+  - "denial_type(name, form=None)"
+  - "class ReviewPageSuggestionsTest"
+  - "class QuestionsPageSuggestionsTest"
+  - "class AssistantCaseSuggestionsTest"
+  - "class RestTriageTest"
+  - "class DeadlineLabelAdminTest"
+  - "class FaxArticleOrderTest"
+  - "class JevDashboardPanelTest"
+  - "class ModelBackendStatusTypeSafeRowTest"
+license: unknown
+provenance:
+  authored_by: mixed
+  agent: agent
+  human_reviewed: false
+triage:
+  - {"date": "2026-11-01", "agent": "agent", "task": "Test triage preserves review corrections", "outcome": "adapted", "notes": "Reuse triage and apply fixtures; six regressions reproduced restored choices before the fix, including clears during insertion"}
