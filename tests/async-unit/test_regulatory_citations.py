@@ -188,18 +188,42 @@ class TestPublicProgramFiltering(unittest.TestCase):
         )
         self.assertIn("not Medicare, Medicaid or VA coverage", block)
 
-    def test_aca_hook_limits_external_review_to_medical_judgment(self):
+    def test_aca_hook_states_the_external_review_scope(self):
+        """45 C.F.R. 147.136(d)(1): medical judgment (a non-exhaustive list),
+        rescissions, and No Surprises Act compliance; not eligibility."""
         block = get_regulatory_citation_context("MA", programs=("erisa",))
         assert block is not None
         self.assertNotIn("Insist on both", block)
-        self.assertIn("turns on medical judgment", block)
-        self.assertIn("claim it only for such a denial, as the plan stated it", block)
+        self.assertIn("involves medical judgment (including medical necessity", block)
+        self.assertIn("a rescission", block)
+        self.assertIn("surprise-billing and cost-sharing protections", block)
+        self.assertIn("failing eligibility requirements is not covered", block)
+        self.assertIn("grandfathered plan owes it only for the surprise-billing", block)
 
-    def test_regulatory_block_keeps_the_denial_basis(self):
+    def test_aca_hook_allows_a_supported_challenge_to_the_plans_label(self):
         block = get_regulatory_citation_context("MA", programs=("erisa",))
         assert block is not None
-        self.assertIn("Keep the denial's basis as the plan stated it", block)
-        self.assertIn("never restate it as a different kind of denial", block)
+        self.assertIn(
+            "argue that the denial is really one of these only where the "
+            "record supports it",
+            block,
+        )
+
+    def test_regulatory_block_keeps_the_plans_reason_accurate(self):
+        """Misattributing the plan's reason is not allowed; a supported
+        challenge to it, such as cosmetic versus reconstructive, is."""
+        block = get_regulatory_citation_context("MA", programs=("erisa",))
+        assert block is not None
+        self.assertIn("never misstate what the plan said", block)
+        self.assertIn("argue that the plan's reason or its category is wrong", block)
+        self.assertIn("a service labelled cosmetic is reconstructive", block)
+        self.assertIn("do not recast the denial only so that a right", block)
+
+    def test_unknown_plan_caveat_names_who_the_aca_rules_bind(self):
+        block = get_regulatory_citation_context("MA")
+        assert block is not None
+        self.assertIn("apply to private health plans and insurers", block)
+        self.assertIn("which have their own appeal rights", block)
 
     def test_public_and_private_coverage_together_keeps_the_private_rules(self):
         """A Medicare Advantage member with an employer plan too: we do not

@@ -69,12 +69,14 @@ class TestWhichLawGoverns:
         "source",
         ["Employer -- Private", "Employer -- State Government", "State Marketplace / Affordable Care Act"],
     )
-    def test_external_review_is_owed_for_medical_judgment_denials_only(self, source):
+    def test_external_review_names_medical_judgment_denials(self, source):
         block = _block(source)
         assert "medical judgment" in block
 
     def test_an_ineligibility_denial_is_not_owed_external_review_under_erisa(self):
-        assert "a denial for ineligibility is not" in _block("Employer -- Private")
+        assert "a denial for ineligibility is not covered" in _block(
+            "Employer -- Private"
+        )
 
     @pytest.mark.parametrize(
         "source", ["Employer -- State Government ", "Employer -- Other Government"]
@@ -236,14 +238,34 @@ class TestClassifyPlan:
         invitation = _block("Employer -- Private").split(
             "If citing the applicable law", 1
         )[1]
-        assert "Keep the denial's basis as the plan stated it" in invitation
-        assert "never restate it as a different kind of denial" in invitation
+        assert "never misstate what the plan said" in invitation
+        assert "a service labelled cosmetic is reconstructive" in invitation
+        assert "do not recast the denial only so that a right" in invitation
+
+    def test_external_review_includes_surprise_billing_disputes(self):
+        """147.136(d)(1) covers No Surprises Act compliance too, and grandfathered
+        plans owe review only for those disputes."""
+        for source in (
+            "Employer -- Private",
+            "State Marketplace / Affordable Care Act",
+            "Employer -- State Government",
+        ):
+            block = _block(source)
+            assert "surprise-billing and cost-sharing protections" in block, source
+            assert "a rescission" in block, source
+        assert "grandfathered plan owes it only for the surprise-billing" in _block(
+            "Employer -- Private"
+        )
+
+    def test_unknown_plan_names_the_full_external_review_scope(self):
+        block = _block()
+        assert "surprise-billing" in block
 
     def test_the_person_facing_paragraphs_carry_no_drafting_instruction(self):
         from fighthealthinsurance.regulatory_citations import plan_law_paragraphs
 
         text = " ".join(plan_law_paragraphs(["Employer -- Private"], for_person=True))
-        assert "Keep the denial's basis" not in text
+        assert "never misstate what the plan said" not in text
 
 
 class TestTheBlockItself:
