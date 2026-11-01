@@ -156,25 +156,25 @@ class TestDenialWatchCopyMatchesData(TestCase):
         lead = _between(self.content, '<p id="appeals-lead">', "</p>").removeprefix('<p id="appeals-lead">')
         national = (
             f"On HealthCare.gov plans, the federal marketplace, insurers reversed {_pct(latest['overturned'] / latest['appeals'])} "
-            f"of the internal appeals they reported in {latest['year']} ({latest['overturned']:,.0f} of {latest['appeals']:,.0f})."
+            f"of the internal claim appeals they reported in {latest['year']} ({latest['overturned']:,.0f} of {latest['appeals']:,.0f})."
         )
         self.assertTrue(lead.startswith(national), lead)
         self.assertLess(lead.index(national), lead.index("California"))
         self.assertIn('<h3 id="appeals-title">Independent review in California</h3>', self.content)
 
-    def test_appeal_win_rate_is_not_compared_with_2023(self):
+    def test_appeal_win_rate_is_not_compared_with_2024(self):
         # The insurers reporting changed between years, so it isn't like for like.
-        prev = next(t for t in DATA["trend"] if t["year"] == 2023)
+        prev = next(t for t in DATA["trend"] if t["year"] == 2024)
         self.assertIn(
-            "In 2024, HealthCare.gov insurers reversed about a third of the internal appeals people filed",
+            "In 2025, HealthCare.gov insurers reversed more than a quarter of the internal claim appeals people filed",
             self.content,
         )
-        self.assertIn("about a third of appeals win.", self.content)
+        self.assertIn("more than a quarter of appeals win.", self.content)
         self.assertNotIn(_pct(prev["overturned"] / prev["appeals"]), self.content)
 
     def test_method_note_explains_the_won_counts_left_out(self):
-        self.assertIn("Nine insurers' 2024 appeals-won counts look like reporting errors", self.content)
-        self.assertIn("With them, the 2024 rate would be 33.6%.", self.content)
+        self.assertIn("Three insurers' 2025 appeals-won counts look like reporting errors", self.content)
+        self.assertIn("With them, the 2025 rate would be 26.8%.", self.content)
 
     def test_share_of_denials_appealed_in_the_steps(self):
         latest = DATA["trend"][-1]
@@ -187,9 +187,9 @@ class TestDenialWatchCopyMatchesData(TestCase):
     def test_headline_counts_in_network_claims(self):
         # One basis for the headline: in-network, as KFF and the map count.
         latest = DATA["trend"][-1]
-        self.assertEqual(round(1 / latest["in_rate"]), 5)
+        self.assertEqual(round(1 / latest["in_rate"]), 6)
         self.assertIn(
-            "about one in five in-network claims in 2024, "
+            "about one in six in-network claims in 2025, "
             f"{_millions(latest['in_denied'])} among reporting insurers",
             self.content,
         )
@@ -198,36 +198,40 @@ class TestDenialWatchCopyMatchesData(TestCase):
         latest = DATA["trend"][-1]
         ratio = latest["in_denied"] / latest["appeals_all"]
         self.assertIn(
-            f"{_millions(latest['in_denied'])} denials in 2024, "
+            f"{_millions(latest['in_denied'])} denials in 2025, "
             f"{_pct(latest['in_rate'])} of in-network claims, and "
-            f"{latest['appeals_all']:,.0f} internal appeals, "
+            f"{latest['appeals_all']:,.0f} internal claim appeals, "
             f"about 1 for every {round(ratio, -1):.0f} of those denials",
             self.content,
         )
         self.assertIn(
-            f"In 2024 insurers denied {_millions(latest['out_denied'])} of "
+            f"In 2025 insurers denied {_millions(latest['out_denied'])} of "
             f"{_millions(latest['out_claims'])} out-of-network claims ({_pct(latest['out_rate'])}) and "
             f"{_millions(latest['all_denied'])} of {_millions(latest['all_claims'])} claims overall "
-            f"({_pct(latest['all_rate'])}), the same national rates KFF reports",
+            f"({_pct(latest['all_rate'])}).",
             self.content,
         )
 
-    def test_about_doubled_matches_in_network_ratio(self):
+    def test_trend_copy_gives_the_fall_with_its_caveat(self):
         by_year = {t["year"]: t for t in DATA["trend"]}
-        ratio = by_year[2024]["in_denied"] / by_year[2020]["in_denied"]
-        self.assertTrue(1.9 <= ratio < 2.1, ratio)
+        new, old = by_year[2025], by_year[2024]
         self.assertIn(
-            "In-network denials about doubled from 2020 to 2024, to "
-            f"{_millions(by_year[2024]['in_denied'])}",
+            f"Insurers denied {new['in_rate'] * 100:.1f}% of in-network claims in 2025, down from {old['in_rate'] * 100:.1f}% in 2024.",
             self.content,
         )
+        self.assertEqual(round((new["in_claims"] / old["in_claims"] - 1) * 100), 18)
+        self.assertLess(abs(new["in_denied"] / old["in_denied"] - 1), 0.02)
+        self.assertIn(f"Denials held at about {_millions(new['in_denied'])} while claims rose 18%", self.content)
+        self.assertIn("That may be a good sign, but this data can't prove it", self.content)
+        self.assertIn('<a href="#method-2025-drop">', self.content)
+        self.assertIn('id="method-2025-drop"', self.content)
 
     def test_trend_copy_uses_the_in_network_series(self):
         # The yearly in-network rates are in the table beside the chart, not read out in the intro.
         latest = DATA["trend"][-1]
         self.assertEqual(round(latest["out_rate"] / latest["in_rate"]), 2)
         self.assertIn(
-            f"denied {_pct(latest['out_rate'])} of them in 2024, about twice the in-network rate",
+            f"denied {_pct(latest['out_rate'])} of them in 2025, about twice the in-network rate",
             self.content,
         )
 
@@ -602,10 +606,10 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
         self.assertIn('id="appeals"', template)
 
     def test_california_line_gives_its_insurers_own_reports_and_keeps_the_reviews_link(self):
-        # FHI's sum over the 8 insurers with usable 2024 reports on Covered California's page; not CMS data.
+        # FHI's sum over the 9 insurers with usable 2025 reports on Covered California's page; not CMS data.
         line = self.js[self.js.index("  CA:[") : self.js.index("\n", self.js.index("  CA:["))]
-        self.assertIn("reported denying 16.8% of in-network claims", line)
-        self.assertIn("(6.7 million of 40.1 million; FHI's calculation from those reports).", line)
+        self.assertIn("reported denying 15.7% of in-network claims", line)
+        self.assertIn("(6.2 million of 39.7 million; FHI's calculation from those reports). Health Net and Aetna are missing for 2025", line)
         self.assertIn('"https://www.hbex.ca.gov/insurance-companies/denied-claims/", "Covered California"', line)
         self.assertIn('"#appeals"', line)
         self.assertIn("for(let i=0;i<e.length;i+=4)", self.js)
@@ -669,8 +673,8 @@ class TestDenialWatchScriptCountsInNetwork(TestCase):
 
     def test_counter_says_what_it_counts(self):
         page = Client().get(reverse("denial-watch")).content.decode()
-        self.assertIn("HealthCare.gov claims denied today, at 2024's pace", page)
-        self.assertIn("denied per day in 2024, on average", page)
+        self.assertIn("HealthCare.gov claims denied today, at 2025's pace", page)
+        self.assertIn("denied per day in 2025, on average", page)
 
     def test_counter_can_be_paused(self):
         self.assertIn("prefers-reduced-motion", self.js)
@@ -864,8 +868,8 @@ class TestDenialWatchEveryStateChart(TestCase):
         )
         self.assertEqual(key[0], f"HealthCare.gov insurers, {self.year} claims (FHI's calculation from CMS's data)")
         years = {v["year"] for v in DATA["state_reports"].values()}
-        self.assertEqual(years, {self.year})
-        self.assertIn(f"own reports for {self.year} claims on the same federal form", key[1])
+        self.assertEqual(years, {self.year, self.year - 1})
+        self.assertIn("California (2025 claims) and Pennsylvania (2024 claims) insurers' own reports on the same federal form", key[1])
         publishers = [v["publisher"] for v in DATA["state_reports"].values()]
         self.assertIn(
             "(FHI's calculation from " + "'s and the ".join(publishers) + "'s data)",
@@ -879,20 +883,18 @@ class TestDenialWatchEveryStateChart(TestCase):
     def test_intro_and_caveat_name_the_states_in_the_bundle(self):
         text = _text(self.section)
         names = _load_builder().STATE_NAMES
-        reporting = sorted(names[s] for s in DATA["state_reports"])
-        reports = " and ".join(reporting)
-        reports_own = "'s and ".join(reporting) + "'s"
+        self.assertEqual({s: r["year"] for s, r in DATA["state_reports"].items()}, {"CA": 2025, "PA": 2024})
         older = sorted(names[s] for s in DATA["earlier"])
         older = ", ".join(older[:-1]) + " and " + older[-1]
-        five = {5: "five"}[len(DATA["state_reports"]) + len(DATA["earlier"])]
         self.assertIn(
-            f"Share of in-network claims denied, by state: the {len(DATA['states'])} HealthCare.gov states from the map, highest first. Below them, on the same scale but listed apart, are {five} grey states we found a figure for elsewhere: "
-            f"{reports} from their insurers' own reports for {self.year} claims on the same federal form, and {older} from the last year CMS's files include them.",
+            f"Share of in-network claims denied, by state: the {len(DATA['states'])} HealthCare.gov states from the map, highest first. Below them, on the same scale but listed apart, are six grey states we found a figure for elsewhere: "
+            f"California (2025 claims) and Pennsylvania (2024 claims) from their insurers' own reports on the same federal form, and {older} from the last year CMS's files include them.",
             text,
         )
         self.assertIn(
-            f"These sources and years aren't strictly comparable: {reports_own} reports can count plans sold outside their marketplaces, "
-            f"which CMS's figures leave out, and {older} are from earlier years, so don't rank those {five} against the {self.year} states.",
+            "These sources and years aren't strictly comparable: California's and Pennsylvania's reports can count plans sold outside their marketplaces, "
+            "which CMS's figures leave out. California's 2025 figure is missing Health Net and Aetna, whose 2025 reports we couldn't read or find. "
+            f"Pennsylvania, {older} are from earlier years. So don't rank those six against the {self.year} states.",
             text,
         )
 
@@ -903,9 +905,9 @@ class TestDenialWatchEveryStateChart(TestCase):
         ]
         self.assertEqual(order, sorted(order))
         self.assertIn('<h3 id="every-state-title">Every state\'s denial rate</h3>', self.section)
-        self.assertIn("<p>Share of in-network claims denied, by state: the 30 HealthCare.gov states from the map, highest first.", self.section)
+        self.assertIn("<p>Share of in-network claims denied, by state: the 29 HealthCare.gov states from the map, highest first.", self.section)
         self.assertIn("Each bar is the % of in-network claims insurers denied in that state.", _text(self.section))
-        five = {5: "Five"}[len(DATA["state_reports"]) + len(DATA["earlier"])]
+        five = {6: "Six"}[len(DATA["state_reports"]) + len(DATA["earlier"])]
         self.assertIn(f'<h4 class="dw-every-sub" id="every-other-title">{five} grey states, from other sources or years</h4>', self.section)
         self.assertIn("<summary>Show these figures as a table</summary>", self.section)
 
@@ -915,7 +917,7 @@ class TestDenialWatchEveryStateChart(TestCase):
         self.assertIn('<th scope="col">FHI\'s calculation from</th>', table)
         self.assertNotIn(">Source<", table)
         map_rows, other_rows = table.split('<tbody id="every-other-rows">')
-        five = {5: "Five"}[len(DATA["state_reports"]) + len(DATA["earlier"])]
+        five = {6: "Six"}[len(DATA["state_reports"]) + len(DATA["earlier"])]
         self.assertIn(f'<th scope="colgroup" colspan="3" class="dw-every-sub">{five} grey states, from other sources or years</th>', other_rows)
         self.assertEqual(set(re.findall(r'<tr data-s="(\w+)">', map_rows)), set(DATA["states"]))
         rows = re.findall(
@@ -951,8 +953,8 @@ class TestDenialWatchEveryStateChart(TestCase):
         note = _between(self.page, 'id="method-every-state"', "</li>")
         ca, pa = DATA["state_reports"]["CA"], DATA["state_reports"]["PA"]
         self.assertIn(
-            f"both FHI's calculations: from the {self.year} claims that {ca['insurers']} insurers in California (the ones with usable reports) "
-            f"and {pa['insurers']} in Pennsylvania reported on the same federal form",
+            f"both FHI's calculations: from the {ca['year']} claims that {ca['insurers']} insurers in California (the ones with usable reports) "
+            f"and the {pa['year']} claims that {pa['insurers']} in Pennsylvania reported on the same federal form",
             _text(note),
         )
         names = _load_builder().STATE_NAMES
@@ -971,7 +973,7 @@ class TestDenialWatchEveryStateChart(TestCase):
         e = entry("CA")
         self.assertIn(f"The {ca['insurers']} with usable reports for {ca['year']} claims reported denying {ca['rate'] * 100:.1f}% of in-network claims", e[0])
         self.assertEqual(e[1:3], [ca["url"], ca["publisher"]])
-        self.assertEqual(e[3], f" ({_millions(ca['denied'])} of {_millions(ca['claims'])}; FHI's calculation from those reports).")
+        self.assertTrue(e[3].startswith(f" ({_millions(ca['denied'])} of {_millions(ca['claims'])}; FHI's calculation from those reports)."), e[3])
         e = entry("PA")
         self.assertEqual(e[0], f"In {pa['year']}, the {pa['insurers']} insurers in ")
         self.assertEqual(e[1], pa["url"])
@@ -1050,6 +1052,13 @@ INSURER_HEADER = (
 # sheet row, and the in-network claims, denials, internal appeals filed and overturned read there (None where CMS
 # printed *, ** or N/A). Copied by hand from the files, so the table can't drift from them.
 EARLIER_PUF_CELLS = [
+    ("tic2026.xlsx", 10091, "OR", "PacificSource Health Plans", 3771, 658, 136, 12),
+    ("tic2026.xlsx", 39424, "OR", "Moda Health Plan, Inc.", 1102738, 157741, 173, 67),
+    ("tic2026.xlsx", 56707, "OR", "Providence Health Plan", 410010, 16582, 301, 217),
+    ("tic2026.xlsx", 63474, "OR", "BridgeSpan Health Company", 12346, 1294, None, None),
+    ("tic2026.xlsx", 71287, "OR", "Kaiser Foundation Healthplan of the NW", 9923, 725, 39, 17),
+    # DOUBTFUL_WON: the same counts as the 2025 file, so no win count.
+    ("tic2026.xlsx", 77969, "OR", "Regence BlueCross BlueShield of Oregon", 1013376, 100498, 616, None),
     ("tic2024.xlsx", 365, "GA", "Cigna HealthCare of Georgia, Inc.", 819128, 144773, None, None),
     ("tic2024.xlsx", 2585, "GA", "UnitedHealthcare of Georgia, Inc.", 297827, 94241, 427, 202),
     ("tic2024.xlsx", 2607, "GA", "AMGP Georgia Managed Care Company, Inc. dba Anthem Blue Cross and Blue Shield", None, None, None, None),
@@ -1179,11 +1188,11 @@ class TestDenialWatchGreyStateInsurers(TestCase):
                 self.assertNotIn("\u2014", part)
                 self.assertNotIn("\u2013", part)
 
-    def test_california_leaves_out_the_four_insurers_its_state_figure_does(self):
-        # The every-state figure's note names the same four, so the table and the chart can't disagree.
+    def test_california_leaves_out_the_three_insurers_its_state_figure_does(self):
+        # The every-state figure's note names the same three, so the table and the chart can't disagree.
         g = DATA["grey_issuers"]["CA"]
         names = [x["n"] for x in g["left_out"]]
-        self.assertEqual(names, ["Aetna CVS Health", "CCHP Health Plan", "Inland Empire Health Plan", "Western Health Advantage"])
+        self.assertEqual(names, ["Aetna CVS Health", "Health Net", "Western Health Advantage"])
         with open(REPO / "scripts" / "denial_watch" / "state_reports.csv", newline="") as f:
             note = next(r["note"] for r in csv.DictReader(f) if r["state"] == "CA")
         left = note[note.index("Left out:") :]
@@ -1326,11 +1335,12 @@ class TestDenialWatchGreyStateInsurersPage(TestCase):
         reports = " and ".join(sorted(self.names[s] for s in DATA["state_reports"]))
         older = sorted(self.names[s] for s in DATA["earlier"])
         year = DATA["trend"][-1]["year"]
-        five = {5: "Five"}[len(DATA["grey_issuers"])]
+        self.assertEqual(len(DATA["grey_issuers"]), 6)
+        self.assertEqual(reports, "California and Pennsylvania")
         self.assertIn(
             f"In-network denial rates for each insurer with at least 50,000 in-network claims, as each company reported them. "
-            f"The {len({i['s'] for i in DATA['issuers']})} HealthCare.gov states show {year} claims. {five} states with their own marketplace "
-            f"show figures from other sources or years: {reports} from insurers' own reports for {year} claims, and "
+            f"The {len({i['s'] for i in DATA['issuers']})} HealthCare.gov states show {year} claims. Six states with their own marketplace "
+            f"show figures from other sources or years: California (2025) and Pennsylvania (2024) from insurers' own reports, and "
             f"{', '.join(older[:-1])} and {older[-1]} from the last year CMS's files include them.",
             _text(self.section),
         )
@@ -1384,8 +1394,8 @@ class TestDenialWatchGreyStateInsurersPage(TestCase):
         ca = DATA["grey_issuers"]["CA"]
         older = sorted((self.names[s], e["year"]) for s, e in DATA["earlier"].items())
         self.assertIn("Insurer table: Each insurer that handled at least 50,000 in-network claims.", note)
-        self.assertIn("the four California insurers we leave out are named under the table, with why.", note)
-        self.assertEqual(len(ca["left_out"]), 4)
+        self.assertIn("the three California insurers we leave out are named under the table, with why.", note)
+        self.assertEqual(len(ca["left_out"]), 3)
         self.assertIn("Covered California posts each insurer's plan rows, not its totals, so California's figures add up those rows, and it posts no appeal counts.", note)
         self.assertIn("California's and Pennsylvania's reports can count plans sold outside the marketplace, which CMS's figures leave out", note)
         self.assertIn(
@@ -1395,18 +1405,43 @@ class TestDenialWatchGreyStateInsurersPage(TestCase):
         )
         self.assertNotIn("Each reporting HealthCare.gov insurer", note)
 
-    def test_three_california_insurers_moved_15_points_from_2023(self):
-        # Covered California's 2023 issuer-level reports (Anthem 26.6%, Kaiser 5.1%, L.A. Care 87.3%) against the 2024 table.
-        before = {"Anthem Blue Cross": 0.266, "Kaiser Permanente": 0.051, "L.A. Care Health Plan": 0.873}
+    def test_two_california_insurers_moved_10_points_from_2024(self):
+        # Covered California's 2024 reports (Kaiser 24.8%, Valley 16.4%) against the 2025 table.
+        before = {"Kaiser Permanente": 0.248, "Valley Health Plan": 0.164}
         rows = {r["n"]: r["r"] for r in DATA["grey_issuers"]["CA"]["rows"]}
-        self.assertTrue(all(abs(rows[n] - r) >= 0.15 for n, r in before.items()))
-        self.assertEqual(len(rows), 8)
-        self.assertIn("three of the eight California insurers' rates moved 15 points or more", _text(_between(self.page, 'id="method-insurers"', "</li>")))
+        self.assertTrue(all(abs(rows[n] - r) > 0.10 for n, r in before.items()))
+        self.assertEqual(len(rows), 9)
+        self.assertIn("Kaiser Permanente's and Valley Health Plan's rates moved more than 10 points", _text(_between(self.page, 'id="method-insurers"', "</li>")))
 
-    def test_map_intro_says_five_grey_states_have_insurers(self):
+    def test_capital_health_plans_in_network_counts_are_left_out_and_named(self):
+        self.assertNotIn(("FL", "Capital Health Plan"), {(i["s"], i["n"]) for i in DATA["issuers"]})
+        self.assertIn("Capital Health Plan in Florida isn't listed: it reported denying 448,953 of 466,619 in-network claims in 2025 (96%)", _text(_between(self.page, 'id="method-insurers"', "</li>")))
+
+    def test_the_change_view_names_the_year_it_compares_with(self):
+        self.assertIn('data-m="chg">Change from 2024<', self.page)
+        # The uninsured map's own change is Census's 2023 to 2024, a different comparison.
+        self.assertIn('data-m="uchg">Change from 2023<', self.page)
+        self.assertNotIn("since 2023", JS)
+
+    def test_capital_health_plans_reasons_are_left_out_too(self):
+        # Its rows would add 96,042 reasons and 71,065 plan-level denials.
+        self.assertEqual(DATA["reason_meta"], {"entries": 86565373.0, "plan_denied_in": 63085209.0})
+        self.assertEqual(_load_builder().DOUBTFUL_DENIED_IN[2027], {("FL", 66966)})
+
+    def test_every_state_note_says_why_california_isnt_a_clean_comparison(self):
+        note = _text(_between(self.page, 'id="method-every-state"', "</li>"))
+        self.assertIn("Health Net (22.5% of 4.2 million claims in 2024) has no readable 2025 report", note)
+        self.assertIn("Pennsylvania's 2025 claims weren't posted when we checked.", note)
+
+    def test_the_2025_drop_note_gives_the_same_insurer_figures(self):
+        note = _text(_between(self.page, 'id="method-2025-drop"', "</li>"))
+        for piece in ("from 18.7% to 15.6%", "Among the 119 insurers with figures in both years, the rate fell from 18.8% to 16.4%", "from 17.7% to 17.8%", "40 insurers"):
+            self.assertIn(piece, note)
+
+    def test_map_intro_says_six_grey_states_have_insurers(self):
         intro = _text(_between(self.page, 'id="map-denials-title"', "</p>"))
-        self.assertIn("A grey state shows what it publishes instead, and five of them also have insurers in the table below, from other sources or years.", intro)
-        self.assertEqual(len(DATA["grey_issuers"]), 5)
+        self.assertIn("A grey state shows what it publishes instead, and six of them also have insurers in the table below, from other sources or years.", intro)
+        self.assertEqual(len(DATA["grey_issuers"]), 6)
 
 
 class TestDenialWatchEnrollment(TestCase):
@@ -1505,12 +1540,12 @@ class TestDenialWatchEnrollmentCard(TestCase):
         )
 
     def test_insurer_notice_names_oregon_and_the_insurers_leaving(self):
-        # From November 1, 2026, Oregon enrolls through ExploreHealthOR.gov; the table is 2024 data and no insurer is named.
+        # From November 1, 2026, Oregon enrolls through ExploreHealthOR.gov; the table is 2025 data and no insurer is named.
         html = _page(date(2026, 10, 18))
         notice = _between(_between(html, 'id="insurers"', "</section>"), "Picking a 2027 marketplace plan?", "</p>")
         self.assertIn("Oregon residents compare 2027 plans at <a href=\"https://explorehealthor.gov/\">ExploreHealthOR.gov</a> instead.", notice)
-        # Most of the table is 2024 claims; the grey states' own years are in the table.
-        self.assertIn("its insurers' rates (2024 claims in most states)", notice)
+        # Most of the table is 2025 claims; the grey states' own years are in the table.
+        self.assertIn("its insurers' rates (2025 claims in most states)", notice)
         self.assertIn("Some of these insurers don't sell plans for 2027, so check which ones do.", notice)
         self.assertNotIn("Cigna", notice)
 
@@ -1967,11 +2002,11 @@ class TestDenialWatchNetworkData(TestCase):
         for t in DATA["trend"]:
             self.assertFalse({"claims", "denied", "rate"} & set(t), t["year"])
 
-    def test_national_rates_round_like_kff(self):
+    def test_national_rates_round_as_the_page_says(self):
         latest = DATA["trend"][-1]
         self.assertEqual(
             (_pct(latest["in_rate"]), _pct(latest["out_rate"]), _pct(latest["all_rate"])),
-            ("19%", "37%", "20%"),
+            ("16%", "31%", "17%"),
         )
 
     def test_no_rate_above_one_in_any_view(self):
@@ -2063,7 +2098,7 @@ class TestDenialWatchNetworkData(TestCase):
 
     def test_states_with_an_impossible_insurer_show_no_all_claims_rate(self):
         gone = {x["s"] for x in DATA["trend"][-1]["left_out"]}
-        self.assertEqual(gone, {"AK", "ND"})
+        self.assertEqual(gone, {"MI"})
         for st, s in DATA["states"].items():
             self.assertEqual(s["all"]["why"] == "error", st in gone, st)
             self.assertEqual(bool(s["all"]["left_out"]), st in gone, st)
@@ -2244,14 +2279,14 @@ class TestDenialWatchNetworkPage(TestCase):
         trend = re.findall(r'data-m="(\w+)"', _between(self.content, 'id="tmode"', "</div>"))
         self.assertEqual(trend, ["in", "out", "all"])
         # Why there are no out-of-network change or appeals figures is in the method section.
-        self.assertIn("There's no out-of-network change from 2023, which mostly reflects which insurers reported, and no out-of-network appeals figure.", self.sources)
+        self.assertIn("There's no out-of-network change from 2024, which mostly reflects which insurers reported, and no out-of-network appeals figure.", self.sources)
 
     def test_map_has_no_out_of_network_state_figures(self):
         # A state's rate would mostly show plan type, so the map points to the trend chart instead.
         views = _between(JS, "const DM={", "\n};")
         self.assertNotIn("out:{", views)
         self.assertIn("we don't map out-of-network claims by state (see What are they denying? below)", self.sources)
-        self.assertIn("we don't map them by state: in 2024, 120 of the 157 insurers reporting them sold only HMO or EPO plans", self.sources)
+        self.assertIn("we don't map them by state: in 2025, 99 of the 135 insurers reporting them sold only HMO or EPO plans", self.sources)
 
     def test_out_of_network_trend_note_carries_the_map_note(self):
         # Everything the map's out-of-network view used to say, now beside the chart that has the figures.
@@ -2278,7 +2313,7 @@ class TestDenialWatchNetworkPage(TestCase):
         self.assertNotIn("network-only plans", JS)
 
     def test_trend_chart_label_says_in_network(self):
-        self.assertIn('aria-label="Line chart of the in-network denial rate by year, 2020 to 2024"', self.content)
+        self.assertIn('aria-label="Line chart of the in-network denial rate by year, 2020 to 2025"', self.content)
         self.assertIn("Line chart of the ${m.lab} denial rate by year, ${y0} to ${y1}", JS)
 
     def test_each_view_has_a_visible_line(self):
@@ -2327,7 +2362,7 @@ class TestDenialWatchNetworkPage(TestCase):
     def test_method_note_gives_the_closed_network_figure(self):
         closed = DATA["oon_meta"]["closed_network"]
         self.assertIn(
-            f"For {_millions(closed['denied'])} of those out-of-network denials, about half, insurers gave the reason",
+            f"For {_millions(closed['denied'])} of those out-of-network denials, more than half, insurers gave the reason",
             self.sources,
         )
 
@@ -2335,7 +2370,7 @@ class TestDenialWatchNetworkPage(TestCase):
         for t in DATA["trend"]:
             for x in t["left_out"]:
                 self.assertIn(_short(x["n"]), self.sources)
-        self.assertIn("shows no figure for Alaska or North Dakota", self.sources)
+        self.assertIn("shows no figure for Michigan", self.sources)
 
 
 class TestDenialWatchCharts(TestCase):
@@ -2432,7 +2467,7 @@ class TestDenialWatchThemes(TestCase):
             "every-state": ("Every state's denial rate", "Share of in-network claims denied, by state:"),
             "insurers": ("Denial rates by insurer", "In some states, one insurer denies four or more times as often as another."),
             "prior-auth": ("Prior authorization denials", "Insurers now post how often they deny prior authorization, and the spread is wide."),
-            "trend": ("Denials over time", "More denials, in network and out."),
+            "trend": ("Denials over time", "A lower denial rate in 2025, though we'd read it with care."),
             "why": ("Reasons given for denials", '"Not medically necessary" is a small share of the reasons given.'),
         }
         for ident, (title, lead) in titles.items():
@@ -3160,3 +3195,43 @@ class TestDenialWatchColourMeaning(TestCase):
             "pink, drug spending; red, only where something got worse; grey, no data.",
         )
         self.assertLess(self.content.index('class="fhi-jump-links"'), self.content.index('id="colour-key"'))
+
+
+class TestDenialWatchPy2027File(TestCase):
+    """The PY2027 file renamed and split columns; these are its headers as CMS published them."""
+
+    def test_reason_columns_map_to_the_2027_in_network_headers(self):
+        builder = _load_builder()
+        columns = builder.REASON_COLUMNS_2027
+        self.assertEqual(set(columns), set(builder.REASONS))
+        for header in (
+            "plan_number_claims_denied_due_to_enrollee_benefit_limit_reached_in_network",
+            "plan_number_claims_denied_due_to_investigational_experimental_cosmetic_procedure_in_network",
+            "plan_number_claims_denied_referral_required_in_network",
+        ):
+            self.assertIn(header, columns.values())
+
+    def test_issuer_cells_read_appeals_of_claims_not_requests_before_care(self):
+        row = {
+            "state": "TX", "issuer_name": "Example", "issuer_id": 1,
+            "issuer_internal_appeals_pre_service_benefit_requests_filed": 900,
+            "issuer_number_internal_appeals_pre_service_benefit_requests_overturned": 800,
+            "issuer_internal_appeals_claims_filed": 10,
+            "issuer_number_internal_appeals_claims_overturned": 3,
+        }
+        cells = _load_builder().issuer_cells(row)
+        self.assertEqual((cells["ap_filed"], cells["ap_over"]), (10, 3))
+
+    def test_a_state_report_can_lag_the_map_by_one_year_only(self):
+        builder = _load_builder()
+        latest = builder.CLAIMS_YEAR[builder.LATEST_PY]
+        fields = "state,claims_year,insurers,in_network_claims,in_network_denied,publisher,source_url,accessed,note\n"
+        for year, ok in ((latest, True), (latest - 1, True), (latest - 2, False)):
+            with self.subTest(year=year), tempfile.TemporaryDirectory() as tmp:
+                path = pathlib.Path(tmp) / "reports.csv"
+                path.write_text(fields + f"CA,{year},1,10,1,Example,https://example.org/,2026-11-01,\n")
+                if ok:
+                    self.assertEqual(builder.load_state_reports(set(), {}, path)["CA"]["year"], year)
+                else:
+                    with self.assertRaises(SystemExit):
+                        builder.load_state_reports(set(), {}, path)

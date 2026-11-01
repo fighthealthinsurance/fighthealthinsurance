@@ -87,6 +87,7 @@ from fighthealthinsurance.regulator_routing import (
 
 from .exec import background_executor, executor
 from .ml.ml_models import (
+    error_kind_for_log,
     MODEL_TRANSPORT_ERRORS,
     DeadlineSkipped,
     ProviderUnavailable,
@@ -95,6 +96,7 @@ from .ml.ml_models import (
     can_be_asked,
     context_already_in_prompt,
     describe_model_error,
+    is_blank_context,
     render_citations_context,
     repetition_penalty,
 )
@@ -409,8 +411,8 @@ class MentalHealthParityAppeal(SpecializedDenialTemplate):
             "45 CFR 146.136(d)); and (c) every guideline and other document relevant "
             "to my claim (29 CFR 2560.503-1(g)(1)(v) and (h)(2)(iii); MHPAEA FAQs Part "
             "45, Q6). If ERISA covers my plan, this is also an ERISA § 104(b)(4) "
-            "request, and I am sending a copy to the plan administrator named in my "
-            "summary plan description.\n\n"
+            "request. [Specify the plan administrator named in your summary plan "
+            "description if you are sending them a copy, or delete this sentence]\n\n"
             "3. Clinical review and automated tools. A denial based on medical "
             "necessity must explain, on request, the clinical judgment applied to my "
             "circumstances (29 CFR 2560.503-1(g)(1)(v)(B)); I request it. Please name "
@@ -460,11 +462,21 @@ class AdvancedImagingAppeal(SpecializedDenialTemplate):
         r"\bimaging\b",
     )
     citations = (
-        "American College of Radiology (ACR) Appropriateness Criteria",
-        "CMS National Coverage Determinations for diagnostic imaging "
-        "(NCD Manual chapter 220)",
+        "American College of Radiology (ACR) Appropriateness Criteria: check "
+        "whether they rate the requested study usually appropriate for the "
+        "stated indication, and cite the specific scenario only if one fits",
+        "Medicare plans only: CMS National Coverage Determinations for "
+        "diagnostic imaging (NCD Manual chapter 220) may apply; cite a "
+        "specific NCD only if one fits this study and indication",
         _CLAIMS_RULE_CITATION,
         _MEDICARE_ADVANTAGE_ONLY_CITATION,
+    )
+    # The letter can't know whether the study meets a published criterion,
+    # so the model must not say it does unless the record shows it.
+    prompt_notes = (
+        "Do not state that the study meets ACR criteria or an NCD's "
+        "indications unless the denial or the patient's history supports "
+        "it; otherwise ask the plan which criterion it applied.",
     )
 
     @classmethod
@@ -479,17 +491,19 @@ class AdvancedImagingAppeal(SpecializedDenialTemplate):
             "1. ACR Appropriateness Criteria. The American College of "
             "Radiology publishes evidence-based criteria identifying the "
             "appropriate imaging modality for specific clinical scenarios. "
-            "The presentation in this case meets ACR-published indications "
-            "for the requested study; lower-cost alternatives such as plain "
-            "radiographs or ultrasound are inadequate to answer the clinical "
-            "question and would predictably lead to repeat imaging.\n\n"
-            "2. CMS National Coverage Determinations (NCD chapter 220). "
-            "CMS NCDs set the community standard for advanced imaging "
-            "coverage and the requested study satisfies the relevant NCD's "
-            "indications.\n\n"
+            "[Specify the ACR Appropriateness Criteria scenario that rates this "
+            "study usually appropriate, and why a lower-cost study was not "
+            "enough, or delete this sentence] Please identify the criterion you "
+            "applied to deny the study and explain how this presentation "
+            "fails it.\n\n"
+            "2. Medicare coverage policy. If my plan is a Medicare plan, CMS "
+            "National Coverage Determinations for diagnostic imaging (NCD "
+            "Manual chapter 220) may set coverage for this study. [Specify the "
+            "NCD and the covered indication that matches this order, or delete "
+            "this sentence]\n\n"
             + _automated_review_paragraph(3, "an automated utilization-management tool")
-            + "Delaying or denying this imaging risks missed diagnoses and "
-            "downstream cost from lower-yield workups. I respectfully "
+            + "If the study has not yet been done, delaying it risks missed "
+            "diagnoses and downstream cost from lower-yield workups. I respectfully "
             "request that the denial be overturned.\n\n"
             "Sincerely,\n[Name]\n"
         )
@@ -535,15 +549,16 @@ class SpecialtyMedicationAppeal(SpecializedDenialTemplate):
             "Dear {insurance_company},\n\n"
             "I am appealing the denial of {procedure} for {diagnosis}. "
             "Specialty medications are typically prescribed because lower-"
-            "tier alternatives are unsuitable for the patient's clinical "
-            "circumstances; the denial as issued does not engage with that "
-            "individualized analysis.\n\n"
+            "tier alternatives are unsuitable for a patient's clinical "
+            "circumstances. Please show the individualized analysis of this "
+            "patient's circumstances behind the denial.\n\n"
             "1. Step-therapy / fail-first override. Where the carrier's "
-            "denial relies on step therapy, the patient qualifies for an "
-            "override under applicable state law and plan terms because "
-            "preferred agents are contraindicated, have been tried and "
-            "failed, or are expected to be ineffective for this indication. "
-            "Please apply the override and process the claim.\n\n"
+            "denial relies on step therapy, state law and plan terms "
+            "generally require an override when preferred agents are "
+            "contraindicated, have been tried and failed, or are expected to "
+            "be ineffective for this indication. [Specify which applies and "
+            "list the agents tried, with dates] Please apply the override "
+            "and process the claim.\n\n"
             "2. ERISA full-and-fair-review obligations "
             "(29 C.F.R. § 2560.503-1). Please produce, with the appeal "
             "decision, (a) the specific clinical criteria relied on, "
@@ -559,7 +574,7 @@ class SpecialtyMedicationAppeal(SpecializedDenialTemplate):
 
 
 class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
-    name = "Physical therapy continuation (visits beyond initial sessions)"
+    name = "Physical, occupational or speech therapy denial"
     text_patterns = (
         r"\bphysical\s+therapy\b",
         r"\bPT\s+(?:visits|sessions|services)\b",
@@ -595,12 +610,12 @@ class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
     @classmethod
     def static_appeal(cls) -> str:
         return (
-            "Re: Appeal of denied therapy continuation, claim {claim_id}\n\n"
+            "Re: Appeal of denied therapy, claim {claim_id}\n\n"
             "Dear {insurance_company},\n\n"
-            "I am appealing the denial of additional {procedure} sessions "
-            "for {diagnosis}. The denial appears to rest on a visit cap or "
-            "a finding that the patient has stopped improving; both grounds "
-            "are inconsistent with controlling authority.\n\n"
+            "I am appealing the denial of {procedure} for {diagnosis}. If "
+            "the denial rests on a visit cap or a finding that the patient "
+            "has stopped improving, both grounds are inconsistent with the "
+            "authority below.\n\n"
             "1. Jimmo v. Sebelius — improvement is NOT the standard. "
             "Skilled therapy is covered when it is reasonable and necessary "
             "to maintain the patient's current condition or to slow further "
@@ -616,13 +631,15 @@ class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
             "not enforceable as written.\n\n"
             + _automated_review_paragraph(3, "a utilization-management algorithm")
             + "I respectfully request the denial be overturned and the "
-            "additional sessions authorized.\n\n"
+            "requested sessions authorized.\n\n"
             "Sincerely,\n[Name]\n"
         )
 
 
 class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
-    name = "Post-surgical rehabilitation denial"
+    name = (
+        "Rehabilitation or skilled nursing denial (after surgery, if it followed one)"
+    )
     # Every pattern requires explicit rehab/therapy/SNF/IRF context so we
     # don't mistake denials of the surgery itself (e.g., a bare "ACL
     # repair" denial) for denials of the post-surgical rehabilitation.
@@ -662,27 +679,26 @@ class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
     @classmethod
     def static_appeal(cls) -> str:
         return (
-            "Re: Appeal of denied post-surgical rehabilitation, "
-            "claim {claim_id}\n\n"
+            "Re: Appeal of denied rehabilitation, claim {claim_id}\n\n"
             "Dear {insurance_company},\n\n"
-            "I am appealing the denial of post-surgical rehabilitation "
-            "({procedure}) following surgery for {diagnosis}. Recovery from "
-            "surgery is precisely the scenario in which skilled "
-            "rehabilitation is most clearly medically necessary, and the "
-            "denial as issued is inconsistent with controlling authority.\n\n"
+            "I am appealing the denial of {procedure} for {diagnosis}. "
+            "[Specify the surgery and its date if this care follows surgery, "
+            "or delete this sentence] Recovery from surgery is a common "
+            "reason skilled rehabilitation is medically necessary, and the "
+            "authority below governs this denial.\n\n"
             "1. CMS coverage standards for inpatient rehabilitation and "
             "skilled nursing care (Medicare Benefit Policy Manual, "
             "chapters 1 and 8). Coverage turns on whether the patient "
             "requires skilled, multidisciplinary rehabilitation services on "
-            "an intensive basis (IRF) or daily skilled care (SNF). The "
-            "denial does not engage with the chapter 1/8 criteria as "
-            "applied to this patient's actual post-operative status.\n\n"
+            "an intensive basis (IRF) or daily skilled care (SNF). Please "
+            "show how the reviewer applied the chapter 1/8 criteria to this "
+            "patient's actual condition.\n\n"
             "2. Jimmo v. Sebelius. To the extent the denial relies on a "
             "lack of measurable improvement or a 'plateau,' the "
             "improvement standard was rejected in Jimmo and clarified in "
             "subsequent CMS guidance. Skilled rehabilitation that maintains "
-            "function or prevents deterioration during post-surgical "
-            "recovery is covered.\n\n"
+            "function or prevents deterioration during recovery is "
+            "covered.\n\n"
             "3. ACA Essential Health Benefits "
             "(42 U.S.C. § 18022(b)(1)(G)). Rehabilitative and habilitative "
             "services and devices are essential health benefits and cannot "
@@ -692,7 +708,7 @@ class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
                 4, "a length-of-stay algorithm or similar tool"
             )
             + "I respectfully request that the denial be overturned and the "
-            "post-surgical rehabilitation authorized.\n\n"
+            "requested rehabilitation authorized.\n\n"
             "Sincerely,\n[Name]\n"
         )
 
@@ -732,8 +748,8 @@ class GLP1WeightLossAppeal(SpecializedDenialTemplate):
     citations = (
         "American Medical Association recognition of obesity as a disease "
         "(AMA Policy H-440.842, adopted 2013)",
-        "FDA-approved labeling for the prescribed anti-obesity medication — "
-        "e.g., Wegovy (semaglutide 2.4 mg) for chronic weight management and, "
+        "FDA labeling for the prescribed medication, if it is approved for "
+        "the patient's use, e.g. Wegovy (semaglutide 2.4 mg) for chronic weight management and, "
         "under its 2024 SELECT-trial indication, reduction of major adverse "
         "cardiovascular events; Zepbound (tirzepatide) for chronic weight "
         "management and for moderate-to-severe obstructive sleep apnea in "
@@ -752,28 +768,28 @@ class GLP1WeightLossAppeal(SpecializedDenialTemplate):
             "claim {claim_id}\n\n"
             "Dear {insurance_company},\n\n"
             "I am appealing the denial of {procedure} for {diagnosis}. "
-            "Anti-obesity medications such as GLP-1 and GIP/GLP-1 receptor "
-            "agonists are FDA-approved treatments for a recognized disease, "
-            "and the denial as issued does not engage with that individualized "
-            "clinical analysis.\n\n"
+            "Several GLP-1 and GIP/GLP-1 receptor agonists are FDA-approved "
+            "treatments for obesity, a recognized disease. Please show the "
+            "individualized clinical analysis behind this denial.\n\n"
             "1. Obesity is a disease, not a cosmetic concern. The American "
             "Medical Association formally recognized obesity as a disease in "
             "2013 (Policy H-440.842). To the extent this denial relies on a "
-            "'cosmetic,' 'lifestyle,' or 'weight-loss' exclusion, that "
-            "exclusion does not properly reach FDA-approved pharmacotherapy "
-            "prescribed to treat a diagnosed disease. Please quote the exact "
-            "plan language relied upon and explain how it encompasses the "
-            "FDA-approved indication at issue.\n\n"
-            "2. FDA-approved indication. The requested medication is FDA-"
-            "approved for the patient's condition — chronic weight management "
-            "in patients with obesity, or with overweight and a weight-related "
-            "comorbidity — and, for several agents, additional medical "
-            "indications (Wegovy for reducing major adverse cardiovascular "
-            "events in adults with established cardiovascular disease; "
-            "Zepbound for moderate-to-severe obstructive sleep apnea in adults "
-            "with obesity). Where the patient is being treated for such an "
-            "indication, the therapy treats a covered medical condition and is "
-            "medically necessary.\n\n"
+            "'cosmetic,' 'lifestyle,' or 'weight-loss' exclusion, and the "
+            "medication is FDA-approved for the patient's use, that exclusion "
+            "does not properly reach pharmacotherapy prescribed to treat a "
+            "diagnosed disease. Please quote the exact plan language relied "
+            "upon and explain how it applies to this treatment.\n\n"
+            "2. FDA-approved indication. [Specify the drug's FDA-approved "
+            "indication that matches this patient, with the patient's BMI and "
+            "any weight-related comorbidity, or delete this paragraph] Some of "
+            "these drugs carry further approved indications (Wegovy for "
+            "reducing major adverse cardiovascular events in adults with "
+            "established cardiovascular disease; Zepbound for "
+            "moderate-to-severe obstructive sleep apnea in adults with "
+            "obesity). Where the patient is being treated for an approved "
+            "indication, the therapy treats a recognized medical condition; if "
+            "the plan finds it not medically necessary for this patient, "
+            "please explain why.\n\n"
             "3. Individualized, full-and-fair review. Under ERISA § 503 "
             "(29 C.F.R. § 2560.503-1) and ACA Section 1557 (42 U.S.C. "
             "§ 18116), please produce the specific clinical criteria applied, "
@@ -952,6 +968,16 @@ def identifier_found_in_text(identifier: str, text: str) -> bool:
     return False
 
 
+# The label on the PubMed block in every appeal prompt version. Article
+# summaries stored before the summarizer wrote in the third person can read
+# like a patient profile ("the patient presents with..."), and a model copied
+# those as the person's own facts, so the label says whose facts they are.
+PUBMED_REFERENCES_LABEL = (
+    "PubMed references (published literature about people in studies, not "
+    "this patient's own history; use these):"
+)
+
+
 # Tier-shed retry: reduce prompt size when zero-result failures may stem
 # from context-window overflow. Each enrichment context appears on TWO
 # surfaces and both need to shrink in lockstep, otherwise we'd null the
@@ -993,12 +1019,14 @@ _PROMPT_TIER1_NULLS: tuple[str, ...] = (
 # letter gets (Melanie, 2026-09-07). Shedding it would drop the citation from
 # exactly the long, complicated denials where it helps most.
 
-# ``pa_context`` is the one tier-1 section ``make_open_prompt`` gates on
-# ``.strip()`` (line ~1661) rather than ``!= ""``: a whitespace-only value
-# renders nothing there, so it must NOT be treated as sheddable — nulling it
-# would only force a needless prompt rebuild (which reshuffles the randomized
-# GOOD EXAMPLEs) with no size reduction. See ``_shed_context``.
-_PROMPT_TIER1_STRIP_GATED: frozenset[str] = frozenset({"pa_context"})
+# The tier-1 sections ``make_open_prompt`` gates on a non-blank value rather
+# than ``!= ""``: a whitespace-only value renders nothing there, so it must
+# NOT be treated as sheddable: nulling it would only force a needless prompt
+# rebuild (which reshuffles the randomized GOOD EXAMPLEs) with no size
+# reduction. See ``_shed_context``.
+_PROMPT_TIER1_STRIP_GATED: frozenset[str] = frozenset(
+    {"pa_context", "pubmed_context", "ml_context"}
+)
 
 # Tier-2 truncation caps. ``plan_context`` lives on BOTH the prompt and the
 # call-dict surface and is truncated to the same length on each, so the cap
@@ -1094,17 +1122,18 @@ def _shed_context(
             # null (and rebuild for) a section that actually contributes
             # prompt bytes there. Most sections render on ``!= ""`` — a
             # whitespace-only value still trips ``has_citations`` and renders
-            # the section header (e.g. ``Provided citations (use these):    ``),
-            # so it must be shed. ``pa_context`` is the exception:
-            # ``make_open_prompt`` gates it on ``.strip()``, so a
-            # whitespace-only pa_context renders nothing and is already a
-            # no-op; nulling it would only force a needless rebuild (which
-            # reshuffles the randomized GOOD EXAMPLEs) with no size reduction.
+            # the section header, so it must be shed. The strip-gated ones
+            # (``pa_context``, ``pubmed_context``, ``ml_context``) render
+            # nothing when blank, so a blank one is already a no-op; nulling
+            # it would only force a needless rebuild (which reshuffles the
+            # randomized GOOD EXAMPLEs) with no size reduction.
             val = shed_kwargs.get(key)
             if not isinstance(val, str):
                 continue
             rendered = (
-                bool(val.strip()) if key in _PROMPT_TIER1_STRIP_GATED else val != ""
+                not is_blank_context(val)
+                if key in _PROMPT_TIER1_STRIP_GATED
+                else val != ""
             )
             if rendered:
                 shed_kwargs[key] = None
@@ -1138,7 +1167,9 @@ def _shed_context(
                     break
         if tier >= 1:
             for key in _SHEDDABLE_TIER1:
-                if new.get(key) is not None:
+                # A blank context sends nothing, so nulling it is no
+                # reduction and must not count as one.
+                if not is_blank_context(new.get(key)):
                     new[key] = None
                     changed.add(key)
         if tier >= 2:
@@ -1229,13 +1260,12 @@ def _estimate_call_token_footprint(
     if isinstance(citations, (list, tuple)):
         citations = render_citations_context(list(citations))
     total = estimate_tokens(prompt)
-    for value in (
-        patient_context,
-        call.get("plan_context"),
-        call.get("pubmed_context"),
-        citations,
-    ):
+    for value in (patient_context, call.get("plan_context")):
         if not context_already_in_prompt(prompt, value):
+            total += estimate_tokens(value)
+    # A blank PubMed or citation block is not sent, so it is not counted.
+    for value in (call.get("pubmed_context"), citations):
+        if not is_blank_context(value) and not context_already_in_prompt(prompt, value):
             total += estimate_tokens(value)
     return total
 
@@ -1328,8 +1358,14 @@ def _add_proactive_shed_variants(
     # shed-relevant content (everything but the level) to detect no-op variants
     # -- otherwise the added level key alone would make v != src and we'd
     # duplicate the full call.
+    # A blank call-dict context and None send the same bytes, so they compare
+    # equal here too.
     def _without_level(d: dict) -> dict:
-        return {k: v for k, v in d.items() if k != "context_level"}
+        return {
+            k: (None if k in _SHEDDABLE_TIER1 and is_blank_context(v) else v)
+            for k, v in d.items()
+            if k != "context_level"
+        }
 
     shed_variants = [
         v
@@ -1507,7 +1543,7 @@ def _generated_to_appeals_text(
                 )
             else:
                 logger.opt(exception=True).warning(
-                    f"Appeal generation via {model_name} failed: {e}"
+                    f"Appeal generation via {model_name} failed: {error_kind_for_log(e)}"
                 )
             return
         if model_results is None:
@@ -1571,7 +1607,7 @@ def _generated_to_appeals_text(
             error_detail = f"appeal mapping failed: {e}"
             logger.opt(exception=True).error(
                 f"Appeal mapping for {model_name} failed mid-results; dropping "
-                f"the remainder of this model's output only: {e}"
+                f"the remainder of this model's output only: {error_kind_for_log(e)}"
             )
             return
     finally:
@@ -1786,7 +1822,10 @@ class AppealGenerator(object):
         "- Maintain a professional, assertive tone throughout.\n"
         "- If drafts disagree on facts, prefer the most specific and well-supported version.\n"
         "- The final letter should be comprehensive but not unnecessarily long.\n"
-        "- Preserve any patient/provider/plan details exactly as they appear in the drafts."
+        "- Preserve any patient/provider/plan details exactly as they appear in the drafts.\n"
+        "- Keep bracketed instructions that start with Specify exactly as they are; "
+        "never turn them into statements of fact. Ordinary fields such as [Name] may "
+        "be filled from values another draft supplies."
     )
 
     def __init__(self):
@@ -1917,7 +1956,7 @@ class AppealGenerator(object):
                         # traceback so it stays diagnosable.
                         logger.opt(exception=True).debug(
                             f"Extraction {model_method_name} via {model} "
-                            f"failed: {e}"
+                            f"failed: {error_kind_for_log(e)}"
                         )
                     extracted = None
                 if extracted is None:
@@ -2566,10 +2605,11 @@ class AppealGenerator(object):
                 f"{base}\n\nPAYER PRIOR-AUTH RULES: The following entries come from "
                 "the payer's own published prior-authorization requirement list. "
                 "Use them when the denial relies on PA grounds — point out exactly "
-                "which rule (or absence of one) supports approval, cite the "
+                "which listed rule supports approval, cite the "
                 "criteria document by name, and reference the published "
                 "submission channel where relevant. Do not invent rules that "
-                "are not listed below.\n"
+                "are not listed below, and do not read a code's absence from "
+                "this list as anything the payer said.\n"
                 f"{pa_context}"
             )
         # Add citation instructions - be explicit about not hallucinating.
@@ -2578,8 +2618,8 @@ class AppealGenerator(object):
         # "may ONLY cite references provided below" instruction keeps that
         # guidance consistent.
         has_citations = (
-            (ml_context is not None and ml_context != "")
-            or (pubmed_context is not None and pubmed_context != "")
+            not is_blank_context(ml_context)
+            or not is_blank_context(pubmed_context)
             or (rag_context is not None and rag_context != "")
             or (nice_context is not None and nice_context != "")
             or (uspstf_context is not None and uspstf_context != "")
@@ -2589,10 +2629,10 @@ class AppealGenerator(object):
             base = f"{base}\n\nCITATION INSTRUCTIONS: You may ONLY cite medical literature, studies, or references that are explicitly provided below. Do NOT invent, fabricate, or hallucinate any citations, PMIDs, NCT IDs, journal names, author names, or study details. If you want to make a medical claim, either cite from the provided references or state it as general medical knowledge without a specific citation."
             if rag_context is not None and rag_context != "":
                 base = f"{base}\n\nEvidence from medical guidelines and regulations:\n{rag_context}"
-            if ml_context is not None and ml_context != "":
+            if not is_blank_context(ml_context):
                 base = f"{base}\n\nProvided citations (use these): {ml_context}"
-            if pubmed_context is not None and pubmed_context != "":
-                base = f"{base}\n\nPubMed references (use these): {pubmed_context}"
+            if not is_blank_context(pubmed_context):
+                base = f"{base}\n\n{PUBMED_REFERENCES_LABEL} {pubmed_context}"
             if nice_context is not None and nice_context != "":
                 # nice_context already carries the international-guidance caveat
                 # (see INTERNATIONAL_GUIDANCE_CAVEAT in nice_tools); the header
@@ -2727,8 +2767,8 @@ class AppealGenerator(object):
 
         def _present(value: Optional[str]) -> bool:
             # The historical ``!= ""`` gate (a whitespace-only value still
-            # renders). ``_shed_context`` relies on it; ``pa_context`` is the
-            # one ``.strip()``-gated section (``_PROMPT_TIER1_STRIP_GATED``).
+            # renders). ``_shed_context`` relies on it; the sections gated on
+            # a non-blank value instead are ``_PROMPT_TIER1_STRIP_GATED``.
             return value is not None and value != ""
 
         def _known(value: Optional[str]) -> bool:
@@ -2819,10 +2859,11 @@ class AppealGenerator(object):
                 "PAYER PRIOR-AUTH RULES: The following entries come from "
                 "the payer's own published prior-authorization requirement list. "
                 "Use them when the denial relies on PA grounds -- point out exactly "
-                "which rule (or absence of one) supports approval, cite the "
+                "which listed rule supports approval, cite the "
                 "criteria document by name, and reference the published "
                 "submission channel where relevant. Do not invent rules that "
-                "are not listed below.\n"
+                "are not listed below, and do not read a code's absence from "
+                "this list as anything the payer said.\n"
                 f"{pa_context}"
             )
 
@@ -2832,8 +2873,8 @@ class AppealGenerator(object):
         # "may ONLY cite references provided below" instruction keeps that
         # guidance consistent.
         has_citations = (
-            _present(ml_context)
-            or _present(pubmed_context)
+            not is_blank_context(ml_context)
+            or not is_blank_context(pubmed_context)
             or _present(rag_context)
             or _present(nice_context)
             or _present(uspstf_context)
@@ -2854,10 +2895,10 @@ class AppealGenerator(object):
                     "Evidence from medical guidelines and regulations:\n"
                     f"{rag_context}"
                 )
-            if _present(ml_context):
+            if not is_blank_context(ml_context):
                 sections.append(f"Provided citations (use these): {ml_context}")
-            if _present(pubmed_context):
-                sections.append(f"PubMed references (use these): {pubmed_context}")
+            if not is_blank_context(pubmed_context):
+                sections.append(f"{PUBMED_REFERENCES_LABEL} {pubmed_context}")
             if _present(nice_context):
                 # nice_context already carries the international-guidance caveat
                 # (see INTERNATIONAL_GUIDANCE_CAVEAT in nice_tools); the header
@@ -3307,6 +3348,7 @@ class AppealGenerator(object):
             prof_pov: bool = False,
             stage: str = "",
             context_level: Optional[str] = None,
+            prompt_version: Optional[str] = None,
         ) -> Tuple[List[Future[Tuple[str, Optional[str]]]], str]:
             if model_name not in ml_router.models_by_name:
                 sample = list(itertools.islice(ml_router.models_by_name.keys(), 10))
@@ -3359,6 +3401,7 @@ class AppealGenerator(object):
                         pubmed_context=pubmed_context,
                         ml_citations_context=ml_citations_context,
                         prof_pov=prof_pov,
+                        prompt_version=prompt_version,
                     )
 
                     # Truthiness matters: an empty futures list is a FAILED
@@ -3376,7 +3419,7 @@ class AppealGenerator(object):
                     )
                     logger.opt(exception=True).warning(
                         f"get_model_result: backend {model} "
-                        f"(for model_name={model_name}) failed: {e}"
+                        f"(for model_name={model_name}) failed: {error_kind_for_log(e)}"
                     )
             logger.warning(
                 f"get_model_result: all {len(model_backends)} backend(s) "
@@ -3403,6 +3446,7 @@ class AppealGenerator(object):
             pubmed_context: Optional[str],
             ml_citations_context: Optional[List[str]],
             prof_pov: bool = False,
+            prompt_version: Optional[str] = None,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             # If the model has parallelism use it.
             if isinstance(model, RemoteFullOpenLike):
@@ -3417,6 +3461,9 @@ class AppealGenerator(object):
                     prof_pov=prof_pov,
                     submit_executor=submit_pool,
                     deadline=deadline,
+                    # v4 changes the system prompt, so the version reaches
+                    # the backend as well as the draft's provenance.
+                    prompt_version=prompt_version,
                 )
             # Otherwise submit the backend's own sync ``infer`` -- but ONLY a
             # real override (this is also the seam tests use to inject fake
@@ -3593,7 +3640,7 @@ class AppealGenerator(object):
             # Otherwise just put in as is.
             initial_appeals.append(static_appeal)
 
-        logger.debug(f"Initial appeal {initial_appeals}")
+        logger.debug(f"Initial appeals: {len(initial_appeals)}")
         # Executor map wants a list for each parameter.
 
         # Context shedding re-renders the sectioned prompt too when any call
@@ -3617,7 +3664,7 @@ class AppealGenerator(object):
             calls,
             stage: str = "",
         ) -> Iterator[GeneratedAppeal]:
-            logger.debug(f"Calling models: {calls}")
+            logger.debug(f"Calling models: {[c.get('model_name') for c in calls]}")
             # Bind model_name AND context_level to each future so we can recover
             # them after the per-call iterator collapses results to (kind, text)
             # pairs. The submit timestamps and prompt size ride along so the
@@ -3626,9 +3673,10 @@ class AppealGenerator(object):
             # slow-backend diagnosis needs.
             model_futures: List[Tuple[dict, Future]] = []
             for call in calls:
-                # context_level and prompt_version are provenance metadata, not
-                # inference args; strip them before spreading the call into
-                # get_model_result.
+                # context_level and prompt_version are provenance metadata,
+                # stripped before spreading the call into get_model_result and
+                # passed to it by name (v4 and v5 also pick the system
+                # prompt).
                 context_level = call.get("context_level")
                 call_kwargs = {
                     k: v
@@ -3644,7 +3692,10 @@ class AppealGenerator(object):
                 submitted_at = time.monotonic()
                 submitted_wall = timezone.now()
                 futures, backend = get_model_result(
-                    **call_kwargs, stage=stage, context_level=context_level
+                    **call_kwargs,
+                    stage=stage,
+                    context_level=context_level,
+                    prompt_version=call.get("prompt_version"),
                 )
                 for fut in futures:
                     model_futures.append(
@@ -4003,7 +4054,7 @@ class AppealGenerator(object):
                     # Unexpected exception = likely code bug; keep the
                     # traceback so it stays diagnosable.
                     logger.opt(exception=True).debug(
-                        f"Synthesis via {model} failed: {e}"
+                        f"Synthesis via {model} failed: {error_kind_for_log(e)}"
                     )
             return None
 

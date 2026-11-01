@@ -40,7 +40,8 @@ def appeal_workflows(
 ) -> List[type]:
     """Workflows hosted on the appeal task queue.
 
-    IntakeJourneyWorkflow is registered only when the intake flag is on, so
+    Intake journeys that started here before they had their own queue finish
+    here, so the journey stays registered, only when the intake flag is on, so
     the flag stays a real execution kill switch: with unconditional
     registration a direct Temporal start (or a task queued before the flag
     flipped) would still run on a "dark" worker. AssistantAppealWorkflow
@@ -52,6 +53,13 @@ def appeal_workflows(
     if drafts_enabled:
         workflows.append(AssistantAppealWorkflow)
     return workflows
+
+
+def intake_workflows() -> List[type]:
+    """Workflows hosted on the intake task queue, a Worker of its own in the
+    appeal-worker process, so a slow generation never delays a journey. The
+    journey's generation child runs on the appeal queue."""
+    return [IntakeJourneyWorkflow]
 
 
 def chat_policy_workflows() -> List[type]:

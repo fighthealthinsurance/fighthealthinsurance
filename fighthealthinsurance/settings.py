@@ -605,6 +605,16 @@ class Base(Configuration):
     # models' higher base score keeping the failed reply in front. It is
     # still delivered when nothing else usable arrives. On by default.
     FHI_CHAT_JEV_GATE_DEMOTE_FAILED = _env_flag("FHI_CHAT_JEV_GATE_DEMOTE_FAILED", "1")
+    # --- Phoenix (letter eval traces) ---
+    # The staff status page's Phoenix panel. Off by default: with it on, the
+    # page asks Phoenix's REST API for counts and run names server-side (the
+    # UI itself stays cluster-internal, see k8s/phoenix/). The key is a
+    # Phoenix API key, read from the app secret.
+    PHOENIX_STATUS_ENABLED = _env_flag("PHOENIX_STATUS_ENABLED")
+    PHOENIX_BASE_URL = os.getenv(
+        "PHOENIX_BASE_URL", "http://phoenix.fhi-eval.svc:6006"
+    ).rstrip("/")
+    PHOENIX_API_KEY = os.getenv("PHOENIX_API_KEY", "")
     # The Temporal frontend: TEMPORAL_HOSTNAME is a hostname
     # ("temporal-frontend", port 7233 implied) or host:port. TEMPORAL_HOST,
     # the older name, still works when TEMPORAL_HOSTNAME is unset. Production
@@ -623,6 +633,8 @@ class Base(Configuration):
     # (separate failure domain; PR #963 review). Point a dedicated
     # worker deployment at it for full resource isolation.
     TEMPORAL_APPEAL_TASK_QUEUE = os.getenv("TEMPORAL_APPEAL_TASK_QUEUE", "fhi-appeals")
+    # The intake journey has its own queue, so slow generations never delay it.
+    TEMPORAL_INTAKE_TASK_QUEUE = os.getenv("TEMPORAL_INTAKE_TASK_QUEUE", "fhi-intake")
     # The chat routing policy runs on its own queue too, hosted as its own
     # Worker in the appeal-worker process, so a slow generation holding the
     # appeal Worker's slots never delays it.

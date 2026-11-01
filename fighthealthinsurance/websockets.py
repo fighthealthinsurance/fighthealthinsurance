@@ -32,6 +32,7 @@ from fhi_users.audit import (
     guess_us_state,
 )
 from fhi_users.fight_paperwork import fight_paperwork_enabled
+from fighthealthinsurance.ml.ml_models import error_kind_for_log
 from fighthealthinsurance.chat.turn_record import arecord_answer_preference
 from fighthealthinsurance.ml import llm_usage
 from fighthealthinsurance.ml.ml_metrics import record_answer_feedback
@@ -890,7 +891,7 @@ class StreamingAppealsBackend(
                 logger.opt(exception=True).error(
                     f"Error sending back appeals for denial {denial_id} after "
                     f"{appeal_count} appeals and {status_count} status frames "
-                    f"(last phase={last_status_phase}, {wire.summary()}): {e}"
+                    f"(last phase={last_status_phase}, {wire.summary()}): {error_kind_for_log(e)}"
                 )
             if appeal_count == 0:
                 await log_zero_appeal_diagnostics(

@@ -14,7 +14,11 @@ from fighthealthinsurance.generate_appeal import (
     AppealTemplateGenerator,
 )
 from fighthealthinsurance.ml import appeal_prompt_versions as apv
-from fighthealthinsurance.ml.ml_models import RemoteModelLike
+from fighthealthinsurance.ml.ml_models import (
+    TIGHT_PATIENT_LETTER_PROMPT,
+    RemoteFullOpenLike,
+    RemoteModelLike,
+)
 
 LETTER = (
     "Dear Appeals Department,\n\n"
@@ -191,7 +195,11 @@ def test_the_existing_modes_keep_their_values():
 
 
 def test_only_the_split_modes_draw_at_random():
-    assert apv.RANDOM_MODES == {apv.MODE_SPLIT, apv.MODE_THIRDS}
+    assert apv.RANDOM_MODES == {
+        apv.MODE_SPLIT,
+        apv.MODE_THIRDS,
+        apv.MODE_THIRDS_V2_V4_V5,
+    }
 
 
 def test_an_unreadable_setting_means_original():
@@ -331,7 +339,7 @@ def test_v3_lays_the_prompt_out_in_labelled_sections_in_order():
         "DETAILS TO INCLUDE",
         "PLAN DETAILS:",
         "CITATION INSTRUCTIONS:",
-        "PubMed references (use these): PMID 1",
+        "PubMed references (published literature about people in studies, not this patient's own history; use these): PMID 1",
         "DENIAL LETTER:",
     ]
     positions = [prompt.find(label) for label in labels]
@@ -459,3 +467,78 @@ def test_a_shed_retry_rerenders_each_calls_own_layout():
         if d.infer_type == "full" and d.text == LETTER
     }
     assert real == {"model-a": apv.PROMPT_V3, "model-b": apv.PROMPT_V1}
+
+
+class _SystemPromptRecorder(RemoteFullOpenLike):
+    """A backend on the real parallel_infer path that remembers the system
+    prompt each full-letter call was given, and writes LETTER."""
+
+    def __init__(self):
+        super().__init__("http://primary.test/v1", "tok", "test-model")
+        self.system_prompts = []
+        self.prompts = []
+
+    def _blocking_checked_infer(self, **kwargs):
+        if kwargs["infer_type"] == "full":
+            self.system_prompts.append(kwargs["system_prompt"])
+            self.prompts.append(kwargs["prompt"])
+            return [("full", LETTER)]
+        return [(kwargs["infer_type"], "it treats the condition the denial names")]
+
+
+def _run_on_parallel_backends(prompt_mode):
+    fakes = {"model-a": _SystemPromptRecorder(), "model-b": _SystemPromptRecorder()}
+    with patch(
+        "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+        side_effect=lambda use_external=False: list(fakes),
+    ), patch(
+        "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+        new={name: [fake] for name, fake in fakes.items()},
+    ), patch(
+        "fighthealthinsurance.generate_appeal.time.sleep"
+    ):
+        drafts = list(
+            AppealGenerator().make_appeals(
+                _denial(),
+                AppealTemplateGenerator(prefaces=["P"], main=["M"], footer=["F"]),
+                medical_reasons=[],
+                non_ai_appeals=[],
+                prompt_mode=prompt_mode,
+            )
+        )
+    return drafts, fakes
+
+
+@pytest.mark.parametrize(
+    "draw,version", [(0.5, apv.PROMPT_V4), (0.9, apv.PROMPT_V5)]
+)
+def test_v4_and_v5_send_the_tight_system_prompt_and_stamp_the_version(draw, version):
+    with patch.object(apv, "_split_draw", lambda: draw):
+        drafts, fakes = _run_on_parallel_backends(apv.MODE_THIRDS_V2_V4_V5)
+    sent = [p for fake in fakes.values() for p in fake.system_prompts]
+    assert sent and set(sent) == {TIGHT_PATIENT_LETTER_PROMPT}
+    prompts = [p for fake in fakes.values() for p in fake.prompts]
+    assert prompts and all(p.endswith(apv.OUTPUT_CONTRACT) for p in prompts)
+    # v5 is the sectioned layout, v4 the open prompt v2 sends.
+    sectioned = [p.startswith("TASK:") or "\nTASK:" in p for p in prompts]
+    assert all(sectioned) if version == apv.PROMPT_V5 else not any(sectioned)
+    full = [d for d in drafts if d.infer_type == "full" and d.text == LETTER]
+    assert full and {d.prompt_version for d in full} == {version}
+
+
+def test_v2_in_the_thirds_keeps_the_backends_own_system_prompt():
+    with patch.object(apv, "_split_draw", lambda: 0.1):
+        drafts, fakes = _run_on_parallel_backends(apv.MODE_THIRDS_V2_V4_V5)
+    for fake in fakes.values():
+        assert fake.system_prompts
+        assert set(fake.system_prompts) == set(fake.system_prompts_map["full"])
+        assert all(p.endswith(apv.OUTPUT_CONTRACT) for p in fake.prompts)
+    full = [d for d in drafts if d.infer_type == "full" and d.text == LETTER]
+    assert full and {d.prompt_version for d in full} == {apv.PROMPT_V2}
+
+
+def test_original_mode_keeps_the_backends_own_system_prompt():
+    _drafts, fakes = _run_on_parallel_backends(apv.MODE_ORIGINAL)
+    for fake in fakes.values():
+        assert fake.system_prompts
+        assert set(fake.system_prompts) == set(fake.system_prompts_map["full"])

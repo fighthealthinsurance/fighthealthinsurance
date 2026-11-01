@@ -24,11 +24,13 @@ tables sit in each window below, counted like the model table.
   <p class="note">The new prompt (v2) is the original with this added at the end, word for word from the September model evaluation:</p>
   <blockquote class="prompt-contract">{{ panel.output_contract }}</blockquote>
   <p class="note">The sectioned prompt (v3) gives the model the same case details and context, laid out as labelled sections (task, point of view, details, plan, evidence, then the denial letter), without the example opening lines, and ends with the same contract as v2.</p>
+  <p class="note">v4 and v5 send v2's and v3's prompts under the letter evaluation's own system prompt in place of the app's longer one, adding only the letter's voice, its fill-in blanks and who it is addressed to:</p>
+  <blockquote class="prompt-contract">{{ panel.tight_system_prompt }}</blockquote>
   <p class="note">Letters already written keep their version. Templates, synthesized letters and medically-necessary template drafts don't use a letter prompt, so they have no version. Each window below has a <strong>Prompt version</strong> table, counted like the model table.</p>
 
   <h3>Pages that showed both versions <span class="source-label">(since the random draw began)</span></h3>
   {% if panel.head_to_head is None %}
-    <p class="note">Neither half and half nor thirds is running, so there's no head-to-head yet.</p>
+    <p class="note">No random-draw mode is running, so there's no head-to-head yet.</p>
   {% else %}
     <p class="note">The fairest comparison: two versions on the same page, for the same case, one pair at a time. Only picks that reported which drafts were on screen count; a pick of a third version, a template or a synthesized letter counts as something else. Since {{ panel.split_started|date:"Y-m-d H:i" }}.</p>
     {% for h in panel.head_to_head %}

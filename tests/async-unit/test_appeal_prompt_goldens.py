@@ -6,6 +6,12 @@ the drafts already stamped v1/v2 stop being comparable with new ones. The
 strings below were captured from the code before v3 existed, with the
 professional-voice example shuffle seeded, so any later change to what v1 or
 v2 sends fails here.
+
+Context labels shared by every version may change for all of them at once, so
+drafts compared within one run still see the same context: the PubMed block
+says it is published literature, not the patient's own history, and the
+prior-authorization block no longer invites reading a code's absence as the
+payer's word.
 """
 
 import itertools
@@ -314,10 +320,11 @@ GOLDEN_V1 = {
         "PAYER PRIOR-AUTH RULES: The following entries come from the "
         "payer's own published prior-authorization requirement list. Use "
         "them when the denial relies on PA grounds — point out exactly "
-        "which rule (or absence of one) supports approval, cite the "
+        "which listed rule supports approval, cite the "
         "criteria document by name, and reference the published submission "
         "channel where relevant. Do not invent rules that are not listed "
-        "below.\n"
+        "below, and do not read a code's absence from this list as anything "
+        "the payer said.\n"
         "Rule 1: infusions need prior authorization.\n"
         "\n"
         "CITATION INSTRUCTIONS: You may ONLY cite medical literature, "
@@ -334,7 +341,7 @@ GOLDEN_V1 = {
         "Provided citations (use these): [1] Example citation one\n"
         "[2] Example citation two\n"
         "\n"
-        "PubMed references (use these): PMID 1: Example abstract.\n"
+        "PubMed references (published literature about people in studies, not this patient's own history; use these): PMID 1: Example abstract.\n"
         "\n"
         "NICE (UK) guidance:\n"
         "NICE TA187 recommends infliximab.\n"
@@ -377,19 +384,17 @@ GOLDEN_V1 = {
         "following denial:\n"
         "The requested infusion is experimental and investigational."
     ),
+    # A whitespace-only ml_context renders no citation section: it gets the
+    # no-citations instruction instead.
     "unknown_and_blank_values": (
         "\n"
         "\n"
-        "CITATION INSTRUCTIONS: You may ONLY cite medical literature, "
-        "studies, or references that are explicitly provided below. Do NOT "
-        "invent, fabricate, or hallucinate any citations, PMIDs, NCT IDs, "
-        "journal names, author names, or study details. If you want to "
-        "make a medical claim, either cite from the provided references or "
-        "state it as general medical knowledge without a specific "
-        "citation.\n"
-        "\n"
-        "Provided citations (use these):   Write a health insurance appeal "
-        "for the following denial:\n"
+        "IMPORTANT: No specific medical citations have been provided. Do NOT "
+        "invent or hallucinate any citations, PMIDs, NCT IDs, journal names, "
+        "or study references. You may state general medical knowledge "
+        "without citations, but do not fabricate specific study "
+        "references.Write a health insurance appeal for the following "
+        "denial:\n"
         "Denied."
     ),
 }
@@ -449,7 +454,7 @@ GOLDEN_MAKE_APPEALS_V1 = (
     "Provided citations (use these): [1] Citation A\n"
     "[2] Citation B\n"
     "\n"
-    "PubMed references (use these): PMID 2: Example abstract.\n"
+    "PubMed references (published literature about people in studies, not this patient's own history; use these): PMID 2: Example abstract.\n"
     "\n"
     "UCR PRICING CONTEXT: The denial may involve out-of-network "
     "under-reimbursement. The [UCR PRICING CONTEXT] block below "

@@ -675,3 +675,21 @@ class TestDeleteConfirmationLinkStaysOutOfSentry:
         event["request"] = {"url": "https://x/scan", "query_string": "email=a@b.com"}
         kept = before_send_transaction_filter(event, {})
         assert kept["request"].get("query_string") == "email=a@b.com"
+
+
+def test_sentry_is_set_up_without_frame_local_variables():
+    # asgi.py sets Sentry up at import, only in deployed environments, so read its call.
+    import ast
+    import pathlib
+
+    import fighthealthinsurance
+
+    source = pathlib.Path(fighthealthinsurance.__file__).with_name("asgi.py").read_text()
+    calls = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "sentry_sdk.init"
+    ]
+    assert len(calls) == 1
+    settings = {k.arg: k.value for k in calls[0].keywords}
+    assert settings["include_local_variables"].value is False

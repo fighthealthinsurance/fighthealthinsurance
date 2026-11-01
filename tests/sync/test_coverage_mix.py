@@ -507,11 +507,11 @@ class TestCoverageMixMethod(TestCase):
 
     def test_scope_matches_denial_watch(self):
         # The every-state chart's grey states with a rate: their own reports, or CMS's last year with them.
-        self.assertEqual(len(DATA["state_reports"]) + len(DATA["earlier"]), 5)
+        self.assertEqual(len(DATA["state_reports"]) + len(DATA["earlier"]), 6)
         # Prior authorization covers Medicare Advantage, Medicaid plans, state Medicaid and HealthCare.gov insurers, nothing job-based.
         self.assertEqual({r["line"] for r in DATA["prior_auth"]}, {"ma", "mcd", "mkt", "ffs"})
         rest = (
-            "claim denial rates are for marketplace plans in HealthCare.gov states and five states that run their own marketplace, where some figures also count plans sold outside it. "
+            "claim denial rates are for marketplace plans in HealthCare.gov states and six states that run their own marketplace, where some figures also count plans sold outside it. "
             "Its prior authorization rates cover large Medicare Advantage plans, Medicaid plans and programs, and HealthCare.gov insurers. "
             "It has no denial rates for job-based plans or Original Medicare."
         )

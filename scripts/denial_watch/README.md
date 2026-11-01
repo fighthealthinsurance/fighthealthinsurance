@@ -13,7 +13,7 @@ nothing here runs in the app.
    | File | Source |
    |---|---|
    | `tic2022.xlsx` … `tic2025.xlsx` | `https://data.healthcare.gov/datafile/py<YEAR>/transparency_in_coverage_PUF.xlsx` |
-   | `tic2026.xlsx` | `Transparency_in_Coverage_PUF.xlsx` inside `https://download.cms.gov/marketplace-puf/2026/transparency-in-coverage-puf.zip` |
+   | `tic2026.xlsx`, `tic2027.xlsx` | The xlsx inside `https://download.cms.gov/marketplace-puf/<YEAR>/transparency-in-coverage-puf.zip` |
    | `imr.csv` | CSV on the [DMHC IMR dataset page](https://data.chhs.ca.gov/dataset/independent-medical-review-imr-determinations-trend) |
    | `partd.csv` | "Medicare Part D Spending by Drug" CSV from [data.cms.gov](https://data.cms.gov/summary-statistics-on-use-and-payments/medicare-medicaid-spending-by-drug/medicare-part-d-spending-by-drug) |
    | `sahie_2023.csv`, `sahie_2024.csv` | `https://www2.census.gov/programs-surveys/sahie/datasets/time-series/estimates-acs/sahie-<YEAR>-csv.zip` (the Census API now needs a key; the zips don't) |
@@ -33,7 +33,7 @@ nothing here runs in the app.
    ```
 
 3. Compare the printed figures with the page's copy. The headline sentences in
-   `templates/denial_watch.html` name some numbers, such as the about 7% to 27% state
+   `templates/denial_watch.html` name some numbers, such as the about 6% to 26% state
    range, 72% in California, the correlations, the trend's in-network shares, and
    the out-of-network and all-claims totals in Sources and method; the tests check them. When a new year arrives, adding
    it means extending `CLAIMS_YEAR` and `LATEST_PY`, then rereading the copy.
@@ -176,12 +176,13 @@ doubled against about 1%, about 7 and 4 for every 100 under 65);
   map, the national figures or the ranges. The page's state-map note names
   those states and years, so reread it when the set changes.
 - `state_reports.csv` holds grey states whose own insurers' reports on CMS's
-  Transparency in Coverage form give an in-network rate for the map's year
+  Transparency in Coverage form give an in-network rate for the map's year or
+  the year before
   (California from Covered California's postings, Pennsylvania from its
   Insurance Department's report), one checked row per state with the source,
   the date it was read and a note on what was summed or left out. The build
   puts them under `state_reports` and stops on a state the map or `earlier`
-  already covers, another claims year, more denials than claims, or a row
+  already covers, a claims year further back, more denials than claims, or a row
   missing its publisher, https source or date. Only the every-state chart, the
   grey state's readout and its insurer table show them. The readout lines for California and
   Pennsylvania in `denial_watch.js` are hand-written, and a test ties their
@@ -206,6 +207,13 @@ doubled against about 1%, about 7 and 4 for every 100 under 65);
   ranges or the national figures. `DOUBTFUL_WON` covers only the latest year:
   the earlier states' appeal counts were checked against its three patterns
   on October 26, 2026 and none matched, so recheck them when `earlier` changes.
+- `DOUBTFUL_DENIED_IN` lists insurers whose in-network denials look like a
+  reporting error (for PY2027, Capital Health Plan in Florida: 96% after 6.5%).
+  Their in-network denials count as missing everywhere, and the page says so.
+- The PY2027 file renamed many columns and split plan-level figures by network
+  and behavioral health. `read_puf` and `issuer_cells` read both shapes. Its
+  appeals columns separate claims from requests made before care; the build
+  uses appeals of claims, and doesn't use the new pre-service counts yet.
 - An insurer that reports more out-of-network denials than claims gets no
   out-of-network or all-claims figure, and is left out of those totals
   nationally and for its state; its state gets no all-claims figure.
@@ -214,7 +222,7 @@ doubled against about 1%, about 7 and 4 for every 100 under 65);
   It also stops on more in-network denials than claims, and on denials reported
   against 0 claims on either side, which have no rule yet.
 - "Network-only" means every plan the insurer sold in the latest claims year
-  (the PY2024 plan list for 2024 claims) was an HMO or EPO. Those plans mostly
+  (the PY2025 plan list for 2025 claims) was an HMO or EPO. Those plans mostly
   don't cover out-of-network care by design, so those insurers get no
   out-of-network rate, and neither does an insurer missing from that plan list.
   The others need at least 1,000 out-of-network claims for a rate.
@@ -227,7 +235,7 @@ doubled against about 1%, about 7 and 4 for every 100 under 65);
   without a builder change.
 - Out-of-network rates aren't mapped by state either: most states' figures
   would mostly show which kinds of plans their insurers sell. There's no
-  out-of-network change from 2023 (it mostly reflects which insurers reported)
+  out-of-network change from 2024 (it mostly reflects which insurers reported)
   and no out-of-network appeals figure (appeals aren't split by network).
 - `oon_meta.closed_network` sums CMS's plan-level closed-network reason
   (`Plan_Number_Claims_Denied_Due_To_Out_Of_Network`) over the insurers in the

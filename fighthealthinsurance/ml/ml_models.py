@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import contextvars
 import itertools
+import json
 import random
 import re
 import socket
@@ -176,6 +177,10 @@ from fighthealthinsurance.ml.bad_output_utils import (
     is_bad_output,
     strip_boilerplate_service,
 )
+from fighthealthinsurance.ml.appeal_prompt_versions import (
+    TIGHT_SYSTEM_PROMPT,
+    uses_tight_system_prompt,
+)
 from fighthealthinsurance.letter_openings import (
     APPEAL_SALUTATION_INSTRUCTION,
     strip_letter_preamble,
@@ -211,6 +216,19 @@ def render_citations_context(
     if isinstance(ml_citations_context, str):
         return ml_citations_context
     return "\n".join(str(c) for c in ml_citations_context if c)
+
+
+def is_blank_context(value: Any) -> bool:
+    """True when a context value would put nothing on the wire: None, an
+    empty or whitespace-only string, or a list of such strings. A search
+    that finds nothing comes back as "", which is not the same as having
+    results. The prompt builders, the context block, the shedder and the
+    size estimate all ask this one question, so they agree."""
+    if value is None:
+        return True
+    if isinstance(value, (list, tuple)):
+        return all(is_blank_context(v) for v in value)
+    return not str(value).strip()
 
 
 def context_already_in_prompt(prompt: Optional[str], value: Any) -> bool:
@@ -425,6 +443,48 @@ class RetiredEndpointError(ValueError):
     constructs backends keeps working; its own class so the deploy check can
     show the operator's own retirement as Retired rather than as a backend
     that failed to construct."""
+
+
+_ERROR_LABEL = re.compile(r"[\w.-]{1,64}")
+
+
+def provider_body_for_log(body: Any) -> str:
+    """A provider's response in a form safe to log: its size and error labels.
+
+    Providers can echo the request back, and the request holds patient data, so
+    the text itself stays out of the logs. Called while handling failures, so it
+    never raises: any odd body falls back to saying less.
+    """
+    try:
+        text = body if isinstance(body, str) else str(body)
+        summary = f"{len(text)} chars"
+    except Exception:
+        return "unreadable body"
+    try:
+        parsed = body if isinstance(body, dict) else json.loads(text)
+        if not isinstance(parsed, dict):
+            return summary
+        error = parsed.get("error")
+        fields = error if isinstance(error, dict) else parsed
+        labels = [
+            f"{key}={fields[key]}"
+            for key in ("type", "code", "object")
+            if isinstance(fields.get(key), (str, int))
+            and _ERROR_LABEL.fullmatch(str(fields[key]))
+        ]
+    except Exception:  # RecursionError on deeply nested JSON, among others
+        return summary
+    return ", ".join([summary, *labels])
+
+
+def error_kind_for_log(exc: BaseException) -> str:
+    """An exception's type, with the status for an HTTP error, and never its text."""
+    name = type(exc).__name__
+    try:
+        status = getattr(exc, "status", None)
+    except Exception:
+        return name
+    return f"{name} (HTTP {status})" if isinstance(status, int) else name
 
 
 def describe_model_error(exc: BaseException) -> str:
@@ -3221,17 +3281,31 @@ class RemoteOpenLike(RemoteModel):
             legs.append(("backup", self.backup_api_base, self.backup_model))
         return legs
 
-    def get_system_prompts(self, prompt_type: str, prof_pov=False) -> list[str]:
+    def get_system_prompts(
+        self, prompt_type: str, prof_pov=False, prompt_version: Optional[str] = None
+    ) -> list[str]:
         """
         Get the appropriate system prompt based on type and audience.
 
         Args:
             prompt_type: The type of prompt to get (e.g., 'full', 'questions', etc.)
             prof_pov: Generating the appeal from the patient (False) or professional (True) point of view
+            prompt_version: The appeal prompt version a full letter is written
+                with (ml/appeal_prompt_versions). v4 and v5 take the
+                evaluation's tight system prompt in place of every backend's
+                own.
 
         Returns:
             The system prompt as a string, or the first prompt if multiple are available
         """
+        if prompt_type == "full" and uses_tight_system_prompt(prompt_version):
+            return [
+                (
+                    TIGHT_PROFESSIONAL_LETTER_PROMPT
+                    if prof_pov
+                    else TIGHT_PATIENT_LETTER_PROMPT
+                )
+            ]
         key = prompt_type
         prompt = "You are a helpful assistant with extensive medical knowledge who loves helping patients. CRITICAL: Only cite medical literature, studies, PMIDs, journal names, or author names that are EXPLICITLY provided in the input. NEVER fabricate or hallucinate citations. If no citations are provided, do not include any specific study references."
         # Professional POV: switch to the *_not_patient variant only when the
@@ -3419,6 +3493,7 @@ class RemoteOpenLike(RemoteModel):
         prof_pov: bool = False,
         submit_executor: Optional[ThreadPoolExecutor] = None,
         deadline: Optional[float] = None,
+        prompt_version: Optional[str] = None,
     ) -> List[Future[Tuple[str, Optional[str]]]]:
         """Fan this inference out over the thread pool.
 
@@ -3443,7 +3518,7 @@ class RemoteOpenLike(RemoteModel):
                 # bodies: a second paid call per system prompt buying no
                 # diversity. Keep one leg rather than pay twice for it.
                 temperatures = [0.6]
-        system_prompts = self.get_system_prompts(infer_type, prof_pov)
+        system_prompts = self.get_system_prompts(infer_type, prof_pov, prompt_version)
         calls = itertools.chain.from_iterable(
             map(
                 lambda temperature: map(
@@ -4467,7 +4542,9 @@ class RemoteOpenLike(RemoteModel):
         if (status != 400 or external) and _http_error_indicates_retired_model(
             status, body
         ):
-            self._note_missing_model(api_base, model, f"HTTP {status}: {body[:200]}")
+            self._note_missing_model(
+                api_base, model, f"HTTP {status}: {provider_body_for_log(body)}"
+            )
             return "missing_model"
         if self._note_spend_refusal(status, body):
             return "credit"
@@ -5107,9 +5184,7 @@ class RemoteOpenLike(RemoteModel):
                             ):
                                 # Per-request condition, not a broken backend:
                                 # the prompt outran the model's context
-                                # window. One WARNING quoting the server's
-                                # message (it carries the max/requested token
-                                # counts) and degrade to None so the shed-
+                                # window. One WARNING and degrade to None so the shed-
                                 # context retry ladder can take over. Detected
                                 # from the response BODY -- the HTTP reason
                                 # phrase ("Bad Request") never carries the
@@ -5117,7 +5192,7 @@ class RemoteOpenLike(RemoteModel):
                                 logger.warning(
                                     f"{self}: prompt exceeds {model}'s context "
                                     f"window at {api_base} -- "
-                                    f"{response_body[:300]}"
+                                    f"{provider_body_for_log(response_body)}"
                                 )
                                 record_ml_failure(
                                     metric_model,
@@ -5170,24 +5245,21 @@ class RemoteOpenLike(RemoteModel):
                                         f"{model} via {api_base}: not served here"
                                     )
                                 return None
-                            response_body_preview = response_body[:2000]
+                            response_body_summary = provider_body_for_log(response_body)
                             # Expected operational errors (quota/auth/rate-limit,
                             # and a credit refusal whatever its status) are
                             # summarized by _infer or were just logged by the
-                            # refusal note; keep their body preview at debug so
-                            # they don't double-warn. Real failures stay at
-                            # WARNING so the body aids debugging.
+                            # refusal note; keep theirs at debug so they don't
+                            # double-warn. Real failures stay at WARNING.
                             if filed or _http_status_is_expected(e.status):
                                 logger.debug(
                                     f"HTTP {e.status} (expected) from {api_base} for "
-                                    f"model {model}. Body preview (truncated): "
-                                    f"{response_body_preview}"
+                                    f"model {model}. Body: {response_body_summary}"
                                 )
                             else:
                                 logger.warning(
                                     f"HTTP {e.status} error from {api_base} for model "
-                                    f"{model}. Body preview (truncated): "
-                                    f"{response_body_preview}"
+                                    f"{model}. Body: {response_body_summary}"
                                 )
                             raise
                         json_result = await response.json()
@@ -5202,7 +5274,11 @@ class RemoteOpenLike(RemoteModel):
                                 json_result.get("message") or json_result
                             )[:300]
                             if _http_error_indicates_retired_model(404, error_message):
-                                self._note_missing_model(api_base, model, error_message)
+                                self._note_missing_model(
+                                    api_base,
+                                    model,
+                                    provider_body_for_log(error_message),
+                                )
                                 record_ml_failure(
                                     metric_model,
                                     "missing_model",
@@ -5219,8 +5295,9 @@ class RemoteOpenLike(RemoteModel):
                                         request_info=response.request_info,
                                         history=(),
                                         status=404,
-                                        message=error_message,
+                                        message="model not served",
                                     )
+                                    _attach_error_body(missing, error_message)
                                     setattr(missing, _REASON_RECORDED_ATTR, True)
                                     raise missing
                                 # As the HTTP 404 branch: a caller that asked
@@ -5232,7 +5309,7 @@ class RemoteOpenLike(RemoteModel):
                                 return None
                             logger.warning(
                                 f"Bad response from {self} with {model}: "
-                                f"{error_message}"
+                                f"{provider_body_for_log(json_result)}"
                             )
                         elif paused_at_send:
                             self._lift_credit_pause(model)
@@ -5254,7 +5331,7 @@ class RemoteOpenLike(RemoteModel):
                 transport_failures.append(f"{model} via {api_base}: unreadable body")
             return None
         except aiohttp.ClientResponseError as e:
-            # Already logged with a body preview above; keep this at debug to
+            # Already logged with a body summary above; keep this at debug to
             # avoid double-logging. Re-raise so _infer (and opted-in subclasses
             # like RemoteAnthropic) can apply status-specific handling.
             logger.debug(
@@ -5318,12 +5395,10 @@ class RemoteOpenLike(RemoteModel):
                 # A 200 with no completions is a provider-side failure worth
                 # seeing: it was previously a DEBUG line, indistinguishable
                 # from routine noise while a backend served empty bodies for
-                # hours. Keep the snippet short and structural (no PHI beyond
-                # what the provider echoed).
-                body_snippet = str(json_result)[:300]
+                # hours.
                 logger.warning(
                     f"Response from {url} for {model} had no choices; "
-                    f"body starts: {body_snippet}"
+                    f"body: {provider_body_for_log(json_result)}"
                 )
                 record_ml_failure(metric_model, "bad_body", leg=leg, endpoint=endpoint)
                 if transport_failures is not None:
@@ -5475,8 +5550,15 @@ class RemoteOpenLike(RemoteModel):
         ):
             patient_context_max = int(self.max_len / 2)
             context_extra = f"When answering the following question you can use the patient context {patient_context[0:patient_context_max]}."
-        if pubmed_context is not None and not _already_in_prompt(pubmed_context):
-            context_extra += f"You can also use this context from pubmed: {pubmed_context} and you can include the DOI number in the appeal."
+        # Only real results earn the PubMed line: an empty search comes back
+        # as "", and the line would still invite the model to cite DOIs with
+        # nothing to cite.
+        if (
+            pubmed_context is not None
+            and not is_blank_context(pubmed_context)
+            and not _already_in_prompt(pubmed_context)
+        ):
+            context_extra += f"You can also use this published literature from PubMed, which describes people in studies, not this patient: {pubmed_context} and you can include the DOI number in the appeal."
         if (
             plan_context is not None
             and len(plan_context) > 3
@@ -5484,13 +5566,38 @@ class RemoteOpenLike(RemoteModel):
         ):
             context_extra += f"For answering the question you can use this context about the plan {plan_context}"
         citations_text = render_citations_context(ml_citations_context)
-        if citations_text and not _already_in_prompt(citations_text):
+        if (
+            citations_text is not None
+            and not is_blank_context(citations_text)
+            and not _already_in_prompt(citations_text)
+        ):
             context_extra += (
                 f"You can also use this context from citations: {citations_text}."
             )
         if len(context_extra) > 0:
             context_extra = f"System context: {context_extra}\n\n"
         return context_extra
+
+
+# v4's and v5's appeal letter system prompt (ml/appeal_prompt_versions): the
+# evaluation's tight prompt, then only what the app depends on. The
+# placeholders are filled in later (the name where the app knows it, the
+# subscriber and group IDs on the person's own screen, so those never reach
+# the server), and the recipient line is the one every letter prompt carries:
+# see letter_openings for why models need telling. Citation rules travel in
+# the user turn, which says in every build what may be cited.
+TIGHT_PATIENT_LETTER_PROMPT = (
+    TIGHT_SYSTEM_PROMPT + " Write as the patient, in the first person (I, my), using"
+    ' "{{FIRST_NAME}} {{LAST_NAME}}" as your name, "{{SCSID}}" for the'
+    ' subscriber ID and "{{GPID}}" for the group ID. ' + APPEAL_SALUTATION_INSTRUCTION
+)
+TIGHT_PROFESSIONAL_LETTER_PROMPT = (
+    TIGHT_SYSTEM_PROMPT
+    + " Write as the patient's healthcare professional, not the patient: use"
+    ' "I" only for yourself and refer to the patient in the third person'
+    ' ("the patient", "they"). Sign as "{{Your Name}}" unless you are given'
+    " a name. " + APPEAL_SALUTATION_INSTRUCTION
+)
 
 
 class RemoteFullOpenLike(RemoteOpenLike):
@@ -7582,12 +7689,11 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             if _http_error_indicates_context_overflow(e.status, body_text):
                 # As on the shared transport (__infer): the prompt outran the
                 # model's context window, a per-request condition rather
-                # than a broken deployment. One WARNING quoting the provider
-                # (it carries the token counts), then None so the caller
+                # than a broken deployment. One WARNING, then None so the caller
                 # moves on; a probe still gets the raw error.
                 logger.warning(
                     f"{self}: prompt exceeds {self.model}'s context window at "
-                    f"{self.api_base} -- {body_text[:300]}"
+                    f"{self.api_base} -- {provider_body_for_log(body_text)}"
                 )
                 if not note_failures:
                     raise
@@ -7609,11 +7715,10 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                     transport_failures.append(f"{self.model}: not served here")
                 return None
             if not filed and not _http_status_is_expected(e.status):
-                # The shared transport logs the provider's body for an error
-                # it cannot classify; without it a log said only "HTTP 400".
+                # As the shared transport does for an error it cannot classify.
                 logger.warning(
                     f"HTTP {e.status} error from {self.api_base} for model "
-                    f"{self.model}. Body preview (truncated): {body_text[:2000]}"
+                    f"{self.model}. Body: {provider_body_for_log(body_text)}"
                 )
             raise
         except MODEL_TRANSPORT_ERRORS as e:

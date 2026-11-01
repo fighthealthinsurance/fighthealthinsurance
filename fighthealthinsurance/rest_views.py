@@ -48,6 +48,7 @@ from fighthealthinsurance.log_redaction import session_key_prefix_for_log
 from fighthealthinsurance.ml import llm_usage
 from fighthealthinsurance.ml.health_status import health_status
 from fighthealthinsurance.ml.ml_models import (
+    error_kind_for_log,
     MODEL_TRANSPORT_ERRORS,
     ProviderUnavailable,
     describe_model_error,
@@ -901,7 +902,7 @@ def streaming_appeals_rest_fallback(request: Request):
                 f"Error streaming REST fallback appeals for denial "
                 f"{denial_id} after {appeal_count} appeals / "
                 f"{status_count} status frames (last phase="
-                f"{last_status_phase}, {_timing()}): {e}"
+                f"{last_status_phase}, {_timing()}): {error_kind_for_log(e)}"
             )
             if appeal_count == 0:
                 await log_zero_appeal_diagnostics(

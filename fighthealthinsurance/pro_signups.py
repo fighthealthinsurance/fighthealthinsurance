@@ -96,7 +96,7 @@ def _phrase(pattern: str) -> Callable[[Submission], bool]:
 
 def _spam_tld(s: Submission) -> bool:
     # The pro-connector queue already treats these domains as spam.
-    from fighthealthinsurance.proconnector import SPAM_EMAIL_TLDS
+    from fighthealthinsurance.email_utils import SPAM_EMAIL_TLDS
 
     return s.email.strip().lower().endswith(SPAM_EMAIL_TLDS)
 

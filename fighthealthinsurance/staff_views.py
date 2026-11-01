@@ -3,6 +3,7 @@ import datetime
 import io
 import json
 import statistics
+import threading
 import types
 from urllib.parse import urlencode
 from collections import Counter, defaultdict
@@ -44,6 +45,7 @@ from django.http import (
     HttpResponseForbidden,
     StreamingHttpResponse,
 )
+from django.contrib import messages
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.db.models import Q
@@ -57,11 +59,13 @@ import ray
 import requests
 from dateutil.relativedelta import relativedelta
 from loguru import logger
+from urllib3.exceptions import ReadTimeoutError
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
 from fighthealthinsurance import experiments
 from fighthealthinsurance import letter_review, letter_review_highlight
 from fighthealthinsurance import storage_health
+from fighthealthinsurance import subscriber_hygiene
 from fighthealthinsurance.common_view_logic import schedule_follow_ups
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.followup_emails import (
@@ -182,6 +186,59 @@ from fighthealthinsurance.utils import mask_email_for_logging
 # a row lands last instead of raising. Timezone-aware because everything it is
 # compared against (the Temporal SDK's timestamps) is.
 _UNDATED = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+
+# Phoenix panel (AdminStatusView._phoenix_status): its budget, read cap,
+# and the one-check-at-a-time lock with the last result it hands out.
+_PHOENIX_BUDGET_S = 8.0
+_PHOENIX_MAX_BODY_BYTES = 4 * 1024 * 1024
+_PHOENIX_RESULT_FRESH_S = 60.0
+_PHOENIX_CHECK_LOCK = threading.Lock()
+_PHOENIX_LAST_RESULT: Dict[str, Any] = {}
+
+
+class _PhoenixDeadline(Exception):
+    """The Phoenix check ran out of its budget."""
+
+
+class _PhoenixRedirect(Exception):
+    """Phoenix answered 3xx; the panel never follows one."""
+
+
+class _PhoenixBadResponse(Exception):
+    """A Phoenix response was empty or not the expected shape."""
+
+
+class _PhoenixBodyTooLarge(Exception):
+    """A Phoenix response went past the read cap."""
+
+
+def _log_phoenix_failure(what: str, exc: Exception) -> None:
+    """Log a Phoenix failure by exception type and HTTP status only."""
+    status = None
+    response = getattr(exc, "response", None)
+    if response is not None:
+        status = getattr(response, "status_code", None)
+    logger.warning(
+        "Phoenix {} failed: {} (HTTP status {})", what, type(exc).__name__, status
+    )
+
+
+def _parse_iso(value: Any) -> Optional[datetime.datetime]:
+    """An ISO 8601 timestamp from a JSON API as an aware datetime, or None.
+
+    Phoenix writes a trailing "Z", which fromisoformat accepts from 3.11; a
+    naive value is taken as UTC so it sorts against _UNDATED.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed
 
 
 class AdminDeleteDataView(generic.FormView):
@@ -552,6 +609,16 @@ class AdminStatusView(generic.TemplateView):
     # started recently may sit well down the store's own ordering. Bounded so a
     # busy namespace cannot turn a status page into a full scan.
     _RECENT_WORKFLOW_SCAN = 100
+    # Phoenix panel bounds. Every request shares one 8s budget, so these keep
+    # the number of requests small: projects listed, datasets whose
+    # experiments are read, and experiments shown. Worst case is
+    # 1 + projects + 1 + datasets requests, 22 at these limits.
+    _PHOENIX_PROJECT_LIMIT = 10
+    _PHOENIX_DATASET_LIMIT = 10
+    _PHOENIX_EXPERIMENT_LIMIT = 10
+    # Traces counted per window before the panel shows "N+" instead. One page
+    # of the traces endpoint (its maximum), so a count is one request.
+    _PHOENIX_TRACE_COUNT_CAP = 1000
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -565,6 +632,7 @@ class AdminStatusView(generic.TemplateView):
         ctx["fax"] = self._fax_backend_status()
         ctx["fax_queue"] = self._fax_queue_status()
         ctx["temporal"] = self._temporal_status()
+        ctx["phoenix"] = self._phoenix_status()
         # The lifetime counters are read once and feed both panels.
         counters = self._lifetime()
         ctx["fax_outcomes"] = self._fax_outcome_status(counters)
@@ -1331,6 +1399,298 @@ class AdminStatusView(generic.TemplateView):
             logger.opt(exception=True).warning("Temporal status check failed")
             out["ok"] = False
             out["error"] = AdminStatusView._temporal_error_message(e)
+        return out
+
+    @staticmethod
+    def _phoenix_error_message(exc: Exception) -> str:
+        """One operator-readable sentence for a Phoenix failure.
+
+        Same idea as ``_temporal_error_message``, but every message here is
+        fixed text chosen by error class: no exception text, URL or response
+        content is ever rendered. Phoenix holds the letter eval traces only;
+        nothing user-facing depends on it, and the messages say so.
+        """
+        if isinstance(exc, (TimeoutError, requests.Timeout, _PhoenixDeadline)):
+            return (
+                "Phoenix did not answer within the status page's 8s budget: "
+                "the phoenix pod in fhi-eval is unreachable or overloaded. "
+                "Letter evals may not be recording; appeals are unaffected."
+            )
+        if isinstance(exc, _PhoenixRedirect):
+            return (
+                "Phoenix answered with a redirect, which this page does not "
+                "follow: check PHOENIX_BASE_URL points straight at the "
+                "phoenix service."
+            )
+        if isinstance(exc, _PhoenixBodyTooLarge):
+            return (
+                "Phoenix sent a larger response than this page reads -- a bug "
+                "in this page or a misrouted PHOENIX_BASE_URL, not an outage."
+            )
+        if isinstance(exc, requests.ConnectionError):
+            return (
+                "Could not connect to Phoenix: check the phoenix pod in "
+                "fhi-eval and PHOENIX_BASE_URL. Appeals are unaffected."
+            )
+        if isinstance(exc, requests.HTTPError) and exc.response is not None:
+            code = exc.response.status_code
+            if code in (401, 403):
+                return (
+                    f"Phoenix refused the status page's API key (HTTP {code}): "
+                    "PHOENIX_API_KEY is missing, revoked, or lacks read "
+                    "access. A config problem, not a Phoenix outage."
+                )
+            if code >= 500:
+                return (
+                    f"Phoenix server error (HTTP {code}): the phoenix pod in "
+                    "fhi-eval or its database is failing. Letter evals may "
+                    "not be recording; appeals are unaffected."
+                )
+            return (
+                f"Phoenix answered HTTP {code}. A 404 or 422 usually means "
+                "the REST API changed under a Phoenix upgrade -- a bug in "
+                "this page, not an outage."
+            )
+        if isinstance(exc, (_PhoenixBadResponse, ValueError)):
+            return (
+                "Phoenix sent an empty or unexpected response: check "
+                "PHOENIX_BASE_URL points at the phoenix service, or the REST "
+                "API changed under a Phoenix upgrade."
+            )
+        if isinstance(exc, requests.RequestException):
+            return (
+                "The request to Phoenix could not be made: check "
+                "PHOENIX_BASE_URL and PHOENIX_API_KEY are well formed."
+            )
+        return f"Phoenix status check failed ({type(exc).__name__})."
+
+    @staticmethod
+    def _phoenix_status() -> Dict[str, Any]:
+        """Phoenix letter eval store: per-project trace counts, recent experiments.
+
+        Answers "are letter evals still landing in Phoenix?" from Phoenix's
+        documented REST API (``/v1/projects``, ``/v1/projects/{id}/traces``,
+        ``/v1/datasets``, ``/v1/datasets/{id}/experiments``). Phoenix stays
+        cluster-internal and is never linked or proxied from here.
+
+        Aggregates only, by construction. Traces are requested without spans
+        and only their start times are read; of a project, its name; of an
+        experiment, its name, dataset name, creation time and run counts.
+        Descriptions, metadata, span contents, annotations and dataset
+        examples are never copied out of a response, because they can carry
+        letter text or eval answer keys.
+
+        Bounded: one check at a time across page loads, no request started
+        after the 8s deadline, and every response read under a byte cap and
+        the same deadline, so a wedged Phoenix degrades to an error row.
+        """
+        from django.conf import settings
+
+        enabled = bool(getattr(settings, "PHOENIX_STATUS_ENABLED", False))
+        base_url = getattr(settings, "PHOENIX_BASE_URL", "") or ""
+        out: Dict[str, Any] = {
+            "ok": True,
+            "error": None,
+            "enabled": enabled,
+            "base_url": base_url,
+            "projects": [],
+            "experiments": [],
+            "experiments_error": None,
+            "projects_truncated": False,
+            "experiments_truncated": False,
+            "count_cap": AdminStatusView._PHOENIX_TRACE_COUNT_CAP,
+        }
+        if not enabled:
+            return out
+        import time
+
+        # One check at a time: a second page load while one runs shows the
+        # last result if it is fresh, and otherwise says a check is running.
+        if not _PHOENIX_CHECK_LOCK.acquire(blocking=False):
+            last = _PHOENIX_LAST_RESULT.get("out")
+            at = _PHOENIX_LAST_RESULT.get("at") or 0.0
+            if last is not None and time.monotonic() - at < _PHOENIX_RESULT_FRESH_S:
+                return dict(last)
+            out["ok"] = False
+            out["error"] = (
+                "A Phoenix check is already running for another page load; "
+                "reload in a few seconds."
+            )
+            return out
+        try:
+            deadline = time.monotonic() + _PHOENIX_BUDGET_S
+            headers = {"Accept": "application/json"}
+            api_key = getattr(settings, "PHOENIX_API_KEY", "") or ""
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            def get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise _PhoenixDeadline()
+                resp = requests.get(
+                    f"{base_url}{path}",
+                    params=params,
+                    headers=headers,
+                    timeout=remaining,
+                    allow_redirects=False,
+                    stream=True,
+                )
+                try:
+                    if 300 <= resp.status_code < 400:
+                        raise _PhoenixRedirect()
+                    resp.raise_for_status()
+                    # The socket timeout only bounds silence between bytes,
+                    # so the read itself checks the deadline and a byte cap.
+                    # Small chunks keep the check close; a read blocked
+                    # inside one chunk is still bounded by that timeout.
+                    chunks: List[bytes] = []
+                    size = 0
+                    try:
+                        for chunk in resp.iter_content(chunk_size=8192):
+                            size += len(chunk)
+                            if size > _PHOENIX_MAX_BODY_BYTES:
+                                raise _PhoenixBodyTooLarge()
+                            if time.monotonic() > deadline:
+                                raise _PhoenixDeadline()
+                            chunks.append(chunk)
+                    except requests.RequestException as e:
+                        # requests reports a read timeout mid-body as a
+                        # connection error wrapping urllib3's timeout.
+                        if any(isinstance(a, ReadTimeoutError) for a in e.args):
+                            raise _PhoenixDeadline() from None
+                        raise
+                finally:
+                    resp.close()
+                raw = b"".join(chunks)
+                if not raw.strip():
+                    raise _PhoenixBadResponse()
+                body = json.loads(raw)
+                # Every list endpoint used here answers {"data": [...], ...}.
+                if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+                    raise _PhoenixBadResponse()
+                return body
+
+            def iso(when: datetime.datetime) -> str:
+                return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            def gather() -> Dict[str, Any]:
+                now = timezone.now()
+                day_ago = now - datetime.timedelta(days=1)
+                cap = AdminStatusView._PHOENIX_TRACE_COUNT_CAP
+                projects: List[Dict[str, Any]] = []
+                # Cursors are not followed: the budget would not cover a
+                # second page of everything. A list that has more behind it
+                # is marked truncated on the page instead.
+                body = get(
+                    "/v1/projects",
+                    {"limit": AdminStatusView._PHOENIX_PROJECT_LIMIT},
+                )
+                projects_truncated = bool(body.get("next_cursor"))
+                for p in body["data"]:
+                    if not isinstance(p, dict):
+                        continue
+                    project_id = str(p.get("id") or "")
+                    if not project_id:
+                        continue
+                    # One query per project: a page of the last seven days of
+                    # trace rows (never spans), newest first by the endpoint's
+                    # default order. The 24h count and last trace time are
+                    # read off the same rows. A full page with more behind it
+                    # shows as "N+", and so does the 24h count when even the
+                    # oldest row on the page is inside the day.
+                    week = get(
+                        f"/v1/projects/{project_id}/traces",
+                        {
+                            "start_time": iso(now - datetime.timedelta(days=7)),
+                            "limit": cap,
+                            "include_spans": "false",
+                        },
+                    )
+                    starts = [
+                        _parse_iso(row.get("start_time"))
+                        for row in week["data"]
+                        if isinstance(row, dict)
+                    ]
+                    more = bool(week.get("next_cursor"))
+                    in_day = [t for t in starts if t and t >= day_ago]
+                    day_more = more and len(in_day) == len(starts)
+                    dated = [t for t in starts if t]
+                    projects.append(
+                        {
+                            "name": str(p.get("name") or project_id),
+                            "traces_24h": f"{len(in_day)}{'+' if day_more else ''}",
+                            "traces_7d": f"{len(starts)}{'+' if more else ''}",
+                            "last_trace": max(dated) if dated else None,
+                        }
+                    )
+                experiments: List[Dict[str, Any]] = []
+                experiments_error: Optional[str] = None
+                experiments_truncated = False
+                try:
+                    listing = get(
+                        "/v1/datasets",
+                        {"limit": AdminStatusView._PHOENIX_DATASET_LIMIT},
+                    )
+                    experiments_truncated = bool(listing.get("next_cursor"))
+                    for ds in listing["data"]:
+                        if not isinstance(ds, dict):
+                            continue
+                        dataset_id = str(ds.get("id") or "")
+                        if not dataset_id:
+                            continue
+                        page = get(
+                            f"/v1/datasets/{dataset_id}/experiments",
+                            {"limit": AdminStatusView._PHOENIX_EXPERIMENT_LIMIT},
+                        )
+                        if page.get("next_cursor"):
+                            experiments_truncated = True
+                        for ex in page["data"]:
+                            if not isinstance(ex, dict):
+                                continue
+                            experiments.append(
+                                {
+                                    "name": str(ex.get("name") or ex.get("id")),
+                                    "dataset": str(ds.get("name") or dataset_id),
+                                    "created": _parse_iso(ex.get("created_at")),
+                                    "examples": ex.get("example_count"),
+                                    "succeeded": ex.get("successful_run_count"),
+                                    "failed": ex.get("failed_run_count"),
+                                    "missing": ex.get("missing_run_count"),
+                                }
+                            )
+                except Exception as e:
+                    # The trace counts say whether evals are landing at all,
+                    # so a failed experiment listing costs the table only.
+                    _log_phoenix_failure("experiment listing", e)
+                    experiments_error = AdminStatusView._phoenix_error_message(e)
+                experiments.sort(
+                    key=lambda row: row["created"] or _UNDATED, reverse=True
+                )
+                return {
+                    "projects": projects,
+                    "projects_truncated": projects_truncated,
+                    "experiments": experiments[
+                        : AdminStatusView._PHOENIX_EXPERIMENT_LIMIT
+                    ],
+                    "experiments_truncated": experiments_truncated,
+                    "experiments_error": experiments_error,
+                }
+
+            data = gather()
+            out["projects"] = data["projects"]
+            out["projects_truncated"] = data["projects_truncated"]
+            out["experiments"] = data["experiments"]
+            out["experiments_truncated"] = data["experiments_truncated"]
+            out["experiments_error"] = data["experiments_error"]
+        except Exception as e:
+            _log_phoenix_failure("status check", e)
+            out["ok"] = False
+            out["error"] = AdminStatusView._phoenix_error_message(e)
+        finally:
+            _PHOENIX_LAST_RESULT["out"] = dict(out)
+            _PHOENIX_LAST_RESULT["at"] = time.monotonic()
+            _PHOENIX_CHECK_LOCK.release()
         return out
 
     @staticmethod
@@ -3488,9 +3848,9 @@ class ModelUsageDashboardView(generic.TemplateView):
 
     @staticmethod
     def _split_started(rows: List[Any]) -> Optional[datetime.datetime]:
-        """When the newest unbroken run of random-draw rows (half and half or
-        thirds) began, or None when the newest row draws no version at
-        random. ``rows`` is newest first."""
+        """When the newest unbroken run of random-draw rows (any mode in
+        RANDOM_MODES) began, or None when the newest row draws no version
+        at random. ``rows`` is newest first."""
         from fighthealthinsurance.ml.appeal_prompt_versions import RANDOM_MODES
 
         started = None
@@ -3513,6 +3873,7 @@ class ModelUsageDashboardView(generic.TemplateView):
             MODE_ORIGINAL,
             MODE_VERSIONS,
             OUTPUT_CONTRACT,
+            TIGHT_SYSTEM_PROMPT,
             current_letter_prompt_mode,
         )
         from fighthealthinsurance.models import LetterPromptMode
@@ -3540,6 +3901,7 @@ class ModelUsageDashboardView(generic.TemplateView):
             "head_to_head": pairs,
             "min_mixed_picks": MIN_MIXED_PICKS,
             "output_contract": OUTPUT_CONTRACT,
+            "tight_system_prompt": TIGHT_SYSTEM_PROMPT,
         }
 
     def post(self, request, *args, **kwargs):
@@ -3553,7 +3915,7 @@ class ModelUsageDashboardView(generic.TemplateView):
         mode = (request.POST.get("mode") or "").strip()
         if mode not in {m for m, _label in MODE_CHOICES}:
             return HttpResponse(
-                "Choose original, new, half and half, sectioned or thirds.",
+                "Choose one of the modes the dashboard lists.",
                 status=400,
             )
         note = (request.POST.get("note") or "").strip()[:500]
@@ -5627,6 +5989,225 @@ class ProConnectorQuickIntroView(View):
             )
         )
         return self._render(request, pro, notice=notice)
+
+
+class SubscriberCleanupView(View):
+    """Staff review queue for junk / suspicious mailing list subscribers.
+
+    Our signup forms are open, so the list collects bot submissions (URLs in the
+    name field), unmailable addresses, and case-variant duplicates of the same
+    mailbox. This page shows every flagged row with the reasons it was flagged,
+    and offers three actions:
+
+      * delete the checked rows,
+      * keep the checked rows (marks them reviewed so they stop showing up), or
+      * delete every row carrying an auto-cleanable reason (needs the confirm box).
+
+    Only unambiguous junk is auto-cleanable; review-only signals (spam TLD, role
+    account, alias duplicate, ...) are never part of the bulk delete. The
+    analysis is shared with ``python manage.py cleanup_subscribers``.
+
+    Lead tables (chat leads, demo requests, interested professionals) are scanned
+    too when asked, but strictly read-only -- those rows belong to other flows.
+    """
+
+    template_name = "subscriber_cleanup.html"
+    page_size = 100
+
+    def get(self, request) -> HttpResponse:
+        return self._render(request)
+
+    def post(self, request) -> HttpResponse:
+        action = request.POST.get("action")
+        actor = getattr(request.user, "username", "") or ""
+
+        if action in ("delete_selected", "keep_selected"):
+            # Act only on rows the queue is showing right now: a stale tab or a
+            # crafted request must not delete or hide a clean subscriber, or a
+            # row someone else already reviewed.
+            queue = {
+                f.record.pk for f in subscriber_hygiene.scan_subscribers().findings
+            }
+            selected = [pk for pk in self._selected_ids(request) if pk in queue]
+            if not selected:
+                return self._render(
+                    request, error="No subscribers in the queue were selected."
+                )
+            if action == "delete_selected":
+                # whole_addresses_only: deleting one copy of an address while
+                # another stays would kill the unsubscribe link mailed from the
+                # deleted copy; tick every copy to remove an address.
+                deleted = subscriber_hygiene.delete_subscribers(
+                    selected,
+                    actor=actor,
+                    unreviewed_only=True,
+                    whole_addresses_only=True,
+                )
+                logger.info(
+                    f"Staff user {actor} deleted {deleted} mailing list "
+                    "subscriber(s) from the cleanup queue"
+                )
+                messages.success(request, self._deleted_message(deleted, len(selected)))
+            else:
+                kept = subscriber_hygiene.mark_subscribers_reviewed(
+                    selected, actor=actor
+                )
+                messages.success(
+                    request,
+                    f"Marked {kept} subscriber(s) as reviewed; they will stay.",
+                )
+            return redirect(request.get_full_path())
+
+        if action == "delete_auto":
+            if request.POST.get("confirm") != "yes":
+                return self._render(
+                    request,
+                    error="Check the confirmation box to delete every "
+                    "auto-cleanable row.",
+                )
+            # Re-scan rather than trusting ids from the form: the page may be
+            # stale, and this action is a bulk delete. unreviewed_only re-checks
+            # at delete time, so a row kept in another tab since the scan stays.
+            result = subscriber_hygiene.scan_subscribers()
+            ids = [f.record.pk for f in result.auto_cleanable_findings]
+            # whole_addresses_only re-checks the address groups at delete time,
+            # so a clean signup that landed after the scan still holds back the
+            # junk copy of its address.
+            deleted = subscriber_hygiene.delete_subscribers(
+                ids, actor=actor, unreviewed_only=True, whole_addresses_only=True
+            )
+            logger.info(
+                f"Staff user {actor} bulk-deleted {deleted} auto-cleanable "
+                "mailing list subscriber(s)"
+            )
+            messages.success(request, self._deleted_message(deleted, len(ids)))
+            # Redirect so a refresh re-runs the GET, not the bulk delete.
+            return redirect(request.get_full_path())
+
+        return self._render(request, error=f"Unknown action: {action}", status=400)
+
+    @staticmethod
+    def _deleted_message(deleted: int, requested: int) -> str:
+        message = f"Deleted {deleted} subscriber(s)."
+        skipped = requested - deleted
+        if skipped > 0:
+            message += (
+                f" Kept {skipped}: reviewed since the page loaded, or another "
+                "copy of the same address stays (tick every copy to remove an "
+                "address)."
+            )
+        return message
+
+    @staticmethod
+    def _selected_ids(request) -> List[int]:
+        ids = []
+        for raw in request.POST.getlist("subscriber_id"):
+            try:
+                ids.append(int(raw))
+            except (TypeError, ValueError):
+                continue
+        return ids
+
+    def _render(
+        self,
+        request,
+        *,
+        error: Optional[str] = None,
+        status: int = 200,
+    ) -> HttpResponse:
+        include_leads = request.GET.get("include_leads") == "1"
+        result = subscriber_hygiene.scan_subscribers()
+        # Auto-cleanable rows first so the deletable junk is what staff sees on
+        # page one, then oldest-first within each bucket.
+        findings = sorted(
+            result.findings, key=lambda f: (not f.auto_cleanable, f.record.pk)
+        )
+        try:
+            page_number = max(1, int(request.GET.get("page", 1)))
+        except (TypeError, ValueError):
+            page_number = 1
+        total_pages = max(1, -(-len(findings) // self.page_size))
+        # Clamp: deleting the last rows of the last page leaves ?page=N past
+        # the end, which would show an empty page with no way back.
+        page_number = min(page_number, total_pages)
+        start = (page_number - 1) * self.page_size
+        page = findings[start : start + self.page_size]
+
+        context: Dict[str, Any] = {
+            "title": "Subscriber Cleanup",
+            "error": error,
+            "scanned": result.scanned,
+            "flagged_count": result.flagged_count,
+            "auto_cleanable_count": len(result.auto_cleanable_findings),
+            "summary": [
+                {
+                    "code": code,
+                    "label": subscriber_hygiene.REASONS[code].label,
+                    "description": subscriber_hygiene.REASONS[code].description,
+                    "auto_cleanable": subscriber_hygiene.REASONS[code].auto_cleanable,
+                    "count": count,
+                }
+                for code, count in result.counts_by_code().items()
+            ],
+            "rows": [
+                {
+                    "id": f.record.pk,
+                    "email": f.record.email,
+                    "name": f.record.name,
+                    "phone": f.record.phone,
+                    "comments": f.record.comments,
+                    "signup_date": f.record.created,
+                    "auto_cleanable": f.auto_cleanable,
+                    "bulk_hold": f.bulk_hold,
+                    "reasons": [
+                        {
+                            "code": code,
+                            "label": subscriber_hygiene.REASONS[code].label,
+                            "detail": f.details.get(code, ""),
+                            "auto_cleanable": code
+                            in subscriber_hygiene.AUTO_CLEANABLE_CODES,
+                        }
+                        for code in f.codes
+                    ],
+                }
+                for f in page
+            ],
+            "page_number": page_number,
+            "total_pages": total_pages,
+            "include_leads": include_leads,
+            "lead_results": self._lead_results() if include_leads else [],
+        }
+        return render(request, self.template_name, context, status=status)
+
+    @staticmethod
+    def _lead_results() -> List[Dict[str, Any]]:
+        """Summaries of the read-only lead-table scans, or [] if they fail.
+
+        The lead tables are an optional extra on this page; a failure scanning
+        them must not take down the subscriber queue staff came here for.
+        """
+        try:
+            return [
+                {
+                    "source": other.source,
+                    "scanned": other.scanned,
+                    "flagged": other.flagged_count,
+                    "counts": [
+                        {
+                            "code": code,
+                            "label": subscriber_hygiene.REASONS[code].label,
+                            "count": count,
+                        }
+                        for code, count in other.counts_by_code().items()
+                    ],
+                }
+                for other in subscriber_hygiene.scan_other_contact_tables()
+            ]
+        except Exception:
+            logger.opt(exception=True).error(
+                "Subscriber cleanup: lead-table scan failed"
+            )
+            return []
 
 
 class _CSVEcho:

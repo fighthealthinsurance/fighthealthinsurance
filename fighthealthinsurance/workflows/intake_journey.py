@@ -201,6 +201,8 @@ class IntakeJourneyWorkflow:
                     denial_uuid=journey.denial_uuid,
                 ),
                 id=f"generate-appeal-{journey.denial_uuid}",
+                # A child runs on its parent's queue unless told otherwise.
+                task_queue=journey.appeal_task_queue or None,
             )
         except WorkflowAlreadyStartedError:
             workflow.logger.info(

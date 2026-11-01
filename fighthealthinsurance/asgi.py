@@ -137,6 +137,8 @@ if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
         traces_sample_rate=1.0,
         integrations=[DjangoIntegration()],
         disabled_integrations=disabled_integrations,
+        # A frame's local variables can hold prompts and letters.
+        include_local_variables=False,
         environment=get_env_variable("DJANGO_CONFIGURATION", "production-ish"),
         release=get_env_variable("RELEASE", "unset"),
         # Scanner probes (.bashrc, api/.env, key.pem, wp-login.php...) are
