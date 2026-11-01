@@ -1334,11 +1334,12 @@ class ChooserVoteAdmin(admin.ModelAdmin):
         "task",
         "chosen_candidate",
         "tied_candidate_ids",
+        "all_bad",
         "session_key",
         "created_at",
     )
-    search_fields = ("task__id", "session_key")
-    list_filter = ("created_at",)
+    search_fields = ("task__id", "session_key", "rationale")
+    list_filter = ("all_bad", "created_at")
     ordering = ("-created_at",)
     readonly_fields = ("id", "created_at")
 

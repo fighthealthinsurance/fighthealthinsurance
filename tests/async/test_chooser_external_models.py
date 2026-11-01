@@ -738,6 +738,55 @@ class TestAReplyThatCantBeUsedGoesToTheNextWriter:
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
+class TestPracticeAreaChatGeneration:
+    async def _generate(self, writers):
+        task = await ChooserTask.objects.acreate(
+            task_type="chat",
+            status="QUEUED",
+            source="synthetic",
+            context_json={"practice_area": "cardiology"},
+        )
+        with patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(return_value=writers),
+        ), patch.object(
+            chooser_tasks.ml_router,
+            "get_chat_backends",
+            MagicMock(return_value=[FakeModel("fhi-2025-nov")]),
+        ), patch.object(
+            chooser_tasks, "_maybe_add_synthesized_candidate", new=AsyncMock()
+        ):
+            await _generate_chat_candidates(task)
+        await task.arefresh_from_db()
+        return task
+
+    async def test_conversation_prompt_and_case_keep_the_practice_area(self):
+        writer = _writer("cardio-writer", CONVERSATION_TEXT)
+        writer._infer_no_context = AsyncMock(return_value=CONVERSATION_TEXT)
+
+        task = await self._generate([writer])
+
+        prompt = writer._infer_no_context.await_args_list[0].kwargs["prompt"]
+        assert "Cardiology / heart care" in prompt
+        assert task.context_json["practice_area"] == "cardiology"
+
+    async def test_single_question_fallback_keeps_the_practice_area(self):
+        silent = _writer("silent-writer", None)
+        asker = _writer("asker", "How do I appeal a denied echocardiogram?")
+        asker._infer_no_context = AsyncMock(
+            side_effect=[None, "How do I appeal a denied echocardiogram?"]
+        )
+
+        task = await self._generate([silent, asker])
+
+        fallback_prompt = asker._infer_no_context.await_args_list[1].kwargs["prompt"]
+        assert "Cardiology / heart care" in fallback_prompt
+        assert task.context_json["practice_area"] == "cardiology"
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
 class TestChatCandidatesSignatureAndExternalModels:
     async def test_chat_candidates_generated_with_real_signature(self):
         """The chooser must call generate_chat_response with

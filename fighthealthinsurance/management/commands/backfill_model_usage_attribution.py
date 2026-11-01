@@ -368,7 +368,8 @@ class Command(BaseCommand):
         for kind in ("appeal_letter", "chat_response"):
             self.stdout.write(f"\n-- ChooserCandidate/ChooserVote ({kind}) --")
             cands = ChooserCandidate.objects.filter(kind=kind)
-            votes = ChooserVote.objects.filter(chosen_candidate__kind=kind)
+            task_type = "appeal" if kind == "appeal_letter" else "chat"
+            votes = ChooserVote.objects.filter(task__task_type=task_type)
             # order_by() clears ChooserCandidate's default ordering, which
             # would otherwise leak into the DISTINCT and make it per-row.
             distinct = list(

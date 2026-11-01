@@ -4308,6 +4308,11 @@ class ChooserView(TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["title"] = "Help Us Improve Our Chooser"
+        context["review_count"] = (
+            models.ChooserVote.objects.filter(user=self.request.user).count()
+            if self.request.user.is_authenticated
+            else None
+        )
         # The "I'm not a robot" check at the start of the Arena, on the same
         # terms as the site's other forms: the page gets the site key only
         # while the captcha is enforced (ChooserViewSet._captcha_gate).

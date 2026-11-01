@@ -578,6 +578,34 @@ class TestSeededScenario:
         assert "facts" not in task.context_json
         assert task.context_json["evidence"] == []
 
+    async def test_a_practice_area_targets_the_pair_and_skips_the_general_seed(self):
+        task = await ChooserTask.objects.acreate(
+            task_type="appeal",
+            status="QUEUED",
+            context_json={"practice_area": "cardiology"},
+        )
+        scenario = (
+            "Procedure: echocardiogram\nDiagnosis: heart failure\n"
+            "Insurance Company: Fictional Mutual\nDenial Reason: not medically necessary.\n"
+        )
+        model = _writer(scenario)
+        seed = AsyncMock(return_value=SeedPair("MRI", "Lower back pain", 8))
+        with patch("fighthealthinsurance.chooser_tasks.ml_router") as router, patch(
+            "fighthealthinsurance.chooser_tasks._maybe_add_synthesized_candidate",
+            AsyncMock(),
+        ), patch(
+            "fighthealthinsurance.chooser_tasks._pick_seed_pair", seed
+        ), _no_live_search():
+            router.generate_text_backends.return_value = [model]
+            await _generate_appeal_candidates(task)
+
+        await task.arefresh_from_db()
+        seed.assert_not_awaited()
+        assert task.context_json["practice_area"] == "cardiology"
+        assert task.context_json["procedure"] == "echocardiogram"
+        scenario_prompt = model._infer_no_context.await_args_list[0].kwargs["prompt"]
+        assert "Cardiology / heart care" in scenario_prompt
+
     async def test_a_seeded_scenario_still_needs_the_insurer_and_reason(self):
         task, _ = await self._generate(
             "Procedure: MRI\nDiagnosis: pain\n", SeedPair("MRI", "Lower back pain", 8)

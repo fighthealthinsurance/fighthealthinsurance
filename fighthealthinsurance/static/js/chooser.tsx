@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 import {
   Alert,
@@ -16,9 +22,11 @@ import {
   Paper,
   ScrollArea,
   SegmentedControl,
+  Select,
   SimpleGrid,
   Stack,
   Text,
+  Textarea,
   Title,
 } from "@mantine/core";
 import ErrorBoundary from "./ErrorBoundary";
@@ -99,6 +107,7 @@ interface ChooserTaskContext {
   seeded?: boolean;
   // "simple": an everyday case kept simple on purpose; "standard" otherwise.
   case_style?: string;
+  practice_area?: string;
   prompt?: string;
   history?: Array<{ role: string; content: string }>;
 }
@@ -108,6 +117,7 @@ interface ChooserTask {
   task_type: string;
   task_context: ChooserTaskContext;
   candidates: ChooserCandidate[];
+  review_count?: number;
 }
 
 type TaskType = "appeal" | "chat";
@@ -115,14 +125,19 @@ type TaskType = "appeal" | "chat";
 interface ChooserState {
   // "pending": the server has no case for us yet but is writing one (it
   // answered 202), and we are waiting for it.
-  mode: "selection" | "loading" | "pending" | "voting" | "confirmation" | "error";
+  mode:
+    | "selection"
+    | "loading"
+    | "pending"
+    | "voting"
+    | "confirmation"
+    | "error";
   task: ChooserTask | null;
-  selectedCandidate: ChooserCandidate | null;
+  // One selection is a winner; several are equally good winners.
+  selectedIds: string[];
+  allBad: boolean;
+  rationale: string;
   flaggedIds: string[];
-  // Tie mode: the referee marks two or more drafts as equally best instead
-  // of picking one.
-  tieMode: boolean;
-  tiedIds: string[];
   error: string | null;
   taskType: TaskType | null;
 }
@@ -231,13 +246,90 @@ const writePreference = (preference: CasePreference): void => {
   }
 };
 
-// The next-task URL, asking for the kind of case the referee chose.
-const nextTaskUrl = (taskType: TaskType, preference: CasePreference | null): string => {
-  const base = `/ziggy/rest/chooser/next/${taskType}/`;
-  return preference && preference !== "either" ? `${base}?difficulty=${preference}` : base;
+const PRACTICE_AREA_OPTIONS = [
+  { value: "primary-care", label: "Primary care / general medicine" },
+  { value: "cardiology", label: "Cardiology / heart care" },
+  { value: "oncology", label: "Oncology / cancer care" },
+  { value: "orthopedics", label: "Orthopedics / musculoskeletal care" },
+  { value: "neurology", label: "Neurology" },
+  { value: "mental-health", label: "Mental health / psychiatry" },
+  { value: "womens-health", label: "Women's health / OB-GYN" },
+  { value: "pediatrics", label: "Pediatrics" },
+  { value: "gastroenterology", label: "Gastroenterology / digestive health" },
+  {
+    value: "endocrinology",
+    label: "Endocrinology / diabetes and hormone care",
+  },
+  { value: "pulmonology", label: "Pulmonology / respiratory care" },
+  { value: "rheumatology", label: "Rheumatology / autoimmune care" },
+  { value: "nephrology", label: "Nephrology / kidney care" },
+  { value: "dermatology", label: "Dermatology / skin care" },
+  { value: "physical-medicine", label: "Physical medicine and rehabilitation" },
+  { value: "emergency-medicine", label: "Emergency medicine" },
+];
+
+const PRACTICE_AREA_KEY = "fhi-arena-practice-area";
+
+const practiceAreaLabel = (slug?: string): string | null =>
+  PRACTICE_AREA_OPTIONS.find((option) => option.value === slug)?.label ?? null;
+
+const readPracticeArea = (): string => {
+  try {
+    const stored = window.localStorage.getItem(PRACTICE_AREA_KEY) ?? "";
+    return practiceAreaLabel(stored) ? stored : "";
+  } catch {
+    return "";
+  }
 };
 
-const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
+const writePracticeArea = (practiceArea: string): void => {
+  try {
+    if (practiceArea) {
+      window.localStorage.setItem(PRACTICE_AREA_KEY, practiceArea);
+    } else {
+      window.localStorage.removeItem(PRACTICE_AREA_KEY);
+    }
+  } catch {
+    // The choice still holds for this visit.
+  }
+};
+
+// The next-task URL, asking for the judge's difficulty and practice area.
+const nextTaskUrl = (
+  taskType: TaskType,
+  preference: CasePreference | null,
+  practiceArea: string,
+): string => {
+  const base = `/ziggy/rest/chooser/next/${taskType}/`;
+  const params = new URLSearchParams();
+  if (preference && preference !== "either")
+    params.set("difficulty", preference);
+  if (practiceArea) params.set("practice_area", practiceArea);
+  const query = params.toString();
+  return query ? `${base}?${query}` : base;
+};
+
+const plural = (n: number, word: string): string =>
+  `${n} ${word}${n === 1 ? "" : "s"}`;
+
+const REVIEW_MILESTONES = [1, 3, 5, 10, 25, 50, 100];
+
+const encouragementFor = (rounds: number): string => {
+  const milestones: Record<number, string> = {
+    1: "First review in the books. Your judgment is already helping us separate useful drafts from merely confident ones.",
+    3: "Three cases reviewed. You are building a careful referee record.",
+    5: "Five reviews complete. That is a meaningful set of comparisons for improving future answers.",
+    10: "Double digits. Thanks for giving these drafts such close attention.",
+    25: "Twenty-five reviews. Your consistency is making the rankings more trustworthy.",
+    50: "Fifty reviews. Exceptional referee work, and a real help to the people who come after you.",
+    100: "One hundred reviews. You have given the Arena an extraordinary body of careful judgment.",
+  };
+  if (milestones[rounds]) return milestones[rounds];
+  const next = REVIEW_MILESTONES.find((milestone) => milestone > rounds);
+  return next
+    ? `${plural(next - rounds, "review")} to your next milestone. Every careful call helps.`
+    : "Another careful review. Thank you for keeping the Arena honest.";
+};
 
 // The public scoreboard (public_rankings.py, `?format=json`): synthetic
 // votes only, already aggregated, so showing it here gives away nothing
@@ -284,7 +376,9 @@ const fetchRankings = async (): Promise<RankingsState> => {
       return "hidden";
     }
     const data = (await response.json()) as Rankings;
-    return Array.isArray(data.windows) && data.windows.length > 0 ? data : "hidden";
+    return Array.isArray(data.windows) && data.windows.length > 0
+      ? data
+      : "hidden";
   } catch {
     // The standings are a nicety; the Arena works without them.
     return "hidden";
@@ -392,7 +486,12 @@ const CaptchaBox: React.FC<{
     let cancelled = false;
     const tryRender = (): boolean => {
       const api = window.grecaptcha;
-      if (!boxRef.current || widgetRef.current !== null || !api || !api.render) {
+      if (
+        !boxRef.current ||
+        widgetRef.current !== null ||
+        !api ||
+        !api.render
+      ) {
         return false;
       }
       widgetRef.current = api.render(boxRef.current, {
@@ -418,7 +517,11 @@ const CaptchaBox: React.FC<{
   }, [siteKey]);
 
   useEffect(() => {
-    if (resetKey > 0 && widgetRef.current !== null && window.grecaptcha?.reset) {
+    if (
+      resetKey > 0 &&
+      widgetRef.current !== null &&
+      window.grecaptcha?.reset
+    ) {
       window.grecaptcha.reset(widgetRef.current);
       onTokenRef.current(null);
     }
@@ -431,33 +534,34 @@ const CaptchaBox: React.FC<{
 // Referee aids: the reviewer's verdicts and the citation check
 
 // How each verdict reads on the page. Colors are Mantine's names.
-const VERDICTS: Record<string, { label: string; color: string; hint: string }> = {
-  supports: {
-    label: "Supports the treatment",
-    color: "green",
-    hint: "The abstract reports the treatment as effective, beneficial or recommended for this condition.",
-  },
-  mixed: {
-    label: "Mixed",
-    color: "yellow",
-    hint: "The abstract argues both ways. A draft may cite it, but should say what it actually found.",
-  },
-  against: {
-    label: "Argues against",
-    color: "red",
-    hint: "The abstract reports the treatment as ineffective, harmful or unsupported. A draft that cites it as support is misreading it; that is a foul.",
-  },
-  off_topic: {
-    label: "Off topic",
-    color: "gray",
-    hint: "Not about this treatment for this condition. A draft that cites it as evidence for the case is stretching.",
-  },
-  unclear: {
-    label: "Unclear",
-    color: "gray",
-    hint: "The reviewer could not tell whether it helps the case.",
-  },
-};
+const VERDICTS: Record<string, { label: string; color: string; hint: string }> =
+  {
+    supports: {
+      label: "Supports the treatment",
+      color: "green",
+      hint: "The abstract reports the treatment as effective, beneficial or recommended for this condition.",
+    },
+    mixed: {
+      label: "Mixed",
+      color: "yellow",
+      hint: "The abstract argues both ways. A draft may cite it, but should say what it actually found.",
+    },
+    against: {
+      label: "Argues against",
+      color: "red",
+      hint: "The abstract reports the treatment as ineffective, harmful or unsupported. A draft that cites it as support is misreading it; that is a foul.",
+    },
+    off_topic: {
+      label: "Off topic",
+      color: "gray",
+      hint: "Not about this treatment for this condition. A draft that cites it as evidence for the case is stretching.",
+    },
+    unclear: {
+      label: "Unclear",
+      color: "gray",
+      hint: "The reviewer could not tell whether it helps the case.",
+    },
+  };
 
 type VerdictLook = (typeof VERDICTS)[string];
 
@@ -471,7 +575,8 @@ const percent = (p: number): string => `${Math.round(p * 100)}%`;
 const PMID_PATTERN =
   "\\b(?:PMID|PubMed\\s+ID)\\s*[:#]?\\s*(\\d{4,9})\\b|pubmed\\.ncbi\\.nlm\\.nih\\.gov\\/(\\d{4,9})";
 
-const pubmedUrl = (pmid: string): string => `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
+const pubmedUrl = (pmid: string): string =>
+  `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
 
 // One PMID a draft cites, checked against the evidence on file.
 interface Citation {
@@ -481,14 +586,20 @@ interface Citation {
   item?: EvidenceItem;
 }
 
-const checkCitations = (content: string, evidence: EvidenceItem[]): Citation[] => {
+const checkCitations = (
+  content: string,
+  evidence: EvidenceItem[],
+): Citation[] => {
   const citations: Citation[] = [];
   const re = new RegExp(PMID_PATTERN, "gi");
   let match: RegExpExecArray | null;
   while ((match = re.exec(content)) !== null) {
     const pmid = match[1] ?? match[2];
     if (!pmid || citations.some((c) => c.pmid === pmid)) continue;
-    citations.push({ pmid, item: evidence.find((e) => String(e.pmid) === pmid) });
+    citations.push({
+      pmid,
+      item: evidence.find((e) => String(e.pmid) === pmid),
+    });
   }
   return citations;
 };
@@ -523,7 +634,12 @@ const citationLook = (citation: Citation): CitationLook => {
     };
   }
   if (verdict && kind === "mixed") {
-    return { label: "mixed", color: "yellow", hint: `On file. ${verdict.hint}`, suspicious: false };
+    return {
+      label: "mixed",
+      color: "yellow",
+      hint: `On file. ${verdict.hint}`,
+      suspicious: false,
+    };
   }
   return {
     label: "on file",
@@ -565,10 +681,10 @@ const MARK_COLORS: Record<string, string> = {
   green: "#e9fac8",
 };
 
-const HighlightedDraft: React.FC<{ content: string; citations: Citation[] }> = ({
-  content,
-  citations,
-}) => {
+const HighlightedDraft: React.FC<{
+  content: string;
+  citations: Citation[];
+}> = ({ content, citations }) => {
   if (citations.length === 0) return <>{content}</>;
   const parts: React.ReactNode[] = [];
   const re = new RegExp(PMID_PATTERN, "gi");
@@ -661,7 +777,10 @@ const CitationCheck: React.FC<{
 // ---------------------------------------------------------------------------
 // Pieces
 
-const HouseRules: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
+const HouseRules: React.FC<{ compact?: boolean; isAppeal?: boolean }> = ({
+  compact = false,
+  isAppeal = true,
+}) => {
   if (compact) {
     return (
       <Paper
@@ -671,54 +790,93 @@ const HouseRules: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
         withBorder
         style={{ backgroundColor: "#fffbea", borderColor: "#f5c518" }}
       >
-        <Text size="sm">
-          <strong>House rules:</strong> pick the draft you would actually send. A draft
-          that makes something up (a study, a law, a test result, a date, a history
-          that is not in the case) is committing a foul: flag it, and never pick it.
-          The PMIDs each draft cites are checked against the evidence on file for you.
-          Too close to call? Call a tie. Not sure? Skip the round.
+        <Text size="sm" fw={700}>
+          Referee checklist: truthful first, then responsive, useful, and clear.
         </Text>
+        <List size="sm" spacing={4} mt={4}>
+          <List.Item>
+            <strong>Would you use it?</strong>{" "}
+            {isAppeal
+              ? "Does it answer this denial with case-specific reasons and a clear request?"
+              : "Does it answer the person's question with a safe, useful next step?"}{" "}
+            Longer is not automatically better.
+          </List.Item>
+          <List.Item>
+            <strong>Check facts before style.</strong>{" "}
+            {isAppeal
+              ? "Use the citation chips to spot claims worth checking."
+              : "Open the lookup results to check what the reply claims."}{" "}
+            Flag <strong>Makes things up</strong> for fabricated facts, sources,
+            or case details—not for weak writing.
+          </List.Item>
+          <List.Item>
+            <strong>Choose the honest outcome.</strong> Select every equally
+            good draft; reject all when none is usable; skip when you cannot
+            judge. Do not force a pick or use <strong>all bad</strong> just
+            because none is perfect.
+          </List.Item>
+        </List>
       </Paper>
     );
   }
   return (
-    <Paper shadow="sm" p="md" radius="md" withBorder style={{ width: "100%", maxWidth: "760px" }}>
+    <Paper
+      shadow="sm"
+      p="md"
+      radius="md"
+      withBorder
+      style={{ width: "100%", maxWidth: "760px" }}
+    >
       <Text fw={700} mb="xs">
-        House rules
+        How to judge a round
+      </Text>
+      <Text size="sm" mb="sm">
+        <strong>Truthful first, then responsive, useful, and clear.</strong>{" "}
+        Judge what is on the page, not how long or confident a draft sounds.
       </Text>
       <List spacing="xs" size="sm">
         <List.Item>
-          <strong>Pick the draft you would send.</strong> Specific, persuasive, and
-          right about the case and the rules.
+          <strong>Start with &ldquo;would I use this?&rdquo;</strong> For an
+          appeal, does it answer the insurer&rsquo;s actual reason with
+          case-specific reasons and a clear request? For a chat reply, does it
+          answer the person&rsquo;s question and offer a safe, useful next step?
+          Specific beats long and generic.
         </List.Item>
         <List.Item>
-          <strong>Making things up is a foul.</strong> Each case lists what is known
-          about the patient, what the patient answered when the app asked, and the
-          evidence on file. A draft that invents a study,
-          a law, a test result, a date or a history that is not there should never
-          win, however good it sounds. Flag it with 🚩 and pick another.
+          <strong>Making things up is a foul.</strong> Compare the draft with
+          the case facts, the patient&rsquo;s answers, and the evidence. Flag an
+          invented study, law, test result, date, or history, and never select
+          that draft. A weak, vague, or unhelpful draft is not automatically a
+          foul; use the outcome buttons instead.
         </List.Item>
         <List.Item>
-          <strong>Check the citations.</strong> Under each draft, the PMIDs it cites are
-          matched to the evidence on file, and each study on file carries an automated
-          reviewer&rsquo;s verdict on whether it supports the treatment. A PMID that is
-          not on file cannot be checked here: open it, and if it is not real, or not
-          what the draft claims, that is a foul. A draft that leans on a study that
-          argues against the treatment is not helping the patient either.
+          <strong>Use the referee aids, then verify what matters.</strong>{" "}
+          Citation chips and automated verdicts are hints, not rulings: open a
+          study when a surprising or decisive claim depends on it. For chat
+          replies, open <em>What it found</em> and check whether the answer
+          matches the lookup.
         </List.Item>
         <List.Item>
-          <strong>Too close to call? Call a tie.</strong> If two or more drafts are
-          equally good, mark them all; the vote is split between them.
+          <strong>Equally good? Select them all.</strong> One selection picks a
+          winner; multiple selections tie for best and split the vote. Select
+          only drafts you would genuinely be happy to use.
         </List.Item>
         <List.Item>
-          <strong>Not sure? Skip it.</strong> A skipped round beats a coin flip.
+          <strong>Rejecting all is different from skipping.</strong> Reject all
+          when you are confident none is usable, even if none invented facts.
+          Skip when you cannot judge the case—not simply because the drafts are
+          imperfect. A sentence about why is always welcome, especially for a
+          tie or no-winner review.
         </List.Item>
       </List>
     </Paper>
   );
 };
 
-const CaseRow: React.FC<{ label: string; value?: string }> = ({ label, value }) => {
+const CaseRow: React.FC<{ label: string; value?: string }> = ({
+  label,
+  value,
+}) => {
   if (!value) return null;
   return (
     <Group gap="xs" align="flex-start" wrap="nowrap">
@@ -759,7 +917,12 @@ const EvidenceRow: React.FC<{ item: EvidenceItem }> = ({ item }) => {
   return (
     <List.Item>
       {item.url ? (
-        <Anchor href={item.url} target="_blank" rel="noopener noreferrer" size="sm">
+        <Anchor
+          href={item.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          size="sm"
+        >
           {item.title}
         </Anchor>
       ) : (
@@ -779,9 +942,9 @@ const EvidenceRow: React.FC<{ item: EvidenceItem }> = ({ item }) => {
           </Text>
           {open && judgment ? (
             <Text size="xs" c="dimmed" mt={2}>
-              Reviewer: {percent(judgment.on_topic)} about this treatment and condition
-              &middot; {percent(judgment.supports)} supports it &middot;{" "}
-              {percent(judgment.undermines)} argues against it.
+              Reviewer: {percent(judgment.on_topic)} about this treatment and
+              condition &middot; {percent(judgment.supports)} supports it
+              &middot; {percent(judgment.undermines)} argues against it.
             </Text>
           ) : null}
           <Button
@@ -803,7 +966,9 @@ const EvidenceRow: React.FC<{ item: EvidenceItem }> = ({ item }) => {
 // about the patient, what they told the app, and the evidence a draft may cite.
 const AppealCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
   const facts = context.facts ?? [];
-  const qaPairs = (context.qa_pairs ?? []).filter((p) => p.question && p.answer);
+  const qaPairs = (context.qa_pairs ?? []).filter(
+    (p) => p.question && p.answer,
+  );
   const evidence = (context.evidence ?? []).filter((e) => e.title);
   const reviewed = evidence.some((e) => verdictOf(e) !== null);
   return (
@@ -816,9 +981,9 @@ const AppealCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
       </Stack>
       {context.case_style === "simple" && (
         <Text size="sm" c="dimmed">
-          An everyday case, kept simple on purpose. A letter that stays short and sticks
-          to the facts is doing it right; one that pads it out with claims the facts do
-          not support is not.
+          An everyday case, kept simple on purpose. A letter that stays short
+          and sticks to the facts is doing it right; one that pads it out with
+          claims the facts do not support is not.
         </Text>
       )}
       <Box>
@@ -833,7 +998,8 @@ const AppealCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
           </List>
         ) : (
           <Text size="sm" c="dimmed">
-            Only what is above. Any detail about the patient beyond this is made up.
+            Only what is above. Any detail about the patient beyond this is made
+            up.
           </Text>
         )}
       </Box>
@@ -843,8 +1009,9 @@ const AppealCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
             What the patient told us
           </Text>
           <Text size="xs" c="dimmed" mb={6}>
-            The questions the app asked this (made-up) patient, and their answers. The
-            drafts had these too, and may rely on them like the facts above.
+            The questions the app asked this (made-up) patient, and their
+            answers. The drafts had these too, and may rely on them like the
+            facts above.
           </Text>
           <Stack gap={6}>
             {qaPairs.map((pair, idx) => (
@@ -872,13 +1039,13 @@ const AppealCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
           </List>
         ) : (
           <Text size="sm" c="dimmed">
-            Nothing on file for this case. A draft that cites a study anyway is making
-            it up.
+            Nothing on file for this case. A draft that cites a study anyway is
+            making it up.
           </Text>
         )}
         <Text size="xs" c="dimmed" mt={4}>
-          A draft may cite only what is listed here, and claim no more for a study than
-          it found. Anything else is a foul.
+          A draft may cite only what is listed here, and claim no more for a
+          study than it found. Anything else is a foul.
           {reviewed
             ? " Each verdict is an automated reviewer's reading of the abstract: whether the study is about this treatment for this condition, and whether it supports it. The drafts saw the summaries, not the verdicts. A hint, not a ruling: open the study when it matters."
             : ""}
@@ -961,7 +1128,12 @@ const ToolCallList: React.FC<{ calls: ToolCall[] }> = ({ calls }) => {
               borderLeft: "3px solid #9775fa",
             }}
           >
-            <Group justify="space-between" gap="xs" wrap="nowrap" align="flex-start">
+            <Group
+              justify="space-between"
+              gap="xs"
+              wrap="nowrap"
+              align="flex-start"
+            >
               <Text size="xs" style={{ wordBreak: "break-word" }}>
                 🔍 <b>{call.tool}</b>: {call.call}
                 {call.timed_out ? (
@@ -1022,7 +1194,7 @@ const CandidateCard: React.FC<{
   candidate: ChooserCandidate;
   label: string;
   isSelected: boolean;
-  tieMode: boolean;
+  showTieLabel: boolean;
   isFlagged: boolean;
   // The case's evidence, for the citation check; an appeal draft is also
   // checked for details the case never gave. A chat reply may rightly name
@@ -1035,7 +1207,7 @@ const CandidateCard: React.FC<{
   candidate,
   label,
   isSelected,
-  tieMode,
+  showTieLabel,
   isFlagged,
   evidence,
   checkFacts,
@@ -1062,10 +1234,10 @@ const CandidateCard: React.FC<{
       padding="lg"
       radius="md"
       withBorder
-      role="button"
+      role="checkbox"
       tabIndex={0}
-      aria-pressed={isSelected}
-      aria-label={tieMode ? `Mark draft ${label} as tied for best` : `Pick draft ${label}`}
+      aria-checked={isSelected}
+      aria-label={`Select draft ${label} as a top choice`}
       onClick={() => {
         // Highlighting a passage to re-read it ends in a click on the card;
         // that is not a pick.
@@ -1084,7 +1256,11 @@ const CandidateCard: React.FC<{
       style={{
         cursor: "pointer",
         border,
-        backgroundColor: isSelected ? "#f9fff0" : isFlagged ? "#fff5f5" : "#ffffff",
+        backgroundColor: isSelected
+          ? "#f9fff0"
+          : isFlagged
+            ? "#fff5f5"
+            : "#ffffff",
         opacity: isFlagged ? 0.85 : 1,
         transition: "all 0.2s ease",
       }}
@@ -1096,7 +1272,7 @@ const CandidateCard: React.FC<{
           </Text>
           {isSelected && (
             <Badge color="green" variant="light">
-              {tieMode ? "Tied for best" : "Your pick"}
+              {showTieLabel ? "Tied for best" : "Your pick"}
             </Badge>
           )}
           {isFlagged && (
@@ -1125,7 +1301,11 @@ const CandidateCard: React.FC<{
       </Group>
       {checkFacts ? (
         <Box mb="sm">
-          <CitationCheck citations={citations} hints={hints} hasEvidence={evidence.length > 0} />
+          <CitationCheck
+            citations={citations}
+            hints={hints}
+            hasEvidence={evidence.length > 0}
+          />
         </Box>
       ) : null}
       {candidate.tool_calls && candidate.tool_calls.length > 0 ? (
@@ -1169,21 +1349,35 @@ const PreferenceQuestion: React.FC<{
   onChoose: (preference: CasePreference) => void;
   buttonStyle: React.CSSProperties;
 }> = ({ onChoose, buttonStyle }) => (
-  <Paper shadow="sm" p="lg" radius="md" withBorder style={{ width: "100%", maxWidth: "640px" }}>
+  <Paper
+    shadow="sm"
+    p="lg"
+    radius="md"
+    withBorder
+    style={{ width: "100%", maxWidth: "640px" }}
+  >
     <Stack gap="sm" align="center">
       <Title order={3} ta="center">
         What kind of case next?
       </Title>
       <Text size="sm" ta="center" c="dimmed">
-        Straightforward cases are quicker reads, with shorter drafts and fewer studies to
-        check. Complex ones take longer, with more to read and more citations to check.
-        You can change this after any round.
+        Straightforward cases are quicker reads, with shorter drafts and fewer
+        studies to check. Complex ones take longer, with more to read and more
+        citations to check. You can change this after any round.
       </Text>
       <Group justify="center" gap="sm" mt="xs">
-        <Button radius="md" onClick={() => onChoose("straightforward")} style={buttonStyle}>
+        <Button
+          radius="md"
+          onClick={() => onChoose("straightforward")}
+          style={buttonStyle}
+        >
           Keep them straightforward
         </Button>
-        <Button radius="md" onClick={() => onChoose("complex")} style={buttonStyle}>
+        <Button
+          radius="md"
+          onClick={() => onChoose("complex")}
+          style={buttonStyle}
+        >
           Bring on complex ones
         </Button>
         <Button radius="md" variant="subtle" onClick={() => onChoose("either")}>
@@ -1218,17 +1412,18 @@ const PreferencePicker: React.FC<{
 // ---------------------------------------------------------------------------
 // The arena
 
-const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed: boolean }> = ({
-  captchaSiteKey,
-  captchaAlreadyPassed,
-}) => {
+const ChooserInterface: React.FC<{
+  captchaSiteKey: string;
+  captchaAlreadyPassed: boolean;
+  initialReviewCount: number | null;
+}> = ({ captchaSiteKey, captchaAlreadyPassed, initialReviewCount }) => {
   const [state, setState] = useState<ChooserState>({
     mode: "selection",
     task: null,
-    selectedCandidate: null,
+    selectedIds: [],
+    allBad: false,
+    rationale: "",
     flaggedIds: [],
-    tieMode: false,
-    tiedIds: [],
     error: null,
     taskType: null,
   });
@@ -1246,7 +1441,9 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
   const requestSeq = useRef(0);
   // The poll asks through the latest fetchNextTask, not the one that set
   // it: that one still holds the captcha token as it was before it was spent.
-  const fetchNextTaskRef = useRef<((taskType: TaskType) => Promise<void>) | null>(null);
+  const fetchNextTaskRef = useRef<
+    ((taskType: TaskType) => Promise<void>) | null
+  >(null);
 
   const clearPoll = useCallback(() => {
     requestSeq.current += 1;
@@ -1282,19 +1479,31 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
       setCaptchaPassed(false);
       setCaptchaToken(null);
       setCaptchaResets((n) => n + 1);
-      setCaptchaNotice(message || "Please tick the \"I'm not a robot\" box, then try again.");
-      setState((prev) => ({ ...prev, mode: "selection", task: null, taskType: null }));
+      setCaptchaNotice(
+        message || 'Please tick the "I\'m not a robot" box, then try again.',
+      );
+      setState((prev) => ({
+        ...prev,
+        mode: "selection",
+        task: null,
+        taskType: null,
+      }));
     },
     [captchaSiteKey],
   );
 
   // The gate's answer, when a response is its 403; undefined otherwise.
-  const captchaRefusal = async (response: Response): Promise<string | undefined> => {
+  const captchaRefusal = async (
+    response: Response,
+  ): Promise<string | undefined> => {
     if (response.status !== 403) {
       return undefined;
     }
     try {
-      const body = (await response.clone().json()) as { error?: string; message?: string };
+      const body = (await response.clone().json()) as {
+        error?: string;
+        message?: string;
+      };
       if (body.error === CAPTCHA_ERROR) {
         return body.message || "";
       }
@@ -1303,20 +1512,32 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
     }
     return undefined;
   };
-  const [scoreboard, setScoreboard] = useState<Scoreboard>({ rounds: 0, fouls: 0 });
+  const [scoreboard, setScoreboard] = useState<Scoreboard>({
+    rounds: 0,
+    fouls: 0,
+  });
+  const [reviewCount, setReviewCount] = useState<number | null>(
+    initialReviewCount,
+  );
   const [lastRoundFouls, setLastRoundFouls] = useState(0);
   const [lastRoundTie, setLastRoundTie] = useState(false);
+  const [lastRoundAllBad, setLastRoundAllBad] = useState(false);
   const [rankings, setRankings] = useState<RankingsState>("pending");
   // Null until the referee answers the question after their first round.
   // The ref is what fetches read, so a choice applies to the very next case.
   const [preference, setPreference] = useState<CasePreference | null>(null);
   const preferenceRef = useRef<CasePreference | null>(null);
+  const [practiceArea, setPracticeArea] = useState("");
+  const practiceAreaRef = useRef("");
 
   useEffect(() => {
     setScoreboard(readScoreboard());
     const stored = readPreference();
     preferenceRef.current = stored;
     setPreference(stored);
+    const storedArea = readPracticeArea();
+    practiceAreaRef.current = storedArea;
+    setPracticeArea(storedArea);
     let cancelled = false;
     fetchRankings().then((data) => {
       if (!cancelled) {
@@ -1328,128 +1549,145 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
     };
   }, []);
 
-  const fetchNextTask = useCallback(async (taskType: TaskType) => {
-    const seq = ++requestSeq.current;
-    const stale = () => seq !== requestSeq.current;
-    if (pollTimer.current !== null) {
-      window.clearTimeout(pollTimer.current);
-      pollTimer.current = null;
-    }
-    setState((prev) => ({
-      ...prev,
-      mode: pendingSince.current === null ? "loading" : "pending",
-      error: null,
-      taskType,
-    }));
+  const fetchNextTask = useCallback(
+    async (taskType: TaskType) => {
+      const seq = ++requestSeq.current;
+      const stale = () => seq !== requestSeq.current;
+      if (pollTimer.current !== null) {
+        window.clearTimeout(pollTimer.current);
+        pollTimer.current = null;
+      }
+      setState((prev) => ({
+        ...prev,
+        mode: pendingSince.current === null ? "loading" : "pending",
+        error: null,
+        taskType,
+      }));
 
-    // One deadline for the whole request, body included: a response whose
-    // body stalled after its headers would otherwise hang the page too.
-    const controller = new AbortController();
-    const deadline = window.setTimeout(() => controller.abort(), NEXT_CASE_REQUEST_TIMEOUT_MS);
-    try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (captchaToken) {
-        headers[CAPTCHA_HEADER] = captchaToken;
-      }
-      const response = await fetch(nextTaskUrl(taskType, preferenceRef.current), {
-        method: "GET",
-        headers,
-        credentials: "include",
-        signal: controller.signal,
-      });
-      if (stale()) return;
-
-      const refusal = await captchaRefusal(response);
-      if (stale()) {
-        return;
-      }
-      if (refusal !== undefined) {
-        pendingSince.current = null;
-        backToCaptcha(refusal);
-        return;
-      }
-      if (captchaToken && (response.ok || response.status === 404)) {
-        // A tick is single use, and these answers all come from past the
-        // gate (a case being written is a 202, an empty arena a 404), so
-        // the session now holds the mark. Any other failure may have come
-        // before the gate and spent nothing; the next try sends the tick
-        // again.
-        setCaptchaToken(null);
-        setCaptchaPassed(true);
-        setCaptchaNotice(null);
-      }
-
-      if (response.status === 202) {
-        // No case for us yet, but one is being written (the server set the
-        // generation off, or another process holds it): wait for it, asking
-        // again when the server says to, rather than sending the referee
-        // away for "a few minutes" from a case that is one or two away.
-        const started = pendingSince.current ?? Date.now();
-        pendingSince.current = started;
-        if (Date.now() - started > PENDING_GIVE_UP_MS) {
-          pendingSince.current = null;
-          throw new Error(
-            "A new case is still being written. Please come back in a few minutes.",
-          );
+      // One deadline for the whole request, body included: a response whose
+      // body stalled after its headers would otherwise hang the page too.
+      const controller = new AbortController();
+      const deadline = window.setTimeout(
+        () => controller.abort(),
+        NEXT_CASE_REQUEST_TIMEOUT_MS,
+      );
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (captchaToken) {
+          headers[CAPTCHA_HEADER] = captchaToken;
         }
-        let retryAfter = PENDING_RETRY_DEFAULT_SECONDS;
-        try {
-          const body = (await response.json()) as { retry_after?: number };
-          if (typeof body.retry_after === "number" && body.retry_after > 0) {
-            retryAfter = body.retry_after;
-          }
-        } catch {
-          // The body is a courtesy; the default interval is fine.
-        }
+        const response = await fetch(
+          nextTaskUrl(taskType, preferenceRef.current, practiceAreaRef.current),
+          {
+            method: "GET",
+            headers,
+            credentials: "include",
+            signal: controller.signal,
+          },
+        );
         if (stale()) return;
-        setState((prev) => ({ ...prev, mode: "pending", error: null, taskType }));
-        pollTimer.current = window.setTimeout(() => {
-          pollTimer.current = null;
-          void fetchNextTaskRef.current?.(taskType);
-        }, retryAfter * 1000);
-        return;
-      }
-      pendingSince.current = null;
 
-      if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error(
-            "The arena is empty right now: every case has been judged and no new one is on its way yet. Please try again later.",
-          );
+        const refusal = await captchaRefusal(response);
+        if (stale()) {
+          return;
         }
-        throw new Error(`Failed to fetch a case: ${response.statusText}`);
-      }
+        if (refusal !== undefined) {
+          pendingSince.current = null;
+          backToCaptcha(refusal);
+          return;
+        }
+        if (captchaToken && (response.ok || response.status === 404)) {
+          // A tick is single use, and these answers all come from past the
+          // gate (a case being written is a 202, an empty arena a 404), so
+          // the session now holds the mark. Any other failure may have come
+          // before the gate and spent nothing; the next try sends the tick
+          // again.
+          setCaptchaToken(null);
+          setCaptchaPassed(true);
+          setCaptchaNotice(null);
+        }
 
-      const task: ChooserTask = await response.json();
-      if (stale()) return;
-      setState((prev) => ({
-        ...prev,
-        mode: "voting",
-        task,
-        selectedCandidate: null,
-        flaggedIds: [],
-        tieMode: false,
-        tiedIds: [],
-      }));
-    } catch (error) {
-      // Checked first: a timed-out request from before the referee left
-      // must not reset the give-up clock of the wait they started since.
-      if (stale()) return;
-      const timedOut = controller.signal.aborted;
-      if (timedOut) pendingSince.current = null;
-      setState((prev) => ({
-        ...prev,
-        mode: "error",
-        error: timedOut
-          ? "The server did not answer in time. Please try again in a few minutes."
-          : error instanceof Error
-            ? error.message
-            : "An error occurred",
-      }));
-    } finally {
-      window.clearTimeout(deadline);
-    }
-  }, [captchaToken, backToCaptcha]);
+        if (response.status === 202) {
+          // No case for us yet, but one is being written (the server set the
+          // generation off, or another process holds it): wait for it, asking
+          // again when the server says to, rather than sending the referee
+          // away for "a few minutes" from a case that is one or two away.
+          const started = pendingSince.current ?? Date.now();
+          pendingSince.current = started;
+          if (Date.now() - started > PENDING_GIVE_UP_MS) {
+            pendingSince.current = null;
+            throw new Error(
+              "A new case is still being written. Please come back in a few minutes.",
+            );
+          }
+          let retryAfter = PENDING_RETRY_DEFAULT_SECONDS;
+          try {
+            const body = (await response.json()) as { retry_after?: number };
+            if (typeof body.retry_after === "number" && body.retry_after > 0) {
+              retryAfter = body.retry_after;
+            }
+          } catch {
+            // The body is a courtesy; the default interval is fine.
+          }
+          if (stale()) return;
+          setState((prev) => ({
+            ...prev,
+            mode: "pending",
+            error: null,
+            taskType,
+          }));
+          pollTimer.current = window.setTimeout(() => {
+            pollTimer.current = null;
+            void fetchNextTaskRef.current?.(taskType);
+          }, retryAfter * 1000);
+          return;
+        }
+        pendingSince.current = null;
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            throw new Error(
+              "The arena is empty right now: every case has been judged and no new one is on its way yet. Please try again later.",
+            );
+          }
+          throw new Error(`Failed to fetch a case: ${response.statusText}`);
+        }
+
+        const task: ChooserTask = await response.json();
+        if (stale()) return;
+        if (task.review_count !== undefined) setReviewCount(task.review_count);
+        setState((prev) => ({
+          ...prev,
+          mode: "voting",
+          task,
+          selectedIds: [],
+          allBad: false,
+          rationale: "",
+          flaggedIds: [],
+        }));
+      } catch (error) {
+        // Checked first: a timed-out request from before the referee left
+        // must not reset the give-up clock of the wait they started since.
+        if (stale()) return;
+        const timedOut = controller.signal.aborted;
+        if (timedOut) pendingSince.current = null;
+        setState((prev) => ({
+          ...prev,
+          mode: "error",
+          error: timedOut
+            ? "The server did not answer in time. Please try again in a few minutes."
+            : error instanceof Error
+              ? error.message
+              : "An error occurred",
+        }));
+      } finally {
+        window.clearTimeout(deadline);
+      }
+    },
+    [captchaToken, backToCaptcha],
+  );
 
   useEffect(() => {
     fetchNextTaskRef.current = fetchNextTask;
@@ -1457,12 +1695,12 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
 
   const submitVote = useCallback(async () => {
     if (!state.task) return;
-    // A tie goes out in display order, its first draft standing as the pick.
-    const tied = state.tieMode
-      ? state.task.candidates.filter((c) => state.tiedIds.includes(c.id)).map((c) => c.id)
-      : [];
-    const chosenId = state.tieMode ? tied[0] : state.selectedCandidate?.id;
-    if (!chosenId || (state.tieMode && tied.length < 2)) return;
+    const selected = state.task.candidates
+      .filter((candidate) => state.selectedIds.includes(candidate.id))
+      .map((candidate) => candidate.id);
+    const chosenId = state.allBad ? undefined : selected[0];
+    if (!state.allBad && !chosenId) return;
+    const tied = !state.allBad && selected.length > 1 ? selected : [];
     const fouls = state.flaggedIds.length;
 
     setState((prev) => ({ ...prev, mode: "loading" }));
@@ -1477,10 +1715,12 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
         credentials: "include",
         body: JSON.stringify({
           task_id: state.task.task_id,
-          chosen_candidate_id: chosenId,
+          ...(chosenId ? { chosen_candidate_id: chosenId } : {}),
           presented_candidate_ids: state.task.candidates.map((c) => c.id),
           flagged_candidate_ids: state.flaggedIds,
           tied_candidate_ids: tied,
+          all_bad: state.allBad,
+          rationale: state.rationale,
         }),
       });
 
@@ -1494,11 +1734,18 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
         throw new Error(errorData.error || "Failed to submit vote");
       }
 
-      const next = { rounds: scoreboard.rounds + 1, fouls: scoreboard.fouls + fouls };
+      const result = (await response.json()) as { review_count?: number };
+      if (result.review_count !== undefined)
+        setReviewCount(result.review_count);
+      const next = {
+        rounds: scoreboard.rounds + 1,
+        fouls: scoreboard.fouls + fouls,
+      };
       writeScoreboard(next);
       setScoreboard(next);
       setLastRoundFouls(fouls);
       setLastRoundTie(tied.length > 0);
+      setLastRoundAllBad(state.allBad);
       setState((prev) => ({ ...prev, mode: "confirmation" }));
     } catch (error) {
       setState((prev) => ({
@@ -1509,51 +1756,30 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
     }
   }, [
     state.task,
-    state.selectedCandidate,
+    state.selectedIds,
+    state.allBad,
+    state.rationale,
     state.flaggedIds,
-    state.tieMode,
-    state.tiedIds,
     scoreboard,
-  , backToCaptcha]);
+    backToCaptcha,
+  ]);
 
   const handleSelectCandidate = useCallback((candidate: ChooserCandidate) => {
-    // A flagged draft cannot be picked (or tied): the voter clears the flag
-    // first. Silently dropping the flag on a click (a stray one, say, after
-    // highlighting text) would turn a foul into the winner.
+    // A flagged draft cannot win; clear its foul before selecting it.
     setState((prev) => {
       if (prev.flaggedIds.includes(candidate.id)) return prev;
-      if (prev.tieMode) {
-        // In a tie, a click adds the draft to the tie or takes it out.
-        return {
-          ...prev,
-          tiedIds: prev.tiedIds.includes(candidate.id)
-            ? prev.tiedIds.filter((id) => id !== candidate.id)
-            : [...prev.tiedIds, candidate.id],
-        };
-      }
-      return { ...prev, selectedCandidate: candidate };
+      return {
+        ...prev,
+        allBad: false,
+        selectedIds: prev.selectedIds.includes(candidate.id)
+          ? prev.selectedIds.filter((id) => id !== candidate.id)
+          : [...prev.selectedIds, candidate.id],
+      };
     });
   }, []);
 
-  const handleToggleTieMode = useCallback(() => {
-    setState((prev) => {
-      if (!prev.tieMode) {
-        // The current pick starts the tie.
-        return {
-          ...prev,
-          tieMode: true,
-          tiedIds: prev.selectedCandidate ? [prev.selectedCandidate.id] : [],
-        };
-      }
-      // Back to one pick: the first tied draft on the page, if any.
-      const first = prev.task?.candidates.find((c) => prev.tiedIds.includes(c.id)) ?? null;
-      return {
-        ...prev,
-        tieMode: false,
-        tiedIds: [],
-        selectedCandidate: first ?? prev.selectedCandidate,
-      };
-    });
+  const handleToggleAllBad = useCallback(() => {
+    setState((prev) => ({ ...prev, allBad: !prev.allBad, selectedIds: [] }));
   }, []);
 
   const handleToggleFlag = useCallback((candidate: ChooserCandidate) => {
@@ -1564,12 +1790,9 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
         flaggedIds: flagged
           ? prev.flaggedIds.filter((id) => id !== candidate.id)
           : [...prev.flaggedIds, candidate.id],
-        // Flagging the current pick un-picks it, and takes it out of a tie.
-        selectedCandidate:
-          !flagged && prev.selectedCandidate?.id === candidate.id
-            ? null
-            : prev.selectedCandidate,
-        tiedIds: flagged ? prev.tiedIds : prev.tiedIds.filter((id) => id !== candidate.id),
+        selectedIds: flagged
+          ? prev.selectedIds
+          : prev.selectedIds.filter((id) => id !== candidate.id),
       };
     });
   }, []);
@@ -1623,10 +1846,10 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
     setState({
       mode: "selection",
       task: null,
-      selectedCandidate: null,
+      selectedIds: [],
+      allBad: false,
+      rationale: "",
       flaggedIds: [],
-      tieMode: false,
-      tiedIds: [],
       error: null,
       taskType: null,
     });
@@ -1646,6 +1869,13 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
     writePreference(next);
   }, []);
 
+  const choosePracticeArea = useCallback((next: string | null) => {
+    const value = next ?? "";
+    practiceAreaRef.current = value;
+    setPracticeArea(value);
+    writePracticeArea(value);
+  }, []);
+
   // The answer to the question after the first round, and on to that round.
   const answerPreference = useCallback(
     (next: CasePreference) => {
@@ -1655,20 +1885,26 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
     [choosePreference, doAnother],
   );
 
-  // The vote can be cast: one pick, or a tie of two or more.
-  const canVote = state.tieMode ? state.tiedIds.length >= 2 : Boolean(state.selectedCandidate);
+  const canVote = state.allBad || state.selectedIds.length > 0;
 
-  // Keyboard: A to F pick a draft (or, in a tie, add or remove it), Enter
-  // casts the vote.
+  // Keyboard: A to F toggle a top choice, Enter casts the review.
   useEffect(() => {
     // Not on the single-draft screen either: it offers no vote.
-    if (state.mode !== "voting" || !state.task || state.task.candidates.length < 2) return;
+    if (
+      state.mode !== "voting" ||
+      !state.task ||
+      state.task.candidates.length < 2
+    )
+      return;
     const task = state.task;
     const handler = (event: KeyboardEvent) => {
       // Ctrl+C to copy a passage must not also pick Draft C.
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
-      if (target && ["INPUT", "TEXTAREA", "SELECT", "A", "BUTTON"].includes(target.tagName)) {
+      if (
+        target &&
+        ["INPUT", "TEXTAREA", "SELECT", "A", "BUTTON"].includes(target.tagName)
+      ) {
         return;
       }
       const index = LABELS.indexOf(event.key.toUpperCase());
@@ -1699,41 +1935,88 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
             Appeal Arena
           </Title>
           <Text size="lg" ta="center" c="dimmed" style={{ maxWidth: "640px" }}>
-            Insurance said no. A few AI drafts said &ldquo;we&rsquo;ll see about that.&rdquo;
-            You are the referee: read the case, read the drafts, pick the one that would
-            actually win, and call out any that make things up.
+            Insurance said no. A few AI drafts said &ldquo;we&rsquo;ll see about
+            that.&rdquo; You are the referee: read the case, read the drafts,
+            pick the one that would actually win, and call out any that make
+            things up.
           </Text>
+          {reviewCount !== null && (
+            <Badge size="lg" variant="light" color="blue">
+              Your account: {plural(reviewCount, "review")}
+            </Badge>
+          )}
           {scoreboard.rounds > 0 && (
             <Text size="sm" c="dimmed">
-              Your record: {plural(scoreboard.rounds, "round")} judged &middot;{" "}
-              {plural(scoreboard.fouls, "foul")} called
+              In this browser: {plural(scoreboard.rounds, "round")} judged
+              &middot; {plural(scoreboard.fouls, "foul")} called
             </Text>
           )}
-          {preference && <PreferencePicker value={preference} onChange={choosePreference} />}
+          {preference && (
+            <PreferencePicker value={preference} onChange={choosePreference} />
+          )}
           <Paper
             shadow="sm"
             p="md"
             radius="md"
             withBorder
-            style={{ backgroundColor: "#fff3cd", borderColor: "#ffc107", maxWidth: "760px" }}
+            style={{ width: "100%", maxWidth: "760px" }}
+          >
+            <Select
+              label="Which area of practice do you know best? (optional)"
+              description="Choose the cases you can judge most confidently. General cases are always available."
+              placeholder="No preference — show me general cases"
+              data={PRACTICE_AREA_OPTIONS}
+              value={practiceArea || null}
+              onChange={choosePracticeArea}
+              searchable
+              clearable
+              data-testid="arena-practice-area"
+            />
+            {practiceArea && (
+              <Text size="xs" c="dimmed" mt="xs">
+                General cases can start right away. We will prepare{" "}
+                {practiceAreaLabel(practiceArea)} cases in the background and
+                prioritize them when they are ready.
+              </Text>
+            )}
+          </Paper>
+          <Paper
+            shadow="sm"
+            p="md"
+            radius="md"
+            withBorder
+            style={{
+              backgroundColor: "#fff3cd",
+              borderColor: "#ffc107",
+              maxWidth: "760px",
+            }}
           >
             <Text size="sm" ta="center" fw={500}>
-              ⚠️ Every case here is synthetic/anonymized for training purposes only: an
-              invented scenario about a real condition and treatment. No real patient
-              data or actual insurance cases are used in this interface.
+              ⚠️ Every case here is synthetic/anonymized for training purposes
+              only: an invented scenario about a real condition and treatment.
+              No real patient data or actual insurance cases are used in this
+              interface.
             </Text>
           </Paper>
           <HouseRules />
-          <Paper shadow="sm" p="md" radius="md" withBorder style={{ width: "100%", maxWidth: "760px" }}>
+          <Paper
+            shadow="sm"
+            p="md"
+            radius="md"
+            withBorder
+            style={{ width: "100%", maxWidth: "760px" }}
+          >
             <Checkbox
               size="sm"
               aria-label="Agree to Terms of Service"
               checked={hasAcceptedTos}
-              onChange={(event) => setHasAcceptedTos(event.currentTarget.checked)}
+              onChange={(event) =>
+                setHasAcceptedTos(event.currentTarget.checked)
+              }
               label={
                 <Text size="sm">
-                  I agree to the Terms of Service and understand the Arena exists to
-                  improve AI response quality.
+                  I agree to the Terms of Service and understand the Arena
+                  exists to improve AI response quality.
                 </Text>
               }
             />
@@ -1744,7 +2027,13 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
             </Text>
           </Paper>
           {captchaNeeded && (
-            <Paper shadow="sm" p="md" radius="md" withBorder style={{ width: "100%", maxWidth: "760px" }}>
+            <Paper
+              shadow="sm"
+              p="md"
+              radius="md"
+              withBorder
+              style={{ width: "100%", maxWidth: "760px" }}
+            >
               <Text size="sm" mb="xs">
                 One more thing: show us you are a person, not a script.
               </Text>
@@ -1759,7 +2048,12 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
                 }}
               />
               {captchaNotice && (
-                <Text size="sm" c="red" mt="xs" data-testid="arena-captcha-notice">
+                <Text
+                  size="sm"
+                  c="red"
+                  mt="xs"
+                  data-testid="arena-captcha-notice"
+                >
                   {captchaNotice}
                 </Text>
               )}
@@ -1772,7 +2066,8 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
           )}
           {hasAcceptedTos && !captchaReady && (
             <Text size="sm" c="orange" ta="center">
-              Please tick the &ldquo;I&rsquo;m not a robot&rdquo; box before stepping into the Arena.
+              Please tick the &ldquo;I&rsquo;m not a robot&rdquo; box before
+              stepping into the Arena.
             </Text>
           )}
           <Group gap="lg" mt="md">
@@ -1797,7 +2092,8 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
           </Group>
           <Standings rankings={rankings} />
           <Text size="sm" c="dimmed" ta="center">
-            Thanks for helping us choose better responses and fight bad insurance decisions 💪
+            Thanks for helping us choose better responses and fight bad
+            insurance decisions 💪
           </Text>
         </Stack>
       </Container>
@@ -1826,11 +2122,16 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
             Writing a new case
           </Title>
           <Text size="lg" ta="center" c="dimmed" style={{ maxWidth: "560px" }}>
-            Every case here has been judged, so a few AI drafts are answering a fresh
-            denial right now. This usually takes a few minutes, and this page will update
-            by itself.
+            Every case here has been judged, so a few AI drafts are answering a
+            fresh denial right now. This usually takes a few minutes, and this
+            page will update by itself.
           </Text>
-          <Button size="lg" radius="md" variant="outline" onClick={resetToSelection}>
+          <Button
+            size="lg"
+            radius="md"
+            variant="outline"
+            onClick={resetToSelection}
+          >
             Leave the Arena
           </Button>
         </Stack>
@@ -1846,7 +2147,12 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
           <Alert color="red" title="Time out" radius="md">
             {state.error}
           </Alert>
-          <Button size="lg" radius="md" onClick={resetToSelection} style={primaryButton(true)}>
+          <Button
+            size="lg"
+            radius="md"
+            onClick={resetToSelection}
+            style={primaryButton(true)}
+          >
             Back to the Arena
           </Button>
         </Stack>
@@ -1863,22 +2169,53 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
             ✓ Vote counted!
           </Title>
           <Text size="lg" ta="center">
-            Round {scoreboard.rounds} {lastRoundTie ? "called a tie" : "done"}
-            {lastRoundFouls > 0 ? ` with ${plural(lastRoundFouls, "foul")} called` : ""}.
-            Thank you for refereeing.
+            Round {scoreboard.rounds}{" "}
+            {lastRoundAllBad
+              ? "found no usable drafts"
+              : lastRoundTie
+                ? "called a tie"
+                : "done"}
+            {lastRoundFouls > 0
+              ? ` with ${plural(lastRoundFouls, "foul")} called`
+              : ""}
+            . Thank you for refereeing.
           </Text>
           <Text size="sm" c="dimmed" ta="center">
-            Your record: {plural(scoreboard.rounds, "round")} judged &middot;{" "}
-            {plural(scoreboard.fouls, "foul")} called
+            In this browser: {plural(scoreboard.rounds, "round")} judged
+            &middot; {plural(scoreboard.fouls, "foul")} called
+            {reviewCount !== null
+              ? ` · ${plural(reviewCount, "review")} across your account`
+              : ""}
           </Text>
+          <Alert
+            color="lime"
+            variant="light"
+            radius="md"
+            data-testid="arena-encouragement"
+          >
+            {encouragementFor(scoreboard.rounds)}
+          </Alert>
           {preference ? (
             <>
-              <PreferencePicker value={preference} onChange={choosePreference} />
+              <PreferencePicker
+                value={preference}
+                onChange={choosePreference}
+              />
               <Group gap="lg" mt="md">
-                <Button size="lg" radius="md" onClick={doAnother} style={primaryButton(true)}>
+                <Button
+                  size="lg"
+                  radius="md"
+                  onClick={doAnother}
+                  style={primaryButton(true)}
+                >
                   Next round
                 </Button>
-                <Button size="lg" radius="md" variant="outline" onClick={resetToSelection}>
+                <Button
+                  size="lg"
+                  radius="md"
+                  variant="outline"
+                  onClick={resetToSelection}
+                >
                   Switch arena
                 </Button>
               </Group>
@@ -1889,14 +2226,20 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
                 onChoose={answerPreference}
                 buttonStyle={primaryButton(true)}
               />
-              <Button size="md" radius="md" variant="outline" onClick={resetToSelection}>
+              <Button
+                size="md"
+                radius="md"
+                variant="outline"
+                onClick={resetToSelection}
+              >
                 Switch arena
               </Button>
             </>
           )}
           <Standings rankings={rankings} />
           <Text size="sm" c="dimmed" ta="center">
-            Thanks for helping us choose better responses and fight bad insurance decisions 💪
+            Thanks for helping us choose better responses and fight bad
+            insurance decisions 💪
           </Text>
         </Stack>
       </Container>
@@ -1907,7 +2250,9 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
   if (state.mode === "voting" && state.task) {
     const hasEnoughCandidates = state.task.candidates.length >= 2;
     const isAppeal = state.task.task_type !== "chat";
-    const caseEvidence = (state.task.task_context.evidence ?? []).filter((e) => e.pmid);
+    const caseEvidence = (state.task.task_context.evidence ?? []).filter(
+      (e) => e.pmid,
+    );
 
     // If only one candidate, show a message and skip options
     if (!hasEnoughCandidates) {
@@ -1917,9 +2262,13 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
             <Title order={2} ta="center">
               Not enough contenders
             </Title>
-            <Alert color="yellow" title="Only one draft in this case" radius="md">
-              There is nothing to compare here. We will skip this one and find you another
-              case.
+            <Alert
+              color="yellow"
+              title="Only one draft in this case"
+              radius="md"
+            >
+              There is nothing to compare here. We will skip this one and find
+              you another case.
             </Alert>
             <Group gap="lg" mt="xl">
               <Button
@@ -1931,7 +2280,12 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
               >
                 Find another case
               </Button>
-              <Button size="lg" radius="md" variant="outline" onClick={resetToSelection}>
+              <Button
+                size="lg"
+                radius="md"
+                variant="outline"
+                onClick={resetToSelection}
+              >
                 Back
               </Button>
             </Group>
@@ -1942,18 +2296,16 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
 
     const labelOf = (id: string) =>
       LABELS[state.task!.candidates.findIndex((c) => c.id === id)] ?? "?";
-    const selectedLabel = state.selectedCandidate ? labelOf(state.selectedCandidate.id) : null;
-    const tiedLabels = state.task.candidates
-      .filter((c) => state.tiedIds.includes(c.id))
-      .map((c) => labelOf(c.id));
-    let castLabel: string;
-    if (state.tieMode) {
-      castLabel =
-        tiedLabels.length >= 2
-          ? `Cast a tie: Drafts ${tiedLabels.join(" & ")}`
-          : "Mark two or more drafts as tied";
-    } else {
-      castLabel = selectedLabel ? `Cast vote for Draft ${selectedLabel}` : "Pick a draft to vote";
+    const selectedLabels = state.task.candidates
+      .filter((candidate) => state.selectedIds.includes(candidate.id))
+      .map((candidate) => labelOf(candidate.id));
+    let castLabel = "Select a draft to vote";
+    if (state.allBad) {
+      castLabel = "Submit: none are usable";
+    } else if (selectedLabels.length > 1) {
+      castLabel = `Cast tie: Drafts ${selectedLabels.join(" & ")}`;
+    } else if (selectedLabels.length === 1) {
+      castLabel = `Cast vote for Draft ${selectedLabels[0]}`;
     }
 
     return (
@@ -1963,21 +2315,36 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
             <Badge size="lg" variant="filled" color="lime">
               Round {scoreboard.rounds + 1}
             </Badge>
+            {reviewCount !== null && (
+              <Badge size="lg" variant="light" color="blue">
+                {plural(reviewCount, "review")} on your account
+              </Badge>
+            )}
+            {practiceAreaLabel(state.task.task_context.practice_area) && (
+              <Badge size="lg" variant="light" color="teal">
+                {practiceAreaLabel(state.task.task_context.practice_area)} case
+              </Badge>
+            )}
             {preference === "straightforward" || preference === "complex" ? (
               <Badge size="lg" variant="light" color="gray">
-                {preference === "complex" ? "Complex cases" : "Straightforward cases"}
+                {preference === "complex"
+                  ? "Complex cases"
+                  : "Straightforward cases"}
               </Badge>
             ) : null}
             <Title order={2} ta="center">
-              {isAppeal ? "Which appeal letter wins?" : "Which chat reply wins?"}
+              {isAppeal
+                ? "Which appeal letter wins?"
+                : "Which chat reply wins?"}
             </Title>
           </Group>
 
           <Text size="xs" ta="center" c="dimmed">
-            📋 Synthetic case for training purposes only. Drafts are shown blind, in random order.
+            📋 Synthetic case for training purposes only. Drafts are shown
+            blind, in random order.
           </Text>
 
-          <HouseRules compact />
+          <HouseRules compact isAppeal={isAppeal} />
 
           {/* The case */}
           <Paper shadow="sm" p="md" radius="md" withBorder>
@@ -1991,6 +2358,11 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
             )}
           </Paper>
 
+          <Text size="sm" ta="center" fw={500}>
+            Select every draft you would be happy to send. One pick wins;
+            multiple picks are equally good and split the vote.
+          </Text>
+
           {/* The contenders */}
           <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
             {state.task.candidates.map((candidate, index) => (
@@ -1998,12 +2370,8 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
                 key={candidate.id}
                 candidate={candidate}
                 label={LABELS[index] || String(index + 1)}
-                isSelected={
-                  state.tieMode
-                    ? state.tiedIds.includes(candidate.id)
-                    : state.selectedCandidate?.id === candidate.id
-                }
-                tieMode={state.tieMode}
+                isSelected={state.selectedIds.includes(candidate.id)}
+                showTieLabel={selectedLabels.length > 1}
                 isFlagged={state.flaggedIds.includes(candidate.id)}
                 evidence={caseEvidence}
                 checkFacts={isAppeal}
@@ -2013,7 +2381,40 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
             ))}
           </SimpleGrid>
 
-          {/* Cast, skip, leave */}
+          <Paper shadow="xs" p="md" radius="md" withBorder>
+            <Textarea
+              label="Why? (optional)"
+              description="One sentence helps us understand your call. Please do not include personal information."
+              placeholder={
+                state.allBad
+                  ? "For example: Every draft invents details that are not in the case."
+                  : "For example: Draft B is specific, persuasive, and sticks to the evidence."
+              }
+              value={state.rationale}
+              maxLength={500}
+              autosize
+              minRows={2}
+              maxRows={4}
+              onChange={(event) =>
+                setState((prev) => ({
+                  ...prev,
+                  rationale: event.currentTarget.value,
+                }))
+              }
+            />
+            <Text size="xs" c="dimmed" ta="right" mt={4}>
+              {state.rationale.length}/500
+            </Text>
+            {state.allBad && (
+              <Alert color="orange" title="No winner selected" mt="sm">
+                This review will record that you would not use any of these
+                drafts. That is different from skipping: every draft gets no
+                winning credit.
+              </Alert>
+            )}
+          </Paper>
+
+          {/* Cast, reject all, skip, leave */}
           <Group justify="center" mt="md">
             <Button
               size="lg"
@@ -2027,25 +2428,38 @@ const ChooserInterface: React.FC<{ captchaSiteKey: string; captchaAlreadyPassed:
             <Button
               size="lg"
               radius="md"
-              variant={state.tieMode ? "filled" : "light"}
-              color="grape"
-              aria-pressed={state.tieMode}
-              onClick={handleToggleTieMode}
+              variant={state.allBad ? "filled" : "light"}
+              color="red"
+              aria-pressed={state.allBad}
+              onClick={handleToggleAllBad}
             >
-              {state.tieMode ? "No tie: pick one" : "It's a tie"}
+              These are all bad — I wouldn&apos;t use any of them
             </Button>
-            <Button size="lg" radius="md" variant="light" onClick={skipTask} loading={isSkipping}>
+            <Button
+              size="lg"
+              radius="md"
+              variant="light"
+              onClick={skipTask}
+              loading={isSkipping}
+            >
               Skip this round
             </Button>
-            <Button size="lg" radius="md" variant="outline" onClick={resetToSelection}>
+            <Button
+              size="lg"
+              radius="md"
+              variant="outline"
+              onClick={resetToSelection}
+            >
               Leave the Arena
             </Button>
           </Group>
 
           <Text size="sm" c="dimmed" ta="center">
-            {state.tieMode
-              ? "Click each draft that is tied for best (or press its letters), then cast the tie. The vote is split between them. A flagged draft cannot be part of a tie."
-              : "Click a draft (or press its letter) to pick it, flag any that make things up, then cast your vote. A flagged draft cannot be picked until you clear the flag. Two or more equally good? Call it a tie. Skip if you are unsure."}
+            {state.allBad
+              ? "Choose a draft instead if one is usable, or submit the no-winner review. You can still flag fabrication."
+              : selectedLabels.length > 1
+                ? "The selected drafts are tied for best, and each gets an equal share of your vote. Click one again to remove it."
+                : "Click drafts (or press their letters) to toggle your top choices. Flag any that make things up, or skip if you are unsure."}
           </Text>
         </Stack>
       </Container>
@@ -2067,7 +2481,11 @@ const App: React.FC = () => {
             padding: "20px 0",
           }}
         >
-          <ChooserInterface captchaSiteKey={captchaSiteKey} captchaAlreadyPassed={captchaAlreadyPassed} />
+          <ChooserInterface
+            captchaSiteKey={captchaSiteKey}
+            captchaAlreadyPassed={captchaAlreadyPassed}
+            initialReviewCount={initialReviewCount}
+          />
         </Box>
       </ErrorBoundary>
     </MantineProvider>
@@ -2078,6 +2496,10 @@ const App: React.FC = () => {
 const container = document.getElementById("chooser-root");
 const captchaSiteKey = container?.dataset.recaptchaSiteKey ?? "";
 const captchaAlreadyPassed = container?.dataset.captchaPassed === "1";
+const initialReviewCount =
+  container?.dataset.reviewCount === undefined
+    ? null
+    : Number(container.dataset.reviewCount);
 if (container) {
   const root = createRoot(container);
   root.render(<App />);

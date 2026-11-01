@@ -458,7 +458,7 @@ def de_identified_export(request):
 
 
 def generate_chooser_ranked_lines():
-    """Yield JSONL lines of highest-ranked candidate for each chooser task."""
+    """Yield task-level Arena preferences, including reviews with no winner."""
     tasks_with_votes = (
         ChooserTask.objects.filter(votes__isnull=False)
         .distinct()
@@ -466,41 +466,60 @@ def generate_chooser_ranked_lines():
     )
 
     # One pass over the votes (no N+1): each vote's point goes to its chosen
-    # candidate, or splits evenly between a tie's candidates
-    # (ChooserVote.shares); plus how often each candidate was tied for best
-    # and how often it was flagged as making things up.
+    # candidate, splits between a tie, or goes nowhere when every draft was
+    # rejected; flags and optional rationales travel with the totals.
     credit_by_task: dict[int, Counter] = {}
     ties_by_task: dict[int, Counter] = {}
     flags_by_task: dict[int, Counter] = {}
+    all_bad_by_task: Counter = Counter()
+    feedback_by_task: dict[int, list[dict[str, object]]] = {}
     votes_by_task: Counter = Counter()
-    for task_id, chosen_id, flagged_ids, tied_ids in ChooserVote.objects.filter(
-        task__in=tasks_with_votes
-    ).values_list(
-        "task_id", "chosen_candidate_id", "flagged_candidate_ids", "tied_candidate_ids"
+    for (
+        task_id,
+        chosen_id,
+        flagged_ids,
+        tied_ids,
+        all_bad,
+        rationale,
+    ) in ChooserVote.objects.filter(task__in=tasks_with_votes).values_list(
+        "task_id",
+        "chosen_candidate_id",
+        "flagged_candidate_ids",
+        "tied_candidate_ids",
+        "all_bad",
+        "rationale",
     ):
         votes_by_task[task_id] += 1
+        if all_bad:
+            all_bad_by_task[task_id] += 1
         shares = ChooserVote.shares(chosen_id, tied_ids)
         credit_by_task.setdefault(task_id, Counter()).update(shares)
         if len(shares) > 1:
             ties_by_task.setdefault(task_id, Counter()).update(shares.keys())
         if flagged_ids:
             flags_by_task.setdefault(task_id, Counter()).update(set(flagged_ids))
+        if rationale:
+            feedback_by_task.setdefault(task_id, []).append(
+                {
+                    "rationale": rationale,
+                    "all_bad": all_bad,
+                    "chosen_candidate_id": chosen_id,
+                    "tied_candidate_ids": tied_ids or [],
+                    "flagged_candidate_ids": flagged_ids or [],
+                }
+            )
 
     for task in tasks_with_votes:
-        task_credit = credit_by_task.get(task.id)
-        if not task_credit:
-            continue
-
+        task_credit = credit_by_task.get(task.id, Counter())
         candidates_by_id = {c.id: c for c in task.candidates.all()}
 
-        # The most-voted candidate; a dead heat goes to the lower index.
+        # The most-voted candidate; a dead heat goes to the lower index. An
+        # all-bad-only task has no highest-ranked candidate to name.
         ranked = sorted(
             (cid for cid in task_credit if cid in candidates_by_id),
             key=lambda cid: (-task_credit[cid], candidates_by_id[cid].candidate_index),
         )
-        if not ranked:
-            continue
-        chosen = candidates_by_id[ranked[0]]
+        chosen = candidates_by_id[ranked[0]] if ranked else None
 
         task_flags = flags_by_task.get(task.id, Counter())
         task_ties = ties_by_task.get(task.id, Counter())
@@ -533,16 +552,27 @@ def generate_chooser_ranked_lines():
             # Which case pipeline wrote it (chooser_tasks), so votes on one
             # version can be told from votes on another.
             "case_version": task.case_version,
-            "chosen_candidate": {
-                "id": chosen.id,
-                "candidate_index": chosen.candidate_index,
-                "kind": chosen.kind,
-                "model_name": chosen.model_name,
-                "synthesized": chosen.synthesized,
-                "content": chosen.content,
-            },
-            "vote_count": ChooserVote.rounded_credit(task_credit[chosen.id]),
+            "chosen_candidate": (
+                {
+                    "id": chosen.id,
+                    "candidate_index": chosen.candidate_index,
+                    "kind": chosen.kind,
+                    "model_name": chosen.model_name,
+                    "synthesized": chosen.synthesized,
+                    "content": chosen.content,
+                }
+                if chosen
+                else None
+            ),
+            "vote_count": (
+                ChooserVote.rounded_credit(task_credit[chosen.id]) if chosen else 0
+            ),
             "total_votes": votes_by_task[task.id],
+            "all_bad_count": all_bad_by_task.get(task.id, 0),
+            "review_feedback": feedback_by_task.get(task.id, []),
+            # Jev's and fhi-local's generation-time picks, for staff analysis
+            # only; the voter API never exposes this task metadata.
+            "scorer_picks": task.scoring_json,
             "all_candidates": all_candidates,
         }
         yield json.dumps(record, default=str) + "\n"

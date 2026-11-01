@@ -4693,20 +4693,22 @@ class ModelUsageDashboardView(generic.TemplateView):
         # "model", so equivalent providers of one model share a row.
         # Both chosen and presented derive from the same vote set (filtered
         # by ChooserVote.created_at), so a window's win rates compare like
-        # with like: every vote event contributes its chosen candidate once
-        # and each distinct presented candidate once. Candidate creation
-        # time is irrelevant — candidates are generated ahead of votes.
+        # with like: each distinct presented candidate counts once per vote,
+        # while an all-bad review contributes presentations but no winner.
+        # Candidate creation time is irrelevant — candidates are generated
+        # ahead of votes. Filter by task rather than the nullable pick so
+        # all-bad reviews stay in the denominator.
         # ``source`` limits the votes to tasks of that ChooserTask.source;
         # the public rankings pass "synthetic" so nothing built from a
         # person's case can reach them, whatever else the pool holds.
-        votes = ChooserVote.objects.filter(chosen_candidate__kind=kind)
+        task_type = {"appeal_letter": "appeal", "chat_response": "chat"}[kind]
+        votes = ChooserVote.objects.filter(task__task_type=task_type)
         if source is not None:
             votes = votes.filter(task__source=source)
         chosen_qs = _within(votes, since, until)
-        # Chosen: one vote's worth of credit per vote event, to its chosen
-        # candidate, or split evenly between the candidates of a tie
-        # (ChooserVote.shares), so a k-way tie gives each 1/k and every vote
-        # still adds up to one.
+        # Chosen: one vote's worth of credit per ordinary vote, to its chosen
+        # candidate or split evenly between a tie (ChooserVote.shares). An
+        # all-bad review adds presentations and no winning credit.
         chosen_credit: Counter = Counter()
 
         # Presented: walk votes' presented_candidate_ids JSON lists into a

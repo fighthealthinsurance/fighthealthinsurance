@@ -76,21 +76,53 @@ to the full page; without the JSON they show the link alone.
   plain ids would let a client learn a token's id by guessing), and the
   drafts are served in random order, so a vote is for the letter, not the
   brand.
-- **House rules.** Pick the draft you would send; a draft that invents a
-  study, a law, a test result, a date or a history that is not in the case is
-  a foul and should never win; call a tie when two or more are equally good;
-  skip if unsure.
-- **Ties.** "It's a tie" switches the page to marking two or more drafts as
-  tied for best. The vote carries them as `tied_candidate_ids` (in display
-  order, none flagged) with `chosen_candidate_id` set to the first of them,
-  so a tie vote still has a chosen candidate. Counting splits the vote
-  evenly between the tied drafts (`ChooserVote.shares`: half a win each for
-  a two-way tie), so every vote still adds up to one.
+- **Referee checklist.** Judge in order: truthful, responsive, useful, and
+  clear. For appeals, that means answering the insurer's actual reason with
+  case-specific reasons and a clear request; for chat, answering the person's
+  question with a safe, useful next step. Length and confidence are not quality
+  signals. "Makes things up" is only for fabricated facts, sources, or case
+  details, not weak writing. Citation chips, automated verdicts, and lookup
+  results are aids to verification, not verdicts to follow mechanically.
+  Reject all only when confident none is usable (not merely imperfect); skip
+  when unable to judge, which records a different outcome.
+- **Ties without a separate mode.** Every draft can be selected directly. One
+  selection is a winner; two or more are equally good winners. The vote
+  carries multiple selections as `tied_candidate_ids` (in display order, none
+  flagged) with `chosen_candidate_id` set to the first of them, so a tie vote
+  still has a chosen candidate. Counting splits the vote evenly between the
+  tied drafts (`ChooserVote.shares`: half a win each for a two-way tie).
+- **No usable drafts.** "These are all bad" submits `all_bad=true` with no
+  chosen candidate or tie. This is a completed review, not a skip: every
+  presented draft counts as shown but receives no winning credit. A database
+  constraint keeps no-winner reviews distinct from ordinary votes.
+- **Why (optional).** A one-sentence rationale of up to 500 characters can
+  accompany any outcome. It is stored on the vote and included only in the
+  staff export, never in the public rankings.
 - **A flag per draft** ("Makes things up"). Flags ride along with the vote as
   `flagged_candidate_ids`; a flagged draft cannot be the chosen one, and the
   server rejects a vote that tries.
-- A per-browser scoreboard (rounds judged, fouls called) in `localStorage`;
-  nothing about it is sent anywhere.
+- A per-browser scoreboard (rounds judged, fouls called) in `localStorage`,
+  with encouragement at review milestones; nothing about it is sent anywhere.
+  Signed-in judges additionally see their account-wide number of completed
+  reviews across both Arena types, on the landing, voting and confirmation
+  screens. The page seeds that count and the task and vote APIs refresh it.
+
+## Evaluator accounts
+
+Staff can use **Add Evaluators Account** on the staff dashboard
+(`/timbit/help/evaluators/add`) to create an ordinary Django user for repeated
+judging. The account is active but has `is_staff=False`,
+`is_superuser=False`, no individual permissions, and membership only in the
+permissionless `evaluators` group. It therefore cannot open the staff
+dashboard, other staff views, or Django admin. Anonymous and non-staff users
+cannot use the creation action.
+
+The unlinked `/evaluators/login/` page is marked `noindex` and accepts only
+active members of that group who are not staff or superusers; other accounts
+get the same generic invalid-login response as bad credentials. A successful
+login goes straight to `/chooser/`, where the account's review count includes
+all of its previous votes. The login grants no extra privileges and does not
+change the Arena's existing captcha requirement.
 
 ## The door: "I'm not a robot"
 
@@ -198,6 +230,18 @@ Models".
    candidate races all of them (`AppealGenerator.synthesize_appeals`); a
    chat candidate takes the strongest, ours before a hosted one. With none
    available, the task skips synthesis.
+7. **Backend-only judge picks.** Once at least two drafts are on file,
+   `chooser_scoring.score_task_candidates` asks Jev and the strongest healthy
+   internal model (fhi-local) which candidate each scores highest. Appeals use
+   the existing letter-quality rubric; chats use the Jev reply-ranking rubric,
+   in balanced batches so a fifth, synthesized candidate is included too.
+   fhi-local sees unlabelled candidates and returns bounded JSON scores. Each
+   judge's winner, score and scorer/rubric goes into the task's
+   `scoring_json`, not its case context or candidate metadata, so voters get
+   no hint about authorship or the judges' preferences. Scoring is
+   best-effort and never decides whether a task goes READY; either judge may
+   independently be absent. `CHOOSER_SCORE_CANDIDATES` controls it (off in
+   tests, which mock and enable it per test).
 
 Each step logs one INFO line saying what it found and how long it took
 (the scenario and its writer, the evidence and whether it was cached or
@@ -216,6 +260,29 @@ fifteen minutes. A case is a round of model calls, so a few minutes is
 normal; before this the page read the empty pool as "try again in a few
 minutes" and sent the visitor away from a case that was one poll from
 READY.
+
+### Practice-area preference
+
+Before starting, a judge may optionally name an area of practice they know
+from a fixed specialty list. The choice is kept in this browser and sent as
+`?practice_area=<slug>` on next-task requests; it is not stored on the vote.
+The endpoint serves a ready matching case first, but **never waits for one**:
+when no match is ready it serves the usual general case and asks for a
+specialty case in the background. A later round prefers the matching case
+once it is ready, and the voting screen labels it with the specialty. An
+unknown slug is ignored, so it cannot inject prompt text or trigger
+generation.
+
+`prefill_practice_area_if_needed` generates only when no fresh, unvoted
+matching task exists. It uses the same per-type generation claim as every
+other writer and a per-type-and-area throttle, so specialty requests cannot
+overlap the general refill or multiply unchecked. Targeted appeal cases ask
+the scenario writer to invent a treatment-and-condition pair within the
+specialty rather than taking a possibly unrelated general-rankings seed;
+targeted chat conversations and their single-question fallback get the same
+instruction. The generated case stores the validated slug in `context_json`
+for later selection and export. As with every generated case, relevance is
+best-effort; the general pool remains available throughout.
 
 ### What the voter is served (`annotate_evidence_verdicts`)
 
@@ -338,7 +405,7 @@ LunaRoute's two models, `lunaroute/deepseek-4.1-flash,lunaroute/glm-5.3`
 
 ## Keeping the pool stocked
 
-Three things write tasks, all under one generation claim per type
+Four things write tasks, all under one generation claim per type
 (`_claim_generation`, a row in `ModelHealthAlertState`), so no two overlap:
 
 - **Page prefill.** Loading the arena, or asking for a case when none is
@@ -347,6 +414,10 @@ Three things write tasks, all under one generation claim per type
   pool is empty, and of the type the session used up (`prefill_if_needed`).
   Throttled per process to one per `CHOOSER_PREFILL_THROTTLE_SECONDS`, with
   page loads and each used-up type throttled separately.
+- **Practice-area prefill.** A next-task request with a specialty but no
+  available match sets off `trigger_practice_area_prefill_async`. It writes
+  one matching task if no fresh one exists, throttled separately by type and
+  area, while the request proceeds with a general case.
 - **Refill actor.** `ChooserRefillActor` (launched by the deploy's
   actor-launch job, reconciled by a cron) checks every five minutes and
   writes `CHOOSER_GENERATION_BATCH_SIZE` tasks of a type whose READY pool,
@@ -446,6 +517,7 @@ environment variables of the same name.
 | `CHOOSER_PUBMED_SEARCH_TIMEOUT` | `20.0` | Seconds a live search may take |
 | `CHOOSER_SIMULATED_QA` | `True` (`False` in tests) | Give appeal cases a simulated interview |
 | `CHOOSER_JUDGE_EVIDENCE` | `True` (`False` in tests) | Judge a case's evidence as it is built: Jev when `TYPESAFE_RESEARCH_JUDGING_ENABLED` is on, our own model for whatever Jev does not judge. Off also hides our own model's stored verdicts |
+| `CHOOSER_SCORE_CANDIDATES` | `True` (`False` in tests) | Ask Jev and fhi-local for their highest-scoring candidate during generation and store the picks in backend-only task metadata |
 | `CHOOSER_EVIDENCE_JUDGING_TIMEOUT` | `60` | Seconds a case waits for those verdicts, Jev's and our own model's together |
 | `CHOOSER_MAX_QUESTIONS` | `4` | Questions the simulated patient is asked |
 | `CHOOSER_QA_TIMEOUT` | `60` | Seconds each question generator may take |
@@ -473,6 +545,14 @@ environment variables of the same name.
 `charts:chooser_ranked_export` (staff only) carries each candidate's
 `votes` (ties split), `tie_count` and `flag_count`, so the preference data,
 the ties and the fabrication flags travel together. `vote_count` is the
-winning candidate's `votes` and `total_votes` the number of votes cast; the
-case (summaries and `qa_pairs` included) rides along in `context`, and its
+winning candidate's `votes` and `total_votes` the number of reviews cast.
+`all_bad_count` records no-winner reviews; when they are a task's only
+reviews, `chosen_candidate` is null and `vote_count` is zero rather than the
+task disappearing from the export. Non-empty rationales are in
+`review_feedback` with their outcome and candidate references, but no user,
+session or address identifier. Generation-time Jev and fhi-local picks are in
+`scorer_picks`, keyed `jev` and `fhi_local`, each with the winning candidate's
+id, index and model name, its score, and the scorer/rubric. These stay on the
+task's backend-only `scoring_json`, never in the case context or voter API.
+The case (summaries and `qa_pairs` included) rides along in `context`, and its
 `complexity` (1 to 5, or null when unscored) beside it.
