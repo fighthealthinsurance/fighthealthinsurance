@@ -77,6 +77,7 @@ CHAT_BACKEND_PROVIDERS = {
     "RemoteAnthropic": "Anthropic",
     "RemoteAzureClaude": "Microsoft Azure",
     "RemoteAzureOpenAI": "Microsoft Azure",
+    "RemoteOpenAIDirect": "OpenAI",
 }
 # TypeSafe checks chat replies when the chat quality checks are on. It scores
 # replies rather than writing them, so it is not a chat backend.

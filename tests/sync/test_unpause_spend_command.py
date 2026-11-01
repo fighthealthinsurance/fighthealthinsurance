@@ -60,7 +60,7 @@ class UnpauseSpendCommandTest(TestCase):
 
     def test_the_command_rejects_an_unknown_provider(self):
         with self.assertRaises(CommandError):
-            self._run("openai")
+            self._run("not-a-provider")
 
     def test_the_help_lists_every_provider(self):
         self.assertTrue(all(p in Command.help for p in spend.PROVIDERS))

@@ -182,6 +182,7 @@ such as `sonar` are not listed in that line.
 | Azure OpenAI (GPT) | `RemoteAzureOpenAI` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` | `azure-openai/` |
 | Azure AI Foundry (Claude) | `RemoteAzureClaude` | `AZURE_ANTHROPIC_API_KEY`, `AZURE_ANTHROPIC_ENDPOINT` | `azure-anthropic/` |
 | Anthropic (direct) | `RemoteAnthropic` | `ANTHROPIC_API_KEY` | `anthropic/` |
+| OpenAI (direct) | `RemoteOpenAIDirect` | `OPENAI_DIRECT_API_KEY` | `openai/` |
 | DeepInfra | `DeepInfra` | `DEEPINFRA_API` | the model id |
 | Perplexity (citations only) | `RemotePerplexity` | `PERPLEXITY_API` | `sonar` |
 | LunaRoute (Appeal Arena only) | `LunaRoute` | `LUNA_ROUTE_KEY` | `lunaroute/` |
@@ -201,9 +202,22 @@ token found` warning; without `LUNA_ROUTE_KEY` it logs `Skipping chat model
 <model id>: Exception` for each LunaRoute model. Either is expected, not a
 fault.
 
+**OpenAI (direct).** `RemoteOpenAIDirect` calls OpenAI's own API at
+`https://api.openai.com/v1` with `OPENAI_DIRECT_API_KEY` (a separate variable
+from `OPENAI_API_KEY`, which the deployment uses for something else). It
+registers `openai/gpt-5.5` by default; `OPENAI_DIRECT_MODELS` replaces the
+list (comma-separated model ids, same rules as `AZURE_OPENAI_MODELS`). It is
+billed per token, so it ranks below every sponsored model: `gpt-5.5` is in the
+`premium` tier with the highest proxy cost in that tier, so the default
+fan-out (`MLRouter.best_external_models`, three models) takes both `frontier`
+models and both Opus models first, and reaches it only when fewer than three
+of those are configured and available. It still ranks above DeepInfra. With
+no key set nothing registers.
+
 **Fallback keys.** Every key above except LunaRoute's can be paired with a
 second key for the same provider, set as `SECONDARY_<name>` (`SECONDARY_ANTHROPIC_API_KEY`,
-`SECONDARY_DEEPINFRA_API`, `SECONDARY_AZURE_OPENAI_API_KEY`, and so on). The
+`SECONDARY_DEEPINFRA_API`, `SECONDARY_AZURE_OPENAI_API_KEY`,
+`SECONDARY_OPENAI_DIRECT_API_KEY`, and so on). The
 primary key is sent until the provider refuses it: for a rate limit (HTTP
 429), for credit or quota that ran out, or as a revoked key or disabled
 account (HTTP 401/403). That request is then sent again with the fallback key

@@ -6908,15 +6908,32 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
     # overrides this since Azure OpenAI and Azure AI Foundry use different hosts.
     ENDPOINT_EXAMPLE: ClassVar[str] = "https://my-resource.services.ai.azure.com"
     MAX_LEN: ClassVar[int] = 128000
+    # A provider with one public endpoint (RemoteOpenAIDirect) sets it here and
+    # leaves ENDPOINT_ENV empty; then only the key is required.
+    FIXED_ENDPOINT: ClassVar[str] = ""
     # Ordered cheapest -> most expensive: (deployment_name, cost, tier).
     DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = []
+
+    @classmethod
+    def _endpoint(cls) -> Optional[str]:
+        """The configured endpoint: ``ENDPOINT_ENV``'s value, or
+        ``FIXED_ENDPOINT`` for a provider that has only one."""
+        if cls.ENDPOINT_ENV:
+            return get_env_variable(cls.ENDPOINT_ENV)
+        return cls.FIXED_ENDPOINT or None
+
+    @classmethod
+    def _has_endpoint_source(cls) -> bool:
+        """Whether this class names an endpoint at all (the shared base
+        does not)."""
+        return bool(cls.ENDPOINT_ENV or cls.FIXED_ENDPOINT)
 
     def __init__(self, model: str, dual_mode: bool = False):
         """Configure the backend from the subclass's env vars (API key +
         endpoint), normalize the endpoint, and create the rate limiter.
         Raises EnvironmentError if the key or endpoint is missing."""
         api_key = get_env_variable(self.API_KEY_ENV) if self.API_KEY_ENV else None
-        endpoint = get_env_variable(self.ENDPOINT_ENV) if self.ENDPOINT_ENV else None
+        endpoint = self._endpoint()
         if not api_key:
             raise EnvironmentError(
                 f"No API key found for {self.PROVIDER_LABEL}. Set "
@@ -7019,16 +7036,18 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
 
     @classmethod
     def config_status(cls) -> Tuple[str, Optional[str]]:
-        if not cls.API_KEY_ENV or not cls.ENDPOINT_ENV:
+        if not cls.API_KEY_ENV or not cls._has_endpoint_source():
             # The shared base carries no configuration of its own.
             return ("not_configured", "abstract Azure base")
+        if not cls.ENDPOINT_ENV:
+            return cls._classify_env_keys(cls.API_KEY_ENV)
         return cls._classify_env_keys(cls.API_KEY_ENV, cls.ENDPOINT_ENV)
 
     @classmethod
     def model_catalog(cls) -> List[ModelDescription]:
         """The deployments this provider would register (honors the optional
         ``MODELS_ENV`` override), independent of key/endpoint presence."""
-        if not cls.API_KEY_ENV or not cls.ENDPOINT_ENV:
+        if not cls.API_KEY_ENV or not cls._has_endpoint_source():
             return []  # the shared base carries no configuration of its own
         return [
             ModelDescription(
@@ -7043,11 +7062,9 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
     def models(cls) -> List[ModelDescription]:
         """Configured Azure deployments; empty (disabled) unless the base class
         is subclassed and both the key and endpoint env vars are set."""
-        if not cls.API_KEY_ENV or not cls.ENDPOINT_ENV:
+        if not cls.API_KEY_ENV or not cls._has_endpoint_source():
             return []  # the shared base carries no configuration of its own
-        if not get_env_variable(cls.API_KEY_ENV) or not get_env_variable(
-            cls.ENDPOINT_ENV
-        ):
+        if not get_env_variable(cls.API_KEY_ENV) or not cls._endpoint():
             logger.debug(
                 f"{cls.__name__}.models: {cls.API_KEY_ENV}/{cls.ENDPOINT_ENV} "
                 f"not both set, skipping"
@@ -7094,6 +7111,50 @@ class RemoteAzureOpenAI(RemoteAzureOpenLike):
     # override without a code change.
     DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
         ("gpt-5.5", 10, "frontier"),
+    ]
+
+    # Per-subclass rate-limit state (do not share across providers).
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+
+class RemoteOpenAIDirect(RemoteAzureOpenLike):
+    """OpenAI's own API (https://api.openai.com/v1), not Azure. Registers as
+    ``openai/<model>``.
+
+    Configure OPENAI_DIRECT_API_KEY (not OPENAI_API_KEY, which the deployment
+    already uses for something else); optionally override the model list with
+    OPENAI_DIRECT_MODELS, and pair a fallback key as
+    SECONDARY_OPENAI_DIRECT_API_KEY. Nothing registers without the key. It
+    reuses the Azure base for the env-driven model list, tiers and rate
+    limiting; the endpoint is fixed. See README / .env.example.
+    """
+
+    API_KEY_ENV: ClassVar[str] = "OPENAI_DIRECT_API_KEY"
+    ENDPOINT_ENV: ClassVar[str] = ""
+    MODELS_ENV: ClassVar[str] = "OPENAI_DIRECT_MODELS"
+    FIXED_ENDPOINT: ClassVar[str] = "https://api.openai.com/v1"
+    NAME_PREFIX: ClassVar[str] = "openai"
+    SPEND_PROVIDER: ClassVar[Optional[str]] = spend.OPENAI
+    PROVIDER_LABEL: ClassVar[str] = "OpenAI"
+    MAX_LEN: ClassVar[int] = 128000
+
+    # gpt-5.5 (snapshot gpt-5.5-2026-04-23): $5 input / $30 output per
+    # million tokens, 1.05M context, per
+    # developers.openai.com/api/docs/models/gpt-5.5 (checked 2026-10-31).
+    #
+    # Paid per token, unlike the sponsored Azure deployments, so it must never
+    # outrank them. "premium" (quality 98) keeps it below every "frontier"
+    # model (the sponsored azure-openai/gpt-5.5 and
+    # azure-anthropic/claude-fable-5), and a cost of 150, above
+    # anthropic/claude-opus-4-8 (130) and azure-anthropic/claude-opus-4-8
+    # (135), puts it last within "premium" because cost breaks ties within a
+    # tier. It still ranks above DeepInfra (quality 92 at best), so with the
+    # Azure OpenAI backend off it is the GPT model the default fan-out
+    # (best_external_models, limit 3) reaches once fewer than three stronger
+    # backends are configured and available.
+    DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
+        ("gpt-5.5", 150, "premium"),
     ]
 
     # Per-subclass rate-limit state (do not share across providers).

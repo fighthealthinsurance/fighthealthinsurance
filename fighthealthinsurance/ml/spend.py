@@ -35,8 +35,8 @@ turn. :func:`unpause` lifts it early once the provider answers again or by
 hand (``manage.py unpause_spend <provider>``), on every pod at its next
 refresh. A lift takes back only the pause counts the lifting process had
 read, so a refusal another pod stored after that read keeps the provider
-paused. Anthropic, Claude on Azure and Perplexity are not budgeted or counted
-here; they are providers only so that pause can reach them.
+paused. Anthropic, Claude on Azure, Perplexity and OpenAI (direct) are not
+budgeted or counted here; they are providers only so that pause can reach them.
 
 How it stays off the request path: :func:`allows` reads a per-process copy
 of this month's counters and never touches the database. :func:`record`
@@ -85,11 +85,20 @@ AZURE = "azure"
 ANTHROPIC = "anthropic"
 AZURE_ANTHROPIC = "azure-anthropic"
 PERPLEXITY = "perplexity"
+OPENAI = "openai"  # OpenAI's own API (RemoteOpenAIDirect), not Azure
 # Providers here only so a credit refusal can pause them; nothing is
 # budgeted or counted for them.
-UNBUDGETED = frozenset({ANTHROPIC, AZURE_ANTHROPIC, PERPLEXITY})
+UNBUDGETED = frozenset({ANTHROPIC, AZURE_ANTHROPIC, PERPLEXITY, OPENAI})
 # Every provider a credit refusal can pause (unpause_spend checks against it).
-PROVIDERS = (TYPESAFE, DEEPINFRA, AZURE, ANTHROPIC, AZURE_ANTHROPIC, PERPLEXITY)
+PROVIDERS = (
+    TYPESAFE,
+    DEEPINFRA,
+    AZURE,
+    ANTHROPIC,
+    AZURE_ANTHROPIC,
+    PERPLEXITY,
+    OPENAI,
+)
 FHI = "fhi"  # our own generations, counted not priced
 CHAT = "chat"
 LETTERS = "letters"
