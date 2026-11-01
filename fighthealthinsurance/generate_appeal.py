@@ -2969,7 +2969,7 @@ class AppealGenerator(object):
             # comes from the TPA flag, unless a source says the plan cannot
             # be ERISA: a government plan is exempt whoever administers it.
             programs = classify_plan(names, is_tpa=is_tpa, regulator_alt_name=alt_name)
-            return get_regulatory_citation_context(
+            state_block = get_regulatory_citation_context(
                 state=getattr(denial, "your_state", None),
                 denial_text=getattr(denial, "denial_text", None),
                 procedure=getattr(denial, "procedure", None),
@@ -2979,6 +2979,42 @@ class AppealGenerator(object):
             )
         except Exception as e:
             logger.opt(exception=True).debug(f"_collect_regulatory_context failed: {e}")
+            return None
+        # The emergency and surprise-billing rules ride in the same block:
+        # chosen by what the denial is about rather than the state, and
+        # skipped on their own if anything about them fails.
+        surprise_block = AppealGenerator._collect_surprise_billing_context(
+            denial, programs
+        )
+        blocks = [b for b in (state_block, surprise_block) if b]
+        return "\n\n".join(blocks) if blocks else None
+
+    @staticmethod
+    def _collect_surprise_billing_context(denial, programs) -> Optional[str]:
+        """The emergency and surprise-billing block for the denial, from its
+        text, procedure, diagnosis and the billing codes found in them, or
+        None. Defensive like the rest: a failure returns None."""
+        try:
+            from fighthealthinsurance.medical_code_extractor import (
+                collect_denial_text,
+                extract_procedure_codes,
+            )
+            from fighthealthinsurance.regulatory_citations import (
+                get_surprise_billing_citation_context,
+            )
+
+            text = collect_denial_text(denial, "denial_text", "procedure", "diagnosis")
+            return get_surprise_billing_citation_context(
+                denial_text=getattr(denial, "denial_text", None),
+                procedure=getattr(denial, "procedure", None),
+                diagnosis=getattr(denial, "diagnosis", None),
+                codes=extract_procedure_codes(text),
+                programs=programs,
+            )
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"_collect_surprise_billing_context failed: {e}"
+            )
             return None
 
     @staticmethod

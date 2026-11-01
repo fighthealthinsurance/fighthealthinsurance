@@ -914,3 +914,245 @@ def plan_law_paragraphs(
     if conflict is not None:
         paragraphs.append(conflict)
     return paragraphs
+
+
+# ---------------------------------------------------------------------------
+# Emergency care and surprise billing, chosen by what the denial is about.
+#
+# The hooks above are keyed off the state. These are federal rules keyed off
+# the facts of the denial instead: emergency care, an air ambulance, or an
+# out-of-network clinician at an in-network facility. Like the plan-law
+# block, the selection is by category (the rule applies to this kind of care
+# under this kind of plan), never by matching words against document titles.
+# Every entry cites the current section by number, checked against eCFR; the
+# pre-2022 emergency rule in 45 C.F.R. 147.138(b) only governs plan years that
+# began before January 1, 2022, so it is not used.
+# ---------------------------------------------------------------------------
+
+EMERGENCY_CARE = "emergency_care"
+AIR_AMBULANCE = "air_ambulance"
+OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY = "out_of_network_at_in_network_facility"
+
+# HCPCS Level II air ambulance codes: rotary-wing and fixed-wing base rates
+# and their mileage. CMS-owned codes, not CPT.
+AIR_AMBULANCE_CODES = frozenset({"A0430", "A0431", "A0435", "A0436"})
+# CPT emergency department visit codes.
+EMERGENCY_DEPARTMENT_CODES = frozenset({"99281", "99282", "99283", "99284", "99285"})
+
+# Phrases that say the care was NOT an emergency, removed before looking for
+# emergency wording so "non-emergency transport" never reads as an emergency.
+_NOT_EMERGENCY_RE = re.compile(
+    r"\bnon[- ]?emergen\w*|\bnot (?:an? )?emergen\w*|\bno emergen\w*", re.I
+)
+_EMERGENCY_RE = re.compile(
+    r"\bemergency (?:room|department|services?|care|treatment|visit|admission|"
+    r"surgery|medical condition)\b|\b(?:ER|ED) visit\b",
+    re.I,
+)
+_AIR_AMBULANCE_RE = re.compile(
+    r"\bair ambulance\b|\bair medical (?:transport|services?)\b|"
+    r"\b(?:helicopter|rotary[- ]wing|fixed[- ]wing) (?:ambulance|transport)\b|"
+    r"\bmedevac\b|\blife ?flight\b",
+    re.I,
+)
+_OUT_OF_NETWORK_RE = re.compile(
+    r"\bout[- ]of[- ]network\b|\bnon[- ]?participating\b|\bnon[- ]?network\b",
+    re.I,
+)
+_IN_NETWORK_FACILITY_RE = re.compile(
+    r"\b(?:in[- ]network|participating|contracted) "
+    r"(?:hospital|facility|surgery center|surgical center|ambulatory surgical center)\b",
+    re.I,
+)
+
+
+def surprise_billing_facts(
+    denial_text: Optional[str] = None,
+    procedure: Optional[str] = None,
+    diagnosis: Optional[str] = None,
+    codes: Iterable[str] = (),
+) -> frozenset[str]:
+    """Which of the emergency and surprise-billing situations the denial
+    shows: EMERGENCY_CARE, AIR_AMBULANCE, OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY.
+
+    Read from the denial text, procedure and diagnosis and from any billing
+    codes found in them. Conservative on purpose: wording that says the care
+    was not an emergency is ignored, and the out-of-network-clinician case
+    needs both an out-of-network phrase and an in-network facility phrase.
+    """
+    text = " ".join(t for t in (denial_text, procedure, diagnosis) if t)
+    code_set = {c.strip().upper() for c in codes if c}
+    facts: set[str] = set()
+    if code_set & AIR_AMBULANCE_CODES or _AIR_AMBULANCE_RE.search(text):
+        facts.add(AIR_AMBULANCE)
+    if code_set & EMERGENCY_DEPARTMENT_CODES or _EMERGENCY_RE.search(
+        _NOT_EMERGENCY_RE.sub(" ", text)
+    ):
+        facts.add(EMERGENCY_CARE)
+    if _OUT_OF_NETWORK_RE.search(text) and _IN_NETWORK_FACILITY_RE.search(text):
+        facts.add(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY)
+    return frozenset(facts)
+
+
+@dataclass(frozen=True)
+class SurpriseBillingRule:
+    """One federal rule for a kind of care, with the plans it reaches."""
+
+    fact: str  # the surprise_billing_facts() value that triggers it
+    name: str
+    summary: str
+    effective: str
+    source_url: str  # documentation only; not rendered into the prompt
+    # Private coverage (employer, marketplace, individual), including
+    # self-funded ERISA plans. The No Surprises Act reaches those, and FEHB
+    # plans through 5 U.S.C. 8902(p); it does not reach Medicare or Medicaid,
+    # which have their own emergency rules below.
+    private: bool
+    public_programs: frozenset[str] = frozenset()
+
+
+SURPRISE_BILLING_RULES: tuple[SurpriseBillingRule, ...] = (
+    SurpriseBillingRule(
+        fact=EMERGENCY_CARE,
+        name=(
+            "No Surprises Act emergency services rule (Public Health Service "
+            "Act § 2799A-1(a); 45 C.F.R. § 149.110)"
+        ),
+        summary=(
+            "Emergency services must be covered without prior authorization, "
+            "whether or not the hospital or clinician is in network, at "
+            "in-network cost sharing. Whether the person had an emergency "
+            "medical condition is judged by the prudent layperson standard "
+            "(acute symptoms, including severe pain, a mental health condition "
+            "or a substance use disorder, that a layperson could reasonably "
+            "expect to need immediate care), and the plan may not decide it "
+            "solely from diagnosis codes."
+        ),
+        effective="plan years beginning on or after January 1, 2022",
+        source_url="https://www.ecfr.gov/current/title-45/section-149.110",
+        private=True,
+        public_programs=frozenset({FEHB}),
+    ),
+    SurpriseBillingRule(
+        fact=EMERGENCY_CARE,
+        name=("Medicare Advantage emergency services rule (42 C.F.R. § 422.113(b))"),
+        summary=(
+            "Medicare Advantage plans are financially responsible for "
+            "emergency and urgently needed services whether they were obtained "
+            "inside or outside the plan's network and whether or not there was "
+            "prior authorization, judged by the prudent layperson definition of "
+            "an emergency medical condition regardless of the final diagnosis."
+        ),
+        effective="in force",
+        source_url="https://www.ecfr.gov/current/title-42/section-422.113",
+        private=False,
+        public_programs=frozenset({MEDICARE_ADVANTAGE}),
+    ),
+    SurpriseBillingRule(
+        fact=EMERGENCY_CARE,
+        name=("Medicaid managed care emergency services rule (42 C.F.R. § 438.114)"),
+        summary=(
+            "Medicaid managed care plans must cover and pay for emergency "
+            "services whether or not the provider has a contract with the plan, "
+            "may not deny payment when the enrollee had an emergency medical "
+            "condition under the prudent layperson definition, and may not limit "
+            "what counts as an emergency by lists of diagnoses or symptoms."
+        ),
+        effective="in force",
+        source_url="https://www.ecfr.gov/current/title-42/section-438.114",
+        private=False,
+        public_programs=frozenset({MEDICAID}),
+    ),
+    SurpriseBillingRule(
+        fact=AIR_AMBULANCE,
+        name=(
+            "No Surprises Act air ambulance rule (Public Health Service Act "
+            "§ 2799A-2; 45 C.F.R. § 149.130)"
+        ),
+        summary=(
+            "When a plan covers air ambulance services, an out-of-network air "
+            "ambulance must be covered at in-network cost sharing, counted "
+            "toward the in-network deductible and out-of-pocket maximum. It "
+            "does not make a plan cover air transport it excludes or finds "
+            "not medically necessary, and it does not reach ground ambulances."
+        ),
+        effective="plan years beginning on or after January 1, 2022",
+        source_url="https://www.ecfr.gov/current/title-45/section-149.130",
+        private=True,
+        public_programs=frozenset({FEHB}),
+    ),
+    SurpriseBillingRule(
+        fact=OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY,
+        name=(
+            "No Surprises Act rule for out-of-network clinicians at in-network "
+            "facilities (Public Health Service Act § 2799A-1(b); 45 C.F.R. "
+            "§§ 149.120 and 149.420)"
+        ),
+        summary=(
+            "Non-emergency care from an out-of-network clinician at an "
+            "in-network hospital or surgery center must be covered at in-network "
+            "cost sharing, unless the person signed a valid notice-and-consent "
+            "waiver beforehand, and that waiver is not allowed for certain "
+            "services such as anesthesiology, radiology, pathology and "
+            "emergency medicine."
+        ),
+        effective="plan years beginning on or after January 1, 2022",
+        source_url="https://www.ecfr.gov/current/title-45/section-149.120",
+        private=True,
+        public_programs=frozenset({FEHB}),
+    ),
+)
+
+SURPRISE_BILLING_HEADER = "EMERGENCY AND SURPRISE BILLING RULES"
+
+
+def applicable_surprise_billing_rules(
+    facts: Iterable[str], programs: Iterable[str] = ()
+) -> list[SurpriseBillingRule]:
+    """The rules for the denial's facts that reach the plan.
+
+    ``programs`` is classify_plan()'s result. With no plan information the
+    private-coverage rules are kept, the common case; with only public
+    coverage, only the rules written for that program.
+    """
+    fact_set = set(facts)
+    keys = set(programs)
+    public = keys & PUBLIC_PROGRAMS
+    public_only = bool(public) and not keys & PRIVATE_COVERAGE
+    rules: list[SurpriseBillingRule] = []
+    for rule in SURPRISE_BILLING_RULES:
+        if rule.fact not in fact_set:
+            continue
+        if public_only:
+            if rule.public_programs & public:
+                rules.append(rule)
+        elif rule.private or rule.public_programs & public:
+            rules.append(rule)
+    return rules
+
+
+def get_surprise_billing_citation_context(
+    denial_text: Optional[str] = None,
+    procedure: Optional[str] = None,
+    diagnosis: Optional[str] = None,
+    codes: Iterable[str] = (),
+    programs: Iterable[str] = (),
+) -> Optional[str]:
+    """The emergency and surprise-billing block for the appeal prompt, or
+    None when the denial shows none of those situations or no rule reaches
+    the plan."""
+    facts = surprise_billing_facts(denial_text, procedure, diagnosis, codes)
+    if not facts:
+        return None
+    rules = applicable_surprise_billing_rules(facts, programs)
+    if not rules:
+        return None
+    lines = "\n".join(f"- {r.name} ({r.effective}): {r.summary}" for r in rules)
+    return (
+        f"{SURPRISE_BILLING_HEADER}: The denial appears to involve emergency "
+        "care, an air ambulance, or an out-of-network clinician at an "
+        "in-network facility. These federal rules MAY apply; cite one by name "
+        "only if the facts of this denial fit it, and do not invent section "
+        "numbers, dates, or quotations beyond what is provided here.\n"
+        f"{lines}"
+    )
