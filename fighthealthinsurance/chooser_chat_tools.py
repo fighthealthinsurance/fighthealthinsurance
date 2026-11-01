@@ -116,9 +116,15 @@ class ToolAnswer:
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
 
 
-def _call_text(match: re.Match[str]) -> str:
+def _call_text(match: re.Match[str], text: str) -> str:
     """The call as the voter should read it: the query or JSON payload when
-    the pattern captures one, else the whole call."""
+    the pattern captures one, else the whole call. The financial-assistance
+    pattern matches only the name before its JSON (see
+    FINANCIAL_ASSISTANCE_REGEX), so its payload is read up to the call's
+    real end, or every such call would read the same and merge as one."""
+    if match.re.pattern == FinancialAssistanceTool.pattern:
+        end = FinancialAssistanceTool._find_call_end(text, match)
+        return text[match.end() : end].strip().rstrip("*").strip()
     try:
         captured = match.group(1)
     except IndexError:
@@ -138,12 +144,12 @@ _TOOLS: List[Tuple[Type[BaseTool], Callable[[Note, FollowUp], BaseTool]]] = [
     (ClinicalTrialsTool, lambda n, f: ClinicalTrialsTool(n, call_llm_callback=f)),
     (
         MedicaidEligibilityTool,
-        lambda n, f: MedicaidEligibilityTool(n, f, eligibility_computed=[]),
+        lambda n, f: MedicaidEligibilityTool(n, f, eligibility_computed=[False]),
     ),
     (MedicaidInfoTool, lambda n, f: MedicaidInfoTool(n, f)),
     (
         MedicaidGovLookupTool,
-        lambda n, f: MedicaidGovLookupTool(n, call_llm_callback=f, lookup_count=[]),
+        lambda n, f: MedicaidGovLookupTool(n, call_llm_callback=f, lookup_count=[0]),
     ),
     (USPSTFLookupTool, lambda n, f: USPSTFLookupTool(n, f)),
     (
@@ -171,8 +177,10 @@ def strip_tool_syntax(text: str) -> str:
     run, or one past the depth or call limit. Each tool strips its own
     calls (BaseTool.strip_calls_on_error), so the anchored JSON calls are
     removed span by span rather than by a pattern that could run on into
-    the prose after them. Falls back to ``text`` when nothing else would be
-    left."""
+    the prose after them, and the financial-assistance call with its JSON
+    (its pattern stops at the brace). A reply that was nothing but calls
+    comes back empty, so the arena's short-reply fallback can ask for a
+    real answer rather than keep the raw call as one."""
     stripped = text
     for tool in [build(_quiet, _no_follow_up) for _, build in _TOOLS] + [
         AppealTool(_quiet),
@@ -181,9 +189,17 @@ def strip_tool_syntax(text: str) -> str:
         DocFetcherTool(_quiet),
         DocumentSearchTool(_quiet),
     ]:
-        if tool.detect(stripped):
+        if not tool.detect(stripped):
+            continue
+        if isinstance(tool, FinancialAssistanceTool):
+            stripped = tool.clean_all_matches(stripped, tool.detect_all(stripped))
+        else:
             stripped = tool.strip_calls_on_error(stripped)
-    return stripped.strip() or text.strip()
+        if tool.detect(stripped):
+            # strip_calls_on_error hands back the text unchanged when the
+            # call was all of it.
+            return ""
+    return stripped.strip()
 
 
 async def _no_follow_up(*_args: Any, **_kwargs: Any) -> Tuple[None, None]:
@@ -256,7 +272,7 @@ class _ToolRun:
                 continue
             if len(self.records) >= MAX_TOOL_CALLS:
                 break
-            record = ToolCallRecord(tool=kind.name, call=_call_text(match))
+            record = ToolCallRecord(tool=kind.name, call=_call_text(match, reply))
             self.records.append(record)
             exchange = history + [
                 {"role": "user", "content": asked},
@@ -305,9 +321,12 @@ async def answer_with_tools(
     if not reply or not tools_allowed():
         return ToolAnswer(reply)
     final = await run.run(reply, question, run.history, 0)
-    if run.records and len(final.strip()) <= min_len:
+    found_nothing = not any(r.found for r in run.records)
+    if run.records and found_nothing and len(final.strip()) <= min_len:
         # A search that found nothing leaves only what the model said
-        # around its call, often nothing at all.
+        # around its call, often nothing at all. (One that found something
+        # was read back to the model already; telling it the search found
+        # nothing would be false.)
         retry = await run.ask(
             _NOTHING_FOUND_MESSAGE,
             None,

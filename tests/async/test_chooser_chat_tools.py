@@ -193,7 +193,26 @@ def test_the_synthesized_draft_carries_each_lookup_once():
         ChooserCandidate(metadata={"tool_calls": [dict(search), other]}),
         ChooserCandidate(metadata={}),
     ]
-    assert _merged_tool_calls(drafts) == [search, other]
+    assert [(c["tool"], c["call"]) for c in _merged_tool_calls(drafts)] == [
+        ("PubMed", "semaglutide"),
+        ("USPSTF Lookup", "{}"),
+    ]
+
+
+def test_the_synthesized_drafts_lookups_are_marked_as_the_drafts():
+    search = {"tool": "PubMed", "call": "semaglutide", "found": FOUND, "notes": []}
+    drafts = [ChooserCandidate(metadata={"tool_calls": [search]})]
+    assert _merged_tool_calls(drafts)[0]["from_drafts"] is True
+
+
+def test_a_timed_out_lookup_does_not_hide_the_same_search_that_finished():
+    timed_out = {"tool": "PubMed", "call": "q", "found": "", "timed_out": True}
+    finished = {"tool": "PubMed", "call": "q", "found": FOUND}
+    drafts = [
+        ChooserCandidate(metadata={"tool_calls": [timed_out]}),
+        ChooserCandidate(metadata={"tool_calls": [finished]}),
+    ]
+    assert _merged_tool_calls(drafts)[0]["found"] == FOUND
 
 
 @pytest.mark.asyncio
@@ -277,3 +296,61 @@ def test_stripping_an_action_call_keeps_the_prose_after_it():
         "create_or_update_appeal" not in stripped
         and stripped.endswith("letter of medical necessity.")
     )
+
+
+def test_a_reply_that_is_only_a_call_strips_to_nothing():
+    text = "**pubmed_query: semaglutide obesity randomized controlled trial outcomes**"
+    assert chooser_chat_tools.strip_tool_syntax(text) == ""
+
+
+def test_a_financial_assistance_call_is_stripped_with_its_payload():
+    text = (
+        "Here are some options.\n"
+        '**financial_assistance {"drug": "Wegovy", "state": "CA"}**'
+    )
+    assert chooser_chat_tools.strip_tool_syntax(text) == "Here are some options."
+
+
+@pytest.mark.asyncio
+async def test_a_financial_assistance_lookup_records_what_it_asked_for():
+    call = '**financial_assistance {"drug": "Wegovy", "state": "CA"}**'
+    model = ScriptedModel(lambda m: ANSWER if "Wegovy" in m and m != call else call)
+    with TOOLS_ON, patch(
+        "fighthealthinsurance.chat.tools.financial_assistance_tool."
+        "FinancialAssistanceTool.execute",
+        AsyncMock(return_value=(ANSWER, "")),
+    ):
+        answer = await answer_with_tools(model, QUESTION, HISTORY, 50)
+    assert answer.tool_calls[0]["call"] == '{"drug": "Wegovy", "state": "CA"}'
+
+
+def test_the_medicaid_tools_get_the_state_their_handlers_index():
+    """MedicaidEligibilityTool sets eligibility_computed[0] and
+    MedicaidGovLookupTool reads lookup_count[0]: an empty list raised
+    IndexError inside the handler, which swallowed the lookup."""
+    from fighthealthinsurance.chat.tools import (
+        MedicaidEligibilityTool,
+        MedicaidGovLookupTool,
+    )
+
+    built = {
+        kind: build(AsyncMock(), AsyncMock())
+        for kind, build in chooser_chat_tools._TOOLS
+    }
+    assert (
+        built[MedicaidEligibilityTool].eligibility_computed,
+        built[MedicaidGovLookupTool]._lookup_count,
+    ) == ([False], [0])
+
+
+@pytest.mark.asyncio
+async def test_a_short_answer_after_a_lookup_that_found_something_is_not_retried():
+    def reply(message):
+        if "found nothing useful" in message:
+            return ANSWER
+        return "Thanks." if message.startswith("pubmedcontext") else SEARCH
+
+    model = ScriptedModel(reply)
+    with TOOLS_ON, _pubmed():
+        answer = await answer_with_tools(model, QUESTION, HISTORY, 50)
+    assert not any("found nothing useful" in m for m, _ in model.asked)

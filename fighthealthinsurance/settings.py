@@ -344,7 +344,9 @@ class Base(Configuration):
     # Medicaid directory, ...) are run and shown to the voter beside it
     # (chooser_chat_tools); off, a draft is kept as the model wrote it.
     CHOOSER_CHAT_TOOLS = os.getenv("CHOOSER_CHAT_TOOLS", "true").lower() != "false"
-    CHOOSER_CHAT_TOOL_TIMEOUT = float(os.getenv("CHOOSER_CHAT_TOOL_TIMEOUT", "120"))
+    CHOOSER_CHAT_TOOL_TIMEOUT = _env_float(
+        "CHOOSER_CHAT_TOOL_TIMEOUT", 120.0, minimum=1.0, maximum=600.0
+    )
     # Whether a case's evidence is judged as the case is built (on topic,
     # supports, against), for the verdicts the arena shows voters. Jev
     # judges when TYPESAFE_RESEARCH_JUDGING_ENABLED is on too; whatever it

@@ -57,6 +57,9 @@ interface ToolCall {
   found: string;
   notes?: string[];
   timed_out?: boolean;
+  // On a synthesized draft: a lookup one of the drafts it merged made. The
+  // synthesis read those drafts, not the lookups themselves.
+  from_drafts?: boolean;
 }
 
 // What the automated reviewer made of one study for this treatment and
@@ -942,6 +945,7 @@ const ChatCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
 // nothing). The found text stays folded until asked for: it is long.
 const ToolCallList: React.FC<{ calls: ToolCall[] }> = ({ calls }) => {
   const [open, setOpen] = useState<Record<number, boolean>>({});
+  const fromDrafts = calls.some((call) => call.from_drafts);
   return (
     <Stack gap={6}>
       {calls.map((call, idx) => {
@@ -1006,8 +1010,9 @@ const ToolCallList: React.FC<{ calls: ToolCall[] }> = ({ calls }) => {
         );
       })}
       <Text size="xs" c="dimmed">
-        The draft looked this up before answering. Did it use what it found, and
-        say no more than that?
+        {fromDrafts
+          ? "The drafts this one combines looked this up; it read their answers, not the lookups. Does it claim no more than they found?"
+          : "The draft looked this up before answering. Did it use what it found, and say no more than that?"}
       </Text>
     </Stack>
   );
@@ -1124,9 +1129,15 @@ const CandidateCard: React.FC<{
         </Box>
       ) : null}
       {candidate.tool_calls && candidate.tool_calls.length > 0 ? (
-        // Its own clicks (the fold buttons, selecting text to read) are not
-        // a pick of the draft.
-        <Box mb="sm" onClick={(event) => event.stopPropagation()}>
+        // Its own clicks and keys (the fold buttons, selecting text to
+        // read) are not a pick of the draft: Enter or Space on a fold
+        // button would otherwise reach the card's key handler, which picks
+        // the draft and swallows the button's own activation.
+        <Box
+          mb="sm"
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
           <ToolCallList calls={candidate.tool_calls} />
         </Box>
       ) : null}

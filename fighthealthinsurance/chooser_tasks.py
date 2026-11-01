@@ -2397,14 +2397,28 @@ def _build_appeal_prompt(context: dict) -> str:
     return "\n".join(parts)
 
 
+def _lookup_rank(call: dict) -> Tuple[bool, bool]:
+    """How much a lookup record shows: one that finished beats one that
+    timed out, and one that found something beats one that did not."""
+    return (not call.get("timed_out"), bool(call.get("found")))
+
+
 def _merged_tool_calls(candidates: List[ChooserCandidate]) -> List[dict]:
     """Every lookup the ``candidates`` made (their ``tool_calls``
-    metadata), once each by tool and call, in the order first made."""
+    metadata), once each by tool and call, in the order first made. Where
+    drafts made the same lookup, the record that shows most is kept: a
+    timeout in one draft must not hide what the same search found in
+    another. Each is marked ``from_drafts``: the synthesis read the drafts,
+    not the lookups, and the card says so."""
     merged: dict = {}
     for candidate in candidates:
         for call in (candidate.metadata or {}).get("tool_calls") or []:
-            if isinstance(call, dict):
-                merged.setdefault((call.get("tool"), call.get("call")), call)
+            if not isinstance(call, dict):
+                continue
+            key = (call.get("tool"), call.get("call"))
+            kept = merged.get(key)
+            if kept is None or _lookup_rank(call) > _lookup_rank(kept):
+                merged[key] = dict(call, from_drafts=True)
     return list(merged.values())
 
 
