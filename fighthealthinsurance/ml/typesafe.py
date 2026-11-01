@@ -41,6 +41,8 @@ from fighthealthinsurance.ml import llm_usage, spend
 # model the response names, so a change here shows up in their data as a new
 # series rather than a silently different number.
 DEFAULT_MODEL = "jev-1.13.0"
+OPENCODE_MODEL = "jev-1.13-free"
+OPENCODE_API_URL = "https://opencode.ai/inference/systemone/v1/systemone"
 
 # A model id or alias as TypeSafe spells them ("jev-1.13.0", "jev-latest").
 # The same shape the features' provenance strings allow, so a model name can
@@ -181,7 +183,10 @@ def cooling_down() -> bool:
     """Whether a cooldown is in force: ask() would refuse every request with
     TypeSafeCoolingDown before anything is sent. For callers that would
     otherwise do work of their own (a database lookup, holding a chat turn
-    back) before asking."""
+    back) before asking. False on the free OpenCode route: the cooldown
+    refuses only the premium attempt, and that route still answers."""
+    if opencode_route():
+        return False
     return time.monotonic() < _cooldown[0]
 
 
@@ -276,12 +281,21 @@ async def _note_refusal(response: typing.Any) -> None:
 
 
 # Why nothing is sent anywhere without a key (every feature checks
-# configured() before asking).
-NO_KEY = "TYPESAFE_API_KEY is not set"
+# configured() before asking). With a custom TYPESAFE_MODEL only
+# TYPESAFE_API_KEY counts, so the message names what each setup needs.
+NO_KEY = (
+    "no TypeSafe key is set: TYPESAFE_API_KEY for a custom TYPESAFE_MODEL, "
+    "or OPENCODE_TOKEN or TYPESAFE_API_KEY for the default model"
+)
 
 
 def configured() -> bool:
-    return bool(getattr(settings, "TYPESAFE_API_KEY", None))
+    if model_name() != DEFAULT_MODEL:
+        return bool(getattr(settings, "TYPESAFE_API_KEY", None))
+    return bool(
+        getattr(settings, "OPENCODE_TOKEN", None)
+        or getattr(settings, "TYPESAFE_API_KEY", None)
+    )
 
 
 def model_name() -> str:
@@ -290,14 +304,33 @@ def model_name() -> str:
     return str(getattr(settings, "TYPESAFE_MODEL", "") or "").strip() or DEFAULT_MODEL
 
 
+def opencode_route() -> bool:
+    """Whether ask() tries OpenCode first: the token is set and the model is
+    the pinned base release, the only one OpenCode serves. That route is
+    free, spends no TypeSafe budget, and a TypeSafe cooldown refuses only the
+    premium attempt, so none of those states holds it back."""
+    return bool(getattr(settings, "OPENCODE_TOKEN", None)) and (
+        model_name() == DEFAULT_MODEL
+    )
+
+
 def settings_problem() -> typing.Optional[str]:
     """Why ask() refuses to send whatever it is asked, from its settings
-    alone, or None."""
-    url = str(getattr(settings, "TYPESAFE_API_URL", "") or "")
-    if urlsplit(url).scheme.lower() != "https":
-        # The bearer token and the state must never travel in the clear
-        # (review).
-        return "TYPESAFE_API_URL must use https"
+    alone, or None. Every endpoint ask() may post to is checked: the premium
+    fallback carries the TypeSafe bearer token and the state too."""
+    urls: list[str] = []
+    if opencode_route():
+        urls.append(OPENCODE_API_URL)
+        if getattr(settings, "TYPESAFE_API_KEY", None):
+            # A failing OpenCode attempt falls through to this URL.
+            urls.append(str(getattr(settings, "TYPESAFE_API_URL", "") or ""))
+    else:
+        urls.append(str(getattr(settings, "TYPESAFE_API_URL", "") or ""))
+    for url in urls:
+        if urlsplit(url).scheme.lower() != "https":
+            # The bearer token and the state must never travel in the clear
+            # (review).
+            return "TYPESAFE_API_URL must use https"
     if not _MODEL_NAME.fullmatch(model_name()):
         # When a response names no model, this name goes into the recorded
         # provenance, so it must fit that format.
@@ -313,11 +346,14 @@ def skip_reason(use: str = spend.OTHER) -> typing.Optional[str]:
     and never sends."""
     if not configured():
         return NO_KEY
-    if spend.paused(spend.TYPESAFE, "*") or spend.paused(spend.TYPESAFE, use):
+    free_route = opencode_route()
+    if not free_route and (
+        spend.paused(spend.TYPESAFE, "*") or spend.paused(spend.TYPESAFE, use)
+    ):
         return "paused until the next UTC day: TypeSafe refused for credit or quota"
-    if not spend.loaded():
+    if not free_route and not spend.loaded():
         return "this process's spend ledger has not loaded (ml/spend.py)"
-    if not spend.allows(spend.TYPESAFE, use):
+    if not free_route and not spend.allows(spend.TYPESAFE, use):
         for_use = "" if use == spend.OTHER else f" for {use}"
         return (
             f"TypeSafe's budget is spent{for_use} "
@@ -328,22 +364,25 @@ def skip_reason(use: str = spend.OTHER) -> typing.Optional[str]:
         return problem
     until, status = _cooldown
     left = until - time.monotonic()
-    if left > 0:
+    if left > 0 and not free_route:
+        # A cooldown refuses only the premium attempt; the free OpenCode
+        # route still answers.
         cause = f"HTTP {status}" if status is not None else "a failed connection"
         return f"cooling down for {left:.0f}s more after {cause}"
     return None
 
 
-def reported_model(payload: typing.Any) -> str:
+def reported_model(payload: typing.Any, default: typing.Optional[str] = None) -> str:
     """The model a response says answered, for the provenance strings the
     features record. TypeSafe reports the versioned id (jev-1.13.0 even when
     the request named the jev-latest alias), so a repointed alias shows up as
     a new name. A response that names none, or names something that is not a
     plain model name (the API types it as a string), is recorded under the
-    name the request sent."""
+    name the request sent: ``default`` when given (the OpenCode route names
+    jev-1.13-free, not the pinned premium release), else model_name()."""
     answered = payload.get("model") if isinstance(payload, dict) else None
     name = answered.strip() if isinstance(answered, str) else ""
-    return name if _MODEL_NAME.fullmatch(name) else model_name()
+    return name if _MODEL_NAME.fullmatch(name) else (default or model_name())
 
 
 async def ask(
@@ -366,91 +405,179 @@ async def ask(
     (CONNECT_TIMEOUT_STREAK; a connect bound under
     MIN_COUNTED_CONNECT_SECONDS never counts) starts the cooldown: until it
     ends every use is refused with TypeSafeCoolingDown before anything is
-    sent. ``task`` is what the LLM usage metrics count the
+    sent. The free OpenCode route has no cooldown or backoff of its own:
+    while OpenCode keeps failing, every eligible request tries it again
+    before falling through to TypeSafe (one extra round trip per request,
+    which is accepted since the fallback still answers). ``task`` is what
+    the LLM usage metrics count the
     answer as (ml/llm_usage.py TASKS).
 
     Raises TypeSafeError on a non-200, a spent budget or a cooldown, and
     lets aiohttp/asyncio errors propagate: callers decide what a failure
     means for their feature.
     """
-    if not spend.allows(spend.TYPESAFE, use):
+    premium_model = model_name()
+    opencode_token = getattr(settings, "OPENCODE_TOKEN", None)
+    premium_token = getattr(settings, "TYPESAFE_API_KEY", None)
+    use_opencode = opencode_route()
+    if not use_opencode and not spend.allows(spend.TYPESAFE, use):
         _log_budget_spent(use)
         raise TypeSafeBudgetSpent("budget spent")
     problem = settings_problem()
     if problem:
         # Refused here, before anything is built or sent.
         raise TypeSafeError(problem)
-    url = str(getattr(settings, "TYPESAFE_API_URL", "") or "")
-    model = model_name()
-    _refuse_while_cooling()
-    body = {
-        "state": state[:STATE_CHAR_CAP],
-        "model": model,
-        "questions": questions,
-    }
-    headers = {
-        "Authorization": f"Bearer {settings.TYPESAFE_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    # The connect bound is kept well inside the total and inside a caller's
-    # own wait_for of the same length (the chat gate's), so a host that
-    # cannot be reached fails here as a connect timeout, which counts toward
-    # the cooldown, rather than being cut off by the caller's cancellation.
+    # OpenCode serves only the public base Jev model. A configured model that
+    # differs from our pinned base is a fine-tune/alias and must go directly
+    # to TypeSafe, which owns that model namespace.
+    if not use_opencode:
+        _refuse_while_cooling()
+    attempts: list[tuple[str, str, str, bool]] = []
+    if use_opencode:
+        attempts.append((OPENCODE_API_URL, str(opencode_token), OPENCODE_MODEL, False))
+    premium_allowed = spend.allows(spend.TYPESAFE, use) and (
+        not use_opencode or _cooldown[0] <= time.monotonic()
+    )
+    if premium_token and premium_allowed:
+        attempts.append(
+            (
+                str(getattr(settings, "TYPESAFE_API_URL", "") or ""),
+                str(premium_token),
+                premium_model,
+                True,
+            )
+        )
+    if not attempts:
+        raise TypeSafeError(NO_KEY)
+    # One deadline for the whole ask: every attempt's total is derived from
+    # the time left on it, so ask() cannot run past timeout_seconds however
+    # the attempts split the budget, and a caller's own wait_for of the same
+    # length never cancels a fallback that is still inside its share.
     # `connect` bounds the whole connect phase once (DNS, every address
     # aiohttp tries, TCP and TLS); when it expires, aiohttp (3.14) raises
     # ConnectionTimeoutError, as it wraps the timeout of connector.connect().
     # `sock_connect` alone bounds one address round, and api.typesafe.ai has
     # two addresses: the second round then ran past `total` and failed as a
     # plain TimeoutError, which never counts toward the cooldown.
-    connect_bound = min(timeout_seconds * 0.75, CONNECT_TIMEOUT_SECONDS)
-    client_timeout = aiohttp.ClientTimeout(
-        total=timeout_seconds, connect=connect_bound, sock_connect=connect_bound
-    )
-    try:
-        async with aiohttp.ClientSession(timeout=client_timeout) as session:
-            # No redirects: a 307 or 308 toward http would make aiohttp resend
-            # the state in the clear (review). A 3xx is just a non-200 here.
-            async with session.post(
-                url, json=body, headers=headers, allow_redirects=False
-            ) as response:
-                _clear_connect_timeouts()
-                if response.status != 200:
-                    await _note_refusal(response)
-                    raise TypeSafeError(
-                        f"HTTP {response.status}", status=response.status
-                    )
-                _end_cooldown()
-                payload = await response.json()
-    except aiohttp.ClientConnectorError as e:
-        # The connect phase (DNS, refused, TLS) failed: nothing reached
-        # TypeSafe, and the next request would likely fail the same way.
-        _start_cooldown(
-            f"could not be reached ({type(e).__name__})",
-            None,
-            cap=CONNECT_COOLDOWN_SECONDS,
+    deadline = time.monotonic() + timeout_seconds
+    last_error: typing.Optional[BaseException] = None
+    payload: typing.Any = None
+    answered_model = premium_model
+    for url, token, model, is_premium in attempts:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("request budget spent")
+        # The free attempt gets half of what is left, so the premium
+        # fallback that follows it still has time: a hung free endpoint
+        # must not eat the whole budget and starve the fallback. A sole
+        # attempt gets everything left.
+        if is_premium or len(attempts) == 1:
+            attempt_total = remaining
+        else:
+            attempt_total = remaining * 0.5
+        attempt_connect = min(attempt_total * 0.75, CONNECT_TIMEOUT_SECONDS)
+        client_timeout = aiohttp.ClientTimeout(
+            total=attempt_total, connect=attempt_connect, sock_connect=attempt_connect
         )
-        raise
-    except aiohttp.ConnectionTimeoutError as e:
-        # No connection within the connect bound. aiohttp raises this for
-        # the connect phase only, so a slow answer after connecting (the
-        # request's own timeout) never gets here. Cools only on a streak, and
-        # only a bound of MIN_COUNTED_CONNECT_SECONDS or more counts toward
-        # one: a shorter one can miss a healthy host's handshake.
-        if connect_bound >= MIN_COUNTED_CONNECT_SECONDS and _connect_timed_out():
-            _start_cooldown(
-                f"could not be reached ({type(e).__name__}, "
-                f"{CONNECT_TIMEOUT_STREAK} in a row)",
-                None,
-                cap=CONNECT_COOLDOWN_SECONDS,
-            )
-        raise
+        body = {
+            "state": state[:STATE_CHAR_CAP],
+            "model": model,
+            "questions": questions,
+        }
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        if is_premium:
+            # The eligibility check above ran before the free attempt, which
+            # can eat its whole half of the budget: the spend ledger and the
+            # cooldown can have turned while it ran.
+            if not spend.allows(spend.TYPESAFE, use):
+                _log_budget_spent(use)
+                raise TypeSafeBudgetSpent("budget spent")
+            _refuse_while_cooling()
+        try:
+            async with aiohttp.ClientSession(timeout=client_timeout) as session:
+                # No redirects: a 307 or 308 toward http would make aiohttp
+                # resend the state in the clear.
+                async with session.post(
+                    url, json=body, headers=headers, allow_redirects=False
+                ) as response:
+                    if is_premium:
+                        # Only a premium answer shows the premium endpoint's
+                        # connect works: a free answer between premium connect
+                        # timeouts must not clear that streak.
+                        _clear_connect_timeouts()
+                    if response.status != 200:
+                        if is_premium:
+                            await _note_refusal(response)
+                        raise TypeSafeError(
+                            f"HTTP {response.status}", status=response.status
+                        )
+                    if is_premium:
+                        _end_cooldown()
+                    payload = await response.json()
+                    answered_model = model
+                    break
+        except (
+            TypeSafeError,
+            aiohttp.ClientError,
+            TimeoutError,
+            OSError,
+            ValueError,
+        ) as e:
+            last_error = e
+            if not is_premium and premium_token:
+                logger.warning(
+                    f"OpenCode Jev unavailable ({type(e).__name__}); "
+                    "falling through to TypeSafe"
+                )
+                continue
+            if is_premium and isinstance(e, aiohttp.ClientConnectorError):
+                _start_cooldown(
+                    f"could not be reached ({type(e).__name__})",
+                    None,
+                    cap=CONNECT_COOLDOWN_SECONDS,
+                )
+            elif is_premium and isinstance(e, aiohttp.ConnectionTimeoutError):
+                if (
+                    attempt_connect >= MIN_COUNTED_CONNECT_SECONDS
+                    and _connect_timed_out()
+                ):
+                    _start_cooldown(
+                        f"could not be reached ({type(e).__name__}, "
+                        f"{CONNECT_TIMEOUT_STREAK} in a row)",
+                        None,
+                        cap=CONNECT_COOLDOWN_SECONDS,
+                    )
+            raise
+    else:
+        assert last_error is not None
+        raise last_error
+    if isinstance(payload, dict):
+        named = payload.get("model")
+        if not isinstance(named, str) or not _MODEL_NAME.fullmatch(named.strip() or ""):
+            # The answer named no usable model. Record the name the request
+            # actually sent, so downstream provenance (letter, triage and
+            # chat scores) reads jev-1.13-free for the free route instead of
+            # mixing it into the pinned premium release's series.
+            payload["model"] = answered_model
     usage = payload.get("usage") if isinstance(payload, dict) else None
     if isinstance(usage, dict):
-        spend.record(
-            spend.TYPESAFE, use, spend.typesafe_cost_micro(usage.get("input_tokens"))
-        )
+        # OpenCode's base Jev is free; only the premium TypeSafe answer uses
+        # the TypeSafe budget.
+        if answered_model != OPENCODE_MODEL:
+            spend.record(
+                spend.TYPESAFE,
+                use,
+                spend.typesafe_cost_micro(usage.get("input_tokens")),
+            )
     llm_usage.record_llm_usage(
-        model=f"typesafe/{reported_model(payload)}",
+        model=(
+            f"opencode/{reported_model(payload, answered_model)}"
+            if answered_model == OPENCODE_MODEL
+            else f"typesafe/{reported_model(payload, answered_model)}"
+        ),
         tier=llm_usage.EXTERNAL,
         usage=usage,
         task=task,

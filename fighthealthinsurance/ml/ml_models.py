@@ -83,6 +83,7 @@ def _served_sample(probe_model: str, served: set[str], limit: int = 8) -> list[s
 from fighthealthinsurance.env_utils import get_env_variable
 from fighthealthinsurance.ml import llm_usage, spend
 from fighthealthinsurance.ml.ml_metrics import (
+    ML_CALL_PURPOSE,
     labelled_ml_calls,
     record_ml_call,
     record_ml_failure,
@@ -6300,10 +6301,14 @@ class DeepInfra(RemoteFullOpenLike):
     # own suggested replacement, GLM-5.3, is a coding model that scored 0.70
     # in the September letter test, so it was not taken. Kimi-K3 stays: it
     # was the best writer in that test and is asked only for side-by-sides.
+    # The 1017 Flash is NOT here: it shares its name with OpenCode's free
+    # copy, and a chat-only registration would shadow the general pool's
+    # [OpenCode, DeepInfra] ordering (chat would bill DeepInfra while the
+    # free endpoint is healthy). Chat reaches it through the general pool,
+    # free first with the paid endpoint as the fallback.
     CHAT_MODELS: ClassVar[List[str]] = [
         "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
         "zai-org/GLM-5.3-Flash",
-        "deepseek-ai/DeepSeek-V4.1-Flash-1017",
         "Qwen/Qwen3.8-Max",
         "moonshotai/Kimi-K3",
     ]
@@ -6326,6 +6331,14 @@ class DeepInfra(RemoteFullOpenLike):
     }
 
     def _request_extras(self, model: str) -> dict[str, Any]:
+        # The output caps exist because chat replies are short. The general
+        # pool answers through these same instances (the Flash release is
+        # one of its models), and an appeal draft cut off at the chat
+        # length would be a silently truncated letter, so the caps apply
+        # to chat calls only (ML_CALL_PURPOSE, set by the chat entry
+        # point).
+        if ML_CALL_PURPOSE.get() != "chat":
+            return {}
         return dict(self._CHAT_REQUEST_EXTRAS.get(model, {}))
 
     @classmethod
@@ -6338,6 +6351,18 @@ class DeepInfra(RemoteFullOpenLike):
     @classmethod
     def models(cls) -> List[ModelDescription]:
         return [
+            # Same friendly name as OpenCode's free copy, so models_by_name
+            # orders [OpenCode, DeepInfra] and a caller that cannot submit
+            # to OpenCode (no key, concurrency full) submits to this paid
+            # endpoint instead. That is where the ordering helps: once a
+            # backend's futures are in flight the fan-out awaits them, and
+            # an inference failure afterwards fails over to the other
+            # MODELS in the race, not to this same-name backup.
+            ModelDescription(
+                cost=15,
+                name="deepseek-ai/DeepSeek-V4.1-Flash-1017",
+                internal_name="deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            ),
             # The official V4-Pro release (DeepInfra: "superseding the
             # preview version"), same price as the preview it replaced
             # on 2026-10-31.
@@ -6408,6 +6433,50 @@ def max_parallel_from_env(var_name: str, default: Optional[int]) -> Optional[int
         logger.warning(f"{var_name}={raw!r} is not a whole number; using {default}")
         return default
     return value if value >= 1 else None
+
+
+class OpenCode(RemoteFullOpenLike):
+    """OpenCode's OpenAI-compatible inference endpoint."""
+
+    PROVIDER_LABEL: ClassVar[str] = "OpenCode"
+    API_BASE: ClassVar[str] = "https://opencode.ai/inference/openai/v1"
+    FLASH_NAME: ClassVar[str] = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+    FLASH_MODEL: ClassVar[str] = "deepseek-v4.1-flash-free"
+
+    @classmethod
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        return cls._classify_env_keys("OPENCODE_TOKEN")
+
+    def __init__(self, model: str, dual_mode: bool = False):
+        token = get_env_variable("OPENCODE_TOKEN")
+        if token is None or not token.strip():
+            # Matches config_status, which reports a whitespace-only token
+            # as missing_credentials.
+            raise Exception("No token found for OpenCode")
+        super().__init__(
+            self.API_BASE,
+            token,
+            model=model,
+            dual_mode=dual_mode,
+            max_len=384000,
+        )
+
+    @property
+    def supports_system(self):
+        return True
+
+    def quality(self) -> int:
+        return 86
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(
+                cost=0,
+                name=cls.FLASH_NAME,
+                internal_name=cls.FLASH_MODEL,
+            )
+        ]
 
 
 class LunaRoute(RemoteFullOpenLike):

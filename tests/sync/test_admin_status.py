@@ -2504,13 +2504,15 @@ class AdminJevTestViewTest(TestCase):
 
     @override_settings(TYPESAFE_API_KEY=None)
     def test_without_a_key_nothing_is_sent_and_the_page_says_so(self):
+        from fighthealthinsurance.ml import typesafe
+
         ask = mock.AsyncMock(return_value=self._ANSWER)
         response = self._post(ask)
         result = response.context["result"]
         self.assertFalse(result["ok"])
         self.assertIsNone(result["answer"])
         self.assertEqual(result["category"], "NOT_CONFIGURED")
-        self.assertContains(response, "skipped: TYPESAFE_API_KEY is not set")
+        self.assertContains(response, f"skipped: {typesafe.NO_KEY}")
         ask.assert_not_awaited()
 
     @override_settings(TYPESAFE_API_KEY="k")

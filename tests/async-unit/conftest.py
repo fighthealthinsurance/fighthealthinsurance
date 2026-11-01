@@ -36,6 +36,7 @@ _AMBIENT_BACKEND_ENV_VARS = (
     "LUNA_ROUTE_KEY",
     "NEW_HEALTH_BACKEND_HOST",
     "NEW_HEALTH_BACKEND_PORT",
+    "OPENCODE_TOKEN",
     "PERPLEXITY_API",
     # The fallback keys (api_keys_from_env): a stray one would change which
     # key a unit-suite backend sends after a refusal.
