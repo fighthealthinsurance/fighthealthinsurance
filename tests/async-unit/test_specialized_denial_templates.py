@@ -259,6 +259,53 @@ class TestAdvancedImagingAppealMatches(unittest.TestCase):
         self.assertIn("Medicare Advantage", text)
 
 
+class TestImagingClaimsAreConditional(unittest.TestCase):
+    """The imaging template can't know the case meets a criterion, so it
+    must not say so: those claims are fill-ins, and the hint frames ACR and
+    the NCD chapter as places to check."""
+
+    # A sentence that asserts the study meets or satisfies a criterion.
+    _CLAIM = re.compile(
+        r"[^.\[\]]*\b(?:meets|satisfies)\b[^.\[\]]*"
+        r"(?:indication|criteri|NCD|ACR)[^.\[\]]*\.",
+        re.IGNORECASE,
+    )
+
+    def test_letter_makes_no_unconditional_criteria_claim(self):
+        text = AdvancedImagingAppeal.static_appeal()
+        # Bracketed fill-ins are the user's to complete; drop them first.
+        outside_fill_ins = re.sub(r"\[[^\]]*\]", "", text)
+        self.assertEqual(self._CLAIM.findall(outside_fill_ins), [])
+
+    def test_letter_asks_which_criterion_was_applied(self):
+        text = AdvancedImagingAppeal.static_appeal()
+        self.assertIn("identify the criterion you applied", text)
+        self.assertIn("[If it applies:", text)
+
+    def test_ncd_chapter_is_scoped_to_medicare_plans(self):
+        text = AdvancedImagingAppeal.static_appeal()
+        self.assertIn("If my plan is a Medicare plan", text)
+        self.assertNotIn("community standard", text)
+
+    def test_hint_frames_authorities_as_places_to_check(self):
+        hint = AdvancedImagingAppeal.model_prompt_hint()
+        self.assertIn("cite a specific NCD only if one fits", hint)
+        self.assertIn("usually appropriate for the stated indication", hint)
+        self.assertIn("Do not state that the study meets ACR criteria", hint)
+
+
+class TestPatientSpecificClaimsAreFillIns(unittest.TestCase):
+    def test_step_therapy_override_asks_which_ground_applies(self):
+        text = SpecialtyMedicationAppeal.static_appeal()
+        self.assertNotIn("the patient qualifies for an override", text)
+        self.assertIn("[Say which applies", text)
+
+    def test_glp1_indication_asks_for_the_patients_details(self):
+        text = GLP1WeightLossAppeal.static_appeal()
+        self.assertNotIn("FDA-approved for the patient's condition", text)
+        self.assertIn("[state the patient's BMI and comorbidity]", text)
+
+
 class TestSpecialtyMedicationAppealMatches(unittest.TestCase):
     def test_matches_step_therapy(self):
         self.assertTrue(

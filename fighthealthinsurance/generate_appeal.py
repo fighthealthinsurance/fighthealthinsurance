@@ -461,11 +461,21 @@ class AdvancedImagingAppeal(SpecializedDenialTemplate):
         r"\bimaging\b",
     )
     citations = (
-        "American College of Radiology (ACR) Appropriateness Criteria",
-        "CMS National Coverage Determinations for diagnostic imaging "
-        "(NCD Manual chapter 220)",
+        "American College of Radiology (ACR) Appropriateness Criteria: check "
+        "whether they rate the requested study usually appropriate for the "
+        "stated indication, and cite the specific scenario only if one fits",
+        "Medicare plans only: CMS National Coverage Determinations for "
+        "diagnostic imaging (NCD Manual chapter 220) may apply; cite a "
+        "specific NCD only if one fits this study and indication",
         _CLAIMS_RULE_CITATION,
         _MEDICARE_ADVANTAGE_ONLY_CITATION,
+    )
+    # The letter can't know whether the study meets a published criterion,
+    # so the model must not say it does unless the record shows it.
+    prompt_notes = (
+        "Do not state that the study meets ACR criteria or an NCD's "
+        "indications unless the denial or the patient's history supports "
+        "it; otherwise ask the plan which criterion it applied.",
     )
 
     @classmethod
@@ -480,14 +490,18 @@ class AdvancedImagingAppeal(SpecializedDenialTemplate):
             "1. ACR Appropriateness Criteria. The American College of "
             "Radiology publishes evidence-based criteria identifying the "
             "appropriate imaging modality for specific clinical scenarios. "
-            "The presentation in this case meets ACR-published indications "
-            "for the requested study; lower-cost alternatives such as plain "
-            "radiographs or ultrasound are inadequate to answer the clinical "
-            "question and would predictably lead to repeat imaging.\n\n"
-            "2. CMS National Coverage Determinations (NCD chapter 220). "
-            "CMS NCDs set the community standard for advanced imaging "
-            "coverage and the requested study satisfies the relevant NCD's "
-            "indications.\n\n"
+            "[If it applies: the ACR Appropriateness Criteria rate this study "
+            "usually appropriate for (the clinical scenario), and (plain "
+            "radiographs, ultrasound, or another lower-cost study) "
+            "(was already done, or cannot answer the clinical question) "
+            "because (the reason).] Please identify the criterion you "
+            "applied to deny the study and explain how this presentation "
+            "fails it.\n\n"
+            "2. Medicare coverage policy. If my plan is a Medicare plan, CMS "
+            "National Coverage Determinations for diagnostic imaging (NCD "
+            "Manual chapter 220) may set coverage for this study. [If one "
+            "applies: name the NCD and the indication it covers that matches "
+            "this order.]\n\n"
             + _automated_review_paragraph(3, "an automated utilization-management tool")
             + "Delaying or denying this imaging risks missed diagnoses and "
             "downstream cost from lower-yield workups. I respectfully "
@@ -540,11 +554,12 @@ class SpecialtyMedicationAppeal(SpecializedDenialTemplate):
             "circumstances; the denial as issued does not engage with that "
             "individualized analysis.\n\n"
             "1. Step-therapy / fail-first override. Where the carrier's "
-            "denial relies on step therapy, the patient qualifies for an "
-            "override under applicable state law and plan terms because "
-            "preferred agents are contraindicated, have been tried and "
-            "failed, or are expected to be ineffective for this indication. "
-            "Please apply the override and process the claim.\n\n"
+            "denial relies on step therapy, state law and plan terms "
+            "generally require an override when preferred agents are "
+            "contraindicated, have been tried and failed, or are expected to "
+            "be ineffective for this indication. [Say which applies and "
+            "name the agents tried, with dates.] Please apply the override "
+            "and process the claim.\n\n"
             "2. ERISA full-and-fair-review obligations "
             "(29 C.F.R. § 2560.503-1). Please produce, with the appeal "
             "decision, (a) the specific clinical criteria relied on, "
@@ -766,9 +781,10 @@ class GLP1WeightLossAppeal(SpecializedDenialTemplate):
             "plan language relied upon and explain how it encompasses the "
             "FDA-approved indication at issue.\n\n"
             "2. FDA-approved indication. The requested medication is FDA-"
-            "approved for the patient's condition — chronic weight management "
-            "in patients with obesity, or with overweight and a weight-related "
-            "comorbidity — and, for several agents, additional medical "
+            "approved for chronic weight management in patients with obesity, "
+            "or with overweight and a weight-related comorbidity [state the "
+            "patient's BMI and comorbidity], and, for several agents, "
+            "additional medical "
             "indications (Wegovy for reducing major adverse cardiovascular "
             "events in adults with established cardiovascular disease; "
             "Zepbound for moderate-to-severe obstructive sleep apnea in adults "
