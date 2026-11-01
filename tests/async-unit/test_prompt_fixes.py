@@ -136,6 +136,19 @@ class TestPubMedLineNeedsResults:
         assert "PMID 12345678" in extra
         assert "you can include the DOI number" in extra
 
+    @pytest.mark.parametrize("sectioned", [False, True])
+    def test_whitespace_pubmed_and_citations_render_no_sections(self, sectioned):
+        gen = AppealGenerator()
+        build = gen.make_sectioned_open_prompt if sectioned else gen.make_open_prompt
+        prompt = build(
+            denial_text="Denied.",
+            pubmed_context=" \n\t",
+            ml_context="   ",
+        )
+        assert "PubMed references" not in prompt
+        assert "Provided citations" not in prompt
+        assert "CITATION INSTRUCTIONS" not in prompt
+
     @pytest.mark.parametrize("citations", ["  ", ["", ""]])
     def test_blank_citations_add_no_citation_line(self, citations):
         extra = _model()._build_context_extra(
